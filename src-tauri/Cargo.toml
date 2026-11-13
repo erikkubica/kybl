@@ -3,6 +3,7 @@ name = "kybl"
 version = "0.1.0"
 description = "A fast, native S3 browser for any S3-compatible storage"
 authors = ["Kybl contributors"]
+license = "MIT"
 edition = "2024"
 
 [lib]

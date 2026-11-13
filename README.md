@@ -16,6 +16,9 @@ Hetzner Object Storage, AWS S3, Cloudflare R2, Backblaze B2, Wasabi, DigitalOcea
 - **Download** files or whole folders, **delete**, **rename** (files and folders), **new folder**.
 - **Share links** (presigned URLs, 1 hour / 1 day / 7 days), copy `s3://` URI.
 - **Transfer queue** with speed, ETA, cancel and retry.
+- **Folder sync** between a local folder and an S3 prefix, upload or download direction, with ignore
+  rules. Runs from the menu bar with the window closed. Deletions are opt-in, local files go to the
+  Trash, and sync refuses to mass-delete when one side suddenly looks empty.
 - Keyboard: `⌘A` select all, `Delete` delete, `⌘R` refresh, `⌘F` search, arrows navigate, `Backspace` up.
 
 ## Develop
@@ -62,15 +65,19 @@ and export both as a `.p12`. Keep a backup: a new certificate means every user g
 ## Folder sync tests
 
 The sync engine has end-to-end tests that run against a throwaway S3 server (skipped unless
-`S3B_TEST_ENDPOINT` is set). With rclone:
+`KYBL_TEST_ENDPOINT` is set). With rclone:
 
 ```bash
 mkdir -p /tmp/s3root/testbucket
 rclone serve s3 --auth-key testkey,testsecret --addr 127.0.0.1:9123 /tmp/s3root &
-cd src-tauri && S3B_TEST_ENDPOINT=http://127.0.0.1:9123 cargo test --lib sync::tests
+cd src-tauri && KYBL_TEST_ENDPOINT=http://127.0.0.1:9123 cargo test --lib sync::tests
 ```
 
 rclone's S3 server can't do multipart uploads, so the large-file upload test needs another server,
 for example `docker run -d -p 9125:9090 adobe/s3mock` plus `curl -X PUT localhost:9125/testbucket`.
-Run `cargo test --lib transfers` with `S3B_TEST_MULTIPART_ENDPOINT` pointing at it. Setting `S3B_TEST_SLOW=1`
+Run `cargo test --lib transfers` with `KYBL_TEST_MULTIPART_ENDPOINT` pointing at it. Setting `KYBL_TEST_SLOW=1`
 and putting a rate-limited proxy in front also checks that progress moves inside a single file.
+
+## License
+
+[MIT](LICENSE)

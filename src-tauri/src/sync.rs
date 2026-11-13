@@ -1068,7 +1068,7 @@ pub async fn sync_pause_all(app: AppHandle, mgr: State<'_, SyncManager>, paused:
 
 /// End-to-end tests against a real S3 endpoint. They need a throwaway server, e.g.
 /// `rclone serve s3 --auth-key testkey,testsecret --addr 127.0.0.1:9123 <dir>` with a
-/// `testbucket` folder in `<dir>`, and run with `S3B_TEST_ENDPOINT=http://127.0.0.1:9123`.
+/// `testbucket` folder in `<dir>`, and run with `KYBL_TEST_ENDPOINT=http://127.0.0.1:9123`.
 /// Without that variable they are skipped.
 #[cfg(test)]
 mod tests {
@@ -1081,7 +1081,7 @@ mod tests {
     const BUCKET: &str = "testbucket";
 
     fn app() -> Option<tauri::App<MockRuntime>> {
-        let endpoint = std::env::var("S3B_TEST_ENDPOINT").ok()?;
+        let endpoint = std::env::var("KYBL_TEST_ENDPOINT").ok()?;
         let app = mock_builder()
             .manage(AppState::default())
             .manage(SyncManager::default())
@@ -1155,7 +1155,7 @@ mod tests {
 
     #[test]
     fn upload_mapping() {
-        let Some(app) = app() else { return eprintln!("skipped: S3B_TEST_ENDPOINT not set") };
+        let Some(app) = app() else { return eprintln!("skipped: KYBL_TEST_ENDPOINT not set") };
         let h = app.handle().clone();
         tauri::async_runtime::block_on(async move {
             let dir = tmpdir("up");

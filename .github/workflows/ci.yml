@@ -47,6 +47,6 @@ jobs:
       - name: Rust tests
         working-directory: src-tauri
         env:
-          S3B_TEST_ENDPOINT: http://127.0.0.1:9123
-          S3B_TEST_MULTIPART_ENDPOINT: http://127.0.0.1:9125
+          KYBL_TEST_ENDPOINT: http://127.0.0.1:9123
+          KYBL_TEST_MULTIPART_ENDPOINT: http://127.0.0.1:9125
         run: cargo test --lib

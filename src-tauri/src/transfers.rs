@@ -415,14 +415,14 @@ mod tests {
         });
     }
 
-    /// Needs a multipart-capable throwaway S3 server in `S3B_TEST_MULTIPART_ENDPOINT`. Set
-    /// `S3B_TEST_SLOW=1` behind a rate-limited proxy to also check that progress moves inside a file.
+    /// Needs a multipart-capable throwaway S3 server in `KYBL_TEST_MULTIPART_ENDPOINT`. Set
+    /// `KYBL_TEST_SLOW=1` behind a rate-limited proxy to also check that progress moves inside a file.
     #[test]
     fn uploads_arrive_intact_and_report_progress_inside_a_file() {
         // rclone's S3 server can't do multipart uploads, so this test has its own server,
         // for example adobe/s3mock with a `testbucket` bucket.
-        let Ok(endpoint) = std::env::var("S3B_TEST_MULTIPART_ENDPOINT") else {
-            return eprintln!("skipped: S3B_TEST_MULTIPART_ENDPOINT not set");
+        let Ok(endpoint) = std::env::var("KYBL_TEST_MULTIPART_ENDPOINT") else {
+            return eprintln!("skipped: KYBL_TEST_MULTIPART_ENDPOINT not set");
         };
         let p = Profile {
             id: "t".into(),
@@ -457,7 +457,7 @@ mod tests {
                 let seen = seen.into_inner().unwrap();
                 assert!(seen.iter().all(|&d| d <= size as u64));
                 assert!(seen.windows(2).all(|w| w[0] <= w[1]), "progress never goes backwards: {seen:?}");
-                if std::env::var("S3B_TEST_SLOW").is_ok() && started.elapsed() > Duration::from_secs(2) {
+                if std::env::var("KYBL_TEST_SLOW").is_ok() && started.elapsed() > Duration::from_secs(2) {
                     let inside = seen.iter().filter(|&&d| d > 0 && d < size as u64).count();
                     assert!(inside >= 3, "{name}: expected progress inside the file, got {seen:?}");
                 }
