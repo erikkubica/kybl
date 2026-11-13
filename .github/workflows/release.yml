@@ -1,0 +1,110 @@
+# Builds the app for macOS (Apple Silicon + Intel), Windows and Linux and attaches the
+# installers to a draft GitHub release. Run it by pushing a tag that matches the app version
+# (`git tag v0.1.0 && git push --tags`) or from the Actions tab.
+#
+# macOS signing uses a self-signed certificate (no Apple Developer account). It is not
+# notarized, so Gatekeeper asks once on first launch, but every release has the same
+# signature, so the keychain keeps remembering "Always Allow" across updates.
+# Secrets: MACOS_CERTIFICATE (base64 .p12) and MACOS_CERTIFICATE_PASSWORD. Without them the
+# macOS build is ad-hoc signed and still works.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+            rust-targets: aarch64-apple-darwin
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+            rust-targets: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            args: ""
+            rust-targets: ""
+          - platform: windows-latest
+            args: ""
+            rust-targets: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux build dependencies
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: ${{ matrix.rust-targets }}
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Import signing certificate
+        if: startsWith(matrix.platform, 'macos')
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_CERTIFICATE" ]; then
+            echo "::warning::MACOS_CERTIFICATE is not set; the macOS build will be ad-hoc signed."
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          KC="$RUNNER_TEMP/signing.keychain-db"
+          KC_PASS="$(openssl rand -hex 16)"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KC_PASS" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PASS" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KC_PASS" "$KC" > /dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          # self-signed, so the identity is listed as untrusted; codesign still signs with it.
+          # Use the SHA-1 so it can't be confused with another identity of the same name.
+          ID="$(security find-identity -p codesigning "$KC" | awk '/[0-9]\)/ {print $2; exit}')"
+          [ -n "$ID" ] || { echo "::error::No signing identity found in the certificate"; exit 1; }
+          echo "APPLE_SIGNING_IDENTITY=$ID" >> "$GITHUB_ENV"
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: v__VERSION__
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+          releaseBody: |
+            ### Install
+
+            - **macOS**: `.dmg` (`aarch64` for Apple Silicon, `x64` for Intel). The app is signed but not notarized, so the first time macOS says it can't check the developer. Open **System Settings → Privacy & Security** and click **Open Anyway**. You only do this once.
+            - **Windows**: `.msi` or `-setup.exe`. If SmartScreen warns, click **More info → Run anyway**.
+            - **Linux**: `.AppImage`, `.deb` or `.rpm`.

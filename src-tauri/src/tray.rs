@@ -1,0 +1,220 @@
+//! Menu-bar (tray) icon, and hiding to it instead of quitting when the window is closed.
+//!
+//! The window (and with it the whole web view process) only exists while it is needed: it is
+//! created when opened, and destroyed once it has been hidden for a while with nothing running.
+//! Sitting in the menu bar then costs only the Rust side.
+
+use std::{
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Mutex,
+    },
+    time::Duration,
+};
+
+use tauri::{
+    image::Image,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::TrayIconBuilder,
+    AppHandle, Emitter, Manager, Runtime, WebviewWindowBuilder, Wry,
+};
+
+use crate::{
+    state::AppState,
+    sync::{self, SyncManager, SyncStatus},
+};
+
+/// How long a hidden window is kept around (cheap to show again) before it is destroyed.
+const KEEP_HIDDEN: Duration = Duration::from_secs(60);
+
+/// Set while the window is being destroyed by [`hide_main`], so that losing the last window does
+/// not quit the app.
+pub static REAPING: AtomicBool = AtomicBool::new(false);
+static REAPER_RUNNING: AtomicBool = AtomicBool::new(false);
+/// Bumped on every hide, so the reaper restarts its wait after a quick show-and-hide.
+static HIDES: AtomicU64 = AtomicU64::new(0);
+
+pub struct TrayItems {
+    status: MenuItem<Wry>,
+    pause: MenuItem<Wry>,
+    sync_now: MenuItem<Wry>,
+    /// last text shown, so unchanged updates skip the native menu calls
+    last: Mutex<String>,
+}
+
+pub fn setup(app: &AppHandle) -> tauri::Result<()> {
+    let status = MenuItem::with_id(app, "status", "No folders synced yet", false, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open Kybl", true, None::<&str>)?;
+    let sync_now = MenuItem::with_id(app, "sync_now", "Sync now", false, None::<&str>)?;
+    let pause = MenuItem::with_id(app, "pause", "Pause syncing", true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "sync_settings", "Sync settings…", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Kybl", true, None::<&str>)?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &status,
+            &PredefinedMenuItem::separator(app)?,
+            &open,
+            &sync_now,
+            &pause,
+            &settings,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
+    TrayIconBuilder::with_id("main")
+        .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
+        .icon_as_template(true)
+        .tooltip("Kybl")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, e| match e.id().as_ref() {
+            "open" => show_main(app),
+            "sync_settings" => show_main_at(app, Some("sync")),
+            "sync_now" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    sync::sync_all_now(&app.state::<SyncManager>()).await;
+                });
+            }
+            "pause" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mgr = app.state::<SyncManager>();
+                    let paused = mgr.paused_flag.load(Ordering::Relaxed);
+                    let _ = sync::set_paused_all(&app, &mgr, !paused).await;
+                });
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
+    app.manage(TrayItems { status, pause, sync_now, last: Mutex::new(String::new()) });
+    refresh(app);
+    Ok(())
+}
+
+fn summarize(st: &[SyncStatus], paused: bool) -> String {
+    if st.is_empty() {
+        return "No folders synced yet".into();
+    }
+    if paused {
+        return "Syncing paused".into();
+    }
+    let (done, total) = st
+        .iter()
+        .filter(|s| s.state == "syncing")
+        .fold((0, 0), |(d, t), s| (d + s.done, t + s.total));
+    if total > 0 {
+        return format!("Syncing… {done} of {total} files");
+    }
+    if st.iter().any(|s| s.state == "scanning") {
+        return "Checking for changes…".into();
+    }
+    let errors = st.iter().filter(|s| s.state == "error").count();
+    if errors > 0 {
+        return format!("{errors} {} need{} attention", if errors == 1 { "folder" } else { "folders" }, if errors == 1 { "s" } else { "" });
+    }
+    let running = st.iter().filter(|s| s.state != "paused").count();
+    if running == 0 {
+        return "All folders paused".into();
+    }
+    format!("Up to date · {running} {}", if running == 1 { "folder" } else { "folders" })
+}
+
+/// Updates the tray menu and tooltip from the current sync state.
+pub fn refresh<R: Runtime>(app: &AppHandle<R>) {
+    let Some(items) = app.try_state::<TrayItems>() else { return };
+    let mgr = app.state::<SyncManager>();
+    let paused = mgr.paused_flag.load(Ordering::Relaxed);
+    let st = mgr.statuses();
+    let text = summarize(&st, paused);
+    {
+        let mut last = items.last.lock().unwrap();
+        let key = format!("{paused}|{}|{text}", st.iter().any(|s| s.state != "paused"));
+        if *last == key {
+            return;
+        }
+        *last = key;
+    }
+    let _ = items.status.set_text(&text);
+    let _ = items.pause.set_text(if paused { "Resume syncing" } else { "Pause syncing" });
+    let _ = items.sync_now.set_enabled(!paused && st.iter().any(|s| s.state != "paused"));
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_tooltip(Some(format!("Kybl · {text}")));
+    }
+}
+
+pub fn show_main(app: &AppHandle) {
+    show_main_at(app, None);
+}
+
+/// Shows the window, creating it if it does not exist, optionally on a settings page.
+pub fn show_main_at(app: &AppHandle, settings_page: Option<&str>) {
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    let window = match app.get_webview_window("main") {
+        Some(w) => {
+            if let Some(page) = settings_page {
+                let _ = app.emit("open-settings", page);
+            }
+            w
+        }
+        None => {
+            let Some(cfg) = app.config().app.windows.iter().find(|w| w.label == "main") else { return };
+            let mut b = match WebviewWindowBuilder::from_config(app, cfg) {
+                Ok(b) => b,
+                Err(_) => return,
+            };
+            if let Some(page) = settings_page {
+                // the page is not listening for events yet: leave the request where it looks on start
+                b = b.initialization_script(format!("window.__KYBL_OPEN_SETTINGS__ = {page:?};"));
+            }
+            match b.build() {
+                Ok(w) => w,
+                Err(_) => return,
+            }
+        }
+    };
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
+/// Hides the window and, on macOS, the Dock icon; the app keeps running in the menu bar.
+/// After [`KEEP_HIDDEN`] with no transfer or bucket operation running, the window is destroyed.
+pub fn hide_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    HIDES.fetch_add(1, Ordering::SeqCst);
+    if REAPER_RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut seen = HIDES.load(Ordering::SeqCst);
+        loop {
+            tokio::time::sleep(KEEP_HIDDEN).await;
+            let now = HIDES.load(Ordering::SeqCst);
+            if now != seen {
+                seen = now;
+                continue;
+            }
+            let Some(w) = app.get_webview_window("main") else { break };
+            if w.is_visible().unwrap_or(true) {
+                break;
+            }
+            // transfers and bucket operations report progress to the page: let them finish first
+            if !app.state::<AppState>().cancels.lock().await.is_empty() {
+                continue;
+            }
+            REAPING.store(true, Ordering::SeqCst);
+            let _ = w.destroy();
+            break;
+        }
+        REAPER_RUNNING.store(false, Ordering::SeqCst);
+    });
+}

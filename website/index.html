@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en" data-type="software">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kybl · A fast S3 browser for your desktop</title>
+<meta name="description" content="Kybl is a free desktop app for S3-compatible storage. Browse, upload, share and sync files on AWS S3, Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces and MinIO.">
+<meta name="page-type" content="software">
+<meta name="site-kind" content="software">
+<meta name="theme-color" content="#d9381f">
+<meta property="og:title" content="Kybl · Drop it in the kybl.">
+<meta property="og:description" content="A fast desktop app for S3-compatible storage. macOS, Windows and Linux.">
+<meta property="og:image" content="assets/shots/app-browse.webp">
+<link rel="icon" href="assets/mark.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="preload" as="image" href="assets/shots/app-browse.webp" type="image/webp">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!--
+  Kybl homepage. Built from notes/brand/kybl-brand.html (draft 4):
+  Kybl Red #D9381F, Cast Iron #1E1A1A, Beach Pail #FFC93C, Leaf #2FA36B, Chip #F1EFED.
+  Fredoka for display, DM Sans for body, JetBrains Mono for code. Kyblík appears on the website,
+  the plain mark in the nav and favicon. One pun per screen, none near anything going wrong.
+  Screenshots are the real app UI (pnpm dev with src/devMock.ts), light and dark.
+-->
+
+<!-- Kyblík and the mark, copied from the brand book. One drawing; colourways via CSS vars. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="kb" viewBox="0 0 200 200">
+      <path d="M40 76 C40 6 160 6 160 76" fill="none" stroke="var(--kb-line, var(--k-line))" stroke-width="7" stroke-linecap="round"/>
+      <rect x="80" y="16" width="40" height="15" rx="7.5" fill="var(--kb-grip, #ffc93c)"/>
+      <rect x="86" y="19" width="22" height="3.4" rx="1.7" fill="#fff" opacity="0.45"/>
+      <path d="M38 76 L54 168 A46 12 0 0 0 146 168 L162 76 A62 16 0 0 1 38 76 Z" fill="var(--kb-body, #d9381f)"/>
+      <path d="M149 100 L139 162" fill="none" stroke="#000" stroke-opacity="0.12" stroke-width="13" stroke-linecap="round"/>
+      <path d="M52 100 L57 130" fill="none" stroke="#fff" stroke-opacity="0.28" stroke-width="5" stroke-linecap="round"/>
+      <path d="M54 168 A46 12 0 0 0 146 168" fill="none" stroke="var(--kb-line, var(--k-line))" stroke-width="4.5" stroke-linecap="round"/>
+      <ellipse cx="100" cy="76" rx="66" ry="18" fill="var(--kb-line, var(--k-line))"/>
+      <ellipse cx="100" cy="76" rx="56" ry="11.5" fill="var(--kb-in, #8f1f0c)"/>
+      <path d="M44 70 A60 14 0 0 1 78 60" fill="none" stroke="#fff" stroke-opacity="0.35" stroke-width="2.6" stroke-linecap="round"/>
+      <g fill="var(--kb-dot, #fff)">
+        <circle cx="62" cy="106" r="5.2"/><circle cx="138" cy="106" r="5.2"/>
+        <circle cx="66" cy="134" r="5.2"/><circle cx="134" cy="134" r="5.2"/>
+        <circle cx="76" cy="157" r="5.2"/><circle cx="100" cy="163" r="5.2"/><circle cx="124" cy="157" r="5.2"/>
+      </g>
+    </symbol>
+    <symbol id="kb-front" viewBox="0 0 200 200">
+      <path d="M34 76 A66 18 0 0 0 166 76 L156 76 A56 11.5 0 0 1 44 76 Z" fill="var(--kb-line, var(--k-line))"/>
+    </symbol>
+    <symbol id="f-happy" viewBox="0 0 200 200">
+      <ellipse cx="85" cy="114" rx="8.5" ry="10" fill="#fff"/><ellipse cx="115" cy="114" rx="8.5" ry="10" fill="#fff"/>
+      <circle cx="86.5" cy="116" r="5" fill="#1e1a1a"/><circle cx="116.5" cy="116" r="5" fill="#1e1a1a"/>
+      <circle cx="88.4" cy="113.8" r="1.8" fill="#fff"/><circle cx="118.4" cy="113.8" r="1.8" fill="#fff"/>
+      <path d="M89 133 Q100 144 111 133" fill="none" stroke="#1e1a1a" stroke-width="4.2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="f-up" viewBox="0 0 200 200">
+      <ellipse cx="85" cy="114" rx="8.5" ry="10" fill="#fff"/><ellipse cx="115" cy="114" rx="8.5" ry="10" fill="#fff"/>
+      <circle cx="86" cy="110" r="5" fill="#1e1a1a"/><circle cx="116" cy="110" r="5" fill="#1e1a1a"/>
+      <circle cx="87.8" cy="108" r="1.8" fill="#fff"/><circle cx="117.8" cy="108" r="1.8" fill="#fff"/>
+      <ellipse cx="100" cy="137" rx="5" ry="5.6" fill="#1e1a1a"/>
+    </symbol>
+    <symbol id="f-sleep" viewBox="0 0 200 200">
+      <path d="M77 115 Q85 122 93 115 M107 115 Q115 122 123 115" fill="none" stroke="#1e1a1a" stroke-width="4.2" stroke-linecap="round"/>
+      <path d="M94 135 Q100 139 106 135" fill="none" stroke="#1e1a1a" stroke-width="3.8" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="f-oops" viewBox="0 0 200 200">
+      <path d="M79 108 L91 120 M91 108 L79 120 M109 108 L121 120 M121 108 L109 120" fill="none" stroke="#1e1a1a" stroke-width="4.2" stroke-linecap="round"/>
+      <path d="M90 141 Q100 132 110 141" fill="none" stroke="#1e1a1a" stroke-width="4.2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="mark" viewBox="0 0 64 64">
+      <path d="M14 25 C14 3 50 3 50 25" fill="none" stroke="var(--m-line, var(--k-line))" stroke-width="4.4" stroke-linecap="round"/>
+      <rect x="24" y="5" width="16" height="7" rx="3.5" fill="var(--m-grip, #ffc93c)"/>
+      <path d="M12 25 L17.5 54 A14.5 4.5 0 0 0 46.5 54 L52 25 Z" fill="var(--m-body, #d9381f)"/>
+      <ellipse cx="32" cy="25" rx="22.5" ry="7.2" fill="var(--m-line, var(--k-line))"/>
+      <ellipse cx="32" cy="25" rx="17.5" ry="3.9" fill="var(--m-in, #8f1f0c)"/>
+      <g fill="var(--m-dot, #fff)"><circle cx="23" cy="40" r="3"/><circle cx="41" cy="40" r="3"/><circle cx="32" cy="49" r="3"/></g>
+    </symbol>
+    <symbol id="tray" viewBox="0 0 64 64">
+      <mask id="tray-band"><rect width="64" height="64" fill="#fff"/><rect x="0" y="45.5" width="64" height="3.6" fill="#000"/></mask>
+      <path d="M12.5 28 C12.5 2.5 51.5 2.5 51.5 28" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+      <rect x="7" y="25.5" width="50" height="8.5" rx="4.25" fill="currentColor"/>
+      <path mask="url(#tray-band)" d="M11.5 37.5 H52.5 L47.8 57 Q47.2 60.5 43.7 60.5 H20.3 Q16.8 60.5 16.2 57 Z" fill="currentColor"/>
+    </symbol>
+  </defs>
+</svg>
+
+<header class="hero" id="top">
+  <nav class="nav gut" aria-label="Main">
+    <div class="wrap nav-in">
+      <a class="brand" href="#top" aria-label="Kybl home">
+        <svg viewBox="0 0 64 64" aria-hidden="true" style="--m-body:#fff;--m-in:#d2cac6;--m-dot:#d9381f;--m-line:#1e1a1a"><use href="#mark"/></svg>
+        <span>kybl</span>
+      </a>
+      <div class="nav-links">
+        <a href="#storage">Storage</a>
+        <a href="#features">Features</a>
+        <a href="#sync">Sync</a>
+        <a class="btn btn-sm btn-iron" href="#download">Download</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="wrap gut hero-copy">
+    <p class="eyebrow">Free desktop app · macOS, Windows, Linux</p>
+    <h1>The fast S3 browser for your&nbsp;desktop.</h1>
+    <p class="lede">Browse, upload, share and sync files on AWS S3, Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces and MinIO. Your keys stay in the system keychain.</p>
+    <div class="actions">
+      <a class="btn btn-iron" href="#download">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3m9 12v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5"/></svg>
+        Download for Mac
+      </a>
+      <a class="btn btn-ghost" href="#download">See all downloads</a>
+    </div>
+  </div>
+
+  <div class="wrap gut hero-stage">
+    <div class="window">
+      <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+      <picture>
+        <source srcset="assets/shots/app-browse-dark.webp" media="(prefers-color-scheme: dark)">
+        <img src="assets/shots/app-browse.webp" width="2400" height="1500" alt="Kybl showing a Hetzner bucket: a file list on the left, a selected photo with its preview, a download button and share link options on the right." fetchpriority="high">
+      </picture>
+    </div>
+    <svg class="hero-kb" viewBox="0 0 200 200" aria-hidden="true">
+      <use href="#kb"/>
+      <g transform="rotate(9 112 66)"><rect x="98" y="42" width="32" height="48" rx="4" fill="#e9e4e1" stroke="#1e1a1a" stroke-width="3"/></g>
+      <g transform="rotate(-7 92 66)"><rect x="74" y="40" width="34" height="50" rx="4" fill="#fff" stroke="#1e1a1a" stroke-width="3"/><path d="M82 52 H100 M82 60 H100 M82 68 H93" stroke="#1e1a1a" stroke-width="3" stroke-linecap="round"/></g>
+      <use href="#kb-front"/><use href="#f-up"/>
+    </svg>
+  </div>
+</header>
+<div class="polka-strip" aria-hidden="true"></div>
+
+<main>
+  <section id="storage" class="sec">
+    <div class="wrap gut split">
+      <div class="split-copy">
+        <p class="label">Any S3-compatible storage</p>
+        <h2>Works with the storage you already&nbsp;pay&nbsp;for.</h2>
+        <p class="body">Pick a preset, paste your access key and you're in. Kybl fills in the endpoint and region, tells you about each provider's quirks and can test the connection before you save it.</p>
+        <ul class="providers" aria-label="Supported providers">
+          <li><img src="assets/icons/aws-s3.svg" alt="" width="28" height="28"><span>Amazon S3</span></li>
+          <li><img src="assets/icons/cloudflare-icon.svg" alt="" width="34" height="16"><span>Cloudflare R2</span></li>
+          <li><img src="assets/icons/hetzner.svg" alt="" width="28" height="28"><span>Hetzner</span></li>
+          <li><img src="assets/icons/backblaze.svg" alt="" width="18" height="28"><span>Backblaze B2</span></li>
+          <li><img src="assets/icons/wasabi.svg" alt="" width="28" height="28"><span>Wasabi</span></li>
+          <li><img src="assets/icons/digital-ocean-icon.svg" alt="" width="28" height="28"><span>DigitalOcean</span></li>
+          <li><img src="assets/icons/minio.svg" alt="" width="15" height="28"><span>MinIO</span></li>
+          <li><img src="assets/icons/ceph.svg" alt="" width="28" height="28"><span>Ceph</span></li>
+        </ul>
+        <p class="keynote">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5"/></svg>
+          Secret keys go to the macOS Keychain, Windows Credential Manager or Secret Service. Never into a file.
+        </p>
+      </div>
+      <div class="shot shot-dialog">
+        <picture>
+          <source srcset="assets/shots/app-connect-dark.webp" media="(prefers-color-scheme: dark)">
+          <img src="assets/shots/app-connect.webp" width="1080" height="1332" loading="lazy" alt="The New connection dialog with presets for Hetzner, Amazon S3, Cloudflare R2, Backblaze B2, Wasabi, DigitalOcean and other S3 servers.">
+        </picture>
+      </div>
+    </div>
+  </section>
+
+  <section id="features" class="sec sec-surface">
+    <div class="wrap gut">
+      <div class="sec-head">
+        <p class="label">Features</p>
+        <h2>Your bucket list, sorted.</h2>
+        <p class="body">Everything you expect from a file manager, made for buckets that hold a hundred files or a million.</p>
+      </div>
+      <div class="bento">
+        <article class="card card-thumbs">
+          <div class="mock mock-grid" aria-hidden="true">
+            <div class="mg-bar"><span class="mg-crumb">media-prod <i>/</i> photos <i>/</i> 2026</span><span class="mg-seg"><b></b><b class="on"></b></span></div>
+            <div class="mg-tiles">
+              <figure style="--a:18;--b:350"><span></span><figcaption>IMG_4100.jpg<em>4.2 MB</em></figcaption></figure>
+              <figure style="--a:190;--b:220"><span></span><figcaption>IMG_4101.jpg<em>3.8 MB</em></figcaption></figure>
+              <figure style="--a:40;--b:10"><span></span><figcaption>IMG_4102.jpg<em>5.1 MB</em></figcaption></figure>
+              <figure style="--a:150;--b:190"><span></span><figcaption>IMG_4103.jpg<em>2.9 MB</em></figcaption></figure>
+              <figure style="--a:205;--b:240"><span></span><figcaption>IMG_4104.jpg<em>4.7 MB</em></figcaption></figure>
+              <figure style="--a:28;--b:345"><span></span><figcaption>IMG_4105.jpg<em>3.3 MB</em></figcaption></figure>
+              <figure style="--a:120;--b:160"><span></span><figcaption>IMG_4106.jpg<em>6.0 MB</em></figcaption></figure>
+              <figure style="--a:48;--b:20"><span></span><figcaption>IMG_4107.jpg<em>4.4 MB</em></figcaption></figure>
+            </div>
+          </div>
+          <div class="card-copy">
+            <h3>Thumbnails in a blink</h3>
+            <p>JPEGs use the photo's own EXIF thumbnail, read from the first 256&nbsp;KB, and everything is cached on disk. A folder you've seen opens instantly.</p>
+          </div>
+        </article>
+
+        <article class="card card-share">
+          <div class="mock mock-share" aria-hidden="true">
+            <p class="ms-label">Share link</p>
+            <div class="ms-row">
+              <div class="ms-seg"><span>1 hour</span><span class="on">24 hours</span><span>7 days</span></div>
+              <span class="ms-copy"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Copy</span>
+            </div>
+            <div class="ms-toast"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7"/></svg>Link copied · works for 24 hours</div>
+          </div>
+          <div class="card-copy">
+            <h3>Share links in one click</h3>
+            <p>Presigned links for 1&nbsp;hour, 1&nbsp;day or 7&nbsp;days. Nothing to make public.</p>
+          </div>
+        </article>
+
+        <article class="card card-drop">
+          <div class="mock mock-drop" aria-hidden="true">
+            <svg class="md-kb" viewBox="0 0 200 200"><use href="#kb"/><use href="#f-up"/></svg>
+            <span class="md-file f1">holiday.mov</span>
+            <span class="md-file f2">IMG_0412.heic</span>
+            <p>Drop to upload to <b>photos/2026</b></p>
+          </div>
+          <div class="card-copy">
+            <h3>Drag, drop, done</h3>
+            <p>Files or whole folders, straight from Finder or Explorer. Big files go up in parts.</p>
+          </div>
+        </article>
+
+        <article class="card card-queue">
+          <div class="mock mock-queue" aria-hidden="true">
+            <div class="mq-head">
+              <b>Activity</b><span class="pill accent">2 active</span><span class="pill ok">3 done</span>
+              <span class="mq-sum">672 MB of 907 MB · 18.4 MB/s · about 2 min left</span>
+            </div>
+            <div class="mq-row">
+              <span class="mq-ic up"><svg viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></span>
+              <div class="mq-main"><span class="mq-name">backup-2026-11-10.tar.gz</span><span class="mq-meta">1.2 GB of 1.8 GB · 14.1 MB/s</span><i class="mq-bar"><b style="--p:.66;--d:3.4s"></b></i></div>
+            </div>
+            <div class="mq-row">
+              <span class="mq-ic up"><svg viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></span>
+              <div class="mq-main"><span class="mq-name">promo-cut-final-v3.mp4</span><span class="mq-meta">96 MB of 248 MB · 4.3 MB/s</span><i class="mq-bar"><b style="--p:.39;--d:2.8s"></b></i></div>
+            </div>
+            <div class="mq-row done">
+              <span class="mq-ic ok"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7"/></svg></span>
+              <div class="mq-main"><span class="mq-name">podcast-episode-14.mp3</span><span class="mq-meta">38.4 MB · uploaded</span></div>
+            </div>
+          </div>
+          <div class="card-copy">
+            <h3>A transfer queue that talks</h3>
+            <p>Speed and time left for every upload and download. Cancel one, retry the ones that failed, keep working meanwhile.</p>
+          </div>
+        </article>
+
+        <article class="card card-small">
+          <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg></span>
+          <h3>Previews without downloading</h3>
+          <p>Images, video, audio, PDF and text open right in the details panel.</p>
+        </article>
+        <article class="card card-small">
+          <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg></span>
+          <h3>Huge folders, still snappy</h3>
+          <p>Lazy paging keeps 100,000-file folders smooth. Search looks through every subfolder.</p>
+        </article>
+        <article class="card card-small card-keys">
+          <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg></span>
+          <h3>Keyboard first</h3>
+          <div class="keys">
+            <span><kbd>⌘</kbd><kbd>F</kbd> search</span>
+            <span><kbd>⌘</kbd><kbd>A</kbd> select all</span>
+            <span><kbd>⌘</kbd><kbd>R</kbd> refresh</span>
+            <span><kbd>⌫</kbd> up a folder</span>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="sync" class="sec">
+    <div class="wrap gut split split-rev">
+      <div class="shot-wrap">
+      <div class="shot shot-sync">
+        <picture>
+          <source srcset="assets/shots/app-sync-dark.webp" media="(prefers-color-scheme: dark)">
+          <img src="assets/shots/app-sync.webp" width="1600" height="1100" loading="lazy" alt="Folder sync settings: an Exports folder uploading to a bucket is up to date, an assets folder shows an access error in plain words.">
+        </picture>
+      </div>
+      <div class="menubar" aria-hidden="true">
+        <div class="mb-strip"><span>Thu 13 Nov</span><span class="mb-ic on busy"><svg viewBox="0 0 64 64"><use href="#tray"/></svg></span><span>09:41</span></div>
+        <ul class="mb-menu">
+          <li class="dis">Syncing… 14 of 18 files</li>
+          <li class="sep"></li>
+          <li>Open Kybl</li>
+          <li class="hl">Sync now</li>
+          <li>Pause syncing</li>
+          <li>Sync settings…</li>
+          <li class="sep"></li>
+          <li>Quit Kybl</li>
+        </ul>
+      </div>
+      </div>
+      <div class="split-copy">
+        <p class="label">Folder sync</p>
+        <h2>Keep a folder in sync, even with the window&nbsp;closed.</h2>
+        <p class="body">Point a local folder at a bucket and pick a direction. Kybl watches for changes, skips what you tell it to ignore and keeps going from the menu bar.</p>
+        <ul class="ticks">
+          <li>Upload to the bucket or download from it</li>
+          <li>Ignore rules for <code>node_modules</code>, <code>.DS_Store</code> and friends</li>
+          <li>Pause everything from the menu bar icon</li>
+          <li>Errors in plain words, with the fix</li>
+        </ul>
+
+      </div>
+    </div>
+  </section>
+
+  <section id="status" class="sec sec-surface">
+    <div class="wrap gut">
+      <div class="sec-head center">
+        <p class="label">Sync status</p>
+        <h2>Kyblík tells you how your folders are doing.</h2>
+        <p class="body">One look at the little bucket and you know: all good, busy, resting or in need of a hand.</p>
+      </div>
+      <div class="states">
+        <div class="state">
+          <svg viewBox="0 0 200 200" role="img" aria-label="Kyblík happy, with a green check">
+            <use href="#kb"/><use href="#f-happy"/>
+            <circle cx="158" cy="160" r="19" fill="#2fa36b" stroke="var(--bg)" stroke-width="5"/>
+            <path d="M149 160 l6.5 6.5 l12 -13" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <b>All synced</b><span>Up to date, nothing to do</span>
+        </div>
+        <div class="state">
+          <svg viewBox="0 0 200 200" role="img" aria-label="Kyblík looking up at files standing in the bucket">
+            <use href="#kb"/>
+            <g transform="rotate(9 112 66)"><rect x="98" y="42" width="32" height="48" rx="4" fill="#e9e4e1" stroke="#1e1a1a" stroke-width="3"/></g>
+            <g transform="rotate(-7 92 66)"><rect x="74" y="40" width="34" height="50" rx="4" fill="#fff" stroke="#1e1a1a" stroke-width="3"/><path d="M82 52 H100 M82 60 H100 M82 68 H93" stroke="#1e1a1a" stroke-width="3" stroke-linecap="round"/></g>
+            <use href="#kb-front"/><use href="#f-up"/>
+          </svg>
+          <b>Uploading</b><span>14 of 18 files</span>
+        </div>
+        <div class="state">
+          <svg viewBox="0 0 200 200" role="img" aria-label="Kyblík asleep">
+            <use href="#kb"/><use href="#f-sleep"/>
+            <text x="150" y="50" font-family="Fredoka, sans-serif" font-weight="700" font-size="30" fill="currentColor">z</text>
+            <text x="172" y="28" font-family="Fredoka, sans-serif" font-weight="700" font-size="20" fill="currentColor">z</text>
+          </svg>
+          <b>Paused</b><span>Syncing is off until you resume</span>
+        </div>
+        <div class="state">
+          <svg viewBox="0 0 200 200" role="img" aria-label="Kyblík tipped over in a puddle">
+            <ellipse cx="78" cy="184" rx="62" ry="9" fill="#6fb8f5" opacity="0.75"/>
+            <circle cx="22" cy="150" r="5" fill="#6fb8f5"/><circle cx="12" cy="168" r="3.5" fill="#6fb8f5"/>
+            <g transform="rotate(-26 100 150)"><use href="#kb"/><use href="#f-oops"/></g>
+          </svg>
+          <b>Needs a hand</b><span>A sync error, with the fix in plain words</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="download" class="sec">
+    <div class="wrap gut">
+      <div class="sec-head center">
+        <p class="label">Download</p>
+        <h2>Get Kybl for your computer.</h2>
+        <p class="body">Free. Native on every platform, built with Rust and Tauri, so it starts fast and stays light.</p>
+      </div>
+      <div class="platforms">
+        <div class="platform">
+          <img src="assets/icons/apple.svg" alt="" width="33" height="40" class="ink">
+          <h3>macOS</h3>
+          <p>Apple Silicon and Intel</p>
+          <div class="dl">
+            <a class="btn" href="#download">Apple Silicon</a>
+            <a class="btn btn-line" href="#download">Intel</a>
+          </div>
+        </div>
+        <div class="platform">
+          <img src="assets/icons/microsoft-windows-icon.svg" alt="" width="40" height="40">
+          <h3>Windows</h3>
+          <p>64-bit installer</p>
+          <div class="dl">
+            <a class="btn" href="#download">Download installer</a>
+          </div>
+        </div>
+        <div class="platform">
+          <img src="assets/icons/linux-tux.svg" alt="" width="34" height="40">
+          <h3>Linux</h3>
+          <p>AppImage, .deb or .rpm</p>
+          <div class="dl">
+            <a class="btn" href="#download">Download for Linux</a>
+          </div>
+        </div>
+      </div>
+      <details class="first-run">
+        <summary>First launch on a Mac asks once</summary>
+        <p>Kybl is signed but not yet notarized. On the first launch, open <b>System Settings → Privacy &amp; Security</b> and click <b>Open Anyway</b>. Updates keep the same signature, so you won't be asked again. On Windows, if SmartScreen warns, click <b>More info → Run anyway</b>. On Linux, secret keys need a Secret Service such as GNOME Keyring or KWallet.</p>
+      </details>
+    </div>
+  </section>
+</main>
+
+<div class="polka-strip" aria-hidden="true"></div>
+<footer class="foot">
+  <div class="wrap gut foot-in">
+    <div class="foot-brand">
+      <svg viewBox="0 0 200 200" aria-hidden="true" style="--k-line:#f1efed"><use href="#kb"/><use href="#f-happy"/></svg>
+      <div>
+        <p class="foot-word">kybl</p>
+        <p class="foot-tag">Drop it in the kybl.</p>
+      </div>
+    </div>
+    <nav class="foot-links" aria-label="Footer">
+      <a href="#storage">Storage</a>
+      <a href="#features">Features</a>
+      <a href="#sync">Folder sync</a>
+      <a href="#download">Download</a>
+    </nav>
+  </div>
+  <p class="wrap gut credits">© 2026 Kybl. Provider and platform logos from SVG Logos and Simple Icons (CC0); they are trademarks of their owners and show compatibility, not endorsement.</p>
+</footer>
+
+
+</body>
+</html>

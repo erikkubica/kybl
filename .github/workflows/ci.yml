@@ -1,0 +1,46 @@
+# Typecheck, build the frontend and run the Rust tests, including the S3 end-to-end tests
+# against a throwaway rclone S3 server.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev pkg-config
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Start test S3 server
+        run: |
+          curl -fsSL -o rclone.zip https://downloads.rclone.org/v1.68.2/rclone-v1.68.2-linux-amd64.zip
+          unzip -q -j rclone.zip '*/rclone' -d "$RUNNER_TEMP"
+          mkdir -p "$RUNNER_TEMP/s3root/testbucket"
+          "$RUNNER_TEMP/rclone" serve s3 --auth-key testkey,testsecret --addr 127.0.0.1:9123 "$RUNNER_TEMP/s3root" &
+          sleep 2
+
+      - name: Rust tests
+        working-directory: src-tauri
+        env:
+          S3B_TEST_ENDPOINT: http://127.0.0.1:9123
+        run: cargo test --lib

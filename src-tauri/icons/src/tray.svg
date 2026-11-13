@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="44" height="44">
+  <defs>
+    <mask id="band"><rect width="64" height="64" fill="#fff"/><rect x="0" y="45.5" width="64" height="3.6" fill="#000"/></mask>
+  </defs>
+  <path d="M12.5 28 C12.5 2.5 51.5 2.5 51.5 28" fill="none" stroke="#000" stroke-width="6" stroke-linecap="round"/>
+  <rect x="7" y="25.5" width="50" height="8.5" rx="4.25" fill="#000"/>
+  <path mask="url(#band)" d="M11.5 37.5 H52.5 L47.8 57 Q47.2 60.5 43.7 60.5 H20.3 Q16.8 60.5 16.2 57 Z" fill="#000"/>
+</svg>
