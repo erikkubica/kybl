@@ -81,8 +81,11 @@ export function ConnectionDialog({
   onSaved,
   onDeleted,
   onClose,
+  onKybl,
 }: {
   initial: Profile | null;
+  /** switch to "Connect Kybl Storage" (no keys to type) */
+  onKybl?: () => void;
   onSaved: (p: Profile) => void;
   onDeleted: (id: string) => void;
   onClose: () => void;
@@ -165,6 +168,16 @@ export function ConnectionDialog({
   return (
     <Modal title={initial ? "Edit connection" : "New connection"} onClose={onClose} width={540}>
       <div className="modal-body form-grid">
+        {!initial && onKybl && (
+          <button type="button" className="kybl-offer span2" onClick={onKybl}>
+            <ProviderBadge provider="kybl" large />
+            <span className="kybl-offer-text">
+              <strong>Kybl Storage</strong>
+              <em>Sign in with your browser. No keys to copy.</em>
+            </span>
+            <Icon name="chevron" size={14} />
+          </button>
+        )}
         <div className="field span2">
           <span>Provider</span>
           <div className="provider-grid" role="radiogroup" aria-label="Provider">

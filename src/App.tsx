@@ -16,6 +16,8 @@ import { GridView } from "./components/GridView";
 import { PreviewPane } from "./components/PreviewPane";
 import { TransferPanel } from "./components/TransferPanel";
 import { ConnectionDialog } from "./components/ConnectionDialog";
+import { KyblConnectDialog } from "./components/KyblConnectDialog";
+import { KYBL, isRevokedKey, kyblError } from "./kybl";
 import { SettingsPage, type SettingsPageId } from "./components/SettingsPage";
 import { useSyncOverall } from "./sync";
 import { listen } from "@tauri-apps/api/event";
@@ -134,7 +136,13 @@ export default function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
-  const [connDialog, setConnDialog] = useState<{ profile: Profile | null } | null>(null);
+  const [connDialog, setConnDialogState] = useState<{ profile: Profile | null } | null>(null);
+  const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
+  /** Opens the editor for a connection: Kybl Storage connections have their own (no keys to edit). */
+  const setConnDialog = useCallback((d: { profile: Profile | null } | null) => {
+    if (d?.profile?.provider === KYBL) setKyblDialog({ existing: d.profile });
+    else setConnDialogState(d);
+  }, []);
   const [confirm, setConfirm] = useState<null | { title: string; message: React.ReactNode; label: string; run: () => void; safe?: boolean }>(null);
   const [moveDialog, setMoveDialog] = useState<null | { items: Entry[]; mode: "move" | "copy" }>(null);
   const [previewWidth, setPreviewWidth] = useState(() => {
@@ -299,14 +307,20 @@ export default function App() {
     setBucketsBy((m) => ({ ...m, [p.id]: { names: m[p.id]?.names ?? [], note: null, loading: true } }));
     let names: string[] = [];
     let note: string | null = null;
+    let reconnect = false;
     try {
       names = (await api.listBuckets(p.id)).map((b) => b.name);
     } catch (e) {
       const msg = errMessage(e);
-      note = /access denied|not allowed/i.test(msg) ? "This key can't list buckets. Open a bucket by name." : errSummary(msg);
+      reconnect = p.provider === KYBL && isRevokedKey(msg);
+      note = reconnect
+        ? "This computer's key was revoked, or the account was deleted."
+        : /access denied|not allowed/i.test(msg)
+          ? "This key can't list buckets. Open a bucket by name."
+          : errSummary(msg);
     }
     if (p.bucket && !names.includes(p.bucket)) names = [p.bucket, ...names];
-    setBucketsBy((m) => ({ ...m, [p.id]: { names, note: names.length ? null : note, loading: false } }));
+    setBucketsBy((m) => ({ ...m, [p.id]: { names, note: names.length ? null : note, loading: false, reconnect } }));
     return names;
   }, []);
   const bucketsRef = useRef(bucketsBy);
@@ -347,6 +361,24 @@ export default function App() {
   );
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
+
+  /** A connection was deleted: drop it from the sidebar and the screen. */
+  const forgetProfile = useCallback(
+    (id: string) => {
+      setProfiles((list) => list.filter((x) => x.id !== id));
+      setExpandedSaved((cur) => {
+        const next = new Set(cur);
+        next.delete(id);
+        return next;
+      });
+      if (id === activeIdRef.current) {
+        setActiveId(null);
+        setBucket(null);
+        setListing({ folders: [], objects: [], next: null });
+      }
+    },
+    [setExpandedSaved],
+  );
 
   // initial load
   useEffect(() => {
@@ -1021,6 +1053,7 @@ export default function App() {
         onOpenSync={() => openSettings("sync")}
         onSelectBucket={(p, b) => openBucket(p, b)}
         onOpenBucketByName={askBucketName}
+        onReconnect={(p) => setKyblDialog({ existing: p, reconnect: true })}
       />
 
       <main className="main">
@@ -1105,8 +1138,11 @@ export default function App() {
                   </div>
                   <h1>Welcome to Kybl</h1>
                   <p>Browse, upload, download and share files on any S3-compatible storage. Your secret keys stay in the system keychain.</p>
-                  <button className="btn btn-primary" onClick={() => setConnDialog({ profile: null })}>
-                    <Icon name="plus" size={15} /> Add a connection
+                  <button className="btn btn-primary" onClick={() => setKyblDialog({ existing: null })}>
+                    <Icon name="cloud" size={15} /> Connect Kybl Storage
+                  </button>
+                  <button className="btn btn-ghost welcome-alt" onClick={() => setConnDialog({ profile: null })}>
+                    Add another S3 connection with keys
                   </button>
                   <div className="welcome-providers" aria-hidden="true">
                     {PROVIDERS.map((p) => (
@@ -1124,9 +1160,15 @@ export default function App() {
                   </div>
                   <h1>Choose a bucket</h1>
                   <p>{(activeId && bucketsBy[activeId]?.note) || "Pick a bucket from the sidebar."}</p>
-                  <button className="btn" onClick={() => askBucketName()}>
-                    Open bucket by name…
-                  </button>
+                  {profile && activeId && bucketsBy[activeId]?.reconnect ? (
+                    <button className="btn btn-primary" onClick={() => setKyblDialog({ existing: profile, reconnect: true })}>
+                      <Icon name="refresh" size={14} /> Connect again
+                    </button>
+                  ) : (
+                    <button className="btn" onClick={() => askBucketName()}>
+                      Open bucket by name…
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -1139,11 +1181,17 @@ export default function App() {
                     </div>
                     <h3>Couldn’t load this folder</h3>
                     <p>
-                      <ErrorText message={listError} />
+                      <ErrorText message={profile.provider === KYBL && isRevokedKey(listError) ? kyblError(listError) : listError} />
                     </p>
-                    <button className="btn btn-sm" onClick={refresh}>
-                      <Icon name="retry" size={13} /> Try again
-                    </button>
+                    {profile.provider === KYBL && isRevokedKey(listError) ? (
+                      <button className="btn btn-primary btn-sm kybl-reconnect" onClick={() => setKyblDialog({ existing: profile, reconnect: true })}>
+                        <Icon name="refresh" size={13} /> Connect again
+                      </button>
+                    ) : (
+                      <button className="btn btn-sm" onClick={refresh}>
+                        <Icon name="retry" size={13} /> Try again
+                      </button>
+                    )}
                   </div>
                 ) : view === "grid" ? (
                   <GridView
@@ -1308,27 +1356,31 @@ export default function App() {
           onToast={toast}
         />
       )}
+      {kyblDialog && (
+        <KyblConnectDialog
+          existing={kyblDialog.existing}
+          reconnect={kyblDialog.reconnect}
+          onClose={() => setKyblDialog(null)}
+          onConnected={(p) => {
+            setProfiles((list) => (list.some((x) => x.id === p.id) ? list.map((x) => (x.id === p.id ? p : x)) : [...list, p]));
+            connect(p);
+          }}
+          onDeleted={forgetProfile}
+        />
+      )}
       {connDialog && (
         <ConnectionDialog
           initial={connDialog.profile}
           onClose={() => setConnDialog(null)}
+          onKybl={() => {
+            setConnDialog(null);
+            setKyblDialog({ existing: null });
+          }}
           onSaved={(p) => {
             setProfiles((list) => (list.some((x) => x.id === p.id) ? list.map((x) => (x.id === p.id ? p : x)) : [...list, p]));
             connect(p);
           }}
-          onDeleted={(id) => {
-            setProfiles((list) => list.filter((x) => x.id !== id));
-            setExpandedSaved((cur) => {
-              const next = new Set(cur);
-              next.delete(id);
-              return next;
-            });
-            if (id === activeId) {
-              setActiveId(null);
-              setBucket(null);
-              setListing({ folders: [], objects: [], next: null });
-            }
-          }}
+          onDeleted={forgetProfile}
         />
       )}
       {confirm && (

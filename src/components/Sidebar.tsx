@@ -29,7 +29,13 @@ const onActivate = (fn: () => void) => (e: React.KeyboardEvent) => {
   }
 };
 
-export type BucketList = { names: string[]; note: string | null; loading: boolean };
+export type BucketList = {
+  names: string[];
+  note: string | null;
+  loading: boolean;
+  /** a Kybl Storage key that no longer works: offer to connect again */
+  reconnect?: boolean;
+};
 
 export function Sidebar({
   profiles,
@@ -45,6 +51,7 @@ export function Sidebar({
   onOpenSync,
   onSelectBucket,
   onOpenBucketByName,
+  onReconnect,
 }: {
   profiles: Profile[];
   /** connection of the bucket on screen */
@@ -61,6 +68,7 @@ export function Sidebar({
   onOpenSync: () => void;
   onSelectBucket: (p: Profile, b: string) => void;
   onOpenBucketByName: (p: Profile) => void;
+  onReconnect: (p: Profile) => void;
 }) {
   return (
     <aside className="sidebar">
@@ -113,7 +121,19 @@ export function Sidebar({
                     );
                   })}
                   {list?.loading && !list.names.length && <p className="side-note">Loading buckets…</p>}
-                  {list?.note && <p className="side-note">{list.note}</p>}
+                  {list?.note && (
+                    <p className="side-note">
+                      {list.note}
+                      {list.reconnect && (
+                        <>
+                          {" "}
+                          <button className="link-btn" onClick={() => onReconnect(p)}>
+                            Connect again
+                          </button>
+                        </>
+                      )}
+                    </p>
+                  )}
                   <button className="side-item sub link" onClick={() => onOpenBucketByName(p)}>
                     <Icon name="plus" size={14} />
                     <span className="side-label">Open bucket by name…</span>

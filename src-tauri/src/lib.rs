@@ -1,4 +1,5 @@
 mod commands;
+mod kybl_connect;
 mod prefs;
 mod state;
 mod sync;
@@ -76,6 +77,11 @@ pub fn run() {
             sync::sync_now,
             sync::sync_set_paused,
             sync::sync_pause_all,
+            kybl_connect::kybl_default_app_url,
+            kybl_connect::kybl_connect_browser,
+            kybl_connect::kybl_device_start,
+            kybl_connect::kybl_device_wait,
+            kybl_connect::kybl_connect_cancel,
             prefs::get_app_prefs,
             prefs::set_app_prefs,
         ])
