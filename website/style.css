@@ -408,3 +408,12 @@ kbd { font: 600 13px/1 var(--mono); min-width: 28px; height: 28px; padding: 0 8p
 .faq details p { color: var(--dim); padding-bottom: 22px; font-size: 16.5px; max-width: 62ch; }
 @media (max-width: 860px) { .faq-wrap { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .faq details { padding: 0 18px; } .faq summary { font-size: 17px; } }
+
+/* download states */
+.platform .alt { font-size: 14px; margin-top: 4px; }
+.platform .alt a { color: var(--dim); text-decoration: underline; text-underline-offset: 3px; }
+.platform .alt a:hover { color: var(--accent); }
+.btn.is-soon { opacity: 0.55; }
+.btn.is-soon:hover { opacity: 0.8; }
+.dl-status { margin: 28px auto 0; text-align: center; color: var(--dim); font-size: 15.5px; }
+.dl-status a { color: var(--accent); font-weight: 700; text-underline-offset: 3px; }

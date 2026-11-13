@@ -72,5 +72,5 @@ cd src-tauri && S3B_TEST_ENDPOINT=http://127.0.0.1:9123 cargo test --lib sync::t
 
 rclone's S3 server can't do multipart uploads, so the large-file upload test needs another server,
 for example `docker run -d -p 9125:9090 adobe/s3mock` plus `curl -X PUT localhost:9125/testbucket`.
-Run `cargo test --lib transfers` with `S3B_TEST_ENDPOINT` pointing at it. Setting `S3B_TEST_SLOW=1`
+Run `cargo test --lib transfers` with `S3B_TEST_MULTIPART_ENDPOINT` pointing at it. Setting `S3B_TEST_SLOW=1`
 and putting a rate-limited proxy in front also checks that progress moves inside a single file.

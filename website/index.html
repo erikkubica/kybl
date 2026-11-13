@@ -198,9 +198,9 @@
     <h1>The fast S3 browser for your&nbsp;desktop.</h1>
     <p class="lede">Browse, upload, share and sync files on AWS S3, Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces and MinIO. Your keys stay in the system keychain.</p>
     <div class="actions">
-      <a class="btn btn-iron" href="#download">
+      <a class="btn btn-iron" href="#download" data-hero-dl>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3m9 12v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5"/></svg>
-        Download for Mac
+        <span>Download for Mac</span>
       </a>
       <a class="btn btn-ghost" href="#download">See all downloads</a>
     </div>
@@ -472,8 +472,8 @@
           <h3>macOS</h3>
           <p>Apple Silicon and Intel</p>
           <div class="dl">
-            <a class="btn" href="#download">Apple Silicon</a>
-            <a class="btn btn-line" href="#download">Intel</a>
+            <a class="btn" href="https://github.com/erikkubica/kybl/releases/latest" data-asset="mac-arm">Apple Silicon</a>
+            <a class="btn btn-line" href="https://github.com/erikkubica/kybl/releases/latest" data-asset="mac-intel">Intel</a>
           </div>
         </div>
         <div class="platform">
@@ -481,7 +481,7 @@
           <h3>Windows</h3>
           <p>64-bit installer</p>
           <div class="dl">
-            <a class="btn" href="#download">Download installer</a>
+            <a class="btn" href="https://github.com/erikkubica/kybl/releases/latest" data-asset="win">Download installer</a>
           </div>
         </div>
         <div class="platform">
@@ -489,10 +489,12 @@
           <h3>Linux</h3>
           <p>AppImage, .deb or .rpm</p>
           <div class="dl">
-            <a class="btn" href="#download">Download for Linux</a>
+            <a class="btn" href="https://github.com/erikkubica/kybl/releases/latest" data-asset="linux">Download AppImage</a>
           </div>
+          <p class="alt"><a href="https://github.com/erikkubica/kybl/releases/latest" data-asset="deb">.deb</a> · <a href="https://github.com/erikkubica/kybl/releases/latest" data-asset="rpm">.rpm</a></p>
         </div>
       </div>
+      <p class="dl-status" data-dl-status hidden></p>
       <details class="first-run">
         <summary>First launch on a Mac asks once</summary>
         <p>Kybl is signed but not yet notarized. On the first launch, open <b>System Settings → Privacy &amp; Security</b> and click <b>Open Anyway</b>. Updates keep the same signature, so you won't be asked again. On Windows, if SmartScreen warns, click <b>More info → Run anyway</b>. On Linux, secret keys need a Secret Service such as GNOME Keyring or KWallet.</p>
@@ -524,5 +526,59 @@
 </footer>
 
 
+
+<script>
+// Download buttons: point each one at the matching file of the latest GitHub release.
+// Without JS, or if GitHub can't be reached, every button opens the releases page.
+(() => {
+  const REPO = "erikkubica/kybl";
+  const PAGE = `https://github.com/${REPO}`;
+  const want = {
+    "mac-arm": /aarch64\.dmg$/i,
+    "mac-intel": /x64\.dmg$/i,
+    win: /-setup\.exe$/i,
+    "win-msi": /\.msi$/i,
+    linux: /\.AppImage$/i,
+    deb: /\.deb$/i,
+    rpm: /\.rpm$/i,
+  };
+  const ua = navigator.userAgent;
+  const os = /Mac/.test(ua) ? "mac" : /Win/.test(ua) ? "win" : /Linux/.test(ua) && !/Android/.test(ua) ? "linux" : null;
+  const hero = document.querySelector("[data-hero-dl]");
+  const label = { mac: "Download for Mac", win: "Download for Windows", linux: "Download for Linux" };
+  if (hero && os) hero.querySelector("span").textContent = label[os];
+  const status = document.querySelector("[data-dl-status]");
+  const mb = (b) => (b / 1048576 >= 10 ? Math.round(b / 1048576) : (b / 1048576).toFixed(1)) + " MB";
+
+  fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { Accept: "application/vnd.github+json" } })
+    .then((r) => (r.status === 404 ? null : r.ok ? r.json() : Promise.reject(r.status)))
+    .then((rel) => {
+      if (!rel) {
+        // Nothing published yet: say so instead of sending people to an empty page.
+        document.querySelectorAll("[data-asset]").forEach((a) => {
+          a.href = PAGE;
+          a.classList.add("is-soon");
+        });
+        status.hidden = false;
+        status.innerHTML = `The first release is on its way. <a href="${PAGE}">Watch Kybl on GitHub</a> to hear when it lands.`;
+        if (hero) { hero.href = PAGE; hero.querySelector("span").textContent = "Get notified on GitHub"; }
+        return;
+      }
+      const find = (k) => rel.assets.find((x) => want[k].test(x.name));
+      document.querySelectorAll("[data-asset]").forEach((a) => {
+        const f = find(a.dataset.asset) || (a.dataset.asset === "win" && find("win-msi"));
+        if (!f) return;
+        a.href = f.browser_download_url;
+        a.title = `${f.name} · ${mb(f.size)}`;
+      });
+      const pick = { mac: "mac-arm", win: "win", linux: "linux" }[os];
+      const f = pick && (find(pick) || (pick === "win" && find("win-msi")));
+      if (hero && f) { hero.href = f.browser_download_url; hero.title = `${f.name} · ${mb(f.size)}`; }
+      status.hidden = false;
+      status.innerHTML = `Version ${rel.tag_name.replace(/^v/, "")} · <a href="${rel.html_url}">Release notes</a>`;
+    })
+    .catch(() => {});
+})();
+</script>
 </body>
 </html>

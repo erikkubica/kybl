@@ -415,11 +415,15 @@ mod tests {
         });
     }
 
-    /// Needs the throwaway S3 server (see the sync tests). Set `S3B_TEST_SLOW=1` when it is rate
-    /// limited (`rclone serve s3 --bwlimit 3M`) to also check that progress moves inside a file.
+    /// Needs a multipart-capable throwaway S3 server in `S3B_TEST_MULTIPART_ENDPOINT`. Set
+    /// `S3B_TEST_SLOW=1` behind a rate-limited proxy to also check that progress moves inside a file.
     #[test]
     fn uploads_arrive_intact_and_report_progress_inside_a_file() {
-        let Ok(endpoint) = std::env::var("S3B_TEST_ENDPOINT") else { return };
+        // rclone's S3 server can't do multipart uploads, so this test has its own server,
+        // for example adobe/s3mock with a `testbucket` bucket.
+        let Ok(endpoint) = std::env::var("S3B_TEST_MULTIPART_ENDPOINT") else {
+            return eprintln!("skipped: S3B_TEST_MULTIPART_ENDPOINT not set");
+        };
         let p = Profile {
             id: "t".into(),
             name: "t".into(),
