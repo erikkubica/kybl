@@ -3680,3 +3680,49 @@ body.dragging-items * {
 .kybl-server .link-btn {
   margin: 0;
 }
+
+/* ---------------------------------------------------------------- brand mark (see KyblMark) */
+/* rim and handle are Cast Iron on light surfaces and Chip on dark ones (brand book) */
+[data-theme="dark"] .km:not(.km-sun) .km-line {
+  stroke: #f1efed;
+}
+[data-theme="dark"] .km:not(.km-sun) .km-rim {
+  fill: #f1efed;
+}
+.kybl-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--lock) * 0.3);
+}
+.kybl-wordmark {
+  font-family: "Fredoka", var(--font, system-ui), sans-serif;
+  font-weight: 700;
+  font-size: calc(var(--lock) * 1.08);
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--text);
+}
+.sidebar-drag {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 2px 16px 0;
+}
+/* the lockup is decoration: the strip stays a window drag handle */
+.sidebar-drag .kybl-lockup {
+  pointer-events: none;
+  opacity: 0.92;
+}
+.welcome-mark {
+  display: block;
+  margin: 0 auto;
+  filter: drop-shadow(0 10px 18px rgba(217, 56, 31, 0.25));
+}
+.welcome-card h1 {
+  font-family: "Fredoka", var(--font, system-ui), sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.pbadge.kybl svg {
+  display: block;
+}

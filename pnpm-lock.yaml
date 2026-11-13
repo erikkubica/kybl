@@ -166,6 +166,9 @@ importers:
 
   .:
     dependencies:
+      '@fontsource/fredoka':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@tauri-apps/api':
         specifier: ^2
         version: 2.12.4
@@ -205,6 +208,9 @@ importers:
         version: 8.3.8
 
 packages:
+
+  '@fontsource/fredoka@5.3.0':
+    resolution: {integrity: sha512-s2IhjQ50wDnKkkaKmjhtL0rxQg6ITsVusiipM3m7zUwVZZbbCKsscNDkngwp28xVzfIt7neWrkgU1qKqyTycQg==}
 
   '@napi-rs/canvas-android-arm64@0.1.100':
     resolution: {integrity: sha512-hjhCKhntPv9+t4ckHymdx0phYNcVW+GKQR6Lzw2zE+pOVjOplSmtx9nNNknTjbEDLcuLZqA1y8ufKg1XfgftzQ==}
@@ -681,6 +687,8 @@ packages:
         optional: true
 
 snapshots:
+
+  '@fontsource/fredoka@5.3.0': {}
 
   '@napi-rs/canvas-android-arm64@0.1.100':
     optional: true

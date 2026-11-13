@@ -1,4 +1,5 @@
 import { Icon } from "../Icons";
+import { KyblLockup, KyblMark } from "./KyblMark";
 import { providerMeta } from "../providers";
 import type { Profile } from "../types";
 import type { SyncState } from "../sync";
@@ -16,7 +17,7 @@ export function ProviderBadge({ provider, large }: { provider: string | undefine
   const meta = providerMeta(provider);
   return (
     <span className={`pbadge ${large ? "lg" : ""} ${meta.id === "kybl" ? "kybl" : ""}`} style={{ "--pc": meta.color } as React.CSSProperties} aria-hidden="true">
-      {meta.mono}
+      {meta.id === "kybl" ? <KyblMark size={large ? 22 : 17} sun /> : meta.mono}
     </span>
   );
 }
@@ -72,7 +73,9 @@ export function Sidebar({
 }) {
   return (
     <aside className="sidebar">
-      <div className="sidebar-drag" data-tauri-drag-region />
+      <div className="sidebar-drag" data-tauri-drag-region>
+        <KyblLockup size={20} />
+      </div>
       <div className="sidebar-scroll">
         {profiles.length > 0 && (
           <div className="side-head">

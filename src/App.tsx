@@ -17,6 +17,7 @@ import { PreviewPane } from "./components/PreviewPane";
 import { TransferPanel } from "./components/TransferPanel";
 import { ConnectionDialog } from "./components/ConnectionDialog";
 import { KyblConnectDialog } from "./components/KyblConnectDialog";
+import { KyblMark } from "./components/KyblMark";
 import { KYBL, isRevokedKey, kyblError } from "./kybl";
 import { SettingsPage, type SettingsPageId } from "./components/SettingsPage";
 import { useSyncOverall } from "./sync";
@@ -1133,9 +1134,7 @@ export default function App() {
             {!profile && (
               <div className="welcome">
                 <div className="welcome-card">
-                  <div className="welcome-logo">
-                    <Icon name="bucket" size={32} />
-                  </div>
+                  <KyblMark size={76} className="welcome-mark" />
                   <h1>Welcome to Kybl</h1>
                   <p>Browse, upload, download and share files on any S3-compatible storage. Your secret keys stay in the system keychain.</p>
                   <button className="btn btn-primary" onClick={() => setKyblDialog({ existing: null })}>

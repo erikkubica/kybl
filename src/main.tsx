@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "@fontsource/fredoka/latin-700.css";
 import "./styles.css";
 import { applySettings, loadSettings } from "./settings";
 
