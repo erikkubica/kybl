@@ -1,0 +1,14 @@
+{
+  "name": "Kybl",
+  "short_name": "Kybl",
+  "description": "A fast desktop S3 browser for any S3-compatible storage.",
+  "start_url": "/",
+  "display": "browser",
+  "background_color": "#ffffff",
+  "theme_color": "#d9381f",
+  "icons": [
+    { "src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/assets/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/assets/mark.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

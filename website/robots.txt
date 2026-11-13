@@ -1,0 +1,21 @@
+# Kybl, https://kybl.app
+User-agent: *
+Allow: /
+
+# AI and answer engines are welcome: see /llms.txt for a plain summary.
+User-agent: GPTBot
+Allow: /
+User-agent: OAI-SearchBot
+Allow: /
+User-agent: ChatGPT-User
+Allow: /
+User-agent: ClaudeBot
+Allow: /
+User-agent: Claude-SearchBot
+Allow: /
+User-agent: PerplexityBot
+Allow: /
+User-agent: Google-Extended
+Allow: /
+
+Sitemap: https://kybl.app/sitemap.xml
