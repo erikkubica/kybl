@@ -15,7 +15,7 @@ const SYNC_LABEL: Record<SyncState, string> = {
 export function ProviderBadge({ provider, large }: { provider: string | undefined; large?: boolean }) {
   const meta = providerMeta(provider);
   return (
-    <span className={`pbadge ${large ? "lg" : ""}`} style={{ "--pc": meta.color } as React.CSSProperties} aria-hidden="true">
+    <span className={`pbadge ${large ? "lg" : ""} ${meta.id === "kybl" ? "kybl" : ""}`} style={{ "--pc": meta.color } as React.CSSProperties} aria-hidden="true">
       {meta.mono}
     </span>
   );

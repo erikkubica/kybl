@@ -319,6 +319,12 @@ code {
   background: color-mix(in srgb, var(--pc) 24%, transparent);
   color: color-mix(in srgb, var(--pc) 70%, white);
 }
+/* Kybl Storage is the paid offer: Beach Pail yellow with Cast Iron text (brand book), in both themes */
+.pbadge.kybl,
+[data-theme="dark"] .pbadge.kybl {
+  background: #ffc93c;
+  color: #1e1a1a;
+}
 .pbadge.lg {
   width: 28px;
   height: 28px;
