@@ -6,9 +6,9 @@
 //!
 //! * **Browser** (default): authorization code with PKCE (S256). On a computer the app listens on
 //!   a loopback `http://127.0.0.1:<random port>/callback` (RFC 8252), opens `<app url>/connect?…`
-//!   in the system browser and waits for the redirect carrying `code` and `state`. On Android the
-//!   page opens in a Custom Tab and comes back to `kybl://connect?…`, which `KyblConnectPlugin.kt`
-//!   catches and hands over.
+//!   in the system browser and waits for the redirect carrying `code` and `state`. On a phone the
+//!   page opens in a Custom Tab (Android) or a sign-in sheet (iOS) and comes back to
+//!   `kybl://connect?…`, which `KyblConnectPlugin` (.kt / .swift) catches and hands over.
 //! * **Device code** (RFC 8628): for when the browser is elsewhere. The app shows a short code and
 //!   a QR of the approval link, then polls every `interval` seconds.
 //!
@@ -36,7 +36,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 use tauri::Manager;
 
 use crate::state::{err, load_profiles, save_profiles, set_secret, AppState, Profile};
@@ -140,18 +140,18 @@ fn enc(s: &str) -> String {
 // ---------------------------------------------------------------- device name
 
 /// What the user calls this device ("Sam's MacBook Air", "Pixel 9"); the key is named after it.
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 async fn device_name(app: &AppHandle) -> String {
     #[derive(Deserialize)]
     struct Name {
         name: String,
     }
-    let name = match app.try_state::<android::Native>() {
+    let name = match app.try_state::<native::Native>() {
         Some(n) => n.0.run_mobile_plugin_async::<Name>("deviceName", ()).await.map(|n| n.name).unwrap_or_default(),
         None => String::new(),
     };
     let name: String = name.chars().filter(|c| !c.is_control()).take(60).collect();
-    if name.trim().is_empty() { "Android".into() } else { name }
+    if name.trim().is_empty() { native::FALLBACK_NAME.into() } else { name }
 }
 
 #[cfg(desktop)]
@@ -411,8 +411,10 @@ async fn browser_code(app: &AppHandle, flow: &Flow, base: &str, verifier: &str, 
     Ok(code)
 }
 
-/// Android: a Custom Tab that comes back to `kybl://connect?…` (KyblConnectPlugin.kt).
-#[cfg(target_os = "android")]
+/// Phones: the native side opens the page (a Custom Tab on Android, KyblConnectPlugin.kt; an
+/// ASWebAuthenticationSession sheet on iOS, KyblConnectPlugin.swift) and hands back the
+/// `kybl://connect?…` redirect.
+#[cfg(mobile)]
 async fn browser_code(app: &AppHandle, flow: &Flow, base: &str, verifier: &str, state: &str) -> Result<String, String> {
     #[derive(Deserialize, Default)]
     #[serde(default)]
@@ -420,8 +422,8 @@ async fn browser_code(app: &AppHandle, flow: &Flow, base: &str, verifier: &str, 
         url: Option<String>,
         cancelled: bool,
     }
-    let native = app.try_state::<android::Native>().ok_or("The sign-in isn't available in this build.")?;
-    let url = connect_url(base, verifier, android::REDIRECT, &device_name(app).await, state);
+    let native = app.try_state::<native::Native>().ok_or("The sign-in isn't available in this build.")?;
+    let url = connect_url(base, verifier, native::REDIRECT, &device_name(app).await, state);
     let back = tokio::select! {
         r = native.0.run_mobile_plugin_async::<Back>("signIn", json!({ "url": url })) => r.map_err(|e| format!("Couldn't open the browser: {e}. Use a code instead."))?,
         _ = flow.cancel.notified() => {
@@ -555,27 +557,31 @@ pub async fn kybl_device_wait(
     }
 }
 
-// ---------------------------------------------------------------- Android glue
+// ---------------------------------------------------------------- phone glue
 
-/// Registers `KyblConnectPlugin` (the Android project): Custom Tab, the `kybl://` redirect and the
-/// phone's name. Nothing to do elsewhere.
+#[cfg(target_os = "ios")]
+tauri::ios_plugin_binding!(init_plugin_kyblconnect);
+
+/// Registers the native side: `KyblConnectPlugin` in the Android project, or the Swift package in
+/// `gen/apple/KyblConnect` (linked by build.rs). Browser page, the `kybl://` redirect and the
+/// phone's name. Nothing to do on a computer.
 pub fn plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
     tauri::plugin::Builder::new("kyblconnect")
         .setup(|_app, _api| {
             #[cfg(target_os = "android")]
-            {
-                let h = _api.register_android_plugin("app.kybl.mobile", "KyblConnectPlugin")?;
-                _app.manage(android::Native(h));
-            }
+            _app.manage(native::Native(_api.register_android_plugin("app.kybl.mobile", "KyblConnectPlugin")?));
+            #[cfg(target_os = "ios")]
+            _app.manage(native::Native(_api.register_ios_plugin(init_plugin_kyblconnect)?));
             Ok(())
         })
         .build()
 }
 
-#[cfg(target_os = "android")]
-mod android {
+#[cfg(mobile)]
+mod native {
     /// Where the account site sends the browser back to (allowed by the server: `kybl://…`).
     pub const REDIRECT: &str = "kybl://connect";
+    pub const FALLBACK_NAME: &str = if cfg!(target_os = "ios") { "iPhone" } else { "Android" };
     pub struct Native(pub tauri::plugin::PluginHandle<tauri::Wry>);
 }
 

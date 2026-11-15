@@ -43,10 +43,12 @@ Folder sync, the menu-bar icon and launch at login are desktop only.
 - **Downloads** go to *Files › On My iPhone › Kybl* on iOS and `Download/Kybl` on Android.
 - **Uploads** use the system photo or document picker; Android `content://` files are copied to the
   cache first, then uploaded (multipart for big files) and the copy removed.
-- **Connect Kybl Storage** (Android): the account site opens in a Custom Tab and comes back to
-  `kybl://connect` with the code (`KyblConnectPlugin.kt`); the rest is the desktop flow. Debug
-  builds sign in against `127.0.0.1:8080`: run `adb reverse tcp:8080 tcp:8080` (and `tcp:9000` for
-  a local S3) so the emulator reaches a local kybl-cloud. Not on iOS yet.
+- **Connect Kybl Storage**: the account site opens in a Custom Tab on Android
+  (`KyblConnectPlugin.kt`) or a sign-in sheet on iOS (`ASWebAuthenticationSession`, the Swift
+  package in `gen/apple/KyblConnect`, linked by `build.rs`) and comes back to `kybl://connect` with
+  the code; the rest is the desktop flow. Debug builds sign in against `127.0.0.1:8080`. The iOS
+  simulator shares the Mac's loopback; on the Android emulator run `adb reverse tcp:8080 tcp:8080`
+  (and `tcp:9000` for a local S3).
 
 ```bash
 pnpm tauri ios dev                      # simulator or a connected iPhone (needs Xcode, xcodegen)

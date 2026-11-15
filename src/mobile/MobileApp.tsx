@@ -18,7 +18,7 @@ import { applySettings, loadSettings, saveSettings, type Settings } from "../set
 import { Icon, type IconName } from "../Icons";
 import { ConnectionDialog } from "../components/ConnectionDialog";
 import { KyblConnectDialog } from "../components/KyblConnectDialog";
-import { KYBL, KYBL_CONNECT, REVOKED_SAY, isRevokedKey } from "../kybl";
+import { KYBL, REVOKED_SAY, isRevokedKey } from "../kybl";
 import { ConfirmDialog, PromptDialog, Toasts, type Toast } from "../components/Dialogs";
 import { MoveDialog } from "../components/MoveDialog";
 import { PreviewPane } from "../components/PreviewPane";
@@ -115,7 +115,7 @@ export default function MobileApp() {
   const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
   /** Kybl Storage connections have their own editor: there are no keys to edit. */
   const editProfile = useCallback((p: Profile) => {
-    if (p.provider === KYBL && KYBL_CONNECT) setKyblDialog({ existing: p });
+    if (p.provider === KYBL) setKyblDialog({ existing: p });
     else setConnDialog({ profile: p });
   }, []);
   const connectKybl = useCallback(() => setKyblDialog({ existing: null }), []);
@@ -276,7 +276,7 @@ export default function MobileApp() {
       names = (await api.listBuckets(p.id)).map((b) => b.name);
     } catch (e) {
       const msg = errMessage(e);
-      revoked = p.provider === KYBL && KYBL_CONNECT && isRevokedKey(msg);
+      revoked = p.provider === KYBL && isRevokedKey(msg);
       note = revoked
         ? REVOKED_SAY
         : /access denied|not allowed/i.test(msg)
@@ -1086,17 +1086,17 @@ export default function MobileApp() {
                   <Mascot size={88} />
                   <h3>{profiles?.length ? "Pick a bucket" : "Welcome to Kybl"}</h3>
                   <p>{profiles?.length ? "Choose a bucket on the left to browse its files." : "Add a connection to start browsing your S3 storage."}</p>
-                  {!profiles?.length && KYBL_CONNECT && (
+                  {!profiles?.length && (
                     <button className="btn btn-primary m-big-btn" onClick={connectKybl}>
                       <Icon name="cloud" size={16} /> Connect Kybl Storage
                     </button>
                   )}
                   {!profiles?.length && (
                     <button
-                      className={`btn m-big-btn ${KYBL_CONNECT ? "btn-ghost m-alt-btn" : "btn-primary"}`}
+                      className="btn btn-ghost m-big-btn m-alt-btn"
                       onClick={() => setConnDialog({ profile: null })}
                     >
-                      <Icon name="plus" size={16} /> {KYBL_CONNECT ? "Add another S3 connection" : "Add a connection"}
+                      <Icon name="plus" size={16} /> Add another S3 connection
                     </button>
                   )}
                 </div>
@@ -1129,7 +1129,7 @@ export default function MobileApp() {
               connections={connections}
               onRecent={(l) => go(l)}
               onAdd={() => setConnDialog({ profile: null })}
-              onKybl={KYBL_CONNECT ? connectKybl : undefined}
+              onKybl={connectKybl}
               onTransfers={() => setScreen("transfers")}
               onSettings={() => setScreen("settings")}
             />
@@ -1206,14 +1206,10 @@ export default function MobileApp() {
         <ConnectionDialog
           initial={connDialog.profile}
           onClose={() => setConnDialog(null)}
-          onKybl={
-            KYBL_CONNECT
-              ? () => {
-                  setConnDialog(null);
-                  connectKybl();
-                }
-              : undefined
-          }
+          onKybl={() => {
+            setConnDialog(null);
+            connectKybl();
+          }}
           kyblFirst={!profiles?.some((p) => p.provider === KYBL)}
           onSaved={async (p) => {
             setConnDialog(null);

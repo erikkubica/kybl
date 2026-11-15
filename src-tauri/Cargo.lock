@@ -2692,6 +2692,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-fs",
  "tauri-plugin-opener",
+ "tauri-utils",
  "tokio",
  "trash",
  "uuid",

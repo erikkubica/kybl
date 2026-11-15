@@ -7,8 +7,6 @@ export const KYBL = "kybl";
 const UA = typeof navigator === "undefined" ? "" : navigator.userAgent;
 /** Phones and tablets: the browser comes back to the app by itself (kybl://connect). */
 export const ON_PHONE = /Android|iPhone|iPad|iPod/i.test(UA);
-/** iOS has no browser sign-in yet (the backend skips the commands there): keys are typed by hand. */
-export const KYBL_CONNECT = !/iPhone|iPad|iPod/i.test(UA);
 /** How the dialogs refer to the device that gets the key. */
 export const THIS_DEVICE = ON_PHONE ? "this device" : "this computer";
 
