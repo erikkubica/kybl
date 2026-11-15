@@ -1724,6 +1724,10 @@ input[type="checkbox"].m-switch:checked {
 .m-detail-body .text-preview {
   max-height: 50vh;
   font-size: 12.5px;
+  /* the shell turns selection and the iOS callout off; text previews need them to copy */
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
 }
 
 .m-detail-body .prop {
