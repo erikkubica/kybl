@@ -4,3 +4,9 @@ Externals/
 .tauri/
 KyblConnect/.build/
 KyblConnect/Package.resolved
+
+# Signing certificates and profiles never go in git
+*.p12
+*.p8
+*.cer
+*.mobileprovision
