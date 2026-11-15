@@ -1347,13 +1347,6 @@ body {
   background: var(--pressed);
 }
 
-.m-sheet-cancel {
-  justify-content: center;
-  margin-top: 8px;
-  background: var(--pressed);
-  font-weight: 650;
-}
-
 /* ------------------------------------------------------------ photo viewer */
 .m-viewer {
   position: fixed;

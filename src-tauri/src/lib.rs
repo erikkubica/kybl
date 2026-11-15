@@ -8,6 +8,7 @@ mod state;
 #[cfg(desktop)]
 mod sync;
 mod thumbs;
+mod transfer_notice;
 mod transfers;
 #[cfg(desktop)]
 mod tray;
@@ -30,6 +31,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(mobile::plugin())
+        .plugin(transfer_notice::plugin())
         .manage(state::AppState::default())
         .register_asynchronous_uri_scheme_protocol("thumb", thumbs::protocol);
 

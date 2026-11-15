@@ -41,6 +41,10 @@ Folder sync, the menu-bar icon and launch at login are desktop only.
 - **Secret keys**: iOS Keychain on iPhone; on Android a file in the app's private storage,
   excluded from backups (`data_extraction_rules.xml`).
 - **Downloads** go to *Files › On My iPhone › Kybl* on iOS and `Download/Kybl` on Android.
+- **In the background**: on Android, uploads and downloads run in a foreground service
+  (`TransferService.kt`, driven by `src/transfer_notice.rs`) that keeps the app from being frozen
+  and shows the progress as a notification. A download whose connection drops (backgrounded on iOS,
+  network change) picks up where it stopped with a ranged request for the same version of the file.
 - **Uploads** use the system photo or document picker; Android `content://` files are copied to the
   cache first, then uploaded (multipart for big files) and the copy removed.
 - **Connect Kybl Storage**: the account site opens in a Custom Tab on Android
