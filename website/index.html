@@ -69,8 +69,8 @@
       "url": "https://kybl.app/",
       "applicationCategory": "UtilitiesApplication",
       "applicationSubCategory": "File manager",
-      "operatingSystem": "macOS, Windows, Linux",
-      "softwareVersion": "0.1.0",
+      "operatingSystem": "macOS, Windows, Linux, iOS",
+      "softwareVersion": "0.3.0",
       "isAccessibleForFree": true,
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
       "image": "https://kybl.app/assets/icon-512.png",
@@ -195,7 +195,7 @@
   </nav>
 
   <div class="wrap gut hero-copy">
-    <p class="eyebrow">Free desktop app · macOS, Windows, Linux</p>
+    <p class="eyebrow">Free · macOS, Windows, Linux and iPhone</p>
     <h1>The fast S3 browser for your&nbsp;desktop.</h1>
     <p class="lede">Browse, upload, share and sync files on AWS S3, Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces and MinIO. Your keys stay in the system keychain.</p>
     <div class="actions">
@@ -464,7 +464,7 @@
     <div class="wrap gut">
       <div class="sec-head center">
         <p class="label">Download</p>
-        <h2>Get Kybl for your computer.</h2>
+        <h2>Get Kybl for your computer and iPhone.</h2>
         <p class="body">Free. Native on every platform, built with Rust and Tauri, so it starts fast and stays light.</p>
       </div>
       <div class="platforms">
@@ -494,11 +494,22 @@
           </div>
           <p class="alt"><a href="https://github.com/erikkubica/kybl/releases/latest" data-asset="deb">.deb</a> · <a href="https://github.com/erikkubica/kybl/releases/latest" data-asset="rpm">.rpm</a></p>
         </div>
+        <div class="platform" id="download-iphone">
+          <img src="assets/icons/apple.svg" alt="" width="33" height="40" class="ink">
+          <h3>iPhone and iPad</h3>
+          <p>Sideload with AltStore or SideStore</p>
+          <div class="dl">
+            <a class="btn" href="altstore://source?url=https%3A%2F%2Fgithub.com%2Ferikkubica%2Fkybl%2Freleases%2Flatest%2Fdownload%2Faltstore-source.json">Add to AltStore</a>
+            <a class="btn btn-line" href="sidestore://source?url=https%3A%2F%2Fgithub.com%2Ferikkubica%2Fkybl%2Freleases%2Flatest%2Fdownload%2Faltstore-source.json">SideStore</a>
+          </div>
+          <p class="alt"><a href="https://github.com/erikkubica/kybl/releases/latest" data-asset="ios">Kybl.ipa</a> for Sideloadly</p>
+        </div>
       </div>
       <p class="dl-status" data-dl-status hidden></p>
       <details class="first-run">
-        <summary>First launch on a Mac asks once</summary>
+        <summary>First launch and iPhone install</summary>
         <p>Kybl is signed but not yet notarized. On the first launch, open <b>System Settings → Privacy &amp; Security</b> and click <b>Open Anyway</b>. Updates keep the same signature, so you won't be asked again. On Windows, if SmartScreen warns, click <b>More info → Run anyway</b>. On Linux, secret keys need a Secret Service such as GNOME Keyring or KWallet.</p>
+        <p>The iPhone app isn't in the App Store, so you sideload it. Install <a href="https://altstore.io">AltStore</a> or <a href="https://sidestore.io">SideStore</a>, then tap <b>Add to AltStore</b> (or <b>SideStore</b>) above and install Kybl from the source; new versions then show up as updates. You can also install <b>Kybl.ipa</b> with Sideloadly. A free Apple ID signs apps for 7 days, and AltStore and SideStore renew them on their own.</p>
       </details>
     </div>
   </section>
@@ -542,12 +553,17 @@
     linux: /\.AppImage$/i,
     deb: /\.deb$/i,
     rpm: /\.rpm$/i,
+    ios: /\.ipa$/i,
   };
   const ua = navigator.userAgent;
-  const os = /Mac/.test(ua) ? "mac" : /Win/.test(ua) ? "win" : /Linux/.test(ua) && !/Android/.test(ua) ? "linux" : null;
+  // iPhones and iPads say "like Mac OS X", and iPadOS may claim to be a Mac outright: check those first.
+  const ios = /iPhone|iPad|iPod/.test(ua) || (/Mac/.test(ua) && navigator.maxTouchPoints > 1);
+  const os = ios ? "ios" : /Mac/.test(ua) ? "mac" : /Win/.test(ua) ? "win" : /Linux/.test(ua) && !/Android/.test(ua) ? "linux" : null;
   const hero = document.querySelector("[data-hero-dl]");
-  const label = { mac: "Download for Mac", win: "Download for Windows", linux: "Download for Linux" };
+  const label = { mac: "Download for Mac", win: "Download for Windows", linux: "Download for Linux", ios: "Get it for iPhone" };
   if (hero && os) hero.querySelector("span").textContent = label[os];
+  // On iPhone the hero button jumps to the iPhone card: installing needs AltStore or SideStore first.
+  if (hero && os === "ios") hero.href = "#download-iphone";
   const status = document.querySelector("[data-dl-status]");
   const mb = (b) => (b / 1048576 >= 10 ? Math.round(b / 1048576) : (b / 1048576).toFixed(1)) + " MB";
 

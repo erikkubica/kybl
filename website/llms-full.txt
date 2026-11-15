@@ -1,6 +1,6 @@
 # Kybl: the fast S3 browser for your desktop
 
-Kybl is a free desktop app for macOS, Windows and Linux that works with any S3-compatible object storage. Browse, upload, download, share and sync files on Amazon S3, Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO and Ceph. Website: https://kybl.app/
+Kybl is a free app for macOS, Windows, Linux and iPhone that works with any S3-compatible object storage. Browse, upload, download, share and sync files on Amazon S3, Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO and Ceph. Website: https://kybl.app/
 
 ## Connect to any S3-compatible storage
 
@@ -29,6 +29,7 @@ Point a local folder at a bucket (or a prefix inside one) and choose a direction
 - macOS: Apple Silicon and Intel builds
 - Windows: 64-bit installer
 - Linux: AppImage, .deb or .rpm
+- iPhone and iPad: Kybl.ipa for sideloading (not in the App Store). Add the source https://github.com/erikkubica/kybl/releases/latest/download/altstore-source.json in AltStore or SideStore, or install the .ipa with Sideloadly. A free Apple ID signs it for 7 days; AltStore and SideStore renew it.
 
 On first launch on a Mac, open System Settings > Privacy & Security and click Open Anyway (the app is signed but not yet notarized). On Windows, if SmartScreen warns, click More info > Run anyway.
 
