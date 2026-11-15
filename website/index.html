@@ -69,7 +69,7 @@
       "url": "https://kybl.app/",
       "applicationCategory": "UtilitiesApplication",
       "applicationSubCategory": "File manager",
-      "operatingSystem": "macOS, Windows, Linux, iOS",
+      "operatingSystem": "macOS, Windows, Linux, Android, iOS",
       "softwareVersion": "0.3.0",
       "isAccessibleForFree": true,
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
@@ -195,7 +195,7 @@
   </nav>
 
   <div class="wrap gut hero-copy">
-    <p class="eyebrow">Free · macOS, Windows, Linux and iPhone</p>
+    <p class="eyebrow">Free · macOS, Windows, Linux, Android and iPhone</p>
     <h1>The fast S3 browser for your&nbsp;desktop.</h1>
     <p class="lede">Browse, upload, share and sync files on AWS S3, Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces and MinIO. Your keys stay in the system keychain.</p>
     <div class="actions">
@@ -464,7 +464,7 @@
     <div class="wrap gut">
       <div class="sec-head center">
         <p class="label">Download</p>
-        <h2>Get Kybl for your computer and iPhone.</h2>
+        <h2>Get Kybl for your computer and phone.</h2>
         <p class="body">Free. Native on every platform, built with Rust and Tauri, so it starts fast and stays light.</p>
       </div>
       <div class="platforms">
@@ -494,7 +494,16 @@
           </div>
           <p class="alt"><a href="https://github.com/erikkubica/kybl/releases/latest" data-asset="deb">.deb</a> · <a href="https://github.com/erikkubica/kybl/releases/latest" data-asset="rpm">.rpm</a></p>
         </div>
-        <div class="platform" id="download-iphone">
+        <div class="platform platform-phone">
+          <img src="assets/icons/android.svg" alt="" width="68" height="40">
+          <h3>Android</h3>
+          <p>Android 7 or newer</p>
+          <div class="dl">
+            <a class="btn" href="https://github.com/erikkubica/kybl/releases/latest" data-asset="android">Download APK</a>
+          </div>
+          <p class="alt">Open it on your phone and allow installs when asked</p>
+        </div>
+        <div class="platform platform-phone" id="download-iphone">
           <img src="assets/icons/apple.svg" alt="" width="33" height="40" class="ink">
           <h3>iPhone and iPad</h3>
           <p>Sideload with AltStore or SideStore</p>
@@ -507,8 +516,9 @@
       </div>
       <p class="dl-status" data-dl-status hidden></p>
       <details class="first-run">
-        <summary>First launch and iPhone install</summary>
+        <summary>First launch and phone installs</summary>
         <p>Kybl is signed but not yet notarized. On the first launch, open <b>System Settings → Privacy &amp; Security</b> and click <b>Open Anyway</b>. Updates keep the same signature, so you won't be asked again. On Windows, if SmartScreen warns, click <b>More info → Run anyway</b>. On Linux, secret keys need a Secret Service such as GNOME Keyring or KWallet.</p>
+        <p>On Android, open <b>Kybl.apk</b> and allow your browser to install apps when the phone asks; later versions install over it. Kybl will come to Google Play later.</p>
         <p>The iPhone app isn't in the App Store, so you sideload it. Install <a href="https://altstore.io">AltStore</a> or <a href="https://sidestore.io">SideStore</a>, then tap <b>Add to AltStore</b> (or <b>SideStore</b>) above and install Kybl from the source; new versions then show up as updates. You can also install <b>Kybl.ipa</b> with Sideloadly. A free Apple ID signs apps for 7 days, and AltStore and SideStore renew them on their own.</p>
       </details>
     </div>
@@ -554,13 +564,14 @@
     deb: /\.deb$/i,
     rpm: /\.rpm$/i,
     ios: /\.ipa$/i,
+    android: /\.apk$/i,
   };
   const ua = navigator.userAgent;
   // iPhones and iPads say "like Mac OS X", and iPadOS may claim to be a Mac outright: check those first.
   const ios = /iPhone|iPad|iPod/.test(ua) || (/Mac/.test(ua) && navigator.maxTouchPoints > 1);
-  const os = ios ? "ios" : /Mac/.test(ua) ? "mac" : /Win/.test(ua) ? "win" : /Linux/.test(ua) && !/Android/.test(ua) ? "linux" : null;
+  const os = ios ? "ios" : /Android/.test(ua) ? "android" : /Mac/.test(ua) ? "mac" : /Win/.test(ua) ? "win" : /Linux/.test(ua) ? "linux" : null;
   const hero = document.querySelector("[data-hero-dl]");
-  const label = { mac: "Download for Mac", win: "Download for Windows", linux: "Download for Linux", ios: "Get it for iPhone" };
+  const label = { mac: "Download for Mac", win: "Download for Windows", linux: "Download for Linux", ios: "Get it for iPhone", android: "Download for Android" };
   if (hero && os) hero.querySelector("span").textContent = label[os];
   // On iPhone the hero button jumps to the iPhone card: installing needs AltStore or SideStore first.
   if (hero && os === "ios") hero.href = "#download-iphone";
@@ -588,7 +599,7 @@
         a.href = f.browser_download_url;
         a.title = `${f.name} · ${mb(f.size)}`;
       });
-      const pick = { mac: "mac-arm", win: "win", linux: "linux" }[os];
+      const pick = { mac: "mac-arm", win: "win", linux: "linux", android: "android" }[os];
       const f = pick && (find(pick) || (pick === "win" && find("win-msi")));
       if (hero && f) { hero.href = f.browser_download_url; hero.title = `${f.name} · ${mb(f.size)}`; }
       status.hidden = false;

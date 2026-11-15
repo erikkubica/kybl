@@ -1,4 +1,4 @@
-# Builds the app for macOS (Apple Silicon + Intel), Windows, Linux and iOS (unsigned .ipa) and attaches the
+# Builds the app for macOS (Apple Silicon + Intel), Windows, Linux, Android (.apk) and iOS (unsigned .ipa) and attaches the
 # installers to a draft GitHub release. Run it by pushing a tag that matches the app version
 # (`git tag v0.1.0 && git push --tags`) or from the Actions tab.
 #
@@ -108,6 +108,7 @@ jobs:
             - **macOS**: `.dmg` (`aarch64` for Apple Silicon, `x64` for Intel). The app is signed but not notarized, so the first time macOS says it can't check the developer. Open **System Settings → Privacy & Security** and click **Open Anyway**. You only do this once.
             - **Windows**: `.msi` or `-setup.exe`. If SmartScreen warns, click **More info → Run anyway**.
             - **Linux**: `.AppImage`, `.deb` or `.rpm`.
+            - **Android**: `Kybl.apk`. Open it on the phone and allow installs from your browser when asked. Updates install over it.
             - **iPhone / iPad**: `Kybl.ipa`, unsigned, for sideloading with [AltStore](https://altstore.io) or [SideStore](https://sidestore.io) (add the source `https://github.com/${{ github.repository }}/releases/latest/download/altstore-source.json` to get updates) or Sideloadly. A free Apple ID signs it for 7 days; AltStore and SideStore renew it on their own.
 
   # iOS without an Apple Developer account: build and archive with code signing switched off,
@@ -179,3 +180,82 @@ jobs:
         run: |
           V="$(jq -r .version src-tauri/tauri.conf.json)"
           gh release upload "v$V" out/Kybl.ipa out/altstore-source.json --clobber --repo "${{ github.repository }}"
+
+  # Android: one APK for ARM phones (arm64 + armv7), signed with the release key from the
+  # ANDROID_KEYSTORE (base64 .jks), ANDROID_KEYSTORE_PASSWORD and ANDROID_KEY_ALIAS secrets.
+  # Every release must use the same key, or Android refuses to install the update.
+  android:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Android NDK
+        run: |
+          sdkmanager --install "ndk;29.0.14206865" > /dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: android
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Signing key
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+        run: |
+          [ -n "$ANDROID_KEYSTORE" ] || { echo "::error::ANDROID_KEYSTORE is not set"; exit 1; }
+          echo "$ANDROID_KEYSTORE" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Build
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: pnpm tauri android build --apk --ci --target aarch64 armv7
+
+      - name: Package Kybl.apk
+        run: |
+          mkdir -p out
+          cp src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk out/Kybl.apk
+          rm -f "$RUNNER_TEMP/release.jks"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: out/Kybl.apk
+
+  # Attach the APK to the draft release the desktop jobs created.
+  android-release:
+    needs: [build, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: android
+          path: out
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="$(jq -r .version src-tauri/tauri.conf.json)"
+          gh release upload "v$V" out/Kybl.apk --clobber --repo "${{ github.repository }}"
