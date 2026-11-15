@@ -1105,6 +1105,15 @@ body {
   box-shadow: 0 8px 20px color-mix(in srgb, var(--accent-solid) 30%, transparent);
 }
 
+/* the second choice under "Connect Kybl Storage": plain S3 keys */
+.m-big-btn.m-alt-btn {
+  height: 44px !important;
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  box-shadow: none;
+  margin-top: 2px;
+}
+
 .m-providers {
   display: flex;
   gap: 8px;

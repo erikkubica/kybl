@@ -17,6 +17,8 @@ import { useJobs } from "../useJobs";
 import { applySettings, loadSettings, saveSettings, type Settings } from "../settings";
 import { Icon, type IconName } from "../Icons";
 import { ConnectionDialog } from "../components/ConnectionDialog";
+import { KyblConnectDialog } from "../components/KyblConnectDialog";
+import { KYBL, KYBL_CONNECT, REVOKED_SAY, isRevokedKey } from "../kybl";
 import { ConfirmDialog, PromptDialog, Toasts, type Toast } from "../components/Dialogs";
 import { MoveDialog } from "../components/MoveDialog";
 import { PreviewPane } from "../components/PreviewPane";
@@ -38,7 +40,8 @@ import "./mobile.css";
 
 type Loc = { profileId: string; bucket: string; prefix: string };
 type Listing = { folders: string[]; objects: ObjInfo[]; next: string | null };
-type Buckets = { names: string[]; note: string | null; loading: boolean };
+/** `revoked`: a Kybl Storage key the storage no longer knows (offer "Connect again") */
+type Buckets = { names: string[]; note: string | null; loading: boolean; revoked?: boolean };
 type SortKey = "name" | "modified" | "size";
 type ViewMode = "auto" | "list" | "grid";
 
@@ -109,6 +112,13 @@ export default function MobileApp() {
   const [sheet, setSheet] = useState<{ title?: string; items: SheetItem[] } | null>(null);
   const [screen, setScreen] = useState<"transfers" | "settings" | null>(null);
   const [connDialog, setConnDialog] = useState<{ profile: Profile | null } | null>(null);
+  const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
+  /** Kybl Storage connections have their own editor: there are no keys to edit. */
+  const editProfile = useCallback((p: Profile) => {
+    if (p.provider === KYBL && KYBL_CONNECT) setKyblDialog({ existing: p });
+    else setConnDialog({ profile: p });
+  }, []);
+  const connectKybl = useCallback(() => setKyblDialog({ existing: null }), []);
   const [confirm, setConfirm] = useState<null | { title: string; message: React.ReactNode; label: string; run: () => void }>(null);
   const [prompt, setPrompt] = useState<null | { title: string; label: string; initial: string; confirmLabel: string; run: (v: string) => void }>(null);
   const [moveDialog, setMoveDialog] = useState<null | { items: Entry[]; mode: "move" | "copy" }>(null);
@@ -261,16 +271,22 @@ export default function MobileApp() {
     setBuckets((m) => ({ ...m, [p.id]: { names: m[p.id]?.names ?? [], note: null, loading: true } }));
     let names: string[] = [];
     let note: string | null = null;
+    let revoked = false;
     try {
       names = (await api.listBuckets(p.id)).map((b) => b.name);
     } catch (e) {
       const msg = errMessage(e);
-      note = /access denied|not allowed/i.test(msg) ? "This key can't list buckets. Open one by its name below." : errSummary(msg);
+      revoked = p.provider === KYBL && KYBL_CONNECT && isRevokedKey(msg);
+      note = revoked
+        ? REVOKED_SAY
+        : /access denied|not allowed/i.test(msg)
+          ? "This key can't list buckets. Open one by its name below."
+          : errSummary(msg);
     }
     if (p.bucket && !names.includes(p.bucket)) names = [p.bucket, ...names];
     // buckets opened by name stay with the connection (a key may reach buckets it cannot list)
     for (const b of readJson<Record<string, string[]>>("m.extraBuckets", {})[p.id] ?? []) if (!names.includes(b)) names.push(b);
-    setBuckets((m) => ({ ...m, [p.id]: { names, note: names.length ? null : note, loading: false } }));
+    setBuckets((m) => ({ ...m, [p.id]: { names, note: names.length && !revoked ? null : note, loading: false, revoked } }));
     return names;
   }, []);
 
@@ -1038,7 +1054,8 @@ export default function MobileApp() {
       onRetry={loadBuckets}
       onOpen={(p, b) => go({ profileId: p.id, bucket: b, prefix: "" })}
       onAdd={() => setConnDialog({ profile: null })}
-      onEdit={(p) => setConnDialog({ profile: p })}
+      onEdit={editProfile}
+      onReconnect={(p) => setKyblDialog({ existing: p, reconnect: true })}
       onOpenByName={askBucketName}
     />
   );
@@ -1069,9 +1086,17 @@ export default function MobileApp() {
                   <Mascot size={88} />
                   <h3>{profiles?.length ? "Pick a bucket" : "Welcome to Kybl"}</h3>
                   <p>{profiles?.length ? "Choose a bucket on the left to browse its files." : "Add a connection to start browsing your S3 storage."}</p>
+                  {!profiles?.length && KYBL_CONNECT && (
+                    <button className="btn btn-primary m-big-btn" onClick={connectKybl}>
+                      <Icon name="cloud" size={16} /> Connect Kybl Storage
+                    </button>
+                  )}
                   {!profiles?.length && (
-                    <button className="btn btn-primary m-big-btn" onClick={() => setConnDialog({ profile: null })}>
-                      <Icon name="plus" size={16} /> Add a connection
+                    <button
+                      className={`btn m-big-btn ${KYBL_CONNECT ? "btn-ghost m-alt-btn" : "btn-primary"}`}
+                      onClick={() => setConnDialog({ profile: null })}
+                    >
+                      <Icon name="plus" size={16} /> {KYBL_CONNECT ? "Add another S3 connection" : "Add a connection"}
                     </button>
                   )}
                 </div>
@@ -1104,6 +1129,7 @@ export default function MobileApp() {
               connections={connections}
               onRecent={(l) => go(l)}
               onAdd={() => setConnDialog({ profile: null })}
+              onKybl={KYBL_CONNECT ? connectKybl : undefined}
               onTransfers={() => setScreen("transfers")}
               onSettings={() => setScreen("settings")}
             />
@@ -1155,7 +1181,7 @@ export default function MobileApp() {
           settings={settings}
           onChange={updateSettings}
           profiles={profiles ?? []}
-          onEdit={(p) => setConnDialog({ profile: p })}
+          onEdit={editProfile}
           onAdd={() => setConnDialog({ profile: null })}
           savedWhere={SAVED_WHERE}
           toast={toast}
@@ -1180,6 +1206,14 @@ export default function MobileApp() {
         <ConnectionDialog
           initial={connDialog.profile}
           onClose={() => setConnDialog(null)}
+          onKybl={
+            KYBL_CONNECT
+              ? () => {
+                  setConnDialog(null);
+                  connectKybl();
+                }
+              : undefined
+          }
           onSaved={async (p) => {
             setConnDialog(null);
             await reloadProfiles();
@@ -1187,6 +1221,21 @@ export default function MobileApp() {
           }}
           onDeleted={async (id) => {
             setConnDialog(null);
+            if (loc?.profileId === id) go(null, "out");
+            await reloadProfiles();
+          }}
+        />
+      )}
+      {kyblDialog && (
+        <KyblConnectDialog
+          existing={kyblDialog.existing}
+          reconnect={kyblDialog.reconnect}
+          onClose={() => setKyblDialog(null)}
+          onConnected={async (p) => {
+            await reloadProfiles();
+            loadBuckets(p);
+          }}
+          onDeleted={async (id) => {
             if (loc?.profileId === id) go(null, "out");
             await reloadProfiles();
           }}
@@ -1268,6 +1317,7 @@ function Connections({
   onOpen,
   onAdd,
   onEdit,
+  onReconnect,
   onOpenByName,
 }: {
   profiles: Profile[] | null;
@@ -1278,6 +1328,7 @@ function Connections({
   onOpen: (p: Profile, bucket: string) => void;
   onAdd: () => void;
   onEdit: (p: Profile) => void;
+  onReconnect: (p: Profile) => void;
   onOpenByName: (p: Profile) => void;
 }) {
   const [all, setAll] = useState<Record<string, boolean>>({});
@@ -1310,9 +1361,15 @@ function Connections({
               {bl?.note && (
                 <li className="m-bucket-note">
                   <span>{bl.note}</span>
-                  <button className="btn btn-sm" onClick={() => onRetry(p)}>
-                    Retry
-                  </button>
+                  {bl.revoked ? (
+                    <button className="btn btn-primary btn-sm" onClick={() => onReconnect(p)}>
+                      Connect again
+                    </button>
+                  ) : (
+                    <button className="btn btn-sm" onClick={() => onRetry(p)}>
+                      Retry
+                    </button>
+                  )}
                 </li>
               )}
               {names.slice(0, limit).map((b) => {
@@ -1366,6 +1423,7 @@ function HomeScreen({
   connections,
   onRecent,
   onAdd,
+  onKybl,
   onTransfers,
   onSettings,
 }: {
@@ -1375,6 +1433,8 @@ function HomeScreen({
   connections: React.ReactNode;
   onRecent: (l: Loc) => void;
   onAdd: () => void;
+  /** "Connect Kybl Storage" (not on iOS yet) */
+  onKybl?: () => void;
   onTransfers: () => void;
   onSettings: () => void;
 }) {
@@ -1398,8 +1458,13 @@ function HomeScreen({
               <Mascot size={120} className="m-bob" />
               <h1>Your buckets, in your pocket</h1>
               <p>Browse, preview, upload and share files on Hetzner, AWS, Cloudflare R2, Backblaze, Wasabi, MinIO or any S3-compatible storage.</p>
-              <button className="btn btn-primary m-big-btn" onClick={onAdd}>
-                <Icon name="plus" size={16} /> Add a connection
+              {onKybl && (
+                <button className="btn btn-primary m-big-btn" onClick={onKybl}>
+                  <Icon name="cloud" size={16} /> Connect Kybl Storage
+                </button>
+              )}
+              <button className={`btn m-big-btn ${onKybl ? "btn-ghost m-alt-btn" : "btn-primary"}`} onClick={onAdd}>
+                <Icon name="plus" size={16} /> {onKybl ? "Add another S3 connection" : "Add a connection"}
               </button>
               <div className="m-providers">
                 {PROVIDERS.slice(0, 6).map((p) => (

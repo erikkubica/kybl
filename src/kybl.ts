@@ -4,6 +4,14 @@ import type { Profile } from "./types";
 
 export const KYBL = "kybl";
 
+const UA = typeof navigator === "undefined" ? "" : navigator.userAgent;
+/** Phones and tablets: the browser comes back to the app by itself (kybl://connect). */
+export const ON_PHONE = /Android|iPhone|iPad|iPod/i.test(UA);
+/** iOS has no browser sign-in yet (the backend skips the commands there): keys are typed by hand. */
+export const KYBL_CONNECT = !/iPhone|iPad|iPod/i.test(UA);
+/** How the dialogs refer to the device that gets the key. */
+export const THIS_DEVICE = ON_PHONE ? "this device" : "this computer";
+
 export type DeviceStart = {
   deviceCode: string;
   userCode: string;
@@ -57,8 +65,7 @@ export function isRevokedKey(msg: string | null | undefined): boolean {
 }
 
 /** What to say when a Kybl Storage key stopped working (the backend's text talks about editing keys). */
-export const REVOKED_SAY =
-  "This computer's access key was revoked on the web, or the account was deleted. Connect again to get a new key.";
+export const REVOKED_SAY = `${ON_PHONE ? "This device" : "This computer"}'s access key was revoked on the web, or the account was deleted. Connect again to get a new key.`;
 
 /** Replaces the plain sentence of a storage error, keeping the technical details. */
 export function kyblError(msg: string): string {

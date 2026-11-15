@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
-import { kyblApi, saveAppUrl, savedAppUrl, type DeviceStart } from "../kybl";
+import { ON_PHONE, THIS_DEVICE, kyblApi, saveAppUrl, savedAppUrl, type DeviceStart } from "../kybl";
 import type { Profile } from "../types";
 import { Modal } from "./Dialogs";
 import { ErrorText } from "./ErrorText";
@@ -166,7 +166,7 @@ export function KyblConnectDialog({
               <div className="kybl-hero">
                 <ProviderBadge provider="kybl" large />
                 <p>
-                  Sign in to Kybl Storage in your browser and approve this computer. Kybl gets its own access key, so there is nothing to copy or
+                  Sign in to Kybl Storage in your browser and approve {THIS_DEVICE}. Kybl gets its own access key, so there is nothing to copy or
                   paste.
                 </p>
               </div>
@@ -174,7 +174,7 @@ export function KyblConnectDialog({
             {existing && (
               <p className="hint">
                 <Icon name="info" size={13} />
-                Connecting again gives this computer a fresh access key. You can revoke keys on the Access keys page of your Kybl account.
+                Connecting again gives {THIS_DEVICE} a fresh access key. You can revoke keys on the Access keys page of your Kybl account.
               </p>
             )}
             <button className="btn btn-primary kybl-big" onClick={startBrowser}>
@@ -190,7 +190,11 @@ export function KyblConnectDialog({
           <div className="kybl-wait">
             <span className="spinner lg" />
             <strong>Waiting for you to approve in the browser…</strong>
-            <p>A page opened in your browser. Sign in there and click Connect, then come back here.</p>
+            <p>
+              {ON_PHONE
+                ? "Sign in on the page that opened and tap Connect. Kybl comes back by itself."
+                : "A page opened in your browser. Sign in there and click Connect, then come back here."}
+            </p>
             <button className="btn btn-ghost btn-sm" onClick={startDevice}>
               Browser didn’t open? Use a code instead
             </button>
@@ -209,7 +213,7 @@ export function KyblConnectDialog({
             {step.d.qrSvg && <div className="kybl-qr" aria-label="QR code of the sign-in link" dangerouslySetInnerHTML={{ __html: step.d.qrSvg }} />}
             <div className="kybl-device-text">
               <p>
-                Scan the code with your phone, or open{" "}
+                {ON_PHONE ? "On another device, scan the code or open" : "Scan the code with your phone, or open"}{" "}
                 <a
                   href={step.d.verificationUriComplete}
                   onClick={(e) => {

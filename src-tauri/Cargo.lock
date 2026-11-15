@@ -2683,6 +2683,7 @@ dependencies = [
  "percent-encoding",
  "qrcode",
  "ring",
+ "rustls",
  "serde",
  "serde_json",
  "tauri",

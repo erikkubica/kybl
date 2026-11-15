@@ -4,13 +4,16 @@
 //! key ("Kybl on <device>"), which the user can revoke on the web Access keys page. Two flows, both
 //! ending at `POST /v1/connect/token`:
 //!
-//! * **Browser** (default): authorization code with PKCE (S256). The app listens on a loopback
-//!   `http://127.0.0.1:<random port>/callback` (RFC 8252), opens `<app url>/connect?…` in the
-//!   system browser and waits for the redirect carrying `code` and `state`.
+//! * **Browser** (default): authorization code with PKCE (S256). On a computer the app listens on
+//!   a loopback `http://127.0.0.1:<random port>/callback` (RFC 8252), opens `<app url>/connect?…`
+//!   in the system browser and waits for the redirect carrying `code` and `state`. On Android the
+//!   page opens in a Custom Tab and comes back to `kybl://connect?…`, which `KyblConnectPlugin.kt`
+//!   catches and hands over.
 //! * **Device code** (RFC 8628): for when the browser is elsewhere. The app shows a short code and
 //!   a QR of the approval link, then polls every `interval` seconds.
 //!
-//! The secret goes straight into the keychain vault; the connection is saved like any other.
+//! The secret goes straight into the vault (the keychain, or the app's private storage on Android);
+//! the connection is saved like any other.
 
 use std::{
     collections::HashMap,
@@ -24,12 +27,17 @@ use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, State};
+#[cfg(desktop)]
 use tauri_plugin_opener::OpenerExt;
+use tokio::sync::Notify;
+#[cfg(any(desktop, test))]
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::Notify,
 };
+
+#[cfg(target_os = "android")]
+use tauri::Manager;
 
 use crate::state::{err, load_profiles, save_profiles, set_secret, AppState, Profile};
 
@@ -131,8 +139,23 @@ fn enc(s: &str) -> String {
 
 // ---------------------------------------------------------------- device name
 
-/// What the user calls this computer ("Sam's MacBook Air"); the key is named after it.
-fn device_name() -> String {
+/// What the user calls this device ("Sam's MacBook Air", "Pixel 9"); the key is named after it.
+#[cfg(target_os = "android")]
+async fn device_name(app: &AppHandle) -> String {
+    #[derive(Deserialize)]
+    struct Name {
+        name: String,
+    }
+    let name = match app.try_state::<android::Native>() {
+        Some(n) => n.0.run_mobile_plugin_async::<Name>("deviceName", ()).await.map(|n| n.name).unwrap_or_default(),
+        None => String::new(),
+    };
+    let name: String = name.chars().filter(|c| !c.is_control()).take(60).collect();
+    if name.trim().is_empty() { "Android".into() } else { name }
+}
+
+#[cfg(desktop)]
+async fn device_name(_app: &AppHandle) -> String {
     let run = |cmd: &str, args: &[&str]| {
         std::process::Command::new(cmd)
             .args(args)
@@ -163,9 +186,23 @@ fn http() -> Result<&'static HttpsClient, String> {
     if let Some(c) = C.get() {
         return Ok(c);
     }
+    #[cfg(desktop)]
     let connector = hyper_rustls::HttpsConnectorBuilder::new()
         .with_native_roots()
-        .map_err(|e| format!("Couldn't load the system's trusted certificates: {e}"))?
+        .map_err(|e| format!("Couldn't load the system's trusted certificates: {e}"))?;
+    // phones keep their roots where rustls can't read them: trust Mozilla's set, like the S3 client
+    #[cfg(mobile)]
+    let connector = {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add_parsable_certificates(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned());
+        let tls = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(rustls::crypto::ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .map_err(|e| format!("Couldn't set up TLS: {e}"))?
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        hyper_rustls::HttpsConnectorBuilder::new().with_tls_config(tls)
+    };
+    let connector = connector
         .https_or_http()
         .enable_http1()
         .build();
@@ -252,9 +289,12 @@ async fn finish(app: &AppHandle, state: &AppState, tok: TokenResponse, replace_i
 
 // ---------------------------------------------------------------- browser + loopback
 
+#[cfg(any(desktop, test))]
 const PAGE_OK: &str = "You're connected. You can close this tab and go back to Kybl.";
+#[cfg(any(desktop, test))]
 const PAGE_DENIED: &str = "The connection was cancelled. You can close this tab.";
 
+#[cfg(any(desktop, test))]
 fn page(msg: &str) -> String {
     format!(
         "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width\"><title>Kybl</title>\
@@ -263,6 +303,7 @@ fn page(msg: &str) -> String {
     )
 }
 
+#[cfg(any(desktop, test))]
 async fn respond(stream: &mut TcpStream, status: &str, body: &str) {
     let res = format!(
         "HTTP/1.1 {status}\r\ncontent-type: text/html; charset=utf-8\r\ncontent-length: {}\r\ncache-control: no-store\r\nconnection: close\r\n\r\n{body}",
@@ -272,6 +313,7 @@ async fn respond(stream: &mut TcpStream, status: &str, body: &str) {
     let _ = stream.shutdown().await;
 }
 
+#[cfg(any(desktop, test))]
 /// Reads the request head and returns the target ("/callback?code=…").
 async fn read_target(stream: &mut TcpStream) -> Option<String> {
     let mut buf = Vec::with_capacity(1024);
@@ -301,6 +343,7 @@ fn query(target: &str) -> HashMap<String, String> {
         .collect()
 }
 
+#[cfg(any(desktop, test))]
 /// Waits for the browser to come back with a code for our `state`. Stray requests (a favicon, a
 /// wrong or replayed state) get an error page and the wait goes on.
 async fn wait_for_code(listener: &TcpListener, state: &str) -> Result<String, String> {
@@ -316,22 +359,88 @@ async fn wait_for_code(listener: &TcpListener, state: &str) -> Result<String, St
             respond(&mut stream, "400 Bad Request", &page("This sign-in link doesn't belong to the Kybl window that's waiting. Start again from the app.")).await;
             continue;
         }
-        if let Some(code) = q.get("code").filter(|c| !c.is_empty()) {
-            respond(&mut stream, "200 OK", &page(PAGE_OK)).await;
-            return Ok(code.clone());
-        }
-        let e = q.get("error").cloned().unwrap_or_default();
-        respond(&mut stream, "200 OK", &page(PAGE_DENIED)).await;
-        return Err(if e == "access_denied" || e.is_empty() {
-            "The connection was cancelled in the browser.".into()
-        } else {
-            format!("The browser returned an error: {e}")
-        });
+        let r = code_from_redirect(&q, state);
+        respond(&mut stream, "200 OK", &page(if r.is_ok() { PAGE_OK } else { PAGE_DENIED })).await;
+        return r;
     }
 }
 
-/// The whole browser flow: listen, open the browser, wait for approval, exchange the code, save
-/// the connection. Resolves with the new (or updated) connection.
+/// What came back from the browser: the code for our `state`, or why there is none.
+fn code_from_redirect(q: &HashMap<String, String>, state: &str) -> Result<String, String> {
+    if q.get("state").map(String::as_str) != Some(state) {
+        return Err("This sign-in link doesn't belong to the Kybl window that's waiting. Start again from the app.".into());
+    }
+    if let Some(code) = q.get("code").filter(|c| !c.is_empty()) {
+        return Ok(code.clone());
+    }
+    let e = q.get("error").cloned().unwrap_or_default();
+    Err(if e == "access_denied" || e.is_empty() {
+        "The connection was cancelled in the browser.".into()
+    } else {
+        format!("The browser returned an error: {e}")
+    })
+}
+
+fn connect_url(base: &str, verifier: &str, redirect: &str, device: &str, state: &str) -> String {
+    format!(
+        "{base}/connect?code_challenge={}&code_challenge_method=S256&redirect_uri={}&device_name={}&state={}",
+        pkce_challenge(verifier),
+        enc(redirect),
+        enc(device),
+        state
+    )
+}
+
+const NOTHING_BACK: &str = "Nothing came back from the browser. Try again, or use a code instead.";
+
+/// Desktop: loopback listener + the default browser.
+#[cfg(desktop)]
+async fn browser_code(app: &AppHandle, flow: &Flow, base: &str, verifier: &str, state: &str) -> Result<String, String> {
+    let listener = TcpListener::bind("127.0.0.1:0").await.map_err(|e| format!("Couldn't start the sign-in listener: {e}"))?;
+    let redirect = format!("http://127.0.0.1:{}/callback", listener.local_addr().map_err(err)?.port());
+    let url = connect_url(base, verifier, &redirect, &device_name(app).await, state);
+    app.opener()
+        .open_url(&url, None::<&str>)
+        .map_err(|e| format!("Couldn't open the browser: {e}. Use a code instead."))?;
+    let code = tokio::select! {
+        r = wait_for_code(&listener, state) => r?,
+        _ = flow.cancel.notified() => return Err(CANCELLED.into()),
+        _ = tokio::time::sleep(BROWSER_TIMEOUT) => return Err(NOTHING_BACK.into()),
+    };
+    crate::tray::show_main(app);
+    Ok(code)
+}
+
+/// Android: a Custom Tab that comes back to `kybl://connect?…` (KyblConnectPlugin.kt).
+#[cfg(target_os = "android")]
+async fn browser_code(app: &AppHandle, flow: &Flow, base: &str, verifier: &str, state: &str) -> Result<String, String> {
+    #[derive(Deserialize, Default)]
+    #[serde(default)]
+    struct Back {
+        url: Option<String>,
+        cancelled: bool,
+    }
+    let native = app.try_state::<android::Native>().ok_or("The sign-in isn't available in this build.")?;
+    let url = connect_url(base, verifier, android::REDIRECT, &device_name(app).await, state);
+    let back = tokio::select! {
+        r = native.0.run_mobile_plugin_async::<Back>("signIn", json!({ "url": url })) => r.map_err(|e| format!("Couldn't open the browser: {e}. Use a code instead."))?,
+        _ = flow.cancel.notified() => {
+            let _ = native.0.run_mobile_plugin_async::<Value>("cancel", ()).await;
+            return Err(CANCELLED.into());
+        }
+        _ = tokio::time::sleep(BROWSER_TIMEOUT) => {
+            let _ = native.0.run_mobile_plugin_async::<Value>("cancel", ()).await;
+            return Err(NOTHING_BACK.into());
+        }
+    };
+    match back.url {
+        Some(u) if !back.cancelled => code_from_redirect(&query(&u), state),
+        _ => Err(CANCELLED.into()),
+    }
+}
+
+/// The whole browser flow: open the browser, wait for approval, exchange the code, save the
+/// connection. Resolves with the new (or updated) connection.
 #[tauri::command]
 pub async fn kybl_connect_browser(
     app: AppHandle,
@@ -342,28 +451,9 @@ pub async fn kybl_connect_browser(
 ) -> Result<Profile, String> {
     let base = base_url(app_url)?;
     let flow = Flow::new(&flow_id);
-    let listener = TcpListener::bind("127.0.0.1:0").await.map_err(|e| format!("Couldn't start the sign-in listener: {e}"))?;
-    let redirect = format!("http://127.0.0.1:{}/callback", listener.local_addr().map_err(err)?.port());
     let verifier = random_token();
     let csrf = random_token();
-    let url = format!(
-        "{base}/connect?code_challenge={}&code_challenge_method=S256&redirect_uri={}&device_name={}&state={}",
-        pkce_challenge(&verifier),
-        enc(&redirect),
-        enc(&device_name()),
-        csrf
-    );
-    app.opener()
-        .open_url(&url, None::<&str>)
-        .map_err(|e| format!("Couldn't open the browser: {e}. Use a code instead."))?;
-
-    let code = tokio::select! {
-        r = wait_for_code(&listener, &csrf) => r?,
-        _ = flow.cancel.notified() => return Err(CANCELLED.into()),
-        _ = tokio::time::sleep(BROWSER_TIMEOUT) => return Err("Nothing came back from the browser. Try again, or use a code instead.".into()),
-    };
-    drop(listener);
-    crate::tray::show_main(&app);
+    let code = browser_code(&app, &flow, &base, &verifier, &csrf).await?;
 
     let (status, body) = post_json(&format!("{base}/v1/connect/token"), &json!({ "code": code, "code_verifier": verifier })).await?;
     if status != 200 {
@@ -401,9 +491,9 @@ fn qr_svg(data: &str) -> String {
 }
 
 #[tauri::command]
-pub async fn kybl_device_start(app_url: Option<String>) -> Result<DeviceStart, String> {
+pub async fn kybl_device_start(app: AppHandle, app_url: Option<String>) -> Result<DeviceStart, String> {
     let base = base_url(app_url)?;
-    let (status, body) = post_json(&format!("{base}/v1/connect/device"), &json!({ "device_name": device_name() })).await?;
+    let (status, body) = post_json(&format!("{base}/v1/connect/device"), &json!({ "device_name": device_name(&app).await })).await?;
     if status != 200 {
         return Err(api_error(status, &body));
     }
@@ -452,6 +542,7 @@ pub async fn kybl_device_wait(
         };
         if status == 200 {
             let tok: TokenResponse = serde_json::from_value(body).map_err(|e| format!("Kybl Storage sent an unexpected answer.\n\n{e}"))?;
+            #[cfg(desktop)]
             crate::tray::show_main(&app);
             return finish(&app, &state, tok, replace_id).await;
         }
@@ -462,6 +553,30 @@ pub async fn kybl_device_wait(
             _ => return Err(api_error(status, &body)),
         }
     }
+}
+
+// ---------------------------------------------------------------- Android glue
+
+/// Registers `KyblConnectPlugin` (the Android project): Custom Tab, the `kybl://` redirect and the
+/// phone's name. Nothing to do elsewhere.
+pub fn plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri::plugin::Builder::new("kyblconnect")
+        .setup(|_app, _api| {
+            #[cfg(target_os = "android")]
+            {
+                let h = _api.register_android_plugin("app.kybl.mobile", "KyblConnectPlugin")?;
+                _app.manage(android::Native(h));
+            }
+            Ok(())
+        })
+        .build()
+}
+
+#[cfg(target_os = "android")]
+mod android {
+    /// Where the account site sends the browser back to (allowed by the server: `kybl://…`).
+    pub const REDIRECT: &str = "kybl://connect";
+    pub struct Native(pub tauri::plugin::PluginHandle<tauri::Wry>);
 }
 
 #[cfg(test)]
@@ -492,6 +607,14 @@ mod tests {
         assert_eq!(q["code"], "a+b");
         assert_eq!(q["state"], "x y");
         assert_eq!(q["error"], "");
+    }
+
+    #[test]
+    fn app_scheme_redirect_gives_the_code() {
+        let back = |u: &str| code_from_redirect(&query(u), "s1");
+        assert_eq!(back("kybl://connect?code=abc&state=s1").unwrap(), "abc");
+        assert!(back("kybl://connect?code=abc&state=other").unwrap_err().contains("doesn't belong"));
+        assert!(back("kybl://connect?error=access_denied&state=s1").unwrap_err().contains("cancelled"));
     }
 
     #[tokio::test]

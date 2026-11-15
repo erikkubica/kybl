@@ -1,5 +1,6 @@
 mod commands;
-#[cfg(desktop)]
+// "Connect Kybl Storage": computers and Android (iOS needs its own browser sign-in first)
+#[cfg(any(desktop, target_os = "android"))]
 mod kybl_connect;
 mod mobile;
 #[cfg(desktop)]
@@ -46,6 +47,9 @@ pub fn run() {
                 }
             }
         });
+
+    #[cfg(any(desktop, target_os = "android"))]
+    let builder = builder.plugin(kybl_connect::plugin());
 
     let app = builder
         .setup(|app| {
@@ -114,15 +118,15 @@ pub fn run() {
             sync::sync_set_paused,
             #[cfg(desktop)]
             sync::sync_pause_all,
-            #[cfg(desktop)]
+            #[cfg(any(desktop, target_os = "android"))]
             kybl_connect::kybl_default_app_url,
-            #[cfg(desktop)]
+            #[cfg(any(desktop, target_os = "android"))]
             kybl_connect::kybl_connect_browser,
-            #[cfg(desktop)]
+            #[cfg(any(desktop, target_os = "android"))]
             kybl_connect::kybl_device_start,
-            #[cfg(desktop)]
+            #[cfg(any(desktop, target_os = "android"))]
             kybl_connect::kybl_device_wait,
-            #[cfg(desktop)]
+            #[cfg(any(desktop, target_os = "android"))]
             kybl_connect::kybl_connect_cancel,
             #[cfg(desktop)]
             prefs::get_app_prefs,

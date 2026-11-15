@@ -43,6 +43,10 @@ Folder sync, the menu-bar icon and launch at login are desktop only.
 - **Downloads** go to *Files › On My iPhone › Kybl* on iOS and `Download/Kybl` on Android.
 - **Uploads** use the system photo or document picker; Android `content://` files are copied to the
   cache first, then uploaded (multipart for big files) and the copy removed.
+- **Connect Kybl Storage** (Android): the account site opens in a Custom Tab and comes back to
+  `kybl://connect` with the code (`KyblConnectPlugin.kt`); the rest is the desktop flow. Debug
+  builds sign in against `127.0.0.1:8080`: run `adb reverse tcp:8080 tcp:8080` (and `tcp:9000` for
+  a local S3) so the emulator reaches a local kybl-cloud. Not on iOS yet.
 
 ```bash
 pnpm tauri ios dev                      # simulator or a connected iPhone (needs Xcode, xcodegen)
@@ -52,7 +56,7 @@ pnpm tauri android build --apk --target aarch64
 ```
 Set `ANDROID_HOME`, `NDK_HOME` and `JAVA_HOME` for Android. The native projects live in
 `src-tauri/gen/apple` and `src-tauri/gen/android` (the Kotlin `DocInfoPlugin` reads picked files'
-names and sizes). Mobile builds use the bundle id `app.kybl.mobile` (`tauri.ios.conf.json`,
+names and sizes, `KyblConnectPlugin` handles the Kybl Storage sign-in). Mobile builds use the bundle id `app.kybl.mobile` (`tauri.ios.conf.json`,
 `tauri.android.conf.json`). Release iOS builds need your Apple team: set `bundle.iOS.developmentTeam`.
 
 ## Install
