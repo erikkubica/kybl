@@ -59,7 +59,8 @@ pnpm tauri android build --apk --target aarch64
 Set `ANDROID_HOME`, `NDK_HOME` and `JAVA_HOME` for Android. The native projects live in
 `src-tauri/gen/apple` and `src-tauri/gen/android` (the Kotlin `DocInfoPlugin` reads picked files'
 names and sizes, `KyblConnectPlugin` handles the Kybl Storage sign-in). Mobile builds use the bundle id `app.kybl.mobile` (`tauri.ios.conf.json`,
-`tauri.android.conf.json`). Release iOS builds need your Apple team: set `bundle.iOS.developmentTeam`.
+`tauri.android.conf.json`). Signed iOS builds (App Store, TestFlight) would need an Apple team in `bundle.iOS.developmentTeam`;
+the release workflow instead turns signing off and zips the archived `Kybl.app` into an unsigned `.ipa`.
 
 ## Install
 Download the latest build from [Releases](../../releases).
@@ -69,11 +70,17 @@ Download the latest build from [Releases](../../releases).
   same signature, so the keychain doesn't ask again for your secret keys.
 - **Windows**: if SmartScreen warns, click **More info → Run anyway**.
 - **Linux**: AppImage, `.deb` or `.rpm`. Secret keys need a Secret Service (GNOME Keyring, KWallet).
+- **iPhone / iPad**: `Kybl.ipa` is unsigned (no Apple Developer account), so it is sideloaded:
+  in [AltStore](https://altstore.io) or [SideStore](https://sidestore.io) add the source
+  `https://github.com/erikkubica/kybl/releases/latest/download/altstore-source.json` and install
+  Kybl from it (new releases then show up as updates), or install the `.ipa` with Sideloadly.
+  A free Apple ID signs apps for 7 days; AltStore and SideStore renew them on their own.
 
 ## Releasing
 1. Bump the version in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`.
 2. `git tag v0.2.0 && git push --tags`. The `Release` workflow builds macOS (Apple Silicon and
-   Intel), Windows and Linux and attaches everything to a **draft** release. Publish it when it looks right.
+   Intel), Windows, Linux and an unsigned iOS `.ipa` (plus `altstore-source.json`, made by
+   `scripts/altstore-source.mjs`) and attaches everything to a **draft** release. Publish it when it looks right.
 
 macOS signing needs two repository secrets (Settings → Secrets and variables → Actions):
 
