@@ -194,11 +194,12 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - uses: android-actions/setup-android@v3
-
-      - name: Android NDK
+      # The Ubuntu runner ships the Android SDK (ANDROID_HOME); add the NDK and platform we build with.
+      - name: Android SDK and NDK
         run: |
-          sdkmanager --install "ndk;29.0.14206865" > /dev/null
+          SDKM="$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "ndk;29.0.14206865" "platforms;android-36" "build-tools;36.0.0" > /dev/null
           echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
 
       - uses: pnpm/action-setup@v4
