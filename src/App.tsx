@@ -1375,6 +1375,7 @@ export default function App() {
             setConnDialog(null);
             setKyblDialog({ existing: null });
           }}
+          kyblFirst={!profiles.some((p) => p.provider === KYBL)}
           onSaved={(p) => {
             setProfiles((list) => (list.some((x) => x.id === p.id) ? list.map((x) => (x.id === p.id ? p : x)) : [...list, p]));
             connect(p);

@@ -3745,3 +3745,63 @@ body.dragging-items * {
 .pbadge.kybl svg {
   display: block;
 }
+
+/* New connection, before any Kybl Storage connection: the short choice */
+.conn-choose {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  padding-top: 6px;
+}
+.conn-choose-kybl {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+}
+.conn-choose-kybl strong {
+  font-size: 15px;
+  margin-top: 4px;
+}
+.conn-choose-kybl p {
+  margin: 0;
+  max-width: 30em;
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.conn-choose .conn-choose-main {
+  height: 38px;
+  justify-content: center;
+  font-size: 13.5px;
+  margin-top: 4px;
+}
+.conn-choose-or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--faint);
+  font-size: 12px;
+}
+.conn-choose-or::before,
+.conn-choose-or::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+.conn-choose .conn-choose-other {
+  justify-content: center;
+  gap: 8px;
+  color: var(--dim);
+}
+.conn-choose-badges {
+  display: inline-flex;
+}
+.conn-choose-badges > * + * {
+  margin-left: -5px;
+}
+.conn-choose-badges > * {
+  box-shadow: 0 0 0 2px var(--bg-elev, var(--bg));
+}

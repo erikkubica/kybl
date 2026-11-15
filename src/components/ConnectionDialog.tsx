@@ -10,7 +10,12 @@ import type { Profile } from "../types";
 /** Keys, endpoints and bucket names are typed exactly: no autocorrect or capitals on phones. */
 const ANDROID = /Android/i.test(navigator.userAgent);
 
-const RAW = { spellCheck: false, autoCorrect: "off", autoCapitalize: "off", autoComplete: "off" } as const;
+const RAW = {
+  spellCheck: false,
+  autoCorrect: "off",
+  autoCapitalize: "off",
+  autoComplete: "off",
+} as const;
 
 type Preset = {
   id: string;
@@ -87,10 +92,16 @@ export function ConnectionDialog({
   onDeleted,
   onClose,
   onKybl,
+  kyblFirst,
 }: {
   initial: Profile | null;
   /** switch to "Connect Kybl Storage" (no keys to type) */
   onKybl?: () => void;
+  /**
+   * No Kybl Storage connection yet: open on the short choice (Kybl, or another provider) and keep
+   * the provider grid and key fields folded away until asked for.
+   */
+  kyblFirst?: boolean;
   onSaved: (p: Profile) => void;
   onDeleted: (id: string) => void;
   onClose: () => void;
@@ -110,9 +121,16 @@ export function ConnectionDialog({
   const resultRef = useRef<HTMLDivElement>(null);
   // On small screens the result lands below the fold; bring it into view.
   useEffect(() => {
-    if (result) resultRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (result)
+      resultRef.current?.scrollIntoView({
+        block: "nearest",
+        behavior: "smooth",
+      });
   }, [result]);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const choosing = !initial && !!onKybl && !!kyblFirst;
+  /** the provider grid and key fields are showing (always, unless `choosing`) */
+  const [custom, setCustom] = useState(!choosing);
 
   const preset = PRESETS.find((p) => p.id === provider) ?? PRESETS[0];
 
@@ -176,159 +194,186 @@ export function ConnectionDialog({
   };
 
   return (
-    <Modal title={initial ? "Edit connection" : "New connection"} onClose={onClose} width={540}>
-      <div className="modal-body form-grid">
-        {!initial && onKybl && (
-          <button type="button" className="kybl-offer span2" onClick={onKybl}>
+    <Modal title={initial ? "Edit connection" : "New connection"} onClose={onClose} width={custom ? 540 : 420}>
+      {!custom ? (
+        <div className="modal-body conn-choose">
+          <div className="conn-choose-kybl">
             <ProviderBadge provider="kybl" large />
-            <span className="kybl-offer-text">
-              <strong>Kybl Storage</strong>
-              <em>Sign in with your browser. No keys to copy.</em>
-            </span>
-            <Icon name="chevron" size={14} />
-          </button>
-        )}
-        <div className="field span2">
-          <span>Provider</span>
-          <div className="provider-grid" role="radiogroup" aria-label="Provider">
-            {PRESETS.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                role="radio"
-                aria-checked={provider === p.id}
-                className={`provider-tile ${provider === p.id ? "on" : ""}`}
-                title={p.label}
-                onClick={() => pickProvider(p.id)}
-              >
-                <ProviderBadge provider={p.id} large />
-                {providerMeta(p.id).short}
-              </button>
-            ))}
+            <strong>Kybl Storage</strong>
+            <p>Sign in with your browser and your buckets show up. No keys to copy.</p>
           </div>
-        </div>
-
-        <label className="field span2">
-          <span>
-            Name <em>optional</em>
-          </span>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder={preset.label} />
-        </label>
-
-        {preset.regions ? (
-          <label className="field">
-            <span>Region</span>
-            <select value={region} onChange={(e) => pickRegion(e.target.value)}>
-              {preset.regions.map((r) => (
-                <option key={r.value} value={r.value}>
-                  {r.label}
-                </option>
+          <button type="button" className="btn btn-primary conn-choose-main" onClick={onKybl}>
+            <Icon name="cloud" size={15} /> Connect with Kybl Storage
+          </button>
+          <div className="conn-choose-or" aria-hidden="true">
+            <span>or</span>
+          </div>
+          <button type="button" className="btn btn-ghost conn-choose-other" onClick={() => setCustom(true)}>
+            <span className="conn-choose-badges" aria-hidden="true">
+              {PRESETS.slice(0, 4).map((p) => (
+                <ProviderBadge key={p.id} provider={p.id} />
               ))}
-            </select>
+            </span>
+            Use another provider with keys
+            <Icon name="chevron-down" size={14} />
+          </button>
+        </div>
+      ) : (
+        <div className="modal-body form-grid">
+          {choosing && (
+            <button type="button" className="kybl-offer span2" onClick={onKybl}>
+              <ProviderBadge provider="kybl" large />
+              <span className="kybl-offer-text">
+                <strong>Kybl Storage</strong>
+                <em>Sign in with your browser. No keys to copy.</em>
+              </span>
+              <Icon name="chevron" size={14} />
+            </button>
+          )}
+          <div className="field span2">
+            <span>Provider</span>
+            <div className="provider-grid" role="radiogroup" aria-label="Provider">
+              {PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={provider === p.id}
+                  className={`provider-tile ${provider === p.id ? "on" : ""}`}
+                  title={p.label}
+                  onClick={() => pickProvider(p.id)}
+                >
+                  <ProviderBadge provider={p.id} large />
+                  {providerMeta(p.id).short}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <label className="field span2">
+            <span>
+              Name <em>optional</em>
+            </span>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder={preset.label} />
           </label>
-        ) : (
+
+          {preset.regions ? (
+            <label className="field">
+              <span>Region</span>
+              <select value={region} onChange={(e) => pickRegion(e.target.value)}>
+                {preset.regions.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <label className="field">
+              <span>Region</span>
+              <input value={region} onChange={(e) => pickRegion(e.target.value)} {...RAW} />
+            </label>
+          )}
+
           <label className="field">
-            <span>Region</span>
-            <input value={region} onChange={(e) => pickRegion(e.target.value)} {...RAW} />
+            <span>
+              Bucket <em>optional</em>
+            </span>
+            <input value={bucket} onChange={(e) => setBucket(e.target.value)} placeholder="my-bucket" {...RAW} />
           </label>
-        )}
 
-        <label className="field">
-          <span>
-            Bucket <em>optional</em>
-          </span>
-          <input value={bucket} onChange={(e) => setBucket(e.target.value)} placeholder="my-bucket" {...RAW} />
-        </label>
+          <label className="field span2">
+            <span>Endpoint</span>
+            <input className="mono" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://…" inputMode="url" {...RAW} />
+          </label>
 
-        <label className="field span2">
-          <span>Endpoint</span>
-          <input className="mono" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://…" inputMode="url" {...RAW} />
-        </label>
+          <label className="field">
+            <span>Access key ID</span>
+            <input className="mono" value={accessKeyId} onChange={(e) => setAccessKeyId(e.target.value)} {...RAW} />
+          </label>
+          <label className="field">
+            <span>Secret access key</span>
+            <div className="input-wrap">
+              <input
+                className="mono"
+                type={showSecret ? "text" : "password"}
+                value={secret}
+                onChange={(e) => setSecret(e.target.value)}
+                placeholder={initial ? (ANDROID ? "Saved on this device" : "Saved in keychain") : ""}
+                {...RAW}
+              />
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => setShowSecret((v) => !v)}
+                title={showSecret ? "Hide secret" : "Show secret"}
+                aria-label={showSecret ? "Hide secret" : "Show secret"}
+              >
+                <Icon name={showSecret ? "eye-off" : "eye"} size={14} />
+              </button>
+            </div>
+          </label>
 
-        <label className="field">
-          <span>Access key ID</span>
-          <input className="mono" value={accessKeyId} onChange={(e) => setAccessKeyId(e.target.value)} {...RAW} />
-        </label>
-        <label className="field">
-          <span>Secret access key</span>
-          <div className="input-wrap">
-            <input
-              className="mono"
-              type={showSecret ? "text" : "password"}
-              value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-              placeholder={initial ? (ANDROID ? "Saved on this device" : "Saved in keychain") : ""}
-              {...RAW}
-            />
-            <button
-              type="button"
-              className="icon-btn"
-              onClick={() => setShowSecret((v) => !v)}
-              title={showSecret ? "Hide secret" : "Show secret"}
-              aria-label={showSecret ? "Hide secret" : "Show secret"}
-            >
-              <Icon name={showSecret ? "eye-off" : "eye"} size={14} />
+          <label className="check span2">
+            <input type="checkbox" checked={pathStyle} onChange={(e) => setPathStyle(e.target.checked)} />
+            <span>
+              Use path-style addressing
+              <em>Needed by MinIO and many self-hosted servers.</em>
+            </span>
+          </label>
+
+          {preset.hint && (
+            <p className="hint span2">
+              <Icon name="info" size={13} />
+              {preset.hint}
+            </p>
+          )}
+
+          <p className="hint span2">
+            <Icon name="check-circle" size={13} />
+            {ANDROID
+              ? "The secret key stays on this device, in Kybl's private storage, and is left out of backups."
+              : "The secret key is stored in your system keychain, never in a file."}
+          </p>
+
+          {result && (
+            <div ref={resultRef} className={`result span2 ${result.ok ? "ok" : "bad"}`}>
+              <Icon name={result.ok ? "check-circle" : "alert"} size={15} />
+              <ErrorText message={result.text} />
+            </div>
+          )}
+        </div>
+      )}
+      {custom && (
+        <div className="modal-foot split">
+          <div className="btn-row">
+            {initial &&
+              (confirmDelete ? (
+                <>
+                  <button className="btn btn-danger" onClick={remove}>
+                    Delete connection
+                  </button>
+                  <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}>
+                    Keep
+                  </button>
+                </>
+              ) : (
+                <button className="btn btn-danger-ghost" onClick={() => setConfirmDelete(true)}>
+                  <Icon name="trash" size={14} /> Delete
+                </button>
+              ))}
+          </div>
+          <div className="btn-row">
+            <button className="btn" onClick={test} disabled={!valid || busy !== null}>
+              {busy === "test" && <span className="spinner" />}
+              {busy === "test" ? "Testing…" : "Test connection"}
+            </button>
+            <button className="btn btn-primary" onClick={save} disabled={!valid || busy !== null}>
+              {busy === "save" ? "Saving…" : "Save"}
             </button>
           </div>
-        </label>
-
-        <label className="check span2">
-          <input type="checkbox" checked={pathStyle} onChange={(e) => setPathStyle(e.target.checked)} />
-          <span>
-            Use path-style addressing
-            <em>Needed by MinIO and many self-hosted servers.</em>
-          </span>
-        </label>
-
-        {preset.hint && (
-          <p className="hint span2">
-            <Icon name="info" size={13} />
-            {preset.hint}
-          </p>
-        )}
-
-        <p className="hint span2">
-          <Icon name="check-circle" size={13} />
-          {ANDROID
-            ? "The secret key stays on this device, in Kybl's private storage, and is left out of backups."
-            : "The secret key is stored in your system keychain, never in a file."}
-        </p>
-
-        {result && (
-          <div ref={resultRef} className={`result span2 ${result.ok ? "ok" : "bad"}`}>
-            <Icon name={result.ok ? "check-circle" : "alert"} size={15} />
-            <ErrorText message={result.text} />
-          </div>
-        )}
-      </div>
-      <div className="modal-foot split">
-        <div className="btn-row">
-          {initial &&
-            (confirmDelete ? (
-              <>
-                <button className="btn btn-danger" onClick={remove}>
-                  Delete connection
-                </button>
-                <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}>
-                  Keep
-                </button>
-              </>
-            ) : (
-              <button className="btn btn-danger-ghost" onClick={() => setConfirmDelete(true)}>
-                <Icon name="trash" size={14} /> Delete
-              </button>
-            ))}
         </div>
-        <div className="btn-row">
-          <button className="btn" onClick={test} disabled={!valid || busy !== null}>
-            {busy === "test" && <span className="spinner" />}
-            {busy === "test" ? "Testing…" : "Test connection"}
-          </button>
-          <button className="btn btn-primary" onClick={save} disabled={!valid || busy !== null}>
-            {busy === "save" ? "Saving…" : "Save"}
-          </button>
-        </div>
-      </div>
+      )}
     </Modal>
   );
 }

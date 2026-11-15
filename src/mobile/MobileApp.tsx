@@ -1214,6 +1214,7 @@ export default function MobileApp() {
                 }
               : undefined
           }
+          kyblFirst={!profiles?.some((p) => p.provider === KYBL)}
           onSaved={async (p) => {
             setConnDialog(null);
             await reloadProfiles();
