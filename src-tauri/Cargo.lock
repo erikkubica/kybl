@@ -2661,13 +2661,17 @@ dependencies = [
 
 [[package]]
 name = "kybl"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aws-sdk-s3",
  "aws-smithy-http-client",
  "base64 0.22.1",
  "bytes",
  "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
  "ignore",
  "image",
  "kamadak-exif",
@@ -2677,6 +2681,8 @@ dependencies = [
  "notify-debouncer-full",
  "objc2",
  "percent-encoding",
+ "qrcode",
+ "ring",
  "serde",
  "serde_json",
  "tauri",
@@ -3667,6 +3673,12 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "quick-error"

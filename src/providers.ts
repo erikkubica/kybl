@@ -2,6 +2,7 @@
 export type ProviderMeta = { id: string; short: string; mono: string; color: string };
 
 export const PROVIDERS: ProviderMeta[] = [
+  { id: "kybl", short: "Kybl Storage", mono: "K", color: "#ffc93c" },
   { id: "hetzner", short: "Hetzner", mono: "H", color: "#e0243c" },
   { id: "aws", short: "Amazon S3", mono: "S3", color: "#f08c00" },
   { id: "r2", short: "Cloudflare R2", mono: "R2", color: "#f4731f" },

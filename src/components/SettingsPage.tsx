@@ -5,6 +5,7 @@ import { SCHEMES, type Palette } from "../schemes";
 import { ACCENTS, DEFAULTS, EXPIRIES, SCALES, isDark, type FontChoice, type Settings, type Theme } from "../settings";
 import type { Profile } from "../types";
 import { ProviderBadge } from "./Sidebar";
+import { KyblLockup } from "./KyblMark";
 import { SyncSection } from "./SyncSection";
 import { syncApi, type AppPrefs } from "../sync";
 
@@ -62,7 +63,7 @@ const SHORTCUTS: { label: string; keys: string[] }[] = [
   { label: "Settings", keys: ["⌘", ","] },
 ];
 
-function Row({ label, hint, stack, children }: { label: string; hint?: string; stack?: boolean; children?: ReactNode }) {
+function Row({ label, hint, stack, children }: { label: ReactNode; hint?: string; stack?: boolean; children?: ReactNode }) {
   return (
     <div className={`set-row ${stack ? "stack" : ""}`}>
       <div className="set-label">
@@ -243,7 +244,7 @@ export function SettingsPage({
 
                 <h3 className="set-title">About</h3>
                 <div className="set-card">
-                  <Row label="Kybl" hint="Browse, upload, download and share files on any S3-compatible storage.">
+                  <Row label={<KyblLockup size={18} />} hint="Browse, upload, download and share files on any S3-compatible storage.">
                     <span className="chip">{version ? `v${version}` : "dev build"}</span>
                   </Row>
                 </div>

@@ -152,6 +152,34 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     case "delete_profile":
       profiles.splice(profiles.findIndex((x) => x.id === a.id), 1);
       return null;
+    case "kybl_default_app_url":
+      return "http://127.0.0.1:8080";
+    case "kybl_connect_cancel":
+      cancelled.add(a.flowId);
+      return null;
+    case "kybl_device_start":
+      await sleep(400);
+      return {
+        deviceCode: "dev",
+        userCode: "BCDF-GHJK",
+        verificationUri: "http://127.0.0.1:8080/link",
+        verificationUriComplete: "http://127.0.0.1:8080/link?code=BCDF-GHJK",
+        expiresIn: 600,
+        interval: 5,
+        qrSvg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><rect width="4" height="4" fill="#fff"/><path d="M0 0h2v2H0zM2 2h2v2H2z" fill="#111"/></svg>',
+      };
+    case "kybl_connect_browser":
+    case "kybl_device_wait": {
+      for (let i = 0; i < (cmd === "kybl_device_wait" ? 40 : 15); i++) {
+        await sleep(200);
+        if (cancelled.has(a.flowId)) throw "Cancelled";
+      }
+      const p: Profile = { id: a.replaceId ?? `k${Date.now()}`, name: "Kybl Storage (demo@example.com)", provider: "kybl", endpoint: "http://127.0.0.1:9000", region: "eu-central", accessKeyId: "KYBLDEMO", bucket: null, pathStyle: true };
+      const i = profiles.findIndex((x) => x.id === p.id);
+      if (i >= 0) profiles[i] = p;
+      else profiles.push(p);
+      return p;
+    }
     case "test_connection":
       await sleep(700);
       if (!a.profile.endpoint) throw "Endpoint is required";

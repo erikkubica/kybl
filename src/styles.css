@@ -319,6 +319,12 @@ code {
   background: color-mix(in srgb, var(--pc) 24%, transparent);
   color: color-mix(in srgb, var(--pc) 70%, white);
 }
+/* Kybl Storage is the paid offer: Beach Pail yellow with Cast Iron text (brand book), in both themes */
+.pbadge.kybl,
+[data-theme="dark"] .pbadge.kybl {
+  background: #ffc93c;
+  color: #1e1a1a;
+}
 .pbadge.lg {
   width: 28px;
   height: 28px;
@@ -3502,4 +3508,240 @@ body.dragging-items * {
 .sync-current .dim {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ---------------------------------------------------------------- Kybl Storage sign-in */
+.kybl-connect {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.kybl-hero {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.kybl-hero p {
+  margin: 0;
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.kybl-account {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.kybl-account div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.kybl-account strong {
+  font-size: 13px;
+}
+.kybl-account span {
+  font-size: 11.5px;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kybl-connect .kybl-big {
+  height: 36px;
+  justify-content: center;
+  font-size: 13.5px;
+}
+.kybl-connect .kybl-alt {
+  align-self: center;
+}
+.kybl-wait {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 8px 4px;
+  text-align: center;
+}
+.kybl-wait strong {
+  font-size: 14px;
+}
+.kybl-wait p {
+  margin: 0 0 4px;
+  color: var(--dim);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.spinner.lg {
+  width: 26px;
+  height: 26px;
+  border-width: 3px;
+}
+.kybl-device {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+.kybl-qr {
+  flex: none;
+  width: 148px;
+  height: 148px;
+  padding: 6px;
+  border-radius: 10px;
+  background: #fff;
+}
+.kybl-qr svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.kybl-device-text {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.kybl-device-text p {
+  margin: 0;
+  color: var(--dim);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.kybl-device-text a {
+  color: var(--accent);
+}
+.kybl-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  align-self: flex-start;
+  padding: 8px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+}
+.kybl-code svg {
+  color: var(--faint);
+}
+.kybl-connect .kybl-poll {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--faint);
+}
+.kybl-server {
+  display: flex;
+  justify-content: center;
+  font-size: 11.5px;
+}
+.kybl-server .link-btn {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.kybl-server-edit {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+.kybl-server-edit input {
+  flex: 1;
+  min-width: 0;
+}
+.side-note .link-btn,
+.error-state .kybl-reconnect {
+  margin-top: 4px;
+}
+.welcome .welcome-alt {
+  display: block;
+  margin: 10px auto 0;
+  height: auto;
+  padding: 4px 8px;
+  font-size: 12.5px;
+}
+.kybl-offer {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.kybl-offer:hover {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.kybl-offer-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 1px;
+}
+.kybl-offer strong {
+  font-size: 13px;
+}
+.kybl-offer em {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--dim);
+}
+.kybl-server .link-btn {
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------- brand mark (see KyblMark) */
+/* rim and handle are Cast Iron on light surfaces and Chip on dark ones (brand book) */
+[data-theme="dark"] .km:not(.km-sun) .km-line {
+  stroke: #f1efed;
+}
+[data-theme="dark"] .km:not(.km-sun) .km-rim {
+  fill: #f1efed;
+}
+.kybl-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--lock) * 0.3);
+}
+.kybl-wordmark {
+  font-family: "Fredoka", var(--font, system-ui), sans-serif;
+  font-weight: 700;
+  font-size: calc(var(--lock) * 1.08);
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--text);
+}
+.sidebar-drag {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 2px 16px 0;
+}
+/* the lockup is decoration: the strip stays a window drag handle */
+.sidebar-drag .kybl-lockup {
+  pointer-events: none;
+  opacity: 0.92;
+}
+.welcome-mark {
+  display: block;
+  margin: 0 auto;
+  filter: drop-shadow(0 10px 18px rgba(217, 56, 31, 0.25));
+}
+.welcome-card h1 {
+  font-family: "Fredoka", var(--font, system-ui), sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.pbadge.kybl svg {
+  display: block;
 }

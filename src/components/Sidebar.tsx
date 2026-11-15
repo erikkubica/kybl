@@ -1,4 +1,5 @@
 import { Icon } from "../Icons";
+import { KyblLockup, KyblMark } from "./KyblMark";
 import { providerMeta } from "../providers";
 import type { Profile } from "../types";
 import type { SyncState } from "../sync";
@@ -15,8 +16,8 @@ const SYNC_LABEL: Record<SyncState, string> = {
 export function ProviderBadge({ provider, large }: { provider: string | undefined; large?: boolean }) {
   const meta = providerMeta(provider);
   return (
-    <span className={`pbadge ${large ? "lg" : ""}`} style={{ "--pc": meta.color } as React.CSSProperties} aria-hidden="true">
-      {meta.mono}
+    <span className={`pbadge ${large ? "lg" : ""} ${meta.id === "kybl" ? "kybl" : ""}`} style={{ "--pc": meta.color } as React.CSSProperties} aria-hidden="true">
+      {meta.id === "kybl" ? <KyblMark size={large ? 22 : 17} sun /> : meta.mono}
     </span>
   );
 }
@@ -29,7 +30,13 @@ const onActivate = (fn: () => void) => (e: React.KeyboardEvent) => {
   }
 };
 
-export type BucketList = { names: string[]; note: string | null; loading: boolean };
+export type BucketList = {
+  names: string[];
+  note: string | null;
+  loading: boolean;
+  /** a Kybl Storage key that no longer works: offer to connect again */
+  reconnect?: boolean;
+};
 
 export function Sidebar({
   profiles,
@@ -45,6 +52,7 @@ export function Sidebar({
   onOpenSync,
   onSelectBucket,
   onOpenBucketByName,
+  onReconnect,
 }: {
   profiles: Profile[];
   /** connection of the bucket on screen */
@@ -61,10 +69,13 @@ export function Sidebar({
   onOpenSync: () => void;
   onSelectBucket: (p: Profile, b: string) => void;
   onOpenBucketByName: (p: Profile) => void;
+  onReconnect: (p: Profile) => void;
 }) {
   return (
     <aside className="sidebar">
-      <div className="sidebar-drag" data-tauri-drag-region />
+      <div className="sidebar-drag" data-tauri-drag-region>
+        <KyblLockup size={20} />
+      </div>
       <div className="sidebar-scroll">
         {profiles.length > 0 && (
           <div className="side-head">
@@ -113,7 +124,19 @@ export function Sidebar({
                     );
                   })}
                   {list?.loading && !list.names.length && <p className="side-note">Loading buckets…</p>}
-                  {list?.note && <p className="side-note">{list.note}</p>}
+                  {list?.note && (
+                    <p className="side-note">
+                      {list.note}
+                      {list.reconnect && (
+                        <>
+                          {" "}
+                          <button className="link-btn" onClick={() => onReconnect(p)}>
+                            Connect again
+                          </button>
+                        </>
+                      )}
+                    </p>
+                  )}
                   <button className="side-item sub link" onClick={() => onOpenBucketByName(p)}>
                     <Icon name="plus" size={14} />
                     <span className="side-label">Open bucket by name…</span>

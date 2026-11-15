@@ -1,4 +1,6 @@
 mod commands;
+#[cfg(desktop)]
+mod kybl_connect;
 mod mobile;
 #[cfg(desktop)]
 mod prefs;
@@ -112,6 +114,16 @@ pub fn run() {
             sync::sync_set_paused,
             #[cfg(desktop)]
             sync::sync_pause_all,
+            #[cfg(desktop)]
+            kybl_connect::kybl_default_app_url,
+            #[cfg(desktop)]
+            kybl_connect::kybl_connect_browser,
+            #[cfg(desktop)]
+            kybl_connect::kybl_device_start,
+            #[cfg(desktop)]
+            kybl_connect::kybl_device_wait,
+            #[cfg(desktop)]
+            kybl_connect::kybl_connect_cancel,
             #[cfg(desktop)]
             prefs::get_app_prefs,
             #[cfg(desktop)]

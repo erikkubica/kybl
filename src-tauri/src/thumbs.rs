@@ -344,7 +344,7 @@ mod tests {
     /// Needs the throwaway S3 server (see the sync tests).
     #[test]
     fn thumbnails_come_from_s3_small_and_cached() {
-        let Ok(endpoint) = std::env::var("S3B_TEST_ENDPOINT") else { return };
+        let Ok(endpoint) = std::env::var("KYBL_TEST_ENDPOINT") else { return };
         let app = mock_builder().manage(AppState::default()).build(mock_context(noop_assets())).unwrap();
         let p = Profile {
             id: "thumb-test".into(),

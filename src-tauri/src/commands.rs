@@ -1042,7 +1042,7 @@ mod tests {
 
     #[test]
     fn folder_size_adds_up_everything_below() {
-        let Ok(endpoint) = std::env::var("S3B_TEST_ENDPOINT") else { return };
+        let Ok(endpoint) = std::env::var("KYBL_TEST_ENDPOINT") else { return };
         let p = Profile {
             id: "t".into(),
             name: "t".into(),
@@ -1086,7 +1086,7 @@ mod tests {
 
     #[test]
     fn move_folder_in_parallel_with_progress() {
-        let Ok(endpoint) = std::env::var("S3B_TEST_ENDPOINT") else { return };
+        let Ok(endpoint) = std::env::var("KYBL_TEST_ENDPOINT") else { return };
         let app = mock_builder().build(mock_context(noop_assets())).unwrap();
         let p = Profile {
             id: "t".into(),
