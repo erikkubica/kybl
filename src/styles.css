@@ -3022,7 +3022,26 @@ body.dragging-items * {
   line-height: 1.45;
 }
 .move-state.error {
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  min-height: 140px;
+  color: var(--dim);
+  text-align: center;
+}
+.move-state.error > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--danger);
+  font-weight: 600;
+}
+.move-state.error .err-text {
+  display: block;
+}
+.move-state.error .err-details pre {
+  max-height: 110px;
 }
 .modal-body p.move-hint {
   margin: 0;

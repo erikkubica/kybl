@@ -1147,7 +1147,7 @@ export default function App() {
                   </div>
                 ) : view === "grid" ? (
                   <GridView
-                    key={`${settings.binaryUnits}${settings.absoluteDates}`}
+                    key={`${settings.binaryUnits}${settings.absoluteDates}${settings.listThumbs}`}
                     entries={entries}
                     selected={selected}
                     loading={loading}

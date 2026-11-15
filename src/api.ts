@@ -1,4 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
+
+/**
+ * Reads that a provider refused with AccessDenied get two more tries. Ceph-based providers
+ * (Hetzner, and other RGW setups) take a few minutes to spread a new key to every server, and
+ * until then some requests are refused while others go through. A real lack of permission
+ * still fails, about two seconds later. Only for reads, which are safe to repeat.
+ */
+async function read<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await invoke<T>(cmd, args);
+    } catch (e) {
+      if (i >= 2 || !/AccessDenied|status: 403/.test(String(e))) throw e;
+      await new Promise((ok) => setTimeout(ok, 500 + i * 1000));
+    }
+  }
+}
 import type {
   ListResult,
   LocalFile,
@@ -20,13 +37,14 @@ export const api = {
     invoke<string>("test_connection", { profile, secret: secret || null }),
 
   listBuckets: (profileId: string) =>
-    invoke<{ name: string; created: number | null }[]>("list_buckets", { profileId }),
+    read<{ name: string; created: number | null }[]>("list_buckets", { profileId }),
   listObjects: (profileId: string, bucket: string, prefix: string, token?: string | null) =>
-    invoke<ListResult>("list_objects", { profileId, bucket, prefix, token: token ?? null }),
-  searchObjects: (profileId: string, bucket: string, prefix: string, query: string) =>
-    invoke<SearchResult>("search_objects", { profileId, bucket, prefix, query }),
+    read<ListResult>("list_objects", { profileId, bucket, prefix, token: token ?? null }),
+  /** With an `opId`, matches stream in as `search-progress` events and `cancelTransfer(opId)` stops it. */
+  searchObjects: (profileId: string, bucket: string, prefix: string, query: string, opId?: string) =>
+    read<SearchResult>("search_objects", { profileId, bucket, prefix, query, opId: opId ?? null }),
   headObject: (profileId: string, bucket: string, key: string) =>
-    invoke<ObjectDetails>("head_object", { profileId, bucket, key }),
+    read<ObjectDetails>("head_object", { profileId, bucket, key }),
   /** The whole object as bytes, for previews rendered in the app (PDF). Rejects above `maxBytes`. */
   objectBytes: (profileId: string, bucket: string, key: string, maxBytes: number) =>
     invoke<ArrayBuffer>("get_object_bytes", { profileId, bucket, key, maxBytes }),
@@ -82,6 +100,12 @@ export const api = {
   cancelTransfer: (id: string) => invoke<void>("cancel_transfer", { id }),
 
   clearThumbnailCache: () => invoke<number>("clear_thumbnail_cache"),
+
+  /** Names and sizes of files from the system picker (paths, or URIs on phones). */
+  pickedFiles: (uris: string[]) =>
+    invoke<{ path: string; name: string; size: number }[]>("picked_files", { uris }),
+  /** Where downloads are saved without asking (phones; Downloads on desktop). */
+  downloadFolder: () => invoke<string>("download_folder"),
 };
 
 export function errMessage(e: unknown): string {

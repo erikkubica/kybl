@@ -1,43 +1,40 @@
 mod commands;
+mod mobile;
+#[cfg(desktop)]
 mod prefs;
 mod state;
+#[cfg(desktop)]
 mod sync;
 mod thumbs;
 mod transfers;
+#[cfg(desktop)]
 mod tray;
 
+#[cfg(desktop)]
 use std::sync::atomic::Ordering;
 
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::Manager;
+#[cfg(desktop)]
+use tauri::{RunEvent, WindowEvent};
 
 /// Passed by the login item: start in the menu bar without opening the window.
+#[cfg(desktop)]
 const HIDDEN_ARG: &str = "--hidden";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_autostart::Builder::new().args([HIDDEN_ARG]).build())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(mobile::plugin())
         .manage(state::AppState::default())
+        .register_asynchronous_uri_scheme_protocol("thumb", thumbs::protocol);
+
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_autostart::Builder::new().args([HIDDEN_ARG]).build())
         .manage(sync::SyncManager::default())
-        .register_asynchronous_uri_scheme_protocol("thumb", thumbs::protocol)
-        .setup(|app| {
-            let handle = app.handle().clone();
-            app.manage(prefs::load(&handle));
-            tray::setup(&handle)?;
-            // the window is not created by the config (`create: false`): started at login it is
-            // only made once the user opens it
-            if std::env::args().any(|a| a == HIDDEN_ARG) {
-                #[cfg(target_os = "macos")]
-                let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            } else {
-                tray::show_main(&handle);
-            }
-            tauri::async_runtime::spawn(thumbs::prune_cache(handle.clone()));
-            tauri::async_runtime::spawn(sync::init(handle));
-            Ok(())
-        })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let app = window.app_handle();
@@ -46,6 +43,36 @@ pub fn run() {
                     tray::hide_main(app);
                 }
             }
+        });
+
+    let app = builder
+        .setup(|app| {
+            let handle = app.handle().clone();
+            if let Ok(dir) = handle.path().app_data_dir() {
+                let _ = handle.state::<state::AppState>().vault_dir.set(dir);
+            }
+            #[cfg(desktop)]
+            {
+                app.manage(prefs::load(&handle));
+                tray::setup(&handle)?;
+                // the window is not created by the config (`create: false`): started at login it is
+                // only made once the user opens it
+                if std::env::args().any(|a| a == HIDDEN_ARG) {
+                    #[cfg(target_os = "macos")]
+                    let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                } else {
+                    tray::show_main(&handle);
+                }
+                tauri::async_runtime::spawn(sync::init(handle.clone()));
+            }
+            #[cfg(mobile)]
+            {
+                let _window = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default()).build()?;
+                #[cfg(target_os = "ios")]
+                mobile::edge_to_edge(&_window);
+            }
+            tauri::async_runtime::spawn(thumbs::prune_cache(handle));
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_profiles,
@@ -66,27 +93,39 @@ pub fn run() {
             commands::move_many,
             commands::expand_paths,
             commands::list_all_under,
+            mobile::download_folder,
+            mobile::native_theme,
+            mobile::picked_files,
             thumbs::clear_thumbnail_cache,
             transfers::start_upload,
             transfers::start_download,
             transfers::cancel_transfer,
+            #[cfg(desktop)]
             sync::sync_list,
+            #[cfg(desktop)]
             sync::sync_save,
+            #[cfg(desktop)]
             sync::sync_delete,
+            #[cfg(desktop)]
             sync::sync_now,
+            #[cfg(desktop)]
             sync::sync_set_paused,
+            #[cfg(desktop)]
             sync::sync_pause_all,
+            #[cfg(desktop)]
             prefs::get_app_prefs,
+            #[cfg(desktop)]
             prefs::set_app_prefs,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|app, event| {
-        match event {
+    app.run(|_app, _event| {
+        #[cfg(desktop)]
+        match _event {
             // clicking the Dock icon while the window is hidden brings it back
             #[cfg(target_os = "macos")]
-            RunEvent::Reopen { .. } => tray::show_main(app),
+            RunEvent::Reopen { .. } => tray::show_main(_app),
             // the hidden window was destroyed to free memory (see tray::hide_main): keep running
             RunEvent::ExitRequested { code: None, api, .. } if tray::REAPING.swap(false, Ordering::SeqCst) => {
                 api.prevent_exit();

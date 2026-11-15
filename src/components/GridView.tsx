@@ -2,7 +2,7 @@ import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } fr
 import { useMeasured, useWindowed } from "../useWindowed";
 import { formatBytes } from "../format";
 import { EmptyState, FileIcon } from "./FileIcon";
-import { cachedThumb, canThumb, loadThumb } from "../thumbs";
+import { cachedThumb, canListThumb, loadThumb } from "../thumbs";
 import type { Entry } from "../types";
 
 const Card = memo(function Card({
@@ -26,7 +26,7 @@ const Card = memo(function Card({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const visible = useRef(false);
-  const eligible = canThumb(entry);
+  const eligible = canListThumb(entry);
   const [thumb, setThumb] = useState<string | null | undefined>(() =>
     eligible ? cachedThumb(profileId, bucket, entry) : null,
   );

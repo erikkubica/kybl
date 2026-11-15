@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- the page background (Kybl scheme, styles.css / schemes.ts), shown before the page paints -->
+    <color name="kybl_bg">#F8F6F5</color>
+</resources>

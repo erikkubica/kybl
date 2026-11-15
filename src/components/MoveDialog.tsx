@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
 import { Modal } from "./Dialogs";
+import { ErrorText } from "./ErrorText";
 import { FileIcon } from "./FileIcon";
 import { entryParent, isValidDest } from "../moving";
 import type { Entry } from "../types";
@@ -33,7 +34,10 @@ export function MoveDialog({
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [cursor, setCursor] = useState(-1);
+  const [attempt, setAttempt] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  /** folders made in this picker; they only exist once something is put in them */
+  const made = useRef(new Set<string>());
 
   useEffect(() => {
     let live = true;
@@ -52,25 +56,29 @@ export function MoveDialog({
       return [...found].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
     })()
       .then((f) => live && setFolders(f))
-      .catch((e) => live && setError(String(e)));
+      .catch((e) => live && setError(errMessage(e)));
     return () => {
       live = false;
     };
-  }, [profileId, bucket, path]);
+  }, [profileId, bucket, path, attempt]);
 
   const parts = path.split("/").filter(Boolean);
   const blocked = (f: string) => items.some((e) => e.kind === "folder" && f.startsWith(e.key));
-  const valid = isValidDest(items, path);
-  const allHere = items.every((e) => entryParent(e) === path);
+  // a folder name still being typed counts as the destination, so "Move here" finishes the job
+  // without a separate confirm step (touch keyboards can be dismissed without pressing Return)
+  const pending = creating ? newName.trim().replace(/\/+$/, "") : "";
+  const dest = pending && !pending.includes("/") ? `${path}${pending}/` : path;
+  const valid = isValidDest(items, dest);
+  const allHere = items.every((e) => entryParent(e) === dest);
   const what = items.length === 1 ? `“${items[0].name}”` : `${items.length} items`;
   const verb = mode === "move" ? "Move" : "Copy";
 
   const createFolder = () => {
-    const n = newName.trim().replace(/\/+$/, "");
-    if (!n || n.includes("/")) return;
+    if (dest === path) return;
+    made.current.add(dest);
     setCreating(false);
     setNewName("");
-    setPath(`${path}${n}/`);
+    setPath(dest);
   };
 
   const onListKey = (e: React.KeyboardEvent) => {
@@ -128,7 +136,17 @@ export function MoveDialog({
               <span className="spinner" /> Loading folders…
             </div>
           )}
-          {error && <div className="move-state error selectable">{error}</div>}
+          {error && (
+            <div className="move-state error">
+              <span>
+                <Icon name="alert" size={14} /> Couldn't list the folders here.
+              </span>
+              <ErrorText message={error} />
+              <button className="btn" onClick={() => setAttempt((n) => n + 1)}>
+                Try again
+              </button>
+            </div>
+          )}
           {folders?.length === 0 && !creating && <div className="move-state">No folders here. You can {mode} into this folder or create a new one.</div>}
           {folders?.map((f, i) => {
             const name = f.slice(path.length).replace(/\/$/, "");
@@ -157,13 +175,16 @@ export function MoveDialog({
                 value={newName}
                 placeholder="Folder name"
                 spellCheck={false}
+                enterKeyHint="done"
+                autoCorrect="off"
+                autoCapitalize="off"
                 onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => {
                   e.stopPropagation();
                   if (e.key === "Enter") createFolder();
                   if (e.key === "Escape") setCreating(false);
                 }}
-                onBlur={() => !newName.trim() && setCreating(false)}
+                onBlur={() => (newName.trim() ? createFolder() : setCreating(false))}
               />
             </div>
           )}
@@ -173,7 +194,7 @@ export function MoveDialog({
             ? `${items.length === 1 ? "It’s" : "They’re"} already in this folder. Pick another one.`
             : !valid
               ? "A folder can’t be moved into itself."
-              : `${verb} to /${path}`}
+              : `${verb} to /${dest}`}
         </p>
       </div>
       <div className="modal-foot split">
@@ -188,7 +209,13 @@ export function MoveDialog({
             className="btn btn-primary"
             disabled={!valid}
             onClick={() => {
-              onSubmit(path, mode);
+              // S3 has no real folders: without a marker object a new folder would vanish again
+              // the moment its last file is moved out. Best effort, the move itself doesn't need it.
+              if (dest !== path) made.current.add(dest);
+              for (const f of made.current) {
+                if (dest.startsWith(f)) api.createFolder(profileId, bucket, f).catch(() => {});
+              }
+              onSubmit(dest, mode);
               onClose();
             }}
           >

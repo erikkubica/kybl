@@ -333,6 +333,9 @@ export function SettingsPage({
               <>
                 <h3 className="set-title">Lists</h3>
                 <div className="set-card">
+                  <Row label="Thumbnails" hint="Show photo previews in the grid. Each one is downloaded once and kept on disk; off, the grid shows file icons and downloads nothing.">
+                    <Switch label="Thumbnails" on={settings.listThumbs} onChange={(listThumbs) => onChange({ listThumbs })} />
+                  </Row>
                   <Row label="Folders first" hint="Keep folders above files, whatever the sort order.">
                     <Switch label="Folders first" on={settings.foldersFirst} onChange={(foldersFirst) => onChange({ foldersFirst })} />
                   </Row>

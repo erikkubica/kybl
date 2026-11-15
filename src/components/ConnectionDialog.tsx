@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ErrorText } from "./ErrorText";
 import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
@@ -6,6 +6,11 @@ import { providerMeta } from "../providers";
 import { Modal } from "./Dialogs";
 import { ProviderBadge } from "./Sidebar";
 import type { Profile } from "../types";
+
+/** Keys, endpoints and bucket names are typed exactly: no autocorrect or capitals on phones. */
+const ANDROID = /Android/i.test(navigator.userAgent);
+
+const RAW = { spellCheck: false, autoCorrect: "off", autoCapitalize: "off", autoComplete: "off" } as const;
 
 type Preset = {
   id: string;
@@ -99,6 +104,11 @@ export function ConnectionDialog({
   const [busy, setBusy] = useState<"test" | "save" | null>(null);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [showSecret, setShowSecret] = useState(false);
+  const resultRef = useRef<HTMLDivElement>(null);
+  // On small screens the result lands below the fold; bring it into view.
+  useEffect(() => {
+    if (result) resultRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [result]);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const preset = PRESETS.find((p) => p.id === provider) ?? PRESETS[0];
@@ -206,7 +216,7 @@ export function ConnectionDialog({
         ) : (
           <label className="field">
             <span>Region</span>
-            <input value={region} onChange={(e) => pickRegion(e.target.value)} spellCheck={false} />
+            <input value={region} onChange={(e) => pickRegion(e.target.value)} {...RAW} />
           </label>
         )}
 
@@ -214,17 +224,17 @@ export function ConnectionDialog({
           <span>
             Bucket <em>optional</em>
           </span>
-          <input value={bucket} onChange={(e) => setBucket(e.target.value)} placeholder="my-bucket" spellCheck={false} />
+          <input value={bucket} onChange={(e) => setBucket(e.target.value)} placeholder="my-bucket" {...RAW} />
         </label>
 
         <label className="field span2">
           <span>Endpoint</span>
-          <input className="mono" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://…" spellCheck={false} />
+          <input className="mono" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://…" inputMode="url" {...RAW} />
         </label>
 
         <label className="field">
           <span>Access key ID</span>
-          <input className="mono" value={accessKeyId} onChange={(e) => setAccessKeyId(e.target.value)} spellCheck={false} autoComplete="off" />
+          <input className="mono" value={accessKeyId} onChange={(e) => setAccessKeyId(e.target.value)} {...RAW} />
         </label>
         <label className="field">
           <span>Secret access key</span>
@@ -234,9 +244,8 @@ export function ConnectionDialog({
               type={showSecret ? "text" : "password"}
               value={secret}
               onChange={(e) => setSecret(e.target.value)}
-              placeholder={initial ? "Saved in keychain" : ""}
-              autoComplete="off"
-              spellCheck={false}
+              placeholder={initial ? (ANDROID ? "Saved on this device" : "Saved in keychain") : ""}
+              {...RAW}
             />
             <button
               type="button"
@@ -267,11 +276,13 @@ export function ConnectionDialog({
 
         <p className="hint span2">
           <Icon name="check-circle" size={13} />
-          The secret key is stored in your system keychain, never in a file.
+          {ANDROID
+            ? "The secret key stays on this device, in Kybl's private storage, and is left out of backups."
+            : "The secret key is stored in your system keychain, never in a file."}
         </p>
 
         {result && (
-          <div className={`result span2 ${result.ok ? "ok" : "bad"}`}>
+          <div ref={resultRef} className={`result span2 ${result.ok ? "ok" : "bad"}`}>
             <Icon name={result.ok ? "check-circle" : "alert"} size={15} />
             <ErrorText message={result.text} />
           </div>

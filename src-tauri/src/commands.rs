@@ -364,7 +364,18 @@ pub struct SearchResult {
     truncated: bool,
 }
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SearchProgress {
+    op_id: String,
+    scanned: u64,
+    /// matches from this page only; the UI appends them
+    found: Vec<ObjInfo>,
+}
+
 /// Recursive, case-insensitive "contains" search over the keys below `prefix`.
+/// With an `op_id`, each page reports a `search-progress` event (keys checked so far and the new
+/// matches), and `cancel_transfer(op_id)` stops the scan.
 #[tauri::command]
 pub async fn search_objects(
     app: AppHandle,
@@ -373,10 +384,39 @@ pub async fn search_objects(
     bucket: String,
     prefix: String,
     query: String,
+    op_id: Option<String>,
 ) -> Result<SearchResult, String> {
     const MAX_SCAN: u64 = 300_000;
     const MAX_RESULTS: usize = 500;
     let client = client_for(&app, &state, &profile_id).await?;
+    let flag = Arc::new(AtomicBool::new(false));
+    if let Some(id) = &op_id {
+        state.cancels.lock().await.insert(id.clone(), flag.clone());
+    }
+    let result = search_scan(&client, &bucket, &prefix, &query, MAX_SCAN, MAX_RESULTS, &flag, |scanned, found| {
+        if let Some(id) = &op_id {
+            let _ = app.emit("search-progress", SearchProgress { op_id: id.clone(), scanned, found: found.to_vec() });
+        }
+    })
+    .await;
+    if let Some(id) = &op_id {
+        state.cancels.lock().await.remove(id);
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn search_scan(
+    client: &Client,
+    bucket: &str,
+    prefix: &str,
+    query: &str,
+    max_scan: u64,
+    max_results: usize,
+    cancel: &AtomicBool,
+    mut progress: impl FnMut(u64, &[ObjInfo]),
+) -> Result<SearchResult, String> {
+    let (bucket, prefix) = (bucket.to_string(), prefix.to_string());
     let needle = query.to_lowercase();
     let mut found: Vec<ObjInfo> = Vec::new();
     let mut scanned = 0u64;
@@ -391,6 +431,8 @@ pub async fn search_objects(
             .send()
             .await
             .map_err(sdk_err)?;
+        let before = found.len();
+        let mut full = false;
         for o in out.contents() {
             scanned += 1;
             let key = o.key().unwrap_or_default();
@@ -399,13 +441,21 @@ pub async fn search_objects(
             }
             if key[prefix.len().min(key.len())..].to_lowercase().contains(&needle) {
                 found.push(obj_info(o));
-                if found.len() >= MAX_RESULTS {
-                    truncated = true;
-                    break 'pages;
+                if found.len() >= max_results {
+                    full = true;
+                    break;
                 }
             }
         }
-        if scanned >= MAX_SCAN {
+        progress(scanned, &found[before..]);
+        if full {
+            truncated = true;
+            break 'pages;
+        }
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        if scanned >= max_scan {
             truncated = true;
             break;
         }

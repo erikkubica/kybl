@@ -15,7 +15,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["image-png", "tray-icon"] }
+tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
@@ -28,18 +28,39 @@ aws-smithy-http-client = { version = "1", default-features = false, features = [
 bytes = "1"
 http-body = "1"
 tokio = { version = "1", features = ["fs", "io-util", "sync", "time", "rt-multi-thread", "macros"] }
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 percent-encoding = "2"
 mime_guess = "2"
 walkdir = "2"
 uuid = { version = "1", features = ["v4"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 kamadak-exif = "0.6"
+tauri-plugin-fs = "2"
+
+# Desktop only: the menu-bar icon, launch at login and two-way folder sync (a phone has no folders
+# to keep in sync and no menu bar).
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri = { version = "2", features = ["image-png", "tray-icon"] }
 notify = "8"
 notify-debouncer-full = "0.7"
 ignore = "0.4"
 tauri-plugin-autostart = "2"
 trash = "5"
+
+# Phones have no root certificate files for rustls to load: trust Mozilla's root set instead
+# (see `state::http_client`).
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+webpki-root-certs = "1"
+base64 = "0.22"
+
+# iOS: to stop the web view insetting itself for the notch and home bar (the page handles the
+# safe areas itself, see mobile.css)
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+
+# The OS keychain everywhere but Android, which keeps secrets in the app's private storage
+# (see `state::vault`).
+[target.'cfg(not(target_os = "android"))'.dependencies]
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 
 [profile.release]
 codegen-units = 1

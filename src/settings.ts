@@ -6,6 +6,7 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { setAbsoluteDates, setByteUnits } from "./format";
+import { setListThumbs } from "./thumbs";
 import { SCHEME_VAR_NAMES, paletteVars, schemeById, type SchemeId } from "./schemes";
 
 export type Theme = "system" | "light" | "dark";
@@ -35,6 +36,8 @@ export type Settings = {
   confirmDelete: boolean;
   /** open the transfers panel when a transfer starts */
   autoOpenTransfers: boolean;
+  /** make thumbnails for photos in lists and grids (each one is a download the first time) */
+  listThumbs: boolean;
 };
 
 export const DEFAULTS: Settings = {
@@ -50,6 +53,7 @@ export const DEFAULTS: Settings = {
   restoreLast: true,
   confirmDelete: true,
   autoOpenTransfers: true,
+  listThumbs: false,
 };
 
 export const ACCENTS: { id: Exclude<Accent, "scheme">; label: string; color: string }[] = [
@@ -138,6 +142,7 @@ export function applySettings(s: Settings) {
   root.dataset.font = s.font;
   setByteUnits(s.binaryUnits);
   setAbsoluteDates(s.absoluteDates);
+  setListThumbs(s.listThumbs);
 
   if ("__TAURI_INTERNALS__" in window) {
     // native title bar / menus follow the chosen theme; null = follow the OS

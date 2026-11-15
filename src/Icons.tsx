@@ -88,6 +88,7 @@ const PATHS: Record<string, ReactNode> = {
     </>
   ),
   cloud: <path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 10.5 3.75 3.75 0 0 1 17.5 18z" />,
+  transfers: <path d="M8 20V5m0 0L4 9m4-4 4 4M16 4v15m0 0 4-4m-4 4-4-4" />,
   sync: (
     <>
       <path d="M20 11.5A8 8 0 0 0 6.1 6.6L4 8.6" />
@@ -115,10 +116,13 @@ const PATHS: Record<string, ReactNode> = {
       <path d="M7 7h.01M7 17h.01" />
     </>
   ),
+  // a pail, after the brand book's one-colour tray mark: handle, rim, body with its band
   bucket: (
     <>
-      <ellipse cx="12" cy="6" rx="8" ry="3" />
-      <path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
+      <path d="M6.5 10a5.5 5.5 0 0 1 11 0" />
+      <rect x="3.5" y="10" width="17" height="3" rx="1.5" />
+      <path d="M5 13l1.6 7a1.5 1.5 0 0 0 1.5 1.1h7.8a1.5 1.5 0 0 0 1.5-1.1L19 13" />
+      <path d="M5.9 16.8h12.2" />
     </>
   ),
   copy: (

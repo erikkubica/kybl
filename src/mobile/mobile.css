@@ -1,0 +1,2308 @@
+/* =========================================================================
+   Kybl on phones and tablets. Builds on the desktop tokens in styles.css (and
+   the colour scheme the user picked), so both apps share one look. Everything
+   lives under .m-app.
+   ========================================================================= */
+:root {
+  /* while the keyboard is up the home bar is under it */
+  --m-kb-bottom: 0px;
+  --m-top: var(--a-top, env(safe-area-inset-top, 0px));
+  --m-bottom: var(--a-bottom, env(safe-area-inset-bottom, 0px));
+  --m-left: var(--a-left, env(safe-area-inset-left, 0px));
+  --m-right: var(--a-right, env(safe-area-inset-right, 0px));
+  --m-bar-h: 52px;
+  --m-page: var(--panel);
+  --m-card: var(--raised);
+  --m-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --m-hair: color-mix(in srgb, var(--border) 85%, transparent);
+  /* brand book: rim and handle are cast iron, chipped enamel on dark surfaces */
+  --k-line: #1e1a1a;
+}
+
+:root[data-theme="dark"] {
+  --k-line: #f1efed;
+}
+
+html,
+body {
+  background: var(--panel);
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+.m-app {
+  position: fixed;
+  inset: 0;
+  /* iOS: the part above the keyboard (MobileApp sets --vvh) */
+  height: var(--vvh, auto);
+  background: var(--m-page);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.35;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* :where() keeps this at zero specificity, so .btn-primary's white text (brand book: white on
+   Kybl Red) and every other button class still win */
+:where(.m-app) button {
+  cursor: pointer;
+  touch-action: manipulation;
+  font-family: inherit;
+  color: inherit;
+}
+
+/* iOS zooms into inputs smaller than 16px when they get focus */
+.m-app input,
+.m-app select,
+.m-app textarea {
+  font-size: 16px !important;
+}
+
+.m-presence {
+  display: contents;
+}
+
+/* ------------------------------------------------------------ screens */
+.m-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--m-page);
+}
+
+.m-overlay {
+  z-index: 20;
+  box-shadow: -18px 0 40px rgba(0, 0, 0, 0.12);
+  animation: m-slide-in 0.36s var(--m-spring) both;
+}
+
+.m-leaving > .m-overlay {
+  animation: m-slide-out 0.22s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@keyframes m-slide-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes m-slide-out {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.m-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 0 var(--m-right) calc(var(--m-bottom) + 104px) var(--m-left);
+}
+
+/* a new folder slides in from the side you are going */
+.m-page.from-right {
+  animation: m-push 0.34s var(--m-spring) both;
+}
+
+.m-page.from-left {
+  animation: m-pop 0.34s var(--m-spring) both;
+}
+
+@keyframes m-push {
+  from {
+    transform: translateX(42px);
+    opacity: 0;
+  }
+}
+
+@keyframes m-pop {
+  from {
+    transform: translateX(-42px);
+    opacity: 0;
+  }
+}
+
+@keyframes m-rise {
+  from {
+    transform: translateY(10px) scale(0.97);
+    opacity: 0;
+  }
+}
+
+@keyframes m-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ------------------------------------------------------------ top bar */
+.m-bar {
+  flex: none;
+  position: relative;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: calc(var(--m-bar-h) + var(--m-top));
+  padding: var(--m-top) calc(6px + var(--m-right)) 0 calc(6px + var(--m-left));
+  background: var(--m-page);
+  border-bottom: 1px solid transparent;
+}
+
+.m-bar.solid {
+  background: color-mix(in srgb, var(--m-page) 82%, transparent);
+  backdrop-filter: saturate(1.8) blur(20px);
+  -webkit-backdrop-filter: saturate(1.8) blur(20px);
+  border-bottom-color: var(--m-hair);
+}
+
+.m-bar-select {
+  background: color-mix(in srgb, var(--accent-soft) 60%, var(--m-page)) !important;
+}
+
+.m-title {
+  flex: 1;
+  min-width: 0;
+  padding: 0 6px;
+}
+
+/* small title centred over the whole bar, whatever sits left and right */
+.m-title.center {
+  position: absolute;
+  left: 25%;
+  right: 25%;
+  bottom: 0;
+  height: var(--m-bar-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  pointer-events: none;
+  text-align: center;
+}
+
+.m-title.center ~ * {
+  margin-left: 0;
+}
+
+.m-bar > .m-title.center + .m-icon,
+.m-bar > .m-title.center + .m-text-btn {
+  margin-left: auto;
+}
+
+.m-title.hidden {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.m-title h1 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.015em;
+}
+
+.m-title p {
+  margin: 1px 0 0;
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.m-icon {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text);
+}
+
+.m-icon:active {
+  background: var(--pressed);
+}
+
+.m-text-btn {
+  flex: none;
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 20px;
+  background: transparent;
+  color: var(--accent) !important;
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.m-text-btn.danger {
+  color: var(--danger) !important;
+}
+
+.m-text-btn:active {
+  background: var(--pressed);
+}
+
+.m-badge {
+  position: absolute;
+  top: 5px;
+  right: 3px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--accent-solid);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--m-page);
+}
+
+.m-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  margin: 0 4px 0 10px;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: var(--pressed);
+  color: var(--dim);
+}
+
+.m-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+}
+
+.m-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+/* ------------------------------------------------------------ large title header */
+.m-hero {
+  padding: 2px 20px 4px;
+}
+
+.m-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.m-eyebrow > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.m-eyebrow .pbadge {
+  transform: scale(0.86);
+  transform-origin: left center;
+  margin-right: -3px;
+}
+
+.m-large {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 760;
+  line-height: 1.12;
+  letter-spacing: -0.028em;
+  overflow-wrap: anywhere;
+}
+
+.m-hero-sub {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--dim);
+}
+
+/* the desktop path (Breadcrumbs.tsx) in the bar, next to the back arrow: bucket › … › parent ›
+   current, folded to fit the room between the arrow and the actions */
+.m-bar-path {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-self: stretch;
+  padding-left: 2px;
+}
+
+.m-bar > .m-bar-path:first-child {
+  padding-left: 10px;
+}
+
+.m-bar-path .crumbs {
+  /* the fold always fits bucket › … › current; scroll is the last resort */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.m-bar-path .crumbs::-webkit-scrollbar {
+  display: none;
+}
+
+/* the hidden measuring copy must not count as something to scroll to */
+.m-bar-path .crumbs-ruler {
+  max-width: 0;
+  overflow: hidden;
+}
+
+.m-bar-path .crumb {
+  height: 36px;
+  padding: 0 6px;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 550;
+  letter-spacing: -0.008em;
+  max-width: none;
+}
+
+.m-bar-path .crumb svg {
+  color: var(--accent);
+}
+
+.m-bar-path .crumb.current {
+  font-weight: 680;
+}
+
+/* desktop's hover tint sticks after a tap on touch screens */
+.m-bar-path button.crumb:hover {
+  background: transparent;
+}
+
+.m-bar-path button.crumb:active {
+  background: var(--pressed);
+}
+
+.m-bar-path .crumb-sep {
+  margin: 0 -2px;
+}
+
+/* a phone bar is narrow: unlike desktop the bucket gives way first, down to its icon, so the
+   current folder keeps its name */
+.m-bar-path .crumbs > .crumb-root {
+  flex: 0 1 auto;
+  min-width: 36px;
+}
+
+.m-bar-path .crumbs > .crumb-root.icon-only {
+  flex: none;
+  min-width: 0;
+}
+
+.m-bar-path .crumbs > .crumb-here {
+  flex: 0 0.08 auto;
+  min-width: 64px;
+}
+
+.m-sentinel {
+  height: 1px;
+  margin-bottom: -1px;
+}
+
+/* count · sort · list / grid */
+.m-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px 6px 20px;
+}
+
+.m-count {
+  flex: 1;
+  font-size: 13px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.m-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--pressed);
+  color: var(--text) !important;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.m-pill svg {
+  color: var(--dim);
+}
+
+.m-pill:active {
+  filter: brightness(0.9);
+}
+
+.m-seg-icons {
+  display: flex;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--pressed);
+}
+
+.m-seg-icons button {
+  width: 36px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dim) !important;
+}
+
+.m-seg-icons button.on {
+  background: var(--m-card);
+  color: var(--text) !important;
+  box-shadow: var(--shadow-sm), 0 0 0 0.5px var(--border);
+}
+
+/* ------------------------------------------------------------ lists */
+.m-section {
+  margin: 26px 20px 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.m-group {
+  list-style: none;
+  margin: 0 16px;
+  padding: 0;
+  background: var(--m-card);
+  border-radius: 16px;
+  box-shadow: 0 0 0 1px var(--border), var(--shadow-sm);
+  overflow: hidden;
+}
+
+.m-group > li + li {
+  border-top: 1px solid var(--m-hair);
+}
+
+.m-pad {
+  padding: 10px;
+}
+
+.m-list {
+  list-style: none;
+  margin: 0;
+  padding: 2px 0 4px;
+}
+
+.m-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 62px;
+  padding-right: 4px;
+}
+
+/* hairlines start under the name, like iOS lists */
+.m-list > .m-row + .m-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--m-hair);
+}
+
+.m-row.selected,
+.m-row.active {
+  background: var(--accent-soft);
+}
+
+.m-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  align-self: stretch;
+  padding: 7px 0 7px 18px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.m-row-main:active {
+  background: var(--pressed);
+}
+
+.m-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.m-row-name {
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.m-row-sub {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.m-row-sub.danger {
+  color: var(--danger);
+  white-space: normal;
+}
+
+.m-row-more {
+  color: var(--dim) !important;
+}
+
+/* the three dots are hairline strokes on desktop; on a phone they have to read as a button */
+.m-row-more svg,
+.m-bar .m-icon[aria-label="More"] svg {
+  stroke-width: 2.8;
+}
+
+.m-chev {
+  flex: none;
+  color: var(--faint);
+  margin-right: 4px;
+}
+
+/* the desktop's folder and page art, or the photo on a small print */
+.m-art {
+  position: relative;
+  flex: none;
+  display: block;
+  width: 48px;
+  height: 40px;
+  border-radius: 9px;
+}
+
+.m-art .ico.big {
+  position: absolute;
+  inset: 0;
+}
+
+.m-art .doc-ext {
+  font-size: 7.5px;
+  bottom: 9%;
+}
+
+.m-art img {
+  position: absolute;
+  inset: 2px 4px;
+  width: calc(100% - 8px);
+  height: calc(100% - 4px);
+  object-fit: cover;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.24), 0 0 0 0.5px rgba(0, 0, 0, 0.18);
+  -webkit-user-drag: none;
+  animation: m-fade 0.3s;
+}
+
+.m-art .shimmer {
+  inset: 2px 4px;
+  border-radius: 6px;
+}
+
+.m-art.skel {
+  border-radius: 9px;
+}
+
+.m-skel {
+  padding-left: 18px;
+  gap: 14px;
+}
+
+.m-check {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  background: color-mix(in srgb, var(--m-card) 80%, transparent);
+  color: #fff;
+}
+
+.m-check.on {
+  background: var(--accent-solid);
+  border-color: var(--accent-solid);
+  animation: m-pop-check 0.25s var(--m-spring);
+}
+
+@keyframes m-pop-check {
+  from {
+    transform: scale(0.6);
+  }
+}
+
+/* ------------------------------------------------------------ grid (Finder tiles, like the desktop) */
+.m-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 2px 4px;
+  padding: 4px 10px;
+}
+
+.m-cell {
+  min-width: 0;
+  animation: m-rise 0.38s var(--m-spring) both;
+}
+
+.m-card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  padding: 6px 2px 10px;
+  border: 0;
+  background: transparent;
+  text-align: center;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.m-card-art {
+  position: relative;
+  width: 86%;
+  aspect-ratio: 5 / 4;
+  border-radius: 14px;
+}
+
+.m-card-art .m-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.m-card-art .m-art .doc-ext {
+  font-size: 10px;
+}
+
+.m-card-art .m-art img {
+  inset: 3%;
+  width: 94%;
+  height: 94%;
+  border-radius: 9px;
+}
+
+.m-card-art .m-art .shimmer {
+  inset: 3%;
+  border-radius: 9px;
+}
+
+.m-card:active .m-card-art {
+  transform: scale(0.95);
+}
+
+.m-card.selected .m-card-art,
+.m-card.active .m-card-art {
+  background: var(--accent-soft);
+}
+
+.m-card .m-check {
+  position: absolute;
+  right: -2px;
+  top: -4px;
+}
+
+.m-card-name {
+  max-width: 100%;
+  margin-top: 6px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.28;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+
+.m-card.selected .m-card-name {
+  background: var(--accent-solid);
+  color: #fff;
+}
+
+.m-card-meta {
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------ home */
+/* brand and actions share one bar */
+.m-home-brand {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding-left: 14px;
+}
+
+/* the lockup: plain mark + "kybl" in Fredoka (brand book) */
+.m-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text);
+}
+
+.m-mark {
+  flex: none;
+}
+
+.m-wordmark {
+  font-family: "Fredoka", "Avenir Next Rounded", "Arial Rounded MT Bold", system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  /* Fredoka sits a touch low next to the mark */
+  transform: translateY(-1px);
+}
+
+.m-recent {
+  display: flex;
+  gap: 12px;
+  padding: 2px 20px 6px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-padding: 0 20px;
+  scrollbar-width: none;
+}
+
+.m-recent::-webkit-scrollbar {
+  display: none;
+}
+
+.m-place {
+  flex: none;
+  width: 136px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 10px 12px 12px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--m-card);
+  box-shadow: 0 0 0 1px var(--border), var(--shadow-sm);
+  text-align: left;
+  scroll-snap-align: start;
+  animation: m-rise 0.4s var(--m-spring) both;
+}
+
+.m-place:active {
+  transform: scale(0.96);
+}
+
+.m-place-art {
+  position: relative;
+  width: 58px;
+  height: 46px;
+  margin: 0 0 8px -4px;
+}
+
+.m-place-art .ico.big {
+  position: absolute;
+  inset: 0;
+}
+
+.m-place-bucket {
+  position: absolute;
+  left: 4px;
+  top: 2px;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.m-place strong {
+  max-width: 100%;
+  font-size: 14.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.m-place small {
+  max-width: 100%;
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* connections as cards on phones */
+.m-conns {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 0 16px;
+}
+
+.m-conn {
+  background: var(--m-card);
+  border-radius: 18px;
+  box-shadow: 0 0 0 1px var(--border), var(--shadow-sm);
+  overflow: hidden;
+  animation: m-rise 0.42s var(--m-spring) both;
+}
+
+.m-conn + .m-conn {
+  animation-delay: 60ms;
+}
+
+.m-conn-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  padding: 8px 4px 8px 16px;
+}
+
+.m-conn-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.m-conn-text strong {
+  font-size: 16.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.m-conn-text small {
+  font-size: 12.5px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.m-conn-edit {
+  color: var(--faint) !important;
+}
+
+.m-buckets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--m-hair);
+}
+
+.m-buckets > li + li .m-bucket::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 62px;
+  right: 0;
+  height: 1px;
+  background: var(--m-hair);
+}
+
+.m-bucket {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 0 12px 0 16px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-size: 16px;
+}
+
+.m-bucket:active {
+  background: var(--pressed);
+}
+
+.m-bucket-ico {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.m-bucket-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.m-bucket-all {
+  justify-content: center;
+  color: var(--accent) !important;
+  font-weight: 600;
+  font-size: 14.5px;
+}
+
+.m-bucket-add {
+  color: var(--accent) !important;
+}
+
+.m-bucket-add .m-bucket-ico {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 10px;
+}
+
+.m-bucket-add .m-bucket-name {
+  font-weight: 550;
+}
+
+.m-bucket-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  color: var(--dim);
+  font-size: 13.5px;
+}
+
+.m-bucket-note span:first-child:not(.spinner) {
+  flex: 1;
+}
+
+.m-add-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 52px;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: 18px;
+  background: transparent;
+  color: var(--accent) !important;
+  font-weight: 650;
+  font-size: 15px;
+}
+
+.m-add-row:active {
+  background: var(--pressed);
+}
+
+/* first run */
+.m-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 10vh 28px 24px;
+  text-align: center;
+}
+
+.m-welcome h1 {
+  margin: 10px 0 0;
+  font-size: 28px;
+  font-weight: 760;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+.m-welcome p {
+  margin: 0 0 10px;
+  max-width: 340px;
+  color: var(--dim);
+  font-size: 15.5px;
+  line-height: 1.45;
+}
+
+.m-mascot {
+  flex: none;
+}
+
+.m-bob {
+  filter: drop-shadow(0 14px 22px rgba(150, 40, 15, 0.25));
+  animation: m-bob 3.2s ease-in-out infinite;
+}
+
+@keyframes m-bob {
+  50% {
+    transform: translateY(-7px) rotate(-2deg);
+  }
+}
+
+.m-big-btn {
+  height: 50px !important;
+  padding: 0 24px !important;
+  font-size: 16px !important;
+  font-weight: 650 !important;
+  border-radius: 16px !important;
+  margin-top: 6px;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--accent-solid) 30%, transparent);
+}
+
+.m-providers {
+  display: flex;
+  gap: 8px;
+  margin-top: 26px;
+  opacity: 0.9;
+}
+
+/* ------------------------------------------------------------ empty states */
+.m-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 9vh 32px 24px;
+  text-align: center;
+  color: var(--dim);
+  animation: m-fade 0.3s;
+}
+
+.m-empty-art {
+  width: 104px;
+  height: 92px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 4px;
+  border-radius: 28px;
+  background: var(--m-card);
+  box-shadow: 0 0 0 1px var(--border), var(--shadow-sm);
+  color: var(--faint);
+}
+
+.m-empty-art.warn {
+  color: var(--danger);
+  background: var(--danger-soft);
+  box-shadow: none;
+}
+
+.m-empty h3 {
+  margin: 8px 0 0;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--text);
+}
+
+.m-empty p {
+  margin: 0 0 8px;
+  max-width: 320px;
+  font-size: 15px;
+}
+
+.m-more {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+}
+
+/* ------------------------------------------------------------ fab & action bar */
+.m-fab {
+  position: absolute;
+  right: calc(18px + var(--m-right));
+  bottom: calc(20px + var(--m-bottom));
+  z-index: 6;
+  width: 60px;
+  height: 60px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 21px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-solid) 82%, #fff) 0%, var(--accent-solid) 55%);
+  color: #fff !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 10px 26px color-mix(in srgb, var(--accent-solid) 42%, transparent),
+    0 2px 6px rgba(0, 0, 0, 0.18);
+  animation: m-fab-in 0.5s var(--m-spring) 0.1s both;
+}
+
+@keyframes m-fab-in {
+  from {
+    transform: scale(0.4) rotate(-90deg);
+    opacity: 0;
+  }
+}
+
+.m-fab:active {
+  transform: scale(0.92);
+}
+
+.m-actionbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  padding: 6px calc(8px + var(--m-right)) calc(6px + var(--m-bottom)) calc(8px + var(--m-left));
+  background: color-mix(in srgb, var(--m-card) 86%, transparent);
+  backdrop-filter: saturate(1.8) blur(20px);
+  -webkit-backdrop-filter: saturate(1.8) blur(20px);
+  border-top: 1px solid var(--m-hair);
+  animation: m-bar-up 0.3s var(--m-spring) both;
+}
+
+@keyframes m-bar-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+.m-barbtn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--accent) !important;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.m-barbtn.danger {
+  color: var(--danger) !important;
+}
+
+.m-barbtn:disabled {
+  opacity: 0.35;
+}
+
+.m-barbtn:active:not(:disabled) {
+  background: var(--pressed);
+}
+
+/* ------------------------------------------------------------ action sheet */
+.m-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: var(--scrim);
+  animation: m-fade 0.2s ease both;
+}
+
+.m-sheet {
+  width: 100%;
+  max-width: 560px;
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 6px calc(10px + var(--m-right)) max(12px, calc(var(--m-bottom) + 6px)) calc(10px + var(--m-left));
+  border-radius: 24px 24px 0 0;
+  background: var(--m-card);
+  box-shadow: var(--shadow-lg);
+  animation: m-sheet-up 0.38s var(--m-spring) both;
+}
+
+@keyframes m-sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+.m-leaving > .m-sheet-backdrop {
+  animation: m-fade-out 0.2s ease both;
+}
+
+.m-leaving > .m-sheet-backdrop .m-sheet {
+  animation: m-sheet-down 0.2s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@keyframes m-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes m-sheet-down {
+  to {
+    transform: translateY(100%);
+  }
+}
+
+.m-sheet-grip {
+  width: 38px;
+  height: 5px;
+  margin: 4px auto 8px;
+  border-radius: 3px;
+  background: var(--border-strong);
+}
+
+.m-sheet-title {
+  padding: 4px 14px 10px;
+  font-size: 13.5px;
+  font-weight: 550;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+.m-sheet-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 54px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  font-size: 16.5px;
+  text-align: left;
+}
+
+.m-sheet-item svg {
+  color: var(--dim);
+}
+
+.m-sheet-item.danger,
+.m-sheet-item.danger svg {
+  color: var(--danger) !important;
+}
+
+.m-sheet-item:active {
+  background: var(--pressed);
+}
+
+.m-sheet-cancel {
+  justify-content: center;
+  margin-top: 8px;
+  background: var(--pressed);
+  font-weight: 650;
+}
+
+/* ------------------------------------------------------------ photo viewer */
+.m-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: #000;
+  color: #fff;
+  animation: m-viewer-in 0.3s var(--m-spring) both;
+}
+
+@keyframes m-viewer-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+
+.m-leaving > .m-viewer {
+  animation: m-viewer-out 0.2s ease both;
+}
+
+@keyframes m-viewer-out {
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+.m-vstage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.m-vslide {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  will-change: transform;
+}
+
+.m-vslide img,
+.m-vslide video {
+  grid-area: 1 / 1;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+
+.m-vslide img.m-vthumb {
+  width: 100%;
+  height: 100%;
+  filter: blur(6px);
+  transform: scale(1.02);
+  opacity: 0.8;
+}
+
+.m-vslide video {
+  max-height: calc(100% - var(--m-top) - var(--m-bottom) - 150px);
+}
+
+.m-vspin {
+  grid-area: 1 / 1;
+}
+
+.m-verror {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 280px;
+  color: rgba(255, 255, 255, 0.75);
+  text-align: center;
+}
+
+.m-vbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: calc(var(--m-bar-h) + var(--m-top) + 24px);
+  padding: var(--m-top) calc(6px + var(--m-right)) 24px calc(6px + var(--m-left));
+  background: linear-gradient(rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0));
+}
+
+.m-vtools {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: space-around;
+  padding: 30px calc(8px + var(--m-right)) calc(10px + var(--m-bottom)) calc(8px + var(--m-left));
+  background: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.6));
+}
+
+.m-viewer.bare .m-vbar,
+.m-viewer.bare .m-vtools {
+  pointer-events: none;
+}
+
+.m-viewer .m-icon,
+.m-viewer .m-title p {
+  color: #fff !important;
+}
+
+.m-viewer .m-title p {
+  opacity: 0.7;
+}
+
+.m-viewer .m-icon:active,
+.m-vtool:active {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.m-vtool {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 68px;
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: #fff !important;
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.m-viewer .spinner {
+  border-color: rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
+}
+
+.m-detail.over-viewer {
+  z-index: 45;
+}
+
+/* ------------------------------------------------------------ transfers */
+.m-xfer {
+  gap: 12px;
+  padding: 10px 4px 10px 18px;
+  align-items: flex-start;
+}
+
+.m-xfer .m-row-name {
+  font-size: 15px;
+}
+
+.m-xfer .m-icon {
+  margin-top: -6px;
+}
+
+.m-xfer-ico {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.m-xfer-ico.done {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.m-xfer-ico.error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.m-xfer-ico.cancelled,
+.m-xfer-ico.queued {
+  background: var(--pressed);
+  color: var(--dim);
+}
+
+.m-progress {
+  position: relative;
+  display: block;
+  height: 5px;
+  margin-top: 8px;
+  border-radius: 3px;
+  background: var(--pressed);
+  overflow: hidden;
+}
+
+.m-progress > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 3px;
+  background: var(--accent-solid);
+}
+
+.m-progress.indeterminate > span {
+  width: 35%;
+  animation: m-indeterminate 1.1s ease-in-out infinite;
+}
+
+@keyframes m-indeterminate {
+  from {
+    left: -35%;
+  }
+  to {
+    left: 100%;
+  }
+}
+
+/* ------------------------------------------------------------ settings */
+.m-settings {
+  padding-top: 6px;
+}
+
+.m-seg {
+  display: flex;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--pressed);
+}
+
+.m-seg button {
+  flex: 1;
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--dim) !important;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.m-seg button.on {
+  background: var(--m-card);
+  color: var(--text) !important;
+  box-shadow: var(--shadow-sm), 0 0 0 0.5px var(--border);
+}
+
+.m-setting-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 6px 16px;
+  border: 0;
+  background: transparent;
+  font-size: 16px;
+  text-align: left;
+}
+
+.m-setting-row:active {
+  background: var(--pressed);
+}
+
+.m-setting-row.accent {
+  color: var(--accent) !important;
+  font-weight: 600;
+}
+
+.m-grow {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* input[type=checkbox].m-switch: outranks the desktop's 15px checkbox rule */
+input[type="checkbox"].m-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  position: relative;
+  width: 51px;
+  height: 31px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  background: var(--border-strong);
+  box-shadow: none;
+  outline: none;
+  cursor: pointer;
+}
+
+/* keyboard focus only, drawn around the whole switch */
+input[type="checkbox"].m-switch:focus-visible {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.m-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15), 0 1px 1px rgba(0, 0, 0, 0.16);
+}
+
+input[type="checkbox"].m-switch:checked {
+  background: var(--ok);
+}
+
+.m-switch:checked::after {
+  transform: translateX(20px);
+}
+
+.m-foot {
+  margin: 26px 24px;
+  font-size: 13px;
+  color: var(--faint);
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* ------------------------------------------------------------ file detail (desktop preview pane) */
+.m-detail-body {
+  background: var(--m-card);
+}
+
+.m-detail-body .preview {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: auto !important;
+  border: 0 !important;
+  background: transparent !important;
+  overflow: visible !important;
+}
+
+.m-detail-body .preview-inner {
+  padding: 16px 18px 24px !important;
+  overflow: visible !important;
+}
+
+.m-detail-body .preview-media {
+  max-height: 52vh;
+  border-radius: 16px;
+}
+
+.m-detail-body .preview-title {
+  font-size: 21px !important;
+  letter-spacing: -0.02em;
+}
+
+.m-detail-body .preview-actions .btn {
+  height: 46px;
+  min-width: 46px;
+  border-radius: 14px;
+  font-size: 15.5px;
+}
+
+.m-detail-body .text-preview {
+  max-height: 50vh;
+  font-size: 12.5px;
+}
+
+.m-detail-body .prop {
+  padding-top: 7px;
+  padding-bottom: 7px;
+  font-size: 14.5px;
+}
+
+.m-detail-body .seg button {
+  height: 36px;
+  font-size: 14px;
+}
+
+/* ------------------------------------------------------------ desktop dialogs as bottom sheets */
+.m-app .modal-backdrop {
+  align-items: flex-end;
+  padding: 0;
+  z-index: 70;
+  animation: m-fade 0.2s ease both;
+}
+
+.m-app .modal {
+  width: 100% !important;
+  max-width: 640px !important;
+  max-height: calc(100% - var(--m-top) - 12px);
+  overflow-y: auto;
+  border-radius: 24px 24px 0 0;
+  padding-bottom: max(18px, calc(var(--m-bottom) + 6px));
+  animation: m-sheet-up 0.38s var(--m-spring) both;
+}
+
+.m-app .modal .btn {
+  height: 46px;
+  padding: 0 18px;
+  border-radius: 14px;
+  font-size: 15.5px;
+}
+
+.m-app .modal input[type="text"],
+.m-app .modal input[type="password"],
+.m-app .modal input:not([type]),
+.m-app .modal select {
+  height: 46px;
+  border-radius: 12px;
+}
+
+.m-app .modal .icon-btn {
+  width: 40px;
+  height: 40px;
+}
+
+/* the desktop dialogs right-align small buttons; on a phone they share the full width */
+.m-app .modal-foot {
+  gap: 10px;
+  padding: 14px 20px 0;
+}
+
+.m-app .modal-foot > .btn,
+.m-app .modal-foot .btn-row > .btn {
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: center;
+}
+
+.m-app .modal-foot .btn-row {
+  gap: 10px;
+}
+
+/* connection form: the main actions first, Delete under them */
+.m-app .modal-foot.split {
+  flex-direction: column-reverse;
+  align-items: stretch;
+}
+
+/* stacked, so a lone button keeps its own height instead of sharing a row's width */
+.m-app .modal-foot.split > .btn {
+  flex: none;
+}
+
+.m-app .modal-foot.split .btn-row:empty {
+  display: none;
+}
+
+.m-app:not(.wide) .modal .form-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.m-app:not(.wide) .modal .form-grid > * {
+  grid-column: 1 / -1;
+}
+
+.m-app .modal .check {
+  gap: 12px;
+  font-size: 15px;
+}
+
+.m-app .modal .check input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+}
+
+.m-app .modal .check span em,
+.m-app .modal .hint {
+  font-size: 13px;
+}
+
+.m-app .modal .input-wrap .icon-btn {
+  top: 3px;
+  right: 4px;
+}
+
+/* ------------------------------------------------------------ toasts above the FAB */
+.m-app .toasts {
+  bottom: calc(100px + var(--m-bottom)) !important;
+  width: calc(100% - 32px);
+  max-width: 480px;
+}
+
+.m-app .toast {
+  max-width: 100% !important;
+  font-size: 14.5px;
+  border-radius: 16px;
+  animation: m-rise 0.35s var(--m-spring) both;
+}
+
+/* ------------------------------------------------------------ tablets: sidebar | files | details */
+.m-app.wide {
+  --m-side: 300px;
+  display: grid;
+  grid-template-columns: var(--m-side) minmax(0, 1fr);
+}
+
+/* iPad-sized landscape: a slimmer sidebar so the details keep the room their actions need */
+@media (max-width: 1100px) {
+  .m-app.wide {
+    --m-side: 256px;
+  }
+}
+
+.m-side {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding-top: var(--m-top);
+  padding-left: var(--m-left);
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+}
+
+.m-side-brand {
+  display: flex;
+  align-items: center;
+  height: var(--m-bar-h);
+  padding: 0 18px;
+}
+
+.m-side-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 0 16px;
+}
+
+.m-side-foot {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 8px calc(8px + var(--m-bottom)) 10px;
+  border-top: 1px solid var(--border);
+}
+
+.m-side-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--accent) !important;
+  font-size: 14.5px;
+  font-weight: 600;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.m-side-btn svg {
+  flex: none;
+}
+
+.m-side-btn:active {
+  background: var(--pressed);
+}
+
+.m-conns.compact {
+  gap: 16px;
+  padding: 0 10px;
+}
+
+.m-conns.compact .m-conn {
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  overflow: visible;
+}
+
+.m-conns.compact .m-conn-head {
+  min-height: 38px;
+  padding: 4px 0 4px 8px;
+  gap: 9px;
+}
+
+.m-conns.compact .m-conn-text strong {
+  font-size: 13.5px;
+  color: var(--dim);
+}
+
+.m-conns.compact .m-conn-head .m-icon {
+  width: 34px;
+  height: 34px;
+}
+
+.m-conns.compact .m-buckets {
+  border-top: 0;
+}
+
+.m-conns.compact .m-bucket::before {
+  display: none;
+}
+
+.m-conns.compact .m-bucket {
+  min-height: 42px;
+  padding: 0 10px;
+  gap: 10px;
+  border-radius: 11px;
+  font-size: 15px;
+}
+
+.m-conns.compact .m-bucket-ico {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.m-conns.compact .m-bucket.here {
+  background: var(--accent-soft);
+  color: var(--accent) !important;
+  font-weight: 650;
+}
+
+.m-main {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.m-main-files {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.m-pane {
+  position: relative;
+  flex: none;
+  /* never so narrow that Download / Copy / the dates get cut */
+  width: clamp(340px, 34vw, 420px);
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--m-card);
+  animation: m-pane-in 0.34s var(--m-spring) both;
+}
+
+@keyframes m-pane-in {
+  from {
+    transform: translateX(40px);
+    opacity: 0;
+  }
+}
+
+.m-pane .m-bar {
+  background: var(--m-card);
+}
+
+.m-app.wide .m-overlay {
+  left: var(--m-side);
+}
+
+.m-app.wide .m-grid {
+  grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+  padding: 6px 18px;
+}
+
+.m-app.wide .m-hero,
+.m-app.wide .m-toolbar {
+  padding-left: 26px;
+  padding-right: 22px;
+}
+
+.m-app.wide .m-row-main {
+  padding-left: 24px;
+}
+
+.m-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  color: var(--dim);
+}
+
+.m-placeholder h3 {
+  margin: 14px 0 0;
+  font-size: 22px;
+  font-weight: 720;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.m-placeholder p {
+  margin: 0;
+  max-width: 340px;
+}
+
+.m-placeholder .m-mascot {
+  filter: drop-shadow(0 14px 22px rgba(150, 40, 15, 0.22));
+}
+
+/* ------------------------------------------------------------ motion
+   iOS turns the first tap on an element into a hover when that hover starts a CSS transition, so
+   people would have to tap twice. The desktop styles transition on :hover everywhere: switch them
+   off here. Motion comes from keyframe animations instead, plus a few transitions on mobile-only
+   elements that have no :hover styles. */
+.m-app *,
+.m-app *::before,
+.m-app *::after {
+  transition: none !important;
+}
+
+.m-app .m-switch,
+.m-app .m-switch::after {
+  transition: background 0.2s var(--ease), transform 0.25s var(--m-spring) !important;
+}
+
+.m-app .m-progress > span {
+  transition: width 0.2s linear !important;
+}
+
+.m-app .m-bar,
+.m-app .m-title {
+  transition: background-color 0.2s ease, border-color 0.2s ease, opacity 0.2s ease, transform 0.25s var(--m-spring) !important;
+}
+
+.m-app .m-fab,
+.m-app .m-card-art,
+.m-app .m-place {
+  transition: transform 0.18s var(--m-spring) !important;
+}
+
+.m-app .m-vslide.anim {
+  transition: transform 0.26s var(--m-spring) !important;
+}
+
+.m-app .m-vbar,
+.m-app .m-vtools {
+  transition: opacity 0.2s ease !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m-app *,
+  .m-app *::before,
+  .m-app *::after {
+    animation-duration: 0.01s !important;
+    animation-delay: 0s !important;
+  }
+}
+
+/* keyboard up (iOS): the home-bar inset is under the keyboard, and fixed layers follow the app */
+.m-kb {
+  --a-bottom: 0px;
+}
+
+/* --vvh is only set on iOS, and always is the visible height, so sheets follow it whether or
+   not the keyboard was detected */
+.m-app .modal-backdrop,
+.m-sheet-backdrop {
+  bottom: auto;
+  height: var(--vvh, 100%);
+}
+
+/* unknown errors arrive as raw text: keep them to a few lines */
+.m-empty-err {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.m-sentinel + .m-section {
+  margin-top: 14px;
+}
+
+/* ------------------------------------------------------------ move / copy picker */
+.m-app .move-mode {
+  justify-self: stretch;
+  display: flex;
+}
+
+.m-app .move-mode button {
+  flex: 1;
+  height: 36px;
+  font-size: 14.5px;
+}
+
+.m-app .move-list {
+  height: min(300px, 36vh);
+  border-radius: 14px;
+}
+
+.m-app .move-row {
+  min-height: 46px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 15.5px;
+}
+
+.m-app .move-row:hover:not(:disabled) {
+  background: none;
+}
+
+.m-app .move-row.cursor,
+.m-app .move-row:active:not(:disabled) {
+  background: var(--pressed);
+}
+
+.m-app .move-row.new input {
+  height: 38px;
+  border-radius: 10px;
+  font-size: 16px;
+}
+
+/* New folder belongs to the list above it; the decision stays on the bottom row */
+.m-app .move-body ~ .modal-foot.split {
+  flex-direction: column;
+}
+
+/* ------------------------------------------------------------ search */
+.m-search-clear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--faint);
+  color: var(--bg);
+}
+
+/* one line above the results: "20 matches in bucket", or live counts while the scan runs */
+.m-search-sum {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 14px;
+  color: var(--dim);
+}
+.m-search-sum > span:last-child {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.m-search-sum b {
+  font-weight: 650;
+  color: var(--text);
+}
+.m-search-sum .spinner {
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+
+/* Kyblík searching with a magnifier while nothing has turned up yet */
+.m-seeking {
+  padding-top: 12vh;
+  animation: m-fade 0.3s ease both;
+}
+.m-seeking h3 {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.m-seeking p {
+  font-variant-numeric: tabular-nums;
+}
+.m-seek-art {
+  position: relative;
+  width: 132px;
+  height: 116px;
+  display: grid;
+  place-items: center;
+}
+.m-seek-art .m-mascot {
+  filter: drop-shadow(0 14px 22px rgba(150, 40, 15, 0.25));
+  animation: m-seek-peek 2.4s ease-in-out infinite;
+}
+.m-seek-glass {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  margin: -6px 0 0 -10px;
+  fill: rgba(255, 255, 255, 0.18);
+  stroke: var(--k-line);
+  stroke-width: 4.5;
+  stroke-linecap: round;
+  animation: m-seek-glass 2.4s ease-in-out infinite;
+}
+@keyframes m-seek-peek {
+  0%, 100% { transform: rotate(-5deg); }
+  50% { transform: rotate(5deg) translateY(-4px); }
+}
+@keyframes m-seek-glass {
+  0% { transform: translate(-30px, 6px) rotate(-8deg); }
+  25% { transform: translate(4px, -14px) rotate(4deg); }
+  50% { transform: translate(28px, 4px) rotate(10deg); }
+  75% { transform: translate(-2px, 18px) rotate(0deg); }
+  100% { transform: translate(-30px, 6px) rotate(-8deg); }
+}
+.m-seek-bar {
+  position: relative;
+  width: 140px;
+  height: 4px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--pressed);
+}
+.m-seek-bar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  border-radius: 2px;
+  background: #d9381f;
+  animation: m-indeterminate 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .m-seek-art .m-mascot,
+  .m-seek-glass,
+  .m-seek-bar::after {
+    animation: none;
+  }
+}
+/* thin bar under the search field while the scan runs */
+.m-bar-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.m-bar-progress::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 35%;
+  background: #d9381f;
+  animation: m-indeterminate 1.2s ease-in-out infinite;
+}

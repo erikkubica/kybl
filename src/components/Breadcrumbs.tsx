@@ -10,7 +10,18 @@ import { Icon } from "../Icons";
  * Every crumb is measured once in a hidden copy (per path), and the fold is worked out from those
  * widths and the width of the bar, so resizing the window never needs another layout pass.
  */
-export function Breadcrumbs({ bucket, parts, onNavigate }: { bucket: string; parts: string[]; onNavigate: (prefix: string) => void }) {
+export function Breadcrumbs({
+  bucket,
+  parts,
+  onNavigate,
+  compact = false,
+}: {
+  bucket: string;
+  parts: string[];
+  onNavigate: (prefix: string) => void;
+  /** narrow bars (phones): inside a folder the bucket shows as its icon only */
+  compact?: boolean;
+}) {
   const nav = useRef<HTMLElement>(null);
   const ruler = useRef<HTMLDivElement>(null);
   const [room, setRoom] = useState(0);
@@ -27,10 +38,11 @@ export function Breadcrumbs({ bucket, parts, onNavigate }: { bucket: string; par
   }, []);
 
   const path = parts.join("/");
+  const iconOnly = compact && parts.length > 0;
   useLayoutEffect(() => {
     const el = ruler.current;
     if (el) setWidths([...el.children].map((c) => c.getBoundingClientRect().width));
-  }, [bucket, path]);
+  }, [bucket, path, iconOnly]);
 
   const n = parts.length;
   let fold = 0; // how many leading folders hide behind "…"
@@ -49,7 +61,7 @@ export function Breadcrumbs({ bucket, parts, onNavigate }: { bucket: string; par
         <span className="crumb-wrap">
           <span className="crumb current">
             <Icon name="bucket" size={15} />
-            <span className="crumb-label">{bucket}</span>
+            {!iconOnly && <span className="crumb-label">{bucket}</span>}
           </span>
         </span>
         <span className="crumb-wrap">
@@ -66,10 +78,10 @@ export function Breadcrumbs({ bucket, parts, onNavigate }: { bucket: string; par
         ))}
       </div>
 
-      <span className="crumb-wrap crumb-root">
-        <button className={`crumb ${n === 0 ? "current" : ""}`} data-drop="" title={bucket} onClick={() => onNavigate("")}>
+      <span className={`crumb-wrap crumb-root ${iconOnly ? "icon-only" : ""}`}>
+        <button className={`crumb ${n === 0 ? "current" : ""}`} data-drop="" title={bucket} aria-label={bucket} onClick={() => onNavigate("")}>
           <Icon name="bucket" size={15} />
-          <span className="crumb-label">{bucket}</span>
+          {!iconOnly && <span className="crumb-label">{bucket}</span>}
         </button>
       </span>
       {fold > 0 && (

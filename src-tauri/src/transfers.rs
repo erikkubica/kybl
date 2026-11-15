@@ -299,6 +299,42 @@ pub(crate) async fn download_file(
     }
 }
 
+/// A file picked on a phone comes as a URL, not a path: `content://…` on Android (a document
+/// another app hands over, only readable through the system) or `file://…` on iOS. A file URL is
+/// just a path. Anything else is copied once into the cache under the object's own name (so its
+/// content type still reads right) and that copy is uploaded; the second value is the copy to
+/// remove afterwards.
+async fn local_source(app: &AppHandle, local: &str, key: &str) -> Result<(String, Option<std::path::PathBuf>), String> {
+    use tauri_plugin_fs::{FilePath, FsExt, OpenOptions};
+    if !local.contains("://") {
+        return Ok((local.to_string(), None));
+    }
+    let fp: FilePath = local.parse().map_err(err)?;
+    if let FilePath::Url(u) = &fp {
+        if u.scheme() == "file" {
+            let p = u.to_file_path().map_err(|_| format!("Not a file: {local}"))?;
+            return Ok((p.to_string_lossy().into_owned(), None));
+        }
+    }
+    let name = key.rsplit('/').next().filter(|n| !n.is_empty()).unwrap_or("upload");
+    let dir = app.path().app_cache_dir().map_err(err)?.join("uploads").join(uuid::Uuid::new_v4().to_string());
+    let dest = dir.join(name);
+    let app = app.clone();
+    let dest2 = dest.clone();
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        std::fs::create_dir_all(&dir).map_err(err)?;
+        let mut opts = OpenOptions::new();
+        opts.read(true);
+        let mut src = app.fs().open(fp, opts).map_err(|e| format!("Could not read the picked file: {e}"))?;
+        let mut out = std::fs::File::create(&dest2).map_err(err)?;
+        std::io::copy(&mut src, &mut out).map_err(err)?;
+        Ok(())
+    })
+    .await
+    .map_err(err)??;
+    Ok((dest.to_string_lossy().into_owned(), Some(dest)))
+}
+
 #[derive(Clone, Copy)]
 enum Kind {
     Upload,
@@ -323,23 +359,34 @@ async fn spawn_transfer(
 
     tauri::async_runtime::spawn(async move {
         let _permit = slots.acquire_owned().await;
+        let mut done_bytes = 0u64;
         let result = if cancel.load(Ordering::Relaxed) {
             Ok(Outcome::Cancelled)
         } else {
             let report = |done: u64, total: u64| emit(&app, &id, "running", done, total, None);
             match kind {
-                Kind::Upload => upload_file(&client, &bucket, &key, &local, &cancel, &report).await,
-                Kind::Download => download_file(&client, &bucket, &key, &local, &cancel, &report).await,
+                Kind::Upload => match local_source(&app, &local, &key).await {
+                    Ok((path, temp)) => {
+                        let r = upload_file(&client, &bucket, &key, &path, &cancel, &report).await;
+                        if let Ok(Outcome::Done) = r {
+                            done_bytes = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
+                        }
+                        if let Some(t) = temp.as_ref().and_then(|t| t.parent()) {
+                            let _ = tokio::fs::remove_dir_all(t).await;
+                        }
+                        r
+                    }
+                    Err(e) => Err(e),
+                },
+                Kind::Download => {
+                    let r = download_file(&client, &bucket, &key, &local, &cancel, &report).await;
+                    done_bytes = tokio::fs::metadata(&local).await.map(|m| m.len()).unwrap_or(0);
+                    r
+                }
             }
         };
         match result {
-            Ok(Outcome::Done) => {
-                let total = match kind {
-                    Kind::Upload => tokio::fs::metadata(&local).await.map(|m| m.len()).unwrap_or(0),
-                    Kind::Download => tokio::fs::metadata(&local).await.map(|m| m.len()).unwrap_or(0),
-                };
-                emit(&app, &id, "done", total, total, None)
-            }
+            Ok(Outcome::Done) => emit(&app, &id, "done", done_bytes, done_bytes, None),
             Ok(Outcome::Cancelled) => emit(&app, &id, "cancelled", 0, 0, None),
             Err(e) => emit(&app, &id, "error", 0, 0, Some(e)),
         }

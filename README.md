@@ -30,6 +30,28 @@ to sign with your own identity.
 
 Icons are generated from one drawing: `python3 scripts/build-icons.py` (needs `rsvg-convert`).
 
+## iOS and Android
+The same Rust backend runs on phones (Tauri 2 mobile), with its own touch UI in `src/mobile/`
+(picked automatically on iOS/Android; open `pnpm dev` with `?mobile` to work on it in a browser).
+Folder sync, the menu-bar icon and launch at login are desktop only.
+
+- **Secret keys**: iOS Keychain on iPhone; on Android a file in the app's private storage,
+  excluded from backups (`data_extraction_rules.xml`).
+- **Downloads** go to *Files › On My iPhone › Kybl* on iOS and `Download/Kybl` on Android.
+- **Uploads** use the system photo or document picker; Android `content://` files are copied to the
+  cache first, then uploaded (multipart for big files) and the copy removed.
+
+```bash
+pnpm tauri ios dev                      # simulator or a connected iPhone (needs Xcode, xcodegen)
+pnpm tauri ios build --debug --target aarch64-sim
+pnpm tauri android dev                  # emulator or a device (needs Android SDK + NDK, JDK 17/21)
+pnpm tauri android build --apk --target aarch64
+```
+Set `ANDROID_HOME`, `NDK_HOME` and `JAVA_HOME` for Android. The native projects live in
+`src-tauri/gen/apple` and `src-tauri/gen/android` (the Kotlin `DocInfoPlugin` reads picked files'
+names and sizes). Mobile builds use the bundle id `app.kybl.mobile` (`tauri.ios.conf.json`,
+`tauri.android.conf.json`). Release iOS builds need your Apple team: set `bundle.iOS.developmentTeam`.
+
 ## Install
 Download the latest build from [Releases](../../releases).
 

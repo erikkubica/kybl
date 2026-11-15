@@ -7,6 +7,16 @@ const THUMB_EXT = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff"];
 /** Must match `MAX_FULL_DOWNLOAD` in thumbs.rs: bigger files are refused there anyway. */
 const MAX_BYTES = 40 * 1000 * 1000;
 
+/** Off by default: lists show file-type icons and download nothing until this is turned on. */
+let listThumbs = false;
+export function setListThumbs(on: boolean) {
+  listThumbs = on;
+}
+/** Thumbnails in folder lists and grids. A single opened image still uses its thumbnail. */
+export function canListThumb(e: Entry): boolean {
+  return listThumbs && canThumb(e);
+}
+
 export function canThumb(e: Entry): boolean {
   if (e.kind !== "file") return false;
   const ext = extOf(e.name);

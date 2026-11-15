@@ -151,6 +151,8 @@ export function PromptDialog({
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && submit()}
             spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
           />
         </label>
       </div>

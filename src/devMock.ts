@@ -162,6 +162,12 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       return buckets.map((name) => ({ name, created: now - 400 * HOUR }));
     case "list_objects": {
       await sleep(350);
+      // set window.__denyLists = n in the console to have the next n listings refused
+      const w = window as unknown as { __denyLists?: number };
+      if (w.__denyLists) {
+        w.__denyLists--;
+        throw "Access denied. This key isn't allowed to do that. If the key is brand new, give it a few minutes: some providers take a while to activate new keys.\n\nservice error: unhandled error (AccessDenied): (ServiceError { source: Unhandled(Unhandled { code: Some(\"AccessDenied\") }), raw: Response { status: StatusCode(403) } })";
+      }
       if (a.bucket === "logs-archive") throw "Can't reach the storage server. Nothing is answering at that address: check the connection's endpoint, or that the server is running.\n\ndispatch failure: io error: client error (Connect): tcp connect error: Connection refused (os error 61) (DispatchFailure(DispatchFailure { source: ConnectorError { kind: Io, source: hyper_util::client::legacy::Error(Connect, ConnectError(\"tcp connect error\", 127.0.0.1:9099, Os { code: 61, kind: ConnectionRefused }))) } }))";
       const dir = a.bucket === "media-prod" ? tree[a.prefix] : undefined;
       const start = Number(a.token ?? 0);
@@ -173,11 +179,17 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       };
     }
     case "search_objects": {
-      await sleep(600);
       const q = String(a.query).toLowerCase();
       const objects = Object.values(tree)
         .flatMap((d) => d.objects)
         .filter((o) => o.key.startsWith(a.prefix) && o.key.toLowerCase().includes(q));
+      // pretend to page through 18k keys, matches turning up along the way
+      const pages = 8;
+      for (let i = 1; i <= pages; i++) {
+        await sleep(450);
+        const found = objects.slice(Math.floor(((i - 1) * objects.length) / pages), Math.floor((i * objects.length) / pages));
+        if (a.opId) await emit("search-progress", { opId: a.opId, scanned: Math.round((18_422 * i) / pages), found });
+      }
       return { objects, scanned: 18_422, truncated: false };
     }
     case "head_object": {
@@ -314,6 +326,10 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       return prefs;
     case "clear_thumbnail_cache":
       return 0;
+    case "picked_files":
+      return (a.uris as string[]).map((p, i) => ({ path: p, name: p.split("/").pop(), size: 3_000_000 * (i + 1) }));
+    case "download_folder":
+      return "/storage/emulated/0/Download/Kybl";
     case "plugin:dialog|open":
       return a?.options?.directory
         ? ["/Users/demo/Downloads"]
