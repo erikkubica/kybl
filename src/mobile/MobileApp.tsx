@@ -26,7 +26,7 @@ import { ProviderBadge } from "../components/Sidebar";
 import { FileIcon } from "../components/FileIcon";
 import { destKey, destLabel, entryParent } from "../moving";
 import { PROVIDERS } from "../providers";
-import { EntryRow, EntryTile, SkeletonList } from "./rows";
+import { EntryRow, EntryTile, SkeletonList, usePress } from "./rows";
 import { ActionSheet, type SheetItem } from "./ActionSheet";
 import { TransfersScreen, useActiveCount } from "./TransfersScreen";
 import { SettingsScreen } from "./SettingsScreen";
@@ -110,6 +110,17 @@ export default function MobileApp() {
   const [detail, setDetail] = useState<Entry | null>(null);
   const [viewer, setViewer] = useState<number | null>(null);
   const [sheet, setSheet] = useState<{ title?: string; items: SheetItem[] } | null>(null);
+  // buckets left out of the connection lists, per connection (all show until one is hidden)
+  const [hiddenBuckets, setHiddenBuckets] = useState<Record<string, string[]>>(() => readJson<Record<string, string[]>>("m.hiddenBuckets", {}));
+  const setBucketHidden = useCallback((p: Profile, name: string, hide: boolean) => {
+    setHiddenBuckets((cur) => {
+      const list = (cur[p.id] ?? []).filter((b) => b !== name);
+      const next = { ...cur, [p.id]: hide ? [...list, name] : list };
+      if (!next[p.id].length) delete next[p.id];
+      LS.set("m.hiddenBuckets", JSON.stringify(next));
+      return next;
+    });
+  }, []);
   const [screen, setScreen] = useState<"transfers" | "settings" | null>(null);
   const [connDialog, setConnDialog] = useState<{ profile: Profile | null } | null>(null);
   const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
@@ -597,6 +608,40 @@ export default function MobileApp() {
     });
   };
 
+  /** Kybl Storage: the account owns its buckets, so it can make new ones. */
+  const askNewBucket = (p: Profile) => {
+    setPrompt({
+      title: "New bucket",
+      label: `Bucket name in ${p.name || p.endpoint}`,
+      initial: "",
+      confirmLabel: "Create",
+      run: (raw) => {
+        const name = raw.trim();
+        if (!name) return;
+        api
+          .createBucket(p.id, name)
+          .then(async () => {
+            await loadBuckets(p);
+            setBucketHidden(p, name, false);
+            go({ profileId: p.id, bucket: name, prefix: "" });
+            toast("success", `Created ${name}`);
+          })
+          .catch((e) => toast("error", errSummary(errMessage(e))));
+      },
+    });
+  };
+
+  /** Long-press on a bucket in the connection lists. */
+  const bucketActions = (p: Profile, b: string, hidden: boolean) =>
+    setSheet({
+      title: b,
+      items: [
+        hidden
+          ? { icon: "eye", label: "Show in the list", run: () => setBucketHidden(p, b, false) }
+          : { icon: "eye-off", label: "Hide from the list", run: () => setBucketHidden(p, b, true) },
+      ],
+    });
+
   /** Buckets the key can use but not list (or another account's): opened by name, then kept. */
   const askBucketName = (p: Profile) => {
     setPrompt({
@@ -1057,6 +1102,9 @@ export default function MobileApp() {
       onEdit={editProfile}
       onReconnect={(p) => setKyblDialog({ existing: p, reconnect: true })}
       onOpenByName={askBucketName}
+      onNewBucket={askNewBucket}
+      hidden={hiddenBuckets}
+      onBucketMenu={bucketActions}
     />
   );
 
@@ -1304,6 +1352,36 @@ function BarButton({ icon, label, onClick, disabled, danger }: { icon: IconName;
   );
 }
 
+/** One bucket in a connection's list: tap opens it, long-press offers to hide it (or show it). */
+function BucketItem({
+  name,
+  here,
+  hidden,
+  compact,
+  onOpen,
+  onMenu,
+}: {
+  name: string;
+  here: boolean;
+  hidden: boolean;
+  compact: boolean;
+  onOpen: () => void;
+  onMenu: () => void;
+}) {
+  const press = usePress(onOpen, onMenu);
+  return (
+    <li>
+      <button className={`m-bucket ${here ? "here" : ""} ${hidden ? "is-hidden" : ""}`} {...press}>
+        <span className="m-bucket-ico">
+          <Icon name="bucket" size={compact ? 16 : 18} />
+        </span>
+        <span className="m-bucket-name">{name}</span>
+        {!compact && <Icon name="chevron" size={13} className="m-chev" />}
+      </button>
+    </li>
+  );
+}
+
 /** Connections with their buckets, as cards (phone home) or a sidebar list (tablets). */
 function Connections({
   profiles,
@@ -1316,6 +1394,9 @@ function Connections({
   onEdit,
   onReconnect,
   onOpenByName,
+  onNewBucket,
+  hidden,
+  onBucketMenu,
 }: {
   profiles: Profile[] | null;
   buckets: Record<string, Buckets>;
@@ -1327,16 +1408,30 @@ function Connections({
   onEdit: (p: Profile) => void;
   onReconnect: (p: Profile) => void;
   onOpenByName: (p: Profile) => void;
+  /** Kybl Storage only: make a bucket in the account */
+  onNewBucket: (p: Profile) => void;
+  /** buckets left out of the list, per connection */
+  hidden: Record<string, string[]>;
+  /** long-press on a bucket: hide it, or show it again */
+  onBucketMenu: (p: Profile, bucket: string, hidden: boolean) => void;
 }) {
   const [all, setAll] = useState<Record<string, boolean>>({});
+  // connections whose hidden buckets are on show (to bring some back)
+  const [reveal, setReveal] = useState<Record<string, boolean>>({});
   if (profiles === null) return <SkeletonList />;
   if (profiles.length === 0) return null;
   return (
     <div className={compact ? "m-conns compact" : "m-conns"}>
       {profiles.map((p) => {
         const bl = buckets[p.id];
-        const names = bl?.names ?? [];
-        const limit = compact || all[p.id] ? names.length : 5;
+        const hiddenSet = new Set(hidden[p.id] ?? []);
+        const hiddenHere = (bl?.names ?? []).filter((b) => hiddenSet.has(b));
+        const revealing = !!reveal[p.id] && hiddenHere.length > 0;
+        // the bucket on screen stays listed even when hidden
+        const names = (bl?.names ?? []).filter(
+          (b) => revealing || !hiddenSet.has(b) || (current?.profileId === p.id && current.bucket === b),
+        );
+        const limit = compact || all[p.id] || revealing ? names.length : 5;
         return (
           <section key={p.id} className="m-conn">
             <header className="m-conn-head">
@@ -1369,20 +1464,17 @@ function Connections({
                   )}
                 </li>
               )}
-              {names.slice(0, limit).map((b) => {
-                const here = current?.profileId === p.id && current.bucket === b;
-                return (
-                  <li key={b}>
-                    <button className={`m-bucket ${here ? "here" : ""}`} onClick={() => onOpen(p, b)}>
-                      <span className="m-bucket-ico">
-                        <Icon name="bucket" size={compact ? 16 : 18} />
-                      </span>
-                      <span className="m-bucket-name">{b}</span>
-                      {!compact && <Icon name="chevron" size={13} className="m-chev" />}
-                    </button>
-                  </li>
-                );
-              })}
+              {names.slice(0, limit).map((b) => (
+                <BucketItem
+                  key={b}
+                  name={b}
+                  here={current?.profileId === p.id && current.bucket === b}
+                  hidden={hiddenSet.has(b)}
+                  compact={compact}
+                  onOpen={() => onOpen(p, b)}
+                  onMenu={() => onBucketMenu(p, b, hiddenSet.has(b))}
+                />
+              ))}
               {names.length > limit && (
                 <li>
                   <button className="m-bucket m-bucket-all" onClick={() => setAll((a) => ({ ...a, [p.id]: true }))}>
@@ -1390,13 +1482,20 @@ function Connections({
                   </button>
                 </li>
               )}
+              {hiddenHere.length > 0 && (
+                <li>
+                  <button className="m-bucket m-bucket-all" onClick={() => setReveal((r) => ({ ...r, [p.id]: !r[p.id] }))}>
+                    {revealing ? "Done · long-press to hide or show" : `${hiddenHere.length} hidden`}
+                  </button>
+                </li>
+              )}
               {!bl?.loading && (
                 <li>
-                  <button className="m-bucket m-bucket-add" onClick={() => onOpenByName(p)}>
+                  <button className="m-bucket m-bucket-add" onClick={() => (p.provider === KYBL ? onNewBucket(p) : onOpenByName(p))}>
                     <span className="m-bucket-ico">
                       <Icon name="plus" size={compact ? 15 : 17} />
                     </span>
-                    <span className="m-bucket-name">Open bucket by name…</span>
+                    <span className="m-bucket-name">{p.provider === KYBL ? "New bucket" : "Open bucket by name"}</span>
                   </button>
                 </li>
               )}

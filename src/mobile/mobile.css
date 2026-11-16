@@ -2312,3 +2312,9 @@ input[type="checkbox"].m-switch:checked {
   background: #d9381f;
   animation: m-indeterminate 1.2s ease-in-out infinite;
 }
+
+/* a hidden bucket, on show while choosing which to bring back */
+.m-bucket.is-hidden .m-bucket-name,
+.m-bucket.is-hidden .m-bucket-ico {
+  opacity: 0.45;
+}

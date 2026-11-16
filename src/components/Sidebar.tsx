@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { Icon } from "../Icons";
+import { KYBL } from "../kybl";
 import { KyblLockup, KyblMark } from "./KyblMark";
 import { providerMeta } from "../providers";
 import type { Profile } from "../types";
@@ -52,6 +54,9 @@ export function Sidebar({
   onOpenSync,
   onSelectBucket,
   onOpenBucketByName,
+  onNewBucket,
+  hiddenBuckets,
+  onHideBucket,
   onReconnect,
 }: {
   profiles: Profile[];
@@ -69,8 +74,15 @@ export function Sidebar({
   onOpenSync: () => void;
   onSelectBucket: (p: Profile, b: string) => void;
   onOpenBucketByName: (p: Profile) => void;
+  /** Kybl Storage only: make a bucket in the account */
+  onNewBucket: (p: Profile) => void;
+  /** buckets left out of the list, per connection */
+  hiddenBuckets: Record<string, string[]>;
+  onHideBucket: (p: Profile, bucket: string, hide: boolean) => void;
   onReconnect: (p: Profile) => void;
 }) {
+  // connections whose hidden buckets are on show (to pick which to bring back)
+  const [showHidden, setShowHidden] = useState<Set<string>>(new Set());
   return (
     <aside className="sidebar">
       <div className="sidebar-drag" data-tauri-drag-region>
@@ -86,6 +98,10 @@ export function Sidebar({
           const active = p.id === activeId;
           const open = expanded.has(p.id);
           const list = bucketsBy[p.id];
+          const hidden = new Set(hiddenBuckets[p.id] ?? []);
+          const hiddenHere = (list?.names ?? []).filter((b) => hidden.has(b));
+          const revealing = showHidden.has(p.id) && hiddenHere.length > 0;
+          const kybl = p.provider === KYBL;
           return (
             <div key={p.id}>
               <div
@@ -116,13 +132,52 @@ export function Sidebar({
                 <div className="bucket-list">
                   {list?.names.map((b) => {
                     const here = active && b === bucket;
+                    const isHidden = hidden.has(b);
+                    // the bucket on screen stays listed even when hidden, so you can see where you are
+                    if (isHidden && !revealing && !here) return null;
                     return (
-                      <button key={b} className={`side-item sub ${here ? "selected" : ""}`} onClick={() => onSelectBucket(p, b)} aria-current={here}>
+                      <div
+                        key={b}
+                        className={`side-item sub bucket-row ${here ? "selected" : ""} ${isHidden ? "is-hidden" : ""}`}
+                        onClick={() => onSelectBucket(p, b)}
+                        onKeyDown={onActivate(() => onSelectBucket(p, b))}
+                        role="button"
+                        tabIndex={0}
+                        aria-current={here}
+                      >
                         <Icon name="bucket" size={14} />
                         <span className="side-label">{b}</span>
-                      </button>
+                        <button
+                          className="icon-btn side-hide"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onHideBucket(p, b, !isHidden);
+                          }}
+                          onKeyDown={(e) => e.stopPropagation()}
+                          title={isHidden ? "Show in the sidebar" : "Hide from the sidebar"}
+                          aria-label={isHidden ? `Show ${b} in the sidebar` : `Hide ${b} from the sidebar`}
+                        >
+                          <Icon name={isHidden ? "eye" : "eye-off"} size={13} />
+                        </button>
+                      </div>
                     );
                   })}
+                  {hiddenHere.length > 0 && (
+                    <button
+                      className="side-item sub link"
+                      onClick={() =>
+                        setShowHidden((cur) => {
+                          const next = new Set(cur);
+                          if (next.has(p.id)) next.delete(p.id);
+                          else next.add(p.id);
+                          return next;
+                        })
+                      }
+                    >
+                      <Icon name={revealing ? "eye-off" : "eye"} size={14} />
+                      <span className="side-label">{revealing ? "Done choosing" : `${hiddenHere.length} hidden`}</span>
+                    </button>
+                  )}
                   {list?.loading && !list.names.length && <p className="side-note">Loading buckets…</p>}
                   {list?.note && (
                     <p className="side-note">
@@ -137,10 +192,17 @@ export function Sidebar({
                       )}
                     </p>
                   )}
-                  <button className="side-item sub link" onClick={() => onOpenBucketByName(p)}>
-                    <Icon name="plus" size={14} />
-                    <span className="side-label">Open bucket by name…</span>
-                  </button>
+                  {kybl ? (
+                    <button className="side-item sub link" onClick={() => onNewBucket(p)}>
+                      <Icon name="plus" size={14} />
+                      <span className="side-label">New bucket</span>
+                    </button>
+                  ) : (
+                    <button className="side-item sub link" onClick={() => onOpenBucketByName(p)}>
+                      <Icon name="plus" size={14} />
+                      <span className="side-label">Open bucket by name</span>
+                    </button>
+                  )}
                 </div>
               )}
             </div>

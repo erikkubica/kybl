@@ -184,6 +184,12 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       await sleep(700);
       if (!a.profile.endpoint) throw "Endpoint is required";
       return "Connected. 4 buckets visible.";
+    case "create_bucket":
+      await sleep(200);
+      if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(a.bucket)) throw "Bucket names are 3-63 characters: lowercase letters, digits, dots and hyphens.";
+      if (buckets.includes(a.bucket)) throw "You already have a bucket with that name.";
+      buckets.push(a.bucket);
+      return null;
     case "list_buckets":
       await sleep(150);
       if (a.profileId === "p3") throw "Access denied. This key isn't allowed to do that.\n\nservice error: unhandled error (AccessDenied): Access Denied (ServiceError { source: Unhandled(Unhandled { code: Some(\"AccessDenied\") }) })";

@@ -55,6 +55,17 @@ function loadExpanded(): Set<string> {
   }
 }
 
+/** Buckets left out of the sidebar, per connection (all are shown until someone hides one). */
+const HIDDEN_KEY = "s3b.hiddenBuckets";
+function loadHidden(): Record<string, string[]> {
+  try {
+    const v = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? "{}");
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
+}
+
 const LS = {
   get(k: string): string | null {
     try {
@@ -85,6 +96,16 @@ export default function App() {
   // bucket lists of every connection opened in the sidebar; several can be expanded at once
   const [bucketsBy, setBucketsBy] = useState<Record<string, BucketList>>({});
   const [expanded, setExpanded] = useState<Set<string>>(loadExpanded);
+  const [hiddenBuckets, setHiddenBuckets] = useState<Record<string, string[]>>(loadHidden);
+  const setBucketHidden = useCallback((p: Profile, name: string, hide: boolean) => {
+    setHiddenBuckets((cur) => {
+      const list = (cur[p.id] ?? []).filter((b) => b !== name);
+      const next = { ...cur, [p.id]: hide ? [...list, name] : list };
+      if (!next[p.id].length) delete next[p.id];
+      LS.set(HIDDEN_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
   const [bucket, setBucket] = useState<string | null>(null);
   const [prefix, setPrefix] = useState("");
   const [listing, setListing] = useState<Listing>({ folders: [], objects: [], next: null });
@@ -864,6 +885,29 @@ export default function App() {
     });
   };
 
+  /** Kybl Storage: the account owns its buckets, so it can make new ones. */
+  const askNewBucket = (p: Profile | null = profile) => {
+    if (!p) return;
+    setPrompt({
+      title: "New bucket",
+      label: `Bucket name in ${p.name}`,
+      initial: "",
+      confirmLabel: "Create",
+      run: (raw) => {
+        const name = raw.trim();
+        api
+          .createBucket(p.id, name)
+          .then(async () => {
+            await loadBuckets(p, true);
+            setBucketHidden(p, name, false);
+            openBucket(p, name);
+            toast("success", `Created ${name}`);
+          })
+          .catch((e) => toast("error", errSummary(errMessage(e))));
+      },
+    });
+  };
+
   // ------------------------------------------------------------ context menu
   const onContext = (ev: React.MouseEvent, e: Entry) => {
     const list = selected.has(e.key) ? selectedEntries : [e];
@@ -1054,6 +1098,9 @@ export default function App() {
         onOpenSync={() => openSettings("sync")}
         onSelectBucket={(p, b) => openBucket(p, b)}
         onOpenBucketByName={askBucketName}
+        onNewBucket={askNewBucket}
+        hiddenBuckets={hiddenBuckets}
+        onHideBucket={setBucketHidden}
         onReconnect={(p) => setKyblDialog({ existing: p, reconnect: true })}
       />
 
@@ -1164,8 +1211,8 @@ export default function App() {
                       <Icon name="refresh" size={14} /> Connect again
                     </button>
                   ) : (
-                    <button className="btn" onClick={() => askBucketName()}>
-                      Open bucket by name…
+                    <button className="btn" onClick={() => (profile?.provider === KYBL ? askNewBucket() : askBucketName())}>
+                      {profile?.provider === KYBL ? "New bucket" : "Open bucket by name"}
                     </button>
                   )}
                 </div>

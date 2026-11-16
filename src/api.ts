@@ -39,6 +39,7 @@ export const api = {
 
   listBuckets: (profileId: string) =>
     read<{ name: string; created: number | null }[]>("list_buckets", { profileId }),
+  createBucket: (profileId: string, bucket: string) => invoke<void>("create_bucket", { profileId, bucket }),
   listObjects: (profileId: string, bucket: string, prefix: string, token?: string | null) =>
     read<ListResult>("list_objects", { profileId, bucket, prefix, token: token ?? null }),
   /** With an `opId`, matches stream in as `search-progress` events and `cancelTransfer(opId)` stops it. */

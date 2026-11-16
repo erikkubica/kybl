@@ -87,6 +87,7 @@ pub fn run() {
             commands::delete_profile,
             commands::test_connection,
             commands::list_buckets,
+            commands::create_bucket,
             commands::list_objects,
             commands::search_objects,
             commands::head_object,

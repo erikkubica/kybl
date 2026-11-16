@@ -152,6 +152,20 @@ pub async fn list_buckets(
         .collect())
 }
 
+/// Creates a bucket. Only offered for Kybl Storage, whose account owns its buckets (so no
+/// region/location constraint to pick).
+#[tauri::command]
+pub async fn create_bucket(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+    bucket: String,
+) -> Result<(), String> {
+    let client = client_for(&app, &state, &profile_id).await?;
+    client.create_bucket().bucket(bucket).send().await.map_err(sdk_err)?;
+    Ok(())
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ObjInfo {
