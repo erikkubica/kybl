@@ -21,6 +21,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::AsyncWriteExt;
 
 use crate::state::{client_for, err, sdk_err, AppState};
+use crate::transfer_notice::{self as notice, Dir};
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -240,6 +241,15 @@ pub(crate) async fn upload_file(
     }
 }
 
+/// How many times in a row a download picks up again after the connection drops, waiting a
+/// little longer each time (1 s, 2 s, 4 s … up to 30 s) before it gives up.
+const RESUME_ATTEMPTS: u32 = 8;
+
+/// The wait before resume attempt `n` (1-based).
+fn resume_delay(n: u32) -> Duration {
+    Duration::from_secs((1u64 << (n - 1).min(5)).min(30))
+}
+
 pub(crate) async fn download_file(
     client: &Client,
     bucket: &str,
@@ -256,6 +266,9 @@ pub(crate) async fn download_file(
         .await
         .map_err(sdk_err)?;
     let total = out.content_length().unwrap_or(0).max(0) as u64;
+    // A resumed request asks for the same version of the object, so a file changed meanwhile
+    // fails cleanly instead of being stitched together from two versions.
+    let etag = out.e_tag().map(str::to_string);
     progress(0, total);
 
     let dest_path = std::path::PathBuf::from(dest);
@@ -267,17 +280,51 @@ pub(crate) async fn download_file(
     let mut got = 0u64;
     let mut last_emit = Instant::now();
     let result: Result<bool, String> = async {
-        while let Some(chunk) = out.body.try_next().await.map_err(err)? {
-            if cancel.load(Ordering::Relaxed) {
-                return Ok(false);
-            }
-            file.write_all(&chunk).await.map_err(err)?;
-            got += chunk.len() as u64;
-            if last_emit.elapsed() > Duration::from_millis(150) {
-                progress(got, total);
-                last_emit = Instant::now();
+        let mut failures = 0u32;
+        loop {
+            match out.body.try_next().await {
+                Ok(Some(chunk)) => {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Ok(false);
+                    }
+                    file.write_all(&chunk).await.map_err(err)?;
+                    got += chunk.len() as u64;
+                    failures = 0;
+                    if last_emit.elapsed() > Duration::from_millis(150) {
+                        progress(got, total);
+                        last_emit = Instant::now();
+                    }
+                }
+                Ok(None) => break,
+                // The connection dropped mid-file: the phone went to the background, the network
+                // changed, the server hung up. Ask for the rest of the file and carry on.
+                Err(e) => loop {
+                    failures += 1;
+                    if failures > RESUME_ATTEMPTS || (total > 0 && got >= total) {
+                        return Err(err(e));
+                    }
+                    tokio::time::sleep(resume_delay(failures)).await;
+                    if cancel.load(Ordering::Relaxed) {
+                        return Ok(false);
+                    }
+                    let mut req = client.get_object().bucket(bucket).key(key).range(format!("bytes={got}-"));
+                    if let Some(tag) = &etag {
+                        req = req.if_match(tag);
+                    }
+                    match req.send().await {
+                        Ok(rest) if rest.content_range().is_some() || got == 0 => {
+                            out = rest;
+                            break;
+                        }
+                        // the server ignored the range and sent the whole file again: can't resume
+                        Ok(_) => return Err(err(e)),
+                        Err(again) if failures >= RESUME_ATTEMPTS => return Err(sdk_err(again)),
+                        Err(_) => continue,
+                    }
+                },
             }
         }
+        progress(got, total);
         file.flush().await.map_err(err)?;
         Ok(true)
     }
@@ -356,6 +403,12 @@ async fn spawn_transfer(
     state.cancels.lock().await.insert(id.clone(), cancel.clone());
     let slots = state.transfer_slots(&profile_id).await;
     emit(&app, &id, "queued", 0, 0, None);
+    let dir = match kind {
+        Kind::Upload => Dir::Upload,
+        Kind::Download => Dir::Download,
+    };
+    let name = key.rsplit('/').find(|n| !n.is_empty()).unwrap_or(&key).to_string();
+    notice::queued(&app, &id, dir, &name);
 
     tauri::async_runtime::spawn(async move {
         let _permit = slots.acquire_owned().await;
@@ -363,7 +416,10 @@ async fn spawn_transfer(
         let result = if cancel.load(Ordering::Relaxed) {
             Ok(Outcome::Cancelled)
         } else {
-            let report = |done: u64, total: u64| emit(&app, &id, "running", done, total, None);
+            let report = |done: u64, total: u64| {
+                emit(&app, &id, "running", done, total, None);
+                notice::progress(&app, &id, done, total);
+            };
             match kind {
                 Kind::Upload => match local_source(&app, &local, &key).await {
                     Ok((path, temp)) => {
@@ -385,6 +441,15 @@ async fn spawn_transfer(
                 }
             }
         };
+        notice::finished(
+            &app,
+            &id,
+            match result {
+                Ok(Outcome::Done) => Some(true),
+                Ok(Outcome::Cancelled) => None,
+                Err(_) => Some(false),
+            },
+        );
         match result {
             Ok(Outcome::Done) => emit(&app, &id, "done", done_bytes, done_bytes, None),
             Ok(Outcome::Cancelled) => emit(&app, &id, "cancelled", 0, 0, None),
@@ -434,6 +499,72 @@ mod tests {
     use super::*;
     use crate::state::{build_client, Profile};
     use std::sync::Mutex;
+
+    /// A server that hangs up halfway through the file, then honours the ranged request for the
+    /// rest: the download carries on from where it was and the file arrives whole.
+    #[test]
+    fn a_download_picks_up_where_a_dropped_connection_left_it() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let data: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            let served = data.clone();
+            let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+            let seen = requests.clone();
+            tokio::spawn(async move {
+                for n in 0.. {
+                    let (mut sock, _) = listener.accept().await.unwrap();
+                    let mut buf = vec![0u8; 8192];
+                    let len = sock.read(&mut buf).await.unwrap();
+                    let req = String::from_utf8_lossy(&buf[..len]).to_lowercase();
+                    seen.lock().unwrap().push(req.clone());
+                    let total = served.len();
+                    if n == 0 {
+                        let head = format!("HTTP/1.1 200 OK\r\ncontent-length: {total}\r\netag: \"v1\"\r\nconnection: close\r\n\r\n");
+                        sock.write_all(head.as_bytes()).await.unwrap();
+                        sock.write_all(&served[..total / 2]).await.unwrap();
+                        // hang up mid-body
+                    } else {
+                        let from: usize = req.split("range: bytes=").nth(1).unwrap().split('-').next().unwrap().trim().parse().unwrap();
+                        let head = format!(
+                            "HTTP/1.1 206 Partial Content\r\ncontent-length: {}\r\ncontent-range: bytes {from}-{}/{total}\r\netag: \"v1\"\r\nconnection: close\r\n\r\n",
+                            total - from,
+                            total - 1
+                        );
+                        sock.write_all(head.as_bytes()).await.unwrap();
+                        sock.write_all(&served[from..]).await.unwrap();
+                    }
+                    let _ = sock.shutdown().await;
+                }
+            });
+            let p = Profile {
+                id: "t".into(),
+                name: "t".into(),
+                provider: "custom".into(),
+                endpoint,
+                region: "us-east-1".into(),
+                access_key_id: "k".into(),
+                bucket: None,
+                path_style: true,
+            };
+            let client = build_client(&p, "s");
+            let dir = std::env::temp_dir().join(format!("kybl-resume-{}", std::process::id()));
+            let dest = dir.join("file.bin");
+            let last = Mutex::new((0u64, 0u64));
+            let r = download_file(&client, "b", "file.bin", dest.to_str().unwrap(), &AtomicBool::new(false), &|d, t| {
+                *last.lock().unwrap() = (d, t);
+            })
+            .await;
+            assert!(matches!(r, Ok(Outcome::Done)), "download failed: {:?}", r.err());
+            assert_eq!(std::fs::read(&dest).unwrap(), data, "the resumed file is whole and in order");
+            assert_eq!(*last.lock().unwrap(), (data.len() as u64, data.len() as u64), "progress ends at 100%");
+            let reqs = requests.lock().unwrap();
+            assert_eq!(reqs.len(), 2, "one resume");
+            assert!(reqs[1].contains("if-match: \"v1\""), "asks for the same version: {}", reqs[1]);
+            let _ = std::fs::remove_dir_all(dir);
+        });
+    }
 
     #[test]
     fn file_body_streams_the_range_in_small_chunks_and_counts_it() {

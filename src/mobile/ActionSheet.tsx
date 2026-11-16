@@ -2,7 +2,8 @@ import { Icon, type IconName } from "../Icons";
 
 export type SheetItem = { icon: IconName; label: string; run: () => void; danger?: boolean; keepOpen?: boolean };
 
-/** A bottom sheet of actions, the phone's stand-in for a context menu. */
+/** A bottom sheet of actions, the phone's stand-in for a context menu. Tapping outside it or
+ * the system back closes it, so it has no Cancel button. */
 export function ActionSheet({
   title,
   items,
@@ -25,9 +26,6 @@ export function ActionSheet({
             <span>{it.label}</span>
           </button>
         ))}
-        <button className="m-sheet-item m-sheet-cancel" onClick={onClose}>
-          Cancel
-        </button>
       </div>
     </div>
   );
