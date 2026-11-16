@@ -16,13 +16,22 @@ Secret keys are stored in the operating system keychain: the macOS Keychain, Win
 - A transfer queue that talks: speed and time left for every upload and download, with cancel and retry.
 - Share links in one click: presigned URLs valid for 1 hour, 1 day or 7 days, or copy the s3:// URI. Nothing has to be made public.
 - Huge folders, still snappy: lazy paging keeps folders with 100,000+ objects smooth; search looks through every subfolder.
-- File operations: download files or folders, delete, rename files and folders, create folders, move items.
+- File operations: download files or folders, delete, rename files and folders, create folders.
+- Move and copy: drag files and folders onto a folder or a breadcrumb, or pick a destination.
+- Folder sizes on demand: S3 has none, so Kybl counts the objects under a folder and keeps the result.
 - Keyboard first: Cmd+F search, Cmd+A select all, Cmd+R refresh, arrow keys to move, Backspace to go up a folder, Delete to delete.
-- Light and dark appearance that follows the system.
+- Make it yours: light, dark or system theme, colour schemes and accents, fonts, text size and density.
+- On your phone too: the same app on Android and iPhone with a touch interface (browse, preview, upload from Photos or Files, share links). Transfers keep going in the background, with a progress notification on Android, and a dropped download resumes where it stopped. Folder sync and the menu bar are desktop only.
 
 ## Folder sync
 
 Point a local folder at a bucket (or a prefix inside one) and choose a direction: upload to the bucket or download from it. Kybl watches for changes on a schedule, skips files that match ignore rules (such as node_modules or .DS_Store) and keeps syncing from the menu bar when the window is closed. All folders can be paused from the menu bar icon. Errors are shown in plain words with the fix, for example "AccessDenied: this key cannot list objects in static-assets".
+
+## Kybl Storage
+
+No bucket yet? Kybl Storage is S3 storage run by Kybl. Sign in with your email at https://app.kybl.app/, approve the app in the browser (or with a code on another device) and it connects itself, with no access keys to copy or endpoint to type. The free plan has 10 GB; bigger plans are coming. Data is stored in the EU. The dashboard shows usage and devices, and makes access keys for any other S3 tool.
+
+Encryption at rest: every file is encrypted with its bucket's own key (AES-256, SSE-C) before it is written to disk. The storage provider, its staff, its backups and anyone holding only the storage side see ciphertext, and reads without the key fail. File names and sizes stay visible there. It is not end-to-end: Kybl's servers encrypt files as they pass through, so data that only you should read is best encrypted before uploading.
 
 ## Download
 
@@ -40,7 +49,13 @@ Q: Which storage providers does Kybl work with?
 A: Any S3-compatible storage: Amazon S3, Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph and other S3 servers.
 
 Q: Is Kybl free?
-A: Yes. Kybl is a free download. You use your own bucket and pay your storage provider as usual.
+A: Yes. Kybl is a free download. Use your own bucket and pay your storage provider as usual, or start with 10 GB free on Kybl Storage.
+
+Q: What is Kybl Storage?
+A: S3 storage run by Kybl. Sign in with your email and the app connects itself, without copying keys. 10 GB free, stored in the EU.
+
+Q: Are my files on Kybl Storage encrypted?
+A: Yes, at rest, with a key per bucket (AES-256). The storage provider only sees ciphertext. It is not end-to-end: Kybl's servers encrypt files as they pass through.
 
 Q: Where are my access keys stored?
 A: In the operating system keychain. They are never written to a file, and Kybl talks to your storage directly.

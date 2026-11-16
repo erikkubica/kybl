@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kybl · A fast S3 browser for Mac, Windows and Linux</title>
-<meta name="description" content="Kybl is a free desktop app for S3-compatible storage. Browse, upload, share and sync files on AWS S3, Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces and MinIO.">
-<meta name="keywords" content="S3 browser, S3 client, desktop S3 app, Cloudflare R2 client, Backblaze B2 client, Hetzner Object Storage, MinIO client, Wasabi, DigitalOcean Spaces, folder sync, Cyberduck alternative">
+<meta name="description" content="Kybl is a free app for S3-compatible storage. Browse, upload, share and sync files on AWS S3, Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces and MinIO, or start with 10 GB of encrypted Kybl Storage.">
+<meta name="keywords" content="S3 browser, S3 client, desktop S3 app, Cloudflare R2 client, Backblaze B2 client, Hetzner Object Storage, MinIO client, Wasabi, DigitalOcean Spaces, folder sync, encrypted cloud storage, Cyberduck alternative">
 <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
 <meta name="application-name" content="Kybl">
 <meta name="apple-mobile-web-app-title" content="Kybl">
@@ -84,7 +84,13 @@
         "Drag and drop upload with multipart for large files",
         "Transfer queue with speed, time left, cancel and retry",
         "Presigned share links for 1 hour, 1 day or 7 days",
-        "Folder sync that keeps running from the menu bar"
+        "Move and copy files and folders by dragging",
+        "Folder sizes on demand",
+        "Folder sync that keeps running from the menu bar",
+        "Themes, colour schemes, fonts and text size",
+        "Apps for Android and iPhone",
+        "Kybl Storage: 10 GB free, connected without copying keys",
+        "Kybl Storage files encrypted at rest with a key per bucket"
       ]
     },
     {
@@ -92,7 +98,9 @@
       "@id": "https://kybl.app/#faq",
       "mainEntity": [
         { "@type": "Question", "name": "Which storage providers does Kybl work with?", "acceptedAnswer": { "@type": "Answer", "text": "Any S3-compatible storage: Amazon S3, Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph and other S3 servers. Presets fill in the endpoint and region for the common providers." } },
-        { "@type": "Question", "name": "Is Kybl free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Kybl is a free download for macOS, Windows and Linux. You use your own bucket and pay your storage provider as usual." } },
+        { "@type": "Question", "name": "Is Kybl free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Kybl is a free download for macOS, Windows, Linux, Android and iPhone. Use your own bucket and pay your storage provider as usual, or start with 10 GB free on Kybl Storage." } },
+        { "@type": "Question", "name": "What is Kybl Storage?", "acceptedAnswer": { "@type": "Answer", "text": "S3 storage run by Kybl for people without a bucket of their own. Sign in with your email, approve the app in the browser and it connects itself, with no access keys to copy. The free plan has 10 GB, stored in the EU, and the account site can make access keys for any other S3 tool." } },
+        { "@type": "Question", "name": "Are my files on Kybl Storage encrypted?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, at rest. Every file is encrypted with its bucket's own key (AES-256) before it is written to disk, so the storage provider, its staff and its backups only ever see ciphertext. It is not end-to-end: Kybl's servers encrypt files as they pass through, so for data only you should read, encrypt it before uploading." } },
         { "@type": "Question", "name": "Where are my access keys stored?", "acceptedAnswer": { "@type": "Answer", "text": "Secret keys are stored in the operating system keychain: the macOS Keychain, Windows Credential Manager or a Secret Service such as GNOME Keyring on Linux. They are never written to a file, and Kybl talks to your storage directly." } },
         { "@type": "Question", "name": "Can Kybl sync a folder with a bucket?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Pick a local folder, a bucket and a direction (upload or download). Kybl watches for changes, skips files that match your ignore rules and keeps syncing from the menu bar when the window is closed." } },
         { "@type": "Question", "name": "Does Kybl handle very large files and folders?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Large files upload in parts (multipart upload), folders with hundreds of thousands of objects load page by page, and search looks through every subfolder." } }
@@ -188,6 +196,7 @@
         <a href="#storage">Storage</a>
         <a href="#features">Features</a>
         <a href="#sync">Sync</a>
+        <a href="#kybl-storage">Kybl Storage</a>
         <a class="btn btn-sm btn-ghost" href="https://app.kybl.app/" title="Kybl Storage: sign in, or go to your dashboard if you already are">Sign in</a>
         <a class="btn btn-sm btn-iron" href="#download">Download</a>
       </div>
@@ -357,6 +366,21 @@
             <span><kbd>⌫</kbd> up a folder</span>
           </div>
         </article>
+        <article class="card card-small">
+          <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="M12 10v6m-3-3 3 3 3-3"/></svg></span>
+          <h3>Move and copy by dragging</h3>
+          <p>Drop files on a folder or a breadcrumb, or pick a destination. Folder sizes are one click away.</p>
+        </article>
+        <article class="card card-small">
+          <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg></span>
+          <h3>Make it yours</h3>
+          <p>Light, dark or system, colour schemes and accents, fonts, text size and density.</p>
+        </article>
+        <article class="card card-small">
+          <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg></span>
+          <h3>On your phone too</h3>
+          <p>The same app on Android and iPhone, made for touch. Transfers keep going in the background, and dropped downloads pick up where they stopped.</p>
+        </article>
       </div>
     </div>
   </section>
@@ -444,7 +468,52 @@
     </div>
   </section>
 
-  <section id="faq" class="sec">
+  <section id="kybl-storage" class="sec">
+    <div class="wrap gut split">
+      <div class="split-copy">
+        <p class="label">Kybl Storage</p>
+        <h2>No bucket yet? Borrow one of&nbsp;ours.</h2>
+        <p class="body">Sign in with your email, approve the app in the browser and it connects itself. No access keys to copy, no endpoint to type. Start with 10&nbsp;GB free.</p>
+        <ul class="ticks">
+          <li>Every file encrypted at rest, with its bucket's own key</li>
+          <li>Approve a computer or phone from the browser, revoke it any time</li>
+          <li>Access keys for any other S3 tool, from your dashboard</li>
+          <li>Stored in the EU</li>
+        </ul>
+        <div class="actions actions-left">
+          <a class="btn" href="https://app.kybl.app/">Get 10 GB free</a>
+        </div>
+        <p class="keynote">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          The storage provider, its staff and its backups only ever see scrambled bytes. It isn't end-to-end: our servers encrypt files on the way in, so for secrets only you should read, encrypt them before uploading.
+        </p>
+      </div>
+      <div class="mock mock-vault" aria-hidden="true">
+        <div class="mv-card">
+          <div class="mv-head">
+            <span class="mv-badge"><svg viewBox="0 0 64 64"><use href="#mark"/></svg></span>
+            <div><b>holiday-photos</b><span>Kybl Storage</span></div>
+            <span class="pill ok mv-lock"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Encrypted</span>
+          </div>
+          <div class="mv-file">
+            <span class="mv-thumb"></span>
+            <div><b>IMG_4101.jpg</b><span>3.8 MB · what you see</span></div>
+          </div>
+          <div class="mv-arrow"><svg viewBox="0 0 24 24"><path d="M12 5v14m-6-6 6 6 6-6"/></svg>AES-256, key per bucket</div>
+          <div class="mv-file mv-disk">
+            <code>9f 3a c1 07 e2 5b 88 d4 1e 6c a0 f7 39 b2 05 cc 71 4e d8 2a 93 f0 6b 1d c5 e8 47 0a bd 62 3f 91</code>
+            <span>3.8 MB · what the disk holds</span>
+          </div>
+          <div class="mv-usage">
+            <div><span>Used</span><b>3.1 GB of 10 GB</b></div>
+            <i><b style="--p:.31"></b></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="faq" class="sec sec-surface">
     <div class="wrap gut faq-wrap">
       <div class="sec-head">
         <p class="label">Questions</p>
@@ -452,7 +521,9 @@
       </div>
       <div class="faq">
         <details open><summary>Which storage providers does Kybl work with?</summary><p>Any S3-compatible storage: Amazon S3, Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph and other S3 servers. Presets fill in the endpoint and region for the common providers.</p></details>
-        <details><summary>Is Kybl free?</summary><p>Yes. Kybl is a free download for macOS, Windows and Linux. You use your own bucket and pay your storage provider as usual.</p></details>
+        <details><summary>Is Kybl free?</summary><p>Yes. Kybl is a free download for macOS, Windows, Linux, Android and iPhone. Use your own bucket and pay your storage provider as usual, or start with 10&nbsp;GB free on Kybl Storage.</p></details>
+        <details><summary>What is Kybl Storage?</summary><p>S3 storage run by Kybl for people without a bucket of their own. Sign in with your email, approve the app in the browser and it connects itself, with no access keys to copy. The free plan has 10&nbsp;GB, stored in the EU, and your dashboard can make access keys for any other S3 tool.</p></details>
+        <details><summary>Are my files on Kybl Storage encrypted?</summary><p>Yes, at rest. Every file is encrypted with its bucket's own key (AES-256) before it is written to disk, so the storage provider, its staff and its backups only ever see ciphertext. It isn't end-to-end: our servers encrypt files as they pass through, so for data only you should read, encrypt it before uploading.</p></details>
         <details><summary>Where are my access keys stored?</summary><p>Secret keys are stored in the operating system keychain: the macOS Keychain, Windows Credential Manager or a Secret Service such as GNOME Keyring on Linux. They are never written to a file, and Kybl talks to your storage directly.</p></details>
         <details><summary>Can Kybl sync a folder with a bucket?</summary><p>Yes. Pick a local folder, a bucket and a direction (upload or download). Kybl watches for changes, skips files that match your ignore rules and keeps syncing from the menu bar when the window is closed.</p></details>
         <details><summary>Does Kybl handle very large files and folders?</summary><p>Yes. Large files upload in parts (multipart upload), folders with hundreds of thousands of objects load page by page, and search looks through every subfolder.</p></details>
@@ -460,7 +531,7 @@
     </div>
   </section>
 
-  <section id="download" class="sec sec-surface">
+  <section id="download" class="sec">
     <div class="wrap gut">
       <div class="sec-head center">
         <p class="label">Download</p>
@@ -539,6 +610,7 @@
       <a href="#storage">Storage</a>
       <a href="#features">Features</a>
       <a href="#sync">Folder sync</a>
+      <a href="#kybl-storage">Kybl Storage</a>
       <a href="#faq">FAQ</a>
       <a href="#download">Download</a>
       <a href="https://github.com/erikkubica/kybl">GitHub</a>

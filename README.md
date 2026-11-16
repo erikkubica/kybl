@@ -7,19 +7,42 @@ Hetzner Object Storage, AWS S3, Cloudflare R2, Backblaze B2, Wasabi, DigitalOcea
 
 ## Features
 - **Connections** with presets; secret keys are stored in the OS keychain, never in a file.
-- **List and grid view** (thumbnail size slider, sorting). Thumbnails are generated locally:
+- **Kybl Storage**: no bucket yet? Sign in with your email and the app connects itself (see below).
+- **List and grid view** (thumbnail size slider, sorting, folders first). Thumbnails are generated locally:
   JPEGs use the photo's embedded EXIF thumbnail (only the first 256 KB is read), other images are
   downloaded and resized once. All thumbnails are cached on disk, so revisits are instant.
 - **Browse** folders with breadcrumbs, lazy paging for huge folders, recursive search in a folder.
-- **Details panel** with previews: images, video, audio, PDF, text.
+- **Details panel** with previews: images, video, audio, PDF, text. Video and audio stream, no download first.
 - **Upload** files or folders (button or drag & drop from Finder) with multipart for big files.
 - **Download** files or whole folders, **delete**, **rename** (files and folders), **new folder**.
+- **Move and copy** files and folders: drag them onto a folder or a breadcrumb, or pick a destination.
+- **Folder sizes** on demand (S3 has none, so Kybl counts them and keeps the result).
 - **Share links** (presigned URLs, 1 hour / 1 day / 7 days), copy `s3://` URI.
 - **Transfer queue** with speed, ETA, cancel and retry.
 - **Folder sync** between a local folder and an S3 prefix, upload or download direction, with ignore
   rules. Runs from the menu bar with the window closed. Deletions are opt-in, local files go to the
   Trash, and sync refuses to mass-delete when one side suddenly looks empty.
+- **Settings**: light/dark/system theme, colour schemes and accents, fonts, text size, density,
+  date and size formats, launch at login, reopen the last folder, confirm before delete.
+- **Phones**: the same app on Android and iPhone, with a touch UI; transfers keep going in the
+  background and dropped downloads resume where they stopped (see below).
 - Keyboard: `⌘A` select all, `Delete` delete, `⌘R` refresh, `⌘F` search, arrows navigate, `Backspace` up.
+
+## Kybl Storage
+S3 storage run by Kybl, for people without a bucket of their own. Choose **Connect Kybl Storage**,
+approve the computer or phone in the browser (or with a code on another device) and the app gets
+its own access key: nothing to copy or type. The account site, [app.kybl.app](https://app.kybl.app/),
+also makes access keys for any other S3 tool, and shows usage, devices and buckets.
+
+- **10 GB free**; bigger plans are coming.
+- **Encrypted at rest.** Every file is encrypted with a key of its own bucket (SSE-C, AES-256)
+  before it touches the disk. The storage provider, its staff, its backups and anyone holding only
+  the storage side see ciphertext; a read without the key fails. File names and sizes stay visible
+  there.
+- **Not end-to-end.** Kybl's servers do the encrypting, so they see files as they pass through.
+  For data only you should ever read, encrypt it before uploading. Clients that send their own
+  SSE-C key keep it: Kybl uses theirs and can't read those files either.
+- Stored in the EU (Germany).
 
 ## Develop
 ```bash
