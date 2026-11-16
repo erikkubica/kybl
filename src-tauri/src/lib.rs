@@ -12,6 +12,8 @@ mod transfer_notice;
 mod transfers;
 #[cfg(desktop)]
 mod tray;
+// update checks and installs from GitHub Releases
+mod updater;
 
 #[cfg(desktop)]
 use std::sync::atomic::Ordering;
@@ -78,6 +80,7 @@ pub fn run() {
                 #[cfg(target_os = "ios")]
                 mobile::edge_to_edge(&_window);
             }
+            updater::start(&handle);
             tauri::async_runtime::spawn(thumbs::prune_cache(handle));
             Ok(())
         })
@@ -126,6 +129,11 @@ pub fn run() {
             kybl_connect::kybl_device_start,
             kybl_connect::kybl_device_wait,
             kybl_connect::kybl_connect_cancel,
+            updater::update_status,
+            updater::update_check,
+            updater::update_settings,
+            updater::update_install,
+            updater::update_restart,
             #[cfg(desktop)]
             prefs::get_app_prefs,
             #[cfg(desktop)]

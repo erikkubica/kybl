@@ -7,6 +7,8 @@ import { EXPIRIES, type Settings, type Theme } from "../settings";
 import type { Toast } from "../components/Dialogs";
 import type { Profile } from "../types";
 import { useEffect } from "react";
+import { actionLabel, ago, updatesApi, type UpdateStatus } from "../updates";
+import { formatBytes } from "../format";
 
 export function SettingsScreen({
   onBack,
@@ -17,6 +19,7 @@ export function SettingsScreen({
   onAdd,
   savedWhere,
   toast,
+  updates,
 }: {
   onBack: () => void;
   settings: Settings;
@@ -26,6 +29,7 @@ export function SettingsScreen({
   onAdd: () => void;
   savedWhere: string;
   toast: (kind: Toast["kind"], text: string) => void;
+  updates: UpdateStatus | null;
 }) {
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => onChange({ ...settings, [k]: v });
   const [version, setVersion] = useState("");
@@ -113,6 +117,43 @@ export function SettingsScreen({
             </button>
           </li>
         </ul>
+        {updates && (
+          <>
+            <h2 className="m-section">Updates</h2>
+            <ul className="m-group">
+              <Toggle label="Check for updates automatically" on={updates.auto} set={(auto) => updatesApi.settings({ auto }).catch(() => {})} />
+              <li>
+                <button
+                  className="m-setting-row"
+                  disabled={updates.checking}
+                  onClick={() => {
+                    if (updates.available) {
+                      updatesApi.install().catch((e) => toast("error", errMessage(e)));
+                      return;
+                    }
+                    updatesApi
+                      .check()
+                      .then((s) => !s.available && toast("success", "Kybl is up to date"))
+                      .catch((e) => toast("error", errMessage(e)));
+                  }}
+                >
+                  <Icon name={updates.available ? "download" : "refresh"} size={16} />
+                  <span className="m-grow">
+                    {updates.available ? `${actionLabel(updates.available)} Kybl ${updates.available.version}` : updates.checking ? "Checking…" : "Check for updates"}
+                    <small className="m-sub">
+                      {updates.available
+                        ? `You have ${updates.current}${updates.available.asset ? ` · ${formatBytes(updates.available.asset.size)}` : ""}`
+                        : updates.lastChecked
+                          ? `Up to date · checked ${ago(updates.lastChecked)}`
+                          : "From the Kybl releases on GitHub"}
+                    </small>
+                  </span>
+                </button>
+              </li>
+            </ul>
+          </>
+        )}
+
         <p className="m-foot">
           Downloads are saved to {savedWhere}. Secret keys are kept on this device only.
           <br />

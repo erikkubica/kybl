@@ -24,6 +24,9 @@ Hetzner Object Storage, AWS S3, Cloudflare R2, Backblaze B2, Wasabi, DigitalOcea
   Trash, and sync refuses to mass-delete when one side suddenly looks empty.
 - **Settings**: light/dark/system theme, colour schemes and accents, fonts, text size, density,
   date and size formats, launch at login, reopen the last folder, confirm before delete.
+- **Updates** straight from GitHub Releases, no update server: checks at start and every few hours
+  (or from the menu bar), then downloads, verifies the SHA-256 GitHub lists and installs in place
+  with one click on macOS, Windows and AppImage; `.deb`/`.rpm`, Android and iOS open the download.
 - **Phones**: the same app on Android and iPhone, with a touch UI; transfers keep going in the
   background and dropped downloads resume where they stopped (see below).
 - Keyboard: `⌘A` select all, `Delete` delete, `⌘R` refresh, `⌘F` search, arrows navigate, `Backspace` up.

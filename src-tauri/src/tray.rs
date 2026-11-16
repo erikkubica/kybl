@@ -38,6 +38,8 @@ pub struct TrayItems {
     status: MenuItem<Wry>,
     pause: MenuItem<Wry>,
     sync_now: MenuItem<Wry>,
+    /// "Check for updates…", or "Update to Kybl x.y.z…" once one is found
+    update: MenuItem<Wry>,
     /// last text shown, so unchanged updates skip the native menu calls
     last: Mutex<String>,
 }
@@ -48,6 +50,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let sync_now = MenuItem::with_id(app, "sync_now", "Sync now", false, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "Pause syncing", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "sync_settings", "Sync settings…", true, None::<&str>)?;
+    let update = MenuItem::with_id(app, "update", "Check for updates…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Kybl", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
@@ -59,6 +62,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             &pause,
             &settings,
             &PredefinedMenuItem::separator(app)?,
+            &update,
             &quit,
         ],
     )?;
@@ -85,11 +89,19 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                     let _ = sync::set_paused_all(&app, &mgr, !paused).await;
                 });
             }
+            // the window shows what was found (the update prompt, or the result in General settings)
+            "update" => {
+                show_main_at(app, Some("general"));
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = crate::updater::update_check(app).await;
+                });
+            }
             "quit" => app.exit(0),
             _ => {}
         })
         .build(app)?;
-    app.manage(TrayItems { status, pause, sync_now, last: Mutex::new(String::new()) });
+    app.manage(TrayItems { status, pause, sync_now, update, last: Mutex::new(String::new()) });
     refresh(app);
     Ok(())
 }
@@ -142,6 +154,16 @@ pub fn refresh<R: Runtime>(app: &AppHandle<R>) {
     let _ = items.sync_now.set_enabled(!paused && st.iter().any(|s| s.state != "paused"));
     if let Some(tray) = app.tray_by_id("main") {
         let _ = tray.set_tooltip(Some(format!("Kybl · {text}")));
+    }
+}
+
+/// Names a found update in the menu.
+pub fn set_update(app: &AppHandle, version: Option<&str>) {
+    if let Some(items) = app.try_state::<TrayItems>() {
+        let _ = items.update.set_text(match version {
+            Some(v) => format!("Update to Kybl {v}…"),
+            None => "Check for updates…".into(),
+        });
     }
 }
 

@@ -176,12 +176,12 @@ async fn device_name(_app: &AppHandle) -> String {
 
 // ---------------------------------------------------------------- account API
 
-type HttpsClient = hyper_util::client::legacy::Client<
+pub(crate) type HttpsClient = hyper_util::client::legacy::Client<
     hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
     Full<Bytes>,
 >;
 
-fn http() -> Result<&'static HttpsClient, String> {
+pub(crate) fn http() -> Result<&'static HttpsClient, String> {
     static C: OnceLock<HttpsClient> = OnceLock::new();
     if let Some(c) = C.get() {
         return Ok(c);

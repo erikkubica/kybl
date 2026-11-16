@@ -121,6 +121,31 @@ const syncStatus: Record<string, Record<string, unknown>> = {
 };
 let syncPausedAll = false;
 const prefs = { closeToTray: true, launchAtLogin: false };
+// ?update in the URL pretends a new version is out, to design the update card
+const updateRelease = {
+  version: "0.4.0",
+  page: "https://github.com/erikkubica/kybl/releases/tag/v0.4.0",
+  notes: "",
+  published: new Date().toISOString(),
+  how: "install",
+  asset: { name: "Kybl_aarch64.app.tar.gz", url: "https://example.invalid/Kybl.tar.gz", size: 4_903_400, sha256: null },
+};
+const updateState = {
+  current: "0.3.2",
+  auto: true,
+  skipped: null as string | null,
+  checking: false,
+  lastChecked: null as number | null,
+  error: null as string | null,
+  available: (new URLSearchParams(location.search).has("update") ? updateRelease : null) as typeof updateRelease | null,
+  phase: "",
+  received: 0,
+  total: 0,
+};
+const pushUpdate = (patch: Partial<typeof updateState>) => {
+  Object.assign(updateState, patch);
+  return emit("update-status", { ...updateState });
+};
 async function pushStatus(id: string, patch: Record<string, unknown>) {
   syncStatus[id] = { ...(syncStatus[id] ?? { id, state: "idle", lastSync: null, error: null, current: null, done: 0, total: 0, files: 0, summary: null }), ...patch };
   await emit("sync-status", syncStatus[id]);
@@ -353,6 +378,34 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     }
     case "sync_pause_all":
       syncPausedAll = a.paused;
+      return null;
+    case "update_status":
+      return { ...updateState };
+    case "update_check":
+      await pushUpdate({ checking: true, error: null });
+      await new Promise((ok) => setTimeout(ok, 700));
+      await pushUpdate({ checking: false, lastChecked: Date.now(), available: updateRelease });
+      return { ...updateState };
+    case "update_settings":
+      if (a.auto != null) updateState.auto = a.auto;
+      if (a.skip != null) updateState.skipped = a.skip || null;
+      await pushUpdate({});
+      return { ...updateState };
+    case "update_install": {
+      const total = updateRelease.asset.size;
+      await pushUpdate({ phase: "downloading", received: 0, total, error: null });
+      for (let got = 0; got < total; got += total / 12) {
+        await new Promise((ok) => setTimeout(ok, 180));
+        await pushUpdate({ received: Math.min(total, Math.round(got)) });
+      }
+      await pushUpdate({ phase: "installing", received: total });
+      await new Promise((ok) => setTimeout(ok, 900));
+      await pushUpdate({ phase: "ready" });
+      return { ...updateState };
+    }
+    case "update_restart":
+      if (!a.force) throw "busy";
+      location.reload();
       return null;
     case "get_app_prefs":
       return prefs;

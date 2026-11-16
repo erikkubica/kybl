@@ -21,6 +21,8 @@ import { KyblMark } from "./components/KyblMark";
 import { KYBL, isRevokedKey, kyblError } from "./kybl";
 import { SettingsPage, type SettingsPageId } from "./components/SettingsPage";
 import { useSyncOverall } from "./sync";
+import { useUpdates } from "./updates";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { listen } from "@tauri-apps/api/event";
 import { MoveDialog } from "./components/MoveDialog";
 import { destKey, destLabel, entryParent } from "./moving";
@@ -129,6 +131,7 @@ export default function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<SettingsPageId | undefined>(undefined);
+  const updates = useUpdates();
   const syncState = useSyncOverall();
   const openSettings = useCallback((page?: SettingsPageId) => {
     setSettingsPage(page);
@@ -1478,6 +1481,7 @@ export default function App() {
         </div>
       )}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+      {!settingsOpen && <UpdateBanner st={updates} />}
       <Toasts toasts={toasts} dismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
     </div>
   );

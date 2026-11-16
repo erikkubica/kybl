@@ -8,6 +8,9 @@ import { ProviderBadge } from "./Sidebar";
 import { KyblLockup } from "./KyblMark";
 import { SyncSection } from "./SyncSection";
 import { syncApi, type AppPrefs } from "../sync";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { actionLabel, ago, installAndRestart, updatesApi, useUpdates } from "../updates";
+import { formatBytes } from "../format";
 
 export type SettingsPageId = "general" | "appearance" | "browsing" | "transfers" | "sync" | "connections" | "storage" | "shortcuts";
 type Page = SettingsPageId;
@@ -62,6 +65,71 @@ const SHORTCUTS: { label: string; keys: string[] }[] = [
   { label: "Clear selection / close dialog", keys: ["Esc"] },
   { label: "Settings", keys: ["⌘", ","] },
 ];
+
+/** Automatic checks, "Check now", and installing what a check found. */
+function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info", text: string) => void }) {
+  const st = useUpdates();
+  if (!st) return null;
+  const rel = st.available;
+  const working = st.phase === "downloading" || st.phase === "installing";
+  const status = st.checking
+    ? "Checking…"
+    : st.phase === "downloading"
+      ? `Downloading Kybl ${rel?.version}… ${formatBytes(st.received)}${st.total ? ` of ${formatBytes(st.total)}` : ""}`
+      : st.phase === "installing"
+        ? `Installing Kybl ${rel?.version}…`
+        : st.phase === "ready"
+          ? `Kybl ${rel?.version} is installed. Restart to use it.`
+          : st.error
+            ? st.error
+            : rel
+              ? `Kybl ${rel.version} is available (you have ${st.current}).`
+              : st.lastChecked
+                ? `You have the latest version. Checked ${ago(st.lastChecked)}.`
+                : "Updates come from the Kybl releases on GitHub.";
+  const check = () =>
+    updatesApi
+      .check()
+      .then((s) => !s.available && onToast("success", "Kybl is up to date"))
+      .catch(() => {});
+  return (
+    <>
+      <Row label="Check for updates automatically" hint="Looks for a new version at start and every few hours. Nothing is installed without asking.">
+        <Switch label="Check for updates automatically" on={st.auto} onChange={(auto) => updatesApi.settings({ auto }).catch((e) => onToast("error", String(e)))} />
+      </Row>
+      <Row label="Updates" hint={status}>
+        <div className="set-actions">
+          {rel && (
+            <button className="btn btn-sm" onClick={() => openUrl(rel.page).catch(() => {})}>
+              What's new
+            </button>
+          )}
+          {st.phase === "ready" ? (
+            <button className="btn btn-sm btn-primary" onClick={() => updatesApi.restart(true).catch((e) => onToast("error", String(e)))}>
+              Restart now
+            </button>
+          ) : rel ? (
+            <button
+              className="btn btn-sm btn-primary"
+              disabled={working}
+              onClick={() =>
+                rel.how === "install"
+                  ? installAndRestart(() => onToast("info", "Kybl restarts when you click Restart now, after your transfers finish.")).catch(() => {})
+                  : updatesApi.install().catch((e) => onToast("error", String(e)))
+              }
+            >
+              {actionLabel(rel)}
+            </button>
+          ) : (
+            <button className="btn btn-sm" disabled={st.checking} onClick={check}>
+              Check now
+            </button>
+          )}
+        </div>
+      </Row>
+    </>
+  );
+}
 
 function Row({ label, hint, stack, children }: { label: ReactNode; hint?: string; stack?: boolean; children?: ReactNode }) {
   return (
@@ -247,6 +315,7 @@ export function SettingsPage({
                   <Row label={<KyblLockup size={18} />} hint="Browse, upload, download and share files on any S3-compatible storage.">
                     <span className="chip">{version ? `v${version}` : "dev build"}</span>
                   </Row>
+                  <UpdatesRows onToast={onToast} />
                 </div>
               </>
             )}

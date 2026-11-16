@@ -30,6 +30,8 @@ import { EntryRow, EntryTile, SkeletonList, usePress } from "./rows";
 import { ActionSheet, type SheetItem } from "./ActionSheet";
 import { TransfersScreen, useActiveCount } from "./TransfersScreen";
 import { SettingsScreen } from "./SettingsScreen";
+import { useUpdates } from "../updates";
+import { UpdateBanner } from "../components/UpdateBanner";
 import { Viewer } from "./Viewer";
 import { Breadcrumbs } from "../components/Breadcrumbs";
 import { Lockup, Mascot } from "./Mascot";
@@ -159,6 +161,7 @@ export default function MobileApp() {
   const [recent, setRecent] = useState<Loc[]>(() => readJson<Loc[]>("m.recent", []));
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const updates = useUpdates();
 
   const toast = useCallback((kind: Toast["kind"], text: string) => {
     const id = Date.now() + Math.random();
@@ -1225,6 +1228,7 @@ export default function MobileApp() {
       </Presence>
       <Presence show={screen === "settings"}>
         <SettingsScreen
+          updates={updates}
           onBack={() => backRef.current()}
           settings={settings}
           onChange={updateSettings}
@@ -1329,6 +1333,7 @@ export default function MobileApp() {
           onClose={() => setMoveDialog(null)}
         />
       )}
+      {screen === null && <UpdateBanner st={updates} mobile />}
       <Toasts toasts={toasts} dismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
     </div>
   );

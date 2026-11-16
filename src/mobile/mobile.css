@@ -2318,3 +2318,39 @@ input[type="checkbox"].m-switch:checked {
 .m-bucket.is-hidden .m-bucket-ico {
   opacity: 0.45;
 }
+
+/* the update card sits above the bottom bar, like the toasts */
+.m-app .update-card.m {
+  top: auto;
+  right: 16px;
+  bottom: calc(100px + var(--m-bottom));
+  left: 16px;
+  width: auto;
+  max-width: 480px;
+  margin: 0 auto;
+  border-radius: 16px;
+  font-size: 14.5px;
+  animation: m-rise 0.35s var(--m-spring) both;
+}
+.m-app .update-card.m small {
+  font-size: 13px;
+}
+.m-app .update-card.m .btn-sm {
+  height: 34px;
+  padding: 0 14px;
+  font-size: 14px;
+}
+.m-app .update-card.m .update-close {
+  width: 28px;
+  height: 28px;
+}
+
+.m-setting-row .m-sub {
+  display: block;
+  margin-top: 2px;
+  color: var(--dim);
+  font-size: 13px;
+}
+.m-setting-row:disabled {
+  opacity: 0.6;
+}
