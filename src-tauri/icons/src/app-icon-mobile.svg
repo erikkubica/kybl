@@ -1,0 +1,25 @@
+<!-- Phone app icon: full-bleed tile, the OS masks the corners. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f04e30"/><stop offset="1" stop-color="#c22b13"/></linearGradient>
+    <filter id="ground" x="-40%" y="-200%" width="180%" height="500%"><feGaussianBlur stdDeviation="20"/></filter>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#tile)"/>
+  <ellipse cx="512" cy="772" rx="206" ry="33" fill="#4a0d02" opacity="0.55" filter="url(#ground)"/>
+  <g transform="translate(198.9 190.6) scale(3.1312)">
+  <path d="M40 76 C40 6 160 6 160 76" fill="none" stroke="#1e1a1a" stroke-width="7" stroke-linecap="round"/>
+  <rect x="80" y="16" width="40" height="15" rx="7.5" fill="#ffc93c"/>
+  <rect x="86" y="19" width="22" height="3.4" rx="1.7" fill="#fff" opacity="0.45"/>
+  <path d="M38 76 L54 168 A46 12 0 0 0 146 168 L162 76 A62 16 0 0 1 38 76 Z" fill="#fff"/>
+  <path d="M149 100 L139 162" fill="none" stroke="#000" stroke-opacity="0.12" stroke-width="13" stroke-linecap="round"/>
+  <path d="M52 100 L57 130" fill="none" stroke="#fff" stroke-opacity="0.28" stroke-width="5" stroke-linecap="round"/>
+  <path d="M54 168 A46 12 0 0 0 146 168" fill="none" stroke="#1e1a1a" stroke-width="4.5" stroke-linecap="round"/>
+  <ellipse cx="100" cy="76" rx="66" ry="18" fill="#1e1a1a"/>
+  <ellipse cx="100" cy="76" rx="56" ry="11.5" fill="#cfc7c3"/>
+  <path d="M44 70 A60 14 0 0 1 78 60" fill="none" stroke="#fff" stroke-opacity="0.35" stroke-width="2.6" stroke-linecap="round"/>
+  <g fill="#d9381f"><circle cx="62" cy="106" r="5.2"/><circle cx="138" cy="106" r="5.2"/><circle cx="66" cy="134" r="5.2"/><circle cx="134" cy="134" r="5.2"/><circle cx="76" cy="157" r="5.2"/><circle cx="100" cy="163" r="5.2"/><circle cx="124" cy="157" r="5.2"/></g>
+  <ellipse cx="85" cy="115" rx="6.2" ry="7.8" fill="#1e1a1a"/><ellipse cx="115" cy="115" rx="6.2" ry="7.8" fill="#1e1a1a"/>
+  <circle cx="87" cy="112.4" r="2" fill="#fff"/><circle cx="117" cy="112.4" r="2" fill="#fff"/>
+  <path d="M89 133 Q100 144 111 133" fill="none" stroke="#1e1a1a" stroke-width="4.2" stroke-linecap="round"/>
+  </g>
+</svg>
