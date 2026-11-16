@@ -22,7 +22,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # One draft release up front: the build jobs run in parallel, and when each of them had to
+  # create it, two could race and make two drafts for the same tag.
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > notes.md <<'NOTES'
+          ### Install
+
+          - **macOS**: `.dmg` (`aarch64` for Apple Silicon, `x64` for Intel). The app is signed but not notarized, so the first time macOS says it can't check the developer. Open **System Settings → Privacy & Security** and click **Open Anyway**. You only do this once.
+          - **Windows**: `.msi` or `-setup.exe`. If SmartScreen warns, click **More info → Run anyway**.
+          - **Linux**: `.AppImage`, `.deb` or `.rpm`.
+          - **Android**: `Kybl.apk`. Open it on the phone and allow installs from your browser when asked. Updates install over it.
+          - **iPhone / iPad**: `Kybl.ipa`, unsigned, for sideloading with [AltStore](https://altstore.io) or [SideStore](https://sidestore.io) (add the source `https://github.com/REPO/releases/latest/download/altstore-source.json` to get updates) or Sideloadly. A free Apple ID signs it for 7 days; AltStore and SideStore renew it on their own.
+          NOTES
+          sed -i "s|REPO|${{ github.repository }}|g" notes.md
+          V="$(jq -r .version src-tauri/tauri.conf.json)"
+          # listed, not looked up by tag: a lookup by tag does not see drafts
+          if [ -z "$(gh api "repos/${{ github.repository }}/releases" --jq ".[] | select(.tag_name == \"v$V\") | .id")" ]; then
+            gh release create "v$V" --repo "${{ github.repository }}" --draft --title "v$V" --target "${{ github.sha }}" --notes-file notes.md
+          fi
+
   build:
+    needs: draft
     strategy:
       fail-fast: false
       matrix:
@@ -102,14 +129,6 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
-          releaseBody: |
-            ### Install
-
-            - **macOS**: `.dmg` (`aarch64` for Apple Silicon, `x64` for Intel). The app is signed but not notarized, so the first time macOS says it can't check the developer. Open **System Settings → Privacy & Security** and click **Open Anyway**. You only do this once.
-            - **Windows**: `.msi` or `-setup.exe`. If SmartScreen warns, click **More info → Run anyway**.
-            - **Linux**: `.AppImage`, `.deb` or `.rpm`.
-            - **Android**: `Kybl.apk`. Open it on the phone and allow installs from your browser when asked. Updates install over it.
-            - **iPhone / iPad**: `Kybl.ipa`, unsigned, for sideloading with [AltStore](https://altstore.io) or [SideStore](https://sidestore.io) (add the source `https://github.com/${{ github.repository }}/releases/latest/download/altstore-source.json` to get updates) or Sideloadly. A free Apple ID signs it for 7 days; AltStore and SideStore renew it on their own.
 
   # iOS without an Apple Developer account: build and archive with code signing switched off,
   # then zip the archived Kybl.app into an unsigned .ipa. Sideloading tools (AltStore, SideStore,
