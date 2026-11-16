@@ -2152,9 +2152,9 @@ input[type="checkbox"] {
 .grid {
   display: grid;
   gap: 10px;
-  /* tiles keep their size; spare width goes between the columns, so resizing the window or
-     toggling the sidebar never makes the icons grow or shrink */
-  justify-content: space-between;
+  /* tiles keep their size and their spacing: spare width stays at the end of the row, so
+     resizing the window or toggling a panel never moves the icons apart or together */
+  justify-content: start;
   padding: 14px 14px 18px;
 }
 /* Finder-style tiles: an icon a bit narrower than the column, the name (up to two lines) right
