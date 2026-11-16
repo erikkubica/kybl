@@ -23,6 +23,7 @@ import type {
   Profile,
   RemoteFile,
   SearchResult,
+  Transfer,
 } from "./types";
 
 /** Outcome of a long bucket operation; `error` is "Cancelled" when the user stopped it. */
@@ -98,6 +99,8 @@ export const api = {
     destPath: string,
   ) => invoke<void>("start_download", { id, profileId, bucket, key, destPath }),
   cancelTransfer: (id: string) => invoke<void>("cancel_transfer", { id }),
+  /** Transfers still queued or running, including ones started before this page loaded. */
+  activeTransfers: () => invoke<Omit<Transfer, "speed" | "error">[]>("active_transfers"),
 
   clearThumbnailCache: () => invoke<number>("clear_thumbnail_cache"),
 

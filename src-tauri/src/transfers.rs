@@ -41,6 +41,39 @@ fn emit(app: &AppHandle, id: &str, state: &'static str, bytes: u64, total: u64, 
     );
 }
 
+/// A transfer that has not ended, as `active_transfers` reports it.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveTransfer {
+    id: String,
+    kind: &'static str,
+    name: String,
+    /// queued | running
+    state: &'static str,
+    bytes: u64,
+    total: u64,
+    profile_id: String,
+    bucket: String,
+    key: String,
+    local: String,
+}
+
+/// Every transfer that has not ended. The page only learns of transfers it started; on Android
+/// the process (and its transfers) can outlive the page, and a page opened again asks for these.
+static ACTIVE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, ActiveTransfer>>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn track(id: &str, f: impl FnOnce(&mut ActiveTransfer)) {
+    if let Some(t) = ACTIVE.lock().unwrap().get_mut(id) {
+        f(t);
+    }
+}
+
+#[tauri::command]
+pub fn active_transfers() -> Vec<ActiveTransfer> {
+    ACTIVE.lock().unwrap().values().cloned().collect()
+}
+
 pub(crate) enum Outcome {
     Done,
     Cancelled,
@@ -346,33 +379,55 @@ pub(crate) async fn download_file(
     }
 }
 
+/// Where an upload reads from.
+enum Source {
+    Path(String),
+    /// A file picked on Android (`content://…`): only readable through the system, so it is
+    /// opened right away, while the app is on screen. Android's file and path APIs go through
+    /// the app's screen, which may be gone (swiped away) by the time the upload's turn comes.
+    Picked { file: std::fs::File, cache: std::path::PathBuf },
+}
+
 /// A file picked on a phone comes as a URL, not a path: `content://…` on Android (a document
 /// another app hands over, only readable through the system) or `file://…` on iOS. A file URL is
-/// just a path. Anything else is copied once into the cache under the object's own name (so its
-/// content type still reads right) and that copy is uploaded; the second value is the copy to
-/// remove afterwards.
-async fn local_source(app: &AppHandle, local: &str, key: &str) -> Result<(String, Option<std::path::PathBuf>), String> {
+/// just a path; anything else is opened now and copied when its upload starts.
+async fn open_source(app: &AppHandle, local: &str) -> Result<Source, String> {
     use tauri_plugin_fs::{FilePath, FsExt, OpenOptions};
     if !local.contains("://") {
-        return Ok((local.to_string(), None));
+        return Ok(Source::Path(local.to_string()));
     }
     let fp: FilePath = local.parse().map_err(err)?;
     if let FilePath::Url(u) = &fp {
         if u.scheme() == "file" {
             let p = u.to_file_path().map_err(|_| format!("Not a file: {local}"))?;
-            return Ok((p.to_string_lossy().into_owned(), None));
+            return Ok(Source::Path(p.to_string_lossy().into_owned()));
         }
     }
-    let name = key.rsplit('/').next().filter(|n| !n.is_empty()).unwrap_or("upload");
-    let dir = app.path().app_cache_dir().map_err(err)?.join("uploads").join(uuid::Uuid::new_v4().to_string());
-    let dest = dir.join(name);
+    let cache = app.path().app_cache_dir().map_err(err)?.join("uploads");
     let app = app.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut opts = OpenOptions::new();
+        opts.read(true);
+        let file = app.fs().open(fp, opts).map_err(|e| format!("Could not read the picked file: {e}"))?;
+        Ok(Source::Picked { file, cache })
+    })
+    .await
+    .map_err(err)?
+}
+
+/// The path to upload from. A picked file is copied into the cache under the object's own name
+/// (so its content type still reads right); the second value is the copy to remove afterwards.
+async fn local_source(source: Source, key: &str) -> Result<(String, Option<std::path::PathBuf>), String> {
+    let (mut src, cache) = match source {
+        Source::Path(p) => return Ok((p, None)),
+        Source::Picked { file, cache } => (file, cache),
+    };
+    let name = key.rsplit('/').next().filter(|n| !n.is_empty()).unwrap_or("upload");
+    let dir = cache.join(uuid::Uuid::new_v4().to_string());
+    let dest = dir.join(name);
     let dest2 = dest.clone();
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         std::fs::create_dir_all(&dir).map_err(err)?;
-        let mut opts = OpenOptions::new();
-        opts.read(true);
-        let mut src = app.fs().open(fp, opts).map_err(|e| format!("Could not read the picked file: {e}"))?;
         let mut out = std::fs::File::create(&dest2).map_err(err)?;
         std::io::copy(&mut src, &mut out).map_err(err)?;
         Ok(())
@@ -399,6 +454,10 @@ async fn spawn_transfer(
     local: String,
 ) -> Result<(), String> {
     let client = client_for(&app, state, &profile_id).await?;
+    let source = match kind {
+        Kind::Upload => Some(open_source(&app, &local).await?),
+        Kind::Download => None,
+    };
     let cancel = Arc::new(AtomicBool::new(false));
     state.cancels.lock().await.insert(id.clone(), cancel.clone());
     let slots = state.transfer_slots(&profile_id).await;
@@ -409,6 +468,24 @@ async fn spawn_transfer(
     };
     let name = key.rsplit('/').find(|n| !n.is_empty()).unwrap_or(&key).to_string();
     notice::queued(&app, &id, dir, &name);
+    ACTIVE.lock().unwrap().insert(
+        id.clone(),
+        ActiveTransfer {
+            id: id.clone(),
+            kind: match kind {
+                Kind::Upload => "upload",
+                Kind::Download => "download",
+            },
+            name: name.clone(),
+            state: "queued",
+            bytes: 0,
+            total: 0,
+            profile_id: profile_id.clone(),
+            bucket: bucket.clone(),
+            key: key.clone(),
+            local: local.clone(),
+        },
+    );
 
     tauri::async_runtime::spawn(async move {
         let _permit = slots.acquire_owned().await;
@@ -419,9 +496,14 @@ async fn spawn_transfer(
             let report = |done: u64, total: u64| {
                 emit(&app, &id, "running", done, total, None);
                 notice::progress(&app, &id, done, total);
+                track(&id, |t| {
+                    t.state = "running";
+                    t.bytes = done;
+                    t.total = total;
+                });
             };
             match kind {
-                Kind::Upload => match local_source(&app, &local, &key).await {
+                Kind::Upload => match local_source(source.expect("an upload has a source"), &key).await {
                     Ok((path, temp)) => {
                         let r = upload_file(&client, &bucket, &key, &path, &cancel, &report).await;
                         if let Ok(Outcome::Done) = r {
@@ -441,6 +523,7 @@ async fn spawn_transfer(
                 }
             }
         };
+        ACTIVE.lock().unwrap().remove(&id);
         notice::finished(
             &app,
             &id,

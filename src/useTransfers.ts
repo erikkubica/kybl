@@ -87,6 +87,7 @@ let listening = false;
 function listenOnce() {
   if (listening) return;
   listening = true;
+  adoptRunning();
   listen<TransferEvent>("transfer", (e) => {
     const ev = e.payload;
     const cur = byId.get(ev.id);
@@ -118,6 +119,24 @@ function listenOnce() {
   }).catch(() => {
     listening = false;
   });
+}
+
+/**
+ * Picks up transfers that were already going when this page loaded. On Android they keep
+ * running after the app is swiped away, and opening Kybl again loads a fresh page.
+ */
+function adoptRunning() {
+  api
+    .activeTransfers()
+    .then((list) => {
+      for (const t of list) {
+        if (byId.has(t.id)) continue;
+        byId.set(t.id, { ...t, speed: 0, error: null });
+        if (t.kind === "upload") batch.add(t.id);
+      }
+      if (list.length) markDirty();
+    })
+    .catch(() => {});
 }
 
 async function start(t: Transfer) {

@@ -9,13 +9,16 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
+import org.json.JSONObject
 
 /**
  * Foreground service that runs while any upload or download is queued or running. Android
@@ -70,6 +73,30 @@ class TransferService : Service() {
 
     @Volatile private var running = false
     @Volatile private var latest: TransferSnapshot? = null
+
+    /**
+     * Called from Rust over JNI (src/transfer_notice.rs) with the combined state as JSON, on the
+     * application context: unlike a Tauri plugin call it works after the app's screen has been
+     * swiped away, which is when this service matters most. `active == 0` stops the service.
+     */
+    @JvmStatic
+    fun fromRust(ctx: Context, json: String) {
+      val o = JSONObject(json)
+      val s = TransferSnapshot().apply {
+        active = o.optInt("active")
+        title = o.optString("title")
+        text = o.optString("text")
+        done = o.optLong("done")
+        total = o.optLong("total")
+        ok = o.optInt("ok")
+        failed = o.optInt("failed")
+        kind = o.optString("kind", "download")
+      }
+      val app = ctx.applicationContext
+      Handler(Looper.getMainLooper()).post {
+        if (s.active == 0) stop(app, s) else update(app, s)
+      }
+    }
 
     fun update(ctx: Context, s: TransferSnapshot) {
       latest = s

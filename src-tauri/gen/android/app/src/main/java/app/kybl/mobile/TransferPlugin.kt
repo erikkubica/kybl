@@ -25,26 +25,17 @@ class TransferSnapshot {
 }
 
 /**
- * Called from Rust (src/transfer_notice.rs) while uploads or downloads run: `update` starts or
- * refreshes [TransferService], `stop` ends it. The first transfer asks for the notification
- * permission (Android 13+); without it the service still keeps transfers alive, just unseen.
+ * The first transfer asks for the notification permission (Android 13+); without it
+ * [TransferService] still keeps transfers alive, just unseen. The service itself is driven from
+ * Rust over JNI ([TransferService.fromRust]), which keeps working once the app's screen is gone.
  */
 @TauriPlugin
 class TransferPlugin(private val activity: Activity) : Plugin(activity) {
   private var askedPermission = false
 
   @Command
-  fun update(invoke: Invoke) {
-    val s = invoke.parseArgs(TransferSnapshot::class.java)
+  fun askNotifications(invoke: Invoke) {
     askForNotifications()
-    TransferService.update(activity.applicationContext, s)
-    invoke.resolve()
-  }
-
-  @Command
-  fun stop(invoke: Invoke) {
-    val s = invoke.parseArgs(TransferSnapshot::class.java)
-    TransferService.stop(activity.applicationContext, s)
     invoke.resolve()
   }
 

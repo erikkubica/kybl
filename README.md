@@ -43,7 +43,9 @@ Folder sync, the menu-bar icon and launch at login are desktop only.
 - **Downloads** go to *Files › On My iPhone › Kybl* on iOS and `Download/Kybl` on Android.
 - **In the background**: on Android, uploads and downloads run in a foreground service
   (`TransferService.kt`, driven by `src/transfer_notice.rs`) that keeps the app from being frozen
-  and shows the progress as a notification. A download whose connection drops (backgrounded on iOS,
+  and shows the progress as a notification. They keep going when the app is swiped away in the
+  app switcher: the process outlives its screen until the last transfer ends, and opening Kybl
+  again picks the running transfers back up. A download whose connection drops (backgrounded on iOS,
   network change) picks up where it stopped with a ranged request for the same version of the file.
 - **Uploads** use the system photo or document picker; Android `content://` files are copied to the
   cache first, then uploaded (multipart for big files) and the copy removed.

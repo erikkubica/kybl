@@ -17,8 +17,9 @@ mod tray;
 use std::sync::atomic::Ordering;
 
 use tauri::Manager;
+use tauri::RunEvent;
 #[cfg(desktop)]
-use tauri::{RunEvent, WindowEvent};
+use tauri::WindowEvent;
 
 /// Passed by the login item: start in the menu bar without opening the window.
 #[cfg(desktop)]
@@ -106,6 +107,7 @@ pub fn run() {
             transfers::start_upload,
             transfers::start_download,
             transfers::cancel_transfer,
+            transfers::active_transfers,
             #[cfg(desktop)]
             sync::sync_list,
             #[cfg(desktop)]
@@ -132,6 +134,25 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|_app, _event| {
+        // Android: closing the app's screen must not end transfers still running
+        #[cfg(mobile)]
+        match &_event {
+            RunEvent::ExitRequested { code: None, api, .. } => {
+                if transfer_notice::keep_alive_without_window(_app) {
+                    api.prevent_exit();
+                }
+            }
+            // ...and opened again while they still run: the new screen needs a window
+            RunEvent::MainEventsCleared => {
+                if transfer_notice::screen_back_without_window(_app) {
+                    // fails while the new screen is still starting: tried again on the next pass
+                    if tauri::WebviewWindowBuilder::new(_app, "main", tauri::WebviewUrl::default()).build().is_err() {
+                        transfer_notice::window_not_back(_app);
+                    }
+                }
+            }
+            _ => {}
+        }
         #[cfg(desktop)]
         match _event {
             // clicking the Dock icon while the window is hidden brings it back

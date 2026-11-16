@@ -24,8 +24,26 @@ class MainActivity : TauriActivity() {
   @Volatile private var insetsJson = "{\"top\":0,\"bottom\":0,\"left\":0,\"right\":0}"
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    // counted before Tauri hears of it: see [screens]
+    screens++
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+  }
+
+  override fun onDestroy() {
+    super.onDestroy()
+    screens--
+  }
+
+  companion object {
+    @Volatile private var screens = 0
+
+    /**
+     * How many Kybl screens exist. Read from Rust over JNI (src/transfer_notice.rs): after the
+     * app was swiped away while transfers ran, the process lives on without a window, and
+     * opening Kybl again makes a new screen that needs one.
+     */
+    @JvmStatic fun screens(): Int = screens
   }
 
   /**

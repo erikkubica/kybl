@@ -70,6 +70,12 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6"
 
+# Android: the transfer notification is driven over JNI on the application context, which
+# outlives the app's screen (src/transfer_notice.rs)
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"
+
 # The OS keychain everywhere but Android, which keeps secrets in the app's private storage
 # (see `state::vault`).
 [target.'cfg(not(target_os = "android"))'.dependencies]

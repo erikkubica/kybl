@@ -316,6 +316,8 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     case "start_download":
       simulateTransfer(a.id, 18_000_000 + Math.random() * 60_000_000);
       return null;
+    case "active_transfers":
+      return [];
     case "cancel_transfer":
       cancelled.add(a.id);
       return null;
