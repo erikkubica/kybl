@@ -229,6 +229,8 @@ function FileDetails({
       <div
         className={`preview-media ${showsPdf ? "pdf" : ""} ${showsImage && !["jpg", "jpeg"].includes(extOf(entry.name)) ? "" : "plain"}`}
         onContextMenu={(ev) => {
+          // text previews keep the native menu (Copy, and on phones the long-press selection)
+          if ((ev.target as HTMLElement).closest(".text-preview")) return;
           ev.preventDefault();
           onContext(ev, entry);
         }}
