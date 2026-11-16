@@ -197,7 +197,7 @@ export function GridView({
       <div
         className="grid"
         ref={grid}
-        style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${tile}px, 1fr))` }}
+        style={{ gridTemplateColumns: `repeat(auto-fill, min(${tile}px, 100%))` }}
       >
         {entries.slice(win.start, win.end).map((e) => {
           const rel = e.key.slice(prefix.length);
@@ -219,7 +219,7 @@ export function GridView({
       {win.padBottom > 0 && <div style={{ height: win.padBottom }} aria-hidden="true" />}
       {entries.length === 0 && !loading && <EmptyState searchMode={searchMode} action={emptyAction} />}
       {loading && entries.length === 0 && (
-        <div className="grid" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${tile}px, 1fr))` }} aria-hidden="true">
+        <div className="grid" style={{ gridTemplateColumns: `repeat(auto-fill, min(${tile}px, 100%))` }} aria-hidden="true">
           {Array.from({ length: 12 }, (_, i) => (
             <div key={i} className="card">
               <div className="skel skel-card" style={{ alignSelf: "stretch" }} />
