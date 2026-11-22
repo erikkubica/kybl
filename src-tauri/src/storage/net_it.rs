@@ -381,3 +381,34 @@ fn https_works_with_the_shared_client() {
         assert!(e.message.contains("certificate"), "{e}");
     });
 }
+
+/// Replacing a file (an upload over it, or a file moved onto it) on a real server: the new
+/// content is there and no temporary or backup file is left.
+async fn replaces_cleanly(s: &dyn Storage, disk: &Path) {
+    put(s, "r/a.txt", b"old").await;
+    put(s, "r/a.txt", b"new").await;
+    assert_eq!(std::fs::read(disk.join("r/a.txt")).unwrap(), b"new");
+    put(s, "r/b.txt", b"moved").await;
+    s.rename(&Loc::new("", "r/b.txt"), &Loc::new("", "r/a.txt"), false).await.unwrap();
+    assert_eq!(std::fs::read(disk.join("r/a.txt")).unwrap(), b"moved");
+    assert!(!disk.join("r/b.txt").exists());
+    assert_eq!(temp_files(disk), Vec::<String>::new());
+}
+
+#[test]
+fn ftp_and_sftp_replace_files_without_leftovers() {
+    let passive = |port: u16| {
+        let lo = if port < 30000 { 41000 } else { 21000 } + (port % 1000) * 10;
+        vec!["--passive-port".to_string(), format!("{lo}-{}", lo + 9)]
+    };
+    let Some(ftp) = serve_with("ftp", &[], passive) else { return };
+    let Some(sftp) = serve("sftp", &[]) else { return };
+    rt().block_on(async {
+        replaces_cleanly(&FtpBackend::new(&net(ftp.port), Some(PASS.into())).unwrap(), &ftp.root).await;
+        let pw = || Secrets { password: Some(PASS.into()), ssh: None };
+        let e = SftpBackend::new(&net(sftp.port), pw()).unwrap().roots().await.err().unwrap();
+        let fp = sftp::hostkey::fingerprint_in(&e.to_string()).unwrap().to_string();
+        let b = SftpBackend::new(&NetConfig { host_key: Some(fp), ..net(sftp.port) }, pw()).unwrap();
+        replaces_cleanly(&b, &sftp.root).await;
+    });
+}
