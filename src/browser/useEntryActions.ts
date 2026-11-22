@@ -6,7 +6,8 @@
 import { asExport } from "../connections/native";
 import { createElement } from "react";
 import { api, errMessage } from "../api";
-import { syncApi } from "../sync";
+import { peekSyncMappings, reloadSync, syncApi, type SyncMapping } from "../sync";
+import { deviceName } from "../jobs/LocationPicker";
 import { baseName, parentPrefix } from "../format";
 import { destLabel, entryParent } from "../moving";
 import { expiryLabel, type Favorite } from "../settings";
@@ -20,6 +21,9 @@ import type { MenuItem } from "../components/Dialogs";
 import type { Entry } from "../types";
 import { itemClipboard } from "../desktop/clipboard";
 import type { PaneCore, PaneEnv } from "./usePane";
+
+/** localStorage: the first "Keep on this device" explained what two-way sync means */
+const KEEP_EXPLAINED = "kybl.keepExplained";
 
 export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   const { profile, bucket, prefix, ent, sel, ops, relBase } = pane;
@@ -139,15 +143,58 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   /** "Keep on this device": a two-way synced copy in ~/Kybl/…, opened in Finder when ready */
   const keepOffline = async (pre: string) => {
     if (!profile || bucket == null) return;
+    const name = destLabel(pre, bucket, profile.id);
+    const show = (m: SyncMapping) => ({ label: "Show", run: () => void api.revealLocal(m.localPath).catch(() => {}) });
+    const kept = keptMapping(pre);
+    if (kept) return void toast("info", `Already kept on this device: “${name}”.`, show(kept));
     try {
       const m = await syncApi.keepOffline(profile.id, bucket, pre);
-      toast("success", `Keeping “${destLabel(pre, bucket, profile.id)}” on this device. The first sync starts in a moment.`, {
-        label: "Show",
-        run: () => void api.revealLocal(m.localPath).catch(() => {}),
-      });
+      void reloadSync();
+      // the first time, say what two-way means (deleting on this device deletes online too)
+      let first = false;
+      try {
+        first = !localStorage.getItem(KEEP_EXPLAINED);
+        localStorage.setItem(KEEP_EXPLAINED, "1");
+      } catch {
+        /* storage off: say it every time */
+        first = true;
+      }
+      toast(
+        "success",
+        `Keeping “${name}” on this device. ` + (first ? "Changes sync both ways: deleting it here deletes it online too." : "The first sync starts in a moment."),
+        show(m),
+      );
     } catch (err) {
       toast("error", errMessage(err));
     }
+  };
+  /** The two-way mapping that keeps this folder of the bucket on screen on this device, if any. */
+  const keptMapping = (pre: string) =>
+    profile && bucket != null ? peekSyncMappings().find((m) => m.direction === "twoway" && m.profileId === profile.id && m.bucket === bucket && m.prefix === pre) : undefined;
+  /** "Kept on this device" (ticked) stops keeping it, after asking; the copy on disk stays. */
+  const stopKeeping = async (m: SyncMapping, pre: string) => {
+    if (!profile || bucket == null) return;
+    const name = destLabel(pre, bucket, profile.id);
+    const device = deviceName().replace(/^This /, "this ");
+    const ok = await dialogs.confirm({
+      title: `Stop keeping “${name}” on this device?`,
+      label: "Stop keeping",
+      message: createElement("p", null, `The copy on ${device} stays; it just stops syncing.`),
+    });
+    if (!ok) return;
+    try {
+      await syncApi.remove(m.id);
+      await reloadSync();
+      toast("success", `“${name}” is no longer kept on this device.`, { label: "Show", run: () => void api.revealLocal(m.localPath).catch(() => {}) });
+    } catch (err) {
+      toast("error", errMessage(err));
+    }
+  };
+  const keepItem = (pre: string): MenuItem => {
+    const kept = keptMapping(pre);
+    return kept
+      ? { type: "item", label: "Kept on this device", icon: "download", checked: true, onClick: () => void stopKeeping(kept, pre) }
+      : { type: "item", label: "Keep on this device", icon: "download", onClick: () => void keepOffline(pre) };
   };
 
   /** "Mount as drive…": the folder (or the whole bucket) in Finder through a local WebDAV drive */
@@ -226,7 +273,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       : [
           { type: "item", label: "Calculate folder size", icon: "info", onClick: () => calcSizes([prefix]) },
           !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(prefix) },
-          !onDisk && { type: "item", label: "Keep on this device", icon: "download", onClick: () => void keepOffline(prefix) },
+          !onDisk && keepItem(prefix),
           !onDisk && { type: "item", label: "Mount as drive…", icon: "server", onClick: () => askMount(prefix) },
           !!env.openMigration && { type: "item", label: prefix ? "Copy this folder to another connection…" : "Copy everything to another connection…", icon: "copy", onClick: migrateHere },
           isS3 && { type: "item", label: "Copy S3 URI", icon: "copy", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") },
@@ -309,7 +356,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       },
       folder && favoriteItem(bucket, e.key),
       folder && !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(e.key) },
-      folder && !onDisk && { type: "item", label: "Keep on this device", icon: "download", onClick: () => void keepOffline(e.key) },
+      folder && !onDisk && keepItem(e.key),
       folder && !onDisk && { type: "item", label: "Mount as drive…", icon: "server", onClick: () => askMount(e.key) },
       { type: "sep" },
       { type: "item", label: "Rename…", icon: "edit", disabled: !one, onClick: () => ops.askRename(e) },
