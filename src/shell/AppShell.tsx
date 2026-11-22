@@ -11,7 +11,7 @@ import { api, errMessage, errSummary } from "../api";
 import { baseName } from "../format";
 import { useTransfers } from "../useTransfers";
 import { useJobs } from "../useJobs";
-import { Sidebar, SidebarToggle } from "../components/Sidebar";
+import { Sidebar, SidebarRail } from "../components/Sidebar";
 import { TransferPanel, type ActivityTab } from "../components/TransferPanel";
 import { ConnectionDialog } from "../components/ConnectionDialog";
 import { KyblConnectDialog } from "../components/KyblConnectDialog";
@@ -471,6 +471,32 @@ export function AppShell() {
       ...(own ? [] : [{ type: "sep" as const }, { type: "item" as const, label: "Edit connection…", icon: "edit" as const, onClick: () => setConnDialog({ profile: p }) }]),
     ]);
   };
+  /** The folded sidebar: a connection's icon lists its buckets (a server's one root just opens). */
+  const railPick = async (p: Profile, x: number, y: number) => {
+    if (!active.profile) return void connectIn(active.id, p);
+    if (rootsMode(p, peekCaps(p.id)) === "single") {
+      active.openBucket(p, "");
+      return focusListSoon();
+    }
+    const names = await conns.loadBuckets(p);
+    const hidden = new Set(conns.hiddenBuckets[p.id] ?? []);
+    const shown = names.filter((b) => !hidden.has(b));
+    const own = p.id === THIS_MAC.id;
+    const here = active.profile?.id === p.id ? active.bucket : null;
+    const note = conns.bucketsBy[p.id]?.note;
+    dialogs.menu(x, y, [
+      { type: "label", label: p.name },
+      ...shown.map((b) => ({
+        type: "item" as const,
+        label: conns.rootLabel(p.id, b),
+        icon: own ? ("folder" as const) : ("bucket" as const),
+        checked: b === here ? true : undefined,
+        onClick: () => (active.openBucket(p, b), focusListSoon()),
+      })),
+      ...(!shown.length ? [{ type: "item" as const, label: note ?? "No buckets yet", disabled: true, onClick: () => {} }] : []),
+      ...(own ? [] : [{ type: "sep" as const }, { type: "item" as const, label: "Open bucket by name…", icon: "plus" as const, onClick: () => askBucketName(p) }]),
+    ]);
+  };
   /** Right-click on a bucket (or one of this computer's folders) in the sidebar. */
   const bucketMenu = (p: Profile, b: string, x: number, y: number) => {
     const hidden = (conns.hiddenBuckets[p.id] ?? []).includes(b);
@@ -574,7 +600,21 @@ export function AppShell() {
   return (
     <div className={`app ${sideHidden ? "side-hidden" : ""}`}>
       {sideHidden ? (
-        <SidebarToggle open={false} onToggle={toggleSidebar} />
+        <SidebarRail
+          profiles={profiles}
+          activeId={active.profile?.id ?? null}
+          favorites={settings.favorites}
+          syncState={syncState}
+          authNeeded={authNeeded}
+          builtIn={(p) => p.id === THIS_MAC.id}
+          onExpand={toggleSidebar}
+          onPick={(p, x, y) => void railPick(p, x, y)}
+          onOpenFavorite={openFavorite}
+          onNewProfile={() => setConnDialog({ profile: null })}
+          onOpenSync={() => openSettings("sync")}
+          onOpenSettings={() => openSettings()}
+          onConnectionMenu={connectionMenu}
+        />
       ) : (
       <Sidebar
         profiles={profiles}

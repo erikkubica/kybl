@@ -434,18 +434,126 @@ function SidebarConnection({
   );
 }
 
-/** the sidebar's show/hide button, by the window controls (the same spot whether it's open or not) */
+/** the sidebar's show/hide button: by the window controls when it's open, atop the icon rail when not */
 export function SidebarToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   return (
     <button
       type="button"
-      className={`icon-btn side-toggle ${open ? "" : "floating"}`}
+      className={`icon-btn side-toggle ${open ? "" : "in-rail"}`}
       onClick={onToggle}
-      title={`${open ? "Hide" : "Show"} sidebar (⌥⌘S)`}
-      aria-label={open ? "Hide sidebar" : "Show sidebar"}
+      title={`${open ? "Collapse" : "Expand"} sidebar (⌥⌘S)`}
+      aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
       aria-expanded={open}
     >
       <Icon name="sidebar" size={17} />
     </button>
+  );
+}
+
+/**
+ * The sidebar folded to an icon rail (like a code editor's activity bar): favorites and
+ * connections as icons, a connection's buckets in a menu on click, and the footer's buttons.
+ */
+export function SidebarRail({
+  profiles,
+  activeId,
+  favorites,
+  syncState,
+  authNeeded,
+  builtIn = () => false,
+  onExpand,
+  onPick,
+  onOpenFavorite,
+  onNewProfile,
+  onOpenSync,
+  onOpenSettings,
+  onConnectionMenu,
+}: {
+  profiles: Profile[];
+  activeId: string | null;
+  favorites?: Favorite[];
+  syncState: SyncState | null;
+  authNeeded?: Set<string>;
+  builtIn?: (p: Profile) => boolean;
+  onExpand: () => void;
+  /** a connection's icon was clicked: its buckets (or the connection itself) next to it */
+  onPick: (p: Profile, x: number, y: number) => void;
+  onOpenFavorite?(f: Favorite): void;
+  onNewProfile: () => void;
+  onOpenSync: () => void;
+  onOpenSettings: () => void;
+  onConnectionMenu?(p: Profile, x: number, y: number): void;
+}) {
+  const favs = (favorites ?? []).filter((f) => profiles.some((p) => p.id === f.profileId));
+  return (
+    <aside className="sidebar rail" onContextMenu={(e) => e.preventDefault()}>
+      <div className="sidebar-drag" data-tauri-drag-region />
+      <SidebarToggle open={false} onToggle={onExpand} />
+      <div className="rail-scroll">
+        {favs.map((f) => (
+          <button
+            key={`${f.profileId}|${f.bucket}|${f.prefix}`}
+            type="button"
+            className="rail-btn"
+            onClick={() => onOpenFavorite?.(f)}
+            title={f.name}
+            aria-label={`Favorite: ${f.name}`}
+          >
+            <Icon name={f.prefix ? "folder" : rootIcon(f.profileId, f.bucket)} size={17} />
+            <span className="rail-star" aria-hidden="true">
+              <Icon name="star" size={8} />
+            </span>
+          </button>
+        ))}
+        {favs.length > 0 && <div className="rail-sep" />}
+        {profiles.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            className={`rail-btn ${p.id === activeId ? "active" : ""}`}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              onPick(p, r.right + 6, r.top);
+            }}
+            onContextMenu={
+              onConnectionMenu &&
+              ((e) => {
+                e.preventDefault();
+                onConnectionMenu(p, e.clientX, e.clientY);
+              })
+            }
+            title={p.name}
+            aria-label={p.name}
+            aria-haspopup="menu"
+          >
+            {builtIn(p) ? (
+              <span className="pbadge local lg" aria-hidden="true">
+                <Icon name={deviceIcon} size={15} />
+              </span>
+            ) : (
+              <ProviderBadge provider={p.provider} large />
+            )}
+            {authNeeded?.has(p.id) && <span className="rail-dot" title="Sign in again" />}
+          </button>
+        ))}
+      </div>
+      <div className="rail-foot">
+        <button type="button" className="icon-btn" onClick={onNewProfile} title="New connection" aria-label="New connection">
+          <Icon name="plus" size={16} />
+        </button>
+        <button
+          type="button"
+          className={`icon-btn sync-ind ${syncState ?? "none"}`}
+          onClick={onOpenSync}
+          title={syncState ? SYNC_LABEL[syncState] : "Folder sync"}
+          aria-label={syncState ? SYNC_LABEL[syncState] : "Folder sync"}
+        >
+          <Icon name="sync" size={15} />
+        </button>
+        <button type="button" className="icon-btn" onClick={onOpenSettings} title="Settings (⌘,)" aria-label="Settings">
+          <Icon name="settings" size={16} />
+        </button>
+      </div>
+    </aside>
   );
 }
