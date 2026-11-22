@@ -28,7 +28,7 @@ export function imageModeLabel(m: ImageMode): string {
 
 const isMode = (v: unknown): v is ImageMode => v === "off" || v === "placeholders" || v === "full";
 
-let appMode: ImageMode = "placeholders";
+let appMode: ImageMode = "full";
 let version = 0;
 const listeners = new Set<() => void>();
 const modeKey = (id: string) => `s3b.imageMode.${id}`;

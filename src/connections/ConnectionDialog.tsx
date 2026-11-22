@@ -14,7 +14,7 @@ import { Modal } from "../components/Dialogs";
 import { ErrorText } from "../components/ErrorText";
 import type { Profile } from "../types";
 import { KINDS, hostKeyChanged, hostKeyUnknown, isCloudKind, kindInfo, pickOf, type BlobKind, type NetKind, type PickId } from "./kinds";
-import { SECRET_NOTE, type Draft, type FormApi } from "./fields";
+import { SECRET_NOTE, Segmented, type Draft, type FormApi } from "./fields";
 import { KindPicker } from "./KindPicker";
 import { S3Form } from "./S3Form";
 import { NetForm } from "./NetForm";
@@ -23,6 +23,7 @@ import { CloudPanel } from "./CloudPanel";
 import { DeleteControl } from "./DeleteControl";
 import { HostKeySheet, type HostKeyAsk } from "./HostKeySheet";
 import "./connections.css";
+import { appImageMode, connImageMode, IMAGE_MODES, imageModeLabel, setConnImageMode, setSharedPlaceholders, SHARE_PLACEHOLDERS_TEXT, sharedPlaceholdersOn, type ImageMode } from "../imageMode";
 
 export type ConnectionDialogProps = {
   initial: Profile | null;
@@ -184,6 +185,9 @@ function KeyedForm({
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [hostAsk, setHostAsk] = useState<(HostKeyAsk & { then: "test" | "save"; draft: Draft }) | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
+  // how photos show for this connection (kept on this device, applied on Save)
+  const [photos, setPhotos] = useState<ImageMode | "app">(() => (initial ? connImageMode(initial.id) ?? "app" : "app"));
+  const [sharing, setSharing] = useState(() => (initial ? sharedPlaceholdersOn(initial.id) : false));
   const live = useRef(true);
   useEffect(() => {
     // (set again on mount: development mode mounts effects twice)
@@ -220,6 +224,8 @@ function KeyedForm({
         }
       }
       const saved = await api.saveProfile(d.profile, d.secret);
+      setConnImageMode(saved.id, photos === "app" ? null : photos);
+      setSharedPlaceholders(saved.id, sharing);
       onSaved(saved);
       onClose();
     } catch (e) {
@@ -279,6 +285,39 @@ function KeyedForm({
           <NetForm kind={pick as NetKind} {...common} />
         ) : (
           <BlobForm kind={pick as BlobKind} {...common} />
+        )}
+
+        <div className="field span2">
+          <span>Photos in lists</span>
+          <Segmented
+            label="Photos in lists"
+            value={photos}
+            onChange={(v) => {
+              setPhotos(v);
+              onDirty();
+            }}
+            options={[
+              { value: "app", label: `As in Settings (${imageModeLabel(appImageMode())})` },
+              ...IMAGE_MODES.map((m) => ({ value: m.id as ImageMode | "app", label: m.label })),
+            ]}
+          />
+          <small className="field-hint">{photos === "app" ? "Follows Settings → Browsing → Photos." : IMAGE_MODES.find((m) => m.id === photos)?.hint}</small>
+        </div>
+        {photos !== "off" && (photos !== "app" || appImageMode() !== "off") && (
+          <label className="check span2">
+            <input
+              type="checkbox"
+              checked={sharing}
+              onChange={(e) => {
+                setSharing(e.target.checked);
+                onDirty();
+              }}
+            />
+            <span>
+              Share placeholders with other devices
+              <em>{SHARE_PLACEHOLDERS_TEXT}</em>
+            </span>
+          </label>
         )}
 
         <p className="hint span2">

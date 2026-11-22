@@ -79,7 +79,9 @@ export const DEFAULTS: Settings = {
   restoreLast: true,
   confirmDelete: true,
   autoOpenTransfers: true,
-  imageMode: "placeholders",
+  // thumbnails: placeholders alone show nothing for photos nobody has thumbnailed yet (most
+  // existing libraries), which reads as broken; slow connections can pick Placeholders
+  imageMode: "full",
   downloadAsk: true,
   favorites: [],
   columns: ["size", "modified", "kind"],
@@ -118,6 +120,7 @@ export function expiryLabel(secs: number): string {
   return EXPIRIES.find((e) => e.secs === secs)?.label ?? `${Math.round(secs / 3600)} hours`;
 }
 
+const IMAGE_MODE_V2 = "s3b.imageModeV2";
 const KEY = "s3b.settings";
 const BRAND_KEY = "s3b.brandScheme";
 
@@ -132,6 +135,15 @@ export function loadSettings(): Settings {
       delete (s as Settings & { listThumbs?: boolean }).listThumbs;
     }
     if (!["off", "placeholders", "full"].includes(s.imageMode)) s.imageMode = DEFAULTS.imageMode;
+    // one-time: the first version turned the old thumbnails switch into Placeholders more often
+    // than meant, and Placeholders was the default then; both now mean Thumbnails
+    if (!localStorage.getItem(IMAGE_MODE_V2)) {
+      localStorage.setItem(IMAGE_MODE_V2, "1");
+      if (s.imageMode === "placeholders") {
+        s.imageMode = "full";
+        localStorage.setItem(KEY, JSON.stringify(s));
+      }
+    }
     // one-time: installs from before the Kybl scheme existed move to it if they never picked a look
     if (!localStorage.getItem(BRAND_KEY)) {
       localStorage.setItem(BRAND_KEY, "1");
