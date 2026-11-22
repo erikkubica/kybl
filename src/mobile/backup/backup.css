@@ -278,6 +278,18 @@
   font-weight: 600;
   gap: 6px;
 }
+/* Stop / Pause say how long: this run, or until resumed */
+.bk-act-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+}
+.bk-act-text small {
+  color: var(--dim);
+  font-size: calc(12 * var(--m-u));
+  font-weight: 500;
+}
 
 .bk-fail,
 .bk-static {
@@ -399,8 +411,27 @@
   flex-direction: column;
   padding: 6px calc(16px + var(--m-right)) calc(var(--m-bottom) + 86px) calc(16px + var(--m-left));
 }
+.bk-dest-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.bk-dest-head .m-text-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+}
 .bk-dest .bk-lead {
   margin: 12px 4px 10px;
+}
+/* "Back up to Connection / bucket / folder": a long place shortens instead of overflowing */
+.bk-bar-bottom .m-big-btn {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .m-app .bk-dest .jobs-tree {
   flex: 1;
