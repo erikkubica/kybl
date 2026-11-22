@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
     time::Duration,
@@ -10,7 +10,8 @@ use std::{
 use aws_sdk_s3::{
     presigning::PresigningConfig,
     primitives::DateTime,
-    types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier},
+    operation::head_object::HeadObjectOutput,
+    types::{CompletedMultipartUpload, CompletedPart, Delete, MetadataDirective, ObjectIdentifier, StorageClass},
     Client,
 };
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
@@ -277,6 +278,54 @@ pub struct ChildSize {
     objects: u64,
 }
 
+/// Runs `fut` unless `cancel` is set first (checked every 100 ms): a slow listing request on a
+/// big scan shouldn't hold up Stop. None when cancelled.
+async fn unless_cancelled<T>(fut: impl std::future::Future<Output = T>, cancel: Option<&AtomicBool>) -> Option<T> {
+    let Some(flag) = cancel else { return Some(fut.await) };
+    tokio::pin!(fut);
+    let mut tick = tokio::time::interval(Duration::from_millis(100));
+    loop {
+        tokio::select! {
+            out = &mut fut => return Some(out),
+            _ = tick.tick() => if flag.load(Ordering::Relaxed) { return None },
+        }
+    }
+}
+
+/// Tries a listing page that failed once or twice more before giving up: a scan of a few million
+/// keys takes thousands of requests, and one dropped connection shouldn't throw all of it away.
+/// Listing the same page again (same continuation token) is safe.
+const PAGE_TRIES: u32 = 3;
+
+async fn list_page(
+    client: &Client,
+    bucket: &str,
+    prefix: &str,
+    token: Option<&str>,
+    cancel: Option<&AtomicBool>,
+) -> Result<aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Output, String> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let req = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(prefix)
+            .set_continuation_token(token.map(str::to_string))
+            .send();
+        match unless_cancelled(req, cancel).await {
+            None => return Err(CANCELLED.into()),
+            Some(Ok(out)) => return Ok(out),
+            Some(Err(e)) if attempt >= PAGE_TRIES => return Err(sdk_err(e)),
+            Some(Err(_)) => {
+                if unless_cancelled(tokio::time::sleep(Duration::from_secs(attempt as u64)), cancel).await.is_none() {
+                    return Err(CANCELLED.into());
+                }
+            }
+        }
+    }
+}
+
 /// Total size of everything under `prefix`, however deep. S3 stores no folder sizes, so this reads
 /// the whole flat listing (1,000 keys per request) and adds it up. The same pass also totals each
 /// direct subfolder, so one run answers for the folder and for every folder directly inside it.
@@ -295,14 +344,7 @@ pub(crate) async fn prefix_size(
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             return Err(CANCELLED.into());
         }
-        let out = client
-            .list_objects_v2()
-            .bucket(bucket)
-            .prefix(prefix)
-            .set_continuation_token(token.take())
-            .send()
-            .await
-            .map_err(sdk_err)?;
+        let out = list_page(client, bucket, prefix, token.as_deref(), cancel).await?;
         for o in out.contents() {
             // folder markers ("name/" with no content) are not files
             if o.key().is_some_and(|k| k.ends_with('/')) && o.size().unwrap_or(0) == 0 {
@@ -361,10 +403,18 @@ pub async fn folder_size(
     let client = client_for(&app, &state, &profile_id).await?;
     let flag = Arc::new(AtomicBool::new(false));
     state.cancels.lock().await.insert(op_id.clone(), flag.clone());
+    // a few events a second is plenty, even when a fast server lists many pages a second
+    let mut last = std::time::Instant::now() - Duration::from_secs(1);
     let result = prefix_size(&client, &bucket, &prefix, Some(&flag), |bytes, objects| {
-        let _ = app.emit("size-progress", SizeProgress { op_id: op_id.clone(), bytes, objects });
+        if last.elapsed() >= Duration::from_millis(200) {
+            last = std::time::Instant::now();
+            let _ = app.emit("size-progress", SizeProgress { op_id: op_id.clone(), bytes, objects });
+        }
     })
     .await;
+    if let Ok((bytes, objects, _)) = &result {
+        let _ = app.emit("size-progress", SizeProgress { op_id: op_id.clone(), bytes: *bytes, objects: *objects });
+    }
     state.cancels.lock().await.remove(&op_id);
     result.map(|(bytes, objects, children)| FolderSize { bytes, objects, children })
 }
@@ -374,7 +424,8 @@ pub async fn folder_size(
 pub struct SearchResult {
     objects: Vec<ObjInfo>,
     scanned: u64,
-    /// true when the scan stopped early (limit reached) so results may be incomplete
+    /// true when the scan stopped early (a limit reached, or stopped by the user), so results
+    /// may be incomplete
     truncated: bool,
 }
 
@@ -437,14 +488,15 @@ async fn search_scan(
     let mut token: Option<String> = None;
     let mut truncated = false;
     'pages: loop {
-        let out = client
-            .list_objects_v2()
-            .bucket(&bucket)
-            .prefix(&prefix)
-            .set_continuation_token(token.take())
-            .send()
-            .await
-            .map_err(sdk_err)?;
+        let out = match list_page(client, &bucket, &prefix, token.as_deref(), Some(cancel)).await {
+            Ok(out) => out,
+            // stopped: what was found so far is the answer, marked as incomplete
+            Err(e) if e == CANCELLED => {
+                truncated = true;
+                break;
+            }
+            Err(e) => return Err(e),
+        };
         let before = found.len();
         let mut full = false;
         for o in out.contents() {
@@ -467,6 +519,7 @@ async fn search_scan(
             break 'pages;
         }
         if cancel.load(Ordering::Relaxed) {
+            truncated = true;
             break;
         }
         if scanned >= max_scan {
@@ -495,6 +548,24 @@ pub struct ObjectDetails {
     etag: Option<String>,
     storage_class: Option<String>,
     metadata: HashMap<String, String>,
+    cache_control: Option<String>,
+    content_disposition: Option<String>,
+    content_encoding: Option<String>,
+}
+
+pub(crate) fn details(key: String, h: &HeadObjectOutput) -> ObjectDetails {
+    ObjectDetails {
+        key,
+        size: h.content_length().unwrap_or(0),
+        content_type: h.content_type().map(|s| s.to_string()),
+        modified: millis(h.last_modified()),
+        etag: h.e_tag().map(|e| e.trim_matches('"').to_string()),
+        storage_class: h.storage_class().map(|s| s.as_str().to_string()),
+        metadata: h.metadata().cloned().unwrap_or_default(),
+        cache_control: h.cache_control().map(str::to_string),
+        content_disposition: h.content_disposition().map(str::to_string),
+        content_encoding: h.content_encoding().map(str::to_string),
+    }
 }
 
 #[tauri::command]
@@ -513,15 +584,7 @@ pub async fn head_object(
         .send()
         .await
         .map_err(sdk_err)?;
-    Ok(ObjectDetails {
-        key,
-        size: h.content_length().unwrap_or(0),
-        content_type: h.content_type().map(|s| s.to_string()),
-        modified: millis(h.last_modified()),
-        etag: h.e_tag().map(|e| e.trim_matches('"').to_string()),
-        storage_class: h.storage_class().map(|s| s.as_str().to_string()),
-        metadata: h.metadata().cloned().unwrap_or_default(),
-    })
+    Ok(details(key, &h))
 }
 
 #[derive(Serialize)]
@@ -683,6 +746,7 @@ pub async fn delete_objects(
     let op = op_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let flag = Arc::new(AtomicBool::new(false));
     state.cancels.lock().await.insert(op.clone(), flag.clone());
+    let _job = Job::start();
     let emit = |phase: &'static str, done: u64, total: u64| {
         let _ = app.emit("move-progress", MoveProgress { op_id: op.clone(), phase, done, total, bytes: 0, total_bytes: 0 });
     };
@@ -714,29 +778,95 @@ pub async fn delete_objects(
     result
 }
 
-async fn copy_one(
+/// The headers an object carries that a copy has to set again when it can't just copy them
+/// (multipart copy, and editing them in place).
+#[derive(Clone, Default, Debug, PartialEq)]
+pub(crate) struct Headers {
+    pub(crate) content_type: Option<String>,
+    pub(crate) cache_control: Option<String>,
+    pub(crate) content_disposition: Option<String>,
+    pub(crate) content_encoding: Option<String>,
+    pub(crate) content_language: Option<String>,
+    pub(crate) metadata: HashMap<String, String>,
+    pub(crate) storage_class: Option<String>,
+}
+
+impl Headers {
+    pub(crate) fn of(h: &HeadObjectOutput) -> Self {
+        Self {
+            content_type: h.content_type().map(str::to_string),
+            cache_control: h.cache_control().map(str::to_string),
+            content_disposition: h.content_disposition().map(str::to_string),
+            content_encoding: h.content_encoding().map(str::to_string),
+            content_language: h.content_language().map(str::to_string),
+            metadata: h.metadata().cloned().unwrap_or_default(),
+            // STANDARD is what an object gets without asking; sending it is only needed to leave
+            // another class, and some providers refuse the header altogether
+            storage_class: h.storage_class().map(|c| c.as_str().to_string()).filter(|c| c != "STANDARD"),
+        }
+    }
+}
+
+/// Copies `src` (in `src_bucket`) to `dst` (in `dst_bucket`, same connection), server-side.
+/// Under the single-copy limit, CopyObject copies the headers itself; with `replace` it sets
+/// those instead. Bigger objects go part by part, and a multipart upload starts with no headers
+/// at all, so they are read from the source first (or taken from `replace`) and set on it.
+pub(crate) async fn copy_object(
     client: &Client,
-    bucket: &str,
+    src_bucket: &str,
     src: &str,
+    dst_bucket: &str,
     dst: &str,
     size: i64,
+    replace: Option<&Headers>,
 ) -> Result<(), String> {
-    let source = utf8_percent_encode(&format!("{bucket}/{src}"), COPY_SOURCE_SET).to_string();
-    if size < MULTIPART_COPY_THRESHOLD {
-        client
-            .copy_object()
-            .bucket(bucket)
-            .key(dst)
-            .copy_source(source)
-            .send()
-            .await
-            .map_err(sdk_err)?;
+    copy_object_from(client, src_bucket, src, dst_bucket, dst, size, replace, MULTIPART_COPY_THRESHOLD).await
+}
+
+/// [`copy_object`] with the size from which it copies part by part (tests use a small one).
+#[allow(clippy::too_many_arguments)]
+async fn copy_object_from(
+    client: &Client,
+    src_bucket: &str,
+    src: &str,
+    dst_bucket: &str,
+    dst: &str,
+    size: i64,
+    replace: Option<&Headers>,
+    multipart_from: i64,
+) -> Result<(), String> {
+    let source = utf8_percent_encode(&format!("{src_bucket}/{src}"), COPY_SOURCE_SET).to_string();
+    if size < multipart_from {
+        let mut req = client.copy_object().bucket(dst_bucket).key(dst).copy_source(source);
+        if let Some(h) = replace {
+            req = req
+                .metadata_directive(MetadataDirective::Replace)
+                .set_content_type(h.content_type.clone())
+                .set_cache_control(h.cache_control.clone())
+                .set_content_disposition(h.content_disposition.clone())
+                .set_content_encoding(h.content_encoding.clone())
+                .set_content_language(h.content_language.clone())
+                .set_metadata(Some(h.metadata.clone()))
+                .set_storage_class(h.storage_class.as_deref().map(StorageClass::from));
+        }
+        req.send().await.map_err(sdk_err)?;
         return Ok(());
     }
+    let headers = match replace {
+        Some(h) => h.clone(),
+        None => Headers::of(&client.head_object().bucket(src_bucket).key(src).send().await.map_err(sdk_err)?),
+    };
     let upload = client
         .create_multipart_upload()
-        .bucket(bucket)
+        .bucket(dst_bucket)
         .key(dst)
+        .set_content_type(headers.content_type)
+        .set_cache_control(headers.cache_control)
+        .set_content_disposition(headers.content_disposition)
+        .set_content_encoding(headers.content_encoding)
+        .set_content_language(headers.content_language)
+        .set_metadata(Some(headers.metadata))
+        .set_storage_class(headers.storage_class.as_deref().map(StorageClass::from))
         .send()
         .await
         .map_err(sdk_err)?;
@@ -749,7 +879,7 @@ async fn copy_one(
             let end = (start + COPY_PART_SIZE).min(size) - 1;
             let r = client
                 .upload_part_copy()
-                .bucket(bucket)
+                .bucket(dst_bucket)
                 .key(dst)
                 .upload_id(&upload_id)
                 .part_number(n)
@@ -773,7 +903,7 @@ async fn copy_one(
         Ok(parts) => {
             client
                 .complete_multipart_upload()
-                .bucket(bucket)
+                .bucket(dst_bucket)
                 .key(dst)
                 .upload_id(&upload_id)
                 .multipart_upload(CompletedMultipartUpload::builder().set_parts(Some(parts)).build())
@@ -785,7 +915,7 @@ async fn copy_one(
         Err(e) => {
             let _ = client
                 .abort_multipart_upload()
-                .bucket(bucket)
+                .bucket(dst_bucket)
                 .key(dst)
                 .upload_id(&upload_id)
                 .send()
@@ -835,13 +965,16 @@ pub struct OpResult {
     error: Option<String>,
 }
 
-/// Copies (and optionally deletes the originals of) objects and whole folders within a bucket.
+/// Copies (and optionally deletes the originals of) objects and whole folders, within `bucket`
+/// or into `dest_bucket` on the same connection.
 /// S3 has no rename, so a move is a server-side copy of every object followed by a delete.
 /// Originals are only ever deleted after their own copy succeeded.
+#[allow(clippy::too_many_arguments)]
 async fn copy_many<R: tauri::Runtime>(
     app: &AppHandle<R>,
     client: &Client,
     bucket: &str,
+    dest_bucket: Option<&str>,
     items: &[MoveItem],
     delete_source: bool,
     op_id: Option<&str>,
@@ -854,14 +987,17 @@ async fn copy_many<R: tauri::Runtime>(
         }
     };
 
+    let to_bucket = dest_bucket.filter(|b| !b.is_empty()).unwrap_or(bucket);
+    let same_bucket = to_bucket == bucket;
+
     // 1. everything to copy
     let mut jobs: Vec<(String, String, i64)> = Vec::new();
     for it in items {
-        if it.from == it.to {
+        if same_bucket && it.from == it.to {
             return Err("Source and destination are the same".into());
         }
         if it.is_prefix {
-            if it.to.starts_with(&it.from) {
+            if same_bucket && it.to.starts_with(&it.from) {
                 return Err("Cannot copy a folder into itself".into());
             }
             for o in list_all(client, bucket, &it.from).await? {
@@ -891,9 +1027,9 @@ async fn copy_many<R: tauri::Runtime>(
         }
         while error.is_none() && set.len() < COPY_CONCURRENCY {
             let Some((src, dst, size)) = queue.next() else { break };
-            let (client, bucket) = (client.clone(), bucket.to_string());
+            let (client, bucket, to_bucket) = (client.clone(), bucket.to_string(), to_bucket.to_string());
             set.spawn(async move {
-                let r = copy_one(&client, &bucket, &src, &dst, size).await;
+                let r = copy_object(&client, &bucket, &src, &to_bucket, &dst, size, None).await;
                 (src, size, r)
             });
         }
@@ -946,7 +1082,7 @@ pub async fn copy_or_move(
     delete_source: bool,
 ) -> Result<u64, String> {
     let client = client_for(&app, &state, &profile_id).await?;
-    let r = copy_many(&app, &client, &bucket, &[MoveItem { from, to, is_prefix }], delete_source, None, None).await?;
+    let r = copy_many(&app, &client, &bucket, None, &[MoveItem { from, to, is_prefix }], delete_source, None, None).await?;
     match r.error {
         Some(e) if r.done > 0 => Err(format!("{e} ({} of {} objects were done before it stopped)", r.done, r.total)),
         Some(e) => Err(e),
@@ -955,6 +1091,8 @@ pub async fn copy_or_move(
 }
 
 /// Moves or copies several items in one go, reporting `move-progress` events tagged with `op_id`.
+/// With `dest_bucket` the copies land in that bucket (same connection, still server-side).
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn move_many(
     app: AppHandle,
@@ -964,13 +1102,39 @@ pub async fn move_many(
     items: Vec<MoveItem>,
     delete_source: bool,
     op_id: String,
+    dest_bucket: Option<String>,
 ) -> Result<OpResult, String> {
     let client = client_for(&app, &state, &profile_id).await?;
     let flag = Arc::new(AtomicBool::new(false));
     state.cancels.lock().await.insert(op_id.clone(), flag.clone());
-    let r = copy_many(&app, &client, &bucket, &items, delete_source, Some(&op_id), Some(&flag)).await;
+    let _job = Job::start();
+    let r = copy_many(&app, &client, &bucket, dest_bucket.as_deref(), &items, delete_source, Some(&op_id), Some(&flag)).await;
     state.cancels.lock().await.remove(&op_id);
     r
+}
+
+/// Bucket operations (move, copy, delete) running right now, for the quit prompt.
+static JOBS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg_attr(mobile, allow(dead_code))]
+pub fn running_jobs() -> usize {
+    JOBS.load(Ordering::Relaxed)
+}
+
+/// Counts one bucket operation while it lives.
+struct Job;
+
+impl Job {
+    fn start() -> Self {
+        JOBS.fetch_add(1, Ordering::Relaxed);
+        Job
+    }
+}
+
+impl Drop for Job {
+    fn drop(&mut self) {
+        JOBS.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 // ---------------------------------------------------------------- helpers for transfers
@@ -1055,6 +1219,48 @@ mod tests {
     use tauri::{test::{mock_builder, mock_context, noop_assets}, Listener};
 
     #[test]
+    fn search_streams_matches_and_stops_when_asked() {
+        let Ok(endpoint) = std::env::var("KYBL_TEST_ENDPOINT") else { return };
+        let p = Profile {
+            id: "t".into(),
+            name: "t".into(),
+            provider: "custom".into(),
+            endpoint,
+            region: "us-east-1".into(),
+            access_key_id: "testkey".into(),
+            bucket: None,
+            path_style: true,
+        };
+        let client = build_client(&p, "testsecret");
+        tauri::async_runtime::block_on(async move {
+            let base = format!("se-{}/", uuid::Uuid::new_v4());
+            for k in ["Report.pdf", "sub/report-2.pdf", "photo.jpg"] {
+                client
+                    .put_object()
+                    .bucket("testbucket")
+                    .key(format!("{base}{k}"))
+                    .body(aws_sdk_s3::primitives::ByteStream::from_static(b"x"))
+                    .send()
+                    .await
+                    .unwrap();
+            }
+            let streamed = Mutex::new(Vec::<String>::new());
+            let go = AtomicBool::new(false);
+            let r = search_scan(&client, "testbucket", &base, "REPORT", 1000, 100, &go, |_, found| {
+                streamed.lock().unwrap().extend(found.iter().map(|o| o.key.clone()));
+            })
+            .await
+            .unwrap();
+            assert_eq!(r.objects.len(), 2, "case-insensitive, in subfolders too");
+            assert!(!r.truncated);
+            assert_eq!(streamed.into_inner().unwrap().len(), 2, "every match also arrives as progress");
+            let stop = AtomicBool::new(true);
+            let r = search_scan(&client, "testbucket", &base, "report", 1000, 100, &stop, |_, _| {}).await.unwrap();
+            assert!(r.truncated, "a stopped search says its results may be incomplete");
+        });
+    }
+
+    #[test]
     fn folder_size_adds_up_everything_below() {
         let Ok(endpoint) = std::env::var("KYBL_TEST_ENDPOINT") else { return };
         let p = Profile {
@@ -1098,6 +1304,77 @@ mod tests {
         });
     }
 
+    /// Needs a multipart-capable server (`KYBL_TEST_MULTIPART_ENDPOINT`, e.g. adobe/s3mock):
+    /// the part-by-part copy keeps the source's headers and metadata, across buckets too, and
+    /// rewriting headers in place works on both paths.
+    #[test]
+    fn copies_keep_headers_and_props_can_be_replaced() {
+        let Ok(endpoint) = std::env::var("KYBL_TEST_MULTIPART_ENDPOINT") else {
+            return eprintln!("skipped: KYBL_TEST_MULTIPART_ENDPOINT not set");
+        };
+        let p = Profile {
+            id: "t".into(),
+            name: "t".into(),
+            provider: "custom".into(),
+            endpoint,
+            region: "us-east-1".into(),
+            access_key_id: "testkey".into(),
+            bucket: None,
+            path_style: true,
+        };
+        let client = build_client(&p, "testsecret");
+        tauri::async_runtime::block_on(async move {
+            let other = format!("other-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+            client.create_bucket().bucket(&other).send().await.unwrap();
+            let base = format!("cp-{}/", uuid::Uuid::new_v4());
+            let src = format!("{base}photo.jpg");
+            client
+                .put_object()
+                .bucket("testbucket")
+                .key(&src)
+                .content_type("image/jpeg")
+                .cache_control("max-age=300")
+                .content_disposition("inline")
+                .metadata("owner", "me")
+                .body(aws_sdk_s3::primitives::ByteStream::from(vec![7u8; 1000]))
+                .send()
+                .await
+                .unwrap();
+            let copies = [
+                ("testbucket", format!("{base}big-copy.jpg"), 0),
+                (other.as_str(), src.clone(), 0),
+                ("testbucket", format!("{base}small-copy.jpg"), i64::MAX),
+            ];
+            for (bucket, dst, from) in copies {
+                copy_object_from(&client, "testbucket", &src, bucket, &dst, 1000, None, from).await.unwrap();
+                let h = client.head_object().bucket(bucket).key(&dst).send().await.unwrap();
+                assert_eq!(h.content_type(), Some("image/jpeg"), "{bucket}/{dst}");
+                assert_eq!(h.cache_control(), Some("max-age=300"), "{bucket}/{dst}");
+                assert_eq!(h.content_disposition(), Some("inline"), "{bucket}/{dst}");
+                assert_eq!(h.metadata().and_then(|m| m.get("owner")).map(String::as_str), Some("me"), "{bucket}/{dst}");
+                assert_eq!(h.content_length(), Some(1000));
+            }
+            // replacing headers in place, both ways
+            for from in [i64::MAX, 0] {
+                let head = client.head_object().bucket("testbucket").key(&src).send().await.unwrap();
+                let mut next = Headers::of(&head);
+                next.content_type = Some(format!("text/plain-{from}"));
+                next.cache_control = None;
+                next.metadata = HashMap::from([("team".to_string(), "ops".to_string())]);
+                copy_object_from(&client, "testbucket", &src, "testbucket", &src, 1000, Some(&next), from).await.unwrap();
+                let h = client.head_object().bucket("testbucket").key(&src).send().await.unwrap();
+                // s3mock keeps the old Content-Type on CopyObject even with REPLACE (real S3,
+                // MinIO and Ceph set it), so only the part-by-part path is checked for it here
+                if from == 0 {
+                    assert_eq!(h.content_type(), Some(format!("text/plain-{from}").as_str()));
+                }
+                assert_eq!(h.cache_control(), None, "{from}");
+                assert_eq!(h.metadata().cloned().unwrap_or_default(), HashMap::from([("team".to_string(), "ops".to_string())]));
+                assert_eq!(h.content_length(), Some(1000), "the content is untouched");
+            }
+        });
+    }
+
     #[test]
     fn move_folder_in_parallel_with_progress() {
         let Ok(endpoint) = std::env::var("KYBL_TEST_ENDPOINT") else { return };
@@ -1130,7 +1407,7 @@ mod tests {
                     .unwrap();
             }
             let items = [MoveItem { from: format!("{base}src/"), to: format!("{base}dst/src/"), is_prefix: true }];
-            let r = copy_many(&h, &client, "testbucket", &items, true, Some("op1"), None).await.unwrap();
+            let r = copy_many(&h, &client, "testbucket", None, &items, true, Some("op1"), None).await.unwrap();
             assert!(r.error.is_none(), "{:?}", r.error);
             assert_eq!((r.done, r.total), (40, 40));
             let left = list_all(&client, "testbucket", &format!("{base}src/")).await.unwrap();
@@ -1141,12 +1418,12 @@ mod tests {
 
             // into itself is refused before anything happens
             let bad = [MoveItem { from: format!("{base}dst/"), to: format!("{base}dst/inner/"), is_prefix: true }];
-            assert!(copy_many(&h, &client, "testbucket", &bad, true, None, None).await.is_err());
+            assert!(copy_many(&h, &client, "testbucket", None, &bad, true, None, None).await.is_err());
 
             // a cancelled move stops before copying anything and leaves the originals alone
             let stop = AtomicBool::new(true);
             let back = [MoveItem { from: format!("{base}dst/src/"), to: format!("{base}back/"), is_prefix: true }];
-            let r = copy_many(&h, &client, "testbucket", &back, true, None, Some(&stop)).await.unwrap();
+            let r = copy_many(&h, &client, "testbucket", None, &back, true, None, Some(&stop)).await.unwrap();
             assert_eq!(r.error.as_deref(), Some(CANCELLED));
             assert_eq!(r.done, 0);
             assert_eq!(list_all(&client, "testbucket", &format!("{base}dst/src/")).await.unwrap().len(), 40);

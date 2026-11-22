@@ -169,6 +169,10 @@ async fn thumbnail<R: Runtime>(
         return Ok(bytes);
     }
 
+    // "Wi-Fi only" also covers thumbnails: cached ones still show, new ones wait for Wi-Fi
+    if crate::tuning::wifi_only() && crate::platform::on_metered_network() {
+        return Err("Previews wait for Wi-Fi".into());
+    }
     let state = app.state::<AppState>();
     let _permit = state.thumb_slots.clone().acquire_owned().await.map_err(err)?;
     // another request may have produced it while we waited

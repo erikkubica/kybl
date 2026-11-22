@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc, OnceLock},
 };
@@ -19,7 +19,7 @@ use aws_smithy_http_client::{
 use aws_sdk_s3::config::SharedHttpClient;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Runtime};
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::{Mutex, Notify, Semaphore};
 
 #[cfg_attr(target_os = "android", allow(dead_code))]
 pub const KEYRING_SERVICE: &str = "app.kybl.desktop";
@@ -49,24 +49,106 @@ pub struct AppState {
     /// Secrets read from the keychain vault item; `None` until first use.
     pub secrets: Mutex<Option<HashMap<String, String>>>,
     pub cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    /// Three transfers at a time per connection, so a long upload queue in one connection never
-    /// holds up a download in another.
-    transfer_slots: Mutex<HashMap<String, Arc<Semaphore>>>,
+    /// A few transfers at a time per connection (the transfer settings say how many), so a long
+    /// upload queue in one connection never holds up a download in another.
+    transfer_slots: Mutex<HashMap<String, Arc<Slots>>>,
     pub thumb_slots: Arc<Semaphore>,
     /// Where the Android vault file lives (the app's private data folder); set at startup.
     pub vault_dir: OnceLock<PathBuf>,
 }
 
-const TRANSFERS_PER_CONNECTION: usize = 3;
-
 impl AppState {
-    pub async fn transfer_slots(&self, profile_id: &str) -> Arc<Semaphore> {
+    pub async fn transfer_slots(&self, profile_id: &str) -> Arc<Slots> {
         self.transfer_slots
             .lock()
             .await
             .entry(profile_id.to_string())
-            .or_insert_with(|| Arc::new(Semaphore::new(TRANSFERS_PER_CONNECTION)))
+            .or_insert_with(|| Arc::new(Slots::new(crate::tuning::concurrency)))
             .clone()
+    }
+
+    /// After the limit changed: queued transfers check whether they may start now.
+    pub async fn wake_transfer_slots(&self) {
+        for s in self.transfer_slots.lock().await.values() {
+            s.notify.notify_waiters();
+        }
+    }
+}
+
+/// Transfer slots for one connection: at most `limit()` run at once, and waiting transfers start
+/// in the order they were queued. Unlike a semaphore the limit can change while transfers wait or
+/// run: a lower limit lets running ones finish and starts no new ones until they fit under it.
+pub struct Slots {
+    st: std::sync::Mutex<SlotState>,
+    notify: Notify,
+    limit: fn() -> usize,
+}
+
+#[derive(Default)]
+struct SlotState {
+    running: usize,
+    next_ticket: u64,
+    waiting: BTreeSet<u64>,
+}
+
+/// A running transfer's slot; dropping it lets the next one start.
+pub struct SlotGuard(Arc<Slots>);
+
+impl Drop for SlotGuard {
+    fn drop(&mut self) {
+        self.0.st.lock().unwrap().running -= 1;
+        self.0.notify.notify_waiters();
+    }
+}
+
+/// A place in the queue, given up if the wait is abandoned (a cancelled transfer).
+struct Ticket<'a> {
+    slots: &'a Slots,
+    n: u64,
+    queued: bool,
+}
+
+impl Drop for Ticket<'_> {
+    fn drop(&mut self) {
+        if self.queued {
+            self.slots.st.lock().unwrap().waiting.remove(&self.n);
+            self.slots.notify.notify_waiters();
+        }
+    }
+}
+
+impl Slots {
+    pub fn new(limit: fn() -> usize) -> Self {
+        Self { st: Default::default(), notify: Notify::new(), limit }
+    }
+
+    pub async fn acquire(self: &Arc<Self>) -> SlotGuard {
+        let mut ticket = {
+            let mut st = self.st.lock().unwrap();
+            let n = st.next_ticket;
+            st.next_ticket += 1;
+            st.waiting.insert(n);
+            Ticket { slots: self, n, queued: true }
+        };
+        loop {
+            // registered before looking, so a slot freed in between still wakes us
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            {
+                let mut st = self.st.lock().unwrap();
+                if st.running < (self.limit)().max(1) && st.waiting.first() == Some(&ticket.n) {
+                    st.waiting.remove(&ticket.n);
+                    st.running += 1;
+                    ticket.queued = false;
+                    drop(st);
+                    // the next in line may fit too
+                    self.notify.notify_waiters();
+                    return SlotGuard(self.clone());
+                }
+            }
+            notified.await;
+        }
     }
 }
 
@@ -397,6 +479,53 @@ pub async fn client_for<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static LIMIT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(2);
+    fn limit() -> usize {
+        LIMIT.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[test]
+    fn slots_follow_a_changing_limit_in_queue_order() {
+        use std::sync::atomic::Ordering::Relaxed;
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let slots = Arc::new(Slots::new(limit));
+            let a = slots.acquire().await;
+            let b = slots.acquire().await;
+            let started = Arc::new(std::sync::Mutex::new(Vec::<u32>::new()));
+            let mut waiters = Vec::new();
+            for i in 0..3u32 {
+                let (s, st) = (slots.clone(), started.clone());
+                waiters.push(tokio::spawn(async move {
+                    let g = s.acquire().await;
+                    st.lock().unwrap().push(i);
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    drop(g);
+                }));
+                // queue them in a known order
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            assert!(started.lock().unwrap().is_empty(), "two running, limit two");
+            // a higher limit lets the first waiter in without anything finishing
+            LIMIT.store(3, Relaxed);
+            slots.notify.notify_waiters();
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            assert_eq!(*started.lock().unwrap(), vec![0]);
+            // a lower limit: finishing one running transfer doesn't start another yet (3 > 1)
+            LIMIT.store(1, Relaxed);
+            drop(a);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            assert_eq!(*started.lock().unwrap(), vec![0]);
+            drop(b);
+            for w in waiters {
+                w.await.unwrap();
+            }
+            // everyone ran, one at a time, in the order they queued
+            assert_eq!(*started.lock().unwrap(), vec![0, 1, 2]);
+            assert_eq!(slots.st.lock().unwrap().running, 0);
+            LIMIT.store(2, Relaxed);
+        });
+    }
 
     #[test]
     fn unreachable_server_reads_plainly_and_keeps_the_details() {

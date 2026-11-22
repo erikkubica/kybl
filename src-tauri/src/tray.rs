@@ -97,7 +97,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                     let _ = crate::updater::update_check(app).await;
                 });
             }
-            "quit" => app.exit(0),
+            "quit" => crate::quit::request(app),
             _ => {}
         })
         .build(app)?;
