@@ -106,6 +106,7 @@ export function AppShell() {
       }),
     [],
   );
+  const sidePeek = useSidePeek(sideHidden, () => dialogs.isOpen());
   // the slider moves the tiles at once; the setting is saved once it settles
   // (the setting stays the source of truth, so a change in Settings shows at once too)
   const [tileDraft, setTileDraft] = useState<number | null>(null);
@@ -599,7 +600,7 @@ export function AppShell() {
 
   return (
     <div className={`app ${sideHidden ? "side-hidden" : ""}`}>
-      {sideHidden ? (
+      {sideHidden && (
         <SidebarRail
           profiles={profiles}
           activeId={active.profile?.id ?? null}
@@ -614,40 +615,51 @@ export function AppShell() {
           onOpenSync={() => openSettings("sync")}
           onOpenSettings={() => openSettings()}
           onConnectionMenu={connectionMenu}
+          onHover={sidePeek.hover}
         />
-      ) : (
-      <Sidebar
-        profiles={profiles}
-        activeId={active.profile?.id ?? null}
-        expanded={conns.expanded}
-        bucketsBy={conns.bucketsBy}
-        bucket={active.bucket}
-        onToggleProfile={toggleConnection}
-        onEditProfile={(p) => setConnDialog({ profile: p })}
-        onNewProfile={() => setConnDialog({ profile: null })}
-        onOpenSettings={() => openSettings()}
-        syncState={syncState}
-        onOpenSync={() => openSettings("sync")}
-        onSelectBucket={(p, b) => {
-          active.openBucket(p, b);
-          focusListSoon();
-        }}
-        onOpenBucketByName={(p) => askBucketName(p)}
-        onNewBucket={(p) => askNewBucket(p)}
-        hiddenBuckets={conns.hiddenBuckets}
-        onHideBucket={conns.setBucketHidden}
-        onReconnect={(p) => setConnDialog({ profile: p, reconnect: true })}
-        authNeeded={authNeeded}
-        onSignInAgain={(p) => setConnDialog({ profile: p, reconnect: true })}
-        favorites={settings.favorites}
-        onOpenFavorite={openFavorite}
-        onRemoveFavorite={active.actions.removeFavorite}
-        rootLabel={conns.rootLabel}
-        builtIn={(p) => p.id === THIS_MAC.id}
-        onConnectionMenu={connectionMenu}
-        onBucketMenu={bucketMenu}
-        onHide={toggleSidebar}
-      />
+      )}
+      {(!sideHidden || sidePeek.open) && (
+        <div
+          className={sideHidden ? "side-peek" : "side-full"}
+          ref={sidePeek.ref}
+          onMouseLeave={sideHidden ? sidePeek.leave : undefined}
+          // opening a place from the overlay puts it away
+          onClickCapture={sideHidden ? sidePeek.clicked : undefined}
+        >
+          <Sidebar
+            profiles={profiles}
+            activeId={active.profile?.id ?? null}
+            expanded={conns.expanded}
+            bucketsBy={conns.bucketsBy}
+            bucket={active.bucket}
+            onToggleProfile={toggleConnection}
+            onEditProfile={(p) => setConnDialog({ profile: p })}
+            onNewProfile={() => setConnDialog({ profile: null })}
+            onOpenSettings={() => openSettings()}
+            syncState={syncState}
+            onOpenSync={() => openSettings("sync")}
+            onSelectBucket={(p, b) => {
+              active.openBucket(p, b);
+              focusListSoon();
+            }}
+            onOpenBucketByName={(p) => askBucketName(p)}
+            onNewBucket={(p) => askNewBucket(p)}
+            hiddenBuckets={conns.hiddenBuckets}
+            onHideBucket={conns.setBucketHidden}
+            onReconnect={(p) => setConnDialog({ profile: p, reconnect: true })}
+            authNeeded={authNeeded}
+            onSignInAgain={(p) => setConnDialog({ profile: p, reconnect: true })}
+            favorites={settings.favorites}
+            onOpenFavorite={openFavorite}
+            onRemoveFavorite={active.actions.removeFavorite}
+            rootLabel={conns.rootLabel}
+            builtIn={(p) => p.id === THIS_MAC.id}
+            onConnectionMenu={connectionMenu}
+            onBucketMenu={bucketMenu}
+            onHide={toggleSidebar}
+            peek={sideHidden}
+          />
+        </div>
       )}
 
       <main className="main">
@@ -780,4 +792,38 @@ export function AppShell() {
       {!settingsOpen && <UpdateBanner st={updates} />}
     </div>
   );
+}
+
+/**
+ * The folded sidebar's overlay: resting on a rail icon brings the whole sidebar in over the
+ * panes (nothing moves); it goes once the pointer has left it and no menu from it is up.
+ */
+function useSidePeek(folded: boolean, menuUp: () => boolean) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const timer = useRef<number>(undefined);
+  useEffect(() => {
+    if (!folded) setOpen(false);
+    return () => window.clearTimeout(timer.current);
+  }, [folded]);
+  const hover = useCallback((on: boolean) => {
+    window.clearTimeout(timer.current);
+    if (on) timer.current = window.setTimeout(() => setOpen(true), 280);
+  }, []);
+  const leave = useCallback(() => {
+    window.clearTimeout(timer.current);
+    const check = () => {
+      if (menuUp() || ref.current?.matches(":hover")) timer.current = window.setTimeout(check, 300);
+      else setOpen(false);
+    };
+    timer.current = window.setTimeout(check, 220);
+  }, [menuUp]);
+  const clicked = useCallback((e: React.MouseEvent) => {
+    const t = e.target as Element;
+    if (t.closest(".side-item.sub, .fav-row, .side-item.conn.single, .side-toggle")) {
+      window.clearTimeout(timer.current);
+      setOpen(false);
+    }
+  }, []);
+  return { open, ref, hover, leave, clicked };
 }

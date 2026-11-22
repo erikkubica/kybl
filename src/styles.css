@@ -3837,6 +3837,32 @@ body.dragging-items * {
 .sidebar.rail {
   align-items: center;
 }
+/* the open sidebar keeps its grid column; the wrapper is only there for the overlay's sake */
+.side-full {
+  display: contents;
+}
+/* resting on a rail icon: the whole sidebar over the panes, nothing pushed aside */
+.side-peek {
+  position: fixed;
+  z-index: 40;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 244px;
+  display: flex;
+  box-shadow: 8px 0 28px rgba(0, 0, 0, 0.28);
+  animation: side-peek-in 0.14s ease-out;
+}
+.side-peek > .sidebar {
+  flex: 1;
+  min-width: 0;
+}
+@keyframes side-peek-in {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+}
 .sidebar.rail .sidebar-drag {
   height: 44px;
   align-self: stretch;

@@ -72,6 +72,7 @@ export function Sidebar({
   onConnectionMenu,
   onBucketMenu,
   onHide,
+  peek,
 }: {
   profiles: Profile[];
   /** connection of the bucket on screen */
@@ -111,6 +112,8 @@ export function Sidebar({
   onBucketMenu?(p: Profile, bucket: string, x: number, y: number): void;
   /** folds the sidebar away (its button sits by the window controls) */
   onHide?: () => void;
+  /** shown over the panes from the folded rail: its button opens it for good */
+  peek?: boolean;
 }) {
   // connections whose hidden buckets are on show (to pick which to bring back)
   const [showHidden, setShowHidden] = useState<Set<string>>(new Set());
@@ -118,7 +121,7 @@ export function Sidebar({
     // the web view's own menu (Reload, Inspect) means nothing here
     <aside className="sidebar" onContextMenu={(e) => e.preventDefault()}>
       <div className="sidebar-drag" data-tauri-drag-region>
-        {onHide && <SidebarToggle open onToggle={onHide} />}
+        {onHide && <SidebarToggle open={!peek} overlay={peek} onToggle={onHide} />}
       </div>
       <div className="sidebar-scroll">
         {favorites && favorites.length > 0 && (
@@ -435,11 +438,11 @@ function SidebarConnection({
 }
 
 /** the sidebar's show/hide button: by the window controls when it's open, atop the icon rail when not */
-export function SidebarToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+export function SidebarToggle({ open, overlay, onToggle }: { open: boolean; overlay?: boolean; onToggle: () => void }) {
   return (
     <button
       type="button"
-      className={`icon-btn side-toggle ${open ? "" : "in-rail"}`}
+      className={`icon-btn side-toggle ${open || overlay ? "" : "in-rail"}`}
       onClick={onToggle}
       title={`${open ? "Collapse" : "Expand"} sidebar (⌥⌘S)`}
       aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
@@ -468,6 +471,7 @@ export function SidebarRail({
   onOpenSync,
   onOpenSettings,
   onConnectionMenu,
+  onHover,
 }: {
   profiles: Profile[];
   activeId: string | null;
@@ -483,13 +487,15 @@ export function SidebarRail({
   onOpenSync: () => void;
   onOpenSettings: () => void;
   onConnectionMenu?(p: Profile, x: number, y: number): void;
+  /** the pointer rests on (or leaves) an icon: the whole sidebar comes in over the panes */
+  onHover?: (on: boolean) => void;
 }) {
   const favs = (favorites ?? []).filter((f) => profiles.some((p) => p.id === f.profileId));
   return (
     <aside className="sidebar rail" onContextMenu={(e) => e.preventDefault()}>
       <div className="sidebar-drag" data-tauri-drag-region />
       <SidebarToggle open={false} onToggle={onExpand} />
-      <div className="rail-scroll">
+      <div className="rail-scroll" onMouseOver={(e) => onHover?.(!!(e.target as Element).closest(".rail-btn"))} onMouseLeave={() => onHover?.(false)}>
         {favs.map((f) => (
           <button
             key={`${f.profileId}|${f.bucket}|${f.prefix}`}
