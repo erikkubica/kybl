@@ -267,11 +267,35 @@ pub async fn open_local(app: AppHandle, path: String) -> Result<(), String> {
 /// nothing happens.
 /// Saves bytes the web view holds (a photo or video just taken with the camera picker) as a new
 /// file in the temporary folder, for an upload. Raw body; name in the `x-file-name` header.
+///
+/// Big captures (minutes of 4K video) come in chunks, so the page never holds the whole file:
+/// the first call creates the file and each next one names it in `x-append-to` (the path the first
+/// call returned, URI-encoded) to add its bytes to the end. That path comes from the page, so only
+/// an existing file inside the temporary folder can be appended to.
 #[tauri::command]
 pub async fn write_temp_file(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("Expected the file's bytes".into());
     };
+    let temp = std::path::PathBuf::from(temp_folder(app).await?);
+    if let Some(target) = request.headers().get("x-append-to").and_then(|v| v.to_str().ok()) {
+        let path = std::path::PathBuf::from(percent_decode(target));
+        // links and ".." resolved before comparing
+        let real = tokio::fs::canonicalize(&path).await.map_err(|_| "That temporary file is gone".to_string())?;
+        let root = tokio::fs::canonicalize(&temp).await.map_err(|e| format!("Couldn't save the file: {e}"))?;
+        if !real.starts_with(&root) || !real.is_file() {
+            return Err("Can only add to Kybl's own temporary files".into());
+        }
+        use tokio::io::AsyncWriteExt;
+        let mut f = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(&real)
+            .await
+            .map_err(|e| format!("Couldn't save the file: {e}"))?;
+        f.write_all(bytes).await.map_err(|e| format!("Couldn't save the file: {e}"))?;
+        f.flush().await.map_err(|e| format!("Couldn't save the file: {e}"))?;
+        return Ok(path.to_string_lossy().into_owned());
+    }
     let raw = request
         .headers()
         .get("x-file-name")
@@ -284,7 +308,7 @@ pub async fn write_temp_file(app: tauri::AppHandle, request: tauri::ipc::Request
         .find(|n| !n.is_empty() && *n != "." && *n != "..")
         .unwrap_or("photo.jpg")
         .to_string();
-    let dir = std::path::PathBuf::from(temp_folder(app).await?).join(format!(
+    let dir = temp.join(format!(
         "{:x}",
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
     ));

@@ -182,8 +182,11 @@ export const api = {
    * to a new file in the temporary folder and resolves to its path, for `startUpload`. The bytes
    * go as the raw request body; the file name (URI-encoded) in the `x-file-name` header.
    */
-  writeTempFile: (name: string, data: ArrayBuffer) =>
-    invoke<string>("write_temp_file", new Uint8Array(data), { headers: { "x-file-name": encodeURIComponent(name) } }),
+  writeTempFile: (name: string, data: ArrayBuffer, appendTo?: string) =>
+    invoke<string>("write_temp_file", new Uint8Array(data), {
+      // `appendTo`: a path an earlier call returned; these bytes go on its end (big files in chunks)
+      headers: appendTo ? { "x-file-name": encodeURIComponent(name), "x-append-to": encodeURIComponent(appendTo) } : { "x-file-name": encodeURIComponent(name) },
+    }),
 
   /** Transfer tuning; the backend applies changes to new transfers right away. */
   transferPrefs: () => invoke<TransferPrefs>("get_transfer_prefs"),
