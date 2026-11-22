@@ -35,6 +35,31 @@ fn app_class(env: &mut JNIEnv, context: &JObject, name: &str) -> jni::errors::Re
     Ok(global)
 }
 
+/// WP-C: the application context handed over by a background backup worker that started the
+/// process without the app's screen, so tao never registered one. Kept apart from
+/// `ndk_context`, which tao fills in (and asserts it was empty) when a screen opens later.
+static WORKER_CONTEXT: std::sync::OnceLock<(usize, GlobalRef)> = std::sync::OnceLock::new();
+
+/// Called by `backup::headless` with the worker's application context.
+pub(crate) fn set_worker_context(env: &mut JNIEnv, context: &JObject) -> jni::errors::Result<()> {
+    if WORKER_CONTEXT.get().is_none() {
+        let vm = env.get_java_vm()?;
+        let global = env.new_global_ref(context)?;
+        let _ = WORKER_CONTEXT.set((vm.get_java_vm_pointer() as usize, global));
+    }
+    Ok(())
+}
+
+/// The JVM and the application context: a worker's when one was handed over (it is ready
+/// before any screen), else the one tao registered.
+fn vm_and_context() -> (*mut std::ffi::c_void, *mut std::ffi::c_void) {
+    if let Some((vm, ctx)) = WORKER_CONTEXT.get() {
+        return (*vm as *mut _, ctx.as_obj().as_raw() as *mut _);
+    }
+    let ctx = ndk_context::android_context();
+    (ctx.vm(), ctx.context())
+}
+
 /// Runs `f` with one of the app's classes and the application context (registered by tao at
 /// start-up), which lives as long as the process.
 ///
@@ -46,10 +71,10 @@ pub(crate) fn with_class<T>(
     f: impl FnOnce(&mut JNIEnv, &JObject, &JClass) -> jni::errors::Result<T>,
 ) -> Result<T, String> {
     use jni::JavaVM;
-    let ctx = ndk_context::android_context();
-    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }.map_err(|e| e.to_string())?;
+    let (vm_ptr, ctx_ptr) = vm_and_context();
+    let vm = unsafe { JavaVM::from_raw(vm_ptr.cast()) }.map_err(|e| e.to_string())?;
     let mut env = vm.attach_current_thread_permanently().map_err(|e| e.to_string())?;
-    let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+    let context = unsafe { JObject::from_raw(ctx_ptr.cast()) };
     let result = env.with_local_frame(16, |env| -> jni::errors::Result<T> {
         let class = app_class(env, &context, name)?;
         f(env, &context, class.as_obj().into())
