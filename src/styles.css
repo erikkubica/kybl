@@ -4898,3 +4898,16 @@ input[type="range"]:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent-ring);
 }
+
+/* a button whose action is downloading first ("Copying 42%"): the fill shows how far it got */
+.btn.btn-progress,
+.btn.btn-progress:disabled {
+  opacity: 1;
+  background-image: linear-gradient(90deg, color-mix(in srgb, currentColor 18%, transparent) var(--p, 0%), transparent var(--p, 0%));
+  font-variant-numeric: tabular-nums;
+}
+.btn-pct {
+  min-width: 15px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}

@@ -21,6 +21,7 @@ import { copyName, joinPath, numberedName, safeRelPath, shortHash } from "./path
 import { undoStack, type UndoEntry } from "./undo";
 import { itemClipboard } from "./clipboard";
 import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
+import { localCopies, type LocalCopyVerb } from "../localCopyProgress";
 
 export type ToastAction = NonNullable<Toast["action"]>;
 
@@ -268,7 +269,7 @@ export function makeFileOps(c: OpsContext) {
    * listing's ETag finds it without asking the server), else downloaded. Null when it failed
    * (already said so).
    */
-  const localCopy = async (picked: Entry, verb: string): Promise<string | null> => {
+  const localCopy = async (picked: Entry, verb: LocalCopyVerb): Promise<string | null> => {
     const { profile, bucket } = c;
     if (!profile || bucket == null || picked.kind !== "file") return null;
     const e = asExport(picked);
@@ -276,35 +277,40 @@ export function makeFileOps(c: OpsContext) {
       toast("info", NO_EXPORT);
       return null;
     }
+    const pid = profile.id;
     try {
       if (c.localPaths) {
-        const path = await api.localPath(profile.id, bucket, e.key);
+        const path = await api.localPath(pid, bucket, e.key);
         if (path) return path;
       }
+      // the Copy / Open buttons show the progress (see localCopyProgress.ts)
+      localCopies.start(pid, bucket, picked.key, verb);
       const tmp = await api.tempFolder();
-      const local = joinPath(tmp, `${shortHash(`${profile.id}\n${bucket}\n${e.key}`)}/${safeRelPath(e.name) || "file"}`);
+      const local = joinPath(tmp, `${shortHash(`${pid}\n${bucket}\n${e.key}`)}/${safeRelPath(e.name) || "file"}`);
       const [t] = transfers.add([
-        { kind: "download", name: e.name, profileId: profile.id, bucket, key: e.key, local, total: e.size, overwrite: true, etag: picked.native ? undefined : e.etag },
+        { kind: "download", name: e.name, profileId: pid, bucket, key: e.key, local, total: e.size, overwrite: true, etag: picked.native ? undefined : e.etag },
       ]);
-      if (e.size > 20_000_000) toast("info", `${verb} “${e.name}” once it has downloaded…`);
+      localCopies.transfer(pid, bucket, picked.key, t.id);
       const done = await transfers.whenFinished(t.id);
       if (done.state === "done") return done.local;
       if (done.state === "error") toast("error", `Couldn’t get “${e.name}”. ${done.error ?? ""}`, showAction);
     } catch (err) {
       toast("error", errMessage(err));
+    } finally {
+      localCopies.end(pid, bucket, picked.key);
     }
     return null;
   };
 
   /** Opens a file in its default app (a local copy first, see `localCopy`). */
   const openInApp = async (picked: Entry) => {
-    const path = await localCopy(picked, "Opening");
+    const path = await localCopy(picked, "open");
     if (path) await api.openLocal(path).catch((err) => toast("error", errMessage(err)));
   };
 
   /** Puts the file itself on the clipboard, to paste into a chat, a mail or a Finder window. */
   const copyFile = async (picked: Entry) => {
-    const path = await localCopy(picked, "Copying");
+    const path = await localCopy(picked, "copy");
     if (!path) return;
     try {
       await api.copyFileToClipboard(path);

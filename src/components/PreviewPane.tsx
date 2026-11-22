@@ -19,6 +19,7 @@ import { asExport } from "../connections/native";
 // data and import() calls only: the viewers themselves load on first use (see viewers/INTEGRATION.md)
 import { LazyDocumentView, viewerFor } from "../viewers/registry";
 import { releaseOnUnmount } from "../releaseMedia";
+import { useLocalCopy } from "../localCopyProgress";
 
 const BIG_IMAGE = 25 * 1000 * 1000;
 
@@ -247,6 +248,8 @@ function FileDetails({
 }) {
   const isFolder = entry.kind === "folder";
   const cls = classify(entry.name);
+  // a Copy or Open of this file still downloading shows on its button
+  const busy = useLocalCopy(profileId, bucket, entry.key);
   const [details, setDetails] = useState<ObjectDetails | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [text, setText] = useState<{ text: string; truncated: boolean } | null>(null);
@@ -506,14 +509,21 @@ function FileDetails({
           // already on this computer: open it in its app instead
           onOpenExternal &&
           !isFolder && (
-            <button className="btn btn-primary grow" onClick={() => onOpenExternal(entry)}>
-              <Icon name="external" size={15} /> Open
+            <button className="btn btn-primary grow" onClick={() => onOpenExternal(entry)} disabled={!!busy}>
+              <Icon name="external" size={15} /> {busy?.verb === "open" ? `Opening ${busy.percent}%` : "Open"}
             </button>
           )
         )}
         {onCopyFile && !isFolder && !gone && (
-          <button className="btn" onClick={() => onCopyFile(entry)} title="Copy the file, to paste into a chat, a mail or a folder" aria-label="Copy file to clipboard">
-            <Icon name="copy" size={15} />
+          <button
+            className={`btn ${busy?.verb === "copy" ? "btn-progress" : ""}`}
+            style={busy?.verb === "copy" ? ({ "--p": `${busy.percent}%` } as React.CSSProperties) : undefined}
+            onClick={() => onCopyFile(entry)}
+            disabled={!!busy}
+            title={busy?.verb === "copy" ? `Copying… ${busy.percent}%` : "Copy the file, to paste into a chat, a mail or a folder"}
+            aria-label="Copy file to clipboard"
+          >
+            {busy?.verb === "copy" ? <span className="btn-pct">{busy.percent}%</span> : <Icon name="copy" size={15} />}
           </button>
         )}
         <button className="btn" onClick={onMoveTo} title="Move or copy to…" aria-label="Move or copy to another folder">

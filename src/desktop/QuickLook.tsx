@@ -14,6 +14,7 @@ import { asExport } from "../connections/native";
 // viewer, images the web view can't draw by their thumbnail, Google files by their Office export
 import { LazyDocumentView, viewerFor } from "../viewers/registry";
 import { releaseOnUnmount } from "../releaseMedia";
+import { useLocalCopy } from "../localCopyProgress";
 
 const MAX_TEXT = 50 * 1000 * 1000;
 
@@ -48,6 +49,9 @@ export function QuickLook({
   /** the file itself on the clipboard (⌘C here), to paste into a chat or a folder */
   onCopyFile?: (e: Entry) => void;
 }) {
+  // a Copy or Open of this file still downloading shows on its button
+  const busy = useLocalCopy(profileId, bucket, entry.key);
+  const working = !!busy;
   // the list underneath must not see these keys while the preview is up
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -58,7 +62,9 @@ export function QuickLook({
       else if (e.key === "ArrowRight" || e.key === "ArrowDown") onStep(1);
       else if (e.key === "Enter" || (mod && e.key.toLowerCase() === "o")) onOpen(entry);
       else if (mod && (e.key.toLowerCase() === "w" || e.key === ".")) onClose();
-      else if (mod && e.key.toLowerCase() === "c" && onCopyFile && entry.kind === "file" && !window.getSelection()?.toString()) onCopyFile(entry);
+      else if (mod && e.key.toLowerCase() === "c" && onCopyFile && entry.kind === "file" && !window.getSelection()?.toString()) {
+        if (!working) onCopyFile(entry);
+      }
       else handled = false;
       if (handled) {
         e.preventDefault();
@@ -67,7 +73,7 @@ export function QuickLook({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [entry, onClose, onStep, onOpen, onCopyFile]);
+  }, [entry, onClose, onStep, onOpen, onCopyFile, working]);
 
   return (
     <div className="ql-backdrop" onMouseDown={onClose}>
@@ -90,8 +96,14 @@ export function QuickLook({
           {entry.kind === "file" && (
             <>
               {onCopyFile && (
-                <button className="btn btn-sm" onClick={() => onCopyFile(entry)} title="Copy the file, to paste into a chat, a mail or a folder (⌘C)">
-                  <Icon name="copy" size={14} /> Copy
+                <button
+                  className={`btn btn-sm ${busy?.verb === "copy" ? "btn-progress" : ""}`}
+                  style={busy?.verb === "copy" ? ({ "--p": `${busy.percent}%` } as React.CSSProperties) : undefined}
+                  onClick={() => onCopyFile(entry)}
+                  disabled={!!busy}
+                  title="Copy the file, to paste into a chat, a mail or a folder (⌘C)"
+                >
+                  <Icon name="copy" size={14} /> {busy?.verb === "copy" ? `Copying ${busy.percent}%` : "Copy"}
                 </button>
               )}
               {onDownload && (
@@ -99,8 +111,14 @@ export function QuickLook({
                   <Icon name="download" size={14} /> Download
                 </button>
               )}
-              <button className="btn btn-sm btn-primary" onClick={() => onOpen(entry)} title="Open in its app (⌘O)">
-                <Icon name="reveal" size={14} /> Open
+              <button
+                className={`btn btn-sm btn-primary ${busy?.verb === "open" ? "btn-progress" : ""}`}
+                style={busy?.verb === "open" ? ({ "--p": `${busy.percent}%` } as React.CSSProperties) : undefined}
+                onClick={() => onOpen(entry)}
+                disabled={!!busy}
+                title="Open in its app (⌘O)"
+              >
+                <Icon name="reveal" size={14} /> {busy?.verb === "open" ? `Opening ${busy.percent}%` : "Open"}
               </button>
             </>
           )}

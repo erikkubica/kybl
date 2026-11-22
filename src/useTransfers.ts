@@ -327,3 +327,13 @@ export function useTransfers(onError: (msg: string) => void): TransferActions {
 export function useTransferList(): Transfer[] {
   return useStore(transfersStore);
 }
+
+/** A transfer's progress in whole percent (null when it isn't in the list); re-renders only when the number changes. */
+export function useTransferPercent(id: string | null): number | null {
+  return useStore(transfersStore, (list) => {
+    if (!id) return null;
+    const t = list.find((x) => x.id === id);
+    if (!t) return null;
+    return t.total > 0 ? Math.min(100, Math.floor((t.bytes / t.total) * 100)) : 0;
+  });
+}
