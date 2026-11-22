@@ -79,7 +79,7 @@ export async function imageUrl(
   const c = caps ?? (await capsFor(profileId).catch(() => null));
   if (!c?.localPaths && e.size <= CACHED_IMAGE_MAX) {
     try {
-      const bytes = await api.objectBytes(profileId, bucket, e.key, CACHED_IMAGE_MAX, true);
+      const bytes = await api.objectBytes(profileId, bucket, e.key, CACHED_IMAGE_MAX, true, { etag: e.etag, size: e.size });
       const url = URL.createObjectURL(new Blob([bytes], { type: imageType(e.name) }));
       return { url, revoke: () => URL.revokeObjectURL(url) };
     } catch {

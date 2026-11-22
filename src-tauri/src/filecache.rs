@@ -393,6 +393,17 @@ pub async fn read_current<R: Runtime>(app: &AppHandle<R>, conn: &Conn, profile: 
     tokio::task::spawn_blocking(move || cache.read(&p, &r, &k, &id)).await.ok()?
 }
 
+/// The bytes of the version the listing showed (`listed`), straight from the cache: no request
+/// at all, so reopening a preview is instant. None when that version isn't cached.
+pub async fn read_listed<R: Runtime>(app: &AppHandle<R>, conn: &Conn, profile: &str, root: &str, key: &str, listed: Ident, max_bytes: u64) -> Option<Vec<u8>> {
+    let cache = get(app)?;
+    if !cacheable(conn) || listed.etag.is_none() || listed.size > max_bytes {
+        return None;
+    }
+    let (p, r, k) = (profile.to_string(), root.to_string(), key.to_string());
+    tokio::task::spawn_blocking(move || cache.read(&p, &r, &k, &listed)).await.ok()?
+}
+
 /// Keeps bytes just fetched whole (a preview) for the next open, in the background. Needs the
 /// ETag or the modification time the fetch saw; without either nothing is kept.
 #[allow(clippy::too_many_arguments)]

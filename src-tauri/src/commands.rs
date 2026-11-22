@@ -663,7 +663,8 @@ pub async fn get_text_preview(
 /// The whole object as raw bytes (no JSON), for previews that render the file in the app
 /// itself, like PDFs. Refuses anything over `max_bytes` instead of loading it. With `cache`
 /// (the PDF viewer), the bytes come from and go to the file cache, as `doc_open`'s do; image
-/// thumbnails leave it off, so photos don't push documents out of it.
+/// thumbnails leave it off, so photos don't push documents out of it. `etag` and `size` (the
+/// listing's) let a cached copy of that version answer without asking the server.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn get_object_bytes(
@@ -674,9 +675,18 @@ pub async fn get_object_bytes(
     key: String,
     max_bytes: u64,
     cache: Option<bool>,
+    etag: Option<String>,
+    size: Option<u64>,
 ) -> Result<tauri::ipc::Response, String> {
     let conn = storage::connect(&app, &state, &profile_id).await?;
     let cache = cache.unwrap_or(false);
+    // the version the listing showed: a cached copy of it needs no HEAD
+    if cache
+        && let (Some(e), Some(n)) = (etag.as_deref(), size)
+        && let Some(bytes) = crate::filecache::read_listed(&app, &conn, &profile_id, &bucket, &key, crate::filecache::Ident::new(Some(e), n, None), max_bytes).await
+    {
+        return Ok(tauri::ipc::Response::new(bytes));
+    }
     if cache && let Some(bytes) = crate::filecache::read_current(&app, &conn, &profile_id, &bucket, &key, max_bytes).await {
         return Ok(tauri::ipc::Response::new(bytes));
     }

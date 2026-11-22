@@ -49,10 +49,11 @@ export const api = {
     read<ObjectDetails>("head_object", { profileId, bucket, key }),
   /**
    * The whole object as bytes, for previews rendered in the app (PDF). Rejects above `maxBytes`.
-   * `cache` reads through the file cache (documents); thumbnails leave it off.
+   * `cache` reads through the file cache (documents); thumbnails leave it off. `listed` (the
+   * listing's version) lets a cached copy answer without a request to the server.
    */
-  objectBytes: (profileId: string, bucket: string, key: string, maxBytes: number, cache = false) =>
-    invoke<ArrayBuffer>("get_object_bytes", { profileId, bucket, key, maxBytes, cache }),
+  objectBytes: (profileId: string, bucket: string, key: string, maxBytes: number, cache = false, listed?: { etag?: string | null; size: number }) =>
+    invoke<ArrayBuffer>("get_object_bytes", { profileId, bucket, key, maxBytes, cache, etag: listed?.etag ?? null, size: listed?.etag ? listed.size : null }),
   textPreview: (profileId: string, bucket: string, key: string, maxBytes = 262144) =>
     invoke<{ text: string; truncated: boolean }>("get_text_preview", {
       profileId,
