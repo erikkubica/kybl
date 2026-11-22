@@ -6,7 +6,7 @@
  */
 import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { MENU_OWNS_SHORTCUTS } from "./menus";
+import { MENU_ACCELERATORS, MENU_OWNS_SHORTCUTS } from "./menus";
 
 export type ShortcutOptions = {
   /** runs a command by id; false when it didn't (a dialog is up, or it doesn't apply) */
@@ -37,11 +37,12 @@ export function useShortcuts(opts: ShortcutOptions) {
       const k = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
       const textSelected = !!window.getSelection()?.toString();
       // keys with a menu-bar accelerator on macOS are handled there (the `menu` event)
-      const own = (id: string) => (MENU_OWNS_SHORTCUTS ? null : id);
+      const own = (id: string) => (MENU_OWNS_SHORTCUTS && id in MENU_ACCELERATORS ? null : id);
       let id: string | null = null;
       if (mod && k === ",") id = own("settings");
       else if (mod && ev.shiftKey && k === "n") id = own("new-folder");
-      else if (mod && !ev.shiftKey && k === "u") id = own("upload-files");
+      else if (mod && k === "u") id = own(ev.shiftKey ? "upload-folder" : "upload-files");
+      else if (mod && ev.shiftKey && k === "d") id = own("download");
       else if (mod && k === "[") id = own("back");
       else if (mod && k === "]") id = own("forward");
       else if (mod && ev.shiftKey && k === "g") id = own("go-to");

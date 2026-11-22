@@ -17,7 +17,25 @@ export function tidyMenu(items: (MenuItem | false | null | undefined)[]): MenuIt
 }
 
 /**
- * Inside the real Tauri window on macOS the menu bar owns these shortcuts (they have
- * accelerators). `isTauri()` and not `__TAURI_INTERNALS__`: the browser dev mock fakes the latter.
+ * Inside the real Tauri window on macOS the menu bar owns the shortcuts in MENU_ACCELERATORS: the
+ * keys arrive as the `menu` event, never as a keydown. `isTauri()` and not `__TAURI_INTERNALS__`:
+ * the browser dev mock fakes the latter.
  */
 export const MENU_OWNS_SHORTCUTS = isTauri() && /Mac/i.test(navigator.userAgent);
+
+/**
+ * The menu items that have an accelerator in the macOS menu bar (src-tauri/src/menu.rs), by
+ * command id. Keep in step with menu.rs. The other menu items (refresh, search, go-up, delete,
+ * rename, new-connection) are click-only there, so their keys are always handled here.
+ */
+export const MENU_ACCELERATORS: Record<string, string> = {
+  "new-folder": "⇧⌘N",
+  "upload-files": "⌘U",
+  "upload-folder": "⇧⌘U",
+  download: "⇧⌘D",
+  "get-info": "⌘I",
+  back: "⌘[",
+  forward: "⌘]",
+  "go-to": "⇧⌘G",
+  settings: "⌘,",
+};
