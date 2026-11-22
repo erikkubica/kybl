@@ -34,6 +34,9 @@ mod storage;
 mod oauth;
 #[cfg(desktop)]
 mod sync;
+// WP-E4: "Mount as drive" (a local WebDAV server the system mounts)
+#[cfg(desktop)]
+mod mount;
 mod thumbs;
 mod transfer_notice;
 mod transfers;
@@ -138,6 +141,8 @@ pub fn run() {
                     tray::show_main(&handle);
                 }
                 tauri::async_runtime::spawn(sync::init(handle.clone()));
+                // WP-E4: saved drives are mounted again
+                mount::setup(&handle);
             }
             #[cfg(mobile)]
             {
@@ -242,6 +247,21 @@ pub fn run() {
             oauth::oauth_start,
             oauth::oauth_cancel,
             oauth::oauth_builtin_clients,
+            // WP-E4: drives
+            #[cfg(desktop)]
+            mount::mount_list,
+            #[cfg(desktop)]
+            mount::mount_add,
+            #[cfg(desktop)]
+            mount::mount_remove,
+            #[cfg(desktop)]
+            mount::mount_reveal,
+            #[cfg(desktop)]
+            mount::mount_retry,
+            #[cfg(desktop)]
+            mount::mount_eject,
+            #[cfg(desktop)]
+            mount::mount_dismiss,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

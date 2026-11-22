@@ -43,6 +43,29 @@ pub fn busy() -> usize {
     crate::transfers::active_count() + crate::commands::running_jobs() + crate::jobs::running_count()
 }
 
+/// WP-E4: busy() plus saves on drives still to upload (they need the app, not the window).
+fn busy_quitting(app: &AppHandle) -> (usize, usize, usize) {
+    (
+        crate::transfers::active_count(),
+        crate::commands::running_jobs() + crate::jobs::running_count(),
+        crate::mount::pending_uploads(app),
+    )
+}
+
+/// WP-E4: the question with drive uploads waiting too.
+fn question_with_drives(transfers: usize, jobs: usize, drives: usize) -> String {
+    if drives == 0 {
+        return question(transfers, jobs);
+    }
+    let files = if drives == 1 { "1 file on a drive is".to_string() } else { format!("{drives} files on drives are") };
+    if transfers + jobs == 0 {
+        return format!("{files} still waiting to upload. They'll upload next time you open Kybl. Quit anyway?");
+    }
+    let q = question(transfers, jobs);
+    let q = q.trim_end_matches(" Quit anyway?");
+    format!("{q} Also, {files} still waiting to upload (they'll upload next time you open Kybl). Quit anyway?")
+}
+
 /// The prompt's question for `n` things running.
 fn question(transfers: usize, jobs: usize) -> String {
     let plural = |n: usize, one: &str, many: &str| if n == 1 { format!("1 {one} is") } else { format!("{n} {many} are") };
@@ -64,8 +87,8 @@ pub fn request(app: &AppHandle) {
         return;
     }
     // WP-B1: copy/move jobs between connections count as copies (they resume on the next start)
-    let (transfers, jobs) = (crate::transfers::active_count(), crate::commands::running_jobs() + crate::jobs::running_count());
-    if transfers + jobs == 0 {
+    let (transfers, jobs, drives) = busy_quitting(app);
+    if transfers + jobs + drives == 0 {
         // failed uploads kept for Retry still hold parts on the server: abort those on the way out
         exit_cleanly(app.clone());
         return;
@@ -75,7 +98,7 @@ pub fn request(app: &AppHandle) {
     }
     let mut dialog = app
         .dialog()
-        .message(question(transfers, jobs))
+        .message(question_with_drives(transfers, jobs, drives))
         .title("Quit Kybl?")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom("Quit".into(), "Keep running".into()));
@@ -106,6 +129,8 @@ fn exit_cleanly(app: AppHandle) {
 pub async fn clean_up(app: &AppHandle) {
     STAGE.store(CLEANING, Ordering::SeqCst);
     crate::transfers::shutdown(&app.state::<AppState>(), CLEANUP_LIMIT).await;
+    // WP-E4: drives unmount; their waiting uploads carry on next start
+    crate::mount::shutdown(app, CLEANUP_LIMIT).await;
     // what couldn't be aborted in time stays written down for the next start
     crate::leftovers::save();
     STAGE.store(LEAVING, Ordering::SeqCst);
@@ -127,5 +152,10 @@ mod tests {
         assert_eq!(question(3, 0), "3 transfers are still running. Quit anyway?");
         assert_eq!(question(0, 1), "1 move, copy or delete is still running. Quit anyway?");
         assert_eq!(question(2, 1), "2 transfers and 1 move, copy or delete are still running. Quit anyway?");
+        assert_eq!(question_with_drives(0, 0, 2), "2 files on drives are still waiting to upload. They'll upload next time you open Kybl. Quit anyway?");
+        assert_eq!(
+            question_with_drives(1, 0, 1),
+            "1 transfer is still running. Also, 1 file on a drive is still waiting to upload (they'll upload next time you open Kybl). Quit anyway?"
+        );
     }
 }
