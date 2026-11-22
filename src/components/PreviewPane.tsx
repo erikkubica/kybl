@@ -4,7 +4,7 @@ import { Icon } from "../Icons";
 import { classify, extOf, formatBytes, formatDateFull, isWebImage, entrySize, entryKind } from "../format";
 import { cachedThumb, canThumb, loadThumb } from "../thumbs";
 import { usePlaceholder } from "../thumbhash";
-import { imageUrl, playableUrl } from "../media";
+import { hasImage, imageUrl, onImageReady, playableUrl } from "../media";
 import { FileIcon } from "./FileIcon";
 import { MAX_PDF_BYTES, PdfView } from "./PdfView";
 import { ErrorText } from "./ErrorText";
@@ -254,7 +254,8 @@ function FileDetails({
   const [url, setUrl] = useState<string | null>(null);
   const [text, setText] = useState<{ text: string; truncated: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [forceLoad, setForceLoad] = useState(false);
+  // Quick Look already has the full-size photo: show it here too (same bytes, no fetch)
+  const [forceLoad, setForceLoad] = useState(() => entry.kind !== "folder" && isWebImage(entry.name) && hasImage(profileId, bucket, entry));
   // why the details couldn't be read; a missing file replaces the whole preview
   const [headError, setHeadError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -298,6 +299,13 @@ function FileDetails({
     };
   }, [profileId, bucket, entry.key, isFolder]);
 
+  // …or once it finishes there, if that comes before this panel's own thumbnail
+  useEffect(() => {
+    if (forceLoad || entry.kind === "folder" || !isWebImage(entry.name)) return;
+    return onImageReady(profileId, bucket, entry, () => setForceLoad(true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId, bucket, entry.key, forceLoad]);
+
   useEffect(() => {
     if (!thumbable || thumb !== undefined) return;
     let live = true;
@@ -335,7 +343,8 @@ function FileDetails({
           .then((t) => live && setText(t))
           .catch((e) => live && setError(errMessage(e)));
       }
-    }, 180);
+      // already loaded for Quick Look: no reason to wait
+    }, cls === "image" && hasImage(profileId, bucket, entry) ? 0 : 180);
     return () => {
       live = false;
       clearTimeout(timer);

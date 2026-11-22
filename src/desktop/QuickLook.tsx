@@ -7,7 +7,7 @@ import { ErrorText } from "../components/ErrorText";
 import { MAX_PDF_BYTES, PdfView } from "../components/PdfView";
 import type { Entry } from "../types";
 import { imageUrl, playableUrl } from "../media";
-import { cachedThumb, canThumb, loadThumb } from "../thumbs";
+import { cachedThumb, canThumb, loadThumb, onThumbReady } from "../thumbs";
 import { usePlaceholder } from "../thumbhash";
 import { asExport } from "../connections/native";
 // the same previews as the details panel (components/PreviewPane): documents in the document
@@ -184,6 +184,14 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
       if (revoke) setTimeout(revoke, 0);
     };
   }, [profileId, bucket, entry.key, media, text]);
+
+  // the details panel's thumbnail finishing while the full size is still on its way: show it then
+  const [, setThumbTick] = useState(0);
+  useEffect(() => {
+    if (!media || cls !== "image" || url) return;
+    return onThumbReady(profileId, bucket, entry, () => setThumbTick((n) => n + 1));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId, bucket, entry.key, media, cls, !!url]);
 
   useEffect(() => {
     if (!thumbable || thumb !== undefined) return;

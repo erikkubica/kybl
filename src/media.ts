@@ -66,6 +66,32 @@ export async function playableUrl(
 const CACHED_IMAGE_MAX = 40_000_000;
 
 /**
+ * Full-size photos loaded right now, shared: the details panel and Quick Look asking for the same
+ * photo get the same bytes and blob URL (one fetch, whichever asked first), and the blob is let
+ * go when the last of them is done with it.
+ */
+type Shared = { p: Promise<string | null>; url?: string; refs: number };
+const shared = new Map<string, Shared>();
+const imageHooks = new Map<string, Set<() => void>>();
+
+/** True while a full-size copy of this photo is loaded (another view holds it). */
+export function hasImage(profileId: string, bucket: string, e: Pick<Entry, "key" | "size" | "etag">): boolean {
+  return !!shared.get(idOf(profileId, bucket, e))?.url;
+}
+
+/** Calls `f` when a full-size copy of this photo finishes loading anywhere. */
+export function onImageReady(profileId: string, bucket: string, e: Pick<Entry, "key" | "size" | "etag">, f: () => void): () => void {
+  const k = idOf(profileId, bucket, e);
+  let set = imageHooks.get(k);
+  if (!set) imageHooks.set(k, (set = new Set()));
+  set.add(f);
+  return () => {
+    set!.delete(f);
+    if (!set!.size) imageHooks.delete(k);
+  };
+}
+
+/**
  * A URL to show a photo at full size. Up to 40 MB it comes through the file cache (a blob URL:
  * `revoke` lets it go), so opening, downloading or copying the photo afterwards needs no second
  * fetch; bigger ones, and this computer's own files, stream as `playableUrl` does.
@@ -78,13 +104,43 @@ export async function imageUrl(
 ): Promise<{ url: string; revoke?: () => void }> {
   const c = caps ?? (await capsFor(profileId).catch(() => null));
   if (!c?.localPaths && e.size <= CACHED_IMAGE_MAX) {
-    try {
-      const bytes = await api.objectBytes(profileId, bucket, e.key, CACHED_IMAGE_MAX, true, { etag: e.etag, size: e.size });
-      const url = URL.createObjectURL(new Blob([bytes], { type: imageType(e.name) }));
-      return { url, revoke: () => URL.revokeObjectURL(url) };
-    } catch {
-      /* stream it instead */
+    const k = idOf(profileId, bucket, e);
+    let s = shared.get(k);
+    if (!s) {
+      const entry: Shared = { refs: 0, p: Promise.resolve(null) };
+      entry.p = api
+        .objectBytes(profileId, bucket, e.key, CACHED_IMAGE_MAX, true, { etag: e.etag, size: e.size })
+        .then((bytes) => {
+          const url = URL.createObjectURL(new Blob([bytes], { type: imageType(e.name) }));
+          if (shared.get(k) !== entry) {
+            // everyone gave up while it loaded
+            URL.revokeObjectURL(url);
+            return null;
+          }
+          entry.url = url;
+          for (const f of imageHooks.get(k) ?? []) f();
+          return url;
+        })
+        .catch(() => {
+          if (shared.get(k) === entry) shared.delete(k);
+          return null;
+        });
+      shared.set(k, (s = entry));
     }
+    const mine = s;
+    mine.refs++;
+    let held = true;
+    const release = () => {
+      if (!held) return;
+      held = false;
+      if (--mine.refs > 0 || shared.get(k) !== mine) return;
+      shared.delete(k);
+      if (mine.url) URL.revokeObjectURL(mine.url);
+    };
+    const url = await mine.p;
+    if (url) return { url, revoke: release };
+    release();
+    /* stream it instead */
   }
   return { url: await playableUrl(profileId, bucket, e, c) };
 }

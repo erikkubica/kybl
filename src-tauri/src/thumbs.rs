@@ -260,6 +260,22 @@ async fn make_thumbnail<R: Runtime>(
         return Ok(bytes);
     }
 
+    // the whole photo is already in the file cache (opened in Quick Look or the details panel):
+    // made from those bytes, with no request
+    if !etag.is_empty()
+        && (0..=MAX_FULL_DOWNLOAD).contains(&size)
+        && let Some(cache) = crate::filecache::get(app)
+    {
+        let id = crate::filecache::Ident::new(Some(etag), size as u64, None);
+        let (p, b, k) = (profile_id.to_string(), bucket.to_string(), key.to_string());
+        if let Ok(Some(bytes)) = tokio::task::spawn_blocking(move || cache.read(&p, &b, &k, &id)).await
+            && let Ok(Ok(jpeg)) = tokio::task::spawn_blocking(move || thumb_from_image_bytes(&bytes)).await
+        {
+            save(&path, &jpeg).await;
+            return Ok(jpeg);
+        }
+    }
+
     // "Wi-Fi only" also covers thumbnails: cached ones still show, new ones wait for Wi-Fi.
     // This device's own files need no network.
     if kind != ConnKind::Local && crate::tuning::wifi_only() && crate::platform::on_metered_network() {
