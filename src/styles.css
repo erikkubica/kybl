@@ -682,8 +682,10 @@ kbd {
 /* an icon-only button (the toolbar's Upload) */
 .btn.btn-square {
   width: 28px;
+  height: 28px;
   padding: 0;
   justify-content: center;
+  border-radius: var(--r-sm);
 }
 .btn-primary {
   border-color: transparent;
