@@ -4212,3 +4212,179 @@ body.marquee-selecting * {
   width: 58%;
   height: 9px;
 }
+
+/* ---------------------------------------------------------------- details pane: properties editor, sizes, errors */
+.props-edit {
+  margin-top: 10px;
+}
+.preview-note.gone {
+  color: var(--dim);
+}
+.preview-note.gone svg {
+  color: var(--warn);
+}
+.preview-note.gone strong {
+  color: var(--text);
+}
+.preview-head-error {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.preview-total {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-weight: 600;
+}
+.preview-total .faint {
+  color: var(--faint);
+  font-weight: 400;
+}
+.preview-empty .link-btn {
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+.prop .link-btn {
+  margin: 0;
+  font-size: 12px;
+}
+.fsize-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dim);
+}
+input[aria-invalid="true"],
+select[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+input[aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+.props-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.props-editor .field input,
+.props-editor .field select {
+  height: 30px;
+  font-size: 12.5px;
+}
+.props-editor .field em,
+.pe-hint,
+.pe-err,
+.pe-warn {
+  margin: 0;
+  font-size: 11.5px;
+  font-style: normal;
+  line-height: 1.4;
+  color: var(--faint);
+}
+.props-editor .pe-err,
+.pe-err {
+  color: var(--danger);
+}
+.pe-warn {
+  color: var(--warn);
+}
+.pe-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pe-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.pe-rows legend {
+  margin-bottom: 5px;
+  padding: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--dim);
+}
+.pe-none {
+  margin: 0;
+  color: var(--faint);
+  font-size: 12px;
+}
+.pe-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 26px;
+  gap: 5px;
+  align-items: center;
+}
+.pe-row input {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.pe-row .icon-btn {
+  width: 26px;
+  height: 26px;
+  color: var(--faint);
+}
+.pe-row-wrap .pe-err {
+  margin-top: 3px;
+}
+.pe-add {
+  align-self: flex-start;
+}
+.pe-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  position: sticky;
+  bottom: 0;
+  padding: 8px 0 2px;
+  background: linear-gradient(to bottom, transparent, var(--panel) 35%);
+}
+.props-editor .result {
+  margin: 0;
+}
+
+/* phones: touch-sized fields, and 16px text so iOS doesn't zoom into a focused field */
+.m-detail-body .props-editor .field input,
+.m-detail-body .props-editor .field select,
+.m-detail-body .pe-row input {
+  height: 42px;
+  font-size: 16px;
+  border-radius: 10px;
+}
+.m-detail-body .pe-row {
+  grid-template-columns: minmax(0, 1fr) 40px;
+  grid-template-areas: "k x" "v x";
+}
+.m-detail-body .pe-row input:first-child {
+  grid-area: k;
+}
+.m-detail-body .pe-row input:nth-child(2) {
+  grid-area: v;
+}
+.m-detail-body .pe-row .icon-btn {
+  grid-area: x;
+  width: 40px;
+  height: 40px;
+}
+.m-detail-body .pe-foot .btn,
+.m-detail-body .props-edit,
+.m-detail-body .pe-add {
+  height: 42px;
+  padding: 0 16px;
+  font-size: 15px;
+  border-radius: 12px;
+}
+.m-detail-body .pe-foot {
+  background: linear-gradient(to bottom, transparent, var(--m-card, var(--bg)) 35%);
+  padding-bottom: 8px;
+}
+.m-detail-body .pe-foot .btn {
+  flex: 1;
+}
