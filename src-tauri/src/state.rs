@@ -240,8 +240,6 @@ mod vault {
     use std::collections::HashMap;
     use std::path::Path;
 
-    use super::err;
-
     pub struct Legacy;
 
     impl Legacy {
@@ -255,26 +253,14 @@ mod vault {
         None
     }
 
-    fn file(dir: Option<&Path>) -> Result<std::path::PathBuf, String> {
-        Ok(dir.ok_or("No private storage folder")?.join("secrets.json"))
-    }
-
+    // Sealed with an Android Keystore key; the plain `secrets.json` of earlier versions is
+    // moved into the sealed file without ever losing a key (see `platform::vault`).
     pub fn read(dir: Option<&Path>) -> Result<HashMap<String, String>, String> {
-        match std::fs::read(file(dir)?) {
-            Ok(raw) => Ok(serde_json::from_slice(&raw).unwrap_or_default()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
-            Err(e) => Err(format!("Could not read the secret keys: {e}")),
-        }
+        crate::platform::vault::read(dir.ok_or("No private storage folder")?, &crate::platform::android::Keystore)
     }
 
     pub fn write(dir: Option<&Path>, map: &HashMap<String, String>) -> Result<(), String> {
-        let path = file(dir)?;
-        if let Some(d) = path.parent() {
-            std::fs::create_dir_all(d).map_err(err)?;
-        }
-        let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, serde_json::to_vec(map).map_err(err)?).map_err(err)?;
-        std::fs::rename(&tmp, &path).map_err(|e| format!("Could not save the secret key: {e}"))
+        crate::platform::vault::write(dir.ok_or("No private storage folder")?, map, &crate::platform::android::Keystore)
     }
 }
 
