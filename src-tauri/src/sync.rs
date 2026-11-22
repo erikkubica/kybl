@@ -422,7 +422,7 @@ impl RunBytes {
     }
 }
 
-async fn exec_job(job: Job, client: Client, bucket: String, cancel: Arc<AtomicBool>, bytes: Arc<RunBytes>) -> (String, Result<Option<Tracked>, String>) {
+async fn exec_job(job: Job, client: Client, profile_id: String, bucket: String, cancel: Arc<AtomicBool>, bytes: Arc<RunBytes>) -> (String, Result<Option<Tracked>, String>) {
     let rel = job.rel().to_string();
     let size = job.size();
     bytes.active.lock().unwrap().insert(rel.clone(), (0, size));
@@ -430,7 +430,7 @@ async fn exec_job(job: Job, client: Client, bucket: String, cancel: Arc<AtomicBo
     let progress = move |sent: u64, total: u64| {
         b.active.lock().unwrap().insert(r.clone(), (sent, total.max(size)));
     };
-    let out = exec_transfer(job, client, bucket, cancel, &progress).await;
+    let out = exec_transfer(job, client, &profile_id, bucket, cancel, &progress).await;
     bytes.active.lock().unwrap().remove(&rel);
     if matches!(out.1, Ok(Some(_))) {
         bytes.finished.fetch_add(size, Ordering::Relaxed);
@@ -441,13 +441,14 @@ async fn exec_job(job: Job, client: Client, bucket: String, cancel: Arc<AtomicBo
 async fn exec_transfer(
     job: Job,
     client: Client,
+    profile_id: &str,
     bucket: String,
     cancel: Arc<AtomicBool>,
     progress: &(dyn Fn(u64, u64) + Send + Sync),
 ) -> (String, Result<Option<Tracked>, String>) {
     match job {
         Job::Up { rel, path, key, size, mtime } => {
-            let r = upload_file(&client, &bucket, &key, &path.to_string_lossy(), &cancel, progress).await;
+            let r = upload_file(&client, profile_id, &bucket, &key, &path.to_string_lossy(), &cancel, progress).await;
             let r = r.map(|o| match o {
                 // record what was scanned: an edit made during the upload is picked up next run
                 Outcome::Done => Some(Tracked { size, mtime, etag: String::new() }),
@@ -501,7 +502,7 @@ async fn run_jobs<R: Runtime>(
     loop {
         while set.len() < CONCURRENCY && !cancel.load(Ordering::Relaxed) {
             let Some(job) = queue.next() else { break };
-            set.spawn(exec_job(job, client.clone(), m.bucket.clone(), cancel.clone(), bytes.clone()));
+            set.spawn(exec_job(job, client.clone(), m.profile_id.clone(), m.bucket.clone(), cancel.clone(), bytes.clone()));
         }
         if set.is_empty() {
             break;

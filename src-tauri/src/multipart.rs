@@ -186,10 +186,10 @@ type OpenUpload = (Client, String, String, String);
 static OPEN_IDS: AtomicU64 = AtomicU64::new(0);
 
 /// Removes its entry from [`OPEN`] when the upload is no longer running here.
-struct OpenGuard(u64);
+pub(crate) struct OpenGuard(u64);
 
 impl OpenGuard {
-    fn new(client: &Client, bucket: &str, key: &str, upload_id: &str) -> Self {
+    pub(crate) fn new(client: &Client, bucket: &str, key: &str, upload_id: &str) -> Self {
         let id = OPEN_IDS.fetch_add(1, Ordering::Relaxed);
         OPEN.lock().unwrap().insert(id, (client.clone(), bucket.into(), key.into(), upload_id.into()));
         Self(id)
@@ -203,7 +203,14 @@ impl Drop for OpenGuard {
 }
 
 async fn abort(client: &Client, bucket: &str, key: &str, upload_id: &str) {
-    let _ = client.abort_multipart_upload().bucket(bucket).key(key).upload_id(upload_id).send().await;
+    let gone = match client.abort_multipart_upload().bucket(bucket).key(key).upload_id(upload_id).send().await {
+        Ok(_) => true,
+        Err(e) => upload_gone(&sdk_err(e)),
+    };
+    // otherwise still on the server: the next start tries again (see leftovers.rs)
+    if gone {
+        crate::leftovers::upload_ended(upload_id);
+    }
 }
 
 /// Aborts every open and every kept multipart upload, waiting at most `limit` (used on quit).
@@ -237,8 +244,10 @@ fn upload_gone(e: &str) -> bool {
 
 /// Uploads a file, fresh, as sync does: a failed multipart upload is aborted, never kept.
 #[cfg_attr(mobile, allow(dead_code))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn upload_file(
     client: &Client,
+    profile_id: &str,
     bucket: &str,
     key: &str,
     path: &str,
@@ -246,7 +255,7 @@ pub(crate) async fn upload_file(
     progress: Progress<'_>,
 ) -> Result<Outcome, String> {
     let mut mp = None;
-    let r = upload(client, bucket, key, path, cancel, progress, &mut mp).await;
+    let r = upload(client, profile_id, bucket, key, path, cancel, progress, &mut mp).await;
     if r.is_err()
         && let Some(m) = mp
     {
@@ -280,11 +289,13 @@ pub(crate) async fn upload_resumable(
         None => None,
     };
     let resumed = mp.is_some();
-    let mut r = upload(client, bucket, key, path, cancel, progress, &mut mp).await;
+    let mut r = upload(client, profile_id, bucket, key, path, cancel, progress, &mut mp).await;
     if resumed && matches!(&r, Err(e) if upload_gone(e)) {
         // the server dropped the old upload (it expires them after a while): start over
-        mp = None;
-        r = upload(client, bucket, key, path, cancel, progress, &mut mp).await;
+        if let Some(m) = mp.take() {
+            crate::leftovers::upload_ended(&m.upload_id);
+        }
+        r = upload(client, profile_id, bucket, key, path, cancel, progress, &mut mp).await;
     }
     if r.is_err()
         && let Some(m) = mp
@@ -306,8 +317,10 @@ pub(crate) async fn upload_resumable(
 /// The upload itself. `mp` carries a multipart upload in and out: given one, its finished parts
 /// are skipped; on error it holds what was done (the caller keeps or aborts it); on cancel the
 /// upload is aborted here and `mp` is cleared.
+#[allow(clippy::too_many_arguments)]
 async fn upload(
     client: &Client,
+    profile_id: &str,
     bucket: &str,
     key: &str,
     path: &str,
@@ -348,11 +361,10 @@ async fn upload(
             .send()
             .await
             .map_err(sdk_err)?;
-        *mp = Some(Multipart {
-            upload_id: created.upload_id().unwrap_or_default().to_string(),
-            part_size: part_size_for(total),
-            parts: BTreeMap::new(),
-        });
+        let upload_id = created.upload_id().unwrap_or_default().to_string();
+        // written down until completed or aborted, in case the app ends before either
+        crate::leftovers::upload_started(profile_id, bucket, key, &upload_id);
+        *mp = Some(Multipart { upload_id, part_size: part_size_for(total), parts: BTreeMap::new() });
     }
     let m = mp.as_mut().expect("set above");
     let _open = OpenGuard::new(client, bucket, key, &m.upload_id);
@@ -380,6 +392,7 @@ async fn upload(
         .send()
         .await
         .map_err(sdk_err)?;
+    crate::leftovers::upload_ended(&m.upload_id);
     *mp = None;
     progress(total, total);
     Ok(Outcome::Done)
@@ -645,7 +658,7 @@ mod tests {
                 let seen = Mutex::new(Vec::<u64>::new());
                 let started = Instant::now();
                 let cancel = Arc::new(AtomicBool::new(false));
-                let r = upload_file(&client, "testbucket", &format!("{base}{name}"), path.to_str().unwrap(), &cancel, &|done, total| {
+                let r = upload_file(&client, "t", "testbucket", &format!("{base}{name}"), path.to_str().unwrap(), &cancel, &|done, total| {
                     assert_eq!(total, size as u64);
                     seen.lock().unwrap().push(done);
                 })
@@ -669,7 +682,7 @@ mod tests {
             // a cancelled upload stops and leaves nothing behind
             let path = dir.join("big.bin");
             let stop = Arc::new(AtomicBool::new(true));
-            let r = upload_file(&client, "testbucket", &format!("{base}cancelled.bin"), path.to_str().unwrap(), &stop, &|_, _| {})
+            let r = upload_file(&client, "t", "testbucket", &format!("{base}cancelled.bin"), path.to_str().unwrap(), &stop, &|_, _| {})
                 .await
                 .unwrap();
             assert!(matches!(r, Outcome::Cancelled));

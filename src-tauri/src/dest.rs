@@ -164,7 +164,9 @@ pub fn recheck_retry(chosen: PathBuf, wanted: &Path, overwrite: bool) -> (PathBu
     }
     let next = reserve(wanted, false).expect("only a download that replaces a file is ever refused");
     let moved = std::fs::rename(part_path(&chosen), part_path(&next)).is_ok();
-    if !moved {
+    if moved {
+        crate::leftovers::partial_started(&part_path(&next));
+    } else {
         let _ = std::fs::remove_file(part_path(&chosen));
     }
     release(&chosen);

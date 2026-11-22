@@ -105,6 +105,8 @@ fn exit_cleanly(app: AppHandle) {
 pub async fn clean_up(app: &AppHandle) {
     STAGE.store(CLEANING, Ordering::SeqCst);
     crate::transfers::shutdown(&app.state::<AppState>(), CLEANUP_LIMIT).await;
+    // what couldn't be aborted in time stays written down for the next start
+    crate::leftovers::save();
     STAGE.store(LEAVING, Ordering::SeqCst);
 }
 

@@ -170,6 +170,7 @@ async fn download_to(
             // meanwhile fails cleanly instead of being stitched together from two versions.
             let etag = out.e_tag().map(str::to_string);
             let file = tokio::fs::File::create(&part_path).await.map_err(err)?;
+            crate::leftovers::partial_started(&part_path);
             (file, 0, out, total, etag)
         }
     };
@@ -234,6 +235,8 @@ async fn download_to(
     match result {
         Ok(true) => {
             tokio::fs::rename(&part_path, dest).await.map_err(err)?;
+            // (a partial file removed anywhere is dropped from the list when it is next saved)
+            crate::leftovers::partial_ended(&part_path);
             Ok(Outcome::Done)
         }
         Ok(false) => {

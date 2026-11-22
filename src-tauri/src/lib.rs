@@ -5,6 +5,8 @@ mod dest;
 mod doc;
 // "Connect Kybl Storage": browser sign-in on computers and phones
 mod kybl_connect;
+// uploads and partial downloads an earlier run left behind (killed, crashed): cleaned at start
+mod leftovers;
 // the macOS menu bar
 #[cfg(target_os = "macos")]
 mod menu;
@@ -108,6 +110,7 @@ pub fn run() {
                 let _ = handle.state::<state::AppState>().vault_dir.set(dir);
             }
             prefs::load_transfers(&handle);
+            leftovers::start(&handle);
             #[cfg(desktop)]
             {
                 app.manage(prefs::load(&handle));
