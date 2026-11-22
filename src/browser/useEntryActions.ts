@@ -6,6 +6,7 @@
 import { asExport } from "../connections/native";
 import { createElement } from "react";
 import { api, errMessage } from "../api";
+import { syncApi } from "../sync";
 import { baseName, parentPrefix } from "../format";
 import { destLabel, entryParent } from "../moving";
 import { expiryLabel, type Favorite } from "../settings";
@@ -121,6 +122,20 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     if (bucket == null) return;
     dialogs.show((close) => createElement(GoToDialog, { bucket, prefix, onGo: goToPath, onClose: close }));
   };
+  /** "Keep on this device": a two-way synced copy in ~/Kybl/…, opened in Finder when ready */
+  const keepOffline = async (pre: string) => {
+    if (!profile || bucket == null) return;
+    try {
+      const m = await syncApi.keepOffline(profile.id, bucket, pre);
+      toast("success", `Keeping “${destLabel(pre, bucket)}” on this device. The first sync starts in a moment.`, {
+        label: "Show",
+        run: () => void api.revealLocal(m.localPath).catch(() => {}),
+      });
+    } catch (err) {
+      toast("error", errMessage(err));
+    }
+  };
+
   const askSync = (pre: string) => {
     if (!profile || bucket == null) return;
     const [pid, b] = [profile.id, bucket];
@@ -191,6 +206,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
           { type: "item", label: "Calculate folder size", icon: "info", onClick: () => calcSizes([prefix]) },
           favoriteItem(bucket, prefix),
           !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(prefix) },
+          !onDisk && { type: "item", label: "Keep on this device", icon: "download", onClick: () => void keepOffline(prefix) },
           !!env.openMigration && { type: "item", label: prefix ? "Copy this folder to another connection…" : "Copy everything to another connection…", icon: "copy", onClick: migrateHere },
           isS3 && { type: "item", label: "Copy S3 URI", icon: "copy", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") },
           onDisk && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: settings.showHiddenFiles, onClick: toggleHidden },
@@ -274,6 +290,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       },
       folder && favoriteItem(bucket, e.key),
       folder && !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(e.key) },
+      folder && !onDisk && { type: "item", label: "Keep on this device", icon: "download", onClick: () => void keepOffline(e.key) },
       { type: "sep" },
       { type: "item", label: "Rename…", icon: "edit", disabled: !one, onClick: () => ops.askRename(e) },
       { type: "item", label: list.length > 1 ? `Delete ${list.length} items…` : "Delete…", icon: "trash", hint: "⌘⌫", danger: true, onClick: () => ops.askDelete(list) },
