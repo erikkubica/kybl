@@ -9,7 +9,9 @@ import { JobConfirm, MigrationDialog, jobFinishedToast, onJobFinished, startMigr
 import type { Loc as JobLoc, PickedLocation } from "../jobs/LocationPicker";
 import type { Dialogs } from "./useDialogs";
 
-export type OpenMigration = (source: MigrationSource, mode: "copy" | "move", initialDest?: JobLoc | null) => void;
+/** `relocate`: the browser's own copy/move for folders of the same connection (see MigrationDialog) */
+export type Relocate = { roots: string[]; run: (dest: JobLoc, mode: "copy" | "move") => void };
+export type OpenMigration = (source: MigrationSource, mode: "copy" | "move", initialDest?: JobLoc | null, relocate?: Relocate) => void;
 export type ConfirmMigration = (source: MigrationSource, mode: "copy" | "move", dest: PickedLocation, singleRoot?: boolean, onStarted?: () => void) => void;
 
 export function useMigrationHost({
@@ -24,7 +26,7 @@ export function useMigrationHost({
   /** opens the Activity panel on its Jobs tab */
   showJobs: () => void;
 }) {
-  const [migrate, setMigrate] = useState<{ source: MigrationSource; mode: "copy" | "move"; initialDest?: JobLoc | null; key: number } | null>(null);
+  const [migrate, setMigrate] = useState<{ source: MigrationSource; mode: "copy" | "move"; initialDest?: JobLoc | null; relocate?: Relocate; key: number } | null>(null);
   const live = useRef({ dialogs, reloadIfShowing, clearAllSizes, showJobs });
   live.current = { dialogs, reloadIfShowing, clearAllSizes, showJobs };
 
@@ -45,7 +47,7 @@ export function useMigrationHost({
     });
   }, []);
 
-  const open: OpenMigration = useCallback((source, mode, initialDest) => setMigrate({ source, mode, initialDest, key: Date.now() }), []);
+  const open: OpenMigration = useCallback((source, mode, initialDest, relocate) => setMigrate({ source, mode, initialDest, relocate, key: Date.now() }), []);
 
   const confirm: ConfirmMigration = useCallback(
     (source, mode, dest, singleRoot, onStarted) =>
@@ -72,6 +74,7 @@ export function useMigrationHost({
       source={migrate.source}
       initialMode={migrate.mode}
       initialDest={migrate.initialDest}
+      relocate={migrate.relocate}
       onClose={() => setMigrate(null)}
       onStarted={() => live.current.showJobs()}
     />

@@ -89,21 +89,28 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   const askMove = (list: Entry[], mode: "move" | "copy" = "move") => {
     if (!list.length || !profile || bucket == null) return;
     const startPrefix = search ? entryParent(list[0]) : prefix;
+    const pid = profile.id;
+    const roots = conns.bucketsBy[pid]?.names ?? [bucket];
+    // one picker for every destination: a tree of all connections, opened at this folder; folders
+    // this connection reaches are copied or moved on the spot, anywhere else becomes a job
+    if (env.openMigration) {
+      env.openMigration(
+        { profileId: pid, root: bucket, items: list.map((e) => ({ path: e.key, isDir: e.kind === "folder", size: e.kind === "folder" ? undefined : e.size })) },
+        mode,
+        { profileId: pid, root: bucket, dir: startPrefix },
+        { roots: roots.includes(bucket) ? roots : [...roots, bucket], run: (dest, m) => ops.relocate(list, dest.dir, m, { destBucket: dest.root }) },
+      );
+      return;
+    }
     dialogs.show((close) =>
       createElement(MoveDialog, {
-        profileId: profile.id,
+        profileId: pid,
         bucket,
-        buckets: conns.bucketsBy[profile.id]?.names,
+        buckets: conns.bucketsBy[pid]?.names,
         items: list,
         initialMode: mode,
         startPrefix,
         onSubmit: (dest, m, destBucket) => ops.relocate(list, dest, m, { destBucket }),
-        onOtherConnection: env.openMigration
-          ? (m: "move" | "copy") => {
-              close();
-              migrate(list, m);
-            }
-          : undefined,
         onClose: close,
       }),
     );

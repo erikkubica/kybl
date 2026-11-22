@@ -6,7 +6,7 @@
 .jobs-tree {
   display: flex;
   flex-direction: column;
-  height: 270px;
+  height: clamp(220px, calc(100vh - 380px), 440px);
   padding: 4px;
   overflow-y: auto;
   border: 1px solid var(--border);

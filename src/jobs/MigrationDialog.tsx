@@ -118,6 +118,7 @@ export function MigrationDialog({
   onClose,
   onStarted,
   variant = "modal",
+  relocate,
 }: {
   source: MigrationSource;
   initialMode?: "copy" | "move";
@@ -128,12 +129,19 @@ export function MigrationDialog({
   onStarted?: (id: string, spec: JobSpec) => void;
   /** "screen": a full-screen phone layer (its back arrow calls onClose) */
   variant?: "modal" | "screen";
+  /**
+   * The file browser's own copy and move, for folders this connection can reach directly
+   * (`roots`): done on the server at once, no background job. Anywhere else becomes a job.
+   */
+  relocate?: { roots: string[]; run: (dest: Loc, mode: "copy" | "move") => void };
 }) {
   const [mode, setMode] = useState(initialMode);
   const [opts, setOpts] = useState<JobOptions>(loadJobOptions);
   const [dest, setDest] = useState<PickedLocation | null>(null);
   const [startAt] = useState<Loc | null>(() => {
-    const d = initialDest ?? loadJson<Loc | null>(DEST_KEY, null);
+    // a folder handed in (the one on screen) is where the tree opens, even when it can't be picked
+    if (initialDest?.profileId) return initialDest;
+    const d = loadJson<Loc | null>(DEST_KEY, null);
     return d && d.profileId && !blockedReason(source, d) ? d : null;
   });
   const [creating, setCreating] = useState(false);
@@ -149,14 +157,31 @@ export function MigrationDialog({
       return n;
     });
 
-  const blocked = useMemo(() => (loc: Loc) => blockedReason(source, loc), [source]);
+  /** dest is done by the browser's own copy/move, not a job */
+  const direct = (loc: Loc | null) => !!relocate && !!loc && loc.profileId === source.profileId && relocate.roots.includes(loc.root);
+  const blocked = useMemo(
+    () => (loc: Loc) => {
+      const r = blockedReason(source, loc);
+      // a direct copy into the folder the files are in makes copies next to them ("photo (1).jpg")
+      if (r && mode === "copy" && direct(loc) && /already in this folder/.test(r)) return null;
+      return r;
+    },
+    [source, mode, relocate],
+  );
   const why = dest ? blocked(dest) : null;
+  const fast = direct(dest);
   const verb = s.Verb;
   const title = `${verb} ${s.multi || s.whole ? "everything" : s.what} to…`;
   const conflict = CONFLICTS.find((c) => c.id === opts.conflict) ?? CONFLICTS[0];
 
   const start = async () => {
     if (!dest || why) return;
+    if (fast && relocate) {
+      relocate.run({ profileId: dest.profileId, root: dest.root, dir: dest.dir }, mode);
+      rememberDest(dest);
+      onClose();
+      return;
+    }
     setStarting(true);
     setError(null);
     try {
@@ -182,6 +207,7 @@ export function MigrationDialog({
 
       <LocationPicker value={dest ?? startAt} onChange={setDest} blocked={blocked} creating={creating} onCreatingDone={() => setCreating(false)} />
 
+      {!fast && (
       <button className="jobs-options-toggle" onClick={() => setShowOptions((v) => !v)} aria-expanded={showOptions}>
         <Icon name="chevron" size={11} className={`jobs-caret ${showOptions ? "open" : ""}`} />
         <span>Options</span>
@@ -192,7 +218,8 @@ export function MigrationDialog({
           </span>
         )}
       </button>
-      {showOptions && (
+      )}
+      {showOptions && !fast && (
         <div className="jobs-options">
           <label className="jobs-field">
             <span>If a file is already there</span>
@@ -242,8 +269,15 @@ export function MigrationDialog({
                 from <strong>{s.from}</strong>
               </>
             )}{" "}
-            to <strong>{locLabel(dest)}</strong>.{s.multi && " Each bucket gets a folder of its own there."} {conflict.hint}
-            {mode === "move" && " Originals are deleted once each copy is checked."}
+            to <strong>{locLabel(dest, !fast)}</strong>.
+            {fast ? (
+              mode === "copy" && blockedReason(source, dest) ? " The copies get a new name next to the originals." : ""
+            ) : (
+              <>
+                {s.multi && " Each bucket gets a folder of its own there."} {conflict.hint}
+                {mode === "move" && " Originals are deleted once each copy is checked."}
+              </>
+            )}
           </span>
         )}
       </div>

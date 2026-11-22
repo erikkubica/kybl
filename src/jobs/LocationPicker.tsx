@@ -88,6 +88,8 @@ export function LocationPicker({
       s.add(connKey(value.profileId));
       const parts = value.dir.split("/").filter(Boolean);
       for (let i = 0; i < parts.length; i++) s.add(dirKey({ ...value, dir: parts.slice(0, i).map((p) => p + "/").join("") }));
+      // and the folder itself, so its subfolders (the likely destinations) show at once
+      s.add(dirKey(value));
     }
     return s;
   });
