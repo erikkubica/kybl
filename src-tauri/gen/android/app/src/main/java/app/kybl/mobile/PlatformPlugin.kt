@@ -91,10 +91,50 @@ class PlatformPlugin(private val activity: Activity) : Plugin(activity) {
     }
   }
 
+  /**
+   * Files Kybl may hand to other apps: its downloads, its cache and temporary copies. Anything
+   * else, its private data above all (the secret keys, settings), is refused whatever path the
+   * page asks for.
+   */
+  @Suppress("DEPRECATION")
+  private fun shareable(file: File): Boolean {
+    val path = try {
+      file.canonicalPath
+    } catch (e: Exception) {
+      return false
+    }
+    val publicDownloads = try {
+      File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Kybl")
+    } catch (e: Exception) {
+      null
+    }
+    val roots = listOfNotNull(
+      activity.cacheDir,
+      activity.externalCacheDir,
+      activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+      File(activity.filesDir, "Downloads"),
+      publicDownloads,
+    )
+    return roots.any { root ->
+      val r = try {
+        root.canonicalPath
+      } catch (e: Exception) {
+        null
+      }
+      r != null && path.startsWith(r + File.separator)
+    }
+  }
+
+  private fun notShareable(file: File) = "${file.name} isn't one of Kybl's downloads, so it can't be handed to another app."
+
   @Command
   fun openFile(invoke: Invoke) {
     val args = invoke.parseArgs(OpenFileArgs::class.java)
     val file = File(args.path)
+    if (!shareable(file)) {
+      invoke.reject(notShareable(file))
+      return
+    }
     try {
       val uri = contentUri(file)
       val view = Intent(Intent.ACTION_VIEW)
@@ -123,6 +163,10 @@ class PlatformPlugin(private val activity: Activity) : Plugin(activity) {
     val args = invoke.parseArgs(ShareArgs::class.java)
     try {
       val paths = args.paths.orEmpty()
+      paths.map { File(it) }.firstOrNull { !shareable(it) }?.let {
+        invoke.reject(notShareable(it))
+        return
+      }
       val send = if (paths.isEmpty()) {
         Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, args.text ?: "")
       } else {
@@ -186,6 +230,10 @@ class PlatformPlugin(private val activity: Activity) : Plugin(activity) {
   private fun savePhoto(invoke: Invoke) {
     val args = invoke.parseArgs(PhotoArgs::class.java)
     val file = File(args.path)
+    if (!shareable(file)) {
+      invoke.reject(notShareable(file))
+      return
+    }
     val video = args.mime.startsWith("video/")
     Thread {
       try {

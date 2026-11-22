@@ -1,13 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Folders whose files "Open with" and the share sheet hand to other apps (PlatformPlugin.kt);
-     a file anywhere else is copied into the cache first. -->
+<!-- The only folders whose files "Open with" and the share sheet hand to other apps
+     (PlatformPlugin.kt, which refuses anything outside the download, cache and temporary folders).
+     Nothing else of the app's private storage (the secret keys, settings) is ever reachable. -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-  <!-- shared storage: Download/Kybl -->
-  <external-path name="shared" path="." />
-  <!-- the app's own folder in shared storage (downloads on Android 7-10 without the permission) -->
-  <external-files-path name="app_shared" path="." />
-  <external-cache-path name="app_shared_cache" path="." />
-  <!-- the app's private folders: previews, temporary copies -->
-  <files-path name="files" path="." />
-  <cache-path name="cache" path="." />
+  <!-- downloads: shared storage Download/Kybl -->
+  <external-path name="downloads" path="Download/Kybl" />
+  <!-- downloads on Android 7-10 without the storage permission: the app's own folder in shared storage -->
+  <external-files-path name="app_downloads" path="Download" />
+  <!-- ...or its private one, when there is no shared storage at all -->
+  <files-path name="private_downloads" path="Downloads" />
+  <!-- temporary copies opened from a preview (platform::temp_folder) -->
+  <cache-path name="open" path="open" />
+  <!-- files shared into Kybl from other apps (ShareIntake.kt) -->
+  <cache-path name="shared" path="shared" />
+  <!-- copies of files from elsewhere in the cache, made by PlatformPlugin.kt for another app -->
+  <cache-path name="outgoing" path="outgoing" />
 </paths>
