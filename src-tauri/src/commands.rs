@@ -20,10 +20,11 @@ use tauri::{AppHandle, Emitter, State};
 use walkdir::WalkDir;
 
 use crate::state::{
-    build_client, client_for, delete_secret, err, get_secret, load_profiles, save_profiles, sdk_err, set_secret,
+    build_client, delete_secret, err, get_secret, load_profiles, save_profiles, sdk_err, set_secret,
     AppState,
     Profile,
 };
+use crate::storage::{self, generic_cmds as generic, registry, ConnKind, Conn};
 
 const COPY_SOURCE_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'/')
@@ -36,7 +37,7 @@ const COPY_SOURCE_SET: &AsciiSet = &NON_ALPHANUMERIC
 const MULTIPART_COPY_THRESHOLD: i64 = 4 * 1024 * 1024 * 1024;
 const COPY_PART_SIZE: i64 = 512 * 1024 * 1024;
 
-fn millis(d: Option<&DateTime>) -> Option<i64> {
+pub(crate) fn millis(d: Option<&DateTime>) -> Option<i64> {
     d.map(|d| d.secs() * 1000 + (d.subsec_nanos() / 1_000_000) as i64)
 }
 
@@ -59,7 +60,7 @@ pub async fn save_profile(
     }
     if let Some(s) = secret.as_deref().filter(|s| !s.is_empty()) {
         set_secret(&state, &profile.id, s).await?;
-    } else if get_secret(&state, &profile.id).await?.is_none() {
+    } else if profile.kind == ConnKind::S3 && get_secret(&state, &profile.id).await?.is_none() {
         return Err("A secret key is required for a new connection".into());
     }
     let mut profiles = load_profiles(&app)?;
@@ -69,6 +70,7 @@ pub async fn save_profile(
     }
     save_profiles(&app, &profiles)?;
     state.clients.lock().await.remove(&profile.id);
+    registry::forget(&profile.id);
     Ok(profile)
 }
 
@@ -83,16 +85,23 @@ pub async fn delete_profile(
     save_profiles(&app, &profiles)?;
     delete_secret(&state, &id).await?;
     state.clients.lock().await.remove(&id);
+    registry::forget(&id);
     Ok(())
 }
 
 /// Tries the connection with the given (possibly unsaved) settings.
 #[tauri::command]
 pub async fn test_connection(
+    app: AppHandle,
     state: State<'_, AppState>,
     profile: Profile,
     secret: Option<String>,
 ) -> Result<String, String> {
+    if profile.kind != ConnKind::S3 {
+        let s = registry::build(&app, &state, &profile, secret).await?;
+        s.roots().await?;
+        return Ok("Connected.".into());
+    }
     let secret = match secret.filter(|s| !s.is_empty()) {
         Some(s) => s,
         None => get_secret(&state, &profile.id)
@@ -131,8 +140,8 @@ pub async fn test_connection(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BucketInfo {
-    name: String,
-    created: Option<i64>,
+    pub(crate) name: String,
+    pub(crate) created: Option<i64>,
 }
 
 #[tauri::command]
@@ -141,7 +150,10 @@ pub async fn list_buckets(
     state: State<'_, AppState>,
     profile_id: String,
 ) -> Result<Vec<BucketInfo>, String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return generic::list_buckets(&*s).await,
+    };
     let out = client.list_buckets().send().await.map_err(sdk_err)?;
     Ok(out
         .buckets()
@@ -162,36 +174,33 @@ pub async fn create_bucket(
     profile_id: String,
     bucket: String,
 ) -> Result<(), String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return generic::create_bucket(&*s, &bucket).await,
+    };
     client.create_bucket().bucket(bucket).send().await.map_err(sdk_err)?;
     Ok(())
 }
 
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ObjInfo {
-    pub(crate) key: String,
-    pub(crate) size: i64,
-    pub(crate) modified: Option<i64>,
-    pub(crate) etag: Option<String>,
-    storage_class: Option<String>,
-}
+/// A listed object: the storage core's [`storage::Entry`], which serializes the same way.
+pub(crate) use crate::storage::Entry as ObjInfo;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListResult {
-    folders: Vec<String>,
-    objects: Vec<ObjInfo>,
-    next_token: Option<String>,
+    pub(crate) folders: Vec<String>,
+    pub(crate) objects: Vec<ObjInfo>,
+    pub(crate) next_token: Option<String>,
 }
 
-fn obj_info(o: &aws_sdk_s3::types::Object) -> ObjInfo {
+pub(crate) fn obj_info(o: &aws_sdk_s3::types::Object) -> ObjInfo {
     ObjInfo {
         key: o.key().unwrap_or_default().to_string(),
         size: o.size().unwrap_or(0),
         modified: millis(o.last_modified()),
         etag: o.e_tag().map(|e| e.trim_matches('"').to_string()),
         storage_class: o.storage_class().map(|s| s.as_str().to_string()),
+        ..Default::default()
     }
 }
 
@@ -204,7 +213,10 @@ pub async fn list_objects(
     prefix: String,
     token: Option<String>,
 ) -> Result<ListResult, String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return generic::list_objects(&*s, &bucket, &prefix, token).await,
+    };
     let out = client
         .list_objects_v2()
         .bucket(&bucket)
@@ -267,15 +279,15 @@ pub(crate) async fn list_all(
 }
 
 /// Most direct subfolders reported back for one folder (the biggest ones win).
-const MAX_CHILDREN: usize = 5000;
+pub(crate) const MAX_CHILDREN: usize = 5000;
 
 /// Size of one direct subfolder, including everything nested below it.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChildSize {
-    prefix: String,
-    bytes: u64,
-    objects: u64,
+    pub(crate) prefix: String,
+    pub(crate) bytes: u64,
+    pub(crate) objects: u64,
 }
 
 /// Runs `fut` unless `cancel` is set first (checked every 100 ms): a slow listing request on a
@@ -297,7 +309,7 @@ async fn unless_cancelled<T>(fut: impl std::future::Future<Output = T>, cancel: 
 /// Listing the same page again (same continuation token) is safe.
 const PAGE_TRIES: u32 = 3;
 
-async fn list_page(
+pub(crate) async fn list_page(
     client: &Client,
     bucket: &str,
     prefix: &str,
@@ -376,17 +388,17 @@ pub(crate) async fn prefix_size(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FolderSize {
-    bytes: u64,
-    objects: u64,
-    children: Vec<ChildSize>,
+    pub(crate) bytes: u64,
+    pub(crate) objects: u64,
+    pub(crate) children: Vec<ChildSize>,
 }
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct SizeProgress {
-    op_id: String,
-    bytes: u64,
-    objects: u64,
+pub(crate) struct SizeProgress {
+    pub(crate) op_id: String,
+    pub(crate) bytes: u64,
+    pub(crate) objects: u64,
 }
 
 /// Adds up a folder's size in the background; progress arrives as `size-progress` events and the
@@ -400,7 +412,10 @@ pub async fn folder_size(
     prefix: String,
     op_id: String,
 ) -> Result<FolderSize, String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return generic::folder_size(&app, &state, &*s, &bucket, &prefix, op_id).await,
+    };
     let flag = Arc::new(AtomicBool::new(false));
     state.cancels.lock().await.insert(op_id.clone(), flag.clone());
     // a few events a second is plenty, even when a fast server lists many pages a second
@@ -422,20 +437,20 @@ pub async fn folder_size(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResult {
-    objects: Vec<ObjInfo>,
-    scanned: u64,
+    pub(crate) objects: Vec<ObjInfo>,
+    pub(crate) scanned: u64,
     /// true when the scan stopped early (a limit reached, or stopped by the user), so results
     /// may be incomplete
-    truncated: bool,
+    pub(crate) truncated: bool,
 }
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct SearchProgress {
-    op_id: String,
-    scanned: u64,
+pub(crate) struct SearchProgress {
+    pub(crate) op_id: String,
+    pub(crate) scanned: u64,
     /// matches from this page only; the UI appends them
-    found: Vec<ObjInfo>,
+    pub(crate) found: Vec<ObjInfo>,
 }
 
 /// Recursive, case-insensitive "contains" search over the keys below `prefix`.
@@ -453,7 +468,10 @@ pub async fn search_objects(
 ) -> Result<SearchResult, String> {
     const MAX_SCAN: u64 = 300_000;
     const MAX_RESULTS: usize = 500;
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return generic::search_objects(&app, &state, &*s, &bucket, &prefix, &query, op_id).await,
+    };
     let flag = Arc::new(AtomicBool::new(false));
     if let Some(id) = &op_id {
         state.cancels.lock().await.insert(id.clone(), flag.clone());
@@ -541,16 +559,16 @@ async fn search_scan(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ObjectDetails {
-    key: String,
-    size: i64,
-    content_type: Option<String>,
-    modified: Option<i64>,
-    etag: Option<String>,
-    storage_class: Option<String>,
-    metadata: HashMap<String, String>,
-    cache_control: Option<String>,
-    content_disposition: Option<String>,
-    content_encoding: Option<String>,
+    pub(crate) key: String,
+    pub(crate) size: i64,
+    pub(crate) content_type: Option<String>,
+    pub(crate) modified: Option<i64>,
+    pub(crate) etag: Option<String>,
+    pub(crate) storage_class: Option<String>,
+    pub(crate) metadata: HashMap<String, String>,
+    pub(crate) cache_control: Option<String>,
+    pub(crate) content_disposition: Option<String>,
+    pub(crate) content_encoding: Option<String>,
 }
 
 pub(crate) fn details(key: String, h: &HeadObjectOutput) -> ObjectDetails {
@@ -576,7 +594,10 @@ pub async fn head_object(
     bucket: String,
     key: String,
 ) -> Result<ObjectDetails, String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return generic::head_object(&*s, &bucket, &key).await,
+    };
     let h = client
         .head_object()
         .bucket(&bucket)
@@ -590,8 +611,8 @@ pub async fn head_object(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextPreview {
-    text: String,
-    truncated: bool,
+    pub(crate) text: String,
+    pub(crate) truncated: bool,
 }
 
 #[tauri::command]
@@ -603,7 +624,10 @@ pub async fn get_text_preview(
     key: String,
     max_bytes: usize,
 ) -> Result<TextPreview, String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return generic::get_text_preview(&*s, &bucket, &key, max_bytes).await,
+    };
     let mut out = client
         .get_object()
         .bucket(&bucket)
@@ -639,7 +663,10 @@ pub async fn get_object_bytes(
     key: String,
     max_bytes: u64,
 ) -> Result<tauri::ipc::Response, String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return generic::get_object_bytes(&*s, &bucket, &key, max_bytes).await,
+    };
     let mut out = client.get_object().bucket(&bucket).key(&key).send().await.map_err(sdk_err)?;
     let len = out.content_length().unwrap_or(0).max(0) as u64;
     if len > max_bytes {
@@ -665,7 +692,10 @@ pub async fn presign_get(
     key: String,
     expires_secs: u64,
 ) -> Result<String, String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return generic::presign_get(&*s, &bucket, &key, expires_secs).await,
+    };
     let cfg = PresigningConfig::expires_in(Duration::from_secs(expires_secs.clamp(60, 7 * 24 * 3600)))
         .map_err(err)?;
     let req = client
@@ -688,7 +718,10 @@ pub async fn create_folder(
     bucket: String,
     prefix: String,
 ) -> Result<(), String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return generic::create_folder(&*s, &bucket, &prefix).await,
+    };
     let key = if prefix.ends_with('/') { prefix } else { format!("{prefix}/") };
     client
         .put_object()
@@ -700,7 +733,7 @@ pub async fn create_folder(
     Ok(())
 }
 
-async fn delete_keys(client: &Client, bucket: &str, keys: &[String]) -> Result<(), String> {
+pub(crate) async fn delete_keys(client: &Client, bucket: &str, keys: &[String]) -> Result<(), String> {
     for chunk in keys.chunks(1000) {
         let ids: Result<Vec<ObjectIdentifier>, _> = chunk
             .iter()
@@ -742,7 +775,10 @@ pub async fn delete_objects(
     prefixes: Vec<String>,
     op_id: Option<String>,
 ) -> Result<OpResult, String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return generic::delete_objects(&app, &state, &*s, &bucket, keys, prefixes, op_id).await,
+    };
     let op = op_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let flag = Arc::new(AtomicBool::new(false));
     state.cancels.lock().await.insert(op.clone(), flag.clone());
@@ -928,7 +964,7 @@ async fn copy_object_from(
 /// Copies or moves one object, or a whole prefix ("folder"), inside a bucket.
 /// For a move the sources are only deleted after every copy succeeded.
 /// Error text of an operation the user stopped; the UI shows it as "Cancelled", not as a failure.
-const CANCELLED: &str = "Cancelled";
+pub(crate) const CANCELLED: &str = storage::CANCELLED;
 
 /// How many objects are copied at once. Kept modest so busy buckets aren't throttled.
 const COPY_CONCURRENCY: usize = 8;
@@ -938,31 +974,31 @@ const DELETE_BATCH: usize = 1000;
 #[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MoveItem {
-    from: String,
-    to: String,
-    is_prefix: bool,
+    pub(crate) from: String,
+    pub(crate) to: String,
+    pub(crate) is_prefix: bool,
 }
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct MoveProgress {
-    op_id: String,
+pub(crate) struct MoveProgress {
+    pub(crate) op_id: String,
     /// listing | copying | deleting
-    phase: &'static str,
-    done: u64,
-    total: u64,
-    bytes: u64,
-    total_bytes: u64,
+    pub(crate) phase: &'static str,
+    pub(crate) done: u64,
+    pub(crate) total: u64,
+    pub(crate) bytes: u64,
+    pub(crate) total_bytes: u64,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpResult {
     /// objects copied (and, for a move, removed from the old place)
-    done: u64,
-    total: u64,
+    pub(crate) done: u64,
+    pub(crate) total: u64,
     /// set when it stopped early; everything not counted in `done` is untouched
-    error: Option<String>,
+    pub(crate) error: Option<String>,
 }
 
 /// Copies (and optionally deletes the originals of) objects and whole folders, within `bucket`
@@ -1081,7 +1117,10 @@ pub async fn copy_or_move(
     is_prefix: bool,
     delete_source: bool,
 ) -> Result<u64, String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return generic::copy_or_move(&app, &*s, &bucket, from, to, is_prefix, delete_source).await,
+    };
     let r = copy_many(&app, &client, &bucket, None, &[MoveItem { from, to, is_prefix }], delete_source, None, None).await?;
     match r.error {
         Some(e) if r.done > 0 => Err(format!("{e} ({} of {} objects were done before it stopped)", r.done, r.total)),
@@ -1104,7 +1143,10 @@ pub async fn move_many(
     op_id: String,
     dest_bucket: Option<String>,
 ) -> Result<OpResult, String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return generic::move_many(&app, &state, &*s, &bucket, items, delete_source, op_id, dest_bucket).await,
+    };
     let flag = Arc::new(AtomicBool::new(false));
     state.cancels.lock().await.insert(op_id.clone(), flag.clone());
     let _job = Job::start();
@@ -1122,10 +1164,10 @@ pub fn running_jobs() -> usize {
 }
 
 /// Counts one bucket operation while it lives.
-struct Job;
+pub(crate) struct Job;
 
 impl Job {
-    fn start() -> Self {
+    pub(crate) fn start() -> Self {
         JOBS.fetch_add(1, Ordering::Relaxed);
         Job
     }
@@ -1190,8 +1232,8 @@ pub fn expand_paths(paths: Vec<String>) -> Result<Vec<LocalFile>, String> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteFile {
-    key: String,
-    size: i64,
+    pub(crate) key: String,
+    pub(crate) size: i64,
 }
 
 #[tauri::command]
@@ -1202,7 +1244,10 @@ pub async fn list_all_under(
     bucket: String,
     prefix: String,
 ) -> Result<Vec<RemoteFile>, String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return generic::list_all_under(&*s, &bucket, &prefix).await,
+    };
     Ok(list_all(&client, &bucket, &prefix)
         .await?
         .into_iter()
@@ -1230,6 +1275,7 @@ mod tests {
             access_key_id: "testkey".into(),
             bucket: None,
             path_style: true,
+            ..Default::default()
         };
         let client = build_client(&p, "testsecret");
         tauri::async_runtime::block_on(async move {
@@ -1272,6 +1318,7 @@ mod tests {
             access_key_id: "testkey".into(),
             bucket: None,
             path_style: true,
+            ..Default::default()
         };
         let client = build_client(&p, "testsecret");
         tauri::async_runtime::block_on(async move {
@@ -1321,6 +1368,7 @@ mod tests {
             access_key_id: "testkey".into(),
             bucket: None,
             path_style: true,
+            ..Default::default()
         };
         let client = build_client(&p, "testsecret");
         tauri::async_runtime::block_on(async move {
@@ -1388,6 +1436,7 @@ mod tests {
             access_key_id: "testkey".into(),
             bucket: None,
             path_style: true,
+            ..Default::default()
         };
         let client = build_client(&p, "testsecret");
         let events = Arc::new(Mutex::new(Vec::<String>::new()));

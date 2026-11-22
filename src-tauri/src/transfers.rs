@@ -15,7 +15,8 @@ use tokio::io::AsyncWriteExt;
 
 use crate::dest;
 use crate::multipart;
-use crate::state::{client_for, err, sdk_err, AppState};
+use crate::state::{err, sdk_err, AppState};
+use crate::storage::{self, generic_cmds, Conn};
 use crate::transfer_notice::{self as notice, Dir};
 use crate::tuning::LIMITER;
 
@@ -351,7 +352,8 @@ async fn spawn_transfer(
     requested: String,
     resume_etag: Option<String>,
 ) -> Result<(), String> {
-    let client = client_for(&app, state, &profile_id).await?;
+    // S3 goes the way it always did; other kinds of connection read and write through their backend
+    let conn = storage::connect(&app, state, &profile_id).await?;
     let source = match kind {
         Kind::Upload => Some(open_source(&app, &local).await?),
         Kind::Download { .. } => None,
@@ -418,7 +420,10 @@ async fn spawn_transfer(
             match kind {
                 Kind::Upload => match local_source(source.expect("an upload has a source"), &key).await {
                     Ok((path, temp)) => {
-                        let r = multipart::upload_resumable(&client, &id, &profile_id, &bucket, &key, &path, &cancel, &report).await;
+                        let r = match &conn {
+                            Conn::S3(client) => multipart::upload_resumable(client, &id, &profile_id, &bucket, &key, &path, &cancel, &report).await,
+                            Conn::Other(s) => generic_cmds::upload(&**s, &bucket, &key, &path, &cancel, &report).await,
+                        };
                         if let Ok(Outcome::Done) = r {
                             done_bytes = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
                         }
@@ -432,7 +437,10 @@ async fn spawn_transfer(
                 Kind::Download { resume } => {
                     let chosen = PathBuf::from(&local);
                     let tag = if resume { resume_etag.as_deref() } else { None };
-                    let r = download_to(&client, &bucket, &key, &chosen, tag, true, &cancel, &report, &mut etag).await;
+                    let r = match &conn {
+                        Conn::S3(client) => download_to(client, &bucket, &key, &chosen, tag, true, &cancel, &report, &mut etag).await,
+                        Conn::Other(s) => generic_cmds::download(&**s, &bucket, &key, &chosen, &cancel, &report).await,
+                    };
                     if let Ok(Outcome::Done) = r {
                         done_bytes = tokio::fs::metadata(&chosen).await.map(|m| m.len()).unwrap_or(0);
                     }
@@ -631,6 +639,7 @@ mod tests {
                 access_key_id: "k".into(),
                 bucket: None,
                 path_style: true,
+                ..Default::default()
             };
             let client = build_client(&p, "s");
             let dir = std::env::temp_dir().join(format!("kybl-resume-{}", std::process::id()));
@@ -690,6 +699,7 @@ mod tests {
                 access_key_id: "k".into(),
                 bucket: None,
                 path_style: true,
+                ..Default::default()
             };
             let client = build_client(&p, "s");
             let dir = std::env::temp_dir().join(format!("kybl-retry-{}", uuid::Uuid::new_v4()));
