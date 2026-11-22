@@ -5,6 +5,10 @@ import { classify, extOf, formatBytes, formatDateFull, isWebImage, kindLabel } f
 import { cachedThumb, canThumb, loadThumb } from "../thumbs";
 import { FileIcon } from "./FileIcon";
 import { MAX_PDF_BYTES, PdfView } from "./PdfView";
+import { ErrorText } from "./ErrorText";
+import { PropsEditor } from "./PropsEditor";
+import { storageClassLabel } from "./storageClasses";
+import type { FolderSizeInfo } from "./listNav";
 import { EXPIRIES } from "../settings";
 import type { Entry, ObjectDetails } from "../types";
 
@@ -14,6 +18,37 @@ const BIG_IMAGE = 25 * 1000 * 1000;
 const quiet = (ev: React.MouseEvent) => {
   if (!window.getSelection()?.toString()) ev.preventDefault();
 };
+
+/** A details request for a key that no longer exists (deleted or moved elsewhere). */
+const isNotFound = (msg: string) => /NotFound|NoSuchKey|status: 404|\b404\b/i.test(msg);
+
+type SizeProps = {
+  folderSize?(key: string): FolderSizeInfo | undefined;
+  onCalcSize?(key: string): void;
+};
+
+/** Folder size line: the total once known, live progress while it adds up, else a button. */
+function FolderSizeLine({ entryKey, folderSize, onCalcSize }: SizeProps & { entryKey: string }) {
+  const info = folderSize?.(entryKey);
+  if (info?.running)
+    return (
+      <span className="fsize-line" role="status">
+        <span className="spinner sm" /> Adding up… {formatBytes(info.bytes)} in {info.objects.toLocaleString()} {info.objects === 1 ? "object" : "objects"} so far
+      </span>
+    );
+  if (info)
+    return (
+      <span>
+        {formatBytes(info.bytes)} · {info.objects.toLocaleString()} {info.objects === 1 ? "object" : "objects"}
+      </span>
+    );
+  if (!onCalcSize) return <span className="faint">Not known</span>;
+  return (
+    <button type="button" className="link-btn" onClick={() => onCalcSize(entryKey)} title="Lists everything in the folder to add it up: one request per 1,000 objects">
+      Calculate size
+    </button>
+  );
+}
 
 export function PreviewPane({
   profileId,
@@ -27,7 +62,10 @@ export function PreviewPane({
   onMoveTo,
   onDelete,
   onContext,
-}: {
+  onChanged,
+  folderSize,
+  onCalcSize,
+}: SizeProps & {
   profileId: string;
   bucket: string;
   selection: Entry[];
@@ -41,6 +79,8 @@ export function PreviewPane({
   onDelete: () => void;
   /** right-click on the preview: the app's own menu for this item */
   onContext: (ev: React.MouseEvent, e: Entry) => void;
+  /** properties or tags were saved (or the file turned out to be gone): reload the list */
+  onChanged?(): void;
 }) {
   const [expiry, setExpiry] = useState(defaultExpiry);
   useEffect(() => setExpiry(defaultExpiry), [defaultExpiry]);
@@ -60,15 +100,49 @@ export function PreviewPane({
   }
 
   if (selection.length > 1) {
-    const total = selection.reduce((s, e) => s + (e.kind === "file" ? e.size : 0), 0);
+    // folders count once their size is known (worked out from the menu or the Size column)
+    let total = 0;
+    let files = 0;
+    let unknown = 0;
+    for (const e of selection) {
+      if (e.kind === "file") {
+        total += e.size;
+        files++;
+        continue;
+      }
+      const fs = folderSize?.(e.key);
+      if (fs && !fs.running) total += fs.bytes;
+      else unknown++;
+    }
+    const folders = selection.length - files;
+    const parts = [files && `${files.toLocaleString()} ${files === 1 ? "file" : "files"}`, folders && `${folders.toLocaleString()} ${folders === 1 ? "folder" : "folders"}`].filter(Boolean);
+    const running = selection.some((e) => e.kind === "folder" && folderSize?.(e.key)?.running);
     return (
       <aside className="preview" onContextMenu={quiet}>
         <div className="preview-empty">
           <div className="empty-art">
             <Icon name="copy" size={24} />
           </div>
-          <h3>{selection.length} items selected</h3>
-          <p>{formatBytes(total)} in files{selection.some((e) => e.kind === "folder") ? " (folders not counted)" : ""}</p>
+          <h3>{selection.length.toLocaleString()} items selected</h3>
+          <p>{parts.join(" and ")}</p>
+          <p className="preview-total">
+            {running && <span className="spinner sm" />} {formatBytes(total)}
+            {unknown > 0 && !running && (
+              <>
+                {" "}
+                <span className="faint">(not counting {unknown === 1 ? "1 folder" : `${unknown.toLocaleString()} folders`})</span>
+              </>
+            )}
+          </p>
+          {unknown > 0 && !running && onCalcSize && (
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => selection.forEach((e) => e.kind === "folder" && !folderSize?.(e.key) && onCalcSize(e.key))}
+            >
+              Add up the {unknown === 1 ? "folder" : "folders"} too
+            </button>
+          )}
           <div className="preview-actions col">
             <button className="btn" onClick={onDownload}>
               <Icon name="download" size={15} /> Download
@@ -102,6 +176,9 @@ export function PreviewPane({
         onMoveTo={onMoveTo}
         onDelete={onDelete}
         onContext={onContext}
+        onChanged={onChanged}
+        folderSize={folderSize}
+        onCalcSize={onCalcSize}
       />
     </aside>
   );
@@ -120,7 +197,10 @@ function FileDetails({
   onMoveTo,
   onDelete,
   onContext,
-}: {
+  onChanged,
+  folderSize,
+  onCalcSize,
+}: SizeProps & {
   profileId: string;
   bucket: string;
   entry: Entry;
@@ -133,6 +213,7 @@ function FileDetails({
   onMoveTo: () => void;
   onDelete: () => void;
   onContext: (ev: React.MouseEvent, e: Entry) => void;
+  onChanged?(): void;
 }) {
   const isFolder = entry.kind === "folder";
   const cls = classify(entry.name);
@@ -141,6 +222,12 @@ function FileDetails({
   const [text, setText] = useState<{ text: string; truncated: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [forceLoad, setForceLoad] = useState(false);
+  // why the details couldn't be read; a missing file replaces the whole preview
+  const [headError, setHeadError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  // null = not loaded yet; providers without tagging just list none
+  const [tags, setTags] = useState<Record<string, string> | null>(null);
+  const gone = !!headError && isNotFound(headError);
 
   // Images show the small cached thumbnail (the same one the grid uses) instead of downloading
   // the original; "Full size" fetches the real file on demand. null = no thumbnail could be made.
@@ -156,10 +243,11 @@ function FileDetails({
   useEffect(() => {
     if (isFolder) return;
     let live = true;
+    setHeadError(null);
     api
       .headObject(profileId, bucket, entry.key)
       .then((d) => live && setDetails(d))
-      .catch(() => {});
+      .catch((e) => live && setHeadError(errMessage(e)));
     return () => {
       live = false;
     };
@@ -179,6 +267,7 @@ function FileDetails({
     if (isFolder) return;
     let live = true;
     const timer = setTimeout(() => {
+      if (gone) return;
       if (previewable && !gated) {
         api
           .presign(profileId, bucket, entry.key, 3600)
@@ -195,7 +284,7 @@ function FileDetails({
       live = false;
       clearTimeout(timer);
     };
-  }, [profileId, bucket, entry.key, entry.size, cls, previewable, gated, isFolder]);
+  }, [profileId, bucket, entry.key, entry.size, cls, previewable, gated, isFolder, gone]);
 
   const s3Uri = `s3://${bucket}/${entry.key}`;
   // "Photos / 2026" instead of a raw key; the full key lives under Technical details
@@ -218,10 +307,23 @@ function FileDetails({
       return !v;
     });
   };
+  // tags show under Technical details, fetched the first time that is open
+  useEffect(() => {
+    if (isFolder || !techOpen || tags !== null || gone) return;
+    let live = true;
+    api
+      .objectTags(profileId, bucket, entry.key)
+      .then((t) => live && setTags(t))
+      .catch(() => live && setTags({}));
+    return () => {
+      live = false;
+    };
+  }, [profileId, bucket, entry.key, isFolder, techOpen, tags, gone]);
+
   const etag = details?.etag ?? entry.etag;
   const storageClass = details?.storageClass ?? entry.storageClass;
-  const loadingMedia = !error && !gated && ((previewable && !url) || (cls === "text" && !text));
-  const unsupported = !isFolder && !error && !previewable && !showsPdf && cls !== "text" && !useThumb;
+  const loadingMedia = !gone && !error && !gated && ((previewable && !url) || (cls === "text" && !text));
+  const unsupported = !gone && !isFolder && !error && !previewable && !showsPdf && cls !== "text" && !useThumb;
   const showsImage = !isFolder && !error && !!url && cls === "image";
 
   return (
@@ -235,7 +337,22 @@ function FileDetails({
           onContext(ev, entry);
         }}
       >
-        {!isFolder && !error && useThumb && thumb && (
+        {gone && (
+          <div className="preview-note gone">
+            <Icon name="alert" size={22} />
+            <p>
+              <strong>This file was deleted or moved</strong>
+              <br />
+              It’s no longer at this place in the bucket.
+            </p>
+            {onChanged && (
+              <button className="btn btn-sm" onClick={onChanged}>
+                <Icon name="refresh" size={13} /> Refresh the list
+              </button>
+            )}
+          </div>
+        )}
+        {!gone && !isFolder && !error && useThumb && thumb && (
           <>
             <img src={thumb} alt={entry.name} />
             {isWebImage(entry.name) && (
@@ -245,7 +362,7 @@ function FileDetails({
             )}
           </>
         )}
-        {!isFolder && !error && useThumb && thumb === undefined && (
+        {!gone && !isFolder && !error && useThumb && thumb === undefined && (
           <div className="preview-note">
             <span className="spinner" />
           </div>
@@ -255,13 +372,13 @@ function FileDetails({
             <FileIcon entry={entry} size={64} />
           </div>
         )}
-        {!isFolder && error && (
+        {!gone && !isFolder && error && (
           <div className="preview-note">
             <Icon name="alert" size={22} />
             <p>{error}</p>
           </div>
         )}
-        {!isFolder && !error && gated && !useThumb && (
+        {!gone && !isFolder && !error && gated && !useThumb && (
           <div className="preview-note">
             <FileIcon entry={entry} size={44} />
             <p>This image is {formatBytes(entry.size)}.</p>
@@ -273,7 +390,7 @@ function FileDetails({
         {showsImage && <img src={url!} alt={entry.name} onError={() => setError("Could not load image")} />}
         {!error && url && cls === "video" && <video src={url} controls preload="metadata" />}
         {!error && url && cls === "audio" && <audio src={url} controls preload="metadata" />}
-        {showsPdf && !error && <PdfView profileId={profileId} bucket={bucket} objectKey={entry.key} onError={setError} />}
+        {showsPdf && !error && !gone && <PdfView profileId={profileId} bucket={bucket} objectKey={entry.key} onError={setError} />}
         {!error && text && (
           <pre className="text-preview">
             {text.text}
@@ -316,7 +433,7 @@ function FileDetails({
         </button>
       </div>
 
-      {!isFolder && (
+      {!isFolder && !gone && (
         <div className="section">
           <div className="section-title">Share link</div>
           <div className="share-row">
@@ -334,10 +451,42 @@ function FileDetails({
         </div>
       )}
 
+      {editing && details ? (
+        <div className="section">
+          <div className="section-title">Edit properties</div>
+          <PropsEditor
+            profileId={profileId}
+            bucket={bucket}
+            objectKey={entry.key}
+            name={entry.name}
+            details={details}
+            onCancel={() => setEditing(false)}
+            onSaved={(d) => {
+              setDetails(d);
+              setTags(null);
+              setEditing(false);
+              onChanged?.();
+            }}
+          />
+        </div>
+      ) : (
       <div className="section">
         <div className="section-title">About this {isFolder ? "folder" : "file"}</div>
+        {headError && !gone && (
+          <div className="result bad preview-head-error">
+            <Icon name="alert" size={15} />
+            <span>
+              Couldn’t load the latest details. <ErrorText message={headError} />
+            </span>
+          </div>
+        )}
         <dl className="props">
           {!isFolder && <Prop label="Size">{formatBytes(entry.size)}</Prop>}
+          {isFolder && (
+            <Prop label="Size">
+              <FolderSizeLine entryKey={entry.key} folderSize={folderSize} onCalcSize={onCalcSize} />
+            </Prop>
+          )}
           {(details?.modified ?? entry.modified) && <Prop label="Modified">{formatDateFull(details?.modified ?? entry.modified)}</Prop>}
           <Prop label="Kind">{kindLabel(entry.name, isFolder)}</Prop>
           <Prop label="Location">{where}</Prop>
@@ -351,7 +500,10 @@ function FileDetails({
           <dl className="props tech">
             {!isFolder && <Prop label="Exact size">{entry.size.toLocaleString()} bytes</Prop>}
             {details?.contentType && <Prop label="Content type">{details.contentType}</Prop>}
-            {storageClass && <Prop label="Storage class">{storageClass}</Prop>}
+            {details?.cacheControl && <Prop label="Cache-Control">{details.cacheControl}</Prop>}
+            {details?.contentDisposition && <Prop label="Disposition">{details.contentDisposition}</Prop>}
+            {details?.contentEncoding && <Prop label="Encoding">{details.contentEncoding}</Prop>}
+            {storageClass && <Prop label="Storage class">{storageClassLabel(storageClass)}</Prop>}
             <Prop label="Object key" mono onCopy={() => onCopyText(entry.key, "Object key")}>
               {entry.key}
             </Prop>
@@ -369,9 +521,21 @@ function FileDetails({
                   {v}
                 </Prop>
               ))}
+            {tags &&
+              Object.entries(tags).map(([k, v]) => (
+                <Prop key={`tag:${k}`} label={`Tag: ${k}`} mono onCopy={() => onCopyText(v, k)}>
+                  {v}
+                </Prop>
+              ))}
           </dl>
         )}
+        {!isFolder && !gone && (
+          <button className="btn btn-sm props-edit" onClick={() => setEditing(true)} disabled={!details} title={details ? undefined : "Loading the details…"}>
+            <Icon name="edit" size={13} /> Edit properties…
+          </button>
+        )}
       </div>
+      )}
     </div>
   );
 }

@@ -3953,3 +3953,615 @@ body.dragging-items * {
   cursor: pointer;
   flex: none;
 }
+
+/* ---------------------------------------------------------------- menus: keyboard, toggles, headings */
+.ctx-menu {
+  overflow-y: auto;
+  outline: none;
+}
+/* the pointer focuses the item under it, so focus is the one highlight for mouse and keyboard */
+.ctx-item:focus:not(:disabled) {
+  background: var(--accent-solid);
+  color: #fff;
+  outline: none;
+}
+.ctx-item:focus:not(:disabled) svg,
+.ctx-item:focus:not(:disabled) .ctx-hint {
+  color: inherit;
+}
+.ctx-item.danger:focus:not(:disabled) {
+  background: var(--danger-solid);
+  color: #fff;
+}
+.ctx-check {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  flex: none;
+}
+.ctx-heading {
+  padding: 5px 9px 3px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- toasts: details, dismiss */
+.toast {
+  align-items: flex-start;
+}
+.toast-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.toast-detail {
+  max-height: 160px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--hover);
+  font: 11px/1.45 var(--mono);
+  font-weight: 400;
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: text;
+}
+.toast-more {
+  flex: none;
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.toast-more:hover {
+  color: var(--text);
+}
+.toast-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: -1px -6px 0 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--faint);
+}
+.toast-close:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.toast-close svg {
+  margin: 0;
+  color: inherit !important;
+}
+.toast.open {
+  width: min(480px, calc(100vw - 40px));
+}
+.modal:focus {
+  outline: none;
+}
+
+/* ---------------------------------------------------------------- file list: headers, cursor, marquee */
+/* the header cell is the grid item; the sort button inside fills it */
+.th-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  justify-content: inherit;
+  text-align: inherit;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.th-btn:focus-visible {
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+.th-btn.static {
+  display: block;
+  line-height: 30px;
+}
+.compact .th-btn.static {
+  line-height: 26px;
+}
+.col-grip:focus-visible {
+  outline: none;
+}
+.col-grip:focus-visible::after {
+  opacity: 1;
+  width: 3px;
+  left: 4.5px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.c-sc,
+.c-etag {
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.c-etag {
+  font-size: 11px;
+}
+.row .c-sc.faint,
+.row .c-etag.faint {
+  color: var(--faint);
+}
+
+/* the list itself takes focus; the row with the keyboard cursor gets the ring */
+.table:focus-visible,
+.grid-scroll:focus-visible {
+  outline: none;
+}
+.table.kbd:focus .row.active,
+.table:focus-visible .row.active {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent-solid) 75%, transparent);
+}
+.grid-scroll.kbd:focus .card.active .card-thumb,
+.grid-scroll:focus-visible .card.active .card-thumb {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-solid) 75%, transparent);
+}
+/* focused with nothing under the cursor: ring the whole list so it's clear where keys go */
+.table:focus-visible:not(:has(.row.active)) .table-body,
+.grid-scroll:focus-visible:not(:has(.card.active)) {
+  box-shadow: inset 0 0 0 2px var(--accent-ring);
+  border-radius: 4px;
+}
+
+/* rows of the previous place while the next one loads: visible, but not something to act on */
+.table.stale .table-body > .row,
+.grid-scroll.stale .card {
+  opacity: 0.45;
+  pointer-events: none;
+  transition: opacity 0.15s 0.12s;
+}
+
+.table-body,
+.grid-scroll {
+  position: relative;
+}
+.marquee {
+  position: absolute;
+  z-index: 3;
+  border: 1px solid var(--accent-solid);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-solid) 14%, transparent);
+  pointer-events: none;
+}
+body.marquee-selecting,
+body.marquee-selecting * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+/* folder sizes in the Size column */
+.fsize {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+.spinner.sm {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+}
+.fsize-calc {
+  display: none;
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--hover);
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+.fsize-calc:hover {
+  background: var(--accent-soft);
+}
+.row:hover .fsize-calc,
+.row.selected .fsize-calc,
+.row.active .fsize-calc {
+  display: inline-block;
+}
+.row:hover .fsize-dash,
+.row.selected .fsize-dash,
+.row.active .fsize-dash {
+  display: none;
+}
+
+/* empty folder: the two ways to fill it */
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* grid placeholders while a folder loads: a tile and a name line each */
+.skel-grid .card {
+  gap: 8px;
+}
+.skel-grid .skel-thumb {
+  width: 72%;
+  height: auto;
+  aspect-ratio: 5 / 4;
+  border-radius: 14px;
+}
+.skel-grid .skel-line {
+  width: 58%;
+  height: 9px;
+}
+
+/* ---------------------------------------------------------------- details pane: properties editor, sizes, errors */
+.props-edit {
+  margin-top: 10px;
+}
+.preview-note.gone {
+  color: var(--dim);
+}
+.preview-note.gone svg {
+  color: var(--warn);
+}
+.preview-note.gone strong {
+  color: var(--text);
+}
+.preview-head-error {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.preview-total {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-weight: 600;
+}
+.preview-total .faint {
+  color: var(--faint);
+  font-weight: 400;
+}
+.preview-empty .link-btn {
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+.prop .link-btn {
+  margin: 0;
+  font-size: 12px;
+}
+.fsize-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dim);
+}
+input[aria-invalid="true"],
+select[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+input[aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+.props-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.props-editor .field input,
+.props-editor .field select {
+  height: 30px;
+  font-size: 12.5px;
+}
+.props-editor .field em,
+.pe-hint,
+.pe-err,
+.pe-warn {
+  margin: 0;
+  font-size: 11.5px;
+  font-style: normal;
+  line-height: 1.4;
+  color: var(--faint);
+}
+.props-editor .pe-err,
+.pe-err {
+  color: var(--danger);
+}
+.pe-warn {
+  color: var(--warn);
+}
+.pe-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pe-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.pe-rows legend {
+  margin-bottom: 5px;
+  padding: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--dim);
+}
+.pe-none {
+  margin: 0;
+  color: var(--faint);
+  font-size: 12px;
+}
+.pe-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 26px;
+  gap: 5px;
+  align-items: center;
+}
+.pe-row input {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.pe-row .icon-btn {
+  width: 26px;
+  height: 26px;
+  color: var(--faint);
+}
+.pe-row-wrap .pe-err {
+  margin-top: 3px;
+}
+.pe-add {
+  align-self: flex-start;
+}
+.pe-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  position: sticky;
+  bottom: 0;
+  padding: 8px 0 2px;
+  background: linear-gradient(to bottom, transparent, var(--panel) 35%);
+}
+.props-editor .result {
+  margin: 0;
+}
+
+/* phones: touch-sized fields, and 16px text so iOS doesn't zoom into a focused field */
+.m-detail-body .props-editor .field input,
+.m-detail-body .props-editor .field select,
+.m-detail-body .pe-row input {
+  height: 42px;
+  font-size: 16px;
+  border-radius: 10px;
+}
+.m-detail-body .pe-row {
+  grid-template-columns: minmax(0, 1fr) 40px;
+  grid-template-areas: "k x" "v x";
+}
+.m-detail-body .pe-row input:first-child {
+  grid-area: k;
+}
+.m-detail-body .pe-row input:nth-child(2) {
+  grid-area: v;
+}
+.m-detail-body .pe-row .icon-btn {
+  grid-area: x;
+  width: 40px;
+  height: 40px;
+}
+.m-detail-body .pe-foot .btn,
+.m-detail-body .props-edit,
+.m-detail-body .pe-add {
+  height: 42px;
+  padding: 0 16px;
+  font-size: 15px;
+  border-radius: 12px;
+}
+.m-detail-body .pe-foot {
+  background: linear-gradient(to bottom, transparent, var(--m-card, var(--bg)) 35%);
+  padding-bottom: 8px;
+}
+.m-detail-body .pe-foot .btn {
+  flex: 1;
+}
+
+/* ---------------------------------------------------------------- sidebar: keyboard-reachable row buttons, favorites, drops */
+/* The edit / hide buttons stay in the tab order: folded to zero width until the row is hovered
+   or anything in it has focus (display:none would make them unreachable by keyboard). */
+.side-item .side-edit,
+.side-item .side-hide {
+  display: inline-grid;
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.side-item:hover .side-edit,
+.side-item:focus-within .side-edit,
+.side-item:hover .side-hide,
+.side-item:focus-within .side-hide {
+  width: 22px;
+  opacity: 1;
+}
+.side-item:focus-within .side-caret {
+  display: none;
+}
+.side-item:focus-visible {
+  outline-offset: -2px;
+}
+.fav-list {
+  margin-bottom: 6px;
+}
+.side-item.fav-row {
+  height: 28px;
+  padding-left: 6px;
+}
+.side-item.fav-row svg {
+  flex: none;
+  margin: 0 4px;
+  color: var(--accent);
+}
+.side-item.fav-row .side-hide svg {
+  margin: 0;
+  color: var(--faint);
+}
+.side-item.fav-row[aria-disabled="true"] {
+  cursor: default;
+}
+body.dragging-items .bucket-row.droppable:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1.5px var(--accent-solid);
+}
+body.dragging-items .bucket-row.droppable:hover svg {
+  color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- activity panel: header button, empty state */
+button.tp-title {
+  height: 30px;
+  margin-left: -6px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+button.tp-title:hover .tp-caret {
+  color: var(--text);
+}
+.tp-actions .btn svg {
+  margin-right: 2px;
+}
+.tp-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 18px;
+  color: var(--dim);
+  font-size: 12.5px;
+}
+.tp-empty svg {
+  flex: none;
+  color: var(--faint);
+}
+.tp-err .err-details summary {
+  color: var(--dim);
+}
+.tp-row:focus-within .icon-btn,
+.st-done .tp-row-actions .icon-btn:focus-visible {
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------- settings: transfers, columns, tile size */
+.set-path {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.set-limit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.set-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dim);
+}
+.set-inline input {
+  width: 84px;
+  height: 28px;
+}
+.set-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--field);
+  color: var(--dim);
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.chip-toggle:hover {
+  color: var(--text);
+}
+.chip-toggle.on {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.set-range {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.set-range .set-value {
+  min-width: 48px;
+  text-align: right;
+}
+input[type="range"] {
+  width: 180px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  accent-color: var(--accent-solid);
+  box-shadow: none;
+}
+input[type="range"]:focus {
+  box-shadow: none;
+}
+input[type="range"]:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------- form validation next to the field */
+.field-err {
+  color: var(--danger);
+  font-size: 11.5px;
+  font-style: normal;
+  line-height: 1.35;
+}

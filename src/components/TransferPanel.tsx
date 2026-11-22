@@ -1,5 +1,6 @@
 import { Icon, type IconName } from "../Icons";
-import { errDetail, errSummary } from "../api";
+import { api } from "../api";
+import { ErrorText } from "./ErrorText";
 import { formatBytes, formatEta, formatSpeed } from "../format";
 import type { Transfer, TransferState } from "../types";
 import { useJobList, type Job, type JobKind } from "../useJobs";
@@ -65,8 +66,17 @@ type PanelProps = {
   onCancel: (id: string) => void;
   onCancelAll: () => void;
   onRetry: (id: string) => void;
+  /** retry every failed transfer at once; without it each failed one is retried in turn */
+  onRetryAll?(): void;
   onClear: () => void;
   onReveal: (t: Transfer) => void;
+  /** open a finished download in its default app; defaults to api.openLocal */
+  onOpenLocal?(t: Transfer): void;
+  /**
+   * Show the panel with a short "nothing here" note while there is no activity, for when the
+   * user opened it on purpose (an Activity button or menu item). Off: no activity, no panel.
+   */
+  showEmpty?: boolean;
 };
 
 function TransferPanelView({
@@ -78,14 +88,19 @@ function TransferPanelView({
   onCancel,
   onCancelAll,
   onRetry,
+  onRetryAll,
   onClear,
   onReveal,
+  onOpenLocal,
+  showEmpty,
   onCancelJob,
   onDismissJob,
   onOpenJob,
   onOpenSync,
 }: PanelProps) {
-  if (transfers.length === 0 && jobs.length === 0 && syncs.length === 0) return null;
+  const nothing = transfers.length === 0 && jobs.length === 0 && syncs.length === 0;
+  // no activity: no panel, unless it was opened on purpose
+  if (nothing && !(showEmpty && open)) return null;
 
   const jobsRunning = jobs.filter((j) => j.state === "running");
   const jobsFailed = jobs.filter((j) => j.state === "error");
@@ -121,11 +136,22 @@ function TransferPanelView({
   const finishedAll = transfers.length - active + jobs.length - jobsRunning.length;
   // with no transfers running, the header summarises the first running job
   const leadJob = active === 0 ? jobsRunning[0] : undefined;
+  const retryAll = () => (onRetryAll ? onRetryAll() : failed.forEach((t) => onRetry(t.id)));
+  const openLocal = (t: Transfer) => (onOpenLocal ? onOpenLocal(t) : api.openLocal(t.local).catch(() => onReveal(t)));
 
   return (
-    <section className={`transfers ${open ? "open" : ""}`}>
+    <section className={`transfers ${open ? "open" : ""}`} aria-label="Activity">
       <header onClick={onToggle}>
-        <div className="tp-title">
+        <button
+          type="button"
+          className="tp-title"
+          aria-expanded={open}
+          aria-controls="tp-list"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle();
+          }}
+        >
           <Icon name="chevron" size={13} className={`tp-caret ${open ? "open" : ""}`} />
           <strong>Activity</strong>
           <span className="tp-counts">
@@ -134,7 +160,7 @@ function TransferPanelView({
             {failedAll > 0 && <span className="pill bad">{failedAll} failed</span>}
             {cancelledCount > 0 && <span className="pill">{cancelledCount} cancelled</span>}
           </span>
-        </div>
+        </button>
         <div className="tp-summary">
           {active > 0 && (
             <>
@@ -159,6 +185,11 @@ function TransferPanelView({
           )}
         </div>
         <div className="tp-actions" onClick={(e) => e.stopPropagation()}>
+          {failed.length > 0 && (
+            <button className="btn btn-ghost btn-sm" onClick={retryAll} title="Try every failed transfer again">
+              <Icon name="retry" size={13} /> Retry {failed.length === 1 ? "failed" : `all ${failed.length} failed`}
+            </button>
+          )}
           {active > 0 && (
             <button className="btn btn-ghost btn-sm" onClick={onCancelAll}>
               Cancel transfers
@@ -171,8 +202,14 @@ function TransferPanelView({
           )}
         </div>
       </header>
-      {open && (
-        <div className="tp-list">
+      {open && nothing && (
+        <div className="tp-empty" id="tp-list">
+          <Icon name="transfers" size={18} />
+          <span>Nothing is uploading or downloading. Transfers, moves and deletes you start show up here.</span>
+        </div>
+      )}
+      {open && !nothing && (
+        <div className="tp-list" id="tp-list">
           {jobList.map((j) => (
             <div key={j.id} className={`tp-row job st-${j.state}`}>
               <span className="tp-icon" title={JOB_DONE[j.kind]}>
@@ -181,8 +218,8 @@ function TransferPanelView({
               <div className="tp-name" title={j.title}>
                 {j.title}
                 {j.state === "error" && j.error && (
-                  <div className="tp-err" title={errDetail(j.error) ?? undefined}>
-                    {errSummary(j.error)}
+                  <div className="tp-err">
+                    <ErrorText message={j.error} />
                   </div>
                 )}
               </div>
@@ -245,8 +282,8 @@ function TransferPanelView({
               <div className="tp-name" title={t.key}>
                 {t.name}
                 {t.state === "error" && t.error && (
-                  <div className="tp-err" title={errDetail(t.error) ?? undefined}>
-                    {errSummary(t.error)}
+                  <div className="tp-err">
+                    <ErrorText message={t.error} />
                   </div>
                 )}
               </div>
@@ -281,10 +318,15 @@ function TransferPanelView({
                     <Icon name="retry" size={13} />
                   </button>
                 )}
-                {t.state === "done" && t.kind === "download" && (
-                  <button className="icon-btn" onClick={() => onReveal(t)} title="Show in Finder" aria-label="Show in Finder">
-                    <Icon name="reveal" size={13} />
-                  </button>
+                {t.state === "done" && t.kind === "download" && t.local && (
+                  <>
+                    <button className="icon-btn" onClick={() => openLocal(t)} title="Open" aria-label={`Open ${t.name}`}>
+                      <Icon name="external" size={13} />
+                    </button>
+                    <button className="icon-btn" onClick={() => onReveal(t)} title="Show in Finder" aria-label={`Show ${t.name} in Finder`}>
+                      <Icon name="reveal" size={13} />
+                    </button>
+                  </>
                 )}
               </div>
             </div>

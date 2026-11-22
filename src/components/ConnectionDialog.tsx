@@ -115,7 +115,10 @@ export function ConnectionDialog({
   const [secret, setSecret] = useState("");
   const [bucket, setBucket] = useState(initial?.bucket ?? "");
   const [pathStyle, setPathStyle] = useState(initial?.pathStyle ?? startPreset.pathStyle);
-  const [busy, setBusy] = useState<"test" | "save" | null>(null);
+  const [busy, setBusy] = useState<"test" | "save" | "delete" | null>(null);
+  // field messages appear once Save or Test was tried, not while typing the first time
+  const [tried, setTried] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [showSecret, setShowSecret] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
@@ -131,6 +134,13 @@ export function ConnectionDialog({
   const choosing = !initial && !!onKybl && !!kyblFirst;
   /** the provider grid and key fields are showing (always, unless `choosing`) */
   const [custom, setCustom] = useState(!choosing);
+  const nameRef = useRef<HTMLInputElement>(null);
+  // "Use another provider" unfolds the form and removes the button that had focus: move on to the first field
+  const unfolded = useRef(custom);
+  useEffect(() => {
+    if (custom && !unfolded.current) nameRef.current?.focus();
+    unfolded.current = custom;
+  }, [custom]);
 
   const preset = PRESETS.find((p) => p.id === provider) ?? PRESETS[0];
 
@@ -159,9 +169,31 @@ export function ConnectionDialog({
     pathStyle,
   });
 
-  const valid = accessKeyId.trim() && (secret || initial) && (endpoint.trim() || provider === "aws");
+  const ep = endpoint.trim();
+  const problems = {
+    endpoint:
+      !ep && provider !== "aws"
+        ? "Enter the endpoint address from your provider."
+        : ep.includes("<account-id>")
+          ? "Replace <account-id> with your Cloudflare account id."
+          : ep && !/^https?:\/\/[^\s/]+/i.test(ep)
+            ? "Start with https:// (or http:// for a local server)."
+            : null,
+    accessKeyId: accessKeyId.trim() ? null : "Enter the access key ID.",
+    secret: secret || initial ? null : "Enter the secret access key.",
+  };
+  const valid = !problems.endpoint && !problems.accessKeyId && !problems.secret;
+  const show = (k: keyof typeof problems) => (tried ? problems[k] : null);
+  /** Shows what's missing and puts the cursor in the first field that needs it. */
+  const check = () => {
+    setTried(true);
+    if (valid) return true;
+    requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+    return false;
+  };
 
   const test = async () => {
+    if (!check()) return;
     setBusy("test");
     setResult(null);
     try {
@@ -175,6 +207,7 @@ export function ConnectionDialog({
   };
 
   const save = async () => {
+    if (busy || !check()) return;
     setBusy("save");
     try {
       const saved = await api.saveProfile(build(), secret || undefined);
@@ -188,9 +221,17 @@ export function ConnectionDialog({
 
   const remove = async () => {
     if (!initial) return;
-    await api.deleteProfile(initial.id);
-    onDeleted(initial.id);
-    onClose();
+    setBusy("delete");
+    setResult(null);
+    try {
+      await api.deleteProfile(initial.id);
+      onDeleted(initial.id);
+      onClose();
+    } catch (e) {
+      setResult({ ok: false, text: `Couldn’t delete this connection.\n\n${errMessage(e)}` });
+      setConfirmDelete(false);
+      setBusy(null);
+    }
   };
 
   return (
@@ -219,7 +260,16 @@ export function ConnectionDialog({
           </button>
         </div>
       ) : (
-        <div className="modal-body form-grid">
+        <form
+          ref={formRef}
+          id="conn-form"
+          className="modal-body form-grid"
+          noValidate
+          onSubmit={(e) => {
+            e.preventDefault();
+            save();
+          }}
+        >
           {choosing && (
             <button type="button" className="kybl-offer span2" onClick={onKybl}>
               <ProviderBadge provider="kybl" large />
@@ -254,7 +304,7 @@ export function ConnectionDialog({
             <span>
               Name <em>optional</em>
             </span>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder={preset.label} />
+            <input ref={nameRef} value={name} onChange={(e) => setName(e.target.value)} placeholder={preset.label} />
           </label>
 
           {preset.regions ? (
@@ -284,12 +334,38 @@ export function ConnectionDialog({
 
           <label className="field span2">
             <span>Endpoint</span>
-            <input className="mono" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://…" inputMode="url" {...RAW} />
+            <input
+              className="mono"
+              value={endpoint}
+              onChange={(e) => setEndpoint(e.target.value)}
+              placeholder="https://…"
+              inputMode="url"
+              aria-invalid={!!show("endpoint")}
+              aria-describedby={show("endpoint") ? "conn-endpoint-err" : undefined}
+              {...RAW}
+            />
+            {show("endpoint") && (
+              <em className="field-err" id="conn-endpoint-err">
+                {show("endpoint")}
+              </em>
+            )}
           </label>
 
           <label className="field">
             <span>Access key ID</span>
-            <input className="mono" value={accessKeyId} onChange={(e) => setAccessKeyId(e.target.value)} {...RAW} />
+            <input
+              className="mono"
+              value={accessKeyId}
+              onChange={(e) => setAccessKeyId(e.target.value)}
+              aria-invalid={!!show("accessKeyId")}
+              aria-describedby={show("accessKeyId") ? "conn-key-err" : undefined}
+              {...RAW}
+            />
+            {show("accessKeyId") && (
+              <em className="field-err" id="conn-key-err">
+                {show("accessKeyId")}
+              </em>
+            )}
           </label>
           <label className="field">
             <span>Secret access key</span>
@@ -300,6 +376,8 @@ export function ConnectionDialog({
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
                 placeholder={initial ? (ANDROID ? "Saved on this device" : "Saved in keychain") : ""}
+                aria-invalid={!!show("secret")}
+                aria-describedby={show("secret") ? "conn-secret-err" : undefined}
                 {...RAW}
               />
               <button
@@ -312,6 +390,11 @@ export function ConnectionDialog({
                 <Icon name={showSecret ? "eye-off" : "eye"} size={14} />
               </button>
             </div>
+            {show("secret") && (
+              <em className="field-err" id="conn-secret-err">
+                {show("secret")}
+              </em>
+            )}
           </label>
 
           <label className="check span2">
@@ -337,12 +420,12 @@ export function ConnectionDialog({
           </p>
 
           {result && (
-            <div ref={resultRef} className={`result span2 ${result.ok ? "ok" : "bad"}`}>
+            <div ref={resultRef} className={`result span2 ${result.ok ? "ok" : "bad"}`} role={result.ok ? "status" : "alert"}>
               <Icon name={result.ok ? "check-circle" : "alert"} size={15} />
               <ErrorText message={result.text} />
             </div>
           )}
-        </div>
+        </form>
       )}
       {custom && (
         <div className="modal-foot split">
@@ -350,25 +433,26 @@ export function ConnectionDialog({
             {initial &&
               (confirmDelete ? (
                 <>
-                  <button className="btn btn-danger" onClick={remove}>
-                    Delete connection
+                  <button type="button" className="btn btn-danger" onClick={remove} disabled={busy !== null} autoFocus>
+                    {busy === "delete" && <span className="spinner" />}
+                    {busy === "delete" ? "Deleting…" : "Delete connection"}
                   </button>
-                  <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}>
+                  <button type="button" className="btn btn-ghost" onClick={() => setConfirmDelete(false)} disabled={busy === "delete"}>
                     Keep
                   </button>
                 </>
               ) : (
-                <button className="btn btn-danger-ghost" onClick={() => setConfirmDelete(true)}>
+                <button type="button" className="btn btn-danger-ghost" onClick={() => setConfirmDelete(true)} disabled={busy !== null}>
                   <Icon name="trash" size={14} /> Delete
                 </button>
               ))}
           </div>
           <div className="btn-row">
-            <button className="btn" onClick={test} disabled={!valid || busy !== null}>
+            <button type="button" className="btn" onClick={test} disabled={busy !== null}>
               {busy === "test" && <span className="spinner" />}
               {busy === "test" ? "Testing…" : "Test connection"}
             </button>
-            <button className="btn btn-primary" onClick={save} disabled={!valid || busy !== null}>
+            <button type="submit" form="conn-form" className="btn btn-primary" disabled={busy !== null}>
               {busy === "save" ? "Saving…" : "Save"}
             </button>
           </div>
