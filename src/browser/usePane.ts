@@ -273,10 +273,23 @@ function usePaneCore(env: PaneEnv) {
         return;
       }
       const was = cur.has(e.key);
+      if (mods.shift) {
+        select(e, mods);
+        return;
+      }
+      if (mods.meta) {
+        // ⌘-press, like Finder: an unselected item joins the selection and the lot can be dragged
+        // straight away; on a selected item the toggle (deselect) waits for a click without a drag
+        if (was) beginDrag(ev, curEntries, () => select(e, mods));
+        else {
+          select(e, mods);
+          beginDrag(ev, [...curEntries, e]);
+        }
+        return;
+      }
       // pressing an item of a multi-selection keeps the selection (so it can be dragged);
       // a click without dragging then narrows it to that item, like Finder
-      if (!(was && !mods.meta && !mods.shift)) select(e, mods);
-      if (mods.meta || mods.shift) return;
+      if (!was) select(e, mods);
       beginDrag(ev, was ? curEntries : [e], was && cur.size > 1 ? () => select(e, mods) : undefined);
     },
     [select, selRef, beginDrag],

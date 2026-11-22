@@ -39,7 +39,7 @@ const STATE_ICON: Record<TransferState, "upload" | "download" | "check-circle" |
 };
 
 /** The Activity panel, subscribed to the live transfer, job and sync lists itself. */
-export function TransferPanel(props: Omit<PanelProps, "transfers" | "jobs" | "syncs" | "migrations" | "migrationsActive">) {
+export function TransferPanel(props: Omit<PanelProps, "transfers" | "jobs" | "syncs" | "migrations" | "migrationsActive" | "migrationsFailed">) {
   const transfers = useTransferList();
   const jobs = useJobList();
   const sync = useSync();
@@ -55,7 +55,8 @@ export function TransferPanel(props: Omit<PanelProps, "transfers" | "jobs" | "sy
   );
   const migs = useMigrations();
   const migsActive = useMemo(() => migs.filter(migrationActive), [migs]);
-  return <TransferPanelView {...props} transfers={transfers} jobs={jobs} syncs={syncs} migrations={migs.length} migrationsActive={migsActive} />;
+  const migsFailed = useMemo(() => migs.filter((m) => m.progress.state === "failed" || m.progress.state === "needsAuth"), [migs]);
+  return <TransferPanelView {...props} transfers={transfers} jobs={jobs} syncs={syncs} migrations={migs.length} migrationsActive={migsActive} migrationsFailed={migsFailed} />;
 }
 
 /** In progress (running and waiting), Failed, Done (finished and cancelled), Log (messages), Jobs. */
@@ -68,6 +69,8 @@ type PanelProps = {
   /** copies between connections (src/jobs): how many are listed, and the ones still going */
   migrations: number;
   migrationsActive: JobSummary[];
+  /** copies between connections that stopped with an error or need a new sign-in */
+  migrationsFailed: JobSummary[];
   /** which tab shows: in progress, failed, done, the message log, or Jobs (copies between connections) */
   tab?: ActivityTab;
   onTab?(tab: ActivityTab): void;
@@ -115,6 +118,7 @@ function TransferPanelView({
   onOpenSync,
   migrations,
   migrationsActive,
+  migrationsFailed,
   tab = "activity",
   onTab,
   onOpenMigrationDest,
@@ -159,13 +163,15 @@ function TransferPanelView({
   ];
   const shownJobs = jobList.filter((j) => (j.state === "running" ? show("progress") : j.state === "error" ? show("failed") : show("done")));
   const shownSyncs = show("progress") ? syncs : [];
+  // copies between connections show here too (with tabs); their details and controls are in Jobs
+  const shownMigs = onTab ? [...(show("progress") ? migrationsActive : []), ...(show("failed") ? migrationsFailed : [])] : [];
   const counts = {
-    progress: active + jobsRunning.length + syncs.length,
-    failed: failed.length + jobsFailed.length,
+    progress: active + jobsRunning.length + syncs.length + migrationsActive.length,
+    failed: failed.length + jobsFailed.length + migrationsFailed.length,
     done: done.length + cancelled.length + jobsDone.length + jobsCancelled.length,
   };
   const onLog = !!onTab && tab === "log";
-  const tabEmpty = shownJobs.length + shownSyncs.length + list.length === 0;
+  const tabEmpty = shownJobs.length + shownSyncs.length + shownMigs.length + list.length === 0;
   const EMPTY_NOTE: Record<string, string> = {
     activity: "Nothing is uploading or downloading right now.",
     failed: "Nothing has failed.",
@@ -293,20 +299,59 @@ function TransferPanelView({
         </div>
       )}
       {open && onLog && <MessageLog />}
-      {open && !onJobs && !onLog && nothing && (
+      {open && !onJobs && !onLog && nothing && shownMigs.length === 0 && (
         <div className="tp-empty" id="tp-list">
           <Icon name="transfers" size={18} />
           <span>Nothing is uploading or downloading. Transfers, moves and deletes you start show up here.</span>
         </div>
       )}
-      {open && !onJobs && !onLog && !nothing && onTab && tabEmpty && (
+      {open && !onJobs && !onLog && (!nothing || shownMigs.length > 0) && onTab && tabEmpty && (
         <div className="tp-empty" id="tp-list">
           <Icon name={tab === "failed" ? "check-circle" : "transfers"} size={18} />
           <span>{EMPTY_NOTE[tab]}</span>
         </div>
       )}
-      {open && !onJobs && !onLog && !nothing && !(onTab && tabEmpty) && (
+      {open && !onJobs && !onLog && (!nothing || shownMigs.length > 0) && !(onTab && tabEmpty) && (
         <div className="tp-list" id="tp-list">
+          {shownMigs.map((m) => {
+            const p = m.progress;
+            const bad = p.state === "failed" || p.state === "needsAuth";
+            const frac = p.state !== "planning" && p.bytesTotal > 0 ? p.bytesDone / p.bytesTotal : null;
+            return (
+              <div key={m.id} className={`tp-row job ${bad ? "st-error" : "st-running"} sync-act`} onClick={() => pickTab("jobs")} title="Open in Jobs">
+                <span className="tp-icon">
+                  <Icon name={bad ? "alert" : m.spec.mode === "move" ? "move" : "copy"} size={15} />
+                </span>
+                <div className="tp-name">
+                  {m.title}
+                  {bad && p.error && (
+                    <div className="tp-err">
+                      <ErrorText message={p.error} />
+                    </div>
+                  )}
+                </div>
+                <div className="tp-meta">
+                  {p.state === "planning"
+                    ? "Finding files…"
+                    : p.state === "paused"
+                      ? "Paused"
+                      : p.state === "waitingNetwork"
+                        ? "Waiting for the network"
+                        : p.state === "needsAuth"
+                          ? "Sign in again to continue"
+                          : `${(p.filesDone + p.filesSkipped).toLocaleString()} of ${p.filesTotal.toLocaleString()} files` + (p.bytesTotal > 0 ? ` · ${formatBytes(p.bytesDone)} of ${formatBytes(p.bytesTotal)}` : "")}
+                </div>
+                {bad ? (
+                  <div className="tp-state">{p.state === "needsAuth" ? "Needs sign-in" : "Failed"}</div>
+                ) : (
+                  <div className={`bar ${frac == null ? "indeterminate" : ""}`}>
+                    <div style={{ width: `${Math.round((frac ?? 0) * 100)}%` }} />
+                  </div>
+                )}
+                <div className="tp-row-actions" />
+              </div>
+            );
+          })}
           {shownJobs.map((j) => (
             <div key={j.id} className={`tp-row job st-${j.state}`}>
               <span className="tp-icon" title={JOB_DONE[j.kind]}>

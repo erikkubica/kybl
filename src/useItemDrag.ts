@@ -4,12 +4,12 @@
  * Finder uploads) swallows HTML5 drags on some platforms, and this gives full control over the
  * ghost and hit-testing. Drop targets are any element with a `data-drop="<prefix>"` attribute, and
  * sidebar buckets marked `data-drop-bucket="<bucket>" data-drop-profile="<connection id>"` (the
- * items land at that bucket's top level). Between buckets a drop copies, like Finder between
- * disks; hold ⌘ to move instead. Within a bucket it moves; hold ⌥ to copy.
+ * items land at that bucket's top level). A drop moves; hold ⌥ to copy (at the press or any time
+ * during the drag). Places that only take copies (`copyOnly`) always copy.
  *
  * Dual pane: every pane's root carries `data-pane="<id>"` and `data-drop-pane`. A drop on a folder,
  * breadcrumb or empty space of ANOTHER pane goes to that pane's place (`paneTarget` decides and
- * names it), and copies like a drop into another bucket (⌘ moves).
+ * names it), and moves like any other drop (⌥ copies).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isValidDest } from "./moving";
@@ -27,7 +27,7 @@ export type DragState = {
   pane: string | null;
   label: string | null;
   copy: boolean;
-  /** the place only takes copies (this computer and the cloud): ⌘ doesn't move */
+  /** the place only takes copies (this computer and the cloud): it never moves */
   copyOnly?: boolean;
 };
 
@@ -76,11 +76,11 @@ export function useItemDrag<P extends string = string>({
     let destPane: P | null = null;
     let label: string | null = null;
     let copyOnly = false;
-    let alt = false;
-    let meta = false;
+    // a modifier held before the press counts too
+    let alt = ev.altKey;
     let springTimer = 0;
     let springFor: string | null = null;
-    const isCopy = () => copyOnly || (destBucket != null || destPane != null ? !meta : alt);
+    const isCopy = () => copyOnly || alt;
 
     const light = (el: HTMLElement | null) => {
       if (lit === el) return;
@@ -147,7 +147,6 @@ export function useItemDrag<P extends string = string>({
         document.body.classList.add("dragging-items");
       }
       alt = e.altKey;
-      meta = e.metaKey;
       hit(e.clientX, e.clientY);
       setDrag({ items, x: e.clientX, y: e.clientY, dest, bucket: destBucket, pane: destPane, label, copy: isCopy(), copyOnly });
     };
@@ -157,7 +156,6 @@ export function useItemDrag<P extends string = string>({
       const b = destBucket;
       const p = destPane;
       alt = e.altKey;
-      meta = e.metaKey;
       const c = isCopy();
       end();
       if (!wasActive) onClick?.();
@@ -168,9 +166,8 @@ export function useItemDrag<P extends string = string>({
         e.preventDefault();
         e.stopPropagation();
         end();
-      } else if ((e.key === "Alt" || e.key === "Meta") && active) {
-        if (e.key === "Alt") alt = e.type === "keydown";
-        else meta = e.type === "keydown";
+      } else if (e.key === "Alt" && active) {
+        alt = e.type === "keydown";
         const copy = isCopy();
         setDrag((s) => (s ? { ...s, copy } : s));
       }

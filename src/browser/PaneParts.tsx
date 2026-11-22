@@ -131,10 +131,10 @@ export function DragGhost({ drag, bucket, profileId }: { drag: DragState; bucket
         <span>
           {drag.dest != null
             ? drag.label != null
-              ? // into the other pane: copies, like a drop into another bucket (⌘ moves)
-                `${drag.copy ? "Copy" : "Move"} to ${drag.label}${drag.copy && !drag.copyOnly ? " · ⌘ to move" : ""}`
-              : // Finder's rule: within a bucket a drop moves (⌥ copies), into another bucket it copies (⌘ moves)
-                `${drag.copy ? "Copy" : "Move"} to ${drag.bucket != null ? rootName(profileId, drag.bucket) : destLabel(drag.dest, bucket ?? "", profileId)}${drag.bucket ? (drag.copy ? " · ⌘ to move" : "") : drag.copy ? "" : " · ⌥ to copy"}`
+              ? // into the other pane: moves (⌥ copies), unless that place only takes copies
+                `${drag.copy ? "Copy" : "Move"} to ${drag.label}${drag.copy || drag.copyOnly ? "" : " · ⌥ to copy"}`
+              : // a drop moves; ⌥ copies
+                `${drag.copy ? "Copy" : "Move"} to ${drag.bucket != null ? rootName(profileId, drag.bucket) : destLabel(drag.dest, bucket ?? "", profileId)}${drag.copy ? "" : " · ⌥ to copy"}`
             : "Drop on a folder or a bucket"}
         </span>
       </span>
