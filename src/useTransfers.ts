@@ -7,6 +7,12 @@ import type { Transfer, TransferEvent } from "./types";
 type NewTransfer = Pick<Transfer, "kind" | "name" | "profileId" | "bucket" | "key" | "local"> & {
   /** downloads: replace a local file of the same name instead of saving next to it as "x (1)" */
   overwrite?: boolean;
+  /**
+   * downloads: the file's ETag in the listing. With it, a version already in the file cache is
+   * copied without asking the server first. Leave it out where the newest version matters more
+   * than a saved HEAD ("Open" in another app).
+   */
+  etag?: string | null;
 };
 
 /** Finished transfers kept in the list once a batch is over; older successful ones are dropped. */
@@ -31,6 +37,8 @@ const overwriteIds = new Set<string>();
  * it is the same download and carries on from its partial file instead of starting over.
  */
 const requested = new Map<string, string>();
+/** The listed version of each download, by id (see `NewTransfer.etag`). */
+const listed = new Map<string, { etag: string; size: number }>();
 /** Callers waiting for a transfer to end (see `whenFinished`). */
 const waiters = new Map<string, ((t: Transfer) => void)[]>();
 
@@ -96,6 +104,7 @@ function prune() {
       byId.delete(id);
       overwriteIds.delete(id);
       requested.delete(id);
+      listed.delete(id);
       done--;
     }
   }
@@ -171,7 +180,7 @@ async function start(t: Transfer) {
     } else {
       // the backend picks a free name ("photo (1).jpg") unless told to overwrite; keep the path it
       // really writes, so Open and Show in Finder point at the right file
-      const local = await api.startDownload(t.id, t.profileId, t.bucket, t.key, requested.get(t.id) ?? t.local, overwriteIds.has(t.id));
+      const local = await api.startDownload(t.id, t.profileId, t.bucket, t.key, requested.get(t.id) ?? t.local, overwriteIds.has(t.id), listed.get(t.id));
       const cur = byId.get(t.id);
       if (cur && typeof local === "string" && local && local !== cur.local) {
         byId.set(t.id, { ...cur, local });
@@ -198,6 +207,7 @@ function clearWhere(pick: (t: Transfer) => boolean) {
     byId.delete(id);
     overwriteIds.delete(id);
     requested.delete(id);
+    listed.delete(id);
   }
   dirty = true;
   flush();
@@ -217,10 +227,11 @@ function requeue(id: string): Transfer | null {
 const actions = {
   add(items: (NewTransfer & { total?: number })[]): Transfer[] {
     listenOnce();
-    const created: Transfer[] = items.map(({ overwrite, ...it }) => {
+    const created: Transfer[] = items.map(({ overwrite, etag, ...it }) => {
       const id = crypto.randomUUID();
       if (overwrite) overwriteIds.add(id);
       if (it.kind === "download") requested.set(id, it.local);
+      if (it.kind === "download" && etag && it.total != null) listed.set(id, { etag, size: it.total });
       return { ...it, id, state: "queued" as const, bytes: 0, total: it.total ?? 0, speed: 0 };
     });
     for (const t of created) {

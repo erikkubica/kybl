@@ -75,6 +75,8 @@ pub async fn save_profile(
     save_profiles(&app, &profiles)?;
     state.clients.lock().await.remove(&profile.id);
     registry::forget(&profile.id);
+    // the connection may point somewhere else now (another endpoint or account)
+    crate::filecache::forget_profile(&app, &profile.id).await;
     Ok(profile)
 }
 
@@ -90,6 +92,8 @@ pub async fn delete_profile(
     delete_secret(&state, &id).await?;
     state.clients.lock().await.remove(&id);
     registry::forget(&id);
+    // files of a deleted connection don't stay on this computer
+    crate::filecache::forget_profile(&app, &id).await;
     Ok(())
 }
 
@@ -657,7 +661,10 @@ pub async fn get_text_preview(
 }
 
 /// The whole object as raw bytes (no JSON), for previews that render the file in the app
-/// itself, like PDFs. Refuses anything over `max_bytes` instead of loading it.
+/// itself, like PDFs. Refuses anything over `max_bytes` instead of loading it. With `cache`
+/// (the PDF viewer), the bytes come from and go to the file cache, as `doc_open`'s do; image
+/// thumbnails leave it off, so photos don't push documents out of it.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn get_object_bytes(
     app: AppHandle,
@@ -666,16 +673,31 @@ pub async fn get_object_bytes(
     bucket: String,
     key: String,
     max_bytes: u64,
+    cache: Option<bool>,
 ) -> Result<tauri::ipc::Response, String> {
-    let client = match storage::connect(&app, &state, &profile_id).await? {
-        Conn::S3(c) => c,
-        Conn::Other(s) => return generic::get_object_bytes(&*s, &bucket, &key, max_bytes).await,
+    let conn = storage::connect(&app, &state, &profile_id).await?;
+    let cache = cache.unwrap_or(false);
+    if cache && let Some(bytes) = crate::filecache::read_current(&app, &conn, &profile_id, &bucket, &key, max_bytes).await {
+        return Ok(tauri::ipc::Response::new(bytes));
+    }
+    let client = match &conn {
+        Conn::S3(c) => c.clone(),
+        Conn::Other(s) if cache => {
+            let r = s.read(&bucket, &key, None, None).await?;
+            let etag = r.etag.clone();
+            let buf = r.collect(max_bytes).await?;
+            crate::filecache::remember_bytes(&app, &conn, &profile_id, &bucket, &key, etag.as_deref(), None, &buf);
+            return Ok(tauri::ipc::Response::new(buf));
+        }
+        Conn::Other(s) => return generic::get_object_bytes(&**s, &bucket, &key, max_bytes).await,
     };
     let mut out = client.get_object().bucket(&bucket).key(&key).send().await.map_err(sdk_err)?;
     let len = out.content_length().unwrap_or(0).max(0) as u64;
     if len > max_bytes {
         return Err("This file is too large to preview.".into());
     }
+    let etag = out.e_tag().map(str::to_string);
+    let modified = out.last_modified().map(|d| d.secs() * 1000 + (d.subsec_nanos() / 1_000_000) as i64);
     // sized up front: growing by doubling would briefly need up to twice the file
     let mut buf: Vec<u8> = Vec::with_capacity(len as usize);
     while let Some(chunk) = out.body.try_next().await.map_err(err)? {
@@ -683,6 +705,9 @@ pub async fn get_object_bytes(
         if buf.len() as u64 > max_bytes {
             return Err("This file is too large to preview.".into());
         }
+    }
+    if cache {
+        crate::filecache::remember_bytes(&app, &conn, &profile_id, &bucket, &key, etag.as_deref(), modified, &buf);
     }
     Ok(tauri::ipc::Response::new(buf))
 }

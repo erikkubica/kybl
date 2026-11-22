@@ -31,7 +31,7 @@ export function PdfView({ profileId, bucket, objectKey, onError }: { profileId: 
     let live = true;
     let opened: PDFDocumentProxy | null = null;
     (async () => {
-      const [pdfjs, bytes] = await Promise.all([loadEngine(), api.objectBytes(profileId, bucket, objectKey, MAX_PDF_BYTES)]);
+      const [pdfjs, bytes] = await Promise.all([loadEngine(), api.objectBytes(profileId, bucket, objectKey, MAX_PDF_BYTES, true)]);
       const d = await pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise;
       if (!live) return void d.destroy();
       opened = d;

@@ -422,7 +422,26 @@ pub async fn prune_cache<R: Runtime>(app: AppHandle<R>) {
 /// Deletes all cached thumbnails. Returns the number of bytes freed.
 #[tauri::command]
 pub async fn clear_thumbnail_cache(app: AppHandle) -> Result<u64, String> {
-    let dir = cache_dir(&app)?;
+    clear(&app).await
+}
+
+/// Bytes of cached thumbnails (for Settings).
+pub async fn usage<R: Runtime>(app: &AppHandle<R>) -> u64 {
+    let Ok(dir) = cache_dir(app) else { return 0 };
+    let mut sum = 0u64;
+    if let Ok(mut rd) = tokio::fs::read_dir(&dir).await {
+        while let Ok(Some(e)) = rd.next_entry().await {
+            if let Ok(m) = e.metadata().await {
+                sum += m.len();
+            }
+        }
+    }
+    sum
+}
+
+/// Deletes all cached thumbnails. Returns the number of bytes freed.
+pub async fn clear<R: Runtime>(app: &AppHandle<R>) -> Result<u64, String> {
+    let dir = cache_dir(app)?;
     let mut freed = 0u64;
     let mut rd = tokio::fs::read_dir(&dir).await.map_err(err)?;
     while let Some(e) = rd.next_entry().await.map_err(err)? {

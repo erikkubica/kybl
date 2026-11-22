@@ -47,9 +47,12 @@ export const api = {
     read<SearchResult>("search_objects", { profileId, bucket, prefix, query, opId: opId ?? null }),
   headObject: (profileId: string, bucket: string, key: string) =>
     read<ObjectDetails>("head_object", { profileId, bucket, key }),
-  /** The whole object as bytes, for previews rendered in the app (PDF). Rejects above `maxBytes`. */
-  objectBytes: (profileId: string, bucket: string, key: string, maxBytes: number) =>
-    invoke<ArrayBuffer>("get_object_bytes", { profileId, bucket, key, maxBytes }),
+  /**
+   * The whole object as bytes, for previews rendered in the app (PDF). Rejects above `maxBytes`.
+   * `cache` reads through the file cache (documents); thumbnails leave it off.
+   */
+  objectBytes: (profileId: string, bucket: string, key: string, maxBytes: number, cache = false) =>
+    invoke<ArrayBuffer>("get_object_bytes", { profileId, bucket, key, maxBytes, cache }),
   textPreview: (profileId: string, bucket: string, key: string, maxBytes = 262144) =>
     invoke<{ text: string; truncated: boolean }>("get_text_preview", {
       profileId,
@@ -116,7 +119,8 @@ export const api = {
   /**
    * Resolves to the local path actually written. Unless `overwrite`, an existing file is kept
    * and the download gets a free name ("photo (1).jpg"), like Finder. Paths with ".." parts are
-   * refused. Retrying the same id resumes from the partial file where possible.
+   * refused. Retrying the same id resumes from the partial file where possible. `listed` is the
+   * version the listing showed: when the file cache holds it, the download is a local copy.
    */
   startDownload: (
     id: string,
@@ -125,12 +129,17 @@ export const api = {
     key: string,
     destPath: string,
     overwrite = false,
-  ) => invoke<string>("start_download", { id, profileId, bucket, key, destPath, overwrite }),
+    listed?: { etag: string; size: number },
+  ) => invoke<string>("start_download", { id, profileId, bucket, key, destPath, overwrite, etag: listed?.etag ?? null, size: listed?.size ?? null }),
   cancelTransfer: (id: string) => invoke<void>("cancel_transfer", { id }),
   /** Transfers still queued or running, including ones started before this page loaded. */
   activeTransfers: () => invoke<Omit<Transfer, "speed" | "error">[]>("active_transfers"),
 
   clearThumbnailCache: () => invoke<number>("clear_thumbnail_cache"),
+  /** Bytes in the thumbnail cache and in the cache of recently opened files. */
+  cacheUsage: () => invoke<{ thumbnails: number; files: number }>("cache_usage"),
+  /** Clears both caches; resolves to the bytes freed. */
+  clearCaches: () => invoke<number>("clear_caches"),
 
   /** Names and sizes of files from the system picker (paths, or URIs on phones). */
   pickedFiles: (uris: string[]) =>
