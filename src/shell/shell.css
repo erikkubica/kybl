@@ -24,8 +24,13 @@
   flex-direction: column;
 }
 .dual > .browser-pane {
-  min-width: 0;
+  /* never so narrow that the path and toolbar fall apart (the splitter stops here) */
+  min-width: 400px;
   min-height: 0;
+}
+.dual.stacked > .browser-pane {
+  min-width: 0;
+  min-height: 160px;
 }
 /* the active pane: an accent line along its top, and its selection in the accent colour */
 .browser-pane.is-active::before {

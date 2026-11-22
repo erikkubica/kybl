@@ -11,7 +11,7 @@ const SPLIT_KEY = "s3b.split";
 const MIN = 0.2;
 const MAX = 0.8;
 /** below this width (CSS px) the two panes stack */
-const STACK_BELOW = 760;
+const STACK_BELOW = 820; // two panes of at least 400px (shell.css) and the splitter
 
 const clamp = (r: number) => Math.min(MAX, Math.max(MIN, r));
 function loadRatio(): number {
@@ -115,7 +115,7 @@ export function DualTools({
   onSyncBrowsing: () => void;
 }) {
   const b = (icon: IconName, label: string, run: () => void, on?: boolean) => (
-    <button type="button" className={`icon-btn ${on ? "on" : ""}`} onClick={run} title={label} aria-label={label} aria-pressed={on}>
+    <button type="button" className={`icon-btn dual-btn ${on ? "on" : ""}`} onClick={run} title={label} aria-label={label} aria-pressed={on}>
       <Icon name={icon} />
     </button>
   );
