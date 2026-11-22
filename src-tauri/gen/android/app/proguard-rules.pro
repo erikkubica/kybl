@@ -41,3 +41,7 @@
 -keep class app.kybl.mobile.KyblNative {
     native <methods>;
 }
+# WP-C: implemented in Rust (src/backup/headless.rs), Java_app_kybl_mobile_BackupNative_* symbols.
+-keep class app.kybl.mobile.BackupNative {
+    native <methods>;
+}

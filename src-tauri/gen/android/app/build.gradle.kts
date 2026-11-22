@@ -92,6 +92,8 @@ dependencies {
     implementation("androidx.browser:browser:1.8.0")
     // app lock: fingerprint / face / screen lock prompt (PlatformPlugin.kt)
     implementation("androidx.biometric:biometric:1.1.0")
+    // WP-C phone backup: periodic, content-triggered and on-demand runs (BackupWorker.kt)
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")
