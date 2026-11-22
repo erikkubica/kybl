@@ -110,7 +110,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     const names = conns.bucketsBy[profile.id]?.names ?? [];
     const loc = parseLocation(input, names);
     const b = loc?.bucket ?? bucket;
-    if (!loc || !b) return;
+    // "" is a real root: a server's (or a single container's) one root
+    if (!loc || b == null) return;
     if (loc.bucket != null && loc.bucket !== bucket) pane.rememberAfterListing.current = { profileId: profile.id, bucket: loc.bucket };
     let pre = loc.prefix;
     if (pre && !pre.endsWith("/")) {
@@ -127,6 +128,12 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   };
   const askGoTo = () => {
     if (bucket == null) return;
+    // the pane's own path bar turns into a text field; the dialog only when it isn't on screen
+    const bar = pane.searchInput.current?.closest(".chrome")?.querySelector(".crumbs.can-edit");
+    if (bar) {
+      bar.dispatchEvent(new Event("kybl-edit-path"));
+      return;
+    }
     dialogs.show((close) => createElement(GoToDialog, { bucket, prefix, onGo: goToPath, onClose: close }));
   };
   /** "Keep on this device": a two-way synced copy in ~/Kybl/…, opened in Finder when ready */
@@ -218,15 +225,12 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       ? []
       : [
           { type: "item", label: "Calculate folder size", icon: "info", onClick: () => calcSizes([prefix]) },
-          favoriteItem(bucket, prefix),
           !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(prefix) },
           !onDisk && { type: "item", label: "Keep on this device", icon: "download", onClick: () => void keepOffline(prefix) },
           !onDisk && { type: "item", label: "Mount as drive…", icon: "server", onClick: () => askMount(prefix) },
           !!env.openMigration && { type: "item", label: prefix ? "Copy this folder to another connection…" : "Copy everything to another connection…", icon: "copy", onClick: migrateHere },
           isS3 && { type: "item", label: "Copy S3 URI", icon: "copy", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") },
           onDisk && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: settings.showHiddenFiles, onClick: toggleHidden },
-          { type: "sep" },
-          { type: "item", label: "Go to folder…", icon: "arrow-up", hint: "⇧⌘G", onClick: askGoTo },
           ...(env.extraPlaceItems?.() ?? []),
         ];
 
@@ -362,6 +366,9 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     askMove,
     migrate,
     askGoTo,
+    goToPath,
+    toggleFavorite,
+    isFavorite: !!(profile && bucket != null && favoriteOf(profile.id, bucket, prefix)),
     calcSizes,
     removeFavorite,
     onContext,

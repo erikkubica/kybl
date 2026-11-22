@@ -17,6 +17,7 @@ export function Breadcrumbs({
   compact = false,
   label = bucket,
   icon = "bucket",
+  onGoTo,
 }: {
   bucket: string;
   /** the root's icon (connections/roots.ts `rootIcon`): a bucket, a drive, a folder, a server */
@@ -27,7 +28,26 @@ export function Breadcrumbs({
   onNavigate: (prefix: string) => void;
   /** narrow bars (phones): inside a folder the bucket shows as its icon only */
   compact?: boolean;
+  /**
+   * Click the empty part of the bar (or press ⇧⌘G) to type a path, like Finder's and Explorer's
+   * address bars; Return goes there (same rules as Go to folder), Escape or clicking away cancels.
+   */
+  onGoTo?: (path: string) => void;
 }) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const editInput = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    if (editing != null) editInput.current?.select();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing != null]);
+  // ⇧⌘G (Go to folder) opens the bar of the pane it is sent to
+  useLayoutEffect(() => {
+    const el = nav.current;
+    if (!el || !onGoTo) return;
+    const open = () => setEditing("/" + parts.map((p) => p + "/").join(""));
+    el.addEventListener("kybl-edit-path", open);
+    return () => el.removeEventListener("kybl-edit-path", open);
+  });
   const nav = useRef<HTMLElement>(null);
   const ruler = useRef<HTMLDivElement>(null);
   const [room, setRoom] = useState(0);
@@ -61,8 +81,51 @@ export function Breadcrumbs({
   const prefixOf = (i: number) => parts.slice(0, i + 1).join("/") + "/";
   const sep = <Icon name="chevron" size={12} className="crumb-sep" />;
 
+  if (editing != null && onGoTo)
+    return (
+      <nav className="crumbs editing" aria-label="Path" ref={nav}>
+        <Icon name={icon} size={15} />
+        <input
+          ref={editInput}
+          className="crumbs-input"
+          value={editing}
+          aria-label={`Path in ${label}`}
+          placeholder="/photos/2026 or s3://bucket/photos"
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
+          onChange={(e) => setEditing(e.target.value)}
+          onBlur={() => setEditing(null)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              const v = editing.trim();
+              setEditing(null);
+              if (v) onGoTo(v);
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              e.stopPropagation();
+              setEditing(null);
+            }
+          }}
+        />
+      </nav>
+    );
+
   return (
-    <nav className="crumbs" aria-label="Path" data-tauri-drag-region ref={nav}>
+    <nav
+      className={`crumbs ${onGoTo ? "can-edit" : ""}`}
+      aria-label="Path"
+      data-tauri-drag-region={onGoTo ? undefined : true}
+      ref={nav}
+      title={onGoTo ? "Click to type a path (⇧⌘G)" : undefined}
+      onMouseDown={(e) => {
+        // the empty part of the bar, not a crumb
+        if (!onGoTo || e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
+        e.preventDefault();
+        setEditing("/" + parts.map((p) => p + "/").join(""));
+      }}
+    >
       <div className="crumbs-ruler" ref={ruler} aria-hidden="true">
         <span className="crumb-wrap">
           <span className="crumb current">

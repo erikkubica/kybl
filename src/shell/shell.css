@@ -152,3 +152,40 @@ body.resizing-row * {
   max-width: 420px;
   line-height: 1.45;
 }
+
+/* ---------------------------------------------------------------- path bar: type a path, favorite */
+.crumbs.can-edit {
+  cursor: text;
+}
+.crumbs.can-edit .crumb {
+  cursor: pointer;
+}
+.crumbs.editing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dim);
+}
+.crumbs-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--accent-solid);
+  border-radius: var(--r-sm);
+  background: var(--input-bg, transparent);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.fav-star {
+  flex: none;
+  color: var(--faint);
+}
+.fav-star.on {
+  color: #e5a50a;
+}
+.fav-star.on svg {
+  fill: currentColor;
+}

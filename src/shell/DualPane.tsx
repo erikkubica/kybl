@@ -5,6 +5,7 @@
  */
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { LS } from "../browser/types";
+import { Icon, type IconName } from "../Icons";
 
 const SPLIT_KEY = "s3b.split";
 const MIN = 0.2;
@@ -18,7 +19,13 @@ function loadRatio(): number {
   return r >= MIN && r <= MAX ? r : 0.5;
 }
 
-export function DualPane({ left, right }: { left: (style: React.CSSProperties) => ReactNode; right: (style: React.CSSProperties) => ReactNode }) {
+export function DualPane({
+  left,
+  right,
+}: {
+  left: (style: React.CSSProperties) => ReactNode;
+  right: (style: React.CSSProperties) => ReactNode;
+}) {
   const box = useRef<HTMLDivElement>(null);
   const [ratio, setRatio] = useState(loadRatio);
   const [stacked, setStacked] = useState(false);
@@ -88,5 +95,36 @@ export function DualPane({ left, right }: { left: (style: React.CSSProperties) =
       />
       {right({ flex: `${1 - ratio} 1 0px` })}
     </div>
+  );
+}
+
+/** A pane's dual-pane buttons, before its "…": this folder into the other pane, swap, compare, follow. */
+export function DualTools({
+  side,
+  onToOther,
+  onSwap,
+  onCompare,
+  syncBrowsing,
+  onSyncBrowsing,
+}: {
+  side: "left" | "right";
+  onToOther: () => void;
+  onSwap: () => void;
+  onCompare: () => void;
+  syncBrowsing: boolean;
+  onSyncBrowsing: () => void;
+}) {
+  const b = (icon: IconName, label: string, run: () => void, on?: boolean) => (
+    <button type="button" className={`icon-btn ${on ? "on" : ""}`} onClick={run} title={label} aria-label={label} aria-pressed={on}>
+      <Icon name={icon} />
+    </button>
+  );
+  return (
+    <>
+      {side === "left" ? b("arrow-right", "Open this folder in the right pane too", onToOther) : b("arrow-left", "Open this folder in the left pane too", onToOther)}
+      {b("swap", "Swap panes (⇧⌘S)", onSwap)}
+      {b("columns", "Compare the two folders", onCompare)}
+      {b("link", syncBrowsing ? "Synchronized browsing: on (both panes follow each other)" : "Synchronized browsing: off", onSyncBrowsing, syncBrowsing)}
+    </>
   );
 }

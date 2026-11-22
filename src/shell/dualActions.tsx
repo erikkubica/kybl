@@ -194,17 +194,9 @@ export function makeDualActions(get: () => DualContext) {
       if (dst.here.profileId === src.here.profileId && dst.bucket === src.bucket && !isValidDest(items, d)) return null;
       return { dest: d, label: d && dst.profile ? destLabel(d, dst.bucket ?? "", dst.profile.id) : (dst.bucketLabel ?? ""), copyOnly: crossesDisk(src, dst) };
     },
-    extraPlaceItems: (): MenuItem[] => {
-      const c = get();
-      if (!c.dual) return [];
-      return [
-        { type: "sep" },
-        { type: "item", label: "Same folder in the other pane", icon: "dual-pane", onClick: () => sameFolderInOther(id) },
-        { type: "item", label: "Compare with the other pane", icon: "columns", onClick: compare },
-        { type: "item", label: "Swap panes", icon: "move", hint: "⇧⌘S", onClick: swap },
-        { type: "item", label: "Synchronized browsing", icon: "sync", checked: c.settings.syncBrowsing, onClick: () => c.updateSettings({ syncBrowsing: !c.settings.syncBrowsing }) },
-      ];
-    },
+    // swap, compare, "this folder in the other pane" and synchronized browsing: on the divider
+    // between the panes and in the View menu, not in the folder menus
+    extraPlaceItems: (): MenuItem[] => [],
     extraItemItems: (list: Entry[]): (MenuItem | false)[] => {
       const c = get();
       const dst = pane(otherId(id));
@@ -236,5 +228,5 @@ export function makeDualActions(get: () => DualContext) {
     "pane-move": () => (get().dual ? void sendSelection("move") : false),
   };
 
-  return { envFor, commands };
+  return { envFor, commands, sameFolderInOther, swap, compare };
 }

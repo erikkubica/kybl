@@ -53,6 +53,10 @@ export function Toolbar({
   onClearSelection,
   dual = false,
   onToggleDual,
+  onGoTo,
+  favorite,
+  onToggleFavorite,
+  dualTools,
 }: {
   bucket: string | null;
   /** what the root is called on screen (defaults to `bucket`) */
@@ -114,6 +118,13 @@ export function Toolbar({
   dual?: boolean;
   /** switches between one pane and two (the button shows only with this) */
   onToggleDual?: () => void;
+  /** dual pane only: this folder into the other pane, swap, compare, synchronized browsing (DualTools) */
+  dualTools?: React.ReactNode;
+  /** typing a path into the bar (Go to folder) */
+  onGoTo?: (path: string) => void;
+  /** the folder on screen is a favorite; the star toggles it */
+  favorite?: boolean;
+  onToggleFavorite?: () => void;
 }) {
   const parts = prefix.split("/").filter(Boolean);
   const hasSel = selectionCount > 0;
@@ -137,7 +148,20 @@ export function Toolbar({
           </button>
         </div>
         {bucket != null ? (
-          <Breadcrumbs bucket={bucket} label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} />
+          <>
+            <Breadcrumbs bucket={bucket} label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} onGoTo={onGoTo} />
+            {onToggleFavorite && (
+              <button
+                className={`icon-btn fav-star ${favorite ? "on" : ""}`}
+                onClick={onToggleFavorite}
+                title={favorite ? "Remove from favorites" : "Add to favorites"}
+                aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
+                aria-pressed={!!favorite}
+              >
+                <Icon name="star" size={15} />
+              </button>
+            )}
+          </>
         ) : (
           <nav className="crumbs" aria-label="Path" data-tauri-drag-region>
             <span className="crumb muted">No bucket selected</span>
@@ -184,9 +208,8 @@ export function Toolbar({
       </div>
 
       <div className={`actionbar ${view === "grid" ? "is-grid" : ""}`}>
-        <button className="btn btn-primary btn-sm" disabled={disabled} onClick={(e) => onUploadMenu(...anchorOf(e))}>
-          <Icon name="upload" size={14} />
-          Upload
+        <button className="btn btn-primary btn-sm btn-square" disabled={disabled} onClick={(e) => onUploadMenu(...anchorOf(e))} title="Upload files or a folder (⌘U)" aria-label="Upload">
+          <Icon name="upload" size={15} />
         </button>
         <div className="tb-group">
           <button className="tool" disabled={disabled} onClick={onNewFolder} title="New folder (⇧⌘N)">
@@ -196,6 +219,7 @@ export function Toolbar({
           <button className="icon-btn" disabled={disabled} onClick={onRefresh} title="Refresh (⌘R)" aria-label="Refresh">
             <Icon name="refresh" />
           </button>
+          {dualTools}
           <button className="icon-btn" disabled={disabled} onClick={(e) => onMoreMenu(...anchorOf(e))} title="More" aria-label="More actions">
             <Icon name="more" />
           </button>

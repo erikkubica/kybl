@@ -39,7 +39,7 @@ import { loadExpanded, useConnections } from "./useConnections";
 import { PreviewAside, usePreviewLayout } from "./PreviewAside";
 import { useFinderDrop } from "./useFinderDrop";
 import { useShellCommands } from "./useShellCommands";
-import { DualPane } from "./DualPane";
+import { DualPane, DualTools } from "./DualPane";
 import { makeDualActions, type DualContext } from "./dualActions";
 import { PaneContext } from "./PaneContext";
 import { useMigrationHost } from "./useMigrationHost";
@@ -530,6 +530,16 @@ export function AppShell() {
     pane: p,
     active: p === active,
     dual,
+    dualTools: dual ? (
+      <DualTools
+        side={p === left ? "left" : "right"}
+        onToOther={() => dualPane.sameFolderInOther(p === left ? "left" : "right")}
+        onSwap={dualPane.swap}
+        onCompare={dualPane.compare}
+        syncBrowsing={settings.syncBrowsing}
+        onSyncBrowsing={() => updateSettings({ syncBrowsing: !settings.syncBrowsing })}
+      />
+    ) : undefined,
     settings,
     updateSettings,
     compact,
@@ -588,7 +598,10 @@ export function AppShell() {
         <PaneContext.Provider value={{ left, right, active, other, dual, setActive: setActiveId }}>
           {dual ? (
             <div className="content dual-wrap" style={previewStyle}>
-              <DualPane left={(style) => <BrowserPane {...paneProps(left)} style={style} />} right={(style) => <BrowserPane {...paneProps(right)} style={style} />} />
+              <DualPane
+                left={(style) => <BrowserPane {...paneProps(left)} style={style} />}
+                right={(style) => <BrowserPane {...paneProps(right)} style={style} />}
+              />
               {aside(active)}
             </div>
           ) : (

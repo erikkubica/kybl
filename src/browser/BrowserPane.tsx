@@ -22,6 +22,8 @@ export type BrowserPaneProps = {
   active: boolean;
   /** two panes on screen (the active one is marked) */
   dual: boolean;
+  /** dual pane: its buttons in the toolbar (shell/DualPane DualTools) */
+  dualTools?: React.ReactNode;
   settings: Settings;
   updateSettings: (patch: Partial<Settings>) => void;
   compact: boolean;
@@ -125,6 +127,10 @@ export function BrowserPane(p: BrowserPaneProps) {
         onTogglePreview={p.onTogglePreview}
         dual={p.dual}
         onToggleDual={p.onToggleDual}
+        dualTools={profile && bucket != null ? p.dualTools : undefined}
+        onGoTo={profile && bucket != null ? (t) => void actions.goToPath(t) : undefined}
+        favorite={actions.isFavorite}
+        onToggleFavorite={profile && bucket != null ? () => actions.toggleFavorite(bucket, prefix) : undefined}
       />
 
       <PaneBanners pane={pane} />

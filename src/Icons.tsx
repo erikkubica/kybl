@@ -106,6 +106,8 @@ const PATHS: Record<string, ReactNode> = {
     </>
   ),
   "arrow-left": <path d="M19 12H5m0 0 6-6m-6 6 6 6" />,
+  "arrow-right": <path d="M5 12h14m0 0-6-6m6 6-6 6" />,
+  swap: <path d="M7 4 3 8l4 4M3 8h13M17 12l4 4-4 4m4-4H8" />,
   "arrow-up": <path d="M12 19V5m0 0-6 6m6-6 6 6" />,
   x: <path d="M6 6l12 12M18 6 6 18" />,
   edit: <path d="M4 20h4L19 9l-4-4L4 16zM13 7l4 4" />,
