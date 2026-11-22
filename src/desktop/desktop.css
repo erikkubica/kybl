@@ -130,7 +130,18 @@
   overflow: auto;
   background: var(--panel);
 }
-.ql-image,
+.ql-body {
+  position: relative;
+}
+/* fitted to the window, never taller: a percentage max-height doesn't resolve in the grid, so
+   the image kept its own height and was letterboxed inside it (empty bands, scrolling) */
+.ql-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
 .ql-video {
   max-width: 100%;
   max-height: 100%;
