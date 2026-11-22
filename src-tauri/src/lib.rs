@@ -27,6 +27,8 @@ mod quit;
 mod state;
 // one trait for S3, this device's disk and (later) other providers
 mod storage;
+// WP-A2: Google Drive, OneDrive and Dropbox sign-in and tokens
+mod oauth;
 #[cfg(desktop)]
 mod sync;
 mod thumbs;
@@ -218,6 +220,10 @@ pub fn run() {
             // WP-D
             doc::doc_open,
             doc::doc_save,
+            // WP-A2: cloud drive sign-in
+            oauth::oauth_start,
+            oauth::oauth_cancel,
+            oauth::oauth_builtin_clients,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -52,6 +52,14 @@ tauri-plugin-fs = "2"
 async-trait = "0.1"
 futures-util = "0.3"
 
+# WP-A2 cloud drives (Google Drive, OneDrive, Dropbox) and their sign-in, hand-written on reqwest:
+# Drive is ID-based and the other two need upload sessions, hashes, share links and change cursors
+# OpenDAL doesn't cover. Same reqwest version and features as WP-A1 (one HTTP stack, rustls on
+# ring; `cargo tree -i aws-lc-rs` stays empty). On merge, keep one copy of the lines both declare.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+base64 = "0.22"
+
 # Desktop only: the menu-bar icon, launch at login and two-way folder sync (a phone has no folders
 # to keep in sync and no menu bar).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
@@ -61,6 +69,8 @@ notify-debouncer-full = "0.7"
 ignore = "0.4"
 tauri-plugin-autostart = "2"
 trash = "5"
+# WP-A2: the system's trusted roots for the cloud drive APIs (phones bundle webpki-root-certs)
+rustls-native-certs = "0.8"
 
 # Phones have no root certificate files for rustls to load: trust Mozilla's root set instead
 # (see `state::http_client`).
@@ -97,3 +107,5 @@ strip = true
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
+# WP-A2: a tiny local HTTP server standing in for Drive, Graph, Dropbox and the token endpoints
+hyper = { version = "1", features = ["server", "http1"] }

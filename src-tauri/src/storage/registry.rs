@@ -56,6 +56,8 @@ pub async fn build<R: Runtime>(
         }
         ConnKind::Local => Ok(Arc::new(LocalBackend::system(app).await?)),
         ConnKind::Unknown => Err("This connection was made by a newer version of Kybl. Update Kybl to open it.".into()),
+        // WP-A2: the sign-in kinds (tokens from the vault, `{id}#oauth`)
+        ConnKind::Gdrive | ConnKind::Onedrive | ConnKind::Dropbox => crate::oauth::open(app, profile),
         // WP-A1 / WP-A2: one arm per kind above this line
         other => Err(format!("{} connections aren't supported by this version of Kybl yet.", other.label())),
     }

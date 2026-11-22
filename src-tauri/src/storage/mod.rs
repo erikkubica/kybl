@@ -17,6 +17,11 @@ pub mod local;
 pub mod registry;
 pub mod s3;
 pub mod s3_stream;
+// WP-A2: cloud drives
+pub mod dropbox;
+pub mod extras;
+pub mod gdrive;
+pub mod onedrive;
 
 use std::{
     fmt,
