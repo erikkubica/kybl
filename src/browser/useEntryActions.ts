@@ -264,7 +264,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       folder
         ? { type: "item", label: "Open", icon: "folder", hint: "↵", onClick: () => pane.navigate(e.key) }
         : { type: "item", label: files.length > 1 ? `Open ${files.length} files` : "Open", icon: "reveal", hint: "⌘O", disabled: !files.length, onClick: () => openSelection(list) },
-      one && e.kind === "file" && env.canOpenDocument?.(e) && { type: "item", label: "Open in Default App", icon: "external", onClick: () => void ops.openInApp(e) },
+      one && e.kind === "file" && env.canOpenDocument?.(e) && { type: "item", label: "Open in default app", icon: "external", onClick: () => void ops.openInApp(e) },
       one && e.kind === "file" && { type: "item", label: "Quick Look", icon: "eye", hint: "Space", onClick: () => pane.setQuick(e.key) },
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => pane.navigate(entryParent(e), e.key) },
       { type: "item", label: one && e.native?.exports.length ? `Download as ${e.native.exports[0].label}` : "Download", icon: "download", hint: "⇧⌘D", onClick: () => ops.downloadEntries(list, relBase) },

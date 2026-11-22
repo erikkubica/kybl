@@ -4,8 +4,7 @@
  * changed and says so, with a way to the Transfers screen where the job is listed.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { errSummary } from "../api";
-import { onJobFinished, startMigrations, type MigrationSource } from "../jobs";
+import { jobFinishedToast, onJobFinished, startMigrations, type MigrationSource } from "../jobs";
 import type { Toast } from "../components/Dialogs";
 import type { ToastAction } from "./useFileOps";
 
@@ -34,11 +33,9 @@ export function useMigrate({
         changed(j.spec.dst.profileId, j.spec.dst.root);
         if (j.spec.mode === "move") changed(j.spec.src.profileId, j.spec.src.root);
       }
-      const show = { label: "Show", run: openTransfers };
-      const verbed = j.spec.mode === "move" ? "moved" : "copied";
-      if (p.state === "done" && p.filesFailed > 0) toast("error", `${j.title}: ${p.filesFailed.toLocaleString()} couldn't be ${verbed}`, show);
-      else if (p.state === "done") toast("success", `Done: ${j.title}`, show);
-      else if (p.state === "failed") toast("error", `${j.title} stopped: ${errSummary(p.error ?? "something went wrong")}`, show);
+      // the same words as on computers (jobs/finishedToast.ts)
+      const t = jobFinishedToast(j);
+      if (t) toast(t.kind, t.text, { label: "Show", run: openTransfers });
     });
   }, []);
 

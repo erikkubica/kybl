@@ -126,7 +126,7 @@ export function JobConfirm({
           ) : (
             <span>
               {conflict.hint} {target.dir !== dest.dir && "Folders that aren't there yet are made. "}
-              It runs in the background, even with Kybl closed.
+              It runs in the background, even with the window closed.
               {mode === "move" && " Originals are deleted once each copy is checked."}
             </span>
           )}

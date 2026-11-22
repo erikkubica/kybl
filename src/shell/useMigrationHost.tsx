@@ -4,16 +4,13 @@
  * reloads the panes that show its destination (and, for a move, its source) and says so.
  */
 import { createElement, useCallback, useEffect, useRef, useState } from "react";
-import { errSummary, type JobSummary } from "../api";
-import { JobConfirm, MigrationDialog, onJobFinished, startMigrations, type MigrationSource } from "../jobs";
+import type { JobSummary } from "../api";
+import { JobConfirm, MigrationDialog, jobFinishedToast, onJobFinished, startMigrations, type MigrationSource } from "../jobs";
 import type { Loc as JobLoc, PickedLocation } from "../jobs/LocationPicker";
 import type { Dialogs } from "./useDialogs";
 
 export type OpenMigration = (source: MigrationSource, mode: "copy" | "move", initialDest?: JobLoc | null) => void;
 export type ConfirmMigration = (source: MigrationSource, mode: "copy" | "move", dest: PickedLocation, singleRoot?: boolean) => void;
-
-/** "Everything in media-prod to Backups" reads as "everything in…" after "Copied". */
-const lowerLead = (t: string) => (/^(Everything|All) /.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t);
 
 export function useMigrationHost({
   dialogs,
@@ -42,13 +39,9 @@ export function useMigrationHost({
         reloadIfShowing(j.spec.dst.profileId, j.spec.dst.root);
         if (j.spec.mode === "move") reloadIfShowing(j.spec.src.profileId, j.spec.src.root);
       }
-      const show = { label: "Show", run: showJobs };
-      const verbed = j.spec.mode === "move" ? "moved" : "copied";
-      if (p.state === "done" && p.filesFailed > 0)
-        dialogs.toast("error", `${j.title}: ${p.filesFailed.toLocaleString()} ${p.filesFailed === 1 ? "file" : "files"} couldn't be ${verbed}`, show);
-      else if (p.state === "done") dialogs.toast("success", `${j.spec.mode === "move" ? "Moved" : "Copied"} ${lowerLead(j.title)}`, show);
-      else if (p.state === "failed") dialogs.toast("error", `${j.title} stopped: ${errSummary(p.error ?? "something went wrong")}`, show);
-      // cancelled: the user did that themselves, nothing to say
+      // the same words as on phones (jobs/finishedToast.ts)
+      const t = jobFinishedToast(j);
+      if (t) dialogs.toast(t.kind, t.text, { label: "Show", run: showJobs });
     });
   }, []);
 

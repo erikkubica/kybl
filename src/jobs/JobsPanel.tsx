@@ -77,7 +77,7 @@ export function jobMeta(j: JobSummary): string {
       return parts.join(" · ");
     }
     case "cancelled":
-      return p.filesDone > 0 ? `${files(p.filesDone)} ${moved} before stopping` : "Nothing was copied";
+      return p.filesDone > 0 ? `${files(p.filesDone)} ${moved} before stopping` : `Nothing was ${moved}`;
     case "failed":
       return p.filesDone > 0 ? `${files(p.filesDone)} ${moved} before it stopped` : "";
   }
