@@ -1,4 +1,4 @@
-//! Thumbnails for the grid view.
+//! Thumbnails for the grid view, for every kind of connection.
 //!
 //! S3 cannot resize images, so thumbnails are made here:
 //!  1. JPEG/TIFF photos: read only the first 256 KB of the object and use the thumbnail the camera
@@ -6,14 +6,19 @@
 //!  2. Otherwise, objects up to `MAX_FULL_DOWNLOAD` are downloaded and resized locally.
 //!  Results are stored as small JPEGs in the app cache directory and reused on every later visit.
 //!
+//! Other connections go through [`Storage`]: a provider's own thumbnail when it makes them
+//! (`caps.thumbnails` "remote"), else the same two steps over `Storage::read` (a ranged read for
+//! the EXIF head where the store can, else one whole read up to the same limit).
+//!
 //! The web view loads them as plain images from the `thumb://` scheme (see [`protocol`]), so the
 //! bytes never pass through JavaScript as base64 strings and the web view's own image cache
 //! decides what stays in memory.
 
 use std::{
+    collections::HashMap,
     io::Cursor,
-    path::PathBuf,
-    sync::{Arc, OnceLock},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
     time::SystemTime,
 };
 
@@ -27,7 +32,8 @@ use tauri::{
 };
 use tokio::sync::Semaphore;
 
-use crate::state::{client_for, err, sdk_err, AppState};
+use crate::state::{err, load_profiles, sdk_err, AppState};
+use crate::storage::{self, registry::LOCAL_ID, Conn, ConnKind, Entry, Loc, Storage, ThumbMode};
 
 const THUMB_PX: u32 = 360;
 /// Embedded EXIF thumbnails smaller than this look blurry in the grid: fall back to the full image.
@@ -154,6 +160,43 @@ fn thumb_from_exif(head: &[u8]) -> Option<Vec<u8>> {
     encode(img).ok()
 }
 
+/// What kind of connection a profile is, without opening it (the cache is looked at first).
+fn kind_of<R: Runtime>(app: &AppHandle<R>, profile_id: &str) -> ConnKind {
+    static KINDS: OnceLock<Mutex<HashMap<String, ConnKind>>> = OnceLock::new();
+    if profile_id == LOCAL_ID {
+        return ConnKind::Local;
+    }
+    let kinds = KINDS.get_or_init(Default::default);
+    if let Some(k) = kinds.lock().unwrap().get(profile_id) {
+        return *k;
+    }
+    let found = load_profiles(app).ok().and_then(|ps| ps.into_iter().find(|p| p.id == profile_id)).map(|p| p.kind);
+    match found {
+        Some(k) => {
+            kinds.lock().unwrap().insert(profile_id.to_string(), k);
+            k
+        }
+        None => ConnKind::S3,
+    }
+}
+
+/// The cache file of one file version. S3 keeps the name it always had, so thumbnails made
+/// before other kinds existed stay valid; other kinds add theirs.
+fn cache_name(kind: ConnKind, profile_id: &str, bucket: &str, key: &str, etag: &str, size: i64) -> String {
+    let id = match kind {
+        ConnKind::S3 => format!("{profile_id}|{bucket}|{key}|{etag}|{size}"),
+        k => format!("{k:?}|{profile_id}|{bucket}|{key}|{etag}|{size}"),
+    };
+    format!("{:016x}.jpg", fnv1a(&id))
+}
+
+async fn save(path: &Path, jpeg: &[u8]) {
+    let tmp = path.with_extension("tmp");
+    if tokio::fs::write(&tmp, jpeg).await.is_ok() {
+        let _ = tokio::fs::rename(&tmp, path).await;
+    }
+}
+
 /// The thumbnail JPEG for an object, from the disk cache or freshly made.
 async fn thumbnail<R: Runtime>(
     app: &AppHandle<R>,
@@ -163,14 +206,15 @@ async fn thumbnail<R: Runtime>(
     size: i64,
     etag: &str,
 ) -> Result<Vec<u8>, String> {
-    let name = format!("{:016x}.jpg", fnv1a(&format!("{profile_id}|{bucket}|{key}|{etag}|{size}")));
-    let path = cache_dir(app)?.join(&name);
+    let kind = kind_of(app, profile_id);
+    let path = cache_dir(app)?.join(cache_name(kind, profile_id, bucket, key, etag, size));
     if let Ok(bytes) = tokio::fs::read(&path).await {
         return Ok(bytes);
     }
 
-    // "Wi-Fi only" also covers thumbnails: cached ones still show, new ones wait for Wi-Fi
-    if crate::tuning::wifi_only() && crate::platform::on_metered_network() {
+    // "Wi-Fi only" also covers thumbnails: cached ones still show, new ones wait for Wi-Fi.
+    // This device's own files need no network.
+    if kind != ConnKind::Local && crate::tuning::wifi_only() && crate::platform::on_metered_network() {
         return Err("Previews wait for Wi-Fi".into());
     }
     let state = app.state::<AppState>();
@@ -179,7 +223,14 @@ async fn thumbnail<R: Runtime>(
     if let Ok(bytes) = tokio::fs::read(&path).await {
         return Ok(bytes);
     }
-    let client = client_for(app, &state, profile_id).await?;
+    let client = match storage::connect(app, &state, profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => {
+            let jpeg = generic_thumbnail(&*s, bucket, key, size, etag).await?;
+            save(&path, &jpeg).await;
+            return Ok(jpeg);
+        }
+    };
     let lower = key.to_lowercase();
     let maybe_exif = [".jpg", ".jpeg", ".tif", ".tiff"].iter().any(|e| lower.ends_with(e));
 
@@ -229,11 +280,75 @@ async fn thumbnail<R: Runtime>(
     }
 
     let jpeg = result.ok_or_else(|| "No thumbnail".to_string())?;
-    let tmp = path.with_extension("tmp");
-    if tokio::fs::write(&tmp, &jpeg).await.is_ok() {
-        let _ = tokio::fs::rename(&tmp, &path).await;
-    }
+    save(&path, &jpeg).await;
     Ok(jpeg)
+}
+
+fn may_have_exif(key: &str) -> bool {
+    let lower = key.to_lowercase();
+    [".jpg", ".jpeg", ".tif", ".tiff"].iter().any(|e| lower.ends_with(e))
+}
+
+/// The first `HEAD_RANGE` bytes. Stores that can't read a range send the whole file; the rest of
+/// it is dropped (which stops the read) once the head is in.
+async fn read_head(s: &dyn Storage, root: &str, key: &str) -> Result<Vec<u8>, String> {
+    use futures_util::StreamExt;
+    let mut r = s.read(root, key, Some(0..HEAD_RANGE as u64), None).await?;
+    let mut head: Vec<u8> = Vec::with_capacity(HEAD_RANGE);
+    while let Some(chunk) = r.body.next().await {
+        head.extend_from_slice(&chunk.map_err(err)?);
+        if head.len() >= HEAD_RANGE {
+            head.truncate(HEAD_RANGE);
+            break;
+        }
+    }
+    Ok(head)
+}
+
+async fn read_all(s: &dyn Storage, root: &str, key: &str) -> Result<Vec<u8>, String> {
+    let r = s.read(root, key, None, None).await?;
+    Ok(r.collect(MAX_FULL_DOWNLOAD as u64).await.map_err(|_| "Image too large for a thumbnail".to_string())?)
+}
+
+/// A thumbnail for a file of any connection but S3 (see the module docs).
+async fn generic_thumbnail(s: &dyn Storage, root: &str, key: &str, size: i64, etag: &str) -> Result<Vec<u8>, String> {
+    let caps = s.caps();
+    if matches!(caps.thumbnails, ThumbMode::Remote | ThumbMode::LocalRemote) {
+        let e = Entry { key: key.to_string(), size, etag: (!etag.is_empty()).then(|| etag.to_string()), ..Default::default() };
+        match s.thumbnail(&Loc::new(root, key), &e).await {
+            // the provider's size and format vary: made into the grid's own small JPEG
+            Ok(Some(bytes)) => return tokio::task::spawn_blocking(move || thumb_from_image_bytes(&bytes)).await.map_err(err)?,
+            _ if caps.thumbnails == ThumbMode::LocalRemote => {}
+            Ok(None) => return Err("No thumbnail".into()),
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    let small = size <= MAX_FULL_DOWNLOAD;
+    // read once from a store that would send the whole file for the EXIF head anyway
+    let mut whole: Option<Vec<u8>> = None;
+    if may_have_exif(key) {
+        let head = if !caps.range_read && small {
+            let all = read_all(s, root, key).await?;
+            let head = all[..all.len().min(HEAD_RANGE)].to_vec();
+            whole = Some(all);
+            head
+        } else {
+            read_head(s, root, key).await?
+        };
+        if let Some(t) = tokio::task::spawn_blocking(move || thumb_from_exif(&head)).await.map_err(err)? {
+            return Ok(t);
+        }
+    }
+    if !small {
+        return Err("Image too large for a thumbnail".into());
+    }
+    let _decode = decode_slots().acquire_owned().await.map_err(err)?;
+    let bytes = match whole {
+        Some(b) => b,
+        None => read_all(s, root, key).await?,
+    };
+    tokio::task::spawn_blocking(move || thumb_from_image_bytes(&bytes)).await.map_err(err)?
 }
 
 /// Serves `thumb://localhost/<id>` (`http://thumb.localhost/<id>` on Windows), where `<id>` is the
@@ -336,6 +451,114 @@ mod tests {
         let mut out = Cursor::new(Vec::new());
         img.write_to(&mut out, fmt).unwrap();
         out.into_inner()
+    }
+
+    #[test]
+    fn s3_cache_names_stay_the_same_and_other_kinds_differ() {
+        let s3 = cache_name(ConnKind::S3, "p", "b", "k.jpg", "e", 5);
+        assert_eq!(s3, format!("{:016x}.jpg", fnv1a("p|b|k.jpg|e|5")));
+        assert_ne!(cache_name(ConnKind::Local, "p", "b", "k.jpg", "e", 5), s3);
+        assert_ne!(cache_name(ConnKind::Local, "p", "b", "k.jpg", "e", 6), cache_name(ConnKind::Local, "p", "b", "k.jpg", "e", 5));
+        assert_ne!(cache_name(ConnKind::Local, "p", "b", "k.jpg", "f", 5), cache_name(ConnKind::Local, "p", "b", "k.jpg", "e", 5));
+    }
+
+    /// A JPEG of `main` with an EXIF block that carries `thumb` as its embedded thumbnail.
+    fn jpeg_with_exif(main: DynamicImage, thumb: DynamicImage) -> Vec<u8> {
+        let mut t = Cursor::new(Vec::new());
+        thumb.write_with_encoder(JpegEncoder::new_with_quality(&mut t, 40)).unwrap();
+        let t = t.into_inner();
+        // little-endian TIFF: IFD0 (orientation 1) at 8, IFD1 (thumbnail offset + length) at 26
+        let mut tiff: Vec<u8> = b"II\x2a\x00".to_vec();
+        tiff.extend(8u32.to_le_bytes());
+        tiff.extend(1u16.to_le_bytes());
+        tiff.extend([0x12, 0x01, 3, 0]);
+        tiff.extend(1u32.to_le_bytes());
+        tiff.extend([1, 0, 0, 0]);
+        tiff.extend(26u32.to_le_bytes());
+        tiff.extend(2u16.to_le_bytes());
+        for (tag, v) in [(0x0201u16, 56u32), (0x0202, t.len() as u32)] {
+            tiff.extend(tag.to_le_bytes());
+            tiff.extend(4u16.to_le_bytes());
+            tiff.extend(1u32.to_le_bytes());
+            tiff.extend(v.to_le_bytes());
+        }
+        tiff.extend(0u32.to_le_bytes());
+        assert_eq!(tiff.len(), 56);
+        tiff.extend(&t);
+        let main = encoded(main, ImageFormat::Jpeg);
+        let mut out = vec![0xff, 0xd8, 0xff, 0xe1];
+        out.extend(((tiff.len() + 8) as u16).to_be_bytes());
+        out.extend(b"Exif\0\0");
+        out.extend(tiff);
+        out.extend(&main[2..]);
+        out
+    }
+
+    fn dims(jpeg: &[u8]) -> (u32, u32) {
+        let img = image::load_from_memory_with_format(jpeg, ImageFormat::Jpeg).unwrap();
+        (img.width(), img.height())
+    }
+
+    #[test]
+    fn other_connections_get_thumbnails_through_storage() {
+        use crate::storage::media::test_store::MemStore;
+        let portrait = DynamicImage::ImageRgb8(RgbImage::from_fn(900, 1600, |_, y| image::Rgb([y as u8, 20, 90])));
+        let landscape = DynamicImage::ImageRgb8(RgbImage::from_fn(320, 240, |x, _| image::Rgb([x as u8, 200, 30])));
+        let exif_jpg = jpeg_with_exif(portrait.clone(), landscape);
+        let plain_jpg = encoded(portrait, ImageFormat::Jpeg);
+        tauri::async_runtime::block_on(async {
+            // a store with ranges: only the head of a (huge) photo is read, the EXIF thumbnail used
+            let s = MemStore::new(true).with("big.jpg", exif_jpg.clone());
+            let t = generic_thumbnail(&s, "", "big.jpg", 100 * MAX_FULL_DOWNLOAD, "e").await.unwrap();
+            assert_eq!(dims(&t), (320, 240));
+            assert_eq!(s.reads.lock().unwrap().as_slice(), &[Some(0..HEAD_RANGE as u64)]);
+
+            // without ranges: one whole read serves the EXIF try and the full decode
+            let s = MemStore::new(false).with("a.jpg", exif_jpg.clone()).with("b.jpg", plain_jpg.clone());
+            let t = generic_thumbnail(&s, "", "a.jpg", exif_jpg.len() as i64, "e").await.unwrap();
+            assert_eq!(dims(&t), (320, 240));
+            let t = generic_thumbnail(&s, "", "b.jpg", plain_jpg.len() as i64, "e").await.unwrap();
+            assert_eq!(dims(&t), (203, 360));
+            assert_eq!(s.reads.lock().unwrap().as_slice(), &[None, None]);
+
+            // too big without an EXIF thumbnail: refused after the head, nothing more read
+            let s = MemStore::new(true).with("huge.jpg", plain_jpg.clone());
+            assert!(generic_thumbnail(&s, "", "huge.jpg", MAX_FULL_DOWNLOAD + 1, "e").await.is_err());
+            assert_eq!(s.reads.lock().unwrap().len(), 1);
+            let s = MemStore::new(true).with("huge.png", plain_jpg.clone());
+            assert!(generic_thumbnail(&s, "", "huge.png", MAX_FULL_DOWNLOAD + 1, "e").await.is_err());
+            assert!(s.reads.lock().unwrap().is_empty());
+
+            // the provider's own thumbnail, made into the grid's JPEG; nothing downloaded
+            let mut s = MemStore::new(true).with("c.png", plain_jpg.clone());
+            s.caps.thumbnails = ThumbMode::LocalRemote;
+            s.remote_thumb = Some(encoded(DynamicImage::ImageRgba8(RgbaImage::new(800, 400)), ImageFormat::Png));
+            let t = generic_thumbnail(&s, "", "c.png", 10, "e").await.unwrap();
+            assert_eq!(dims(&t), (360, 180));
+            assert!(s.reads.lock().unwrap().is_empty());
+            // none offered: made here instead, unless the provider is the only source
+            s.remote_thumb = None;
+            assert!(generic_thumbnail(&s, "", "c.png", plain_jpg.len() as i64, "e").await.is_ok());
+            s.caps.thumbnails = ThumbMode::Remote;
+            assert!(generic_thumbnail(&s, "", "c.png", plain_jpg.len() as i64, "e").await.is_err());
+        });
+    }
+
+    #[test]
+    fn local_files_get_thumbnails() {
+        use crate::storage::{local::LocalBackend, RootKind};
+        let dir = std::env::temp_dir().join(format!("kybl-thumbs-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = encoded(DynamicImage::ImageRgba8(RgbaImage::from_fn(1600, 900, |x, _| image::Rgba([x as u8, 80, 160, 128]))), ImageFormat::Png);
+        std::fs::write(dir.join("pic.png"), &png).unwrap();
+        let b = LocalBackend::with_roots(vec![("T".into(), RootKind::Folder, dir.clone())], false);
+        tauri::async_runtime::block_on(async {
+            let root = b.roots().await.unwrap()[0].id.clone();
+            let t = generic_thumbnail(&b, &root, "pic.png", png.len() as i64, "e").await.unwrap();
+            assert_eq!(dims(&t), (360, 203));
+            assert!(generic_thumbnail(&b, &root, "missing.png", 10, "e").await.is_err());
+        });
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

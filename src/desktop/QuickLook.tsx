@@ -6,6 +6,7 @@ import { FileIcon } from "../components/FileIcon";
 import { ErrorText } from "../components/ErrorText";
 import { MAX_PDF_BYTES, PdfView } from "../components/PdfView";
 import type { Entry } from "../types";
+import { playableUrl } from "../media";
 
 const MAX_TEXT = 50 * 1000 * 1000;
 
@@ -110,8 +111,7 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
     // a short delay, so holding an arrow key doesn't start a download for every file it passes
     const t = setTimeout(() => {
       if (media)
-        api
-          .presign(profileId, bucket, entry.key, 3600)
+        playableUrl(profileId, bucket, entry)
           .then((u) => live && setUrl(u))
           .catch((e) => live && setError(errMessage(e)));
       else if (text)

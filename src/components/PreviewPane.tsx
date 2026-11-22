@@ -3,6 +3,7 @@ import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
 import { classify, extOf, formatBytes, formatDateFull, isWebImage, kindLabel } from "../format";
 import { cachedThumb, canThumb, loadThumb } from "../thumbs";
+import { playableUrl } from "../media";
 import { FileIcon } from "./FileIcon";
 import { MAX_PDF_BYTES, PdfView } from "./PdfView";
 import { ErrorText } from "./ErrorText";
@@ -295,8 +296,8 @@ function FileDetails({
     const timer = setTimeout(() => {
       if (gone) return;
       if (previewable && !gated) {
-        api
-          .presign(profileId, bucket, entry.key, 3600)
+        // presigned on S3; through the app where the connection can't presign
+        playableUrl(profileId, bucket, entry, caps)
           .then((u) => live && setUrl(u))
           .catch((e) => live && setError(errMessage(e)));
       } else if (cls === "text" && !showsDoc && entry.size <= 50 * 1000 * 1000) {

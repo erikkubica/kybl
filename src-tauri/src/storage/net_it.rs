@@ -230,7 +230,7 @@ async fn exercise(s: &dyn Storage, disk: &Path) {
     all.sort();
     assert_eq!(all, vec!["a/b/new.txt", "big/big.bin", "copied/hello2.txt", "deep/er/x y #1.txt", "moved/hello2.txt"]);
     let down = disk.parent().unwrap().join("down/big.bin");
-    let r = generic_cmds::download(s, "", "big/big.bin", &down, &never, &report).await.unwrap();
+    let r = generic_cmds::download(s, "", "big/big.bin", &down, &never, &report, None).await.unwrap();
     assert!(matches!(r, Outcome::Done));
     assert_eq!(std::fs::read(&down).unwrap(), big);
     let r = generic_cmds::upload(s, "", "up/again.bin", down.to_str().unwrap(), &never, &report).await.unwrap();

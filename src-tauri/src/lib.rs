@@ -75,7 +75,9 @@ pub fn run() {
         .plugin(transfer_notice::plugin())
         .plugin(platform::plugin())
         .manage(state::AppState::default())
-        .register_asynchronous_uri_scheme_protocol("thumb", thumbs::protocol);
+        .register_asynchronous_uri_scheme_protocol("thumb", thumbs::protocol)
+        // WP-A4: video and audio from connections that can't presign
+        .register_asynchronous_uri_scheme_protocol("media", storage::media::protocol);
 
     #[cfg(desktop)]
     let builder = builder
@@ -185,6 +187,8 @@ pub fn run() {
             storage::generic_cmds::list_roots,
             storage::generic_cmds::connection_capabilities,
             storage::generic_cmds::local_path,
+            // WP-A4
+            storage::media::media_base,
             transfers::start_upload,
             transfers::start_download,
             transfers::cancel_transfer,
