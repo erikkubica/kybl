@@ -368,6 +368,15 @@ impl FtpBackend {
         Ok(Stored::Done)
     }
 
+    /// Removes what an interrupted STOR left. The server may still be closing that upload (the
+    /// data connection was just dropped) and create the file after a first delete, so delete,
+    /// wait a moment and delete again.
+    async fn remove_partial(&self, path: String) {
+        self.remove_quietly(path.clone()).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        self.remove_quietly(path).await;
+    }
+
     async fn remove_quietly(&self, path: String) {
         let _ = self
             .run(move |ftp, _| {
@@ -548,12 +557,12 @@ impl Storage for FtpBackend {
         match stored {
             Ok(Stored::Done) => {}
             Ok(Stored::Cancelled) => {
-                self.remove_quietly(written).await;
+                self.remove_partial(written).await;
                 return Ok(WriteOutcome::Cancelled);
             }
             Ok(Stored::Refused(e)) => return Err(e),
             Err(e) => {
-                self.remove_quietly(written).await;
+                self.remove_partial(written).await;
                 return Err(e);
             }
         }

@@ -1,0 +1,578 @@
+/* Copies and moves between connections: the destination tree, the dialog and the jobs list.
+   Colours come from the theme variables in styles.css, so light, dark and the colour schemes
+   all work without overrides here. */
+
+/* ---------------------------------------------------------------- destination tree */
+.jobs-tree {
+  display: flex;
+  flex-direction: column;
+  height: 270px;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--field);
+  outline: none;
+}
+.jobs-tree:focus-visible {
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.jobs-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding-right: 10px;
+  flex: none;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+.jobs-tree-row:hover:not(:disabled) {
+  background: var(--hover);
+}
+.jobs-tree-row.selected,
+.jobs-tree-row.selected:hover {
+  background: var(--accent-soft);
+}
+.jobs-tree-row:disabled,
+.jobs-tree-row.blocked .jobs-tree-name {
+  opacity: 0.45;
+}
+.jobs-tree-row.conn {
+  font-weight: 600;
+}
+.jobs-tree-row.more {
+  color: var(--dim);
+}
+.jobs-tree-caret {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--faint);
+  transition: transform 0.16s var(--ease);
+}
+.jobs-tree-caret.open {
+  transform: rotate(90deg);
+}
+.jobs-tree-icon {
+  color: var(--dim);
+}
+.jobs-tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jobs-tree-check {
+  color: var(--accent);
+}
+.jobs-device {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 6px;
+  background: var(--hover);
+  color: var(--dim);
+}
+.jobs-tree-row.new input {
+  flex: 1;
+  height: 26px;
+  padding: 0 8px;
+  border-color: var(--accent-solid);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.jobs-tree-state {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 4px 10px;
+  color: var(--faint);
+  line-height: 1.4;
+}
+.jobs-tree-state.error {
+  color: var(--dim);
+}
+.jobs-tree-detail {
+  flex-basis: 100%;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jobs-tree-detail.error {
+  flex-basis: auto;
+  color: var(--danger);
+}
+
+/* ---------------------------------------------------------------- dialog */
+.jobs-dialog {
+  display: grid;
+  gap: 10px;
+}
+.jobs-mode {
+  justify-self: start;
+}
+.jobs-mode button {
+  width: auto;
+  min-width: 64px;
+  height: 26px;
+  padding: 0 14px;
+}
+.jobs-options-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-weight: 600;
+  text-align: left;
+}
+.jobs-options-sum {
+  overflow: hidden;
+  color: var(--faint);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jobs-caret {
+  flex: none;
+  color: var(--faint);
+  transition: transform 0.16s var(--ease);
+}
+.jobs-caret.open {
+  transform: rotate(90deg);
+}
+.jobs-options {
+  display: grid;
+  gap: 10px;
+  padding: 2px 0 2px 18px;
+}
+.jobs-field {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  align-items: center;
+  gap: 10px;
+  color: var(--dim);
+}
+.jobs-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--text);
+}
+.jobs-check input {
+  flex: none;
+  margin: 2px 0 0;
+}
+.jobs-check small {
+  display: block;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+.jobs-summary {
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--dim);
+  line-height: 1.5;
+}
+.jobs-summary strong {
+  color: var(--text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.jobs-summary.bad {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.jobs-summary.bad svg {
+  vertical-align: -2px;
+}
+
+/* ---------------------------------------------------------------- jobs list */
+.jobs-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.jobs-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 8px 6px 8px 8px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+}
+.jobs-row:hover {
+  background: var(--hover);
+}
+.jobs-icon {
+  display: grid;
+  place-items: center;
+  height: 18px;
+  color: var(--faint);
+}
+.jobs-icon.tone-accent {
+  color: var(--accent);
+}
+.jobs-icon.tone-ok {
+  color: var(--ok);
+}
+.jobs-icon.tone-bad {
+  color: var(--danger);
+}
+.jobs-icon.tone-warn {
+  color: var(--warn);
+}
+.pill.warn {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
+}
+.jobs-main {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.jobs-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 18px;
+}
+.jobs-title {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jobs-line .pill {
+  flex: none;
+}
+.jobs-meta {
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.jobs-current {
+  overflow: hidden;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jobs-faint {
+  color: var(--faint);
+  font-family: var(--font);
+}
+.jobs-note {
+  color: var(--dim);
+}
+.jobs-problems {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.jobs-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  width: auto;
+  padding: 0;
+  text-align: left;
+  border: 0;
+  background: none;
+  color: var(--danger);
+  font-weight: 600;
+}
+.jobs-link:hover {
+  text-decoration: underline;
+}
+.jobs-failures {
+  display: grid;
+  gap: 1px;
+  max-height: 180px;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--field);
+}
+.jobs-failures > .btn {
+  justify-self: start;
+}
+.jobs-failure {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 3px 6px;
+  font-size: 11.5px;
+}
+.jobs-failure.muted {
+  display: flex;
+  align-items: center;
+  color: var(--faint);
+}
+.jobs-failure-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jobs-failure-err {
+  overflow: hidden;
+  color: var(--danger);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jobs-row.st-paused .bar > div,
+.jobs-row.st-needsAuth .bar > div,
+.jobs-row.st-waitingNetwork .bar > div {
+  background: var(--faint);
+}
+.jobs-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.jobs-actions .icon-btn {
+  width: 24px;
+  height: 24px;
+}
+.jobs-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 12px;
+  color: var(--faint);
+  line-height: 1.45;
+}
+.jobs-empty svg {
+  flex: none;
+}
+.jobs-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 2px 4px;
+}
+
+/* ---------------------------------------------------------------- narrow screens and phones */
+@media (max-width: 560px) {
+  .jobs-field {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .jobs-options {
+    padding-left: 0;
+  }
+}
+.m-app .jobs-tree {
+  height: min(42vh, 340px);
+}
+.m-app .jobs-tree-row {
+  min-height: 44px;
+  font-size: calc(15 * var(--m-u, 1px));
+}
+.m-app .jobs-mode button {
+  height: 34px;
+}
+/* phones: the title gets the full width and may wrap; the buttons go on their own line */
+.jobs-mobile .jobs-row {
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 6px 12px;
+  padding: 12px 10px 6px;
+  border-radius: 14px;
+  font-size: calc(14 * var(--m-u, 1px));
+}
+.jobs-mobile .jobs-line {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.jobs-mobile .jobs-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.jobs-mobile .jobs-actions {
+  grid-column: 2;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.jobs-mobile .jobs-row:hover {
+  background: none;
+}
+.jobs-mobile .jobs-actions .icon-btn {
+  width: 40px;
+  height: 40px;
+}
+.jobs-mobile .jobs-current {
+  font-size: calc(12 * var(--m-u, 1px));
+}
+.jobs-mobile .jobs-failure {
+  grid-template-columns: 1fr;
+  gap: 0;
+  padding: 6px;
+}
+
+/* ---------------------------------------------------------------- quick confirm (dual pane F5 / F6) */
+.jobs-confirm-what {
+  margin: 0;
+  color: var(--dim);
+  line-height: 1.5;
+}
+.jobs-confirm-what strong {
+  color: var(--text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+/* the connection and root stay put; the folder after them is typed over, like Total Commander */
+.jobs-confirm-path {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 34px;
+  padding: 0 0 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--field);
+}
+.jobs-confirm-path:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.jobs-confirm-fixed {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  padding-right: 4px;
+  color: var(--dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jobs-confirm-path input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px 0 2px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font: inherit;
+}
+
+/* ---------------------------------------------------------------- Activity panel tabs (TransferPanel) */
+.tp-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: -12px;
+}
+.tp-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tp-tabs button:hover {
+  color: var(--text);
+}
+.tp-tabs button.on {
+  background: var(--hover);
+  color: var(--text);
+}
+.tp-tabs button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.tp-list.tp-jobs {
+  max-height: 300px;
+}
+
+/* ---------------------------------------------------------------- phones: the dialog as a screen */
+/* a full-screen layer of the phone's screen stack: the tree takes what the options leave */
+.jobs-screen .m-title h1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jobs-screen-body {
+  flex: 1;
+  min-height: 0;
+  grid-template-rows: auto minmax(220px, 1fr);
+  grid-auto-rows: auto;
+  align-content: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px calc(16px + var(--m-right)) calc(var(--m-bottom) + 92px) calc(16px + var(--m-left));
+  font-size: calc(15 * var(--m-u, 1px));
+}
+.m-app .jobs-screen .jobs-tree {
+  height: auto;
+  min-height: 220px;
+  border-radius: 14px;
+  background: var(--m-card);
+}
+.jobs-screen .jobs-summary {
+  border-radius: 14px;
+  background: var(--m-card);
+  box-shadow: 0 0 0 1px var(--border);
+}
+.jobs-screen .jobs-options-toggle {
+  min-height: 40px;
+  font-size: inherit;
+}
+.jobs-screen .jobs-field select,
+.jobs-screen .jobs-field input {
+  height: 42px;
+  font-size: 16px;
+}
+.jobs-screen .jobs-check input {
+  width: 20px;
+  height: 20px;
+}
+.jobs-screen .jobs-check small {
+  font-size: calc(12.5 * var(--m-u, 1px));
+}
+.m-actionbar.jobs-screen-bar {
+  padding: 10px calc(16px + var(--m-right)) calc(10px + var(--m-bottom)) calc(16px + var(--m-left));
+}
+.m-actionbar.jobs-screen-bar .m-big-btn {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+.jobs-screen-bar .m-big-btn svg {
+  margin-right: 6px;
+}
+/* the Transfers screen's section of copies between connections */
+.m-jobs-section .jobs-panel {
+  margin: 0 12px;
+}

@@ -198,6 +198,7 @@ export function PromptDialog({
   label,
   initial,
   confirmLabel,
+  note,
   onSubmit,
   onClose,
 }: {
@@ -205,6 +206,8 @@ export function PromptDialog({
   label: string;
   initial: string;
   confirmLabel: string;
+  /** a caution under the field (renaming a folder that is copied file by file, say) */
+  note?: string;
   onSubmit: (value: string) => void;
   onClose: () => void;
 }) {
@@ -241,6 +244,12 @@ export function PromptDialog({
               autoCapitalize="off"
             />
           </label>
+          {note && (
+            <p className="hint warn prompt-note">
+              <Icon name="info" size={13} />
+              <span>{note}</span>
+            </p>
+          )}
         </div>
         <div className="modal-foot">
           <button type="button" className="btn" onClick={onClose}>

@@ -73,6 +73,8 @@ pub async fn build<R: Runtime>(
             Ok(if profile.kind == ConnKind::Azblob { Arc::new(dal::azblob(&blob, secret)?) } else { Arc::new(dal::gcs(&blob, secret)?) })
         }
         ConnKind::Unknown => Err("This connection was made by a newer version of Kybl. Update Kybl to open it.".into()),
+        // WP-A2: the sign-in kinds (tokens from the vault, `{id}#oauth`)
+        ConnKind::Gdrive | ConnKind::Onedrive | ConnKind::Dropbox => crate::oauth::open(app, profile),
         // WP-A1 / WP-A2: one arm per kind above this line
         other => Err(format!("{} connections aren't supported by this version of Kybl yet.", other.label())),
     }

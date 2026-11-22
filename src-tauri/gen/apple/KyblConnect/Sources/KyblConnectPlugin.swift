@@ -5,11 +5,15 @@ import WebKit
 
 struct SignInArgs: Decodable {
   let url: String
+  /// The scheme that ends the sign-in: "kybl" (Kybl Storage, OneDrive, and the loopback sign-ins,
+  /// which come back through kybl://oauth/done) or Google's reversed client id.
+  let callbackScheme: String?
 }
 
-/// "Connect Kybl Storage" on iOS (see src/kybl_connect.rs). `signIn` opens the account site in an
-/// ASWebAuthenticationSession sheet and resolves with the `kybl://connect?code=…&state=…` redirect
-/// the page sends back. Closing the sheet without approving resolves with `{cancelled: true}`.
+/// Browser sign-in on iOS: "Connect Kybl Storage" (src/kybl_connect.rs) and the cloud drives
+/// (src/oauth/mod.rs). `signIn` opens the page in an ASWebAuthenticationSession sheet and resolves
+/// with the redirect to `callbackScheme` (`kybl://connect?code=…&state=…` by default). Closing the
+/// sheet without approving resolves with `{cancelled: true}`.
 class KyblConnectPlugin: Plugin, ASWebAuthenticationPresentationContextProviding {
   private var session: ASWebAuthenticationSession?
   private var pending: Invoke?
@@ -24,7 +28,8 @@ class KyblConnectPlugin: Plugin, ASWebAuthenticationPresentationContextProviding
       self.finish(["cancelled": true])
       self.session?.cancel()
       self.pending = invoke
-      let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "kybl") { [weak self] back, error in
+      let scheme = args.callbackScheme.flatMap { $0.isEmpty ? nil : $0 } ?? "kybl"
+      let session = ASWebAuthenticationSession(url: url, callbackURLScheme: scheme) { [weak self] back, error in
         DispatchQueue.main.async {
           guard let self = self, self.pending === invoke else { return }
           self.session = nil

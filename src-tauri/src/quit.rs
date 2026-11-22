@@ -40,7 +40,7 @@ pub fn leaving() -> bool {
 
 /// Transfers and bucket operations still running.
 pub fn busy() -> usize {
-    crate::transfers::active_count() + crate::commands::running_jobs()
+    crate::transfers::active_count() + crate::commands::running_jobs() + crate::jobs::running_count()
 }
 
 /// The prompt's question for `n` things running.
@@ -63,7 +63,8 @@ pub fn request(app: &AppHandle) {
     if quitting() {
         return;
     }
-    let (transfers, jobs) = (crate::transfers::active_count(), crate::commands::running_jobs());
+    // WP-B1: copy/move jobs between connections count as copies (they resume on the next start)
+    let (transfers, jobs) = (crate::transfers::active_count(), crate::commands::running_jobs() + crate::jobs::running_count());
     if transfers + jobs == 0 {
         // failed uploads kept for Retry still hold parts on the server: abort those on the way out
         exit_cleanly(app.clone());

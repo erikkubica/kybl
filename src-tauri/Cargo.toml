@@ -66,17 +66,21 @@ quick-xml = "0.42"
 suppaftp = { version = "13", default-features = false, features = ["tokio-rustls-ring", "deprecated"] }
 russh = { version = "0.65", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "4.0"
-# GCS takes its service account key base64-encoded
-base64 = "0.22"
-
-# WP-E1 two-way sync: the sync state database (sync.db; SQLite is compiled in, also for iOS and
-# Android, where phone backup reuses the planner), paths compared Unicode-normalised (macOS keeps
-# names decomposed), a downloaded file's time set to the remote one, and MD5 to tell an identical
-# copy from a real conflict. md-5 is already in the tree through the S3 client.
+# WP-B1 copying between connections: the job database (jobs.db, and `db.rs` for the other
+# engines' databases; SQLite is compiled in, also for iOS and Android), and Content-MD5 on every
+# part sent to S3 (md-5 is already in the tree through the S3 client; base64 for the header).
 rusqlite = { version = "0.40", features = ["bundled"] }
+md-5 = "0.11"
+# base64: GCS service account keys (WP-A1), the Content-MD5 header (WP-B1), sign-in (WP-A2)
+base64 = "0.22"
+# WP-A2 cloud drives (Google Drive, OneDrive, Dropbox) and their sign-in are hand-written on the
+# reqwest/rustls lines above (one HTTP stack, rustls on ring).
+
+# WP-E1 two-way sync (sync.db goes through rusqlite and md-5 from WP-B1 above): paths compared
+# Unicode-normalised (macOS keeps names decomposed), and a downloaded file's time set to the
+# remote one.
 unicode-normalization = "0.1"
 filetime = "0.2"
-md-5 = "0.11"
 
 # Desktop only: the menu-bar icon, launch at login and two-way folder sync (a phone has no folders
 # to keep in sync and no menu bar).
@@ -87,7 +91,7 @@ notify-debouncer-full = "0.7"
 ignore = "0.4"
 tauri-plugin-autostart = "2"
 trash = "5"
-# WP-A1: the system's trusted roots for WebDAV and FTPS (phones bundle webpki-root-certs below)
+# WP-A1/WP-A2: the system's trusted roots for WebDAV, FTPS and the cloud drive APIs (phones bundle webpki-root-certs below)
 rustls-native-certs = "0.8"
 
 # Phones have no root certificate files for rustls to load: trust Mozilla's root set instead
@@ -125,3 +129,5 @@ strip = true
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
+# WP-A2: a tiny local HTTP server standing in for Drive, Graph, Dropbox and the token endpoints
+hyper = { version = "1", features = ["server", "http1"] }

@@ -24,6 +24,11 @@ pub mod s3;
 pub mod s3_stream;
 pub mod sftp;
 pub mod webdav;
+// WP-A2: cloud drives
+pub mod dropbox;
+pub mod extras;
+pub mod gdrive;
+pub mod onedrive;
 
 use std::{
     fmt,

@@ -390,3 +390,134 @@ export type Capabilities = {
   /** Files are real files on this device: `localPath`, open and reveal work on them. */
   localPaths: boolean;
 };
+
+// ---------------------------------------------------------------- WP-B1: copying between connections (src/jobs)
+
+/**
+ * What to do when a file is already at the destination:
+ * - `skipIdentical` (default): skip it when it has the same size (and the same content hash or a
+ *   time no older than the source's), copy it over otherwise
+ * - `skip`: never touch what is there
+ * - `overwrite`: always replace it
+ * - `keepBoth`: copy next to it as "name (1).ext"
+ * - `newerWins`: replace it only when the source was changed more recently
+ */
+export type JobConflict = "skipIdentical" | "skip" | "overwrite" | "keepBoth" | "newerWins";
+
+/**
+ * A copy or move between any two places, even on different connections (or this device,
+ * LOCAL_ID). `items` are files and folders (`isDir`, path ending with "/") in `src.root`; each
+ * lands inside `dst.dir` under its own name. A folder item with path "" means everything in the
+ * root (its contents go straight into `dst.dir`).
+ */
+export type JobSpec = {
+  /** leave empty: the backend picks one */
+  id?: string;
+  mode: "copy" | "move";
+  src: { profileId: string; root: string; items: { path: string; isDir: boolean }[] };
+  /** `dir` is "" for the top of the root, else ends with "/" */
+  dst: { profileId: string; root: string; dir: string };
+  conflict: JobConflict;
+  /**
+   * `size`: sizes must match. `hash`: also compares content hashes where both sides have one
+   * (S3 uploads are always checked by the server per part, with Content-MD5). Move only deletes
+   * an original once its copy is verified.
+   */
+  verify: "size" | "hash";
+  /** keep modification times where the destination stores them (this device, SFTP) */
+  preserveMtime: boolean;
+  /** names or paths to leave out, with `*`, `?` and `**` (".DS_Store", "node_modules/", "*.tmp") */
+  ignore: string[];
+  /** shown in the jobs list, e.g. "Photos to Kybl Storage"; the backend makes one when empty */
+  title?: string;
+};
+
+export type JobState = "planning" | "running" | "paused" | "waitingNetwork" | "needsAuth" | "done" | "failed" | "cancelled";
+
+/** Event `job-progress`, at most 4 a second per job (and once on every state change). */
+export type JobProgress = {
+  id: string;
+  state: JobState;
+  /** what a running job is doing right now */
+  phase: "planning" | "copying" | "deleting" | "finished";
+  filesDone: number;
+  filesTotal: number;
+  filesFailed: number;
+  filesSkipped: number;
+  bytesDone: number;
+  bytesTotal: number;
+  /** bytes per second, smoothed */
+  rateBps: number;
+  etaSecs: number | null;
+  /** paths being copied right now */
+  current: string[];
+  /** why a job failed or waits (needsAuth, waitingNetwork) */
+  error: string | null;
+};
+
+export type JobSummary = {
+  id: string;
+  title: string;
+  spec: JobSpec;
+  created: number;
+  updated: number;
+  progress: JobProgress;
+};
+
+export type JobFailure = { path: string; error: string };
+
+export const jobsApi = {
+  /** Plans and starts the job right away; resolves to its id. Jobs survive restarts. */
+  jobCreate: (spec: JobSpec) => invoke<string>("job_create", { spec }),
+  /** Every job, newest first, including finished ones until deleted. */
+  jobList: () => invoke<JobSummary[]>("job_list"),
+  jobPause: (id: string) => invoke<void>("job_pause", { id }),
+  jobResume: (id: string) => invoke<void>("job_resume", { id }),
+  /** Stops for good (copies already made stay); unfinished uploads are cleaned up. */
+  jobCancel: (id: string) => invoke<void>("job_cancel", { id }),
+  /** Removes a job that isn't running from the list. */
+  jobDelete: (id: string) => invoke<void>("job_delete", { id }),
+  jobFailures: (id: string, offset = 0, limit = 100) => invoke<JobFailure[]>("job_failures", { id, offset, limit }),
+  /** Puts the failed files back in line and runs the job again. */
+  jobRetryFailed: (id: string) => invoke<void>("job_retry_failed", { id }),
+};
+
+// ---------------------------------------------------------------- WP-A2: cloud drive sign-in
+
+/** The kinds that sign in in the browser (Google Drive, OneDrive, Dropbox). */
+export type CloudKind = "gdrive" | "onedrive" | "dropbox";
+
+/**
+ * "Use your own OAuth app": the user's client ID (and secret, for Google "Desktop" clients).
+ * The secret goes to the vault (`{id}#oauth`), never into the profile.
+ */
+export type OAuthClient = {
+  clientId: string;
+  clientSecret?: string | null;
+  /** Microsoft: a tenant id or domain for apps limited to one organization ("common" when empty). */
+  tenant?: string | null;
+};
+
+/** Payload of the `connection-auth` event (see `CONNECTION_AUTH_EVENT`). */
+export type ConnectionAuthEvent = { profileId: string };
+
+/**
+ * Emitted when a sign-in connection's access is gone for good (revoked, expired, password changed).
+ * Its commands fail until the user reconnects: show "Reconnect", which calls
+ * `oauthStart(kind, flowId, null, profileId)`. See src-tauri/src/oauth/README.md.
+ */
+export const CONNECTION_AUTH_EVENT = "connection-auth";
+
+/**
+ * Signs in to a cloud drive in the browser and saves the connection. Resolves with the new profile
+ * (or, with `replaceId`, the same profile updated: Reconnect keeps the id, open tabs and sync
+ * folders). Rejects with "Cancelled" after `oauthCancel(flowId)`.
+ */
+export const oauthStart = (kind: CloudKind, flowId: string, client?: OAuthClient | null, replaceId?: string | null) =>
+  invoke<Profile>("oauth_start", { kind, flowId, client: client ?? null, replaceId: replaceId ?? null });
+
+/** Stops a sign-in that is waiting for the browser. */
+export const oauthCancel = (flowId: string) => invoke<void>("oauth_cancel", { flowId });
+
+/** Which kinds this build can sign in to on its own; false: show "Needs your own client ID". */
+export const oauthBuiltinClients = () => invoke<Record<CloudKind, boolean>>("oauth_builtin_clients");

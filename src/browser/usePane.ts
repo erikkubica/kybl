@@ -18,6 +18,7 @@ import type { useJobs } from "../useJobs";
 import type { Entry, Profile } from "../types";
 import type { Dialogs } from "../shell/useDialogs";
 import type { Connections } from "../shell/useConnections";
+import type { OpenMigration } from "../shell/useMigrationHost";
 import { useEntries } from "./useEntries";
 import { useLocation } from "./useLocation";
 import { useSelection } from "./useSelection";
@@ -63,6 +64,8 @@ export type PaneEnv = {
   rootLabel?: (profileId: string, root: string) => string;
   /** folders were renamed, moved or deleted (favorites follow) */
   foldersChanged?: (profileId: string, fromBucket: string, toBucket: string, moves: { from: string; to: string | null }[]) => void;
+  /** "Copy to another connection…": opens the job dialog for these items (src/jobs) */
+  openMigration?: OpenMigration;
 };
 
 function usePaneCore(env: PaneEnv) {
@@ -75,7 +78,7 @@ function usePaneCore(env: PaneEnv) {
   const loc = useLocation(env.storageKey);
   const { bucket, prefix } = loc;
   const profile = useMemo(() => profiles.find((p) => p.id === loc.profileId) ?? null, [profiles, loc.profileId]);
-  const here: Loc | null = useMemo(() => (profile && bucket ? { profileId: profile.id, bucket, prefix } : null), [profile, bucket, prefix]);
+  const here: Loc | null = useMemo(() => (profile && bucket != null ? { profileId: profile.id, bucket, prefix } : null), [profile, bucket, prefix]);
   const hereRef = useRef(here);
   hereRef.current = here;
 
@@ -125,7 +128,7 @@ function usePaneCore(env: PaneEnv) {
 
   const navigate = useCallback(
     (p: string, selectKey?: string) => {
-      if (profile && bucket) go(profile, bucket, p, { selectKey });
+      if (profile && bucket != null) go(profile, bucket, p, { selectKey });
     },
     [profile, bucket, go],
   );
@@ -281,7 +284,7 @@ function usePaneCore(env: PaneEnv) {
     profile,
     bucket,
     /** what the root is called on screen (the bucket's name; "Desktop" for a folder of this computer) */
-    bucketLabel: profile && bucket ? (env.rootLabel?.(profile.id, bucket) ?? bucket) : bucket,
+    bucketLabel: profile && bucket != null ? (env.rootLabel?.(profile.id, bucket) ?? bucket) : bucket,
     prefix,
     here,
     history: loc.history,

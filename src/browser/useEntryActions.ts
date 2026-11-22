@@ -3,6 +3,7 @@
  * space, the toolbar's "…" menu, share links, Move to…, Go to folder, favorites, and the command
  * ids the keyboard and the menu bar run (see desktop/useShortcuts).
  */
+import { asExport } from "../connections/native";
 import { createElement } from "react";
 import { api, errMessage } from "../api";
 import { baseName, parentPrefix } from "../format";
@@ -66,7 +67,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   };
 
   const copyLink = async (entry: Entry, secs: number) => {
-    if (!profile || !bucket) return;
+    if (!profile || bucket == null) return;
     try {
       const url = await api.presign(profile.id, bucket, entry.key, secs);
       await navigator.clipboard.writeText(url);
@@ -79,7 +80,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   };
 
   const askMove = (list: Entry[], mode: "move" | "copy" = "move") => {
-    if (!list.length || !profile || !bucket) return;
+    if (!list.length || !profile || bucket == null) return;
     const startPrefix = search ? entryParent(list[0]) : prefix;
     dialogs.show((close) =>
       createElement(MoveDialog, {
@@ -102,7 +103,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     const loc = parseLocation(input, names);
     const b = loc?.bucket ?? bucket;
     if (!loc || !b) return;
-    if (loc.bucket && loc.bucket !== bucket) pane.rememberAfterListing.current = { profileId: profile.id, bucket: loc.bucket };
+    if (loc.bucket != null && loc.bucket !== bucket) pane.rememberAfterListing.current = { profileId: profile.id, bucket: loc.bucket };
     let pre = loc.prefix;
     if (pre && !pre.endsWith("/")) {
       // the path of a file opens its folder with the file selected
@@ -117,11 +118,11 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     pane.go(profile, b, pre);
   };
   const askGoTo = () => {
-    if (!bucket) return;
+    if (bucket == null) return;
     dialogs.show((close) => createElement(GoToDialog, { bucket, prefix, onGo: goToPath, onClose: close }));
   };
   const askSync = (pre: string) => {
-    if (!profile || !bucket) return;
+    if (!profile || bucket == null) return;
     const [pid, b] = [profile.id, bucket];
     dialogs.show((close) =>
       createElement(SyncThisFolder, {
@@ -135,6 +136,24 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     );
   };
 
+  /** "Copy to another connection…": a background job to any connection or this computer. */
+  const migrate = (list: Entry[], mode: "copy" | "move") => {
+    if (!profile || bucket == null || !list.length || !env.openMigration) return;
+    env.openMigration(
+      {
+        profileId: profile.id,
+        root: bucket,
+        items: list.map((e) => ({ path: e.key, isDir: e.kind === "folder", size: e.kind === "folder" ? undefined : e.size })),
+      },
+      mode,
+    );
+  };
+  /** The folder on screen, or the whole root at its top, to another connection. */
+  const migrateHere = () => {
+    if (!profile || bucket == null || !env.openMigration) return;
+    env.openMigration({ profileId: profile.id, root: bucket, items: [{ path: prefix, isDir: true }] }, "copy");
+  };
+
   // ------------------------------------------------------------ favorites
   const favoriteOf = (pid: string, b: string, pre: string) => settings.favorites.find((f) => f.profileId === pid && f.bucket === b && f.prefix === pre);
   const removeFavorite = (f: Favorite) =>
@@ -146,7 +165,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       removeFavorite(have);
       return;
     }
-    const name = pre ? baseName(pre) : b;
+    const name = pre ? baseName(pre) : (env.rootLabel?.(profile.id, b) ?? b);
     env.updateSettings({ favorites: [...settings.favorites, { profileId: profile.id, bucket: b, prefix: pre, name }] });
     toast("success", `Added “${name}” to favorites`);
   };
@@ -166,12 +185,13 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
 
   /** What applies to the folder on screen: from the empty-space menu and the toolbar's "…". */
   const placeItems = (): (MenuItem | false)[] =>
-    !profile || !bucket
+    !profile || bucket == null
       ? []
       : [
           { type: "item", label: "Calculate folder size", icon: "info", onClick: () => calcSizes([prefix]) },
           favoriteItem(bucket, prefix),
           !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(prefix) },
+          !!env.openMigration && { type: "item", label: prefix ? "Copy this folder to another connection…" : "Copy everything to another connection…", icon: "copy", onClick: migrateHere },
           isS3 && { type: "item", label: "Copy S3 URI", icon: "copy", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") },
           onDisk && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: settings.showHiddenFiles, onClick: toggleHidden },
           { type: "sep" },
@@ -182,7 +202,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   const selectAll = () => sel.setSelected(new Set(entries.map((e) => e.key)));
 
   const onBackgroundContext = (ev: React.MouseEvent) => {
-    if (!profile || !bucket) return;
+    if (!profile || bucket == null) return;
     const clip = clipFor();
     dialogs.menu(
       ev.clientX,
@@ -210,7 +230,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   };
 
   const onContext = (ev: React.MouseEvent, e: Entry) => {
-    if (!profile || !bucket) return;
+    if (!profile || bucket == null) return;
     const list = selected.has(e.key) ? selectedEntries : [e];
     if (!selected.has(e.key)) sel.selectOnly(e.key);
     const one = list.length === 1;
@@ -225,7 +245,9 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       one && e.kind === "file" && env.canOpenDocument?.(e) && { type: "item", label: "Open in Default App", icon: "external", onClick: () => void ops.openInApp(e) },
       one && e.kind === "file" && { type: "item", label: "Quick Look", icon: "eye", hint: "Space", onClick: () => pane.setQuick(e.key) },
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => pane.navigate(entryParent(e), e.key) },
-      { type: "item", label: "Download", icon: "download", hint: "⇧⌘D", onClick: () => ops.downloadEntries(list, relBase) },
+      { type: "item", label: one && e.native?.exports.length ? `Download as ${e.native.exports[0].label}` : "Download", icon: "download", hint: "⇧⌘D", onClick: () => ops.downloadEntries(list, relBase) },
+      // a Google Doc / Sheet / Slides: its other formats (PDF…)
+      ...(one ? (e.native?.exports.slice(1) ?? []) : []).map((x) => ({ type: "item" as const, label: `Download as ${x.label}`, icon: "download" as const, onClick: () => ops.downloadEntries([asExport(e, x.ext) ?? e], relBase) })),
       canShare && { type: "item", label: `Copy share link (${expiryLabel(settings.linkExpiry)})`, icon: "link", disabled: !(one && e.kind === "file"), onClick: () => copyLink(e, settings.linkExpiry) },
       isS3 && { type: "item", label: "Copy S3 URI", icon: "copy", disabled: !one, onClick: () => copyText(`s3://${bucket}/${e.key}`, "S3 URI") },
       { type: "sep" },
@@ -234,6 +256,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       folder && clip && { type: "item", label: `Paste into “${e.name}”`, icon: "copy", onClick: () => ops.paste(e.key) },
       { type: "item", label: "Move to…", icon: "move", onClick: () => askMove(list, "move") },
       { type: "item", label: "Copy to…", icon: "copy", onClick: () => askMove(list, "copy") },
+      !!env.openMigration && { type: "item", label: "Copy to another connection…", icon: "copy", onClick: () => migrate(list, "copy") },
+      !!env.openMigration && { type: "item", label: "Move to another connection…", icon: "move", onClick: () => migrate(list, "move") },
       ...(env.extraItemItems?.(list) ?? []),
       !!prefix && !search && {
         type: "item",
@@ -281,7 +305,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     "go-up": () => void pane.goUp(),
     back: () => pane.historyStep(-1),
     forward: () => pane.historyStep(1),
-    "go-to": () => bucket && askGoTo(),
+    "go-to": () => bucket != null && askGoTo(),
     search: focusSearch,
     "select-all": selectAll,
     delete: () => selectedEntries.length && ops.askDelete(selectedEntries),
@@ -304,6 +328,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     copyLink,
     canShare,
     askMove,
+    migrate,
     askGoTo,
     calcSizes,
     removeFavorite,

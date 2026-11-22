@@ -56,6 +56,8 @@ export function BrowserPane(p: BrowserPaneProps) {
   const onSort = (key: SortKey) => setSort(sort.key === key ? { key, dir: sort.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
   const listLoading = search ? search.running && !search.stopped && entries.length === 0 : lst.loading || !fresh;
   const listError = ent.listError;
+  /** what this connection can't show: storage classes */
+  const noClass = !!pane.caps && !pane.caps.storageClass;
   const clearSel = () => sel.setSelected(new Set());
   const uploadFiles = () => void ops.pickAndUpload(false);
   const newFolder = () => ops.askNewFolder();
@@ -86,7 +88,7 @@ export function BrowserPane(p: BrowserPaneProps) {
         searchRunning={!!search?.running && !search.stopped}
         query={ent.query}
         searchInput={pane.searchInput}
-        disabled={!profile || !bucket}
+        disabled={!profile || bucket == null}
         working={working}
         view={pane.view}
         compact={p.compact}
@@ -128,8 +130,8 @@ export function BrowserPane(p: BrowserPaneProps) {
       <div className="content" style={p.contentStyle}>
         <div className={`pane ${p.compact ? "compact" : ""}`}>
           {!profile && <Welcome actions={p.empty} />}
-          {profile && !bucket && <ChooseBucket profile={profile} note={p.bucketNote} reconnect={p.bucketReconnect} actions={p.empty} />}
-          {profile && bucket && (
+          {profile && bucket == null && <ChooseBucket profile={profile} note={p.bucketNote} reconnect={p.bucketReconnect} actions={p.empty} />}
+          {profile && bucket != null && (
             <>
               {listError && entries.length === 0 && !search ? (
                 <ListError profile={profile} error={listError} onRetry={ent.refresh} onReconnect={p.empty.onReconnect} />
@@ -171,8 +173,12 @@ export function BrowserPane(p: BrowserPaneProps) {
                   hasMore={ent.hasMore}
                   searchMode={!!search || !!filter}
                   prefix={search ? search.loc.prefix : prefix}
-                  columns={settings.columns}
-                  onColumnsChange={(columns) => p.updateSettings({ columns })}
+                  // connections without storage classes (servers, drives, this computer) leave that column out;
+                  // the setting keeps it for the connections that have them
+                  columns={noClass ? settings.columns.filter((c) => c !== "storageClass") : settings.columns}
+                  onColumnsChange={(columns) =>
+                    p.updateSettings({ columns: noClass && settings.columns.includes("storageClass") && !columns.includes("storageClass") ? [...columns, "storageClass"] : columns })
+                  }
                   autoFocus={active}
                   onUpload={uploadFiles}
                   onNewFolder={newFolder}
@@ -208,7 +214,7 @@ export function BrowserPane(p: BrowserPaneProps) {
         {p.aside}
       </div>
 
-      {pane.quick && pane.quickIndex >= 0 && profile && bucket && (
+      {pane.quick && pane.quickIndex >= 0 && profile && bucket != null && (
         <QuickLook
           profileId={profile.id}
           bucket={bucket}

@@ -3,12 +3,13 @@
  * lists and the buckets someone chose to hide. Panes only read these; opening a place in a pane
  * goes through the shell.
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errMessage, errSummary } from "../api";
 import { KYBL, isRevokedKey } from "../kybl";
 import { LS } from "../browser/types";
 import type { BucketList } from "../components/Sidebar";
 import type { Profile } from "../types";
+import { setConnectionNames, setRootNames, useRootName, usesListRoots } from "../connections/roots";
 
 const EXPANDED_KEY = "s3b.expanded";
 export function loadExpanded(): Set<string> {
@@ -37,10 +38,9 @@ export function useConnections() {
   const [bucketsBy, setBucketsBy] = useState<Record<string, BucketList>>({});
   const [expanded, setExpanded] = useState<Set<string>>(loadExpanded);
   const [hiddenBuckets, setHiddenBuckets] = useState<Record<string, string[]>>(loadHidden);
-  // display names of roots whose id isn't one (this computer's folders: id = absolute path)
-  const [rootNames, setRootNames] = useState<Record<string, Record<string, string>>>({});
-  /** What to call a root (bucket) on screen. */
-  const rootLabel = useCallback((profileId: string, root: string) => rootNames[profileId]?.[root] ?? root, [rootNames]);
+  /** What to call a root (bucket) on screen: names of roots whose id isn't one (paths, drive ids, a server's ""). */
+  const rootLabel = useRootName();
+  useEffect(() => setConnectionNames(profiles), [profiles]);
 
   const setBucketHidden = useCallback((p: Profile, name: string, hide: boolean) => {
     setHiddenBuckets((cur) => {
@@ -73,11 +73,11 @@ export function useConnections() {
     let note: string | null = null;
     let reconnect = false;
     try {
-      if (p.kind && p.kind !== "s3") {
+      if (usesListRoots(p)) {
         // other kinds name their roots ("Home" for /Users/me): the id stays what commands take
         const roots = await api.listRoots(p.id);
         names = roots.map((r) => r.id);
-        setRootNames((m) => ({ ...m, [p.id]: Object.fromEntries(roots.map((r) => [r.id, r.name])) }));
+        setRootNames(p.id, roots);
       } else names = (await api.listBuckets(p.id)).map((b) => b.name);
     } catch (e) {
       const msg = errMessage(e);

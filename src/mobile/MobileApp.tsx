@@ -7,6 +7,7 @@
  * gesture / button (or a swipe from the left edge on iPhone) walks back up. Tablets (≥ 900 × 600):
  * connections in a sidebar, files in the middle, details in a panel on the right, like the desktop.
  */
+import { asExport } from "../connections/native";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage, errSummary } from "../api";
@@ -35,7 +36,8 @@ import { Viewer } from "./Viewer";
 import { Lockup, Mascot } from "./Mascot";
 import { Layer, Presence, useCollapsed, useWide } from "./ui";
 import { FileList } from "./FileList";
-import { Connections, HomeScreen, addKind, type Buckets } from "./Home";
+import { Connections, HomeScreen, addKind, rootWord, type Buckets } from "./Home";
+import { rootsMode } from "../connections/roots";
 import { FolderInfo } from "./FolderInfo";
 import { DestinationScreen, type SharedFile } from "./DestinationScreen";
 import { PullIndicator, useEdgeSwipe, usePullToRefresh } from "./gestures";
@@ -46,11 +48,15 @@ import { locKey, useListing, type Loc } from "./useListing";
 import { useKeyboardFit, useSystemBack } from "./useSystemBack";
 import { SHEETS, SWIPEABLE, layerElement, layerZ, useLayerStack, type LayerId } from "./layers";
 import { DocScreen } from "./DocScreen";
-import { connName, isLocal } from "./connName";
+import { ON_DEVICE, connName, isLocal } from "./connName";
+import { rootName, setConnectionNames, setRootNames, useRootName, usesListRoots } from "../connections/roots";
+import { clearAuthNeeded, useAuthNeeded } from "../connections/authNeeded";
 import { LockScreen, useAppLock } from "./AppLock";
 import { canView, viewerFor } from "../viewers/registry";
 import type { DocumentHandle } from "../viewers/DocumentView";
-import { capsFor, useCaps } from "../useCaps";
+import { capsFor, forgetCaps, peekCaps, useCaps } from "../useCaps";
+import { MigrationDialog, type MigrationSource } from "../jobs";
+import { useMigrate } from "./useMigrate";
 import "../styles.css";
 import "./mobile.css";
 
@@ -93,7 +99,7 @@ const sameLoc = (a: Loc, b: Loc) => a.profileId === b.profileId && a.bucket === 
 const isMedia = (e: Entry) => e.kind === "file" && ((classify(e.name) === "image" && isWebImage(e.name)) || classify(e.name) === "video");
 /** Documents (text, code, Markdown, CSV, Office files) open in the app's own document screen; photos keep the viewer. */
 const opensAsDoc = (e: Entry) => e.kind === "file" && canView(e.name, e.size) && (viewerFor(e.name)?.kind !== "image" || !isMedia(e));
-const toEntry = (o: ObjInfo): Entry => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass });
+const toEntry = (o: ObjInfo): Entry => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native });
 
 /** Where downloads land, in the words people see in their Files app. */
 function friendlyFolder(path: string): string {
@@ -136,6 +142,10 @@ export default function MobileApp() {
   const wide = useWide();
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
   const [profilesError, setProfilesError] = useState<string | null>(null);
+  const listed = useMemo(() => (profiles ? [...profiles, ON_DEVICE] : null), [profiles]);
+  useEffect(() => setConnectionNames(profiles ?? []), [profiles]);
+  /** what a root is called on screen (drive ids, this device's paths, a server's "") */
+  const rootLabel = useRootName();
   const [buckets, setBuckets] = useState<Record<string, Buckets>>({});
   const [loc, setLoc] = useState<Loc | null>(null);
   const [nav, setNav] = useState<"in" | "out">("in");
@@ -177,16 +187,19 @@ export default function MobileApp() {
   const [transfersOpen, setTransfersOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const openTransfers = useCallback(() => setTransfersOpen(true), []);
-  const [connDialog, setConnDialog] = useState<{ profile: Profile | null } | null>(null);
+  const [connDialog, setConnDialog] = useState<{ profile: Profile | null; reconnect?: boolean } | null>(null);
   const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
   /** Kybl Storage connections have their own editor: there are no keys to edit. */
   const editProfile = useCallback((p: Profile) => {
     if (p.provider === KYBL) setKyblDialog({ existing: p });
     else setConnDialog({ profile: p });
   }, []);
+  /** A Google Drive / OneDrive / Dropbox connection whose access ended: sign in again, same id. */
+  const signInAgain = useCallback((p: Profile) => setConnDialog({ profile: p, reconnect: true }), []);
+  const authNeeded = useAuthNeeded();
   const connectKybl = useCallback(() => setKyblDialog({ existing: null }), []);
   const [confirm, setConfirm] = useState<null | { title: string; message: React.ReactNode; label: string; danger?: boolean; run: () => void }>(null);
-  const [prompt, setPrompt] = useState<null | { title: string; label: string; initial: string; confirmLabel: string; run: (v: string) => void }>(null);
+  const [prompt, setPrompt] = useState<null | { title: string; label: string; initial: string; confirmLabel: string; note?: string; run: (v: string) => void }>(null);
   const [moveDialog, setMoveDialog] = useState<null | { items: Entry[]; mode: "move" | "copy" }>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -336,24 +349,25 @@ export default function MobileApp() {
     const caps = await capsFor(p.id).catch(() => null);
     const add: Buckets["add"] = caps ? (caps.createRoot ? "new" : caps.roots === "buckets" ? "open" : null) : undefined;
     try {
-      if (isLocal(p)) {
-        // this phone's own folders: ids are paths, so they carry names to show
+      if (usesListRoots(p)) {
+        // this phone's folders (ids are paths), drives (ids), a server's one root (""): named roots
         const roots = await api.listRoots(p.id);
         names = roots.map((r) => r.id);
         labels = Object.fromEntries(roots.map((r) => [r.id, r.name]));
+        setRootNames(p.id, roots);
       } else names = (await api.listBuckets(p.id)).map((b) => b.name);
     } catch (e) {
       const msg = errMessage(e);
       revoked = p.provider === KYBL && isRevokedKey(msg);
       note = revoked
         ? REVOKED_SAY
-        : /access denied|not allowed/i.test(msg)
+        : /access denied|not allowed/i.test(msg) && !usesListRoots(p)
           ? "This key can't list buckets. Open one by its name below."
           : errSummary(msg);
     }
     if (p.bucket && !names.includes(p.bucket)) names = [p.bucket, ...names];
     // buckets opened by name stay with the connection (a key may reach buckets it cannot list)
-    for (const b of readJson<Record<string, string[]>>("m.extraBuckets", {})[p.id] ?? []) if (!names.includes(b)) names.push(b);
+    if (!usesListRoots(p)) for (const b of readJson<Record<string, string[]>>("m.extraBuckets", {})[p.id] ?? []) if (!names.includes(b)) names.push(b);
     setBuckets((m) => ({ ...m, [p.id]: { names, labels, add, note: names.length && !revoked ? null : note, loading: false, revoked } }));
     return names;
   }, []);
@@ -374,12 +388,13 @@ export default function MobileApp() {
   const startup = useCallback(async (restore: boolean) => {
     const list = await reloadProfiles();
     if (!list) return;
-    for (const p of list) loadBuckets(p);
+    const all = [...list, ON_DEVICE];
+    for (const p of all) loadBuckets(p);
     // forget recent places of connections that are gone
-    setRecent((r) => r.filter((x) => list.some((p) => p.id === x.profileId)));
+    setRecent((r) => r.filter((x) => all.some((p) => p.id === x.profileId)));
     if (!restore) return;
     const last = readJson<Loc | null>("m.last", null);
-    if (last && list.some((p) => p.id === last.profileId)) go(last);
+    if (last && all.some((p) => p.id === last.profileId)) go(last);
   }, [reloadProfiles, loadBuckets, go]);
 
   useEffect(() => {
@@ -409,6 +424,16 @@ export default function MobileApp() {
     [transfers, changed, toast],
   );
 
+  // copies between connections (src/jobs): the screen that starts one, and what happens when one ends
+  const mig = useMigrate({ toast, changed, openTransfers });
+  /** "Copy to another connection…" for entries of the bucket on screen */
+  const migrateEntries = (list: Entry[], mode: "copy" | "move" = "copy") =>
+    loc &&
+    mig.open(
+      { profileId: loc.profileId, root: loc.bucket, items: list.map((e) => ({ path: e.key, isDir: e.kind === "folder", size: e.kind === "folder" ? undefined : e.size })) },
+      mode,
+    );
+
   // a transfer notification was tapped
   useEffect(() => {
     const off = listen("open-transfers", openTransfers);
@@ -433,9 +458,9 @@ export default function MobileApp() {
   // ------------------------------------------------------------ network
   const refreshAll = useCallback(() => {
     if (locRef.current) void reloadListing({ quiet: true });
-    for (const p of profiles ?? []) if (buckets[p.id]?.note && !buckets[p.id]?.revoked) loadBuckets(p);
+    for (const p of listed ?? []) if (buckets[p.id]?.note && !buckets[p.id]?.revoked) loadBuckets(p);
     if (profilesError) void startup(false);
-  }, [reloadListing, profiles, buckets, loadBuckets, profilesError, startup]);
+  }, [reloadListing, listed, buckets, loadBuckets, profilesError, startup]);
   const net = useNetwork(() => refreshAll());
   const offline = !net.online || (!!lst.error && isNetworkError(lst.error));
   useEffect(() => syncThumbPause(prefs, net), [prefs, net]);
@@ -528,6 +553,7 @@ export default function MobileApp() {
     folderInfo: !!folderInfo && !!loc,
     sheet: !!sheet,
     move: !!moveDialog && !!loc,
+    migrate: !!mig.migrate,
     prompt: !!prompt,
     confirm: !!confirm,
     conn: !!connDialog,
@@ -542,6 +568,7 @@ export default function MobileApp() {
     kybl: () => setKyblDialog(null),
     conn: () => setConnDialog(null),
     move: () => setMoveDialog(null),
+    migrate: mig.close,
     sheet: () => setSheet(null),
     folderInfo: () => setFolderInfo(null),
     // "Upload to…" walks back up the folders it went into, then closes
@@ -660,7 +687,7 @@ export default function MobileApp() {
   const isFavorite = (l: Loc) => favorites.some((f) => sameLoc(f, l));
   const setFavorite = (l: Loc, on: boolean) => {
     const rest = favorites.filter((f) => !sameLoc(f, l));
-    const name = l.prefix ? baseName(l.prefix) : l.bucket;
+    const name = l.prefix ? baseName(l.prefix) : rootName(l.profileId, l.bucket);
     const next: Favorite[] = on ? [...rest, { ...l, name }] : rest;
     updateSettings({ ...settings, favorites: next });
     void api.haptic("success");
@@ -677,7 +704,9 @@ export default function MobileApp() {
       // photos and documents open full screen: their details (size, link, properties) are here
       if (detail?.key !== e.key) items.push({ icon: "info", label: "Info", run: () => setDetail(e) });
     }
-    items.push({ icon: "download", label: e.kind === "folder" ? "Download folder" : "Download", run: () => ops.download([e]) });
+    items.push({ icon: "download", label: e.kind === "folder" ? "Download folder" : e.native?.exports.length ? `Download as ${e.native.exports[0].label}` : "Download", run: () => ops.download([e]) });
+    // a Google Doc / Sheet / Slides: its other formats (PDF…)
+    for (const x of e.native?.exports.slice(1) ?? []) items.push({ icon: "download", label: `Download as ${x.label}`, run: () => ops.download([asExport(e, x.ext) ?? e]) });
     if (e.kind === "folder") {
       const at = loc && { ...loc, prefix: e.key };
       items.push({ icon: "info", label: "Info", run: () => setFolderInfo({ prefix: e.key, name: e.name }) });
@@ -686,6 +715,7 @@ export default function MobileApp() {
     items.push(
       { icon: "edit", label: "Rename", run: () => ops.askRename(e) },
       { icon: "move", label: "Move or copy…", run: () => setMoveDialog({ items: [e], mode: "move" }) },
+      { icon: "copy", label: "Copy to another connection…", run: () => migrateEntries([e]) },
       { icon: "check", label: "Select", run: () => select(e) },
       { icon: "trash", label: "Delete", danger: true, run: () => ops.askDelete([e]) },
     );
@@ -770,7 +800,10 @@ export default function MobileApp() {
   const selectionMore = () => {
     const list = selectedEntries;
     if (list.length === 1) return setSheet({ title: list[0].name, items: entryActions(list[0]).filter((i) => i.label !== "Select") });
-    const items: SheetItem[] = [{ icon: "copy", label: "Copy to…", run: () => setMoveDialog({ items: list, mode: "copy" }) }];
+    const items: SheetItem[] = [
+      { icon: "copy", label: "Copy to…", run: () => setMoveDialog({ items: list, mode: "copy" }) },
+      { icon: "copy", label: "Copy to another connection…", run: () => migrateEntries(list) },
+    ];
     if (PHONE_OS && list.some(isPhoto)) items.push({ icon: "photos", label: "Save to Photos", run: () => ops.saveToPhotos(list) });
     setSheet({ title: `${list.length} selected`, items });
   };
@@ -801,7 +834,7 @@ export default function MobileApp() {
   const offerThumbs = !askedThumbs && !settings.listThumbs && photoFolder && !search && media.some((m) => canThumb(m));
 
   // ------------------------------------------------------------ render
-  const title = loc ? (loc.prefix ? baseName(loc.prefix) : loc.bucket) : "Kybl";
+  const title = loc ? (loc.prefix ? baseName(loc.prefix) : rootLabel(loc.profileId, loc.bucket)) : "Kybl";
   const [heroRef, collapsed] = useCollapsed<HTMLDivElement>(`${here}${!!search}`);
 
   const moreSheet = () => {
@@ -812,6 +845,11 @@ export default function MobileApp() {
       { icon: "refresh", label: "Refresh", run: () => void reloadListing({ quiet: true }) },
       isFavorite(loc) ? { icon: "star-fill", label: "Remove from Favorites", run: () => setFavorite(loc, false) } : { icon: "star", label: "Add to Favorites", run: () => setFavorite(loc, true) },
       { icon: "info", label: loc.prefix ? "Folder info" : "Bucket info", run: () => setFolderInfo({ prefix: loc.prefix, name: title }) },
+      {
+        icon: "copy",
+        label: loc.prefix ? "Copy to another connection…" : "Copy everything to another connection…",
+        run: () => mig.open({ profileId: loc.profileId, root: loc.bucket, items: [{ path: loc.prefix, isDir: true }] }),
+      },
     ];
     setSheet({ title, items });
   };
@@ -887,7 +925,7 @@ export default function MobileApp() {
             </button>
           )}
           <div className="m-bar-path">
-            <Breadcrumbs compact={!wide} bucket={loc.bucket} parts={loc.prefix.split("/").filter(Boolean)} onNavigate={(prefix) => go({ ...loc, prefix }, "out")} />
+            <Breadcrumbs compact={!wide} bucket={loc.bucket} label={rootLabel(loc.profileId, loc.bucket)} parts={loc.prefix.split("/").filter(Boolean)} onNavigate={(prefix) => go({ ...loc, prefix }, "out")} />
           </div>
           <button className="m-icon" onClick={() => setSearchOpen(true)} aria-label="Search">
             <Icon name="search" size={20} />
@@ -1152,7 +1190,7 @@ export default function MobileApp() {
 
   const connections = (
     <Connections
-      profiles={profiles}
+      profiles={listed}
       error={profilesError}
       buckets={buckets}
       current={loc}
@@ -1163,24 +1201,41 @@ export default function MobileApp() {
       onAdd={() => setConnDialog({ profile: null })}
       onConnMenu={(p) => {
         const add = addKind(p, buckets[p.id]);
+        const caps = peekCaps(p.id);
+        const single = rootsMode(p, caps) === "single";
+        const words = rootWord(p, caps, true);
         const items: SheetItem[] = [];
+        if (authNeeded.has(p.id)) items.push({ icon: "refresh", label: "Sign in again", run: () => signInAgain(p) });
         // this phone's own folder has nothing to edit
         if (!isLocal(p)) items.push({ icon: "edit", label: "Edit connection", run: () => editProfile(p) });
-        items.push({ icon: "eye", label: "Choose buckets to show", run: () => setChoosing(p.id) });
+        if (single) items.push({ icon: "folder", label: "Open", run: () => go({ profileId: p.id, bucket: "", prefix: "" }) });
+        else items.push({ icon: "eye", label: `Choose ${words} to show`, run: () => setChoosing(p.id) });
         if (add === "new") items.push({ icon: "plus", label: "New bucket", run: () => askNewBucket(p) });
         else if (add === "open") items.push({ icon: "bucket", label: "Open bucket by name", run: () => askBucketName(p) });
-        items.push({ icon: "refresh", label: "Refresh buckets", run: () => void loadBuckets(p) });
+        if (!single) items.push({ icon: "refresh", label: `Refresh ${words}`, run: () => void loadBuckets(p) });
+        // everything this connection shows, each bucket into a folder of its own name
+        const shown = (buckets[p.id]?.names ?? []).filter((b) => !(hiddenBuckets[p.id] ?? []).includes(b));
+        if (!isLocal(p) && shown.length > 0) {
+          const source: MigrationSource =
+            shown.length === 1
+              ? { profileId: p.id, root: shown[0], items: [{ path: "", isDir: true }] }
+              : { profileId: p.id, root: shown[0], items: [], roots: shown.map((b) => ({ id: b, name: buckets[p.id]?.labels?.[b] ?? rootName(p.id, b) })) };
+          items.push({ icon: "copy", label: "Copy everything to…", run: () => mig.open(source) });
+        }
         setSheet({ title: connName(p), items });
       }}
       onAddBucket={(p) => (addKind(p, buckets[p.id]) === "new" ? askNewBucket(p) : askBucketName(p))}
       onReconnect={(p) => setKyblDialog({ existing: p, reconnect: true })}
+      authNeeded={authNeeded}
+      onSignInAgain={signInAgain}
       hidden={hiddenBuckets}
       onBucketMenu={(p, b, hidden) =>
         setSheet({
-          title: b,
+          title: rootName(p.id, b),
           items: [
             hidden ? { icon: "eye", label: "Show in the list", run: () => setBucketHidden(p, b, false) } : { icon: "eye-off", label: "Hide from the list", run: () => setBucketHidden(p, b, true) },
-            { icon: "eye", label: "Choose buckets to show", run: () => setChoosing(p.id) },
+            { icon: "eye", label: `Choose ${rootWord(p, peekCaps(p.id), true)} to show`, run: () => setChoosing(p.id) },
+            { icon: "copy", label: "Copy everything to…", run: () => mig.open({ profileId: p.id, root: b, items: [{ path: "", isDir: true }] }) },
           ],
         })
       }
@@ -1327,7 +1382,8 @@ export default function MobileApp() {
             browse
           ) : (
             <HomeScreen
-              profiles={profiles}
+              profiles={listed}
+              firstRun={profiles !== null && profiles.length === 0 && !profilesError}
               error={profilesError}
               recent={recent}
               favorites={favorites}
@@ -1421,7 +1477,28 @@ export default function MobileApp() {
       </Presence>
 
       <Presence show={transfersOpen} layer="transfers" z={z("transfers")}>
-        <TransfersScreen onBack={() => backRef.current()} transfers={transfers} savedWhere={savedWhere} onOpenFile={(p) => api.openLocal(p).catch((e) => toast("error", errSummary(errMessage(e))))} />
+        <TransfersScreen
+          onBack={() => backRef.current()}
+          transfers={transfers}
+          savedWhere={savedWhere}
+          onOpenFile={(p) => api.openLocal(p).catch((e) => toast("error", errSummary(errMessage(e))))}
+          onOpenPlace={(l) => {
+            setTransfersOpen(false);
+            go({ profileId: l.profileId, bucket: l.root, prefix: l.dir });
+          }}
+        />
+      </Presence>
+      <Presence show={!!mig.migrate} layer="migrate" z={z("migrate")}>
+        {mig.migrate && (
+          <MigrationDialog
+            key={mig.migrate.key}
+            variant="screen"
+            source={mig.migrate.source}
+            initialMode={mig.migrate.mode}
+            onClose={mig.close}
+            onStarted={(_id, spec) => mig.started(spec.mode)}
+          />
+        )}
       </Presence>
       <Presence show={settingsOpen} layer="settings" z={z("settings")}>
         <SettingsScreen
@@ -1504,6 +1581,7 @@ export default function MobileApp() {
         <Layer id="conn" z={z("conn")}>
           <ConnectionDialog
             initial={connDialog.profile}
+            reconnect={connDialog.reconnect}
             onClose={() => setConnDialog(null)}
             onKybl={() => {
               setConnDialog(null);
@@ -1512,11 +1590,19 @@ export default function MobileApp() {
             kyblFirst={!profiles?.some((p) => p.provider === KYBL)}
             onSaved={async (p) => {
               setConnDialog(null);
+              forgetCaps(p.id);
+              clearAuthNeeded(p.id);
               await reloadProfiles();
-              loadBuckets(p);
+              await loadBuckets(p);
+              // a server has one root: open it, as the desktop does after saving
+              if (rootsMode(p, await capsFor(p.id).catch(() => null)) === "single") go({ profileId: p.id, bucket: "", prefix: "" });
+              // a sign-in done again: the folder on screen loads now
+              else if (locRef.current?.profileId === p.id) void reloadListing({ quiet: true });
             }}
             onDeleted={async (id) => {
               setConnDialog(null);
+              forgetCaps(id);
+              clearAuthNeeded(id);
               if (loc?.profileId === id) go(null, "out");
               await reloadProfiles();
             }}
@@ -1563,6 +1649,7 @@ export default function MobileApp() {
             label={prompt.label}
             initial={prompt.initial}
             confirmLabel={prompt.confirmLabel}
+            note={prompt.note}
             onSubmit={(v) => {
               const run = prompt.run;
               setPrompt(null);

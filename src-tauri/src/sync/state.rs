@@ -18,7 +18,6 @@ use std::{
     collections::{HashMap, HashSet},
     path::Path,
     sync::Mutex,
-    time::Duration,
 };
 
 use rusqlite::{params, Connection, OptionalExtension};
@@ -52,31 +51,6 @@ CREATE TABLE conflicts(
     PRIMARY KEY(mapping_id, copy)
 ) WITHOUT ROWID;
 "];
-
-/// Opens a database and brings its schema up to date: migration `n` runs once, when `PRAGMA
-/// user_version` is below `n`, in a transaction that also bumps the version. A file from a newer
-/// Kybl is refused rather than written with an older schema.
-///
-/// The same helper as the job engine's `db::open` (WP-B1); once both have landed this can call
-/// that one instead.
-fn open_with(conn: &mut Connection, migrations: &[&str]) -> Result<(), String> {
-    let e = |e: rusqlite::Error| format!("Couldn't open the sync database: {e}");
-    conn.busy_timeout(Duration::from_secs(5)).map_err(e)?;
-    // answers the new mode ("memory" for in-memory databases), so read it as a row
-    conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(())).map_err(e)?;
-    conn.execute_batch("PRAGMA synchronous = NORMAL;").map_err(e)?;
-    let have: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(e)?;
-    if have > migrations.len() as i64 {
-        return Err("The sync database was made by a newer version of Kybl. Update Kybl to sync these folders.".into());
-    }
-    for (i, sql) in migrations.iter().enumerate().skip(have as usize) {
-        let tx = conn.transaction().map_err(e)?;
-        tx.execute_batch(sql).map_err(|err| format!("Sync database upgrade {} failed: {err}", i + 1))?;
-        tx.execute_batch(&format!("PRAGMA user_version = {}", i + 1)).map_err(e)?;
-        tx.commit().map_err(e)?;
-    }
-    Ok(())
-}
 
 fn db_err(e: rusqlite::Error) -> String {
     format!("The sync database failed: {e}")
@@ -134,20 +108,15 @@ pub struct SyncDb {
 }
 
 impl SyncDb {
+    /// Opens (or creates) sync.db with its schema up to date (see `db::open`: WAL, append-only
+    /// migrations, a file from a newer Kybl refused).
     pub fn open(path: &Path) -> Result<Self, String> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("Couldn't create the folder for the sync database: {e}"))?;
-        }
-        let mut conn = Connection::open(path).map_err(db_err)?;
-        open_with(&mut conn, MIGRATIONS)?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self { conn: Mutex::new(crate::db::open(path, MIGRATIONS)?) })
     }
 
     #[cfg(test)]
     pub fn in_memory() -> Self {
-        let mut conn = Connection::open_in_memory().unwrap();
-        open_with(&mut conn, MIGRATIONS).unwrap();
-        Self { conn: Mutex::new(conn) }
+        Self { conn: Mutex::new(crate::db::open_in_memory(MIGRATIONS).unwrap()) }
     }
 
     fn with<T>(&self, f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>) -> Result<T, String> {

@@ -62,7 +62,7 @@ export function useShellCommands({
     }
     if (id in free) return free[id]() !== false;
     const run = commands[id];
-    if (!run || !active.bucket) {
+    if (!run || active.bucket == null) {
       // without a bucket on screen only connection-level actions make sense
       if (id === "back" || id === "forward") run?.();
       return !!run;
@@ -79,7 +79,7 @@ export function useShellCommands({
     settingsOpen,
     closeSettings,
     hasSelection: active.sel.selectedEntries.length > 0,
-    listShown: !!active.bucket,
+    listShown: active.bucket != null,
     moveSelection: active.sel.moveSelection,
     listScope: () => document.querySelector(`[data-pane="${active.id}"]`),
     dual,

@@ -16,6 +16,9 @@ const profiles: Profile[] = [
   { id: "p1", name: "Hetzner · media", provider: "hetzner", endpoint: "https://nbg1.your-objectstorage.com", region: "nbg1", accessKeyId: "DEMOKEY", bucket: "media-prod", pathStyle: false },
   { id: "p2", name: "AWS production", provider: "aws", endpoint: "https://s3.eu-central-1.amazonaws.com", region: "eu-central-1", accessKeyId: "DEMOKEY", bucket: null, pathStyle: false },
   { id: "p3", name: "Local MinIO", provider: "custom", endpoint: "http://localhost:9000", region: "us-east-1", accessKeyId: "minio", bucket: null, pathStyle: true },
+  // A3: a server (one root, no bucket level) and a cloud drive (a few named roots, from the WP-A2 block)
+  { id: "n1", name: "Web server", kind: "sftp", provider: "sftp", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, net: { host: "files.example.com", port: 0, user: "deploy", basePath: "/var/www", tls: "none", auth: "password", hostKey: "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8", url: null } },
+  { id: "g1", name: "Google Drive (demo@gmail.com)", kind: "gdrive", provider: "gdrive", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, cloud: { accountEmail: "demo@gmail.com", accountId: "1001", clientId: null, tenant: null, scopes: ["drive"] } },
 ];
 
 const mockTags: Record<string, Record<string, string>> = {};
@@ -220,6 +223,62 @@ function s3Caps(p: Profile | undefined): Capabilities {
   };
 }
 
+// ---- A3: servers and blob storage (cloud drives: the WP-A2 block at the end)
+const kindOf = (id: string) => profiles.find((x) => x.id === id)?.kind ?? "s3";
+const isOther = (id: string) => id !== LOCAL && kindOf(id) !== "s3";
+/** One server folder per connection, named after the host (or container), like the backends do. */
+function otherRoots(p: Profile): RootInfo[] {
+  const r = (id: string, name: string, kind: RootInfo["kind"], readOnly = false): RootInfo => ({ id, name, kind, created: null, readOnly });
+  switch (p.kind) {
+    case "azblob":
+    case "gcs":
+      return [r("", p.blob?.container || "container", "bucket")];
+    default:
+      return [r("", `${p.net?.host || p.name}${p.net?.basePath ? ` ${p.net.basePath}` : ""}`, "folder")];
+  }
+}
+function otherCaps(p: Profile): Capabilities {
+  const k = p.kind;
+  const server = k === "sftp" || k === "ftp" || k === "webdav";
+  const drive = k === "gdrive" || k === "onedrive" || k === "dropbox";
+  return {
+    ...S3_CAPS,
+    roots: k === "gdrive" || k === "onedrive" ? "drives" : "single",
+    createRoot: false,
+    folders: server || drive ? "real" : "prefix",
+    rename: server || drive ? "native" : "copy-delete",
+    serverCopy: k === "webdav" || drive || k === "azblob" || k === "gcs" ? "same-root" : "none",
+    share: drive ? "link" : "none",
+    shareExpiry: false,
+    streaming: "proxy",
+    conditionalWrite: k === "azblob" ? "if-match" : "compare",
+    hashes: k === "dropbox" ? ["dropbox"] : k === "onedrive" ? ["quickxor"] : k === "azblob" || k === "gcs" || k === "gdrive" ? ["md5"] : [],
+    thumbnails: drive ? "local+remote" : "local",
+    metadata: "none",
+    tags: false,
+    storageClass: false,
+    trash: drive,
+    multipart: false,
+    maxObjectSize: null,
+    backgroundUpload: false,
+  };
+}
+const HOST_KEY_UNKNOWN = "Kybl hasn't connected to this server before. Check that the server's fingerprint matches, then trust it to connect.\n\nhost-key-unknown SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8";
+/** What connecting to a non-S3 connection says: host keys, unknown hosts, wrong passwords. */
+function otherConnect(p: Profile, secret: string | null) {
+  const n = p.net;
+  if (p.kind === "sftp" && n) {
+    // a host with "changed" in its name pretends to have been reinstalled since it was trusted
+    if (/changed/.test(n.host) && n.hostKey && n.hostKey !== "SHA256:Zm9yZ2VkLWtleS1mb3ItdGhlLWNoYW5nZWQtc2VydmVy")
+      throw `The server's identity changed. Someone may be intercepting the connection, so Kybl didn't connect. If the server was reinstalled or its key replaced, remove the saved fingerprint in the connection's settings and connect again.\n\nhost-key-changed SHA256:Zm9yZ2VkLWtleS1mb3ItdGhlLWNoYW5nZWQtc2VydmVy expected ${n.hostKey}`;
+    // (so trusting it there leads straight to the "identity changed" warning)
+    if (!n.hostKey) throw HOST_KEY_UNKNOWN;
+  }
+  const host = n?.host || n?.url || "";
+  if (/(^|\/\/)bad\b/.test(host)) throw `Couldn't find ${host.replace(/^\w+:\/\//, "")}. Check the address.\n\ndns error: failed to lookup address information: nodename nor servname provided`;
+  if (secret === "wrong") throw "Wrong user name or password.\n\n530 Login incorrect.";
+}
+
 /** The local connection's commands; undefined for anything it doesn't answer specially. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function handleLocal(cmd: string, a: any): Promise<unknown> {
@@ -257,6 +316,8 @@ async function handleLocal(cmd: string, a: any): Promise<unknown> {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function handle(cmd: string, a: any): Promise<unknown> {
+  // WP-B1: copies between connections (src/jobs/devJobs.ts)
+  if (cmd.startsWith("job_")) return (await import("./jobs/devJobs")).handleJob(cmd, a);
   if (a?.profileId === LOCAL) {
     const r = await handleLocal(cmd, a);
     if (r !== undefined) return r;
@@ -267,6 +328,10 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       if (a.profileId === LOCAL) return localRoots;
       const p = profiles.find((x) => x.id === a.profileId);
       if (!p) throw "Connection not found";
+      if (p.kind && p.kind !== "s3") {
+        otherConnect(p, null);
+        return otherRoots(p);
+      }
       if (a.profileId === "p3" && !p.bucket) throw "Access denied. This key isn't allowed to do that.";
       const names = p.bucket && !buckets.includes(p.bucket) ? [p.bucket, ...buckets] : buckets;
       return names.map((name) => ({ id: name, name, kind: "bucket", created: now - 400 * HOUR, readOnly: false }) satisfies RootInfo);
@@ -275,6 +340,7 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       await sleep(40);
       if (a.profileId === LOCAL) return localCaps;
       if (!profiles.some((x) => x.id === a.profileId)) throw "Connection not found";
+      if (isOther(a.profileId)) return otherCaps(profiles.find((x) => x.id === a.profileId)!);
       return s3Caps(profiles.find((x) => x.id === a.profileId));
     case "local_path":
       return a.profileId === LOCAL ? `${a.bucket.replace(/\/$/, "")}/${a.key}` : null;
@@ -323,6 +389,10 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     }
     case "test_connection":
       await sleep(700);
+      if (a.profile.kind && a.profile.kind !== "s3") {
+        otherConnect(a.profile, a.secret);
+        return "Connected.";
+      }
       if (!a.profile.endpoint) throw "Endpoint is required";
       return "Connected. 4 buckets visible.";
     case "create_bucket":
@@ -344,7 +414,9 @@ async function handle(cmd: string, a: any): Promise<unknown> {
         throw "Access denied. This key isn't allowed to do that. If the key is brand new, give it a few minutes: some providers take a while to activate new keys.\n\nservice error: unhandled error (AccessDenied): (ServiceError { source: Unhandled(Unhandled { code: Some(\"AccessDenied\") }), raw: Response { status: StatusCode(403) } })";
       }
       if (a.bucket === "logs-archive") throw "Can't reach the storage server. Nothing is answering at that address: check the connection's endpoint, or that the server is running.\n\ndispatch failure: io error: client error (Connect): tcp connect error: Connection refused (os error 61) (DispatchFailure(DispatchFailure { source: ConnectorError { kind: Io, source: hyper_util::client::legacy::Error(Connect, ConnectError(\"tcp connect error\", 127.0.0.1:9099, Os { code: 61, kind: ConnectionRefused }))) } }))";
-      const dir = a.bucket === "media-prod" ? tree[a.prefix] : undefined;
+      if (isOther(a.profileId)) otherConnect(profiles.find((x) => x.id === a.profileId)!, null);
+      // every root of the other kinds shows the demo tree (Shared with me: just the photos)
+      const dir = a.bucket === "media-prod" || (isOther(a.profileId) && a.bucket !== "shared") ? tree[a.prefix] : a.bucket === "shared" && !a.prefix ? { folders: ["photos/"], objects: [] } : a.bucket === "shared" ? tree[a.prefix] : undefined;
       const start = Number(a.token ?? 0);
       const all = dir?.objects ?? [];
       return {
@@ -591,6 +663,7 @@ async function handle(cmd: string, a: any): Promise<unknown> {
 mockWindows("main");
 mockIPC((cmd, args) => handle(cmd, args), { shouldMockEvents: true });
 
+
 /** A second of a soft tone as a WAV data URL, so audio on the media: scheme plays in the mock. */
 let toneUrl: string | null = null;
 function tone(): string {
@@ -667,4 +740,182 @@ function demoPdf(): ArrayBuffer {
     const { handleDoc } = await import("./viewers/devSamples");
     return handleDoc(cmd, args, options);
   };
+}
+
+// ---------------------------------------------------------------- WP-A2: cloud drive sign-in
+// oauth_start "signs in" after a moment and adds a connection with a made-up drive; Google
+// Drive, OneDrive and Dropbox connections answer the browse commands from the trees below.
+// In the console: __kyblExpire("<profile id>") sends `connection-auth` (Reconnect).
+{
+  type Invoke = (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
+  type Tree = Record<string, Record<string, { folders: string[]; objects: ObjInfo[] }>>;
+  const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: Invoke } }).__TAURI_INTERNALS__;
+  const next = internals.invoke;
+  const cloudKinds = ["gdrive", "onedrive", "dropbox"];
+  const accounts: Record<string, { label: string; email: string }> = {
+    gdrive: { label: "Google Drive", email: "demo@gmail.com" },
+    onedrive: { label: "OneDrive", email: "demo@outlook.com" },
+    dropbox: { label: "Dropbox", email: "demo@example.com" },
+  };
+  const file = (key: string, size: number, ageHours: number, extra: Partial<ObjInfo> = {}): ObjInfo => ({
+    ...obj(key, size, ageHours),
+    storageClass: null,
+    id: `id-${Math.abs(hash(key)).toString(36)}`,
+    ...extra,
+  });
+  const gdoc = (key: string, kind: "document" | "spreadsheet" | "presentation"): ObjInfo => {
+    const office = { document: ["docx", "Word document"], spreadsheet: ["xlsx", "Excel workbook"], presentation: ["pptx", "PowerPoint presentation"] }[kind];
+    return file(key, 0, 20, {
+      etag: "v12",
+      mime: `application/vnd.google-apps.${kind}`,
+      native: { exports: [{ mime: "application/octet-stream", ext: office[0], label: office[1] }, { mime: "application/pdf", ext: "pdf", label: "PDF" }] },
+    });
+  };
+  const trees: Record<string, Tree> = {
+    gdrive: {
+      root: {
+        "": {
+          folders: ["Photos/", "Work/"],
+          objects: [gdoc("Trip plan", "document"), gdoc("Budget 2026", "spreadsheet"), file("report.pdf", 820_000, 50), file("report (2).pdf", 790_000, 30), file("notes.txt", 1_400, 4)],
+        },
+        "Photos/": { folders: [], objects: [file("Photos/beach.jpg", 3_200_000, 70), file("Photos/hanoi.jpg", 2_600_000, 90)] },
+        "Work/": { folders: [], objects: [gdoc("Work/Pitch", "presentation"), file("Work/contract.docx", 64_000, 300)] },
+      },
+      "0ATEAM": { "": { folders: ["Brand/"], objects: [file("logo.svg", 12_000, 400)] }, "Brand/": { folders: [], objects: [file("Brand/colors.pdf", 210_000, 500)] } },
+      "shared-with-me": { "": { folders: ["From Sam/"], objects: [file("menu.pdf", 140_000, 12)] }, "From Sam/": { folders: [], objects: [file("From Sam/video.mp4", 48_000_000, 6)] } },
+    },
+    onedrive: {
+      me: {
+        "": { folders: ["Documents/", "Pictures/"], objects: [file("Book.xlsx", 22_000, 3)] },
+        "Documents/": { folders: [], objects: [file("Documents/cv.docx", 40_000, 200)] },
+        "Pictures/": { folders: [], objects: [file("Pictures/cat.jpg", 1_900_000, 30)] },
+      },
+      "shared-with-me": { "": { folders: [], objects: [file("Shared deck.pptx", 3_000_000, 40)] } },
+    },
+    dropbox: {
+      "": {
+        "": { folders: ["Camera Uploads/"], objects: [file("Getting Started.pdf", 1_100_000, 900)] },
+        "Camera Uploads/": { folders: [], objects: [file("Camera Uploads/2026-11-20 09.12.44.jpg", 2_400_000, 48)] },
+      },
+    },
+  };
+  const roots: Record<string, RootInfo[]> = {
+    gdrive: [
+      { id: "root", name: "My Drive", kind: "drive", created: null, readOnly: false },
+      { id: "0ATEAM", name: "Team", kind: "drive", created: null, readOnly: false },
+      { id: "shared-with-me", name: "Shared with me", kind: "shared", created: null, readOnly: true },
+    ],
+    onedrive: [
+      { id: "me", name: "OneDrive", kind: "drive", created: null, readOnly: false },
+      { id: "shared-with-me", name: "Shared with me", kind: "shared", created: null, readOnly: true },
+    ],
+    dropbox: [{ id: "", name: "Dropbox", kind: "folder", created: null, readOnly: false }],
+  };
+  const cloudCaps = (kind: string): Capabilities => ({
+    ...S3_CAPS,
+    roots: kind === "dropbox" ? "single" : "drives",
+    createRoot: false,
+    folders: "real",
+    rename: "native",
+    serverCopy: kind === "gdrive" ? "cross-root" : "same-root",
+    share: kind === "gdrive" ? "none" : "link",
+    shareExpiry: kind !== "gdrive",
+    streaming: kind === "gdrive" ? "proxy" : "presign",
+    rangeRead: true,
+    conditionalWrite: kind === "gdrive" ? "compare" : kind === "onedrive" ? "if-match" : "rev",
+    hashes: [kind === "gdrive" ? "md5" : kind === "onedrive" ? "quickxor" : "dropbox"],
+    thumbnails: "local+remote",
+    metadata: "none",
+    tags: false,
+    storageClass: false,
+    trash: true,
+    changes: true,
+    multipart: true,
+    maxObjectSize: null,
+    backgroundUpload: false,
+    localPaths: false,
+  });
+  const kindOf = (profileId: unknown) => {
+    const k = profiles.find((p) => p.id === profileId)?.kind;
+    return k && cloudKinds.includes(k) ? k : null;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleCloud = async (cmd: string, a: any): Promise<unknown> => {
+    switch (cmd) {
+      case "oauth_builtin_clients":
+        // Dropbox shows the "Needs your own client ID" state
+        return { gdrive: true, onedrive: true, dropbox: false };
+      case "oauth_cancel":
+        cancelled.add(a.flowId);
+        return null;
+      case "oauth_start": {
+        for (let i = 0; i < 12; i++) {
+          await sleep(200);
+          if (cancelled.has(a.flowId)) throw "Cancelled";
+        }
+        if (a.kind === "dropbox" && !a.client?.clientId) throw "This version of Kybl has no built-in Dropbox sign-in. Add your own OAuth client ID under Advanced.";
+        const acct = accounts[a.kind];
+        const old = profiles.find((p) => p.id === a.replaceId);
+        const p: Profile = {
+          id: a.replaceId ?? `c${Date.now()}`,
+          name: old?.name ?? `${acct.label} (${acct.email})`,
+          kind: a.kind,
+          provider: a.kind,
+          endpoint: "",
+          region: "",
+          accessKeyId: "",
+          bucket: null,
+          pathStyle: false,
+          cloud: { accountEmail: acct.email, accountId: `acct-${a.kind}`, clientId: a.client?.clientId ?? null, tenant: a.client?.tenant ?? null, scopes: [] },
+        };
+        const i = profiles.findIndex((x) => x.id === p.id);
+        if (i >= 0) profiles[i] = p;
+        else profiles.push(p);
+        return p;
+      }
+    }
+    const kind = kindOf(a?.profileId);
+    if (!kind) return undefined;
+    const dirs = trees[kind][a.bucket] ?? {};
+    switch (cmd) {
+      case "list_roots":
+        await sleep(150);
+        return roots[kind];
+      case "connection_capabilities":
+        return cloudCaps(kind);
+      case "list_buckets":
+        return roots[kind].map((r) => ({ name: r.id, created: null }));
+      case "list_objects": {
+        await sleep(250);
+        const d = dirs[a.prefix] ?? { folders: [], objects: [] };
+        return { folders: d.folders, objects: d.objects, nextToken: null };
+      }
+      case "head_object": {
+        const o = Object.values(dirs).flatMap((d) => d.objects).find((x) => x.key === a.key);
+        if (!o) throw "This file or folder isn't there any more. It may have been moved or deleted.";
+        return { key: a.key, size: o.size, contentType: o.mime ?? null, modified: o.modified, etag: o.etag, storageClass: null, metadata: {} };
+      }
+      case "presign_get":
+        if (kind === "gdrive") throw "This connection doesn't support that.";
+        return `https://example.com/${kind}/temporary/${encodeURIComponent(a.key)}`;
+      case "update_object_props":
+      case "get_object_tags":
+      case "put_object_tags":
+        throw "This connection doesn't support that.";
+      case "create_folder":
+        (dirs[""] ??= { folders: [], objects: [] }).folders.push(a.prefix.endsWith("/") ? a.prefix : `${a.prefix}/`);
+        return null;
+      case "folder_size": {
+        const all = Object.entries(dirs).filter(([k]) => k.startsWith(a.prefix)).flatMap(([, n]) => n.objects);
+        return { bytes: all.reduce((s, o) => s + o.size, 0), objects: all.length, children: [] };
+      }
+      default:
+        return undefined;
+    }
+  };
+  internals.invoke = async (cmd, args, options) => {
+    const r = await handleCloud(cmd, args && typeof args === "object" && !(args instanceof Uint8Array) ? args : {});
+    return r === undefined ? next(cmd, args, options) : r;
+  };
+  (window as unknown as { __kyblExpire: (id: string) => Promise<void> }).__kyblExpire = (profileId: string) => emit("connection-auth", { profileId });
 }
