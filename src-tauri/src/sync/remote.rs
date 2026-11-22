@@ -21,7 +21,8 @@ pub struct RemoteSnapshot {
     pub files: HashMap<String, RemoteMeta>,
     /// NFC key -> the key as stored, where they differ
     pub raw: HashMap<String, String>,
-    /// keys that collide once normalised; left out
+    /// NFC keys that more than one stored key normalises to: all of them are left out, and the
+    /// run leaves the path alone on both sides
     pub dupes: Vec<String>,
 }
 
@@ -33,9 +34,13 @@ impl RemoteSnapshot {
 
     fn insert(&mut self, rel: &str, meta: RemoteMeta) {
         let key = nfc(rel);
+        if self.dupes.contains(&key) {
+            return;
+        }
         if self.files.contains_key(&key) && self.raw.get(&key).map(String::as_str).unwrap_or(&key) != rel {
             self.files.remove(&key);
-            self.dupes.push(rel.to_string());
+            self.raw.remove(&key);
+            self.dupes.push(key);
             return;
         }
         if key != rel {
@@ -211,6 +216,9 @@ mod tests {
         // the composed spelling of the same name as well: they can't both be synced
         s.insert("caf\u{e9}.txt", RemoteMeta::new(1, "f", 0));
         assert!(s.files.is_empty());
-        assert_eq!(s.dupes.len(), 1);
+        assert_eq!(s.dupes, vec!["caf\u{e9}.txt".to_string()]);
+        // a third spelling doesn't sneak back in
+        s.insert("cafe\u{301}.txt", RemoteMeta::new(1, "g", 0));
+        assert!(s.files.is_empty() && s.raw.is_empty());
     }
 }

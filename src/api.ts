@@ -276,6 +276,8 @@ export type DocMeta = {
   modified: number | null;
   contentType: string | null;
   version: string | null;
+  /** a save that went through but couldn't keep something (the file's tags) */
+  warning?: string;
 };
 
 /**

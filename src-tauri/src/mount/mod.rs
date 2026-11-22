@@ -103,6 +103,8 @@ pub struct MountManager {
     live: Mutex<HashMap<String, Live>>,
     /// one mount or unmount at a time
     busy: tokio::sync::Mutex<()>,
+    /// drives that were mounted when the app began to quit (mounted again by `resume`)
+    resume: Mutex<Vec<String>>,
 }
 
 // ---------------------------------------------------------------- persistence
@@ -277,9 +279,9 @@ async fn mount_one(app: &AppHandle, id: &str) {
     let Some(fs) = fs else { return };
     let need_server = mgr.live.lock().unwrap().get(id).is_some_and(|l| l.server.is_none());
     if need_server {
-        if c.token.is_empty() {
-            c.token = server::random_token();
-        }
+        // a fresh path token for every mount: the system's mount list shows the drive's address
+        // to every app on this computer, so a token seen there stops working with the mount
+        c.token = server::random_token();
         match server::start(fs, c.port, c.token.clone(), read_only).await {
             Ok(s) => {
                 if s.port != c.port {
@@ -335,13 +337,15 @@ async fn mount_one(app: &AppHandle, id: &str) {
 }
 
 /// Unmounts the drive and stops its server (its uploads keep going unless `stop_uploads`).
-async fn unmount_one(app: &AppHandle, id: &str, stop_uploads: bool) -> Result<(), String> {
+/// With files open on the drive it stops with [`os::BUSY`] unless `force` (quitting only).
+/// The caller holds `busy`.
+async fn unmount_one(app: &AppHandle, id: &str, stop_uploads: bool, force: bool) -> Result<(), String> {
     let mgr = app.state::<MountManager>();
     let url = mgr.config(id).map(|c| format!("http://127.0.0.1:{}/{}/", c.port, c.token)).unwrap_or_default();
     let mounted = mgr.live.lock().unwrap().get(id).and_then(|l| l.mounted.clone());
     if let Some(m) = mounted {
         let url2 = url.clone();
-        let r = tokio::time::timeout(Duration::from_secs(5), tokio::task::spawn_blocking(move || os::unmount(&m, &url2))).await;
+        let r = tokio::time::timeout(Duration::from_secs(5), tokio::task::spawn_blocking(move || os::unmount(&m, &url2, force))).await;
         match r {
             Ok(Ok(Ok(()))) => {}
             Ok(Ok(Err(e))) => return Err(e),
@@ -396,12 +400,39 @@ pub async fn shutdown(app: &AppHandle, limit: Duration) {
     // small saves still waiting get a moment to go up first
     let queues: Vec<_> = mgr.live.lock().unwrap().values().map(|l| l.fs.0.uploads.clone()).collect();
     let _ = futures_util::future::join_all(queues.iter().map(|q| q.drain(limit / 3))).await;
+    // the drives to mount again if the quit is called off (see `resume`)
+    *mgr.resume.lock().unwrap() = mgr.live.lock().unwrap().iter().filter(|(_, l)| l.mounted.is_some()).map(|(id, _)| id.clone()).collect();
     let all = async {
+        let _one = mgr.busy.lock().await;
         for id in &ids {
-            let _ = unmount_one(app, id, true).await;
+            let _ = unmount_one(app, id, true, true).await;
         }
     };
-    let _ = tokio::time::timeout(limit, all).await;
+    if tokio::time::timeout(limit, all).await.is_err() {
+        // whatever didn't unmount in time: its uploads stop all the same (they carry on next start)
+        for q in &queues {
+            q.stop();
+        }
+    }
+}
+
+/// The quit after [`shutdown`] was called off (an update's installer didn't start): the
+/// uploads start again and the drives that were mounted are mounted again.
+pub async fn resume(app: &AppHandle) {
+    let Some(mgr) = app.try_state::<MountManager>() else { return };
+    let ids: Vec<String> = std::mem::take(&mut *mgr.resume.lock().unwrap());
+    {
+        let live = mgr.live.lock().unwrap();
+        for l in live.values() {
+            if l.fs.0.uploads.is_stopped() {
+                l.fs.0.uploads.rearm();
+                l.fs.start_uploads();
+            }
+        }
+    }
+    for id in ids {
+        mount_one(app, &id).await;
+    }
 }
 
 /// Saves still to upload (0 when the drives aren't set up, e.g. in tests).
@@ -496,18 +527,41 @@ pub async fn mount_add(app: AppHandle, profile_id: String, bucket: String, prefi
 #[tauri::command]
 pub async fn mount_remove(app: AppHandle, id: String) -> Result<(), String> {
     let mgr = app.state::<MountManager>();
+    let _one = mgr.busy.lock().await;
     let c = mgr.config(&id).ok_or("This drive isn't there any more.")?;
-    let waiting = mgr.live.lock().unwrap().get(&id).map(|l| l.fs.0.uploads.stats().0).unwrap_or(0);
-    if waiting > 0 {
-        return Err(format!(
+    let waiting = || mgr.live.lock().unwrap().get(&id).map(|l| l.fs.0.uploads.stats().0).unwrap_or(0);
+    let still_uploading = |n: usize| {
+        format!(
             "{} from this drive {} still uploading. Remove the drive once {} done.",
-            if waiting == 1 { "1 file".to_string() } else { format!("{waiting} files") },
-            if waiting == 1 { "is" } else { "are" },
-            if waiting == 1 { "it's" } else { "they're" },
-        ));
+            if n == 1 { "1 file".to_string() } else { format!("{n} files") },
+            if n == 1 { "is" } else { "are" },
+            if n == 1 { "it's" } else { "they're" },
+        )
+    };
+    if waiting() > 0 {
+        return Err(still_uploading(waiting()));
     }
-    unmount_one(&app, &id, true).await?;
-    if let Some(l) = mgr.live.lock().unwrap().remove(&id) {
+    unmount_one(&app, &id, false, false).await?;
+    // a save that landed while the drive was unmounting is the user's only copy: keep the drive
+    let n = waiting();
+    if n > 0 {
+        drop(_one);
+        emit(&app, &id);
+        return Err(still_uploading(n));
+    }
+    // nothing can be saved any more (unmounted, server stopped): stop the workers, then delete
+    let l = mgr.live.lock().unwrap().remove(&id);
+    if let Some(l) = l {
+        l.fs.0.uploads.stop();
+        if l.fs.0.uploads.stats().0 > 0 {
+            // committed in the last instant: put it back rather than delete it
+            l.fs.0.uploads.rearm();
+            l.fs.start_uploads();
+            mgr.live.lock().unwrap().insert(id.clone(), l);
+            drop(_one);
+            emit(&app, &id);
+            return Err(still_uploading(1));
+        }
         l.fs.0.blocks.clear();
     }
     let _ = std::fs::remove_dir_all(cache_dir(&app, &id)?);
@@ -553,7 +607,10 @@ pub async fn mount_retry(app: AppHandle, id: String) -> Result<MountInfo, String
 pub async fn mount_eject(app: AppHandle, id: String) -> Result<MountInfo, String> {
     let mgr = app.state::<MountManager>();
     let c = mgr.config(&id).ok_or("This drive isn't there any more.")?;
-    unmount_one(&app, &id, false).await?;
+    {
+        let _one = mgr.busy.lock().await;
+        unmount_one(&app, &id, false, false).await?;
+    }
     emit(&app, &id);
     Ok(mgr.info_of(&c))
 }

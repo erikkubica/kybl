@@ -173,18 +173,42 @@ fn a_first_run_adopts_what_is_already_there() {
     let (d, src) = (tmp(), tmp());
     let (core, _, set) = engine(&d.0);
     let id = set.id.as_str();
-    // backed up earlier by another app: same name, same size
+    // backed up earlier by another app: same name, same size, same time
     write(&d.0, "Camera/2026/03/IMG_0001.HEIC", b"1234");
     let before = std::fs::metadata(d.0.join("Camera/2026/03/IMG_0001.HEIC")).unwrap().modified().unwrap();
-    let f = write(&src.0, "x", b"abcd");
+    let ms = before.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+    let f = write(&src.0, "x", b"1234");
     core.offer(id, &[photo("p1", "IMG_0001.HEIC", 4, 1)]).unwrap();
-    let r = run(core.upload(id, "p1", Source::Path(f), 4, None));
+    let r = run(core.upload(id, "p1", Source::Path(f), 4, Some(ms + 1500)));
     assert_eq!(r, UploadResult::at("adopted", "Camera/2026/03/IMG_0001.HEIC"));
     // not written again
     assert_eq!(files(&d.0)["Camera/2026/03/IMG_0001.HEIC"], b"1234");
     assert_eq!(std::fs::metadata(d.0.join("Camera/2026/03/IMG_0001.HEIC")).unwrap().modified().unwrap(), before);
     assert_eq!(core.status(id).unwrap().backed_up, 1);
     assert!(core.offer(id, &[photo("p1", "IMG_0001.HEIC", 4, 1)]).unwrap().is_empty());
+}
+
+#[test]
+fn a_different_photo_of_the_same_name_and_size_is_never_adopted() {
+    let (d, src) = (tmp(), tmp());
+    let (core, _, set) = engine(&d.0);
+    let id = set.id.as_str();
+    // a camera counter that started over: another photo, same name and size
+    write(&d.0, "Camera/2026/03/IMG_0001.HEIC", b"1234");
+    let f = write(&src.0, "x", b"abcd");
+    core.offer(id, &[photo("p1", "IMG_0001.HEIC", 4, 1)]).unwrap();
+    let r = run(core.upload(id, "p1", Source::Path(f.clone()), 4, Some(1)));
+    assert_eq!(r, UploadResult::at("done", "Camera/2026/03/IMG_0001 (2).HEIC"));
+    assert_eq!(files(&d.0)["Camera/2026/03/IMG_0001.HEIC"], b"1234");
+    assert_eq!(files(&d.0)["Camera/2026/03/IMG_0001 (2).HEIC"], b"abcd");
+
+    // with hashes on both sides, the hash decides whatever the times say
+    let e = crate::storage::Entry { key: "k".into(), size: 4, modified: Some(1), ..Default::default() };
+    assert!(same_file(&e, 4, Some(5_000_000), Some("AB"), Some("ab")));
+    assert!(!same_file(&e, 4, Some(1), Some("ab"), Some("cd")));
+    assert!(same_file(&e, 4, Some(1999), None, None));
+    assert!(!same_file(&e, 4, None, None, None), "no time, no hash: not proof");
+    assert!(!same_file(&e, 5, Some(1), None, None));
 }
 
 #[test]

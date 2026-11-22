@@ -108,6 +108,23 @@ function PendingPanel({ m, count, run }: { m: SyncMapping; count: number; run: (
   }, [open, m.id, count]);
   const here = items?.filter((i) => i.side === "local").length ?? 0;
   const there = (items?.length ?? 0) - here;
+  // confirm exactly what was shown: the open list, or (closed) the count in the heading. If a
+  // run changed the list meanwhile, the backend confirms nothing and the list is shown afresh.
+  const confirm = async () => {
+    const shown = open && items ? items : await syncApi.pending(m.id);
+    if (shown.length !== count) {
+      setItems(shown);
+      setOpen(true);
+      throw new Error("The list of files changed since you looked. Check it again, then confirm.");
+    }
+    try {
+      await syncApi.confirmDeletes(m.id, shown);
+    } catch (e) {
+      setItems(await syncApi.pending(m.id).catch(() => null));
+      setOpen(true);
+      throw e;
+    }
+  };
   return (
     <div className="sync-attn warn" role="group" aria-label="Deletions waiting">
       <div className="sync-attn-head">
@@ -150,7 +167,7 @@ function PendingPanel({ m, count, run }: { m: SyncMapping; count: number; run: (
         </div>
       )}
       <div className="sync-attn-actions">
-        <button className="btn btn-sm btn-danger" onClick={() => run(() => syncApi.confirmDeletes(m.id))}>
+        <button className="btn btn-sm btn-danger" onClick={() => run(confirm)}>
           Delete them
         </button>
         <button className="btn btn-sm" onClick={() => run(() => syncApi.restoreDeletes(m.id))}>

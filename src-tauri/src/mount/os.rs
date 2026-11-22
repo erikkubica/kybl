@@ -89,18 +89,26 @@ fn force_unmount(point: &Path) {
     }
 }
 
+/// What an eject says when an app still has a file open on the drive.
+pub const BUSY: &str = "The drive is in use. Close the files open on the drive, then try again.";
+
+/// Unmounts the drive. When something has a file open on it, an eject or a removal (`force`
+/// false) stops and says so: forcing it would cut that app off mid-save. Only quitting forces
+/// it, since Kybl stops serving the drive anyway.
 #[cfg(target_os = "macos")]
-pub fn unmount(m: &Mounted, _url: &str) -> Result<(), String> {
+pub fn unmount(m: &Mounted, _url: &str, force: bool) -> Result<(), String> {
     let point = Path::new(&m.point);
     if mounted_url(&mount_table(), point).is_some() {
         let out = Command::new("/sbin/umount").arg(point).output().map_err(|e| e.to_string())?;
         if !out.status.success() {
-            // something has a file open on the drive: let go anyway, Kybl is about to stop serving it
+            if !force {
+                return Err(BUSY.into());
+            }
             let _ = Command::new("/sbin/umount").arg("-f").arg(point).status();
         }
     }
     if mounted_url(&mount_table(), point).is_some() {
-        return Err("The drive is still in use. Close the files open on it and try again.".into());
+        return Err(BUSY.into());
     }
     let _ = std::fs::remove_dir(point);
     Ok(())
@@ -148,8 +156,16 @@ fn gvfs_point(url: &str) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn unmount(_m: &Mounted, url: &str) -> Result<(), String> {
-    let _ = Command::new("gio").arg("mount").arg("-u").arg(dav_url(url)).status();
+pub fn unmount(m: &Mounted, url: &str, force: bool) -> Result<(), String> {
+    let mut cmd = Command::new("gio");
+    cmd.arg("mount").arg("-u");
+    if force {
+        cmd.arg("-f");
+    }
+    let ok = cmd.arg(dav_url(url)).status().is_ok_and(|s| s.success());
+    if !ok && !force && is_mounted(m) {
+        return Err(BUSY.into());
+    }
     Ok(())
 }
 
@@ -177,9 +193,18 @@ pub fn mount(url: &str, _base: &Path, _name: &str, _read_only: bool) -> Result<M
 }
 
 #[cfg(target_os = "windows")]
-pub fn unmount(m: &Mounted, _url: &str) -> Result<(), String> {
+pub fn unmount(m: &Mounted, _url: &str, force: bool) -> Result<(), String> {
     if !m.point.is_empty() {
-        let _ = Command::new("net").args(["use", m.point.as_str(), "/delete", "/y"]).status();
+        // without /y Windows asks (and refuses) when files are open
+        let mut cmd = Command::new("net");
+        cmd.args(["use", m.point.as_str(), "/delete"]).stdin(std::process::Stdio::null());
+        if force {
+            cmd.arg("/y");
+        }
+        let ok = cmd.status().is_ok_and(|s| s.success());
+        if !ok && !force && is_mounted(m) {
+            return Err(BUSY.into());
+        }
     }
     Ok(())
 }

@@ -195,9 +195,14 @@ pub async fn clean_up(app: &AppHandle) {
 }
 
 /// The exit after [`clean_up`] didn't happen (an update's installer wouldn't start): the app
-/// carries on, and quitting works as usual again.
-pub fn stay() {
+/// carries on, and quitting works as usual again. The drives [`clean_up`] unmounted are
+/// mounted again and their uploads start again (they were stopped for the exit).
+pub fn stay(app: &AppHandle) {
     STAGE.store(RUNNING, Ordering::SeqCst);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        crate::mount::resume(&app).await;
+    });
 }
 
 #[cfg(test)]

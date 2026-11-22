@@ -91,7 +91,10 @@ export const syncApi = {
   /** keep: "both", "original" (the version that kept the name) or "copy" (this computer's) */
   resolveConflict: (id: string, copy: string, keep: "both" | "original" | "copy") => invoke<void>("sync_resolve_conflict", { id, copy, keep }),
   pending: (id: string) => invoke<PendingDelete[]>("sync_pending", { id }),
-  confirmDeletes: (id: string) => invoke<void>("sync_confirm_deletes", { id }),
+  /** Confirms exactly the held deletions the user was shown; fails (confirming nothing) when a
+   * run changed the list meanwhile, so the UI shows it again. */
+  confirmDeletes: (id: string, items: Pick<PendingDelete, "path" | "side">[]) =>
+    invoke<void>("sync_confirm_deletes", { id, items: items.map(({ path, side }) => ({ path, side })) }),
   restoreDeletes: (id: string) => invoke<void>("sync_restore_deletes", { id }),
   /** "Keep on this device": a two-way synced copy, by default in ~/Kybl/<connection>/<bucket>/<folder> */
   keepOffline: (profileId: string, bucket: string, prefix: string, localPath?: string | null) =>
