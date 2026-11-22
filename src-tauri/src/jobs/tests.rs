@@ -14,8 +14,10 @@ use futures_util::StreamExt;
 
 use super::*;
 use crate::storage::{
-    local::LocalBackend, Capabilities, ConnKind, Entry, Loc, Page, Progress, ReadStream, RootInfo, RootKind, SResult, Storage, WriteOpts, WriteOutcome, WriteSource,
+    local::LocalBackend, Capabilities, ConnKind, Entry, Loc, Page, Progress, ReadStream, RootInfo, RootKind, SResult, Storage, StorageError, WriteOpts, WriteOutcome,
+    WriteSource,
 };
+use super::{db, plan};
 
 // ---------------------------------------------------------------- fixtures
 
