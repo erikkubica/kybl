@@ -62,8 +62,8 @@ export function useShortcuts(opts: ShortcutOptions) {
       else if (mod && k === "l") id = "go-to";
       else if (mod && k === "r") id = "refresh";
       else if (mod && k === "f") id = "search";
-      else if (mod && k === "\\") id = "toggle-dual";
-      else if (mod && ev.shiftKey && k === "s") id = "swap-panes";
+      else if (mod && k === "\\") id = own("toggle-dual");
+      else if (mod && ev.shiftKey && k === "s") id = own("swap-panes");
       else if (settingsOpen) {
         // a dialog open on top of settings handles its own Escape
         if (ev.key === "Escape" && !overlayUp()) closeSettings();
@@ -79,7 +79,7 @@ export function useShortcuts(opts: ShortcutOptions) {
       else if (mod && ev.key === "ArrowUp") id = "go-up";
       else if (mod && ev.key === "ArrowDown") id = "open";
       // Finder's "show hidden files" (by code: Shift turns "." into ">")
-      else if (mod && ev.shiftKey && ev.code === "Period") id = "toggle-hidden";
+      else if (mod && ev.shiftKey && ev.code === "Period") id = own("toggle-hidden");
       else if (mod) return;
       else if (ev.key === "Tab" && o.current.dual && !ev.altKey && t.closest?.("[data-list-focus]")) id = "switch-pane";
       else if (o.current.dual && /^F[35678]$/.test(ev.key))

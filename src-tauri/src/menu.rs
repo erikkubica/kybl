@@ -17,7 +17,7 @@ use tauri::{
 };
 
 /// Item ids passed to the page as they are.
-const PAGE_ITEMS: [&str; 15] = [
+const PAGE_ITEMS: [&str; 23] = [
     "new-connection",
     "new-folder",
     "upload-files",
@@ -33,6 +33,14 @@ const PAGE_ITEMS: [&str; 15] = [
     "go-to",
     "search",
     "settings",
+    "toggle-dual",
+    "swap-panes",
+    "switch-pane",
+    "same-folder",
+    "compare-folders",
+    "pane-copy",
+    "pane-move",
+    "toggle-hidden",
 ];
 
 /// Handled here, not by the page (named apart from the tray menu's ids, which share the handler).
@@ -110,6 +118,16 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         &[
             &item("refresh", "Refresh", None)?,
             &item("search", "Search…", None)?,
+            &item("toggle-hidden", "Show Hidden Files", Some("CmdOrCtrl+Shift+Period"))?,
+            &sep()?,
+            // dual pane: F5, F6 and Tab stay with the page (they'd steal keys from text fields)
+            &item("toggle-dual", "Dual Pane", Some("CmdOrCtrl+Backslash"))?,
+            &item("switch-pane", "Switch Pane", None)?,
+            &item("swap-panes", "Swap Panes", Some("CmdOrCtrl+Shift+S"))?,
+            &item("same-folder", "Same Folder in Other Pane", None)?,
+            &item("compare-folders", "Compare Folders", None)?,
+            &item("pane-copy", "Copy to Other Pane", None)?,
+            &item("pane-move", "Move to Other Pane", None)?,
             &sep()?,
             &PredefinedMenuItem::fullscreen(app, None)?,
         ],
