@@ -98,7 +98,8 @@ impl TokenSource {
         }
     }
 
-    /// Starts with an access token in hand (just signed in, or tests).
+    /// Starts with an access token in hand (tests).
+    #[cfg(test)]
     pub async fn prime(&self, access: &str, expires_in: Duration) {
         let mut g = self.inner.lock().await;
         g.access = Some((access.to_string(), Instant::now() + expires_in, expires_in));
@@ -141,6 +142,7 @@ impl TokenSource {
         }
     }
 
+    #[cfg(test)]
     pub async fn needs_auth(&self) -> bool {
         self.inner.lock().await.needs_auth
     }

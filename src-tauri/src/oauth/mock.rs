@@ -87,7 +87,8 @@ impl Mock {
                                 let body = body.collect().await.map(|b| b.to_bytes()).unwrap_or_default();
                                 let r = Req {
                                     method: parts.method.to_string(),
-                                    path: parts.uri.path().to_string(),
+                                    // decoded, so handlers match "/root:/My Docs:" rather than "/root:/My%20Docs:"
+                                    path: percent_decode_str(parts.uri.path()).decode_utf8_lossy().into_owned(),
                                     query: parts.uri.query().unwrap_or("").to_string(),
                                     headers: parts
                                         .headers

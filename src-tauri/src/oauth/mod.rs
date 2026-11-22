@@ -348,8 +348,6 @@ struct CodeAnswer {
     access_token: String,
     #[serde(default)]
     refresh_token: Option<String>,
-    #[serde(default)]
-    expires_in: Option<u64>,
 }
 
 async fn exchange(kind: ConnKind, token_url: &str, pairs: &[(&str, &str)]) -> Result<CodeAnswer, String> {
@@ -556,8 +554,8 @@ pub fn open<R: Runtime>(app: &AppHandle<R>, profile: &Profile) -> Result<Arc<dyn
     let api = http::Api::new(profile.kind, tokens);
     Ok(match profile.kind {
         ConnKind::Gdrive => Arc::new(crate::storage::gdrive::GDrive::new(api)),
-        // ONEDRIVE_TODO
-        // DROPBOX_TODO
+        ConnKind::Onedrive => Arc::new(crate::storage::onedrive::OneDrive::new(api)),
+        ConnKind::Dropbox => Arc::new(crate::storage::dropbox::Dropbox::new(api)),
         other => return Err(format!("{} doesn't use a browser sign-in.", other.label())),
     })
 }

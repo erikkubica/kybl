@@ -47,7 +47,9 @@ impl Target<'_> {
 pub async fn upload(api: &Api, base: &str, t: Target<'_>, mut src: Source, opts: &WriteOpts<'_>, progress: Progress<'_>, cancel: &AtomicBool) -> SResult<Option<DFile>> {
     let total = src.len;
     progress(0, total.unwrap_or(0));
-    if opts.resume.is_none() && total.is_some_and(|n| n <= SIMPLE_MAX) {
+    // a piece size smaller than the file asks for a session even below the usual limit
+    let simple_max = opts.part_size.map_or(SIMPLE_MAX, |p| p.min(SIMPLE_MAX));
+    if opts.resume.is_none() && total.is_some_and(|n| n <= simple_max) {
         let bytes = match src.rest(SIMPLE_MAX, cancel).await {
             Err(e) if e.is_cancelled() => return Ok(None),
             r => r?,
