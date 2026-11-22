@@ -681,7 +681,10 @@ kbd {
 }
 /* an icon-only button (the toolbar's Upload) */
 .btn.btn-square {
+  /* never squeezed by a crowded bar */
+  flex: none;
   width: 28px;
+  min-width: 28px;
   height: 28px;
   padding: 0;
   justify-content: center;
