@@ -46,7 +46,7 @@ export function PreviewAside({
 }) {
   const { profile, bucket, ops, actions, sel } = pane;
   const { previewWidth, setPreviewWidth } = layout;
-  if (!profile || !bucket) return null;
+  if (!profile || bucket == null) return null;
   const selectedEntries = sel.selectedEntries;
 
   const startResize = (ev: React.MouseEvent) => {

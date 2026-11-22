@@ -75,7 +75,7 @@ function usePaneCore(env: PaneEnv) {
   const loc = useLocation(env.storageKey);
   const { bucket, prefix } = loc;
   const profile = useMemo(() => profiles.find((p) => p.id === loc.profileId) ?? null, [profiles, loc.profileId]);
-  const here: Loc | null = useMemo(() => (profile && bucket ? { profileId: profile.id, bucket, prefix } : null), [profile, bucket, prefix]);
+  const here: Loc | null = useMemo(() => (profile && bucket != null ? { profileId: profile.id, bucket, prefix } : null), [profile, bucket, prefix]);
   const hereRef = useRef(here);
   hereRef.current = here;
 
@@ -125,7 +125,7 @@ function usePaneCore(env: PaneEnv) {
 
   const navigate = useCallback(
     (p: string, selectKey?: string) => {
-      if (profile && bucket) go(profile, bucket, p, { selectKey });
+      if (profile && bucket != null) go(profile, bucket, p, { selectKey });
     },
     [profile, bucket, go],
   );
@@ -281,7 +281,7 @@ function usePaneCore(env: PaneEnv) {
     profile,
     bucket,
     /** what the root is called on screen (the bucket's name; "Desktop" for a folder of this computer) */
-    bucketLabel: profile && bucket ? (env.rootLabel?.(profile.id, bucket) ?? bucket) : bucket,
+    bucketLabel: profile && bucket != null ? (env.rootLabel?.(profile.id, bucket) ?? bucket) : bucket,
     prefix,
     here,
     history: loc.history,

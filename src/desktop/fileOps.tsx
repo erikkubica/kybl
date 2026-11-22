@@ -117,7 +117,7 @@ export function makeFileOps(c: OpsContext) {
   // ---------------------------------------------------------------- upload
   const uploadPaths = async (paths: string[], dest = c.prefix) => {
     const { profile, bucket } = c;
-    if (!profile || !bucket || paths.length === 0) return;
+    if (!profile || bucket == null || paths.length === 0) return;
     const pid = profile.id;
     try {
       c.setBusy("Reading the files…");
@@ -192,7 +192,7 @@ export function makeFileOps(c: OpsContext) {
    */
   const downloadEntries = async (list: Entry[], relBase: string | null = null) => {
     const { profile, bucket, settings } = c;
-    if (!profile || !bucket || list.length === 0) return;
+    if (!profile || bucket == null || list.length === 0) return;
     const pid = profile.id;
     try {
       if (list.length === 1 && list[0].kind === "file" && relBase === null) {
@@ -248,7 +248,7 @@ export function makeFileOps(c: OpsContext) {
   /** Downloads a file to Kybl's temporary folder and opens it in its default app. */
   const openInApp = async (e: Entry) => {
     const { profile, bucket } = c;
-    if (!profile || !bucket || e.kind !== "file") return;
+    if (!profile || bucket == null || e.kind !== "file") return;
     try {
       if (c.localPaths) {
         // a file on this computer opens where it is
@@ -270,7 +270,7 @@ export function makeFileOps(c: OpsContext) {
   // ---------------------------------------------------------------- delete
   const askDelete = (list: Entry[]) => {
     const { profile, bucket, settings } = c;
-    if (!profile || !bucket || list.length === 0) return;
+    if (!profile || bucket == null || list.length === 0) return;
     const folders = list.filter((e) => e.kind === "folder");
     const files = list.filter((e) => e.kind === "file");
     const what = whatOf(list);
@@ -364,7 +364,7 @@ export function makeFileOps(c: OpsContext) {
   // ---------------------------------------------------------------- rename
   const askRename = (e: Entry) => {
     const { profile, bucket } = c;
-    if (!profile || !bucket) return;
+    if (!profile || bucket == null) return;
     const pid = profile.id;
     const b = bucket;
     c.prompt({
@@ -429,7 +429,7 @@ export function makeFileOps(c: OpsContext) {
   // ---------------------------------------------------------------- new folder
   const askNewFolder = (dest = c.prefix) => {
     const { profile, bucket } = c;
-    if (!profile || !bucket) return;
+    if (!profile || bucket == null) return;
     const pid = profile.id;
     const b = bucket;
     let initial = "New folder";
@@ -575,7 +575,7 @@ export function makeFileOps(c: OpsContext) {
   /** ⌘C / ⌘X: remembers the items (and puts their S3 URIs on the clipboard as text). */
   const clip = (list: Entry[], mode: "copy" | "cut") => {
     const { profile, bucket } = c;
-    if (!profile || !bucket || !list.length) return;
+    if (!profile || bucket == null || !list.length) return;
     itemClipboard.set({ mode, profileId: profile.id, bucket, items: list });
     navigator.clipboard?.writeText(list.map((e) => `s3://${bucket}/${e.key}`).join("\n")).catch(() => {});
     toast("info", `${mode === "cut" ? "Cut" : "Copied"} ${whatOf(list)}. Paste with ⌘V in another folder.`);
@@ -585,7 +585,7 @@ export function makeFileOps(c: OpsContext) {
   const paste = (dest = c.prefix) => {
     const cl = itemClipboard.get();
     const { profile, bucket } = c;
-    if (!cl || !profile || !bucket) return;
+    if (!cl || !profile || bucket == null) return;
     if (cl.profileId !== profile.id) {
       toast("error", "Items can only be pasted within the same connection.");
       return;

@@ -86,7 +86,7 @@ export function BrowserPane(p: BrowserPaneProps) {
         searchRunning={!!search?.running && !search.stopped}
         query={ent.query}
         searchInput={pane.searchInput}
-        disabled={!profile || !bucket}
+        disabled={!profile || bucket == null}
         working={working}
         view={pane.view}
         compact={p.compact}
@@ -128,8 +128,8 @@ export function BrowserPane(p: BrowserPaneProps) {
       <div className="content" style={p.contentStyle}>
         <div className={`pane ${p.compact ? "compact" : ""}`}>
           {!profile && <Welcome actions={p.empty} />}
-          {profile && !bucket && <ChooseBucket profile={profile} note={p.bucketNote} reconnect={p.bucketReconnect} actions={p.empty} />}
-          {profile && bucket && (
+          {profile && bucket == null && <ChooseBucket profile={profile} note={p.bucketNote} reconnect={p.bucketReconnect} actions={p.empty} />}
+          {profile && bucket != null && (
             <>
               {listError && entries.length === 0 && !search ? (
                 <ListError profile={profile} error={listError} onRetry={ent.refresh} onReconnect={p.empty.onReconnect} />
@@ -208,7 +208,7 @@ export function BrowserPane(p: BrowserPaneProps) {
         {p.aside}
       </div>
 
-      {pane.quick && pane.quickIndex >= 0 && profile && bucket && (
+      {pane.quick && pane.quickIndex >= 0 && profile && bucket != null && (
         <QuickLook
           profileId={profile.id}
           bucket={bucket}

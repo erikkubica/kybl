@@ -66,7 +66,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   };
 
   const copyLink = async (entry: Entry, secs: number) => {
-    if (!profile || !bucket) return;
+    if (!profile || bucket == null) return;
     try {
       const url = await api.presign(profile.id, bucket, entry.key, secs);
       await navigator.clipboard.writeText(url);
@@ -79,7 +79,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   };
 
   const askMove = (list: Entry[], mode: "move" | "copy" = "move") => {
-    if (!list.length || !profile || !bucket) return;
+    if (!list.length || !profile || bucket == null) return;
     const startPrefix = search ? entryParent(list[0]) : prefix;
     dialogs.show((close) =>
       createElement(MoveDialog, {
@@ -102,7 +102,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     const loc = parseLocation(input, names);
     const b = loc?.bucket ?? bucket;
     if (!loc || !b) return;
-    if (loc.bucket && loc.bucket !== bucket) pane.rememberAfterListing.current = { profileId: profile.id, bucket: loc.bucket };
+    if (loc.bucket != null && loc.bucket !== bucket) pane.rememberAfterListing.current = { profileId: profile.id, bucket: loc.bucket };
     let pre = loc.prefix;
     if (pre && !pre.endsWith("/")) {
       // the path of a file opens its folder with the file selected
@@ -117,11 +117,11 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     pane.go(profile, b, pre);
   };
   const askGoTo = () => {
-    if (!bucket) return;
+    if (bucket == null) return;
     dialogs.show((close) => createElement(GoToDialog, { bucket, prefix, onGo: goToPath, onClose: close }));
   };
   const askSync = (pre: string) => {
-    if (!profile || !bucket) return;
+    if (!profile || bucket == null) return;
     const [pid, b] = [profile.id, bucket];
     dialogs.show((close) =>
       createElement(SyncThisFolder, {
@@ -166,7 +166,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
 
   /** What applies to the folder on screen: from the empty-space menu and the toolbar's "…". */
   const placeItems = (): (MenuItem | false)[] =>
-    !profile || !bucket
+    !profile || bucket == null
       ? []
       : [
           { type: "item", label: "Calculate folder size", icon: "info", onClick: () => calcSizes([prefix]) },
@@ -182,7 +182,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   const selectAll = () => sel.setSelected(new Set(entries.map((e) => e.key)));
 
   const onBackgroundContext = (ev: React.MouseEvent) => {
-    if (!profile || !bucket) return;
+    if (!profile || bucket == null) return;
     const clip = clipFor();
     dialogs.menu(
       ev.clientX,
@@ -210,7 +210,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   };
 
   const onContext = (ev: React.MouseEvent, e: Entry) => {
-    if (!profile || !bucket) return;
+    if (!profile || bucket == null) return;
     const list = selected.has(e.key) ? selectedEntries : [e];
     if (!selected.has(e.key)) sel.selectOnly(e.key);
     const one = list.length === 1;
@@ -281,7 +281,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     "go-up": () => void pane.goUp(),
     back: () => pane.historyStep(-1),
     forward: () => pane.historyStep(1),
-    "go-to": () => bucket && askGoTo(),
+    "go-to": () => bucket != null && askGoTo(),
     search: focusSearch,
     "select-all": selectAll,
     delete: () => selectedEntries.length && ops.askDelete(selectedEntries),

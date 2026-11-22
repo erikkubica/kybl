@@ -6,6 +6,9 @@ import { PROVIDERS } from "../providers";
 import { KYBL, isRevokedKey, kyblError } from "../kybl";
 import { Icon } from "../Icons";
 import type { Profile } from "../types";
+import { useCaps } from "../useCaps";
+import { rootsMode } from "../connections/roots";
+import { isOAuthKind } from "../connections/kinds";
 
 /** The shell's ways out of an empty pane. */
 export type EmptyActions = {
@@ -40,23 +43,30 @@ export function Welcome({ actions }: { actions: EmptyActions }) {
 }
 
 export function ChooseBucket({ profile, note, reconnect, actions }: { profile: Profile; note: string | null; reconnect: boolean; actions: EmptyActions }) {
-  const kybl = profile.provider === KYBL;
+  const caps = useCaps(profile.id);
+  const mode = rootsMode(profile, caps);
+  // making buckets is Kybl Storage's (or whatever says it can); naming one by hand is S3's
+  const kybl = caps ? caps.createRoot : profile.provider === KYBL;
+  const byName = !kybl && mode === "buckets";
+  const what = mode === "drives" ? "place" : "bucket";
   return (
     <div className="welcome">
       <div className="welcome-card">
         <div className="welcome-logo plain">
           <Icon name="bucket" size={30} />
         </div>
-        <h1>Choose a bucket</h1>
-        <p>{note || "Pick a bucket from the sidebar."}</p>
+        <h1>Choose a {what}</h1>
+        <p>{note || `Pick a ${what} from the sidebar.`}</p>
         {reconnect ? (
           <button className="btn btn-primary" onClick={() => actions.onReconnect(profile)}>
             <Icon name="refresh" size={14} /> Connect again
           </button>
         ) : (
-          <button className="btn" onClick={() => (kybl ? actions.onNewBucket(profile) : actions.onOpenBucketByName(profile))}>
-            {kybl ? "New bucket" : "Open bucket by name"}
-          </button>
+          (kybl || byName) && (
+            <button className="btn" onClick={() => (kybl ? actions.onNewBucket(profile) : actions.onOpenBucketByName(profile))}>
+              {kybl ? "New bucket" : "Open bucket by name"}
+            </button>
+          )
         )}
       </div>
     </div>
@@ -65,6 +75,8 @@ export function ChooseBucket({ profile, note, reconnect, actions }: { profile: P
 
 export function ListError({ profile, error, onRetry, onReconnect }: { profile: Profile; error: string; onRetry: () => void; onReconnect: (p: Profile) => void }) {
   const revoked = profile.provider === KYBL && isRevokedKey(error);
+  // a Google Drive / OneDrive / Dropbox sign-in that ended: sign in again, then it loads
+  const signIn = isOAuthKind(profile.kind) && /sign in again|invalid_grant|expired or revoked/i.test(error);
   return (
     <div className="empty error-state">
       <div className="empty-art">
@@ -75,9 +87,9 @@ export function ListError({ profile, error, onRetry, onReconnect }: { profile: P
       <div className="error-msg">
         <ErrorText message={revoked ? kyblError(error) : error} />
       </div>
-      {revoked ? (
+      {revoked || signIn ? (
         <button className="btn btn-primary btn-sm kybl-reconnect" onClick={() => onReconnect(profile)}>
-          <Icon name="refresh" size={13} /> Connect again
+          <Icon name="refresh" size={13} /> {signIn ? "Sign in again" : "Connect again"}
         </button>
       ) : (
         <button className="btn btn-sm" onClick={onRetry}>
