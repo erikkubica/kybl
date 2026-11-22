@@ -25,6 +25,12 @@ let timer: number | undefined;
 let onErrorRef: (msg: string) => void = () => {};
 /** Downloads that may replace an existing local file (the user picked the path in a Save dialog). */
 const overwriteIds = new Set<string>();
+/**
+ * The path each download asked for, by id. `local` becomes the path really written ("x (1).jpg"
+ * when "x.jpg" was taken); a retry asks for the original again, which is how the backend knows
+ * it is the same download and carries on from its partial file instead of starting over.
+ */
+const requested = new Map<string, string>();
 /** Callers waiting for a transfer to end (see `whenFinished`). */
 const waiters = new Map<string, ((t: Transfer) => void)[]>();
 
@@ -89,6 +95,7 @@ function prune() {
     if (t.state === "done") {
       byId.delete(id);
       overwriteIds.delete(id);
+      requested.delete(id);
       done--;
     }
   }
@@ -164,7 +171,7 @@ async function start(t: Transfer) {
     } else {
       // the backend picks a free name ("photo (1).jpg") unless told to overwrite; keep the path it
       // really writes, so Open and Show in Finder point at the right file
-      const local = await api.startDownload(t.id, t.profileId, t.bucket, t.key, t.local, overwriteIds.has(t.id));
+      const local = await api.startDownload(t.id, t.profileId, t.bucket, t.key, requested.get(t.id) ?? t.local, overwriteIds.has(t.id));
       const cur = byId.get(t.id);
       if (cur && typeof local === "string" && local && local !== cur.local) {
         byId.set(t.id, { ...cur, local });
@@ -197,6 +204,7 @@ const actions = {
     const created: Transfer[] = items.map(({ overwrite, ...it }) => {
       const id = crypto.randomUUID();
       if (overwrite) overwriteIds.add(id);
+      if (it.kind === "download") requested.set(id, it.local);
       return { ...it, id, state: "queued" as const, bytes: 0, total: it.total ?? 0, speed: 0 };
     });
     for (const t of created) {
@@ -261,6 +269,7 @@ const actions = {
         if (t.state !== "done") api.cancelTransfer(id).catch(() => {});
         byId.delete(id);
         overwriteIds.delete(id);
+        requested.delete(id);
       }
     }
     dirty = true;
