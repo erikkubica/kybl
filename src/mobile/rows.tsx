@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Icon } from "../Icons";
 import { FileIcon } from "../components/FileIcon";
-import { formatBytes, formatDate, parentPrefix } from "../format";
+import { formatBytes, formatDate, parentPrefix, entrySize, entryKind } from "../format";
 import { cachedThumb, canListThumb, loadThumb } from "../thumbs";
 import type { Entry } from "../types";
 import { whenNear } from "./thumbObserver";
@@ -131,10 +131,12 @@ export const EntryRow = memo(function EntryRow({ entry, index, profileId, bucket
     (p) => h.longPress(entry, index, p),
   );
   const sub = showPath
-    ? `${parentPrefix(entry.key) || "/"} · ${formatBytes(entry.size)}`
+    ? `${parentPrefix(entry.key) || "/"} · ${entrySize(entry)}`
     : entry.kind === "folder"
       ? "Folder"
-      : `${formatBytes(entry.size)} · ${formatDate(entry.modified)}`;
+      : entry.native
+        ? `${entryKind(entry)} · ${formatDate(entry.modified)}`
+        : `${formatBytes(entry.size)} · ${formatDate(entry.modified)}`;
   return (
     <li className={`m-row ${selected ? "selected" : ""} ${active ? "active" : ""}`} data-idx={index}>
       <button className="m-row-main" {...press} aria-pressed={selecting ? selected : undefined}>
@@ -170,7 +172,7 @@ export const EntryTile = memo(function EntryTile({ entry, index, profileId, buck
         <span className="m-card-label">
           <span className="m-card-name">{entry.name}</span>
         </span>
-        <span className="m-card-meta">{entry.kind === "folder" ? " " : formatBytes(entry.size)}</span>
+        <span className="m-card-meta">{entry.kind === "folder" ? " " : entrySize(entry)}</span>
       </button>
     </div>
   );

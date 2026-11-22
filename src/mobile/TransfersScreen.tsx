@@ -171,9 +171,10 @@ const TransferRow = memo(function TransferRow({ t, transfers, onOpenFile }: { t:
   let sub: string;
   if (t.state === "running") {
     const left = t.speed > 0 && t.total ? (t.total - t.bytes) / t.speed : 0;
-    sub = `${formatBytes(t.bytes)} of ${formatBytes(t.total)}${t.speed ? ` · ${formatSpeed(t.speed)}` : ""}${left ? ` · ${formatEta(left)}` : ""}`;
-  } else if (t.state === "queued") sub = `Waiting · ${formatBytes(t.total)}`;
-  else if (t.state === "done") sub = t.kind === "upload" ? `Uploaded · ${formatBytes(t.total)}` : `${renamed ? `Saved as “${savedAs}”` : "Saved"} · ${formatBytes(t.total)} · Tap to open`;
+    // total 0: a Google Docs export, whose size isn't known until it's done
+    sub = `${t.total ? `${formatBytes(t.bytes)} of ${formatBytes(t.total)}` : formatBytes(t.bytes)}${t.speed ? ` · ${formatSpeed(t.speed)}` : ""}${left ? ` · ${formatEta(left)}` : ""}`;
+  } else if (t.state === "queued") sub = t.total ? `Waiting · ${formatBytes(t.total)}` : "Waiting";
+  else if (t.state === "done") sub = t.kind === "upload" ? `Uploaded · ${formatBytes(t.total)}` : `${renamed ? `Saved as “${savedAs}”` : "Saved"} · ${formatBytes(t.total || t.bytes)} · Tap to open`;
   else if (t.state === "cancelled") sub = "Stopped · Tap to retry";
   else sub = `${errSummary(t.error ?? "Failed")} · Tap to retry`;
   const tap =

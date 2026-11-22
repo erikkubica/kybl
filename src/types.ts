@@ -128,6 +128,8 @@ export type Entry = {
   storageClass?: string | null;
   /** Google Docs / Sheets / Slides: downloads are exports (connections/native.ts) */
   native?: ObjInfo["native"];
+  /** the provider's own type, when it gives one ("application/vnd.google-apps.document") */
+  mime?: string;
 };
 
 export type TransferState = "queued" | "running" | "done" | "error" | "cancelled";

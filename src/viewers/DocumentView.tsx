@@ -13,6 +13,7 @@ import { Icon } from "../Icons";
 import { formatBytes } from "../format";
 import type { Entry } from "../types";
 import { EDIT_MAX, viewerFor } from "./registry";
+import { asExport } from "../connections/native";
 import { encodeText } from "./text";
 import { useDocument } from "./useDocument";
 import { ConflictDialog, UnsavedDialog } from "./ConflictDialog";
@@ -74,8 +75,12 @@ const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 /** the Mac app's window buttons float over the top-left corner of the page */
 const macWindow = /Macintosh|Mac OS X/.test(navigator.userAgent) && !window.matchMedia("(pointer: coarse)").matches;
 
-export default function DocumentView({ profileId, bucket, entry, mode, onClose, onSaved, onOpenExternal, onOpenFull, inline, ref }: DocumentViewProps) {
+export default function DocumentView({ profileId, bucket, entry: given, mode, onClose, onSaved, onOpenExternal, onOpenFull, inline, ref }: DocumentViewProps) {
   const full = mode === "full";
+  // Google Docs, Sheets and Slides have no bytes of their own: show their Office export, read-only
+  // (saving it would make a new .docx next to the original, not change the Google file)
+  const native = given.native;
+  const entry = useMemo(() => (given.native ? (asExport(given) ?? given) : given), [given]);
   // where saves go (changes after "Save as copy") and what was last read from storage
   const [target, setTarget] = useState(entry.key);
   const [source, setSource] = useState(entry.key);
@@ -84,9 +89,9 @@ export default function DocumentView({ profileId, bucket, entry, mode, onClose, 
     setSource(entry.key);
   }, [entry.key]);
 
-  const name = baseName(target);
+  const name = native ? given.name : baseName(target);
   // after "Save as copy" the actions act on the copy
-  const current: Entry = target === entry.key ? entry : { ...entry, key: target, name, size: 0 };
+  const current: Entry = target === entry.key ? given : { ...entry, key: target, name, size: 0 };
   const info = useMemo(() => viewerFor(entry.name, null, entry.size), [entry.name, entry.size]);
   const { state, reload, saved } = useDocument(profileId, bucket, source, source === entry.key ? entry.size : 0, info, mode);
 
@@ -108,7 +113,7 @@ export default function DocumentView({ profileId, bucket, entry, mode, onClose, 
 
   const ready = state.status === "ready" ? state : null;
   const textDoc = ready?.text ?? null;
-  const editable = full && !!info?.canEdit && !!textDoc && !textDoc.lossy && (ready?.bytes.length ?? 0) <= info.editMaxBytes;
+  const editable = full && !native && !!info?.canEdit && !!textDoc && !textDoc.lossy && (ready?.bytes.length ?? 0) <= info.editMaxBytes;
 
   // a fresh load starts clean
   useEffect(() => {
@@ -277,12 +282,12 @@ export default function DocumentView({ profileId, bucket, entry, mode, onClose, 
         </p>
         <div className="dv-note-actions">
           {!full && onOpenFull && state.limit < info.maxBytes && entry.size <= info.maxBytes && (
-            <button className="btn btn-sm" onClick={() => onOpenFull(entry)}>
+            <button className="btn btn-sm" onClick={() => onOpenFull(given)}>
               Open
             </button>
           )}
           {onOpenExternal && (
-            <button className="btn btn-sm" onClick={() => onOpenExternal(entry)}>
+            <button className="btn btn-sm" onClick={() => onOpenExternal(given)}>
               Open in another app
             </button>
           )}
@@ -320,7 +325,8 @@ export default function DocumentView({ profileId, bucket, entry, mode, onClose, 
 
   // why a text file is read-only, when it is
   let readOnlyWhy: string | null = null;
-  if (full && ready && textDoc && info?.canEdit === false && info.editMaxBytes > 0) readOnlyWhy = `Files over ${formatBytes(EDIT_MAX)} open read-only.`;
+  if (full && ready && native?.exports[0]) readOnlyWhy = `Shown read-only, as a ${native.exports[0].label}. Edit it in Google Drive.`;
+  else if (full && ready && textDoc && info?.canEdit === false && info.editMaxBytes > 0) readOnlyWhy = `Files over ${formatBytes(EDIT_MAX)} open read-only.`;
   else if (full && ready && textDoc?.lossy) readOnlyWhy = "This file isn't UTF-8 text, so it opens read-only to keep it intact.";
   else if (full && ready && textDoc && info && ready.bytes.length > info.editMaxBytes && info.editMaxBytes > 0) readOnlyWhy = `Files over ${formatBytes(info.editMaxBytes)} open read-only.`;
 
@@ -369,8 +375,8 @@ export default function DocumentView({ profileId, bucket, entry, mode, onClose, 
       )}
       <div className="dv-body">{body}</div>
       {!full && onOpenFull && ready && (
-        <button className="btn btn-sm dv-open-full" onClick={() => onOpenFull(entry)} title={info?.canEdit ? "Open to edit" : "Open"}>
-          {info?.canEdit ? "Edit" : "Open"}
+        <button className="btn btn-sm dv-open-full" onClick={() => onOpenFull(given)} title={info?.canEdit && !native ? "Open to edit" : "Open"}>
+          {info?.canEdit && !native ? "Edit" : "Open"}
         </button>
       )}
       {conflict && (

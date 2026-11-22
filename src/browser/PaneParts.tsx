@@ -1,5 +1,5 @@
 /** The smaller pieces of a browser pane: banners above the list, the status bar and the drag ghost. */
-import { formatBytes } from "../format";
+import { formatBytes, sumSizes, hasSize } from "../format";
 import { rootName } from "../connections/roots";
 import { destLabel } from "../moving";
 import { Icon } from "../Icons";
@@ -72,7 +72,7 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
   const { ent, sel, busy, prefix } = pane;
   const { entries, search, stale, filter, moreOnServer, lst, needsAll, loadedCount, sortCapped, hasMore } = ent;
   const { selected, selectedEntries } = sel;
-  const totalSize = entries.reduce((s, e) => s + (e.kind === "file" ? e.size : 0), 0);
+  const totalSize = sumSizes(entries);
   const hereSize = pane.folderSizes.get(prefix);
   return (
     <footer className="statusbar">
@@ -88,7 +88,7 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
       {selected.size > 0 && (
         <span className="sel">
           · {selected.size} selected
-          {selectedEntries.some((e) => e.kind === "file") ? ` (${formatBytes(selectedEntries.reduce((s, e) => s + (e.kind === "file" ? e.size : 0), 0))})` : ""}
+          {selectedEntries.some(hasSize) ? ` (${formatBytes(sumSizes(selectedEntries))})` : ""}
         </span>
       )}
       {hereSize && !search && !stale && (

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useMeasured, useWindowed } from "../useWindowed";
 import { Icon } from "../Icons";
-import { formatBytes, formatDate, formatDateFull, kindLabel } from "../format";
+import { formatBytes, formatDate, formatDateFull, entrySize, entryKind } from "../format";
 import { EmptyState, FileIcon, SkeletonRows } from "./FileIcon";
 import { ContextMenu, isMenuKey, menuPointFor, type MenuItem } from "./Dialogs";
 import { useListNav, useMarquee, type Box, type FolderSizeInfo, type SelectKeys } from "./listNav";
@@ -460,7 +460,7 @@ export function FileTable({
                   case "size":
                     return (
                       <div key={c.id} className="c-size" role="gridcell">
-                        {folder ? <FolderSizeCell info={folderSize?.(e.key)} onCalc={onCalcSize && (() => onCalcSize(e.key))} /> : formatBytes(e.size)}
+                        {folder ? <FolderSizeCell info={folderSize?.(e.key)} onCalc={onCalcSize && (() => onCalcSize(e.key))} /> : entrySize(e)}
                       </div>
                     );
                   case "modified":
@@ -472,7 +472,7 @@ export function FileTable({
                   case "kind":
                     return (
                       <div key={c.id} className="c-kind" role="gridcell">
-                        {kindLabel(e.name, folder)}
+                        {entryKind(e)}
                       </div>
                     );
                   case "storageClass":

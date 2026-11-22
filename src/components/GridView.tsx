@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useMeasured, useWindowed } from "../useWindowed";
-import { formatBytes } from "../format";
+import { formatBytes, entrySize } from "../format";
 import { EmptyState, FileIcon } from "./FileIcon";
 import { cachedThumb, canListThumb, loadThumb } from "../thumbs";
 import { useListNav, useMarquee, type Box, type FolderSizeInfo, type SelectKeys } from "./listNav";
@@ -77,7 +77,7 @@ const Card = memo(function Card({
   }, [eligible, profileId, bucket, entry.key, entry.etag, entry.size]);
 
   const folder = entry.kind === "folder";
-  const meta = folder ? (size && !size.running ? formatBytes(size.bytes) : "") : formatBytes(entry.size);
+  const meta = folder ? (size && !size.running ? formatBytes(size.bytes) : "") : entrySize(entry);
   return (
     <div
       ref={ref}

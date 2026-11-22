@@ -98,8 +98,12 @@ const readJson = <T,>(k: string, fallback: T): T => {
 const sameLoc = (a: Loc, b: Loc) => a.profileId === b.profileId && a.bucket === b.bucket && a.prefix === b.prefix;
 const isMedia = (e: Entry) => e.kind === "file" && ((classify(e.name) === "image" && isWebImage(e.name)) || classify(e.name) === "video");
 /** Documents (text, code, Markdown, CSV, Office files) open in the app's own document screen; photos keep the viewer. */
-const opensAsDoc = (e: Entry) => e.kind === "file" && canView(e.name, e.size) && (viewerFor(e.name)?.kind !== "image" || !isMedia(e));
-const toEntry = (o: ObjInfo): Entry => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native });
+const opensAsDoc = (picked: Entry) => {
+  // a Google Doc / Sheet / Slides opens as its Office export, read-only (DocumentView)
+  const e = picked.native ? asExport(picked) : picked;
+  return !!e && e.kind === "file" && canView(e.name, e.size) && (viewerFor(e.name)?.kind !== "image" || !isMedia(e));
+};
+const toEntry = (o: ObjInfo): Entry => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native, mime: o.mime });
 
 /** Where downloads land, in the words people see in their Files app. */
 function friendlyFolder(path: string): string {

@@ -139,6 +139,8 @@ export function useFileOps(c: FileOpsCtx) {
     const files = ex.list.filter((e) => e.kind === "file");
     if (!files.length) return null;
     const total = files.reduce((s, e) => s + e.size, 0) || 1;
+    // Drive makes an export as it sends it: no size to measure against
+    const sized = !picked.some((e) => e.kind === "file" && e.native);
     let before = 0;
     let stop = false;
     let cancelCur = () => {};
@@ -148,10 +150,10 @@ export function useFileOps(c: FileOpsCtx) {
     try {
       for (const e of files) {
         const job = localCopy({ ...l, key: e.key, name: e.name, etag: e.etag, size: e.size }, (f) => {
-          if (!stop) pill.set({ text: `${doing} ${label}`, frac: f == null ? null : (before + f * e.size) / total, cancel });
+          if (!stop) pill.set({ text: `${doing} ${label}`, frac: f == null || !sized ? null : (before + f * e.size) / total, cancel });
         });
         cancelCur = job.cancel;
-        pill.set({ text: `${doing} ${label}`, frac: before / total, cancel });
+        pill.set({ text: `${doing} ${label}`, frac: sized ? before / total : null, cancel });
         paths.push(await job.path);
         before += e.size;
         if (stop) return null;

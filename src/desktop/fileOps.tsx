@@ -9,7 +9,7 @@ import { peekCaps } from "../useCaps";
 import type { ReactNode } from "react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { api, errMessage } from "../api";
-import { formatBytes, parentPrefix } from "../format";
+import { formatBytes, parentPrefix, sumSizes } from "../format";
 import { destKey, entryParent, placeLabel } from "../moving";
 import type { Settings } from "../settings";
 import type { Entry, LocalFile, Profile } from "../types";
@@ -316,7 +316,7 @@ export function makeFileOps(c: OpsContext) {
           </p>
           {files.length > 0 && (
             <p>
-              {plural(files.length, "file")}, {formatBytes(files.reduce((s, e) => s + e.size, 0))}
+              {plural(files.length, "file")}, {formatBytes(sumSizes(files))}
             </p>
           )}
         </>
