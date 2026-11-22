@@ -264,12 +264,11 @@ struct PendingDownload {
 
 static PENDING_DOWNLOADS: LazyLock<Mutex<HashMap<String, PendingDownload>>> = LazyLock::new(Default::default);
 
-/// Forgets a failed download and removes its partial file, unless another download is writing to
-/// that name now (one that replaces the file can pick a name a failed download left behind).
-fn forget_download(p: PendingDownload) {
-    if dest::try_hold(&p.chosen) {
+/// Forgets the failed download `id` and removes its partial file, unless that file isn't its own
+/// any more (a download that replaces the file can take a name a failed download left behind).
+fn forget_download(id: &str, p: PendingDownload) {
+    if dest::unpark(&p.chosen, id) {
         let _ = std::fs::remove_file(dest::part_path(&p.chosen));
-        dest::release(&p.chosen);
     }
 }
 
@@ -444,9 +443,12 @@ async fn spawn_transfer(
         match (kind, &result) {
             (Kind::Download { .. }, r) => {
                 let chosen = PathBuf::from(&local);
-                // the name is free for others again; a failed download's partial file still keeps
-                // it from being picked (see dest::reserve), so Retry can usually carry on
-                dest::release(&chosen);
+                // a failed download keeps its name (and partial file) for Retry; otherwise the
+                // name is free for others again
+                match r {
+                    Err(_) => dest::park(&chosen, &id),
+                    Ok(_) => dest::release(&chosen),
+                }
                 match r {
                     Err(_) => {
                         let kept = PendingDownload { profile_id: profile_id.clone(), bucket: bucket.clone(), key: key.clone(), requested, chosen, etag };
@@ -518,18 +520,20 @@ pub async fn start_download(
     if state.cancels.lock().await.contains_key(&id) {
         return Err("This download is already running.".into());
     }
+    let overwrite = overwrite.unwrap_or(false);
     let kept = PENDING_DOWNLOADS.lock().unwrap().remove(&id);
     let (chosen, resume_etag) = match kept {
         // the same download again: same name, carrying on from its partial file (unless another
-        // download took the name meanwhile)
-        Some(p) if p.profile_id == profile_id && p.bucket == bucket && p.key == key && p.requested == dest_path && dest::try_hold(&p.chosen) => {
-            (p.chosen, p.etag)
+        // download took the name meanwhile, or a file turned up there)
+        Some(p) if p.profile_id == profile_id && p.bucket == bucket && p.key == key && p.requested == dest_path && dest::resume(&p.chosen, &id) => {
+            let (chosen, partial) = dest::recheck_retry(p.chosen, &wanted, overwrite);
+            (chosen, if partial { p.etag } else { None })
         }
         other => {
             if let Some(p) = other {
-                forget_download(p);
+                forget_download(&id, p);
             }
-            (dest::reserve(&wanted, overwrite.unwrap_or(false)), None)
+            (dest::reserve(&wanted, overwrite)?, None)
         }
     };
     let local = chosen.to_string_lossy().into_owned();
@@ -551,7 +555,7 @@ pub async fn cancel_transfer(state: State<'_, AppState>, id: String) -> Result<(
         return Ok(());
     }
     if let Some(p) = PENDING_DOWNLOADS.lock().unwrap().remove(&id) {
-        forget_download(p);
+        forget_download(&id, p);
     }
     multipart::forget(&id);
     Ok(())

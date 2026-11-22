@@ -2,7 +2,7 @@
 //! Finder-style name ("photo (1).jpg") instead of replacing a file that is already there.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Component, Path, PathBuf},
     sync::Mutex,
 };
@@ -60,34 +60,128 @@ pub fn free_name(path: &Path, taken: impl Fn(&Path) -> bool) -> PathBuf {
         .expect("some number is free")
 }
 
-/// Paths handed to downloads that have not finished, so two downloads started together with the
-/// same name (two `report.pdf` from different folders) get different names, not the same file.
-static RESERVED: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+/// Names downloads are using, so two downloads started together with the same name (two
+/// `report.pdf` from different folders) get different names, and two downloads never share one
+/// `.s3part` file. `held`: written to right now. `parked`: a failed download (by transfer id)
+/// keeps its partial file there for Retry.
+#[derive(Default)]
+struct Names {
+    held: HashSet<PathBuf>,
+    parked: HashMap<PathBuf, String>,
+}
 
-/// Picks the path a download writes to and holds it until [`release`]. With `overwrite` it is
-/// `dest` itself; otherwise the first name that is neither on disk nor held by another download.
-pub fn reserve(dest: &Path, overwrite: bool) -> PathBuf {
-    let mut guard = RESERVED.lock().unwrap();
-    let held = guard.get_or_insert_with(HashSet::new);
-    let chosen = if overwrite {
-        dest.to_path_buf()
+static NAMES: Mutex<Option<Names>> = Mutex::new(None);
+
+fn names<T>(f: impl FnOnce(&mut Names) -> T) -> T {
+    f(NAMES.lock().unwrap().get_or_insert_with(Names::default))
+}
+
+/// How a path is compared with the names in use. The file systems of macOS, Windows, iOS and
+/// Android's shared storage ignore case, so there "Report.pdf" and "report.pdf" are one file.
+fn name_key(p: &Path) -> PathBuf {
+    if cfg!(target_os = "linux") {
+        p.to_path_buf()
     } else {
-        free_name(dest, |p| held.contains(p) || p.exists() || part_path(p).exists())
-    };
-    held.insert(chosen.clone());
-    chosen
-}
-
-/// Holds `path` again for a retried download that keeps the name it was given first; false if
-/// another download holds it now.
-pub fn try_hold(path: &Path) -> bool {
-    RESERVED.lock().unwrap().get_or_insert_with(HashSet::new).insert(path.to_path_buf())
-}
-
-pub fn release(path: &Path) {
-    if let Some(held) = RESERVED.lock().unwrap().as_mut() {
-        held.remove(path);
+        PathBuf::from(p.to_string_lossy().to_lowercase())
     }
+}
+
+/// What a download that replaces a file hears while another download writes to that name.
+pub const BUSY: &str = "Already downloading this file. Wait for that download to finish, or cancel it first.";
+
+/// Picks the path a download writes to and holds it until [`release`] or [`park`]. With
+/// `overwrite` it is `dest` itself (refused while another download writes there; a failed
+/// download parked there loses its partial file to it); otherwise the first name that is neither
+/// on disk nor in use by another download.
+pub fn reserve(dest: &Path, overwrite: bool) -> Result<PathBuf, String> {
+    names(|n| {
+        let chosen = if overwrite {
+            let key = name_key(dest);
+            if n.held.contains(&key) {
+                return Err(BUSY.to_string());
+            }
+            n.parked.remove(&key);
+            dest.to_path_buf()
+        } else {
+            free_name(dest, |p| {
+                let key = name_key(p);
+                n.held.contains(&key) || n.parked.contains_key(&key) || p.exists() || part_path(p).exists()
+            })
+        };
+        n.held.insert(name_key(&chosen));
+        Ok(chosen)
+    })
+}
+
+/// The download writing to `path` ended.
+pub fn release(path: &Path) {
+    names(|n| n.held.remove(&name_key(path)));
+}
+
+/// The download writing to `path` (transfer `id`) failed: its partial file stays for Retry.
+pub fn park(path: &Path, id: &str) {
+    names(|n| {
+        let key = name_key(path);
+        n.held.remove(&key);
+        n.parked.insert(key, id.to_string());
+    });
+}
+
+/// Retry of the failed download `id`: holds its name again. False when the partial file there is
+/// not its own any more (a download that replaces the file took the name meanwhile).
+pub fn resume(path: &Path, id: &str) -> bool {
+    names(|n| {
+        let key = name_key(path);
+        if n.parked.get(&key).map(String::as_str) != Some(id) || n.held.contains(&key) {
+            return false;
+        }
+        n.parked.remove(&key);
+        n.held.insert(key);
+        true
+    })
+}
+
+/// The failed download `id` is forgotten. True when the partial file at `path` was still its
+/// own, so the caller may remove it.
+pub fn unpark(path: &Path, id: &str) -> bool {
+    names(|n| {
+        let key = name_key(path);
+        if n.parked.get(&key).map(String::as_str) != Some(id) {
+            return false;
+        }
+        n.parked.remove(&key);
+        !n.held.contains(&key)
+    })
+}
+
+/// Retry of a failed download that holds its first name again (see [`resume`]). A file that
+/// turned up under that name since is kept, unless `overwrite`: the download then carries on
+/// under a free name for `wanted`, its partial file moved along. Answers the name and whether
+/// the partial file is still there to continue.
+pub fn recheck_retry(chosen: PathBuf, wanted: &Path, overwrite: bool) -> (PathBuf, bool) {
+    if overwrite || !chosen.exists() {
+        return (chosen, true);
+    }
+    let next = reserve(wanted, false).expect("only a download that replaces a file is ever refused");
+    let moved = std::fs::rename(part_path(&chosen), part_path(&next)).is_ok();
+    if !moved {
+        let _ = std::fs::remove_file(part_path(&chosen));
+    }
+    release(&chosen);
+    (next, moved)
+}
+
+/// Runs `f` unless a download writes to, or keeps a partial file for, `path`; nothing can take
+/// the name while `f` runs. False when it was in use.
+pub fn unless_in_use(path: &Path, f: impl FnOnce()) -> bool {
+    names(|n| {
+        let key = name_key(path);
+        if n.held.contains(&key) || n.parked.contains_key(&key) {
+            return false;
+        }
+        f();
+        true
+    })
 }
 
 #[cfg(test)]
@@ -123,24 +217,107 @@ mod tests {
         assert_eq!(free_name(Path::new("/d/a.tar.gz"), taken(&["/d/a.tar.gz"])), Path::new("/d/a.tar (1).gz"));
     }
 
-    #[test]
-    fn two_downloads_with_one_name_get_two_files() {
+    fn temp_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("kybl-dest-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn two_downloads_with_one_name_get_two_files() {
+        let dir = temp_dir();
         let want = dir.join("report.pdf");
         std::fs::write(&want, b"mine").unwrap();
-        let a = reserve(&want, false);
-        let b = reserve(&want, false);
+        let a = reserve(&want, false).unwrap();
+        let b = reserve(&want, false).unwrap();
         assert_eq!(a, dir.join("report (1).pdf"));
         assert_eq!(b, dir.join("report (2).pdf"));
         // overwrite takes the name as given, even though it exists
-        assert_eq!(reserve(&want, true), want);
+        assert_eq!(reserve(&want, true).unwrap(), want);
         release(&a);
-        assert!(!try_hold(&b), "held by the other download");
-        assert_eq!(reserve(&want, false), a, "a released name is free again");
+        assert_eq!(reserve(&want, false).unwrap(), a, "a released name is free again");
         for p in [&a, &b, &want] {
             release(p);
         }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn replacing_a_file_another_download_writes_to_is_refused() {
+        let dir = temp_dir();
+        let want = dir.join("movie.mkv");
+        let a = reserve(&want, false).unwrap();
+        assert_eq!(a, want);
+        assert_eq!(reserve(&want, true), Err(BUSY.to_string()), "never two writers on one .s3part");
+        release(&a);
+        assert_eq!(reserve(&want, true).unwrap(), want, "free once the first one ended");
+        release(&want);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn names_differing_only_in_case_are_one_file() {
+        let dir = temp_dir();
+        let a = reserve(&dir.join("Report.PDF"), false).unwrap();
+        let b = reserve(&dir.join("report.pdf"), false).unwrap();
+        assert_eq!(b, dir.join("report (1).pdf"));
+        assert_eq!(reserve(&dir.join("REPORT.pdf"), true), Err(BUSY.to_string()));
+        release(&a);
+        release(&b);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_failed_download_keeps_its_name_for_retry() {
+        let dir = temp_dir();
+        let want = dir.join("big.iso");
+        let a = reserve(&want, false).unwrap();
+        park(&a, "t1");
+        let other = reserve(&want, false).unwrap();
+        assert_eq!(other, dir.join("big (1).iso"), "parked names aren't handed out");
+        release(&other);
+        assert!(!resume(&a, "other"), "only by its own transfer");
+        assert!(resume(&a, "t1"));
+        assert!(!unless_in_use(&a, || {}));
+        park(&a, "t1");
+        // a download that replaces the file takes the name: the partial isn't t1's any more
+        assert_eq!(reserve(&want, true).unwrap(), want);
+        assert!(!resume(&a, "t1"));
+        assert!(!unpark(&a, "t1"), "forgetting t1 must not remove the other one's partial");
+        park(&want, "t2");
+        assert!(unpark(&want, "t2"));
+        assert!(unless_in_use(&want, || {}));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_retry_never_replaces_a_file_that_turned_up_meanwhile() {
+        let dir = temp_dir();
+        let want = dir.join("notes.txt");
+        let a = reserve(&want, false).unwrap();
+        std::fs::write(part_path(&a), b"half").unwrap();
+        park(&a, "t1");
+        // nothing there yet: same name, partial kept
+        assert!(resume(&a, "t1"));
+        assert_eq!(recheck_retry(a.clone(), &want, false), (a.clone(), true));
+        park(&a, "t1");
+        // the user saved a file of that name meanwhile
+        std::fs::write(&a, b"theirs").unwrap();
+        assert!(resume(&a, "t1"));
+        let (next, kept) = recheck_retry(a.clone(), &want, false);
+        assert_eq!(next, dir.join("notes (1).txt"));
+        assert!(kept);
+        assert_eq!(std::fs::read(part_path(&next)).unwrap(), b"half", "the partial moved along");
+        assert_eq!(std::fs::read(&a).unwrap(), b"theirs", "their file is untouched");
+        assert!(unless_in_use(&a, || {}), "the old name is let go");
+        release(&next);
+        // unless the download replaces files anyway
+        assert!(reserve(&a, true).is_ok());
+        park(&a, "t2");
+        assert!(resume(&a, "t2"));
+        assert_eq!(recheck_retry(a.clone(), &want, true), (a.clone(), true));
+        release(&a);
         let _ = std::fs::remove_dir_all(dir);
     }
 }
