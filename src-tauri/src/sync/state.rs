@@ -50,6 +50,11 @@ CREATE TABLE conflicts(
     mapping_id TEXT NOT NULL, copy TEXT NOT NULL, path TEXT NOT NULL, created_at INTEGER NOT NULL,
     PRIMARY KEY(mapping_id, copy)
 ) WITHOUT ROWID;
+", "
+CREATE TABLE confirmed(
+    mapping_id TEXT NOT NULL, path TEXT NOT NULL, side TEXT NOT NULL,
+    PRIMARY KEY(mapping_id, path, side)
+) WITHOUT ROWID;
 "];
 
 fn db_err(e: rusqlite::Error) -> String {
@@ -339,16 +344,62 @@ impl SyncDb {
         })
     }
 
-    /// The deletions the user confirmed (the held ones, once "Confirm deletions" was pressed).
+    /// The deletions the user confirmed: exactly the list they were shown when they pressed
+    /// "Delete them", never whatever a later run held.
     pub fn confirmed(&self, id: &str) -> Result<HashSet<(String, Side)>, String> {
         if !self.cursor(id)?.confirm_deletes {
             return Ok(HashSet::new());
         }
-        Ok(self.pending(id)?.into_iter().map(|p| (p.path, p.side)).collect())
+        let rows: Vec<(String, String)> = self.with(|c| {
+            let mut q = c.prepare("SELECT path, side FROM confirmed WHERE mapping_id = ?1")?;
+            let rows = q.query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect()
+        })?;
+        Ok(rows.into_iter().filter_map(|(p, s)| Some((p, Side::parse(&s)?))).collect())
     }
 
+    /// Confirms the held deletions the user saw, if they are still exactly what is held.
+    /// Answers false (and confirms nothing) when a run changed the list meanwhile.
+    pub fn confirm_exact(&self, id: &str, items: &[(String, Side)]) -> Result<bool, String> {
+        let want: HashSet<(String, Side)> = items.iter().cloned().collect();
+        self.with(|c| {
+            let tx = c.transaction()?;
+            let held: HashSet<(String, Side)> = {
+                let mut q = tx.prepare("SELECT path, side FROM pending WHERE mapping_id = ?1")?;
+                let rows = q.query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+                rows.filter_map(|r| r.ok().and_then(|(p, s)| Some((p, Side::parse(&s)?)))).collect()
+            };
+            if held.is_empty() || held != want {
+                return Ok(false);
+            }
+            tx.execute("DELETE FROM confirmed WHERE mapping_id = ?1", [id])?;
+            {
+                let mut ins = tx.prepare("INSERT OR REPLACE INTO confirmed(mapping_id, path, side) VALUES (?1, ?2, ?3)")?;
+                for (p, s) in &want {
+                    ins.execute(params![id, p, s.as_str()])?;
+                }
+            }
+            tx.execute(
+                "INSERT INTO cursors(mapping_id, confirm_deletes) VALUES (?1, 1) ON CONFLICT(mapping_id) DO UPDATE SET confirm_deletes = 1",
+                [id],
+            )?;
+            tx.commit()?;
+            Ok(true)
+        })
+    }
+
+    /// On: confirms what is held right now (tests; the app confirms through [`confirm_exact`]).
+    /// Off: a used (or dropped) confirmation is forgotten.
+    ///
+    /// [`confirm_exact`]: SyncDb::confirm_exact
     pub fn set_confirm(&self, id: &str, on: bool) -> Result<(), String> {
-        self.set_cursor_col(id, "confirm_deletes", &(on as i64))
+        if on {
+            let items: Vec<(String, Side)> = self.pending(id)?.into_iter().map(|p| (p.path, p.side)).collect();
+            self.confirm_exact(id, &items)?;
+            return Ok(());
+        }
+        self.with(|c| c.execute("DELETE FROM confirmed WHERE mapping_id = ?1", [id]).map(|_| ()))?;
+        self.set_cursor_col(id, "confirm_deletes", &0i64)
     }
 
     /// "Keep the files": forgets the base of every held deletion (so the next run copies them
@@ -477,6 +528,27 @@ mod tests {
         assert!(!db.load_base("m").unwrap().contains_key("a"), "forgotten, so it is copied back");
         assert!(db.tombstones("m").unwrap().is_empty());
         assert!(!db.cursor("m").unwrap().confirm_deletes);
+    }
+
+    #[test]
+    fn a_confirmation_covers_only_the_list_the_user_saw() {
+        let db = SyncDb::in_memory();
+        let a = PendingDelete { path: "a".into(), side: Side::Remote, size: 1 };
+        db.set_pending("m", std::slice::from_ref(&a)).unwrap();
+        let seen = vec![("a".to_string(), Side::Remote)];
+        // a run held one more meanwhile: the click confirms nothing
+        db.set_pending("m", &[a.clone(), PendingDelete { path: "b".into(), side: Side::Local, size: 2 }]).unwrap();
+        assert!(!db.confirm_exact("m", &seen).unwrap());
+        assert!(db.confirmed("m").unwrap().is_empty());
+        // the list as it is now
+        db.set_pending("m", std::slice::from_ref(&a)).unwrap();
+        assert!(db.confirm_exact("m", &seen).unwrap());
+        // a later run holding something else doesn't widen the confirmation
+        db.set_pending("m", &[a, PendingDelete { path: "c".into(), side: Side::Remote, size: 3 }]).unwrap();
+        assert_eq!(db.confirmed("m").unwrap(), HashSet::from([("a".to_string(), Side::Remote)]));
+        db.set_confirm("m", false).unwrap();
+        assert!(db.confirmed("m").unwrap().is_empty());
+        assert!(!db.confirm_exact("m", &[]).unwrap(), "nothing held, nothing to confirm");
     }
 
     #[test]

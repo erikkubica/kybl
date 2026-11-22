@@ -670,11 +670,23 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     }
     case "sync_pending":
       return syncPending[a.id] ?? [];
-    case "sync_confirm_deletes":
+    case "sync_confirm_deletes": {
+      // like the backend: only the exact list the user saw is confirmed
+      const key = (i: { path: string; side: string }) => `${i.side}:${i.path}`;
+      const held = new Set((syncPending[a.id] ?? []).map(key));
+      const seen = new Set(((a.items ?? []) as { path: string; side: string }[]).map(key));
+      if (held.size === 0 || held.size !== seen.size || [...held].some((k) => !seen.has(k))) {
+        throw "The list of files changed since you looked. Check it again, then confirm.";
+      }
+      const n = syncPending[a.id].length;
+      syncPending[a.id] = [];
+      await pushStatus(a.id, { pendingDeletes: 0, state: "idle", error: null, lastSync: Date.now(), summary: `${n} deleted` });
+      return null;
+    }
     case "sync_restore_deletes": {
       const n = syncPending[a.id]?.length ?? 0;
       syncPending[a.id] = [];
-      await pushStatus(a.id, { pendingDeletes: 0, state: "idle", error: null, lastSync: Date.now(), summary: cmd === "sync_confirm_deletes" ? `${n} deleted` : `${n} files kept` });
+      await pushStatus(a.id, { pendingDeletes: 0, state: "idle", error: null, lastSync: Date.now(), summary: `${n} files kept` });
       return null;
     }
     case "sync_keep_offline": {

@@ -11,13 +11,14 @@ use std::{
     time::Duration,
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tokio::sync::{mpsc, Mutex};
 
 use super::{
     config::{load_config, norm_prefix, overlaps, save_config, Direction, SyncConfig, SyncMapping},
     local::{self, make_watcher, Dirty, Watcher},
+    plan::Side,
     runner::{self, Engine, RunResult, Tick},
     state::{PendingDelete, SyncDb},
 };
@@ -595,10 +596,22 @@ pub async fn sync_pending(app: AppHandle, mgr: State<'_, SyncManager>, id: Strin
     mgr.db(&app)?.pending(&id)
 }
 
-/// "Delete them": the held deletions go ahead on the next run, which starts now.
+/// One held deletion as the user saw it.
+#[derive(Deserialize)]
+pub struct ConfirmItem {
+    pub path: String,
+    pub side: Side,
+}
+
+/// "Delete them": the held deletions the user was shown (`items`) go ahead on the next run,
+/// which starts now. If a run changed the list meanwhile nothing is confirmed, and the UI is
+/// told to show the list again.
 #[tauri::command]
-pub async fn sync_confirm_deletes(app: AppHandle, mgr: State<'_, SyncManager>, id: String) -> Result<(), String> {
-    mgr.db(&app)?.set_confirm(&id, true)?;
+pub async fn sync_confirm_deletes(app: AppHandle, mgr: State<'_, SyncManager>, id: String, items: Vec<ConfirmItem>) -> Result<(), String> {
+    let items: Vec<(String, Side)> = items.into_iter().map(|i| (i.path, i.side)).collect();
+    if !mgr.db(&app)?.confirm_exact(&id, &items)? {
+        return Err("The list of files changed since you looked. Check it again, then confirm.".into());
+    }
     if !mgr.kick(&id, true).await {
         return Err("This folder is paused. Resume it to delete the files.".into());
     }
