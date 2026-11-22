@@ -22,6 +22,8 @@ mod plan;
 pub mod types;
 
 #[cfg(test)]
+mod mock_s3;
+#[cfg(test)]
 mod tests;
 
 use std::{

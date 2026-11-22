@@ -219,12 +219,17 @@ fn copies_a_whole_tree_with_empty_folders_and_ignores() {
         assert!(d.0.join("backup/empty/inner").is_dir(), "empty folders come along");
         assert!(!d.0.join("backup/node_modules").exists());
         // progress went out, at most every 250 ms apart from state changes
-        let ev = host.events.lock().unwrap();
-        assert!(ev.iter().any(|(_, p)| p.state == JobState::Planning));
-        assert_eq!(ev.last().unwrap().1.state, JobState::Done);
-        assert_eq!(ev.last().unwrap().1.phase, Phase::Finished);
+        {
+            let ev = host.events.lock().unwrap();
+            assert!(ev.iter().any(|(_, p)| p.state == JobState::Planning));
+            assert_eq!(ev.last().unwrap().1.state, JobState::Done);
+            assert_eq!(ev.last().unwrap().1.phase, Phase::Finished);
+            // never more than 4 a second outside state changes
+            let running: Vec<Instant> = ev.iter().filter(|(_, p)| p.state == JobState::Running && p.phase == Phase::Copying).map(|(t, _)| *t).collect();
+            let quick = running.windows(2).filter(|w| w[1] - w[0] < Duration::from_millis(200)).count();
+            assert!(quick <= 2, "{quick} progress events came closer than 200 ms");
+        }
         // a second run finds everything already there
-        drop(ev);
         let id2 = m.create(spec(&sr, &[("", true)], &dr, "backup")).unwrap();
         let j2 = finished(&m, &id2).await;
         // (without the ignore list this time, the two files it left out are copied now)
@@ -510,4 +515,272 @@ fn failed_files_can_be_retried() {
         assert_eq!((j.progress.files_failed, j.progress.files_done), (0, 2));
         assert!(m.failures(&id, 0, 10).unwrap().is_empty());
     });
+}
+
+// ---------------------------------------------------------------- S3 (rclone serve s3)
+
+/// A throwaway S3 server: `rclone serve s3` over a temporary folder (bucket `testbucket`), or
+/// the server in `KYBL_TEST_S3_ENDPOINT` (keys testkey / testsecret). None when neither is there.
+mod s3 {
+    use super::*;
+    use crate::state::{build_client, Profile};
+    use crate::storage::{s3::S3Backend, s3_stream, PartRecord, Reopen, ResumeState};
+
+    pub struct Server {
+        child: Option<std::process::Child>,
+        _dir: Option<Tmp>,
+        pub endpoint: String,
+    }
+
+    impl Drop for Server {
+        fn drop(&mut self) {
+            if let Some(c) = self.child.as_mut() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+        }
+    }
+
+    pub fn server() -> Option<Server> {
+        if let Ok(endpoint) = std::env::var("KYBL_TEST_S3_ENDPOINT") {
+            return Some(Server { child: None, _dir: None, endpoint });
+        }
+        let dir = tmp();
+        std::fs::create_dir_all(dir.0.join("testbucket")).unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0").ok()?.local_addr().ok()?.port();
+        let child = std::process::Command::new("rclone")
+            .args(["serve", "s3", "--auth-key", "testkey,testsecret", "--addr", &format!("127.0.0.1:{port}")])
+            .arg(&dir.0)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        let server = Server { child: Some(child), _dir: Some(dir), endpoint: format!("http://127.0.0.1:{port}") };
+        for _ in 0..100 {
+            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                return Some(server);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        None
+    }
+
+    pub fn backend(endpoint: &str) -> S3Backend {
+        let p = Profile {
+            id: "s3".into(),
+            name: "s3".into(),
+            provider: "custom".into(),
+            endpoint: endpoint.into(),
+            region: "us-east-1".into(),
+            access_key_id: "testkey".into(),
+            path_style: true,
+            ..Default::default()
+        };
+        S3Backend::new(build_client(&p, "testsecret"), &p)
+    }
+
+    fn data(n: usize, seed: u8) -> Vec<u8> {
+        (0..n).map(|i| ((i * 31 + i / 7919) % 251) as u8 ^ seed).collect()
+    }
+
+    fn stream_of(d: &[u8], chunk: usize) -> crate::storage::ByteStream {
+        let chunks: Vec<std::io::Result<bytes::Bytes>> = d.chunks(chunk).map(|c| Ok(bytes::Bytes::copy_from_slice(c))).collect();
+        Box::pin(futures_util::stream::iter(chunks))
+    }
+
+    /// Opens `d` at any offset, one part's worth, counting the reads of each offset.
+    fn reopen_of(d: Arc<Vec<u8>>, part: u64, reads: Arc<Mutex<HashMap<u64, u32>>>) -> Reopen {
+        Box::new(move |off| {
+            let (d, reads) = (d.clone(), reads.clone());
+            Box::pin(async move {
+                *reads.lock().unwrap().entry(off).or_default() += 1;
+                let end = (off + part).min(d.len() as u64) as usize;
+                Ok(stream_of(&d[off as usize..end], 100_000))
+            })
+        })
+    }
+
+    async fn get(s3: &S3Backend, key: &str) -> Vec<u8> {
+        let mut out = s3.client().get_object().bucket("testbucket").key(key).send().await.unwrap();
+        let mut back = Vec::new();
+        while let Some(c) = out.body.try_next().await.unwrap() {
+            back.extend_from_slice(&c);
+        }
+        back
+    }
+
+    fn no_progress(_: u64, _: u64) {}
+
+    #[test]
+    fn stream_uploads_arrive_intact_and_resume_from_confirmed_parts() {
+        tauri::async_runtime::block_on(async move {
+            let mock = super::super::mock_s3::start().await;
+            let s3 = backend(&mock.endpoint);
+            let never = Arc::new(AtomicBool::new(false));
+            let run = uuid::Uuid::new_v4().to_string();
+
+            // small, known length: one PUT with Content-MD5
+            let small = data(1 << 20, 1);
+            let k = format!("{run}/small.bin");
+            let r = s3_stream::upload_stream(&s3, "testbucket", &k, Some(small.len() as u64), stream_of(&small, 70_000), None, WriteOpts::default(), &no_progress, &never)
+                .await
+                .unwrap();
+            assert!(matches!(r, WriteOutcome::Done(e) if e.size == small.len() as i64));
+            assert!(get(&s3, &k).await == small);
+
+            // unknown length, short: still one PUT
+            let k = format!("{run}/unknown.bin");
+            let r = s3_stream::upload_stream(&s3, "testbucket", &k, None, stream_of(&small, 70_000), None, WriteOpts::default(), &no_progress, &never).await.unwrap();
+            assert!(matches!(r, WriteOutcome::Done(_)));
+            assert!(get(&s3, &k).await == small);
+
+            // big, read once in order: multipart, every part with Content-MD5
+            let big = Arc::new(data(40 << 20, 2));
+            let k = format!("{run}/sequential.bin");
+            let seen = Mutex::new(Vec::new());
+            let r = s3_stream::upload_stream(
+                &s3,
+                "testbucket",
+                &k,
+                Some(big.len() as u64),
+                stream_of(&big, 256 << 10),
+                None,
+                WriteOpts::default(),
+                &|d, t| {
+                    assert_eq!(t, big.len() as u64);
+                    seen.lock().unwrap().push(d)
+                },
+                &never,
+            )
+            .await
+            .unwrap();
+            assert!(matches!(r, WriteOutcome::Done(e) if e.size == big.len() as i64));
+            assert!(get(&s3, &k).await == *big);
+            assert_eq!(*seen.lock().unwrap().last().unwrap(), big.len() as u64);
+
+            // parallel ranged parts, stopped after the first part lands, then resumed
+            let part = s3_stream::part_size(Some(big.len() as u64));
+            let k = format!("{run}/resumed.bin");
+            let reads = Arc::new(Mutex::new(HashMap::new()));
+            let saved: Mutex<Option<ResumeState>> = Mutex::new(None);
+            let stop = Arc::new(AtomicBool::new(false));
+            let on_part = |p: PartRecord| {
+                let mut s = saved.lock().unwrap();
+                if p.number == 0 {
+                    *s = Some(ResumeState { upload_id: p.etag, part_size: p.size, parts: vec![] });
+                } else {
+                    s.as_mut().unwrap().parts.push(p);
+                    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            };
+            let empty = || -> crate::storage::ByteStream { Box::pin(futures_util::stream::empty()) };
+            let opts = WriteOpts { part_size: Some(part), parts_in_flight: 1, on_part: Some(&on_part), ..Default::default() };
+            let r = s3_stream::upload_stream(&s3, "testbucket", &k, Some(big.len() as u64), empty(), Some(reopen_of(big.clone(), part, reads.clone())), opts, &no_progress, &stop)
+                .await
+                .unwrap();
+            assert!(matches!(r, WriteOutcome::Cancelled));
+            let rs = saved.lock().unwrap().clone().expect("the upload was announced");
+            assert!(!rs.parts.is_empty(), "a part landed before the stop");
+            // the tracked upload was left open for resuming: carry on
+            let opts = WriteOpts { part_size: Some(part), resume: Some(rs.clone()), on_part: Some(&on_part), ..Default::default() };
+            let fresh = Arc::new(AtomicBool::new(false));
+            let r = s3_stream::upload_stream(&s3, "testbucket", &k, Some(big.len() as u64), empty(), Some(reopen_of(big.clone(), part, reads.clone())), opts, &no_progress, &fresh)
+                .await
+                .unwrap();
+            assert!(matches!(r, WriteOutcome::Done(_)));
+            assert!(get(&s3, &k).await == *big);
+            {
+                let reads = reads.lock().unwrap();
+                for p in &rs.parts {
+                    let off = (p.number as u64 - 1) * part;
+                    assert_eq!(reads.get(&off), Some(&1), "part {} was read once, not again after resuming", p.number);
+                }
+            }
+
+            // cancelled without tracking: aborted, nothing left behind
+            let k = format!("{run}/cancelled.bin");
+            let stopped = Arc::new(AtomicBool::new(true));
+            let r = s3_stream::upload_stream(&s3, "testbucket", &k, Some(big.len() as u64), stream_of(&big, 1 << 20), None, WriteOpts::default(), &no_progress, &stopped)
+                .await
+                .unwrap();
+            assert!(matches!(r, WriteOutcome::Cancelled));
+            assert!(s3.client().head_object().bucket("testbucket").key(&k).send().await.is_err());
+
+            let st = mock.state.lock().unwrap();
+            assert_eq!(st.without_md5, 0, "every PUT and UploadPart carried a Content-MD5");
+            assert_eq!(st.bad_digests, 0);
+            assert!(st.uploads.is_empty(), "nothing left open: finished, or aborted when untracked");
+        });
+    }
+
+    /// Single-request uploads and listing against a real S3 server implementation (rclone), when
+    /// it is installed.
+    #[test]
+    fn rclone_takes_content_md5_uploads() {
+        let Some(srv) = server() else { return eprintln!("skipped: rclone not installed and KYBL_TEST_S3_ENDPOINT not set") };
+        tauri::async_runtime::block_on(async move {
+            let s3 = backend(&srv.endpoint);
+            let never = Arc::new(AtomicBool::new(false));
+            let small = data(3 << 20, 4);
+            let r = s3_stream::upload_stream(&s3, "testbucket", "r/small.bin", Some(small.len() as u64), stream_of(&small, 70_000), None, WriteOpts::default(), &no_progress, &never)
+                .await
+                .unwrap();
+            assert!(matches!(r, WriteOutcome::Done(e) if e.size == small.len() as i64));
+            assert!(get(&s3, "r/small.bin").await == small);
+
+            let (s, back) = (tmp(), tmp());
+            write(&s.0, "t/a.txt", b"hello");
+            write(&s.0, "t/sub/b.bin", &data(200_000, 5));
+            let (src, sr) = local(&s.0);
+            let (dst_back, br) = local(&back.0);
+            let s3: Arc<dyn Storage> = Arc::new(s3);
+            let m = JobManager::open(None, TestHost::with(vec![("src", src), ("s3", s3.clone()), ("back", dst_back)])).unwrap();
+            let mut up = spec(&sr, &[("t/", true)], "testbucket", "up/");
+            up.dst.profile_id = "s3".into();
+            let id = m.create(up).unwrap();
+            let j = finished(&m, &id).await;
+            assert_eq!((j.progress.files_done, j.progress.files_failed), (2, 0), "{:?}", m.failures(&id, 0, 5));
+            let mut down = spec("testbucket", &[("up/t/", true)], &br, "");
+            down.src.profile_id = "s3".into();
+            down.dst.profile_id = "back".into();
+            let id = m.create(down).unwrap();
+            let j = finished(&m, &id).await;
+            assert_eq!((j.progress.files_done, j.progress.files_failed), (2, 0), "{:?}", m.failures(&id, 0, 5));
+            assert_eq!(files(&back.0)["t/sub/b.bin"], data(200_000, 5));
+        });
+    }
+
+    #[test]
+    fn a_job_copies_this_device_into_s3_and_back() {
+        tauri::async_runtime::block_on(async move {
+            let mock = super::super::mock_s3::start().await;
+            let (s, back) = (tmp(), tmp());
+            write(&s.0, "t/a.txt", b"hello");
+            write(&s.0, "t/big/b.bin", &data(20 << 20, 3));
+            std::fs::create_dir_all(s.0.join("t/empty")).unwrap();
+            let (src, sr) = local(&s.0);
+            let (dst_back, br) = local(&back.0);
+            let s3: Arc<dyn Storage> = Arc::new(backend(&mock.endpoint));
+            let m = JobManager::open(None, TestHost::with(vec![("src", src), ("s3", s3.clone()), ("back", dst_back)])).unwrap();
+            let run = format!("{}/", uuid::Uuid::new_v4());
+            let mut up = spec(&sr, &[("t/", true)], "testbucket", &run);
+            up.dst.profile_id = "s3".into();
+            let id = m.create(up).unwrap();
+            let j = finished(&m, &id).await;
+            assert_eq!((j.progress.state, j.progress.files_done, j.progress.files_failed), (JobState::Done, 2, 0), "{:?}", m.failures(&id, 0, 5));
+            assert!(s3.stat("testbucket", &format!("{run}t/empty/")).await.unwrap().is_some(), "an empty folder gets a marker");
+
+            // and back down, flat-listed from S3, with the move deleting the objects
+            let mut down = spec("testbucket", &[(&format!("{run}t/"), true)], &br, "");
+            down.src.profile_id = "s3".into();
+            down.dst.profile_id = "back".into();
+            down.mode = JobMode::Move;
+            let id = m.create(down).unwrap();
+            let j = finished(&m, &id).await;
+            assert_eq!((j.progress.files_done, j.progress.files_failed), (2, 0), "{:?}", m.failures(&id, 0, 5));
+            assert_eq!(files(&back.0)["t/big/b.bin"], data(20 << 20, 3));
+            assert!(back.0.join("t/empty").is_dir());
+            assert!(s3.stat("testbucket", &format!("{run}t/a.txt")).await.unwrap().is_none(), "moved out of S3");
+        });
+    }
 }
