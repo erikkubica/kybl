@@ -481,3 +481,43 @@ export const jobsApi = {
   /** Puts the failed files back in line and runs the job again. */
   jobRetryFailed: (id: string) => invoke<void>("job_retry_failed", { id }),
 };
+
+// ---------------------------------------------------------------- WP-A2: cloud drive sign-in
+
+/** The kinds that sign in in the browser (Google Drive, OneDrive, Dropbox). */
+export type CloudKind = "gdrive" | "onedrive" | "dropbox";
+
+/**
+ * "Use your own OAuth app": the user's client ID (and secret, for Google "Desktop" clients).
+ * The secret goes to the vault (`{id}#oauth`), never into the profile.
+ */
+export type OAuthClient = {
+  clientId: string;
+  clientSecret?: string | null;
+  /** Microsoft: a tenant id or domain for apps limited to one organization ("common" when empty). */
+  tenant?: string | null;
+};
+
+/** Payload of the `connection-auth` event (see `CONNECTION_AUTH_EVENT`). */
+export type ConnectionAuthEvent = { profileId: string };
+
+/**
+ * Emitted when a sign-in connection's access is gone for good (revoked, expired, password changed).
+ * Its commands fail until the user reconnects: show "Reconnect", which calls
+ * `oauthStart(kind, flowId, null, profileId)`. See src-tauri/src/oauth/README.md.
+ */
+export const CONNECTION_AUTH_EVENT = "connection-auth";
+
+/**
+ * Signs in to a cloud drive in the browser and saves the connection. Resolves with the new profile
+ * (or, with `replaceId`, the same profile updated: Reconnect keeps the id, open tabs and sync
+ * folders). Rejects with "Cancelled" after `oauthCancel(flowId)`.
+ */
+export const oauthStart = (kind: CloudKind, flowId: string, client?: OAuthClient | null, replaceId?: string | null) =>
+  invoke<Profile>("oauth_start", { kind, flowId, client: client ?? null, replaceId: replaceId ?? null });
+
+/** Stops a sign-in that is waiting for the browser. */
+export const oauthCancel = (flowId: string) => invoke<void>("oauth_cancel", { flowId });
+
+/** Which kinds this build can sign in to on its own; false: show "Needs your own client ID". */
+export const oauthBuiltinClients = () => invoke<Record<CloudKind, boolean>>("oauth_builtin_clients");

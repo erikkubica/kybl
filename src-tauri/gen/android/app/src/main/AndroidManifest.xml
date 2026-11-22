@@ -56,6 +56,14 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="kybl" android:host="connect" />
             </intent-filter>
+            <!-- Cloud drive sign-in (src/oauth/mod.rs): Microsoft comes back to kybl://oauth/onedrive?code=…,
+                 the loopback sign-ins (Google, Dropbox) end at kybl://oauth/done (KyblConnectPlugin.kt) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="kybl" android:host="oauth" />
+            </intent-filter>
             <!-- "Kybl" in other apps' share sheets: files to upload (ShareIntake.kt) -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />

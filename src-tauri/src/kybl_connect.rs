@@ -30,10 +30,12 @@ use tauri::{AppHandle, State};
 #[cfg(desktop)]
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Notify;
+// the loopback page helpers also serve the cloud sign-in on phones (see oauth/mod.rs)
 #[cfg(any(desktop, test))]
+use tokio::net::TcpListener;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
+    net::TcpStream,
 };
 
 #[cfg(mobile)]
@@ -80,13 +82,13 @@ fn flows() -> &'static StdMutex<HashMap<String, Arc<Notify>>> {
 }
 
 /// Registers a flow so [`kybl_connect_cancel`] can stop it; unregisters when dropped.
-struct Flow {
+pub(crate) struct Flow {
     id: String,
-    cancel: Arc<Notify>,
+    pub(crate) cancel: Arc<Notify>,
 }
 
 impl Flow {
-    fn new(id: &str) -> Self {
+    pub(crate) fn new(id: &str) -> Self {
         let cancel = Arc::new(Notify::new());
         flows().lock().unwrap().insert(id.to_string(), cancel.clone());
         Self { id: id.to_string(), cancel }
@@ -111,7 +113,7 @@ pub fn kybl_connect_cancel(flow_id: String) {
 
 // ---------------------------------------------------------------- PKCE
 
-fn b64url(bytes: &[u8]) -> String {
+pub(crate) fn b64url(bytes: &[u8]) -> String {
     const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
@@ -123,17 +125,17 @@ fn b64url(bytes: &[u8]) -> String {
     out
 }
 
-fn random_token() -> String {
+pub(crate) fn random_token() -> String {
     let mut buf = [0u8; 32];
     ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut buf).expect("system randomness");
     b64url(&buf)
 }
 
-fn pkce_challenge(verifier: &str) -> String {
+pub(crate) fn pkce_challenge(verifier: &str) -> String {
     b64url(ring::digest::digest(&ring::digest::SHA256, verifier.as_bytes()).as_ref())
 }
 
-fn enc(s: &str) -> String {
+pub(crate) fn enc(s: &str) -> String {
     utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()
 }
 
@@ -296,8 +298,7 @@ const PAGE_OK: &str = "You're connected. You can close this tab and go back to K
 #[cfg(any(desktop, test))]
 const PAGE_DENIED: &str = "The connection was cancelled. You can close this tab.";
 
-#[cfg(any(desktop, test))]
-fn page(msg: &str) -> String {
+pub(crate) fn page(msg: &str) -> String {
     format!(
         "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width\"><title>Kybl</title>\
          <body style=\"font:16px/1.5 -apple-system,system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;margin:0;color:#222;background:#f6f6f4\">\
@@ -305,8 +306,7 @@ fn page(msg: &str) -> String {
     )
 }
 
-#[cfg(any(desktop, test))]
-async fn respond(stream: &mut TcpStream, status: &str, body: &str) {
+pub(crate) async fn respond(stream: &mut TcpStream, status: &str, body: &str) {
     let res = format!(
         "HTTP/1.1 {status}\r\ncontent-type: text/html; charset=utf-8\r\ncontent-length: {}\r\ncache-control: no-store\r\nconnection: close\r\n\r\n{body}",
         body.len()
@@ -315,9 +315,8 @@ async fn respond(stream: &mut TcpStream, status: &str, body: &str) {
     let _ = stream.shutdown().await;
 }
 
-#[cfg(any(desktop, test))]
 /// Reads the request head and returns the target ("/callback?code=…").
-async fn read_target(stream: &mut TcpStream) -> Option<String> {
+pub(crate) async fn read_target(stream: &mut TcpStream) -> Option<String> {
     let mut buf = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
     while !buf.windows(4).any(|w| w == b"\r\n\r\n") && buf.len() < 16 * 1024 {
@@ -333,7 +332,7 @@ async fn read_target(stream: &mut TcpStream) -> Option<String> {
     parts.next().map(str::to_string)
 }
 
-fn query(target: &str) -> HashMap<String, String> {
+pub(crate) fn query(target: &str) -> HashMap<String, String> {
     let q = target.split_once('?').map(|(_, q)| q).unwrap_or("");
     q.split('&')
         .filter_map(|kv| kv.split_once('=').or(Some((kv, ""))))
@@ -368,7 +367,7 @@ async fn wait_for_code(listener: &TcpListener, state: &str) -> Result<String, St
 }
 
 /// What came back from the browser: the code for our `state`, or why there is none.
-fn code_from_redirect(q: &HashMap<String, String>, state: &str) -> Result<String, String> {
+pub(crate) fn code_from_redirect(q: &HashMap<String, String>, state: &str) -> Result<String, String> {
     if q.get("state").map(String::as_str) != Some(state) {
         return Err("This sign-in link doesn't belong to the Kybl window that's waiting. Start again from the app.".into());
     }
@@ -580,7 +579,7 @@ pub fn plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
 }
 
 #[cfg(mobile)]
-mod native {
+pub(crate) mod native {
     /// Where the account site sends the browser back to (allowed by the server: `kybl://…`).
     pub const REDIRECT: &str = "kybl://connect";
     pub const FALLBACK_NAME: &str = if cfg!(target_os = "ios") { "iPhone" } else { "Android" };
