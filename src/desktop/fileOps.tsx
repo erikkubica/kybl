@@ -301,11 +301,11 @@ export function makeFileOps(c: OpsContext) {
       c.deselect(list.map((e) => e.key));
       try {
         const r = await api.deleteObjects(pid, b, files.map((e) => e.key), folders.map((e) => e.key), id);
-        jobs.finish(id, r);
+        jobs.finish(id, r, run);
         if (r.error && r.error !== "Cancelled")
           toast("error", `Deleting stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`, showAction);
       } catch (e) {
-        jobs.finish(id, { error: errMessage(e) });
+        jobs.finish(id, { error: errMessage(e) }, run);
         toast("error", errMessage(e), showAction);
       }
       c.clearSizes();
@@ -349,6 +349,46 @@ export function makeFileOps(c: OpsContext) {
     });
   };
 
+  type MoveItem = { from: string; to: string; isPrefix: boolean };
+  /**
+   * Retry of a failed move, copy or rename: runs what is left of it as a new job. A move only
+   * takes what is still in its old place (the rest got there already); a copy runs again in full
+   * onto the names it picked the first time.
+   */
+  const runRest = (kind: "move" | "copy" | "rename", pid: string, srcB: string, dstB: string, items: MoveItem[], title: string, dest?: string) => {
+    const again = async () => {
+      let todo = items;
+      if (kind !== "copy") {
+        try {
+          const left = await findExisting(pid, srcB, items.map((i) => ({ key: i.from, folder: i.isPrefix })));
+          todo = items.filter((i) => left.has(i.from));
+        } catch (e) {
+          toast("error", `Couldn’t try again. ${errMessage(e).split("\n\n")[0]}`);
+          return;
+        }
+        if (!todo.length) {
+          toast("info", "Nothing left to move: everything is in its new place already.");
+          c.reloadIfShowing(pid, srcB);
+          return;
+        }
+      }
+      const id = jobs.start({ kind, title, dest, profileId: pid, bucket: dstB });
+      c.autoShowActivity();
+      try {
+        const r = await api.moveMany(pid, srcB, todo, kind !== "copy", id, dstB !== srcB ? dstB : null);
+        jobs.finish(id, r, again);
+        if (r.error && r.error !== "Cancelled") toast("error", `Stopped again after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`, showAction);
+      } catch (e) {
+        jobs.finish(id, { error: errMessage(e) }, again);
+        toast("error", errMessage(e), showAction);
+      }
+      c.clearSizes();
+      c.reloadIfShowing(pid, srcB);
+      if (dstB !== srcB) c.reloadIfShowing(pid, dstB);
+    };
+    return () => void again();
+  };
+
   /** Moves items back (`items` as they were moved: from → to, in `fromBucket` → `toBucket`). */
   const moveBack = (pid: string, fromBucket: string, toBucket: string, items: { from: string; to: string; isPrefix: boolean }[], label: string) => async () => {
     // something new may sit at the old names by now: never overwrite it
@@ -365,12 +405,13 @@ export function makeFileOps(c: OpsContext) {
       return;
     }
     const id = jobs.start({ kind: "move", title: `Undoing: ${label}`, profileId: pid, bucket: fromBucket });
+    const retry = runRest("move", pid, toBucket, fromBucket, items.map((i) => ({ from: i.to, to: i.from, isPrefix: i.isPrefix })), `Undoing: ${label}`);
     try {
       const r = await api.moveMany(pid, toBucket, items.map((i) => ({ from: i.to, to: i.from, isPrefix: i.isPrefix })), true, id, toBucket !== fromBucket ? fromBucket : null);
-      jobs.finish(id, r);
+      jobs.finish(id, r, retry);
       if (r.error && r.error !== "Cancelled") toast("error", `Undo stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`, showAction);
     } catch (e) {
-      jobs.finish(id, { error: errMessage(e) });
+      jobs.finish(id, { error: errMessage(e) }, retry);
       toast("error", errMessage(e), showAction);
     }
     c.clearSizes();
@@ -423,14 +464,15 @@ export function makeFileOps(c: OpsContext) {
         if (isFolder) c.autoShowActivity();
         let renamed = false;
         const items = [{ from: e.key, to, isPrefix: isFolder }];
+        const retry = runRest("rename", pid, b, b, items, `Renaming “${e.name}” to “${name}”`, parent);
         try {
           const r = await api.moveMany(pid, b, items, true, id);
-          jobs.finish(id, r);
+          jobs.finish(id, r, retry);
           if (r.error && r.error !== "Cancelled")
             toast("error", `Renaming stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`, showAction);
           else renamed = !r.error;
         } catch (err) {
-          jobs.finish(id, { error: errMessage(err) });
+          jobs.finish(id, { error: errMessage(err) }, retry);
           toast("error", errMessage(err), showAction);
         }
         if (renamed) {
@@ -526,9 +568,10 @@ export function makeFileOps(c: OpsContext) {
     c.autoShowActivity();
     if (mode === "move") c.deselect(items.map((i) => i.from));
     let ok = false;
+    const retry = runRest(mode, pid, srcB, dstB, items, `${verb} ${what} to ${where}`, dest);
     try {
       const r = await api.moveMany(pid, srcB, items, mode === "move", id, cross ? dstB : null);
-      jobs.finish(id, r);
+      jobs.finish(id, r, retry);
       if (r.error && r.error !== "Cancelled")
         toast(
           "error",
@@ -538,7 +581,7 @@ export function makeFileOps(c: OpsContext) {
         );
       ok = !r.error;
     } catch (err) {
-      jobs.finish(id, { error: errMessage(err) });
+      jobs.finish(id, { error: errMessage(err) }, retry);
       toast("error", errMessage(err), showAction);
     }
     // Undo only when nothing was replaced or merged: moving a merged folder back, or deleting a
@@ -581,12 +624,14 @@ export function makeFileOps(c: OpsContext) {
       if (!go) return;
     }
     const uid = jobs.start({ kind: "delete", title: `Undoing: ${label}` });
+    // deleting what is gone already is a no-op: a retry deletes the same list again
+    const again = () => void deleteCopies(pid, b, keys, label)();
     try {
       const r = await api.deleteObjects(pid, b, keys, [], uid);
-      jobs.finish(uid, r);
+      jobs.finish(uid, r, again);
       if (r.error && r.error !== "Cancelled") toast("error", r.error, showAction);
     } catch (e) {
-      jobs.finish(uid, { error: errMessage(e) });
+      jobs.finish(uid, { error: errMessage(e) }, again);
       toast("error", errMessage(e), showAction);
     }
     c.clearSizes();

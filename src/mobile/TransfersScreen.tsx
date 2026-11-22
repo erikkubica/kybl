@@ -62,7 +62,8 @@ export function TransfersScreen({
   const sorted = useMemo(() => [...list].sort((a, b) => ORDER[a.state] - ORDER[b.state]), [list]);
   const active = list.some((t) => t.state === "queued" || t.state === "running");
   const failed = list.filter((t) => t.state === "error" || t.state === "cancelled").length;
-  const finished = list.some((t) => t.state !== "queued" && t.state !== "running") || jobs.some((j) => j.state !== "running");
+  // "Clear finished" takes done and cancelled items; failed ones stay until retried
+  const finished = list.some((t) => t.state === "done" || t.state === "cancelled") || jobs.some((j) => j.state === "done" || j.state === "cancelled");
   const copies = useMigrations().length;
   const copiesSection = copies > 0 && (
     <section className="m-jobs-section">

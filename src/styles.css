@@ -2108,7 +2108,7 @@ input[type="checkbox"] {
 .toasts {
   position: fixed;
   left: 50%;
-  bottom: 22px;
+  bottom: var(--toasts-bottom, 22px);
   z-index: 300;
   display: flex;
   flex-direction: column;
@@ -4496,6 +4496,60 @@ button.tp-title:hover .tp-caret {
 }
 .tp-actions .btn svg {
   margin-right: 2px;
+}
+/* a narrow window: the caret and the buttons keep their size, the tabs scroll, the summary gives way */
+.transfers {
+  container-type: inline-size;
+}
+.transfers > header {
+  min-width: 0;
+}
+.transfers > header > .tp-title,
+.tp-actions {
+  flex-shrink: 0;
+}
+.tp-tabs {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tp-tabs::-webkit-scrollbar {
+  display: none;
+}
+.tp-tabs button {
+  flex-shrink: 0;
+}
+.tp-summary {
+  min-width: 120px;
+  overflow: hidden;
+}
+.tp-summary .tp-lead {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@container (max-width: 1100px) {
+  .tp-actions .btn {
+    padding: 0 7px;
+  }
+  .tp-actions .btn svg {
+    margin-right: 0;
+  }
+  .tp-actions .tp-lbl {
+    display: none;
+  }
+  .tp-summary {
+    min-width: 0;
+  }
+  .tp-summary > span:not(.tp-lead) {
+    display: none;
+  }
+}
+@container (max-width: 860px) {
+  .tp-summary {
+    display: none;
+  }
 }
 .tp-empty {
   display: flex;

@@ -29,6 +29,8 @@ export type Job = {
   error: string | null;
   started: number;
   finished: number | null;
+  /** a failed job: runs what is left of it again (a new job) */
+  retry?: () => void;
 };
 
 type Progress = { opId: string; phase: "listing" | "copying" | "deleting"; done: number; total: number; bytes: number; totalBytes: number };
@@ -95,8 +97,11 @@ const actions = {
     return id;
   },
 
-  /** Records how a job ended. A "Cancelled" error means the user stopped it. */
-  finish(id: string, r: { done?: number; total?: number; error?: string | null }) {
+  /**
+   * Records how a job ended. A "Cancelled" error means the user stopped it. `retry` (kept when it
+   * failed) runs what is left of it again.
+   */
+  finish(id: string, r: { done?: number; total?: number; error?: string | null }, retry?: () => void) {
     trackers.delete(id);
     jobsStore.set((list) =>
       list.map((j) => {
@@ -111,12 +116,23 @@ const actions = {
           frac: state === "done" ? 1 : j.frac,
           eta: null,
           finished: Date.now(),
+          retry: state === "error" ? retry : undefined,
         };
       }),
     );
   },
 
-  clearFinished: () => jobsStore.set((list) => list.filter((j) => j.state === "running")),
+  /** Clears finished and cancelled jobs (failed ones stay until retried or cleared on their own). */
+  clearFinished: () => jobsStore.set((list) => list.filter((j) => j.state === "running" || j.state === "error")),
+  clearFailed: () => jobsStore.set((list) => list.filter((j) => j.state !== "error")),
+  /** Runs a failed job's rest again; false when it can't be retried. */
+  retry(id: string): boolean {
+    const j = jobsStore.get().find((x) => x.id === id);
+    if (!j || j.state !== "error" || !j.retry) return false;
+    jobsStore.set((list) => list.filter((x) => x.id !== id));
+    j.retry();
+    return true;
+  },
   dismiss: (id: string) => jobsStore.set((list) => list.filter((j) => j.id !== id)),
 };
 
