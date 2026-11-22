@@ -24,7 +24,8 @@ function restoreFocus(prev: Element | null, fallback = true) {
     prev instanceof HTMLElement && prev.isConnected && prev !== document.body
       ? prev
       : fallback
-        ? document.querySelector<HTMLElement>("[data-list-focus]")
+        ? // with two browser panes, the active one's list
+          (document.querySelector<HTMLElement>("[data-active-pane] [data-list-focus]") ?? document.querySelector<HTMLElement>("[data-list-focus]"))
         : null;
   target?.focus({ preventScroll: true });
 }

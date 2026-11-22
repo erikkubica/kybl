@@ -22,6 +22,8 @@ export type ShortcutOptions = {
   onResume: () => void;
   /** where the active list lives (with two panes, the active pane); default the whole page */
   listScope?: () => ParentNode | null;
+  /** two panes on screen: the commander keys (Tab, F3, F5–F8) work */
+  dual?: boolean;
 };
 
 export function useShortcuts(opts: ShortcutOptions) {
@@ -52,6 +54,8 @@ export function useShortcuts(opts: ShortcutOptions) {
       else if (mod && k === "l") id = "go-to";
       else if (mod && k === "r") id = "refresh";
       else if (mod && k === "f") id = "search";
+      else if (mod && k === "\\") id = "toggle-dual";
+      else if (mod && ev.shiftKey && k === "s") id = "swap-panes";
       else if (settingsOpen) {
         // a dialog open on top of settings handles its own Escape
         if (ev.key === "Escape" && !overlayUp()) closeSettings();
@@ -67,6 +71,9 @@ export function useShortcuts(opts: ShortcutOptions) {
       else if (mod && ev.key === "ArrowUp") id = "go-up";
       else if (mod && ev.key === "ArrowDown") id = "open";
       else if (mod) return;
+      else if (ev.key === "Tab" && o.current.dual && !ev.altKey && t.closest?.("[data-list-focus]")) id = "switch-pane";
+      else if (o.current.dual && /^F[35678]$/.test(ev.key))
+        id = { F3: "quick-look", F5: "pane-copy", F6: "pane-move", F7: "new-folder", F8: "delete" }[ev.key] ?? null;
       else if (ev.key === "Backspace") id = "go-up";
       else if (ev.key === "F2") id = "rename";
       else if (onControl && (ev.key === "Enter" || ev.key === " ")) return;

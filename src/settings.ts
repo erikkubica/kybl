@@ -48,6 +48,10 @@ export type Settings = {
   sort: { by: "name" | "size" | "modified" | "kind"; desc: boolean };
   /** desktop grid tile size in px (96..320) */
   tileSize: number;
+  /** desktop: one browser pane, or two side by side (dual pane, like a commander) */
+  layout: "single" | "dual";
+  /** dual pane: opening a subfolder (or going up) in one pane does the same in the other when it can */
+  syncBrowsing: boolean;
 };
 
 export type Favorite = { profileId: string; bucket: string; prefix: string; name: string };
@@ -72,6 +76,8 @@ export const DEFAULTS: Settings = {
   columns: ["size", "modified", "kind"],
   sort: { by: "name", desc: false },
   tileSize: 160,
+  layout: "single",
+  syncBrowsing: false,
 };
 
 export const ACCENTS: { id: Exclude<Accent, "scheme">; label: string; color: string }[] = [

@@ -3,7 +3,7 @@
  * Activity panel, Settings, connection dialogs and the update banner. It owns the panes (one, or
  * two side by side) and routes the sidebar, the keyboard and the menu bar to the active one.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage, errSummary } from "../api";
@@ -30,6 +30,9 @@ import { loadExpanded, useConnections } from "./useConnections";
 import { PreviewAside, usePreviewLayout } from "./PreviewAside";
 import { useFinderDrop } from "./useFinderDrop";
 import { useShellCommands } from "./useShellCommands";
+import { DualPane } from "./DualPane";
+import { makeDualActions, type DualContext } from "./dualActions";
+import { PaneContext } from "./PaneContext";
 
 /** Gives a pane's file list keyboard focus (after a sidebar click the arrows should move in it). */
 export function focusPaneList(id: PaneId) {
@@ -90,7 +93,12 @@ export function AppShell() {
     setCompactState(c);
     LS.set("s3b.compact", c ? "1" : "0");
   };
-  const preview = usePreviewLayout("s3b.preview");
+  const dual = settings.layout === "dual";
+  const [activeId, setActiveId] = useState<PaneId>("left");
+  // two lists side by side leave little room: the details pane has its own switch there, off at first
+  const singlePreview = usePreviewLayout("s3b.preview");
+  const dualPreview = usePreviewLayout("s3b.preview.dual", false);
+  const preview = dual ? dualPreview : singlePreview;
 
   const [connDialog, setConnDialogState] = useState<{ profile: Profile | null } | null>(null);
   const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
@@ -110,7 +118,11 @@ export function AppShell() {
   const jobs = useJobs();
 
   // ------------------------------------------------------------ panes
+  /** the panes on screen (work that finishes reloads these) */
   const panesRef = useRef<Pane[]>([]);
+  const allPanes = useRef<Pane[]>([]);
+  const dualCtx = useRef<DualContext | null>(null);
+  const dualPane = useMemo(() => makeDualActions(() => dualCtx.current!), []);
   /**
    * After a job in `pid`/`b` finishes, reloads every pane still showing that bucket. Work in
    * another connection or bucket carries on undisturbed in the meantime.
@@ -125,7 +137,7 @@ export function AppShell() {
     return hit;
   }, []);
   const clearAllSizes = useCallback(() => {
-    for (const p of panesRef.current) p.folderSizes.clear();
+    for (const p of allPanes.current) p.folderSizes.clear();
   }, []);
 
   const envFor = (id: PaneId): PaneEnv => ({
@@ -143,15 +155,33 @@ export function AppShell() {
     showActivityPanel,
     reloadIfShowing,
     clearAllSizes,
+    ...dualPane.envFor(id),
   });
   const left = usePane(envFor("left"));
-  const active = left;
-  panesRef.current = [left];
+  const right = usePane(envFor("right"));
+  const active = dual && activeId === "right" ? right : left;
+  const other = dual ? (active === left ? right : left) : null;
+  panesRef.current = dual ? [left, right] : [left];
+  allPanes.current = [left, right];
+  dualCtx.current = {
+    left,
+    right,
+    dual,
+    activeId: active.id,
+    setActive: setActiveId,
+    profiles,
+    settings,
+    updateSettings,
+    dialogs,
+    transfers,
+    autoShowActivity: () => void (settings.autoOpenTransfers && setTransfersOpen(true)),
+    focusPane: (id: PaneId) => requestAnimationFrame(() => focusPaneList(id)),
+  };
 
   /** Sidebar clicks, favorites and new connections open here. */
   const activeRef = useRef(active);
   activeRef.current = active;
-  const paneById = (id: PaneId) => panesRef.current.find((p) => p.id === id) ?? left;
+  const paneById = (id: PaneId) => allPanes.current.find((p) => p.id === id) ?? left;
   const focusListSoon = () => {
     const id = activeRef.current.id;
     requestAnimationFrame(() => focusPaneList(id));
@@ -189,7 +219,7 @@ export function AppShell() {
   /** A connection was deleted: drop it from the sidebar, the history and the screen. */
   const forgetProfile = (id: string) => {
     conns.dropProfile(id);
-    for (const p of panesRef.current) p.forgetProfile(id);
+    for (const p of allPanes.current) p.forgetProfile(id);
   };
 
   // initial load
@@ -207,6 +237,25 @@ export function AppShell() {
       .catch((e) => toast("error", errMessage(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // two panes: the right one reopens where it was, or starts at the left one's place
+  const rightTried = useRef(false);
+  useEffect(() => {
+    if (!dual) {
+      rightTried.current = false;
+      return;
+    }
+    if (rightTried.current || right.profile || !left.here || !profiles.length) return;
+    rightTried.current = true;
+    const saved = settings.restoreLast ? right.savedLocation() : null;
+    const p = saved && profiles.find((x) => x.id === saved.profileId);
+    if (p && saved) right.go(p, saved.bucket, saved.prefix);
+    else if (left.profile) right.go(left.profile, left.here.bucket, left.here.prefix);
+  }, [dual, left.here, left.profile, right, profiles, settings.restoreLast]);
+  // back to one pane: the keyboard goes to the one left on screen
+  useEffect(() => {
+    if (!dual) setActiveId("left");
+  }, [dual]);
 
   // refresh listing once all uploads have finished
   useEffect(
@@ -292,7 +341,7 @@ export function AppShell() {
   /** A dialog, menu or preview is up: it owns the keyboard, and actions must not run behind it. */
   const overlayUp = () =>
     dialogs.isOpen() ||
-    !!(connDialog || kyblDialog || panesRef.current.some((p) => p.quick)) ||
+    !!(connDialog || kyblDialog || allPanes.current.some((p) => p.quick)) ||
     !!document.querySelector(".modal-backdrop, .ctx-menu, .ql-backdrop");
 
   useShellCommands({
@@ -308,12 +357,19 @@ export function AppShell() {
     },
     free: {
       "new-connection": () => setConnDialog({ profile: null }),
+      ...dualPane.commands,
     },
+    dual,
   });
 
   // ------------------------------------------------------------ drag & drop from Finder
   const dropOver = useFinderDrop({
-    target: () => (activeRef.current.profile && activeRef.current.bucket ? activeRef.current.id : null),
+    target: (x, y) => {
+      // with two panes, the one under the pointer; else (or without a position) the active one
+      const under = x != null && y != null ? document.elementFromPoint(x, y)?.closest("[data-pane]")?.getAttribute("data-pane") : null;
+      const p = dualCtx.current?.dual && under ? paneById(under as PaneId) : activeRef.current;
+      return p.profile && p.bucket ? p.id : null;
+    },
     onDrop: (id, paths) => void paneById(id).ops.uploadPaths(paths),
   });
 
@@ -321,7 +377,7 @@ export function AppShell() {
   const paneProps = (p: Pane) => ({
     pane: p,
     active: p === active,
-    dual: false,
+    dual,
     settings,
     updateSettings,
     compact,
@@ -334,8 +390,13 @@ export function AppShell() {
     bucketNote: (p.profile && conns.bucketsBy[p.profile.id]?.note) || null,
     bucketReconnect: !!(p.profile && conns.bucketsBy[p.profile.id]?.reconnect),
     empty: emptyFor(p.id),
-    onActivate: () => {},
+    onToggleDual: () => void dualPane.commands["toggle-dual"](),
+    onActivate: () => {
+      if (dual && activeId !== p.id) setActiveId(p.id);
+    },
   });
+  const previewStyle = { "--preview-w": `${preview.previewWidth}px` } as React.CSSProperties;
+  const aside = (p: Pane) => preview.previewOpen && <PreviewAside pane={p} layout={preview} settings={settings} reloadIfShowing={reloadIfShowing} />;
 
   return (
     <div className="app">
@@ -366,11 +427,16 @@ export function AppShell() {
       />
 
       <main className="main">
-        <BrowserPane
-          {...paneProps(left)}
-          contentStyle={{ "--preview-w": `${preview.previewWidth}px` } as React.CSSProperties}
-          aside={preview.previewOpen && <PreviewAside pane={left} layout={preview} settings={settings} reloadIfShowing={reloadIfShowing} />}
-        />
+        <PaneContext.Provider value={{ left, right, active, other, dual, setActive: setActiveId }}>
+          {dual ? (
+            <div className="content dual-wrap" style={previewStyle}>
+              <DualPane left={(style) => <BrowserPane {...paneProps(left)} style={style} />} right={(style) => <BrowserPane {...paneProps(right)} style={style} />} />
+              {aside(active)}
+            </div>
+          ) : (
+            <BrowserPane {...paneProps(left)} contentStyle={previewStyle} aside={aside(left)} />
+          )}
+        </PaneContext.Provider>
 
         <TransferPanel
           onCancelJob={(id) => api.cancelTransfer(id).catch(() => {})}

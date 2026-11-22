@@ -19,6 +19,7 @@ export function useShellCommands({
   closeSettings,
   shell,
   free,
+  dual,
 }: {
   active: Pane;
   /** the panes on screen */
@@ -31,6 +32,8 @@ export function useShellCommands({
   shell: Record<string, () => void>;
   /** commands that work without a bucket on screen; a function returning false = not handled */
   free: Record<string, () => boolean | void>;
+  /** two panes on screen (the commander keys work) */
+  dual: boolean;
 }) {
   const commands: Record<string, () => void> = { ...active.actions.commands, ...shell };
 
@@ -66,6 +69,7 @@ export function useShellCommands({
     listShown: !!active.bucket,
     moveSelection: active.sel.moveSelection,
     listScope: () => document.querySelector(`[data-pane="${active.id}"]`),
+    dual,
     onResume: () => {
       if (overlayUp() || Date.now() - lastResume.current < RESUME_REFRESH_MS) return;
       const due = visible.filter((p) => p.here && !p.ent.search && !p.ent.lst.loading);

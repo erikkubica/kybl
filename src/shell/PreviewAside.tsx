@@ -13,8 +13,8 @@ const PREVIEW_MAX = 760;
 const PREVIEW_DEFAULT = 336;
 
 /** Whether the details pane is open and how wide it is, both kept between launches. */
-export function usePreviewLayout(openKey: string) {
-  const [previewOpen, setPreviewOpen] = useState(LS.get(openKey) !== "0");
+export function usePreviewLayout(openKey: string, openByDefault = true) {
+  const [previewOpen, setPreviewOpen] = useState(openByDefault ? LS.get(openKey) !== "0" : LS.get(openKey) === "1");
   const [previewWidth, setPreviewWidth] = useState(() => {
     const w = Number(LS.get("s3b.previewWidth"));
     return w >= PREVIEW_MIN && w <= PREVIEW_MAX ? w : PREVIEW_DEFAULT;

@@ -83,6 +83,12 @@ const SHORTCUTS: { label: string; keys: string[] }[] = [
   { label: "Delete selection", keys: ["⌘", "⌫"] },
   { label: "Clear selection / close dialog", keys: ["Esc"] },
   { label: "Settings", keys: ["⌘", ","] },
+  { label: "Two panes side by side", keys: ["⌘", "\\"] },
+  { label: "Two panes: switch pane", keys: ["Tab"] },
+  { label: "Two panes: copy / move to the other pane", keys: ["F5", "F6"] },
+  { label: "Two panes: quick look, new folder, delete", keys: ["F3", "F7", "F8"] },
+  { label: "Two panes: swap them", keys: ["⇧", "⌘", "S"] },
+  { label: "Two panes: copy instead of moving while dragging across", keys: ["drop copies, ⌘ moves"] },
 ];
 
 /** Automatic checks, "Check now", and installing what a check found. */
