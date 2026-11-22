@@ -12,11 +12,16 @@
 //! providers, copying between connections, the editor), so not all of them are used yet.
 #![allow(dead_code)]
 
+pub mod dal;
+pub mod ftp;
 pub mod generic_cmds;
 pub mod local;
+pub(crate) mod net;
 pub mod registry;
 pub mod s3;
 pub mod s3_stream;
+pub mod sftp;
+pub mod webdav;
 
 use std::{
     fmt,
@@ -538,6 +543,11 @@ pub enum ErrKind {
     Network,
     Cancelled,
     TooLarge,
+    /// SFTP: a server not seen before; the detail carries its key's fingerprint for the user to
+    /// trust (see BACKENDS.md)
+    UnknownHost,
+    /// SFTP: the server's key isn't the one trusted earlier
+    HostKeyChanged,
     Other,
 }
 
