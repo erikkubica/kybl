@@ -33,17 +33,24 @@ import { TransfersButton, TransfersScreen } from "./TransfersScreen";
 import { SettingsScreen } from "./SettingsScreen";
 import { Viewer } from "./Viewer";
 import { Lockup, Mascot } from "./Mascot";
-import { Presence, useCollapsed, useWide } from "./ui";
+import { Layer, Presence, useCollapsed, useWide } from "./ui";
 import { FileList } from "./FileList";
-import { Connections, HomeScreen, type Buckets } from "./Home";
+import { Connections, HomeScreen, addKind, type Buckets } from "./Home";
 import { FolderInfo } from "./FolderInfo";
 import { DestinationScreen, type SharedFile } from "./DestinationScreen";
 import { PullIndicator, useEdgeSwipe, usePullToRefresh } from "./gestures";
 import { MIcon, type MIconName } from "./icons";
 import { isNetworkError, syncThumbPause, useNetwork, useTransferPrefs } from "./net";
-import { useFileOps, type Busy, type ToastAction } from "./useFileOps";
+import { useFileOps, type Pill, type ToastAction } from "./useFileOps";
 import { locKey, useListing, type Loc } from "./useListing";
 import { useKeyboardFit, useSystemBack } from "./useSystemBack";
+import { SHEETS, SWIPEABLE, layerElement, layerZ, useLayerStack, type LayerId } from "./layers";
+import { DocScreen } from "./DocScreen";
+import { connName, isLocal } from "./connName";
+import { LockScreen, useAppLock } from "./AppLock";
+import { canView, viewerFor } from "../viewers/registry";
+import type { DocumentHandle } from "../viewers/DocumentView";
+import { capsFor, useCaps } from "../useCaps";
 import "../styles.css";
 import "./mobile.css";
 
@@ -84,6 +91,8 @@ const readJson = <T,>(k: string, fallback: T): T => {
 
 const sameLoc = (a: Loc, b: Loc) => a.profileId === b.profileId && a.bucket === b.bucket && a.prefix === b.prefix;
 const isMedia = (e: Entry) => e.kind === "file" && ((classify(e.name) === "image" && isWebImage(e.name)) || classify(e.name) === "video");
+/** Documents (text, code, Markdown, CSV, Office files) open in the app's own document screen; photos keep the viewer. */
+const opensAsDoc = (e: Entry) => e.kind === "file" && canView(e.name, e.size) && (viewerFor(e.name)?.kind !== "image" || !isMedia(e));
 const toEntry = (o: ObjInfo): Entry => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass });
 
 /** Where downloads land, in the words people see in their Files app. */
@@ -134,11 +143,24 @@ export default function MobileApp() {
   const [detail, setDetail] = useState<Entry | null>(null);
   /** the photo or video open in the viewer, by key, so a refresh can't swap it for another */
   const [viewerKey, setViewerKey] = useState<string | null>(null);
+  // the closing viewer still runs its last slide for a moment: paging then must not reopen it
+  const viewerOpen = useRef(false);
+  viewerOpen.current = viewerKey !== null;
   const [sheet, setSheet] = useState<{ title?: string; message?: string; items: SheetItem[] } | null>(null);
   const [folderInfo, setFolderInfo] = useState<{ prefix: string; name: string } | null>(null);
   /** files shared into Kybl from another app, waiting for a destination */
   const [intake, setIntake] = useState<{ files: SharedFile[]; at: Loc | null } | null>(null);
-  const [busy, setBusy] = useState<Busy>(null);
+  /** a document open full screen, with the bucket it is in */
+  const [doc, setDoc] = useState<{ entry: Entry; profileId: string; bucket: string } | null>(null);
+  const docRef = useRef<DocumentHandle>(null);
+  /** progress pills of running operations, oldest first */
+  const [pills, setPills] = useState<[string, Pill][]>([]);
+  const setPill = useCallback((id: string, p: Pill | null) => {
+    setPills((cur) => {
+      if (!p) return cur.some(([k]) => k === id) ? cur.filter(([k]) => k !== id) : cur;
+      return cur.some(([k]) => k === id) ? cur.map((x) => (x[0] === id ? [id, p] : x)) : [...cur, [id, p]];
+    });
+  }, []);
   // buckets left out of the connection lists, per connection (all show until one is hidden)
   const [hiddenBuckets, setHiddenBuckets] = useState<Record<string, string[]>>(() => readJson<Record<string, string[]>>("m.hiddenBuckets", {}));
   const [choosing, setChoosing] = useState<string | null>(null);
@@ -152,7 +174,9 @@ export default function MobileApp() {
       return next;
     });
   }, []);
-  const [screen, setScreen] = useState<"transfers" | "settings" | null>(null);
+  const [transfersOpen, setTransfersOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const openTransfers = useCallback(() => setTransfersOpen(true), []);
   const [connDialog, setConnDialog] = useState<{ profile: Profile | null } | null>(null);
   const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
   /** Kybl Storage connections have their own editor: there are no keys to edit. */
@@ -193,6 +217,7 @@ export default function MobileApp() {
   const [downloadDir, setDownloadDir] = useState<string | null>(null);
   const [prefs, savePrefs] = useTransferPrefs();
   const updates = useUpdates();
+  const lock = useAppLock(settings.appLock);
 
   const toast = useCallback((kind: Toast["kind"], text: string, action?: ToastAction) => {
     const id = Date.now() + Math.random();
@@ -306,8 +331,17 @@ export default function MobileApp() {
     let names: string[] = [];
     let note: string | null = null;
     let revoked = false;
+    let labels: Record<string, string> | undefined;
+    // the "+" row follows what the connection can do: make buckets, open one by name, or neither
+    const caps = await capsFor(p.id).catch(() => null);
+    const add: Buckets["add"] = caps ? (caps.createRoot ? "new" : caps.roots === "buckets" ? "open" : null) : undefined;
     try {
-      names = (await api.listBuckets(p.id)).map((b) => b.name);
+      if (isLocal(p)) {
+        // this phone's own folders: ids are paths, so they carry names to show
+        const roots = await api.listRoots(p.id);
+        names = roots.map((r) => r.id);
+        labels = Object.fromEntries(roots.map((r) => [r.id, r.name]));
+      } else names = (await api.listBuckets(p.id)).map((b) => b.name);
     } catch (e) {
       const msg = errMessage(e);
       revoked = p.provider === KYBL && isRevokedKey(msg);
@@ -320,7 +354,7 @@ export default function MobileApp() {
     if (p.bucket && !names.includes(p.bucket)) names = [p.bucket, ...names];
     // buckets opened by name stay with the connection (a key may reach buckets it cannot list)
     for (const b of readJson<Record<string, string[]>>("m.extraBuckets", {})[p.id] ?? []) if (!names.includes(b)) names.push(b);
-    setBuckets((m) => ({ ...m, [p.id]: { names, note: names.length && !revoked ? null : note, loading: false, revoked } }));
+    setBuckets((m) => ({ ...m, [p.id]: { names, labels, add, note: names.length && !revoked ? null : note, loading: false, revoked } }));
     return names;
   }, []);
 
@@ -369,7 +403,7 @@ export default function MobileApp() {
     () =>
       transfers.onUploadsSettled((ok, failed, where) => {
         for (const w of where) changed(w.profileId, w.bucket);
-        if (failed) toast("error", `${failed} ${failed === 1 ? "upload" : "uploads"} failed`, { label: "Open Transfers", run: () => setScreen("transfers") });
+        if (failed) toast("error", `${failed} ${failed === 1 ? "upload" : "uploads"} failed`, { label: "Open Transfers", run: openTransfers });
         else if (ok) toast("success", `Uploaded ${ok} ${ok === 1 ? "file" : "files"}`);
       }),
     [transfers, changed, toast],
@@ -377,7 +411,7 @@ export default function MobileApp() {
 
   // a transfer notification was tapped
   useEffect(() => {
-    const off = listen("open-transfers", () => setScreen("transfers"));
+    const off = listen("open-transfers", openTransfers);
     return () => void off.then((f) => f()).catch(() => {});
   }, []);
 
@@ -458,13 +492,16 @@ export default function MobileApp() {
     batches.current.set(ids[0] ?? String(Date.now()), { ids: new Set(ids), done });
   }, []);
 
+  // what the connection on screen can do (null while it loads: S3's usual actions show)
+  const caps = useCaps(loc?.profileId);
   const ops = useFileOps({
+    caps,
     loc,
     settings,
     transfers,
     jobs,
     toast,
-    setBusy,
+    setPill,
     setConfirm,
     setPrompt,
     setSheet,
@@ -472,33 +509,63 @@ export default function MobileApp() {
     watchDownloads,
     downloadDir: async () => downloadDir ?? (await api.downloadFolder()),
     savedWhere,
-    openTransfers: () => setScreen("transfers"),
+    openTransfers,
     go: (l) => go(l),
     clearSelection: () => setSelecting(null),
     closeDetail: () => setDetail(null),
     renamedDetail: (from, e) => setDetail((d) => (d?.key === from ? e : d)),
   });
 
-  // ------------------------------------------------------------ back navigation
+  // ------------------------------------------------------------ layers and back navigation
+  const locked = lock.locked;
+  const stack = useLayerStack({
+    detail: !!detail && !!loc,
+    viewer: viewerIdx >= 0 && !!loc,
+    doc: !!doc,
+    intake: !!intake,
+    transfers: transfersOpen,
+    settings: settingsOpen,
+    folderInfo: !!folderInfo && !!loc,
+    sheet: !!sheet,
+    move: !!moveDialog && !!loc,
+    prompt: !!prompt,
+    confirm: !!confirm,
+    conn: !!connDialog,
+    kybl: !!kyblDialog,
+  });
+  const top: LayerId | undefined = stack[stack.length - 1];
+  const z = (id: LayerId) => layerZ(Math.max(0, stack.indexOf(id)));
+  /** How each layer closes when back reaches it. */
+  const closeLayer: Record<LayerId, () => void> = {
+    confirm: () => setConfirm(null),
+    prompt: () => setPrompt(null),
+    kybl: () => setKyblDialog(null),
+    conn: () => setConnDialog(null),
+    move: () => setMoveDialog(null),
+    sheet: () => setSheet(null),
+    folderInfo: () => setFolderInfo(null),
+    // "Upload to…" walks back up the folders it went into, then closes
+    intake: () => {
+      const at = intake?.at;
+      if (!at) setIntake(null);
+      else setIntake((cur) => cur && { ...cur, at: at.prefix ? { ...at, prefix: parentPrefix(at.prefix) } : null });
+    },
+    // a document with unsaved changes asks first; it closes itself through onClose
+    doc: () => (docRef.current ? void docRef.current.requestClose() : setDoc(null)),
+    detail: () => setDetail(null),
+    viewer: () => setViewerKey(null),
+    transfers: () => setTransfersOpen(false),
+    settings: () => setSettingsOpen(false),
+  };
   /**
-   * One step back, from the topmost thing on screen down to the connection list. The system back
-   * (Android button, the history), the iPhone edge swipe and every on-screen back arrow go here.
+   * One step back: the layer on top of the stack, then selection, search, the bucket picker and
+   * the folders up to the connection list. The system back (Android button, the history), the
+   * iPhone edge swipe and every on-screen back arrow go here.
    */
   const back = (): boolean => {
-    if (confirm) setConfirm(null);
-    else if (prompt) setPrompt(null);
-    else if (kyblDialog) setKyblDialog(null);
-    else if (connDialog) setConnDialog(null);
-    else if (moveDialog) setMoveDialog(null);
-    else if (sheet) setSheet(null);
-    else if (folderInfo) setFolderInfo(null);
-    else if (intake) {
-      const at = intake.at;
-      if (!at) setIntake(null);
-      else setIntake({ ...intake, at: at.prefix ? { ...at, prefix: parentPrefix(at.prefix) } : null });
-    } else if (detail) setDetail(null);
-    else if (viewerKey !== null) setViewerKey(null);
-    else if (screen) setScreen(null);
+    // the lock screen has nothing to go back to: the system back leaves the app
+    if (locked) return false;
+    if (top) closeLayer[top]();
     else if (selecting) setSelecting(null);
     else if (searchOpen || search) {
       setSearchOpen(false);
@@ -510,15 +577,42 @@ export default function MobileApp() {
     else return false;
     return true;
   };
-  const modal = !!(confirm || prompt || kyblDialog || connDialog || moveDialog || sheet || folderInfo);
-  const depth =
-    Number(!!confirm) + Number(!!prompt) + Number(!!kyblDialog) + Number(!!connDialog) + Number(!!moveDialog) + Number(!!sheet) + Number(!!folderInfo) +
-    Number(!!intake) + Number(!!detail) + Number(viewerKey !== null) + Number(!!screen) + Number(!!selecting) + Number(searchOpen || !!search) +
-    Number(!!choosing) + (loc ? 1 : 0);
+  const depth = locked ? 0 : stack.length + Number(!!selecting) + Number(searchOpen || !!search) + Number(!!choosing) + (loc ? 1 : 0);
   const backRef = useSystemBack(back, depth);
   useKeyboardFit(IOS);
-  // iPhone: swipe from the left edge (Android has its own back gesture)
-  useEdgeSwipe(EDGE_SWIPE, !wide && !modal && viewerKey === null && depth > 0, () => backRef.current());
+  // iPhone: swipe from the left edge (Android has its own back gesture). It moves the screen on
+  // top of the stack, or the folder page when nothing is open; never a sheet, dialog or the viewer.
+  const swipeable = !wide && !locked && depth > 0 && (!top || SWIPEABLE.has(top));
+  const swipeTarget = () => {
+    if (top) {
+      const el = layerElement(top);
+      return el ? { el, overlay: true } : null;
+    }
+    const page = document.querySelector<HTMLElement>(".m-app .m-browse .m-page");
+    return page ? { el: page, overlay: false } : null;
+  };
+  useEdgeSwipe(EDGE_SWIPE, swipeable, () => backRef.current(), swipeTarget);
+
+  // closing the filter or search goes back to where the folder was scrolled (the search list had
+  // a scroller of its own; the filter scrolled the folder's own)
+  const finding = searchOpen || !!search;
+  const wasFinding = useRef(finding);
+  useLayoutEffect(() => {
+    const was = wasFinding.current;
+    wasFinding.current = finding;
+    if (!was || finding || !loc) return;
+    const top = lst.scrollOf(loc);
+    const el = scrollEl;
+    // the search's scroller is gone: the folder's new one picks the position up when it mounts
+    if (!el?.isConnected) {
+      pendingScroll.current = top || null;
+      return;
+    }
+    el.scrollTop = top;
+    const f = requestAnimationFrame(() => (el.scrollTop = top));
+    return () => cancelAnimationFrame(f);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finding]);
 
   // ------------------------------------------------------------ pull to refresh
   const pullRefresh = useCallback(async () => {
@@ -532,10 +626,13 @@ export default function MobileApp() {
   const ptr = usePullToRefresh(scrollEl, pullRefresh, !!loc && !selecting && !searching);
 
   // ------------------------------------------------------------ actions
+  const openDoc = (e: Entry) => loc && setDoc({ entry: e, profileId: loc.profileId, bucket: loc.bucket });
   const openEntry = (e: Entry) => {
     if (!loc) return;
     if (e.kind === "folder") go({ ...loc, prefix: e.key });
     else if (isMedia(e) && !wide) setViewerKey(e.key);
+    // documents open full screen on phones; tablets show them in the details pane first
+    else if (!wide && opensAsDoc(e)) openDoc(e);
     else setDetail(e);
   };
 
@@ -577,6 +674,8 @@ export default function MobileApp() {
       items.push({ icon: "share", label: "Share…", run: () => ops.shareSheet([e]) });
       if (!isMedia(e) || (classify(e.name) === "video" && !isPlayableVideo(e.name))) items.push({ icon: "open", label: "Open in…", run: () => ops.openIn(e) });
       if (PHONE_OS && isPhoto(e)) items.push({ icon: "photos", label: "Save to Photos", run: () => ops.saveToPhotos([e]) });
+      // photos and documents open full screen: their details (size, link, properties) are here
+      if (detail?.key !== e.key) items.push({ icon: "info", label: "Info", run: () => setDetail(e) });
     }
     items.push({ icon: "download", label: e.kind === "folder" ? "Download folder" : "Download", run: () => ops.download([e]) });
     if (e.kind === "folder") {
@@ -681,9 +780,13 @@ export default function MobileApp() {
   useEffect(() => {
     const el = sentinel.current;
     if (!el || !listing.next || search || lst.loadingAll !== null) return;
-    const io = new IntersectionObserver((xs) => {
-      if (xs.some((x) => x.isIntersecting)) void loadMore();
-    }, { rootMargin: "800px" });
+    // rooted at the list's scroller: rooted at the screen, the margin would be clipped away
+    const io = new IntersectionObserver(
+      (xs) => {
+        if (xs.some((x) => x.isIntersecting)) void loadMore();
+      },
+      { root: scrollEl, rootMargin: "800px" },
+    );
     io.observe(el);
     return () => io.disconnect();
   }, [listing.next, loadMore, lst.loadingAll, search, scrollEl]);
@@ -789,7 +892,7 @@ export default function MobileApp() {
           <button className="m-icon" onClick={() => setSearchOpen(true)} aria-label="Search">
             <Icon name="search" size={20} />
           </button>
-          {!wide && <TransfersButton onClick={() => setScreen("transfers")} />}
+          {!wide && <TransfersButton onClick={openTransfers} />}
           <button className="m-icon" aria-label="More" onClick={moreSheet}>
             <Icon name="more" size={20} />
           </button>
@@ -802,7 +905,8 @@ export default function MobileApp() {
         className="m-scroll"
         key={`${here}${search ? "?" : ""}`}
         ref={setScrollEl}
-        onScroll={(e) => loc && saveScroll(loc, e.currentTarget.scrollTop)}
+        // a filtered or searched list is shorter: where it is scrolled to is not the folder's place
+        onScroll={(e) => loc && !searchOpen && !search && saveScroll(loc, e.currentTarget.scrollTop)}
       >
         <div
           className={`m-page ${nav === "out" ? "from-left" : "from-right"} ${ptr.busy || !ptr.pull ? "ptr-settle" : ""}`}
@@ -1023,9 +1127,18 @@ export default function MobileApp() {
         onMoveTo={() => setMoveDialog({ items: [detail], mode: "move" })}
         onDelete={() => ops.askDelete([detail])}
         onContext={(ev) => ev.preventDefault()}
+        // properties saved, or the file turned out to be gone: the list catches up
+        onChanged={() => changed(loc.profileId, loc.bucket)}
+        onOpenFull={openDoc}
+        onOpenExternal={(e) => void ops.openIn(e)}
       />
       {detail.kind === "file" && (
         <div className="m-detail-open">
+          {opensAsDoc(detail) && (
+            <button className="btn btn-primary" onClick={() => openDoc(detail)}>
+              <MIcon name="open" size={16} /> Open
+            </button>
+          )}
           <button className="btn" onClick={() => ops.openIn(detail)}>
             <MIcon name="open" size={16} /> Open in…
           </button>
@@ -1048,18 +1161,18 @@ export default function MobileApp() {
       onRetryProfiles={() => void startup(false)}
       onOpen={(p, b) => go({ profileId: p.id, bucket: b, prefix: "" })}
       onAdd={() => setConnDialog({ profile: null })}
-      onConnMenu={(p) =>
-        setSheet({
-          title: p.name || p.endpoint,
-          items: [
-            { icon: "edit", label: "Edit connection", run: () => editProfile(p) },
-            { icon: "eye", label: "Choose buckets to show", run: () => setChoosing(p.id) },
-            p.provider === KYBL ? { icon: "plus", label: "New bucket", run: () => askNewBucket(p) } : { icon: "bucket", label: "Open bucket by name", run: () => askBucketName(p) },
-            { icon: "refresh", label: "Refresh buckets", run: () => void loadBuckets(p) },
-          ],
-        })
-      }
-      onAddBucket={(p) => (p.provider === KYBL ? askNewBucket(p) : askBucketName(p))}
+      onConnMenu={(p) => {
+        const add = addKind(p, buckets[p.id]);
+        const items: SheetItem[] = [];
+        // this phone's own folder has nothing to edit
+        if (!isLocal(p)) items.push({ icon: "edit", label: "Edit connection", run: () => editProfile(p) });
+        items.push({ icon: "eye", label: "Choose buckets to show", run: () => setChoosing(p.id) });
+        if (add === "new") items.push({ icon: "plus", label: "New bucket", run: () => askNewBucket(p) });
+        else if (add === "open") items.push({ icon: "bucket", label: "Open bucket by name", run: () => askBucketName(p) });
+        items.push({ icon: "refresh", label: "Refresh buckets", run: () => void loadBuckets(p) });
+        setSheet({ title: connName(p), items });
+      }}
+      onAddBucket={(p) => (addKind(p, buckets[p.id]) === "new" ? askNewBucket(p) : askBucketName(p))}
       onReconnect={(p) => setKyblDialog({ existing: p, reconnect: true })}
       hidden={hiddenBuckets}
       onBucketMenu={(p, b, hidden) =>
@@ -1147,8 +1260,9 @@ export default function MobileApp() {
     });
 
   return (
-    <div className={`m-app ${wide ? "wide" : ""}`}>
+    <div className={`m-app ${wide ? "wide" : ""} ${locked ? "m-locked" : ""} ${top && SHEETS.has(top) ? "m-toasts-top" : ""}`}>
       <DownloadWatch batches={batches} />
+      {locked && <LockScreen unlock={lock.unlock} error={lock.error} busy={lock.busy} />}
       {offline && (
         <div className="m-offline" role="status">
           <MIcon name="wifi-off" size={15} />
@@ -1166,8 +1280,8 @@ export default function MobileApp() {
               <button className="m-side-btn" onClick={() => setConnDialog({ profile: null })}>
                 <Icon name="plus" size={17} /> New connection
               </button>
-              <TransfersButton onClick={() => setScreen("transfers")} />
-              <button className="m-icon" onClick={() => setScreen("settings")} aria-label="Settings">
+              <TransfersButton onClick={openTransfers} />
+              <button className="m-icon" onClick={() => setSettingsOpen(true)} aria-label="Settings">
                 <Icon name="settings" size={20} />
               </button>
             </div>
@@ -1222,13 +1336,13 @@ export default function MobileApp() {
               onPlaceMenu={placeMenu}
               onAdd={() => setConnDialog({ profile: null })}
               onKybl={connectKybl}
-              onTransfers={() => setScreen("transfers")}
-              onSettings={() => setScreen("settings")}
+              onTransfers={openTransfers}
+              onSettings={() => setSettingsOpen(true)}
             />
           )}
-          <Presence show={!!detail && !!loc}>
+          <Presence show={!!detail && !!loc} layer="detail" z={z("detail")}>
             {detail && loc && (
-              <section key={detail.key} className={`m-screen m-overlay m-detail ${viewerKey !== null ? "over-viewer" : ""}`}>
+              <section key={detail.key} className="m-screen m-overlay m-detail">
                 <header className="m-bar solid">
                   <button className="m-icon" onClick={() => backRef.current()} aria-label="Back">
                     <Icon name="arrow-left" size={22} />
@@ -1247,16 +1361,18 @@ export default function MobileApp() {
         </>
       )}
 
-      <Presence show={viewerIdx >= 0 && !!loc}>
+      {/* every layer below takes its place in the stack (--m-z): whatever opened last is on top */}
+      <Presence show={viewerIdx >= 0 && !!loc} layer="viewer" z={z("viewer")}>
         {viewerIdx >= 0 && loc && (
           <Viewer
             items={media}
             index={viewerIdx}
             profileId={loc.profileId}
             bucket={loc.bucket}
-            lowData={net.metered || thumbsPaused()}
+            // originals of the neighbours only on a network known not to cost anything
+            lowData={!net.unmetered || thumbsPaused()}
             photos={PHONE_OS}
-            onIndex={(i) => media[i] && setViewerKey(media[i].key)}
+            onIndex={(i) => viewerOpen.current && media[i] && setViewerKey(media[i].key)}
             onClose={() => setViewerKey(null)}
             onInfo={(e) => setDetail(e)}
             onShare={(e) => ops.shareSheet([e])}
@@ -1268,7 +1384,26 @@ export default function MobileApp() {
         )}
       </Presence>
 
-      <Presence show={!!intake}>
+      <Presence show={!!doc} layer="doc" z={z("doc")}>
+        {doc && (
+          <DocScreen
+            key={`${doc.profileId}|${doc.bucket}|${doc.entry.key}`}
+            handle={docRef}
+            profileId={doc.profileId}
+            bucket={doc.bucket}
+            entry={doc.entry}
+            onClose={() => setDoc(null)}
+            onSaved={({ key, asCopy }) => {
+              changed(doc.profileId, doc.bucket);
+              void api.haptic("success");
+              if (asCopy) toast("success", `Saved a copy as “${baseName(key)}”`);
+            }}
+            onOpenExternal={(e) => void ops.openIn(e)}
+          />
+        )}
+      </Presence>
+
+      <Presence show={!!intake} layer="intake" z={z("intake")}>
         {intake && (
           <DestinationScreen
             files={intake.files}
@@ -1277,7 +1412,7 @@ export default function MobileApp() {
             buckets={buckets}
             onAt={(at) => setIntake({ ...intake, at })}
             onPick={(at) => {
-              ops.queueUploads(at, intake.files);
+              void ops.queueUploads(at, intake.files);
               setIntake(null);
             }}
             onBack={() => backRef.current()}
@@ -1285,10 +1420,10 @@ export default function MobileApp() {
         )}
       </Presence>
 
-      <Presence show={screen === "transfers"}>
+      <Presence show={transfersOpen} layer="transfers" z={z("transfers")}>
         <TransfersScreen onBack={() => backRef.current()} transfers={transfers} savedWhere={savedWhere} onOpenFile={(p) => api.openLocal(p).catch((e) => toast("error", errSummary(errMessage(e))))} />
       </Presence>
-      <Presence show={screen === "settings"}>
+      <Presence show={settingsOpen} layer="settings" z={z("settings")}>
         <SettingsScreen
           updates={updates}
           onBack={() => backRef.current()}
@@ -1301,10 +1436,11 @@ export default function MobileApp() {
           toast={toast}
           prefs={prefs}
           onPrefs={savePrefs}
+          lockable={PHONE_OS || import.meta.env.DEV}
         />
       </Presence>
 
-      <Presence show={!!sheet} ms={200}>
+      <Presence show={!!sheet} ms={200} layer="sheet" z={z("sheet")}>
         {sheet && (
           <ActionSheet
             title={sheet.title}
@@ -1318,7 +1454,7 @@ export default function MobileApp() {
           />
         )}
       </Presence>
-      <Presence show={!!folderInfo && !!loc} ms={200}>
+      <Presence show={!!folderInfo && !!loc} ms={200} layer="folderInfo" z={z("folderInfo")}>
         {folderInfo && loc && (
           <FolderInfo
             profileId={loc.profileId}
@@ -1331,19 +1467,23 @@ export default function MobileApp() {
         )}
       </Presence>
 
-      {busy && (
-        <div className="m-busy" role="status">
-          <span className="spinner" />
-          <span className="m-busy-text">
-            {busy.text}
-            {busy.frac != null && <b> {Math.round(busy.frac * 100)}%</b>}
-          </span>
-          {busy.cancel && (
-            <button className="m-text-btn" onClick={busy.cancel}>
-              Cancel
-            </button>
-          )}
-          {busy.frac != null && <span className="m-busy-bar" style={{ width: `${Math.round(busy.frac * 100)}%` }} />}
+      {pills.length > 0 && (
+        <div className="m-pills">
+          {pills.map(([id, p]) => (
+            <div key={id} className="m-busy" role="status">
+              <span className="spinner" />
+              <span className="m-busy-text">
+                {p.text}
+                {p.frac != null && <b> {Math.round(p.frac * 100)}%</b>}
+              </span>
+              {p.cancel && (
+                <button className="m-text-btn" onClick={p.cancel}>
+                  Cancel
+                </button>
+              )}
+              {p.frac != null && <span className="m-busy-bar" style={{ width: `${Math.round(p.frac * 100)}%` }} />}
+            </div>
+          ))}
         </div>
       )}
 
@@ -1361,85 +1501,95 @@ export default function MobileApp() {
       />
 
       {connDialog && (
-        <ConnectionDialog
-          initial={connDialog.profile}
-          onClose={() => setConnDialog(null)}
-          onKybl={() => {
-            setConnDialog(null);
-            connectKybl();
-          }}
-          kyblFirst={!profiles?.some((p) => p.provider === KYBL)}
-          onSaved={async (p) => {
-            setConnDialog(null);
-            await reloadProfiles();
-            loadBuckets(p);
-          }}
-          onDeleted={async (id) => {
-            setConnDialog(null);
-            if (loc?.profileId === id) go(null, "out");
-            await reloadProfiles();
-          }}
-        />
+        <Layer id="conn" z={z("conn")}>
+          <ConnectionDialog
+            initial={connDialog.profile}
+            onClose={() => setConnDialog(null)}
+            onKybl={() => {
+              setConnDialog(null);
+              connectKybl();
+            }}
+            kyblFirst={!profiles?.some((p) => p.provider === KYBL)}
+            onSaved={async (p) => {
+              setConnDialog(null);
+              await reloadProfiles();
+              loadBuckets(p);
+            }}
+            onDeleted={async (id) => {
+              setConnDialog(null);
+              if (loc?.profileId === id) go(null, "out");
+              await reloadProfiles();
+            }}
+          />
+        </Layer>
       )}
       {kyblDialog && (
-        <KyblConnectDialog
-          existing={kyblDialog.existing}
-          reconnect={kyblDialog.reconnect}
-          onClose={() => setKyblDialog(null)}
-          onConnected={async (p) => {
-            await reloadProfiles();
-            loadBuckets(p);
-          }}
-          onDeleted={async (id) => {
-            if (loc?.profileId === id) go(null, "out");
-            await reloadProfiles();
-          }}
-        />
+        <Layer id="kybl" z={z("kybl")}>
+          <KyblConnectDialog
+            existing={kyblDialog.existing}
+            reconnect={kyblDialog.reconnect}
+            onClose={() => setKyblDialog(null)}
+            onConnected={async (p) => {
+              await reloadProfiles();
+              loadBuckets(p);
+            }}
+            onDeleted={async (id) => {
+              if (loc?.profileId === id) go(null, "out");
+              await reloadProfiles();
+            }}
+          />
+        </Layer>
       )}
       {confirm && (
-        <ConfirmDialog
-          title={confirm.title}
-          message={confirm.message}
-          confirmLabel={confirm.label}
-          danger={confirm.danger ?? true}
-          onConfirm={() => {
-            const run = confirm.run;
-            setConfirm(null);
-            run();
-          }}
-          onClose={() => setConfirm(null)}
-        />
+        <Layer id="confirm" z={z("confirm")}>
+          <ConfirmDialog
+            title={confirm.title}
+            message={confirm.message}
+            confirmLabel={confirm.label}
+            danger={confirm.danger ?? true}
+            onConfirm={() => {
+              const run = confirm.run;
+              setConfirm(null);
+              run();
+            }}
+            onClose={() => setConfirm(null)}
+          />
+        </Layer>
       )}
       {prompt && (
-        <PromptDialog
-          title={prompt.title}
-          label={prompt.label}
-          initial={prompt.initial}
-          confirmLabel={prompt.confirmLabel}
-          onSubmit={(v) => {
-            const run = prompt.run;
-            setPrompt(null);
-            run(v);
-          }}
-          onClose={() => setPrompt(null)}
-        />
+        <Layer id="prompt" z={z("prompt")}>
+          <PromptDialog
+            title={prompt.title}
+            label={prompt.label}
+            initial={prompt.initial}
+            confirmLabel={prompt.confirmLabel}
+            onSubmit={(v) => {
+              const run = prompt.run;
+              setPrompt(null);
+              run(v);
+            }}
+            onClose={() => setPrompt(null)}
+          />
+        </Layer>
       )}
       {moveDialog && loc && (
-        <MoveDialog
-          profileId={loc.profileId}
-          bucket={loc.bucket}
-          items={moveDialog.items}
-          startPrefix={loc.prefix}
-          initialMode={moveDialog.mode}
-          onSubmit={(dest, mode) => {
-            const items = moveDialog.items;
-            setMoveDialog(null);
-            void ops.relocate(items, dest, mode);
-          }}
-          onClose={() => setMoveDialog(null)}
-        />
+        <Layer id="move" z={z("move")}>
+          <MoveDialog
+            profileId={loc.profileId}
+            bucket={loc.bucket}
+            items={moveDialog.items}
+            startPrefix={loc.prefix}
+            initialMode={moveDialog.mode}
+            onSubmit={(dest, mode) => {
+              const items = moveDialog.items;
+              setMoveDialog(null);
+              void ops.relocate(items, dest, mode);
+            }}
+            onClose={() => setMoveDialog(null)}
+          />
+        </Layer>
       )}
-      {screen === null && <UpdateBanner st={updates} mobile />}
+      {!transfersOpen && !settingsOpen && <UpdateBanner st={updates} mobile />}
       <Toasts toasts={toasts} dismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
     </div>
   );
