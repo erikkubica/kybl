@@ -2,6 +2,7 @@
 export { JobsPanel, jobMeta } from "./JobsPanel";
 export { MigrationDialog, blockedReason, startJobs, loadJobOptions, type MigrationItem, type MigrationSource } from "./MigrationDialog";
 export { JobConfirm, normalizeDir } from "./JobConfirm";
+export { jobFinishedToast } from "./finishedToast";
 export { LocationPicker, deviceName, locLabel, type Loc, type PickedLocation } from "./LocationPicker";
 export {
   ACTIVE_STATES,

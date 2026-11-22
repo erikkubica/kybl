@@ -16,9 +16,7 @@ const GRACE_MS = 60_000;
 
 /** The setting's name in the words of each phone. */
 export const LOCK_LABEL = IOS ? "Lock with Face ID" : "Lock with fingerprint";
-export const LOCK_SUB = IOS
-  ? "Kybl asks for Face ID, Touch ID or your passcode when you open it"
-  : "Kybl asks for your fingerprint, face or screen lock when you open it";
+export const LOCK_SUB = "Asks when you open Kybl and after a minute away";
 
 /**
  * Whether the app is locked, and the unlock action. `enabled` is the setting: on at launch means

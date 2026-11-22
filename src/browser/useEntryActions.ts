@@ -92,6 +92,12 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
         initialMode: mode,
         startPrefix,
         onSubmit: (dest, m, destBucket) => ops.relocate(list, dest, m, { destBucket }),
+        onOtherConnection: env.openMigration
+          ? (m: "move" | "copy") => {
+              close();
+              migrate(list, m);
+            }
+          : undefined,
         onClose: close,
       }),
     );
@@ -127,7 +133,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     if (!profile || bucket == null) return;
     try {
       const m = await syncApi.keepOffline(profile.id, bucket, pre);
-      toast("success", `Keeping “${destLabel(pre, bucket)}” on this device. The first sync starts in a moment.`, {
+      toast("success", `Keeping “${destLabel(pre, bucket, profile.id)}” on this device. The first sync starts in a moment.`, {
         label: "Show",
         run: () => void api.revealLocal(m.localPath).catch(() => {}),
       });
@@ -258,7 +264,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       folder
         ? { type: "item", label: "Open", icon: "folder", hint: "↵", onClick: () => pane.navigate(e.key) }
         : { type: "item", label: files.length > 1 ? `Open ${files.length} files` : "Open", icon: "reveal", hint: "⌘O", disabled: !files.length, onClick: () => openSelection(list) },
-      one && e.kind === "file" && env.canOpenDocument?.(e) && { type: "item", label: "Open in Default App", icon: "external", onClick: () => void ops.openInApp(e) },
+      one && e.kind === "file" && env.canOpenDocument?.(e) && { type: "item", label: "Open in default app", icon: "external", onClick: () => void ops.openInApp(e) },
       one && e.kind === "file" && { type: "item", label: "Quick Look", icon: "eye", hint: "Space", onClick: () => pane.setQuick(e.key) },
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => pane.navigate(entryParent(e), e.key) },
       { type: "item", label: one && e.native?.exports.length ? `Download as ${e.native.exports[0].label}` : "Download", icon: "download", hint: "⇧⌘D", onClick: () => ops.downloadEntries(list, relBase) },
@@ -270,14 +276,13 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       { type: "item", label: "Copy", icon: "copy", hint: "⌘C", onClick: () => ops.clip(list, "copy") },
       { type: "item", label: "Cut", icon: "move", hint: "⌘X", onClick: () => ops.clip(list, "cut") },
       folder && clip && { type: "item", label: `Paste into “${e.name}”`, icon: "copy", onClick: () => ops.paste(e.key) },
-      { type: "item", label: "Move to…", icon: "move", onClick: () => askMove(list, "move") },
-      { type: "item", label: "Copy to…", icon: "copy", onClick: () => askMove(list, "copy") },
-      !!env.openMigration && { type: "item", label: "Copy to another connection…", icon: "copy", onClick: () => migrate(list, "copy") },
-      !!env.openMigration && { type: "item", label: "Move to another connection…", icon: "move", onClick: () => migrate(list, "move") },
+      // dual pane: to the other pane's folder (F5 / F6)
       ...(env.extraItemItems?.(list) ?? []),
+      // one picker for any folder: this connection's (any bucket or drive), or another connection
+      { type: "item", label: "Copy or move to…", icon: "move", onClick: () => askMove(list, "copy") },
       !!prefix && !search && {
         type: "item",
-        label: `Move to “${destLabel(parentPrefix(prefix), bucket)}”`,
+        label: `Move to “${destLabel(parentPrefix(prefix), bucket, profile.id)}”`,
         icon: "arrow-up",
         onClick: () => ops.relocate(list, parentPrefix(prefix), "move"),
       },

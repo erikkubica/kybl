@@ -17,6 +17,7 @@ import { useJobs } from "../useJobs";
 import { applySettings, loadSettings, saveSettings, type Favorite, type Settings } from "../settings";
 import { Icon, type IconName } from "../Icons";
 import { ConnectionDialog } from "../components/ConnectionDialog";
+import type { ConnectionDialogHandle } from "../connections/ConnectionDialog";
 import { KyblConnectDialog } from "../components/KyblConnectDialog";
 import { KYBL, REVOKED_SAY, isRevokedKey } from "../kybl";
 import { ConfirmDialog, PromptDialog, Toasts, type Toast } from "../components/Dialogs";
@@ -49,7 +50,7 @@ import { useKeyboardFit, useSystemBack } from "./useSystemBack";
 import { SHEETS, SWIPEABLE, layerElement, layerZ, useLayerStack, type LayerId } from "./layers";
 import { DocScreen } from "./DocScreen";
 import { ON_DEVICE, connName, isLocal } from "./connName";
-import { rootName, setConnectionNames, setRootNames, useRootName, usesListRoots } from "../connections/roots";
+import { rootIcon, rootName, setConnectionNames, setRootNames, useRootName, usesListRoots } from "../connections/roots";
 import { clearAuthNeeded, useAuthNeeded } from "../connections/authNeeded";
 import { LockScreen, useAppLock } from "./AppLock";
 import { canView, viewerFor } from "../viewers/registry";
@@ -98,8 +99,12 @@ const readJson = <T,>(k: string, fallback: T): T => {
 const sameLoc = (a: Loc, b: Loc) => a.profileId === b.profileId && a.bucket === b.bucket && a.prefix === b.prefix;
 const isMedia = (e: Entry) => e.kind === "file" && ((classify(e.name) === "image" && isWebImage(e.name)) || classify(e.name) === "video");
 /** Documents (text, code, Markdown, CSV, Office files) open in the app's own document screen; photos keep the viewer. */
-const opensAsDoc = (e: Entry) => e.kind === "file" && canView(e.name, e.size) && (viewerFor(e.name)?.kind !== "image" || !isMedia(e));
-const toEntry = (o: ObjInfo): Entry => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native });
+const opensAsDoc = (picked: Entry) => {
+  // a Google Doc / Sheet / Slides opens as its Office export, read-only (DocumentView)
+  const e = picked.native ? asExport(picked) : picked;
+  return !!e && e.kind === "file" && canView(e.name, e.size) && (viewerFor(e.name)?.kind !== "image" || !isMedia(e));
+};
+const toEntry = (o: ObjInfo): Entry => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native, mime: o.mime });
 
 /** Where downloads land, in the words people see in their Files app. */
 function friendlyFolder(path: string): string {
@@ -188,6 +193,7 @@ export default function MobileApp() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const openTransfers = useCallback(() => setTransfersOpen(true), []);
   const [connDialog, setConnDialog] = useState<{ profile: Profile | null; reconnect?: boolean } | null>(null);
+  const connRef = useRef<ConnectionDialogHandle>(null);
   const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
   /** Kybl Storage connections have their own editor: there are no keys to edit. */
   const editProfile = useCallback((p: Profile) => {
@@ -566,7 +572,8 @@ export default function MobileApp() {
     confirm: () => setConfirm(null),
     prompt: () => setPrompt(null),
     kybl: () => setKyblDialog(null),
-    conn: () => setConnDialog(null),
+    // something typed into the form asks first; the dialog closes itself through onClose
+    conn: () => (connRef.current ? connRef.current.requestClose() : setConnDialog(null)),
     move: () => setMoveDialog(null),
     migrate: mig.close,
     sheet: () => setSheet(null),
@@ -925,7 +932,7 @@ export default function MobileApp() {
             </button>
           )}
           <div className="m-bar-path">
-            <Breadcrumbs compact={!wide} bucket={loc.bucket} label={rootLabel(loc.profileId, loc.bucket)} parts={loc.prefix.split("/").filter(Boolean)} onNavigate={(prefix) => go({ ...loc, prefix }, "out")} />
+            <Breadcrumbs compact={!wide} bucket={loc.bucket} label={rootLabel(loc.profileId, loc.bucket)} icon={rootIcon(loc.profileId, loc.bucket)} parts={loc.prefix.split("/").filter(Boolean)} onNavigate={(prefix) => go({ ...loc, prefix }, "out")} />
           </div>
           <button className="m-icon" onClick={() => setSearchOpen(true)} aria-label="Search">
             <Icon name="search" size={20} />
@@ -1449,10 +1456,10 @@ export default function MobileApp() {
             bucket={doc.bucket}
             entry={doc.entry}
             onClose={() => setDoc(null)}
-            onSaved={({ key, asCopy }) => {
+            onSaved={() => {
+              // the editor's header says "Saved" / "Saved as …" itself: no toast on top
               changed(doc.profileId, doc.bucket);
               void api.haptic("success");
-              if (asCopy) toast("success", `Saved a copy as “${baseName(key)}”`);
             }}
             onOpenExternal={(e) => void ops.openIn(e)}
           />
@@ -1580,6 +1587,7 @@ export default function MobileApp() {
       {connDialog && (
         <Layer id="conn" z={z("conn")}>
           <ConnectionDialog
+            ref={connRef}
             initial={connDialog.profile}
             reconnect={connDialog.reconnect}
             onClose={() => setConnDialog(null)}

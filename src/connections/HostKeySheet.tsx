@@ -20,7 +20,7 @@ export function HostKeySheet({ ask, onTrust, onClose }: { ask: HostKeyAsk; onTru
           <p className="hint">
             <Icon name="info" size={13} />
             <span>
-              If you can, compare it with the one your server shows (for example with <code>ssh-keygen -l</code> on the server). Kybl remembers it and warns you if it ever changes.
+              If you can, compare it with the one your server shows (for example with <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> on the server). Kybl remembers it and warns you if it ever changes.
             </span>
           </p>
         </div>

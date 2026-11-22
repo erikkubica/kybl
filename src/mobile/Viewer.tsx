@@ -379,7 +379,7 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onInd
 
       <nav className="m-vtools" style={{ opacity: chrome ? fade : 0 }}>
         <Tool icon="share" label="Share" onClick={() => onShare(cur)} />
-        {photos && <Tool icon="photos" label="Save" aria="Save to Photos" onClick={() => onSaveToPhotos(cur)} />}
+        {photos && <Tool icon="photos" label="Save to Photos" onClick={() => onSaveToPhotos(cur)} />}
         <Tool icon="download" label="Download" onClick={() => onDownload(cur)} />
         <Tool icon="info" label="Info" onClick={() => onInfo(cur)} />
         <Tool icon="trash" label="Delete" onClick={() => onDelete(cur)} />

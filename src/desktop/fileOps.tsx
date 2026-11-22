@@ -9,8 +9,8 @@ import { peekCaps } from "../useCaps";
 import type { ReactNode } from "react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { api, errMessage } from "../api";
-import { formatBytes, parentPrefix } from "../format";
-import { destKey, entryParent } from "../moving";
+import { formatBytes, parentPrefix, sumSizes } from "../format";
+import { destKey, entryParent, placeLabel } from "../moving";
 import type { Settings } from "../settings";
 import type { Entry, LocalFile, Profile } from "../types";
 import type { Toast } from "../components/Dialogs";
@@ -59,7 +59,6 @@ const UNDO_CONFIRM_OVER = 100;
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 const whatOf = (list: { name: string }[]) => (list.length === 1 ? `“${list[0].name}”` : plural(list.length, "item"));
-const placeLabel = (bucket: string, prefix: string) => `${bucket}/${prefix}`.replace(/\/$/, "");
 
 export function makeFileOps(c: OpsContext) {
   const { transfers, jobs, toast } = c;
@@ -159,7 +158,7 @@ export function makeFileOps(c: OpsContext) {
       if (!found) return;
       const clashes = targets.filter((t) => found.has(t.key)).map((t) => ({ key: t.key, folder: t.folder, name: t.key.slice(dest.length).replace(/\/$/, "") }));
       const reserved = new Set(targets.filter((t) => !found.has(t.key)).map((t) => t.key));
-      const d = await decide(pid, bucket, clashes, "Uploading", placeLabel(bucket, dest), new Map(), reserved);
+      const d = await decide(pid, bucket, clashes, "Uploading", placeLabel(pid, bucket, dest), new Map(), reserved);
       if (!d) return;
       const items: Parameters<TransferActions["add"]>[0] = [];
       for (const [top, g] of groups) {
@@ -317,7 +316,7 @@ export function makeFileOps(c: OpsContext) {
           </p>
           {files.length > 0 && (
             <p>
-              {plural(files.length, "file")}, {formatBytes(files.reduce((s, e) => s + e.size, 0))}
+              {plural(files.length, "file")}, {formatBytes(sumSizes(files))}
             </p>
           )}
         </>
@@ -490,7 +489,7 @@ export function makeFileOps(c: OpsContext) {
     const dup = (e: Entry) => !cross && mode === "copy" && entryParent(e) === dest;
     const todo = list.filter((e) => cross || ((entryParent(e) !== dest || dup(e)) && !(e.kind === "folder" && dest.startsWith(e.key))));
     if (todo.length === 0) return false;
-    const where = placeLabel(dstB, dest);
+    const where = placeLabel(pid, dstB, dest);
 
     const targets = todo.map((e) => ({ key: destKey(e, dest), folder: e.kind === "folder", name: e.name }));
     const found = await existing(pid, dstB, targets.filter((t) => !todo.some((e) => dup(e) && destKey(e, dest) === t.key)));

@@ -1,4 +1,5 @@
 import { parentPrefix } from "./format";
+import { rootName } from "./connections/roots";
 import type { Entry } from "./types";
 
 /** Prefix an entry currently lives in. */
@@ -17,8 +18,16 @@ export function isValidDest(items: Entry[], dest: string): boolean {
   return items.some((e) => entryParent(e) !== dest);
 }
 
-/** Short label for a destination prefix ("photos", or the bucket name at the root). */
-export function destLabel(dest: string, bucket: string): string {
+/**
+ * Short label for a destination prefix: "photos", or at the top level the root's name on screen
+ * ("My Drive", the bucket's name; never a drive id or a path).
+ */
+export function destLabel(dest: string, bucket: string, profileId: string): string {
   const parts = dest.split("/").filter(Boolean);
-  return parts.length ? parts[parts.length - 1] : bucket;
+  return parts.length ? parts[parts.length - 1] : rootName(profileId, bucket);
+}
+
+/** "Photos / 2026": a root's name on screen plus the folders under it. */
+export function placeLabel(profileId: string, bucket: string, prefix: string): string {
+  return [rootName(profileId, bucket), ...prefix.split("/").filter(Boolean)].join(" / ");
 }

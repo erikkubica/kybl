@@ -178,6 +178,11 @@ export const api = {
    */
   setPrivacyScreen: (enabled: boolean) => invoke<void>("set_privacy_screen", { enabled }),
   /**
+   * Computers: how many documents open in the editor have unsaved changes. Quitting (and closing
+   * the window when it quits the app) asks first while any do. Never throws (phones don't quit).
+   */
+  setUnsavedDocuments: (count: number) => invoke<void>("set_unsaved_documents", { count }).catch(() => {}),
+  /**
    * Phones: writes bytes the web view holds (a photo or video just taken with the camera picker)
    * to a new file in the temporary folder and resolves to its path, for `startUpload`. The bytes
    * go as the raw request body; the file name (URI-encoded) in the `x-file-name` header.

@@ -1,3 +1,5 @@
+import type { Entry } from "./types";
+
 let binaryUnits = false;
 
 /** Switches every size in the app between decimal (KB = 1000 B) and binary (KiB = 1024 B). */
@@ -154,6 +156,44 @@ export function kindLabel(name: string, isFolder: boolean): string {
     default:
       return `${E} file`;
   }
+}
+
+/** Google's own file types, by the part after "application/vnd.google-apps.". */
+const GOOGLE_KINDS: Record<string, string> = {
+  document: "Google Docs",
+  spreadsheet: "Google Sheets",
+  presentation: "Google Slides",
+  drawing: "Google Drawings",
+  form: "Google Forms",
+  site: "Google Sites",
+  script: "Apps Script",
+  jam: "Jamboard",
+  map: "Google My Maps",
+};
+/** When the listing carries no type: the first export tells Docs, Sheets and Slides apart. */
+const GOOGLE_BY_EXPORT: Record<string, string> = { docx: "Google Docs", xlsx: "Google Sheets", pptx: "Google Slides" };
+
+type Sized = Pick<Entry, "kind" | "name" | "size" | "native" | "mime">;
+
+/**
+ * Whether the entry has a size of its own. Google Docs, Sheets and Slides don't: Drive makes the
+ * file when it's downloaded, so they show "—" and count for nothing in totals.
+ */
+export const hasSize = (e: Pick<Entry, "kind" | "native">) => e.kind === "file" && !e.native;
+
+/** A file's size for display: "—" for Google Docs and friends (see `hasSize`). */
+export const entrySize = (e: Sized) => (e.native ? "—" : formatBytes(e.size));
+
+/** Bytes a list of entries adds up to, files only and leaving out Google Docs and friends. */
+export const sumSizes = (list: Sized[]) => list.reduce((s, e) => s + (hasSize(e) ? e.size : 0), 0);
+
+/** The Kind column: "Google Sheets" for a native Google file, else what the name says (`kindLabel`). */
+export function entryKind(e: Sized): string {
+  if (e.kind === "file" && e.native) {
+    const sub = e.mime?.startsWith("application/vnd.google-apps.") ? e.mime.slice("application/vnd.google-apps.".length) : "";
+    return GOOGLE_KINDS[sub] ?? GOOGLE_BY_EXPORT[e.native.exports[0]?.ext ?? ""] ?? "Google Drive file";
+  }
+  return kindLabel(e.name, e.kind === "folder");
 }
 
 /**

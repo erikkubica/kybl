@@ -209,7 +209,7 @@ function TransferPanelView({
           {active > 0 && (
             <>
               <span>
-                {formatBytes(doneBytes)} of {formatBytes(totalBytes)}
+                {running.some((t) => !t.total) ? formatBytes(doneBytes) : `${formatBytes(doneBytes)} of ${formatBytes(totalBytes)}`}
               </span>
               {speed > 0 && <span>{formatSpeed(speed)}</span>}
               {eta > 0 && <span>{formatEta(eta)} left</span>}
@@ -348,14 +348,15 @@ function TransferPanelView({
               <div className="tp-meta">
                 {t.state === "running" && (
                   <>
-                    {formatBytes(t.bytes)} of {formatBytes(t.total)}
+                    {/* total 0: a Google Docs export, whose size isn't known until it's done */}
+                    {t.total > 0 ? `${formatBytes(t.bytes)} of ${formatBytes(t.total)}` : formatBytes(t.bytes)}
                     {t.speed > 0 && ` · ${formatSpeed(t.speed)}`}
                   </>
                 )}
-                {t.state !== "running" && t.total > 0 && formatBytes(t.total)}
+                {t.state !== "running" && (t.total || (t.state === "done" ? t.bytes : 0)) > 0 && formatBytes(t.total || t.bytes)}
               </div>
               {t.state === "running" || t.state === "queued" ? (
-                <div className="bar">
+                <div className={`bar ${t.state === "running" && !t.total ? "indeterminate" : ""}`}>
                   <div style={{ width: `${t.total > 0 ? Math.min(100, (t.bytes / t.total) * 100) : 0}%` }} />
                 </div>
               ) : (

@@ -6,7 +6,7 @@
  */
 import { createElement } from "react";
 import { parentPrefix } from "../format";
-import { destLabel, isValidDest } from "../moving";
+import { destLabel, isValidDest, placeLabel } from "../moving";
 import type { MenuItem } from "../components/Dialogs";
 import type { Settings } from "../settings";
 import type { Entry, Profile } from "../types";
@@ -38,7 +38,7 @@ export type DualContext = {
 };
 
 const otherId = (id: PaneId): PaneId => (id === "left" ? "right" : "left");
-const placeName = (p: Pane) => (p.prefix ? destLabel(p.prefix, p.bucket ?? "") : (p.bucketLabel ?? ""));
+const placeName = (p: Pane) => (p.prefix && p.profile ? destLabel(p.prefix, p.bucket ?? "", p.profile.id) : (p.bucketLabel ?? ""));
 
 export function makeDualActions(get: () => DualContext) {
   const pane = (id: PaneId) => (id === "left" ? get().left : get().right);
@@ -93,8 +93,17 @@ export function makeDualActions(get: () => DualContext) {
     }
     // between connections a background job copies: its own confirm shows the path to edit
     if (viaJob(src, dst)) return sendToPane(src, dst, items, mode, dst.prefix, c);
+    // both panes in one place (or a folder into itself): say so instead of confirming a no-op
+    if (src.here && dst.here.profileId === src.here.profileId && dst.bucket === src.bucket && !isValidDest(items, dst.prefix)) {
+      const intoItself = items.some((e) => e.kind === "folder" && dst.prefix.startsWith(e.key));
+      c.dialogs.toast(
+        "info",
+        intoItself ? `A folder can’t be ${mode === "copy" ? "copied" : "moved"} into itself.` : `${items.length === 1 ? "It’s" : "They’re"} already in this folder.`,
+      );
+      return;
+    }
     const what = items.length === 1 ? `“${items[0].name}”` : `${items.length.toLocaleString()} items`;
-    const where = `${dst.bucketLabel}/${dst.prefix}`.replace(/\/$/, "");
+    const where = dst.profile ? placeLabel(dst.profile.id, dst.bucket ?? "", dst.prefix) : (dst.bucketLabel ?? "");
     // between this computer and the cloud the originals always stay: a move there is a copy
     const asCopy = mode === "move" && crossesDisk(src, dst);
     if (asCopy) mode = "copy";
@@ -146,8 +155,22 @@ export function makeDualActions(get: () => DualContext) {
     right.ent.setQuery("");
     left.sel.setSelected(new Set(sel.left));
     right.sel.setSelected(new Set(sel.right));
+    // F5 copies from the active pane: when only one side has something selected, that's the one
+    const only: PaneId | null = sel.left.length && !sel.right.length ? "left" : sel.right.length && !sel.left.length ? "right" : null;
+    if (only && only !== c.activeId) c.setActive(only);
     const partial = !!(left.ent.listing.next || right.ent.listing.next);
-    c.dialogs.show((close) => createElement(CompareSummary, { diff, leftName: placeName(left), rightName: placeName(right), partial, onClose: close }));
+    c.dialogs.show((close) =>
+      createElement(CompareSummary, {
+        diff,
+        leftName: placeName(left),
+        rightName: placeName(right),
+        partial,
+        onClose: () => {
+          close();
+          c.focusPane(only ?? get().activeId);
+        },
+      }),
+    );
   };
 
   const switchPane = () => {
@@ -169,7 +192,7 @@ export function makeDualActions(get: () => DualContext) {
       if (!get().dual || !dst.here || !src.here) return null;
       const d = dest ?? dst.prefix;
       if (dst.here.profileId === src.here.profileId && dst.bucket === src.bucket && !isValidDest(items, d)) return null;
-      return { dest: d, label: d ? destLabel(d, dst.bucket ?? "") : (dst.bucketLabel ?? ""), copyOnly: crossesDisk(src, dst) };
+      return { dest: d, label: d && dst.profile ? destLabel(d, dst.bucket ?? "", dst.profile.id) : (dst.bucketLabel ?? ""), copyOnly: crossesDisk(src, dst) };
     },
     extraPlaceItems: (): MenuItem[] => {
       const c = get();
@@ -186,12 +209,15 @@ export function makeDualActions(get: () => DualContext) {
       const c = get();
       const dst = pane(otherId(id));
       if (!c.dual || !dst.here) return [];
+      const src = pane(id);
       const where = placeName(dst) || "the other pane";
-      const run = (mode: "copy" | "move") => void sendToPane(pane(id), dst, list, mode, dst.prefix, get());
+      const run = (mode: "copy" | "move") => void sendToPane(src, dst, list, mode, dst.prefix, get());
+      // both panes show the same folder (or a folder would go into itself): nothing to do there
+      const noop = !!src.here && src.here.profileId === dst.here.profileId && src.bucket === dst.bucket && !isValidDest(list, dst.prefix);
       return [
-        { type: "item", label: `Copy to “${where}”`, icon: "copy", hint: "F5", onClick: () => run("copy") },
+        { type: "item", label: `Copy to “${where}”`, icon: "copy", hint: "F5", disabled: noop, onClick: () => run("copy") },
         // this computer and the cloud only copy to each other
-        !crossesDisk(pane(id), dst) && { type: "item", label: `Move to “${where}”`, icon: "move", hint: "F6", onClick: () => run("move") },
+        !crossesDisk(src, dst) && { type: "item", label: `Move to “${where}”`, icon: "move", hint: "F6", disabled: noop, onClick: () => run("move") },
       ];
     },
   });

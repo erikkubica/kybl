@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
-import { classify, formatBytes, formatDateFull, isWebImage, kindLabel } from "../format";
+import { classify, formatDateFull, isWebImage, entrySize, entryKind } from "../format";
 import { FileIcon } from "../components/FileIcon";
 import { ErrorText } from "../components/ErrorText";
 import { MAX_PDF_BYTES, PdfView } from "../components/PdfView";
@@ -70,8 +70,8 @@ export function QuickLook({
           <div className="ql-title">
             <strong title={entry.key}>{entry.name}</strong>
             <span>
-              {entry.kind === "file" ? `${formatBytes(entry.size)} · ` : ""}
-              {kindLabel(entry.name, entry.kind === "folder")}
+              {entry.kind === "file" ? `${entrySize(entry)} · ` : ""}
+              {entryKind(entry)}
               {count > 1 ? ` · ${index + 1} of ${count.toLocaleString()}` : ""}
             </span>
           </div>
@@ -166,7 +166,7 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
       <FileIcon entry={entry} size={72} big />
       <strong>{entry.name}</strong>
       <span className="dim">
-        {entry.kind === "folder" ? "Folder" : `${kindLabel(entry.name, false)} · ${formatBytes(entry.size)}`}
+        {entry.kind === "folder" ? "Folder" : `${entryKind(entry)} · ${entrySize(entry)}`}
         {entry.modified ? ` · ${formatDateFull(entry.modified)}` : ""}
       </span>
       {entry.kind === "file" && (

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, errMessage, errSummary, LOCAL_ID, type RootInfo } from "../api";
 import { Icon } from "../Icons";
 import { FileIcon } from "../components/FileIcon";
+import { deviceIcon, rootIcon } from "../connections/roots";
 import { ProviderBadge } from "../components/Sidebar";
 import { capsFor } from "../useCaps";
 import type { Profile } from "../types";
@@ -53,10 +54,7 @@ const nameOf = (dir: string) => dir.replace(/\/$/, "").split("/").pop() ?? dir;
 function DeviceIcon() {
   return (
     <span className="jobs-device" aria-hidden="true">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="4" width="18" height="12" rx="2" />
-        <path d="M2 20h20" />
-      </svg>
+      <Icon name={deviceIcon} size={15} />
     </span>
   );
 }
@@ -410,7 +408,7 @@ export function LocationPicker({
                 <Icon name="chevron" size={11} />
               </span>
               {r.type === "conn" && (r.pid === LOCAL_ID ? <DeviceIcon /> : <ProviderBadge provider={r.provider} />)}
-              {r.type === "root" && (r.rootKind === "bucket" ? <Icon name="bucket" size={15} className="jobs-tree-icon" /> : <FileIcon entry={{ kind: "folder", key: r.loc.root, name: r.name, size: 0, modified: null }} size={16} />)}
+              {r.type === "root" && <Icon name={rootIcon(r.loc.profileId, r.loc.root)} size={15} className="jobs-tree-icon" />}
               {r.type === "dir" && <FileIcon entry={{ kind: "folder", key: r.loc.dir, name: r.name, size: 0, modified: null }} size={16} />}
               <span className="jobs-tree-name">{r.name}</span>
               {selected && <Icon name="check" size={13} className="jobs-tree-check" />}

@@ -267,8 +267,15 @@ body {
   color: var(--danger) !important;
 }
 
-.m-text-btn:active {
+.m-text-btn:active:not(:disabled) {
   background: var(--pressed);
+}
+
+/* a text button that can't be used now looks it (grey, like the toolbar's own) */
+.m-text-btn:disabled,
+.m-text-btn.danger:disabled {
+  color: var(--faint) !important;
+  cursor: default;
 }
 
 .m-badge {
@@ -2904,11 +2911,14 @@ input[type="checkbox"].m-switch:checked {
   color: #fff;
 }
 
-/* five tools fit on a small phone */
+/* five tools fit on a small phone ("Save to Photos" takes two lines there) */
 .m-vtool {
   min-width: 0;
   flex: 1;
   max-width: 88px;
+  justify-content: flex-start;
+  text-align: center;
+  line-height: 1.15;
 }
 
 /* the selection bar has five buttons too */

@@ -39,8 +39,10 @@ export function CompareSummary({
               <li className="dim">{n(diff.same, "item")} the same</li>
             </ul>
             <p>
-              Selected what the other side is missing or has an older copy of: {n(leftSel, "item")} on the left, {n(rightSel, "item")} on the right. Press F5
-              to copy the selection across.
+              Selected what the other side is missing or has an older copy of: {n(leftSel, "item")} on the left, {n(rightSel, "item")} on the right.{" "}
+              {leftSel && rightSel
+                ? "Press F5 to copy the active pane’s selection across, then Tab to the other pane and press F5 again."
+                : `Press F5 to copy ${leftSel + rightSel === 1 ? "it" : "them"} to the ${leftSel ? "right" : "left"}.`}
             </p>
           </>
         )}

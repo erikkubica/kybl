@@ -29,6 +29,7 @@ import { forgetCaps, peekCaps } from "../useCaps";
 import { clearAuthNeeded, useAuthNeeded } from "../connections/authNeeded";
 import { rootsMode } from "../connections/roots";
 import { canView, LazyDocumentView, viewerFor } from "../viewers/registry";
+import { asExport } from "../connections/native";
 import type { DocumentHandle } from "../viewers/DocumentView";
 import type { Entry } from "../types";
 import type { Profile } from "../types";
@@ -202,8 +203,11 @@ export function AppShell() {
     if (e.kind !== "file" || !p.profile || p.bucket == null) return false;
     // this computer's own files open in their own apps, where they are
     if (peekCaps(p.profile.id)?.localPaths) return false;
-    const v = viewerFor(e.name, null, e.size);
-    return !!v && v.kind !== "image" && canView(e.name, e.size);
+    // a Google Doc / Sheet / Slides opens as its Office export, read-only (DocumentView)
+    const x = e.native ? asExport(e) : e;
+    if (!x) return false;
+    const v = viewerFor(x.name, null, x.size);
+    return !!v && v.kind !== "image" && canView(x.name, x.size);
   };
   const openDocument = (id: PaneId, e: Entry) => {
     if (!canOpenDocument(id, e)) return false;
@@ -680,10 +684,10 @@ export function AppShell() {
               setDoc(null);
               requestAnimationFrame(() => focusPaneList(doc.pane));
             }}
-            onSaved={({ key, asCopy }) => {
-              // size, date and ETag changed (or a copy appeared)
+            onSaved={() => {
+              // size, date and ETag changed (or a copy appeared); the editor's header says
+              // "Saved" / "Saved as …" itself, so no toast on top
               reloadIfShowing(doc.profileId, doc.bucket);
-              if (asCopy) toast("success", `Saved a copy as “${baseName(key)}”`);
             }}
             onOpenExternal={(e) => void paneById(doc.pane).ops.openInApp(e)}
           />

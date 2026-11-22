@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
-import { classify, extOf, formatBytes, formatDateFull, isWebImage, kindLabel } from "../format";
+import { classify, extOf, formatBytes, formatDateFull, isWebImage, entrySize, entryKind } from "../format";
 import { cachedThumb, canThumb, loadThumb } from "../thumbs";
 import { playableUrl } from "../media";
 import { FileIcon } from "./FileIcon";
@@ -13,6 +13,8 @@ import type { FolderSizeInfo } from "./listNav";
 import { EXPIRIES } from "../settings";
 import type { Entry, ObjectDetails } from "../types";
 import { useCaps } from "../useCaps";
+import { rootName } from "../connections/roots";
+import { asExport } from "../connections/native";
 // data and import() calls only: the viewers themselves load on first use (see viewers/INTEGRATION.md)
 import { LazyDocumentView, viewerFor } from "../viewers/registry";
 
@@ -253,7 +255,9 @@ function FileDetails({
   const canTags = !caps || caps.tags;
   // text, code, JSON, Markdown, CSV, Word, Excel and slides show in the document viewer; images
   // keep the thumbnail flow below (cheaper than downloading the original)
-  const viewer = isFolder ? null : viewerFor(entry.name, details?.contentType, entry.size);
+  // (a Google Doc / Sheet / Slides by its Office export, which DocumentView shows)
+  const docAs = entry.native ? asExport(entry) : entry;
+  const viewer = isFolder || !docAs ? null : viewerFor(docAs.name, entry.native ? null : details?.contentType, docAs.size);
   const showsDoc = !!viewer && viewer.kind !== "image";
 
   // Images show the small cached thumbnail (the same one the grid uses) instead of downloading
@@ -316,7 +320,7 @@ function FileDetails({
   const s3Uri = `s3://${bucket}/${entry.key}`;
   // "Photos / 2026" instead of a raw key; the full key lives under Technical details
   const folderPath = entry.key.slice(0, entry.key.length - entry.name.length - (isFolder ? 1 : 0)).replace(/\/$/, "");
-  const where = [bucket, ...folderPath.split("/").filter(Boolean)].join(" › ");
+  const where = [rootName(profileId, bucket), ...folderPath.split("/").filter(Boolean)].join(" › ");
   const [techOpen, setTechOpen] = useState(() => {
     try {
       return localStorage.getItem("s3b.techDetails") === "1";
@@ -452,8 +456,8 @@ function FileDetails({
         {entry.name}
       </h3>
       <p className="preview-sub">
-        {kindLabel(entry.name, isFolder)}
-        {!isFolder && ` · ${formatBytes(entry.size)}`}
+        {entryKind(entry)}
+        {!isFolder && ` · ${entrySize(entry)}`}
       </p>
 
       <div className="preview-actions">
@@ -519,14 +523,14 @@ function FileDetails({
           </div>
         )}
         <dl className="props">
-          {!isFolder && <Prop label="Size">{formatBytes(entry.size)}</Prop>}
+          {!isFolder && <Prop label="Size">{entrySize(entry)}</Prop>}
           {isFolder && (
             <Prop label="Size">
               <FolderSizeLine entryKey={entry.key} folderSize={folderSize} onCalcSize={onCalcSize} />
             </Prop>
           )}
           {(details?.modified ?? entry.modified) && <Prop label="Modified">{formatDateFull(details?.modified ?? entry.modified)}</Prop>}
-          <Prop label="Kind">{kindLabel(entry.name, isFolder)}</Prop>
+          <Prop label="Kind">{entryKind(entry)}</Prop>
           <Prop label="Location">{where}</Prop>
         </dl>
 

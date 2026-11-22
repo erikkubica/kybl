@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
-import { useRootName } from "../connections/roots";
+import { rootIcon, useRootName } from "../connections/roots";
 import { Modal } from "./Dialogs";
 import { ErrorText } from "./ErrorText";
 import { FileIcon } from "./FileIcon";
@@ -22,6 +22,7 @@ export function MoveDialog({
   startPrefix,
   initialMode,
   onSubmit,
+  onOtherConnection,
   onClose,
 }: {
   profileId: string;
@@ -32,11 +33,16 @@ export function MoveDialog({
   startPrefix: string;
   initialMode: "move" | "copy";
   onSubmit: (dest: string, mode: "move" | "copy", destBucket: string) => void;
+  /** "Another connection…": the same items to any other connection (or this computer), as a job */
+  onOtherConnection?: (mode: "move" | "copy") => void;
   onClose: () => void;
 }) {
   const [mode, setMode] = useState(initialMode);
   // roots by name (drives, a server's one root), not by id
   const label = useRootName();
+  // what the roots are called here: S3 buckets, cloud drives, this computer's places
+  const ico = rootIcon(profileId, bucket);
+  const word = ico === "bucket" ? "bucket" : ico === "cloud" ? "drive" : "place";
   const [target, setTarget] = useState(bucket);
   const [path, setPath] = useState(startPrefix);
   const other = target !== bucket;
@@ -122,8 +128,8 @@ export function MoveDialog({
 
         {buckets && buckets.length > 1 && (
           <label className="move-bucket">
-            <Icon name="bucket" size={14} />
-            <span>Bucket</span>
+            <Icon name={rootIcon(profileId, target)} size={14} />
+            <span>{word.charAt(0).toUpperCase() + word.slice(1)}</span>
             <select
               value={target}
               onChange={(e) => {
@@ -131,12 +137,12 @@ export function MoveDialog({
                 setTarget(e.target.value);
                 setPath("");
               }}
-              aria-label="Destination bucket"
+              aria-label={`Destination ${word}`}
             >
               {buckets.map((b) => (
                 <option key={b} value={b}>
                   {label(profileId, b)}
-                  {b === bucket ? " (this bucket)" : ""}
+                  {b === bucket ? ` (this ${word})` : ""}
                 </option>
               ))}
             </select>
@@ -144,7 +150,7 @@ export function MoveDialog({
         )}
         <nav className="move-crumbs" aria-label="Destination">
           <button className="crumb" onClick={() => setPath("")}>
-            <Icon name="bucket" size={14} />
+            <Icon name={rootIcon(profileId, target)} size={14} />
             {label(profileId, target)}
           </button>
           {parts.map((p, i) => (
@@ -227,13 +233,20 @@ export function MoveDialog({
             ? `${items.length === 1 ? "It’s" : "They’re"} already in this folder. Pick another one.`
             : !valid
               ? "A folder can’t be moved into itself."
-              : `${verb} to ${other ? `${target}/` : "/"}${dest}`}
+              : `${verb} to ${other ? `${label(profileId, target)}/` : "/"}${dest}`}
         </p>
       </div>
       <div className="modal-foot split">
-        <button className="btn" onClick={() => setCreating(true)} disabled={creating}>
-          <Icon name="folder-plus" size={14} /> New folder
-        </button>
+        <div className="btn-row">
+          <button className="btn" onClick={() => setCreating(true)} disabled={creating}>
+            <Icon name="folder-plus" size={14} /> New folder
+          </button>
+          {onOtherConnection && (
+            <button className="btn" onClick={() => onOtherConnection(mode)} title="Copy or move to another connection, or to this computer">
+              Another connection…
+            </button>
+          )}
+        </div>
         <div className="btn-row">
           <button className="btn" onClick={onClose}>
             Cancel

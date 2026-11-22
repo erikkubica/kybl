@@ -80,8 +80,11 @@ export function ConflictDialog({
       onCancel={onCancel}
       actions={
         <>
-          <button className="btn" onClick={onReload} disabled={busy}>
+          <button className={dirty ? "btn btn-danger-ghost" : "btn"} onClick={onReload} disabled={busy}>
             {dirty ? "Discard mine and reload" : "Reload"}
+          </button>
+          <button className="btn" onClick={onCancel} disabled={busy}>
+            Cancel
           </button>
           <button className="btn" onClick={onOverwrite} disabled={busy}>
             Overwrite
@@ -93,7 +96,7 @@ export function ConflictDialog({
       }
     >
       <p>
-        <strong>{name}</strong> was saved by someone else{current.modified ? ` (${formatDateFull(current.modified)})` : ""} after you opened it.
+        <strong>{name}</strong> changed after you opened it{current.modified ? ` (saved ${formatDateFull(current.modified)})` : ""}.
       </p>
       <p>Overwrite replaces their version with yours. Save as copy keeps both.</p>
     </Dialog>

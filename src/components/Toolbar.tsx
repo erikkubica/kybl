@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { Icon } from "../Icons";
+import { Icon, type IconName } from "../Icons";
 import { Breadcrumbs } from "./Breadcrumbs";
 import type { Sort, SortKey } from "./FileTable";
 
@@ -9,6 +9,7 @@ export const TILE_MAX = 320;
 export function Toolbar({
   bucket,
   bucketLabel,
+  bucketIcon,
   canShare = true,
   prefix,
   canUp,
@@ -56,6 +57,8 @@ export function Toolbar({
   bucket: string | null;
   /** what the root is called on screen (defaults to `bucket`) */
   bucketLabel?: string | null;
+  /** the root's icon in the breadcrumbs (a bucket, a drive, a folder, a server) */
+  bucketIcon?: IconName;
   /** the connection can make share links (false hides "Copy link") */
   canShare?: boolean;
   prefix: string;
@@ -134,7 +137,7 @@ export function Toolbar({
           </button>
         </div>
         {bucket != null ? (
-          <Breadcrumbs bucket={bucket} label={bucketLabel ?? bucket} parts={parts} onNavigate={onNavigate} />
+          <Breadcrumbs bucket={bucket} label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} />
         ) : (
           <nav className="crumbs" aria-label="Path" data-tauri-drag-region>
             <span className="crumb muted">No bucket selected</span>
