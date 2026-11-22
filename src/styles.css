@@ -3953,3 +3953,101 @@ body.dragging-items * {
   cursor: pointer;
   flex: none;
 }
+
+/* ---------------------------------------------------------------- menus: keyboard, toggles, headings */
+.ctx-menu {
+  overflow-y: auto;
+  outline: none;
+}
+/* the pointer focuses the item under it, so focus is the one highlight for mouse and keyboard */
+.ctx-item:focus:not(:disabled) {
+  background: var(--accent-solid);
+  color: #fff;
+  outline: none;
+}
+.ctx-item:focus:not(:disabled) svg,
+.ctx-item:focus:not(:disabled) .ctx-hint {
+  color: inherit;
+}
+.ctx-item.danger:focus:not(:disabled) {
+  background: var(--danger-solid);
+  color: #fff;
+}
+.ctx-check {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  flex: none;
+}
+.ctx-heading {
+  padding: 5px 9px 3px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- toasts: details, dismiss */
+.toast {
+  align-items: flex-start;
+}
+.toast-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.toast-detail {
+  max-height: 160px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--hover);
+  font: 11px/1.45 var(--mono);
+  font-weight: 400;
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: text;
+}
+.toast-more {
+  flex: none;
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.toast-more:hover {
+  color: var(--text);
+}
+.toast-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: -1px -6px 0 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--faint);
+}
+.toast-close:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.toast-close svg {
+  margin: 0;
+  color: inherit !important;
+}
+.toast.open {
+  width: min(480px, calc(100vw - 40px));
+}
+.modal:focus {
+  outline: none;
+}
