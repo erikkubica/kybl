@@ -184,6 +184,7 @@ export function BrowserPane(p: BrowserPaneProps) {
                   autoFocus={active}
                   onUpload={uploadFiles}
                   onNewFolder={newFolder}
+                  onGoUp={prefix && !search && !filter ? () => void pane.goUp() : undefined}
                   activeKey={sel.cursorKey}
                   onSelectKeys={sel.selectKeys}
                   onSort={onSort}

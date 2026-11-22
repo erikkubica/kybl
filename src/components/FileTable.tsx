@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useMeasured, useWindowed } from "../useWindowed";
 import { Icon } from "../Icons";
-import { formatBytes, formatDate, formatDateFull, entrySize, entryKind } from "../format";
+import { formatBytes, formatDate, formatDateFull, entrySize, entryKind, parentPrefix } from "../format";
 import { EmptyState, FileIcon, SkeletonRows } from "./FileIcon";
 import { ContextMenu, isMenuKey, menuPointFor, type MenuItem } from "./Dialogs";
 import { useListNav, useMarquee, type Box, type FolderSizeInfo, type SelectKeys } from "./listNav";
@@ -124,6 +124,7 @@ export function FileTable({
   onSelectKeys,
   onUpload,
   onNewFolder,
+  onGoUp,
 }: {
   entries: Entry[];
   selected: Set<string>;
@@ -159,14 +160,18 @@ export function FileTable({
   /** empty folder: "Upload files" and "New folder" buttons */
   onUpload?(): void;
   onNewFolder?(): void;
+  /** a ".." row on top goes to the enclosing folder (given only inside a folder) */
+  onGoUp?(): void;
 }) {
   const sentinel = useRef<HTMLDivElement>(null);
   const table = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const listId = useId();
   const rowH = useMeasured(body, ".row", 32);
+  // the ".." row sits above the first entry
+  const upH = onGoUp ? rowH : 0;
   // the body's top padding sits above the first row
-  const win = useWindowed({ scroller: body, count: entries.length, rowHeight: rowH, offset: 4 });
+  const win = useWindowed({ scroller: body, count: entries.length, rowHeight: rowH, offset: 4 + upH });
   const [widths, setWidths] = useState(loadWidths);
   const [avail, setAvail] = useState(10_000);
   const [resizing, setResizing] = useState<ColumnId | null>(null);
@@ -279,13 +284,13 @@ export function FileTable({
 
   const hitTest = useCallback(
     (b: Box) => {
-      const first = Math.max(0, Math.floor((b.y0 - 4) / rowH));
-      const last = Math.min(entries.length - 1, Math.floor((b.y1 - 4) / rowH));
+      const first = Math.max(0, Math.floor((b.y0 - 4 - upH) / rowH));
+      const last = Math.min(entries.length - 1, Math.floor((b.y1 - 4 - upH) / rowH));
       const out: number[] = [];
       for (let i = first; i <= last; i++) out.push(i);
       return out;
     },
-    [rowH, entries.length],
+    [rowH, upH, entries.length],
   );
   const marquee = useMarquee({ scroller: body, entries, selected, hitTest, onSelectKeys, onMove, onClearSelection });
 
@@ -422,6 +427,28 @@ export function FileTable({
         {shown.map((c) => head(c.label, c.cls, c.sort, c))}
       </div>
       <div className="table-body" ref={body} role="rowgroup">
+        {onGoUp && (
+          // not an entry: no selection or menu; files dropped on it move to the enclosing folder
+          <div
+            className="row is-folder row-up"
+            role="row"
+            data-drop={parentPrefix(prefix)}
+            title="Enclosing folder (⌘↑)"
+            onMouseDown={(ev) => ev.button === 0 && ev.preventDefault()}
+            onDoubleClick={onGoUp}
+            onContextMenu={(ev) => ev.preventDefault()}
+          >
+            <div className="c-name" role="gridcell">
+              <span className="ico ico-folder">
+                <Icon name="folder" size={17} />
+              </span>
+              <span className="name-text" aria-label="Enclosing folder">..</span>
+            </div>
+            {shown.map((c) => (
+              <div key={c.id} role="gridcell" />
+            ))}
+          </div>
+        )}
         {win.padTop > 0 && <div style={{ height: win.padTop }} aria-hidden="true" />}
         {entries.slice(win.start, win.end).map((e, n) => {
           const i = win.start + n;
