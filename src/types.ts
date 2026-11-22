@@ -130,6 +130,8 @@ export type Entry = {
   native?: ObjInfo["native"];
   /** the provider's own type, when it gives one ("application/vnd.google-apps.document") */
   mime?: string;
+  /** the provider's file id, for providers that address files by id (Drive: "Open in Google Drive") */
+  id?: string;
 };
 
 export type TransferState = "queued" | "running" | "done" | "error" | "cancelled";

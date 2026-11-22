@@ -146,6 +146,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
   flex: none;
   padding: 7px 14px;
   border-bottom: 1px solid var(--border);
@@ -155,6 +156,7 @@
 }
 .dv-banner span {
   flex: 1;
+  min-width: 180px;
 }
 .dv-banner.bad {
   background: var(--danger-soft);
