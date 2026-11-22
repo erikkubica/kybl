@@ -18,6 +18,7 @@ import type { useJobs } from "../useJobs";
 import type { Entry, Profile } from "../types";
 import type { Dialogs } from "../shell/useDialogs";
 import type { Connections } from "../shell/useConnections";
+import type { OpenMigration } from "../shell/useMigrationHost";
 import { useEntries } from "./useEntries";
 import { useLocation } from "./useLocation";
 import { useSelection } from "./useSelection";
@@ -63,6 +64,8 @@ export type PaneEnv = {
   rootLabel?: (profileId: string, root: string) => string;
   /** folders were renamed, moved or deleted (favorites follow) */
   foldersChanged?: (profileId: string, fromBucket: string, toBucket: string, moves: { from: string; to: string | null }[]) => void;
+  /** "Copy to another connection…": opens the job dialog for these items (src/jobs) */
+  openMigration?: OpenMigration;
 };
 
 function usePaneCore(env: PaneEnv) {

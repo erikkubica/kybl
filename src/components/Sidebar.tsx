@@ -64,6 +64,8 @@ export function Sidebar({
   onRemoveFavorite,
   rootLabel = (_p, r) => r,
   builtIn = () => false,
+  onConnectionMenu,
+  onBucketMenu,
 }: {
   profiles: Profile[];
   /** connection of the bucket on screen */
@@ -94,6 +96,9 @@ export function Sidebar({
   rootLabel?: (profileId: string, root: string) => string;
   /** a connection that comes with the app (This Mac): no edit button, no "Open bucket by name" */
   builtIn?: (p: Profile) => boolean;
+  /** right-click on a connection / a bucket (at the pointer) */
+  onConnectionMenu?(p: Profile, x: number, y: number): void;
+  onBucketMenu?(p: Profile, bucket: string, x: number, y: number): void;
 }) {
   // connections whose hidden buckets are on show (to pick which to bring back)
   const [showHidden, setShowHidden] = useState<Set<string>>(new Set());
@@ -164,6 +169,7 @@ export function Sidebar({
               <div
                 className={`side-item conn ${open ? "open" : ""} ${active ? "active" : ""}`}
                 onClick={() => onToggleProfile(p)}
+                onContextMenu={onConnectionMenu && ((e) => onConnectionMenu(p, e.clientX, e.clientY))}
                 onKeyDown={onActivate(() => onToggleProfile(p))}
                 role="button"
                 tabIndex={0}
@@ -205,6 +211,7 @@ export function Sidebar({
                         key={b}
                         className={`side-item sub bucket-row ${here ? "selected" : ""} ${isHidden ? "is-hidden" : ""}`}
                         onClick={() => onSelectBucket(p, b)}
+                        onContextMenu={onBucketMenu && ((e) => onBucketMenu(p, b, e.clientX, e.clientY))}
                         onKeyDown={onActivate(() => onSelectBucket(p, b))}
                         role="button"
                         tabIndex={0}

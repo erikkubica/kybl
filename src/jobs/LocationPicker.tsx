@@ -16,11 +16,12 @@ export type Loc = { profileId: string; root: string; dir: string };
 /** A picked folder with the names to show for it. */
 export type PickedLocation = Loc & { connectionName: string; rootName: string };
 
-/** How this device is called: "This Mac", "This PC", "This phone". */
+/** How this device is called: "This Mac", "This PC", and on phones "On this phone" like their home screen. */
 export function deviceName(): string {
   const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
-  if (/Android|iPhone|iPod/i.test(ua) || new URLSearchParams(location.search).has("mobile")) return "This phone";
-  if (/iPad/i.test(ua)) return "This iPad";
+  // iPadOS asks for the desktop site: a Mac with a touch screen is an iPad
+  if (/iPad/i.test(ua) || (/Macintosh/.test(ua) && typeof navigator !== "undefined" && navigator.maxTouchPoints > 1)) return "On this iPad";
+  if (/Android|iPhone|iPod/i.test(ua) || new URLSearchParams(location.search).has("mobile")) return "On this phone";
   if (/Macintosh|Mac OS X/i.test(ua)) return "This Mac";
   if (/Windows/i.test(ua)) return "This PC";
   return "This computer";
@@ -115,7 +116,11 @@ export function LocationPicker({
   }, []);
 
   const connections = useMemo(
-    () => [...(profiles ?? []).map((p) => ({ pid: p.id, name: p.name, provider: p.provider })), { pid: LOCAL_ID, name: deviceName(), provider: undefined }],
+    () => [
+      // this device is listed once, last, under its own name (a backend may list it as a profile too)
+      ...(profiles ?? []).filter((p) => p.id !== LOCAL_ID && p.kind !== "local").map((p) => ({ pid: p.id, name: p.name || p.endpoint, provider: p.provider })),
+      { pid: LOCAL_ID, name: deviceName(), provider: undefined },
+    ],
     [profiles],
   );
   const connName = (pid: string) => connections.find((c) => c.pid === pid)?.name ?? pid;

@@ -15,8 +15,9 @@ import type { Pane, PaneEnv } from "../browser/usePane";
 import type { Loc, PaneId } from "../browser/types";
 import { compareFolders, diffSelection } from "../compare/compareFolders";
 import { CompareSummary } from "../compare/CompareSummary";
-import { crossesDisk, sendToPane } from "./crossPane";
+import { crossesDisk, sendToPane, viaJob } from "./crossPane";
 import type { Dialogs } from "./useDialogs";
+import type { ConfirmMigration } from "./useMigrationHost";
 
 export type DualContext = {
   left: Pane;
@@ -32,6 +33,8 @@ export type DualContext = {
   autoShowActivity: () => void;
   focusPane: (id: PaneId) => void;
   reloadIfShowing: (profileId: string, bucket: string) => boolean;
+  /** F5 / F6 between connections: the job's quick confirm (destination editable) */
+  confirmMigration?: ConfirmMigration;
 };
 
 const otherId = (id: PaneId): PaneId => (id === "left" ? "right" : "left");
@@ -88,6 +91,8 @@ export function makeDualActions(get: () => DualContext) {
       c.dialogs.toast("info", "Open a folder in the other pane first");
       return;
     }
+    // between connections a background job copies: its own confirm shows the path to edit
+    if (viaJob(src, dst)) return sendToPane(src, dst, items, mode, dst.prefix, c);
     const what = items.length === 1 ? `“${items[0].name}”` : `${items.length.toLocaleString()} items`;
     const where = `${dst.bucketLabel}/${dst.prefix}`.replace(/\/$/, "");
     // between this computer and the cloud the originals always stay: a move there is a copy
