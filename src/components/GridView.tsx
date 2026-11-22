@@ -61,17 +61,37 @@ const Card = memo(function Card({
     const el = ref.current;
     if (!el) return;
     let alive = true;
+    // what is still to fetch (the state seen by this effect would go stale)
+    let needThumb = eligible && thumb === undefined;
+    let needPh = phEligible && ph === undefined;
+    const asking = { thumb: false, ph: false };
     const request = () => {
-      if (eligible && thumb === undefined)
+      if (needThumb && !asking.thumb) {
+        asking.thumb = true;
         loadThumb(profileId, bucket, entry, () => visible.current).then((u) => {
-          if (!alive || u === undefined) return;
-          setThumb(u);
-          if (u) learnPlaceholder(profileId, bucket, entry);
+          asking.thumb = false;
+          if (!alive) return;
+          if (u !== undefined) {
+            needThumb = false;
+            setThumb(u);
+            if (u) learnPlaceholder(profileId, bucket, entry);
+          }
+          // skipped because it was off screen when its turn came; it may be back by now, and the
+          // observer won't fire again while it stays put (it then waited forever)
+          else if (visible.current) request();
         });
-      if (phEligible && ph === undefined)
+      }
+      if (needPh && !asking.ph) {
+        asking.ph = true;
         loadPlaceholder(profileId, bucket, entry, () => visible.current).then((u) => {
-          if (alive && u !== undefined) setPh(u);
+          asking.ph = false;
+          if (!alive) return;
+          if (u !== undefined) {
+            needPh = false;
+            setPh(u);
+          } else if (visible.current) request();
         });
+      }
     };
     const io = new IntersectionObserver(
       (items) => {
@@ -115,13 +135,12 @@ const Card = memo(function Card({
       title={entry.key}
     >
       <div className={`card-thumb ${thumb || ph ? "has-img" : ""} ${folder ? "is-folder" : ""}`}>
+        {/* the placeholder is static; the thumbnail fades in over it once */}
         {ph && <img className="ph" src={ph} alt="" draggable={false} />}
         {thumb && <img src={thumb} alt="" draggable={false} />}
-        {!thumb && !ph && (
-          <FileIcon entry={entry} size={34} big>
-            {((eligible && thumb === undefined) || (phEligible && ph === undefined)) && <span className="shimmer" />}
-          </FileIcon>
-        )}
+        {/* no shimmer while it loads: dozens of waiting tiles animating kept the CPU and GPU busy
+            until every thumbnail had arrived */}
+        {!thumb && !ph && <FileIcon entry={entry} size={34} big />}
       </div>
       <div className="card-text">
         <div className="card-name">{label}</div>
