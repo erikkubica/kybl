@@ -211,6 +211,18 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
       </Suspense>
     );
   if (thumbable && thumb) return <img className="ql-image thumb" src={thumb} alt={entry.name} />;
+  // the thumbnail the grid or the details panel already made: shown at once, scaled to fit, while
+  // the full-size photo comes in (rather than a blur and a wait for something already on screen)
+  const ready = media && cls === "image" && !url ? cachedThumb(profileId, bucket, entry) : undefined;
+  if (typeof ready === "string")
+    return (
+      <>
+        <img className="ql-image" src={ready} alt={entry.name} />
+        <span className="load-badge" role="status">
+          <span className="spinner" /> Loading {formatBytes(entry.size)}…
+        </span>
+      </>
+    );
   if (((thumbable && thumb === undefined) || (media && cls === "image" && !url)) && placeholder)
     return (
       <>
