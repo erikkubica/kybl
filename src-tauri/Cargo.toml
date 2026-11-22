@@ -47,6 +47,11 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 kamadak-exif = "0.6"
 tauri-plugin-fs = "2"
 
+# WP0 storage core: one `dyn Storage` trait for S3, local disk and (later) other providers.
+# Both are already in the tree through the S3 client.
+async-trait = "0.1"
+futures-util = "0.3"
+
 # Desktop only: the menu-bar icon, launch at login and two-way folder sync (a phone has no folders
 # to keep in sync and no menu bar).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

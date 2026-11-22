@@ -276,6 +276,7 @@ async fn finish(app: &AppHandle, state: &AppState, tok: TokenResponse, replace_i
         access_key_id: tok.access_key_id,
         bucket: None,
         path_style: true,
+        ..Default::default()
     };
     set_secret(state, &profile.id, &tok.secret_access_key).await?;
     match existing {
@@ -284,6 +285,7 @@ async fn finish(app: &AppHandle, state: &AppState, tok: TokenResponse, replace_i
     }
     save_profiles(app, &profiles)?;
     state.clients.lock().await.remove(&profile.id);
+    crate::storage::registry::forget(&profile.id);
     Ok(profile)
 }
 

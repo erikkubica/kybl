@@ -1,12 +1,76 @@
 export type Profile = {
   id: string;
   name: string;
+  /** What kind of storage this is; profiles from before other kinds existed come back as "s3". */
+  kind?: ConnKind;
+  /** The visual id (logo, presets): "aws", "hetzner", "kybl", later "sftp", "gdrive"... */
   provider: string;
   endpoint: string;
   region: string;
   accessKeyId: string;
   bucket?: string | null;
   pathStyle: boolean;
+  /** FTP, SFTP, WebDAV */
+  net?: NetConfig | null;
+  /** The sign-in kinds (Google Drive, OneDrive, Dropbox, Box) */
+  cloud?: CloudConfig | null;
+  /** Azure Blob Storage, Google Cloud Storage */
+  blob?: BlobConfig | null;
+};
+
+// WP0: connection kinds beyond S3 (capabilities and roots are in api.ts)
+/** "local" is this computer or phone (the reserved connection id `LOCAL_ID`); "unknown" is a kind saved by a newer Kybl. */
+export type ConnKind =
+  | "s3"
+  | "local"
+  | "ftp"
+  | "sftp"
+  | "webdav"
+  | "gdrive"
+  | "onedrive"
+  | "dropbox"
+  | "azblob"
+  | "gcs"
+  | "box"
+  | "unknown";
+
+/** Where and how a server connection signs in. The password is the connection's secret. */
+export type NetConfig = {
+  host: string;
+  /** 0: the kind's usual port */
+  port: number;
+  user: string;
+  /** The folder the connection starts in ("" for the server's own start). */
+  basePath: string;
+  /** "explicit": STARTTLS / AUTH TLS; "implicit": TLS from the first byte (FTPS on 990, HTTPS). */
+  tls: "none" | "explicit" | "implicit";
+  /** "key": a private key kept in the vault as `{id}#ssh`. */
+  auth: "password" | "key" | "agent";
+  /** SFTP: the server key's SHA-256 fingerprint, trusted on first use. */
+  hostKey?: string | null;
+  /** WebDAV: the full address, when given instead of host and port. */
+  url?: string | null;
+};
+
+/** The account behind a sign-in connection. Tokens live in the vault (`{id}#oauth`), never here. */
+export type CloudConfig = {
+  accountEmail: string;
+  accountId: string;
+  /** "Use your own OAuth app": its client id. */
+  clientId?: string | null;
+  /** Microsoft: the tenant ("common" when empty). */
+  tenant?: string | null;
+  scopes: string[];
+};
+
+/** Azure Blob Storage / Google Cloud Storage; the account key or service account JSON is the secret. */
+export type BlobConfig = {
+  /** Azure: the storage account name; GCS: the project id. */
+  account: string;
+  /** A custom endpoint (Azurite, a sovereign cloud); "" for the usual one. */
+  endpoint: string;
+  /** A single container / bucket to open, for keys limited to one. */
+  container?: string | null;
 };
 
 export type ObjInfo = {
@@ -15,6 +79,13 @@ export type ObjInfo = {
   modified: number | null;
   etag: string | null;
   storageClass: string | null;
+  // WP0: only present when a provider fills them (never for S3)
+  /** Providers that address files by id (Drive, Box); key rows by it when present. */
+  id?: string;
+  mime?: string;
+  hashes?: { md5?: string; sha1?: string; sha256?: string; quickxor?: string; dropbox?: string };
+  /** Google Docs / Sheets / Slides: no bytes of their own, only exports. */
+  native?: { exports: { mime: string; ext: string; label: string }[] };
 };
 
 export type ListResult = {

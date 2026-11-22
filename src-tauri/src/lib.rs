@@ -5,6 +5,9 @@ mod dest;
 mod doc;
 // "Connect Kybl Storage": browser sign-in on computers and phones
 mod kybl_connect;
+// vault v2: the secrets file and its keychain key (computers and iOS)
+#[cfg(not(target_os = "android"))]
+mod keyvault;
 // the macOS menu bar
 #[cfg(target_os = "macos")]
 mod menu;
@@ -20,6 +23,8 @@ mod prefs;
 #[cfg(desktop)]
 mod quit;
 mod state;
+// one trait for S3, this device's disk and (later) other providers
+mod storage;
 #[cfg(desktop)]
 mod sync;
 mod thumbs;
@@ -156,6 +161,10 @@ pub fn run() {
             platform::biometric_unlock,
             platform::set_privacy_screen,
             thumbs::clear_thumbnail_cache,
+            // WP0: storage core
+            storage::generic_cmds::list_roots,
+            storage::generic_cmds::connection_capabilities,
+            storage::generic_cmds::local_path,
             transfers::start_upload,
             transfers::start_download,
             transfers::cancel_transfer,

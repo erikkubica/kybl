@@ -188,6 +188,20 @@ export const api = {
   /** Transfer tuning; the backend applies changes to new transfers right away. */
   transferPrefs: () => invoke<TransferPrefs>("get_transfer_prefs"),
   setTransferPrefs: (p: Partial<TransferPrefs>) => invoke<TransferPrefs>("set_transfer_prefs", { prefs: p }),
+
+  // WP0: storage core. Every command above also works for non-S3 connections (and for
+  // LOCAL_ID) with `bucket` = a root id from `listRoots`, except presign / props / tags, which
+  // reject where `capabilities` says the connection can't.
+  /** Where browsing starts: buckets, drives, one server folder, or this device's folders. */
+  listRoots: (profileId: string) => read<RootInfo[]>("list_roots", { profileId }),
+  /** What the connection can do; `useCaps` caches it per connection. */
+  capabilities: (profileId: string) => invoke<Capabilities>("connection_capabilities", { profileId }),
+  /**
+   * The real path of a key, for connections that are this device's disk (`localPaths`), e.g. to
+   * download into the folder a local pane shows. Null elsewhere or outside the root.
+   */
+  localPath: (profileId: string, bucket: string, key: string) =>
+    invoke<string | null>("local_path", { profileId, bucket, key }),
 };
 
 /** Editable object headers; see `updateObjectProps`. `metadata` replaces all user metadata when given. */
@@ -305,3 +319,69 @@ export async function docSave(profileId: string, bucket: string, key: string, by
     throw e;
   }
 }
+
+// ---------------------------------------------------------------- WP0: storage core
+
+export type { ConnKind } from "./types";
+
+/** The reserved connection id of this computer or phone. Never in `listProfiles`. */
+export const LOCAL_ID = "local";
+
+export type RootKind =
+  | "bucket"
+  | "drive"
+  | "shared"
+  | "folder"
+  | "home"
+  | "desktop"
+  | "documents"
+  | "downloads"
+  | "volume";
+
+/**
+ * A place browsing starts in. `id` is what every command takes as `bucket`; show `name`.
+ * For LOCAL_ID the id is the folder's absolute path.
+ */
+export type RootInfo = {
+  id: string;
+  name: string;
+  kind: RootKind;
+  created: number | null;
+  readOnly: boolean;
+};
+
+/** What a connection can do; the UI hides what it can't. */
+export type Capabilities = {
+  /** "single": one root, so skip the root level; "drives": a few named roots. */
+  roots: "buckets" | "single" | "drives";
+  createRoot: boolean;
+  /** "prefix": folders are key prefixes (empty ones need a marker). */
+  folders: "prefix" | "real";
+  /** "copy-delete": renaming a folder copies everything, so warn for big ones. */
+  rename: "native" | "copy-delete";
+  serverCopy: "none" | "same-root" | "cross-root";
+  /** "none": hide "Share link". */
+  share: "presign" | "link" | "none";
+  shareExpiry: boolean;
+  /** "proxy": media plays through the app's media:// scheme instead of a presigned URL. */
+  streaming: "presign" | "proxy";
+  rangeRead: boolean;
+  conditionalWrite: "if-match" | "compare" | "rev" | "none";
+  hashes: Array<"md5" | "sha1" | "sha256" | "quickxor" | "dropbox">;
+  thumbnails: "local" | "remote" | "local+remote";
+  /** "s3": the Properties editor (headers, metadata). */
+  metadata: "s3" | "none";
+  tags: boolean;
+  storageClass: boolean;
+  /** Deleting moves things to a trash the user can restore from (say "Move to Trash"). */
+  trash: boolean;
+  versions: boolean;
+  search: "scan" | "server";
+  changes: boolean;
+  multipart: boolean;
+  maxObjectSize: number | null;
+  /** iOS background uploads can work. */
+  backgroundUpload: boolean;
+  /** Files are real files on this device: `localPath`, open and reveal work on them. */
+  localPaths: boolean;
+};
