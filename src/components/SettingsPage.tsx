@@ -8,12 +8,14 @@ import type { Profile } from "../types";
 import { ProviderBadge } from "./Sidebar";
 import { KyblLockup } from "./KyblMark";
 import { SyncSection } from "./SyncSection";
+// WP-E4: drives
+import { MountsSection } from "../mount/MountsSection";
 import { syncApi, type AppPrefs } from "../sync";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { actionLabel, ago, installAndRestart, updatesApi, useUpdates } from "../updates";
 import { formatBytes } from "../format";
 
-export type SettingsPageId = "general" | "appearance" | "browsing" | "transfers" | "sync" | "connections" | "storage" | "shortcuts";
+export type SettingsPageId = "general" | "appearance" | "browsing" | "transfers" | "sync" | "drives" | "connections" | "storage" | "shortcuts";
 type Page = SettingsPageId;
 
 const NAV: { title: string; items: { id: Page; label: string; icon: IconName }[] }[] = [
@@ -30,6 +32,7 @@ const NAV: { title: string; items: { id: Page; label: string; icon: IconName }[]
     title: "Storage",
     items: [
       { id: "sync", label: "Folder sync", icon: "sync" },
+      { id: "drives", label: "Drives", icon: "server" },
       { id: "connections", label: "Connections", icon: "server" },
       { id: "storage", label: "Cache and data", icon: "bucket" },
     ],
@@ -658,6 +661,7 @@ export function SettingsPage({
             )}
 
             {page === "sync" && <SyncSection profiles={profiles} activeProfileId={activeProfileId} onToast={onToast} />}
+            {page === "drives" && <MountsSection profiles={profiles} onToast={onToast} />}
 
             {page === "connections" && (
               <>

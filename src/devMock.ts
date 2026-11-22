@@ -958,3 +958,112 @@ function demoPdf(): ArrayBuffer {
   };
   (window as unknown as { __kyblExpire: (id: string) => Promise<void> }).__kyblExpire = (profileId: string) => emit("connection-auth", { profileId });
 }
+
+// ---------------------------------------------------------------- WP-E4: drives
+// Two made-up drives (one mounted, one uploading saves that finish in about half a minute); mounting
+// "works" after a moment. `?nodrives` starts with none, for the empty state.
+{
+  type Invoke = (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
+  type Mount = import("./api").MountInfo;
+  const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: Invoke } }).__TAURI_INTERNALS__;
+  const next = internals.invoke;
+  const base = (over: Partial<Mount>): Mount => ({
+    id: `m-${Math.random().toString(36).slice(2, 8)}`,
+    profileId: "p1",
+    bucket: "media-prod",
+    prefix: "",
+    name: "media-prod",
+    readOnly: false,
+    state: "mounted",
+    error: null,
+    mountPoint: null,
+    uploading: 0,
+    uploadBytes: 0,
+    uploadSent: 0,
+    uploadError: null,
+    notice: null,
+    cacheBytes: 0,
+    ...over,
+  });
+  const point = (name: string) => `/Users/demo/Library/Application Support/app.kybl.desktop/Mounts/${name}`;
+  const mounts: Mount[] = new URLSearchParams(location.search).has("nodrives")
+    ? []
+    : [
+        base({ id: "m-photos", prefix: "photos/", name: "photos", mountPoint: point("photos"), cacheBytes: 412_000_000 }),
+        base({
+          id: "m-backups",
+          profileId: "p2",
+          bucket: "backups",
+          name: "backups",
+          mountPoint: point("backups"),
+          uploading: 2,
+          uploadBytes: 48_000_000,
+          uploadSent: 9_000_000,
+          notice: "“budget.xlsx” changed on the server while you edited it, so your version was saved as “budget (conflict 2026-11-22 19.30).xlsx”.",
+        }),
+      ];
+  const changed = (m: Mount) => emit("mount-status", m);
+  // the uploading drive finishes in a few seconds
+  const tick = setInterval(() => {
+    const m = mounts.find((x) => x.uploading > 0);
+    if (!m) return clearInterval(tick);
+    m.uploadSent = Math.min(m.uploadBytes, m.uploadSent + 1_500_000);
+    if (m.uploadSent >= m.uploadBytes) Object.assign(m, { uploading: 0, uploadBytes: 0, uploadSent: 0 });
+    changed({ ...m });
+  }, 1000);
+  const find = (id: string) => {
+    const m = mounts.find((x) => x.id === id);
+    if (!m) throw "This drive isn't there any more.";
+    return m;
+  };
+  const handle = async (cmd: string, a: Record<string, string>): Promise<unknown> => {
+    switch (cmd) {
+      case "mount_list":
+        return mounts.map((m) => ({ ...m }));
+      case "mount_add": {
+        const prefix = a.prefix ? `${a.prefix.replace(/^\/+|\/+$/g, "")}/` : "";
+        if (mounts.some((m) => m.profileId === a.profileId && m.bucket === a.bucket && m.prefix === prefix)) throw "This is already a drive.";
+        const name = a.name || prefix.replace(/\/$/, "").split("/").pop() || a.bucket || "Kybl";
+        const m = base({ profileId: a.profileId, bucket: a.bucket, prefix, name, state: "mounting" });
+        mounts.push(m);
+        changed({ ...m });
+        await new Promise((ok) => setTimeout(ok, 700));
+        Object.assign(m, { state: "mounted", mountPoint: point(name) });
+        changed({ ...m });
+        return { ...m };
+      }
+      case "mount_remove": {
+        const m = find(a.id);
+        if (m.uploading > 0) throw `${m.uploading} files from this drive are still uploading. Remove the drive once they're done.`;
+        mounts.splice(mounts.indexOf(m), 1);
+        changed({ ...m, state: "removed" });
+        return null;
+      }
+      case "mount_reveal":
+        find(a.id);
+        return null;
+      case "mount_retry": {
+        const m = Object.assign(find(a.id), { state: "mounted", error: null });
+        m.mountPoint = point(m.name);
+        changed({ ...m });
+        return { ...m };
+      }
+      case "mount_eject": {
+        const m = Object.assign(find(a.id), { state: "unmounted", mountPoint: null });
+        changed({ ...m });
+        return { ...m };
+      }
+      case "mount_dismiss": {
+        const m = Object.assign(find(a.id), { notice: null });
+        changed({ ...m });
+        return null;
+      }
+      default:
+        return undefined;
+    }
+  };
+  internals.invoke = async (cmd, args, options) => {
+    if (!cmd.startsWith("mount_")) return next(cmd, args, options);
+    return handle(cmd, (args ?? {}) as Record<string, string>);
+  };
+}

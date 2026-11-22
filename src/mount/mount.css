@@ -1,0 +1,42 @@
+/* Drives ("Mount as drive"): the dialog and the Settings section. Builds on the sync card styles. */
+
+.mount-dialog {
+  display: grid;
+  gap: 10px;
+}
+.mount-dialog p {
+  margin: 0;
+}
+.mount-where {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text) !important;
+  font-weight: 600;
+}
+.mount-where svg {
+  flex: none;
+  color: var(--accent);
+}
+.mount-dialog .field {
+  margin-top: 4px;
+}
+.modal-foot .spacer {
+  flex: 1;
+}
+
+/* a one-off message (a save kept as a conflict copy): informative, not an error */
+.sync-error.mount-notice {
+  align-items: center;
+  background: var(--hover);
+  color: var(--text);
+}
+.sync-error.mount-notice svg {
+  color: var(--dim);
+}
+.sync-error.mount-notice span {
+  flex: 1;
+}
+.sync-error.mount-notice .btn {
+  flex: none;
+}

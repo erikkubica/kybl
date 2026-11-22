@@ -94,6 +94,16 @@ trash = "5"
 # WP-A1/WP-A2: the system's trusted roots for WebDAV, FTPS and the cloud drive APIs (phones bundle webpki-root-certs below)
 rustls-native-certs = "0.8"
 
+# WP-E4 "Mount as drive" (desktop only): a WebDAV server on 127.0.0.1 that Finder, GVFS or
+# Explorer mount. dav-server brings the protocol (PROPFIND, LOCK, ranges); its local-disk and
+# in-memory file systems are left out (`default-features = false`): files come from `Storage`.
+# A table of its own (an equivalent cfg spelled differently) so it merges cleanly beside the
+# desktop table above.
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))'.dependencies]
+dav-server = { version = "0.12", default-features = false, features = ["proppatch"] }
+# Finder sends decomposed (NFD) names; keys are usually composed (NFC)
+unicode-normalization = "0.1"
+
 # Phones have no root certificate files for rustls to load: trust Mozilla's root set instead
 # (see `state::http_client`).
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]

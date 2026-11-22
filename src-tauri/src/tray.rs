@@ -14,7 +14,7 @@ use std::{
 
 use tauri::{
     image::Image,
-    menu::{Menu, MenuItem, PredefinedMenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, Runtime, WebviewWindowBuilder, Wry,
 };
@@ -46,8 +46,11 @@ pub struct TrayItems {
     sync_now: MenuItem<Wry>,
     /// "Check for updates…", or "Update to Kybl x.y.z…" once one is found
     update: MenuItem<Wry>,
+    /// WP-E4: "Drives", one item per mounted drive (opens it in Finder)
+    drives: Submenu<Wry>,
     /// last text shown, so unchanged updates skip the native menu calls
     last: Mutex<String>,
+    last_drives: Mutex<Vec<(String, String, bool)>>,
 }
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
@@ -60,6 +63,8 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let settings = MenuItem::with_id(app, "sync_settings", "Sync settings…", true, None::<&str>)?;
     let update = MenuItem::with_id(app, "update", "Check for updates…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Kybl", true, None::<&str>)?;
+    // WP-E4: filled by refresh_mounts
+    let drives = Submenu::with_id(app, "drives", "Drives", true)?;
     let menu = Menu::with_items(
         app,
         &[
@@ -69,6 +74,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             &sync_now,
             &pause,
             &settings,
+            &drives,
             &PredefinedMenuItem::separator(app)?,
             &update,
             &quit,
@@ -106,12 +112,52 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 });
             }
             "quit" => crate::quit::request(app),
+            // WP-E4
+            "drive_settings" => show_main_at(app, Some("drives")),
+            id if id.starts_with("drive:") => {
+                let (app, id) = (app.clone(), id["drive:".len()..].to_string());
+                tauri::async_runtime::spawn(async move {
+                    let _ = crate::mount::mount_reveal(app, id).await;
+                });
+            }
             _ => {}
         })
         .build(app)?;
-    app.manage(TrayItems { menu, status, conflicts, deletions, shown: Mutex::new((false, false)), pause, sync_now, update, last: Mutex::new(String::new()) });
+    app.manage(TrayItems { menu, status, conflicts, deletions, shown: Mutex::new((false, false)), pause, sync_now, update, drives, last: Mutex::new(String::new()), last_drives: Mutex::new(vec![(String::new(), String::new(), false)]) });
     refresh(app);
+    refresh_mounts(app);
     Ok(())
+}
+
+/// WP-E4: rebuilds the "Drives" submenu from the mounted drives (when they changed).
+pub fn refresh_mounts(app: &AppHandle) {
+    let Some(items) = app.try_state::<TrayItems>() else { return };
+    let drives = crate::mount::tray_items(app);
+    {
+        let mut last = items.last_drives.lock().unwrap();
+        if *last == drives {
+            return;
+        }
+        *last = drives.clone();
+    }
+    let menu = &items.drives;
+    while let Ok(Some(_)) = menu.remove_at(0) {}
+    for (id, name, mounted) in &drives {
+        if let Ok(item) = MenuItem::with_id(app, format!("drive:{id}"), name, *mounted, None::<&str>) {
+            let _ = menu.append(&item);
+        }
+    }
+    if drives.is_empty()
+        && let Ok(item) = MenuItem::with_id(app, "drives_none", "No drives yet", false, None::<&str>)
+    {
+        let _ = menu.append(&item);
+    }
+    if let Ok(sep) = PredefinedMenuItem::separator(app) {
+        let _ = menu.append(&sep);
+    }
+    if let Ok(item) = MenuItem::with_id(app, "drive_settings", "Drive settings…", true, None::<&str>) {
+        let _ = menu.append(&item);
+    }
 }
 
 fn summarize(st: &[SyncStatus], paused: bool) -> String {
