@@ -47,6 +47,10 @@ function publish() {
   });
   // a job this page hasn't heard of (started elsewhere, or before the list loaded): ask again
   if (unknown) void refreshJobs();
+  notifyEnded(ended);
+}
+
+function notifyEnded(ended: JobSummary[]) {
   for (const j of ended) for (const l of finishedListeners) l(j);
 }
 
@@ -60,7 +64,16 @@ export function refreshJobs(): Promise<void> {
   loading = jobsApi
     .jobList()
     .then((list) => {
+      // a job can end between two events and the next list (a cancel, or while the page slept):
+      // the list is then the first to say so, and "finished" must still fire once
+      const before = new Map(jobsStore.get().map((j) => [j.id, j.progress.state]));
       jobsStore.set(list);
+      notifyEnded(
+        list.filter((j) => {
+          const was = before.get(j.id);
+          return was !== undefined && !FINISHED_STATES.has(was) && FINISHED_STATES.has(j.progress.state);
+        }),
+      );
     })
     .catch(() => {
       /* an older backend without jobs: the list stays empty */

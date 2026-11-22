@@ -5,14 +5,16 @@ import { baseName, formatBytes, formatEta, formatSpeed } from "../format";
 import { useJobList, useJobs } from "../useJobs";
 import { useTransferList, type TransferActions } from "../useTransfers";
 import type { Transfer } from "../types";
+import { JobsPanel, useActiveJobCount, useMigrations } from "../jobs";
 
-/** Transfers still queued or running, plus bucket jobs in progress (for the badge). */
+/** Transfers still queued or running, bucket jobs and copies between connections in progress (for the badge). */
 export function useActiveCount(): number {
   const list = useTransferList();
   const jobs = useJobList();
+  const copies = useActiveJobCount();
   return useMemo(
-    () => list.filter((t) => t.state === "queued" || t.state === "running").length + jobs.filter((j) => j.state === "running").length,
-    [list, jobs],
+    () => list.filter((t) => t.state === "queued" || t.state === "running").length + jobs.filter((j) => j.state === "running").length + copies,
+    [list, jobs, copies],
   );
 }
 
@@ -44,12 +46,15 @@ export function TransfersScreen({
   transfers,
   savedWhere,
   onOpenFile,
+  onOpenPlace,
 }: {
   onBack: () => void;
   transfers: TransferActions;
   savedWhere: string;
   /** a finished download was tapped */
   onOpenFile: (path: string) => void;
+  /** a finished copy between connections: show where it went */
+  onOpenPlace?: (dst: { profileId: string; root: string; dir: string }) => void;
 }) {
   const list = useTransferList();
   const jobs = useJobList();
@@ -58,6 +63,13 @@ export function TransfersScreen({
   const active = list.some((t) => t.state === "queued" || t.state === "running");
   const failed = list.filter((t) => t.state === "error" || t.state === "cancelled").length;
   const finished = list.some((t) => t.state !== "queued" && t.state !== "running") || jobs.some((j) => j.state !== "running");
+  const copies = useMigrations().length;
+  const copiesSection = copies > 0 && (
+    <section className="m-jobs-section">
+      <h3 className="m-section">Copies between connections</h3>
+      <JobsPanel variant="mobile" hideWhenEmpty onOpenDest={onOpenPlace && ((j) => onOpenPlace(j.spec.dst))} />
+    </section>
+  );
 
   return (
     <section className="m-screen m-overlay">
@@ -76,11 +88,13 @@ export function TransfersScreen({
       </header>
       <div className="m-scroll">
         {list.length === 0 && jobs.length === 0 ? (
-          <div className="m-empty">
-            <Icon name="transfers" size={30} />
-            <h3>No transfers</h3>
-            <p>Uploads and downloads show up here. Downloads are saved to {savedWhere}.</p>
-          </div>
+          copiesSection || (
+            <div className="m-empty">
+              <Icon name="transfers" size={30} />
+              <h3>No transfers</h3>
+              <p>Uploads and downloads show up here. Downloads are saved to {savedWhere}.</p>
+            </div>
+          )
         ) : (
           <>
             {(failed > 0 || finished) && (
@@ -133,6 +147,7 @@ export function TransfersScreen({
                 <TransferRow key={t.id} t={t} transfers={transfers} onOpenFile={onOpenFile} />
               ))}
             </ul>
+            {copiesSection}
           </>
         )}
       </div>

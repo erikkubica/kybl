@@ -51,6 +51,8 @@ import { LockScreen, useAppLock } from "./AppLock";
 import { canView, viewerFor } from "../viewers/registry";
 import type { DocumentHandle } from "../viewers/DocumentView";
 import { capsFor, useCaps } from "../useCaps";
+import { MigrationDialog, type MigrationSource } from "../jobs";
+import { useMigrate } from "./useMigrate";
 import "../styles.css";
 import "./mobile.css";
 
@@ -409,6 +411,16 @@ export default function MobileApp() {
     [transfers, changed, toast],
   );
 
+  // copies between connections (src/jobs): the screen that starts one, and what happens when one ends
+  const mig = useMigrate({ toast, changed, openTransfers });
+  /** "Copy to another connection…" for entries of the bucket on screen */
+  const migrateEntries = (list: Entry[], mode: "copy" | "move" = "copy") =>
+    loc &&
+    mig.open(
+      { profileId: loc.profileId, root: loc.bucket, items: list.map((e) => ({ path: e.key, isDir: e.kind === "folder", size: e.kind === "folder" ? undefined : e.size })) },
+      mode,
+    );
+
   // a transfer notification was tapped
   useEffect(() => {
     const off = listen("open-transfers", openTransfers);
@@ -528,6 +540,7 @@ export default function MobileApp() {
     folderInfo: !!folderInfo && !!loc,
     sheet: !!sheet,
     move: !!moveDialog && !!loc,
+    migrate: !!mig.migrate,
     prompt: !!prompt,
     confirm: !!confirm,
     conn: !!connDialog,
@@ -542,6 +555,7 @@ export default function MobileApp() {
     kybl: () => setKyblDialog(null),
     conn: () => setConnDialog(null),
     move: () => setMoveDialog(null),
+    migrate: mig.close,
     sheet: () => setSheet(null),
     folderInfo: () => setFolderInfo(null),
     // "Upload to…" walks back up the folders it went into, then closes
@@ -686,6 +700,7 @@ export default function MobileApp() {
     items.push(
       { icon: "edit", label: "Rename", run: () => ops.askRename(e) },
       { icon: "move", label: "Move or copy…", run: () => setMoveDialog({ items: [e], mode: "move" }) },
+      { icon: "copy", label: "Copy to another connection…", run: () => migrateEntries([e]) },
       { icon: "check", label: "Select", run: () => select(e) },
       { icon: "trash", label: "Delete", danger: true, run: () => ops.askDelete([e]) },
     );
@@ -770,7 +785,10 @@ export default function MobileApp() {
   const selectionMore = () => {
     const list = selectedEntries;
     if (list.length === 1) return setSheet({ title: list[0].name, items: entryActions(list[0]).filter((i) => i.label !== "Select") });
-    const items: SheetItem[] = [{ icon: "copy", label: "Copy to…", run: () => setMoveDialog({ items: list, mode: "copy" }) }];
+    const items: SheetItem[] = [
+      { icon: "copy", label: "Copy to…", run: () => setMoveDialog({ items: list, mode: "copy" }) },
+      { icon: "copy", label: "Copy to another connection…", run: () => migrateEntries(list) },
+    ];
     if (PHONE_OS && list.some(isPhoto)) items.push({ icon: "photos", label: "Save to Photos", run: () => ops.saveToPhotos(list) });
     setSheet({ title: `${list.length} selected`, items });
   };
@@ -812,6 +830,11 @@ export default function MobileApp() {
       { icon: "refresh", label: "Refresh", run: () => void reloadListing({ quiet: true }) },
       isFavorite(loc) ? { icon: "star-fill", label: "Remove from Favorites", run: () => setFavorite(loc, false) } : { icon: "star", label: "Add to Favorites", run: () => setFavorite(loc, true) },
       { icon: "info", label: loc.prefix ? "Folder info" : "Bucket info", run: () => setFolderInfo({ prefix: loc.prefix, name: title }) },
+      {
+        icon: "copy",
+        label: loc.prefix ? "Copy to another connection…" : "Copy everything to another connection…",
+        run: () => mig.open({ profileId: loc.profileId, root: loc.bucket, items: [{ path: loc.prefix, isDir: true }] }),
+      },
     ];
     setSheet({ title, items });
   };
@@ -1170,6 +1193,15 @@ export default function MobileApp() {
         if (add === "new") items.push({ icon: "plus", label: "New bucket", run: () => askNewBucket(p) });
         else if (add === "open") items.push({ icon: "bucket", label: "Open bucket by name", run: () => askBucketName(p) });
         items.push({ icon: "refresh", label: "Refresh buckets", run: () => void loadBuckets(p) });
+        // everything this connection shows, each bucket into a folder of its own name
+        const shown = (buckets[p.id]?.names ?? []).filter((b) => !(hiddenBuckets[p.id] ?? []).includes(b));
+        if (!isLocal(p) && shown.length > 0) {
+          const source: MigrationSource =
+            shown.length === 1
+              ? { profileId: p.id, root: shown[0], items: [{ path: "", isDir: true }] }
+              : { profileId: p.id, root: shown[0], items: [], roots: shown.map((b) => ({ id: b, name: buckets[p.id]?.labels?.[b] ?? b })) };
+          items.push({ icon: "copy", label: "Copy everything to…", run: () => mig.open(source) });
+        }
         setSheet({ title: connName(p), items });
       }}
       onAddBucket={(p) => (addKind(p, buckets[p.id]) === "new" ? askNewBucket(p) : askBucketName(p))}
@@ -1181,6 +1213,7 @@ export default function MobileApp() {
           items: [
             hidden ? { icon: "eye", label: "Show in the list", run: () => setBucketHidden(p, b, false) } : { icon: "eye-off", label: "Hide from the list", run: () => setBucketHidden(p, b, true) },
             { icon: "eye", label: "Choose buckets to show", run: () => setChoosing(p.id) },
+            { icon: "copy", label: "Copy everything to…", run: () => mig.open({ profileId: p.id, root: b, items: [{ path: "", isDir: true }] }) },
           ],
         })
       }
@@ -1421,7 +1454,28 @@ export default function MobileApp() {
       </Presence>
 
       <Presence show={transfersOpen} layer="transfers" z={z("transfers")}>
-        <TransfersScreen onBack={() => backRef.current()} transfers={transfers} savedWhere={savedWhere} onOpenFile={(p) => api.openLocal(p).catch((e) => toast("error", errSummary(errMessage(e))))} />
+        <TransfersScreen
+          onBack={() => backRef.current()}
+          transfers={transfers}
+          savedWhere={savedWhere}
+          onOpenFile={(p) => api.openLocal(p).catch((e) => toast("error", errSummary(errMessage(e))))}
+          onOpenPlace={(l) => {
+            setTransfersOpen(false);
+            go({ profileId: l.profileId, bucket: l.root, prefix: l.dir });
+          }}
+        />
+      </Presence>
+      <Presence show={!!mig.migrate} layer="migrate" z={z("migrate")}>
+        {mig.migrate && (
+          <MigrationDialog
+            key={mig.migrate.key}
+            variant="screen"
+            source={mig.migrate.source}
+            initialMode={mig.migrate.mode}
+            onClose={mig.close}
+            onStarted={(_id, spec) => mig.started(spec.mode)}
+          />
+        )}
       </Presence>
       <Presence show={settingsOpen} layer="settings" z={z("settings")}>
         <SettingsScreen

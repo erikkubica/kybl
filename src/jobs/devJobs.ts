@@ -98,10 +98,12 @@ function seed() {
 }
 seed();
 
-const summary = (j: MockJob): JobSummary => ({ id: j.id, title: j.title, spec: j.spec, created: j.created, updated: j.updated, progress: j.progress });
+// copies, like the real IPC hands out: the page must never hold the object the timer mutates (a
+// job finishing in place would never look like it changed, and "finished" would never fire)
+const summary = (j: MockJob): JobSummary => ({ id: j.id, title: j.title, spec: j.spec, created: j.created, updated: j.updated, progress: { ...j.progress, current: [...j.progress.current] } });
 const send = (j: MockJob) => {
   j.updated = Date.now();
-  void emit("job-progress", j.progress);
+  void emit("job-progress", { ...j.progress, current: [...j.progress.current] });
 };
 
 const NAMES = ["IMG_4412.jpg", "clip-00231.mp4", "export/final-v3.mov", "photos/2026/hanoi/pho.jpg", "backup-2026-11-10.tar.gz", "docs/contract.pdf"];
