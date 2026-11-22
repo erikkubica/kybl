@@ -25,10 +25,6 @@ export type BrowserPaneProps = {
   dualTools?: React.ReactNode;
   settings: Settings;
   updateSettings: (patch: Partial<Settings>) => void;
-  compact: boolean;
-  onCompact: (c: boolean) => void;
-  tile: number;
-  onTileSize: (px: number) => void;
   previewOpen: boolean;
   onTogglePreview: () => void;
   onToggleDual?: () => void;
@@ -50,11 +46,11 @@ export function BrowserPane(p: BrowserPaneProps) {
   const { pane, settings, active } = p;
   const { profile, bucket, prefix, ent, sel, actions, ops } = pane;
   const { search, entries, listEntries, filter, fresh, stale, lst } = ent;
-  const { selected, selectedEntries } = sel;
-  const singleFile = selectedEntries.length === 1 && selectedEntries[0].kind === "file";
+  const { selected } = sel;
   const working = lst.loading || !!pane.busy || !!search?.running;
   const sort = pane.sort;
-  const setSort = (s: typeof sort) => p.updateSettings({ sort: { by: s.key, desc: s.dir === "desc" } });
+  // this pane's own sort (and compact rows, tile size): the other pane keeps its own
+  const setSort = pane.setSort;
   const onSort = (key: SortKey) => setSort(sort.key === key ? { key, dir: sort.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
   const listLoading = search ? search.running && !search.stopped && entries.length === 0 : lst.loading || !fresh;
   const listError = ent.listError;
@@ -79,10 +75,7 @@ export function BrowserPane(p: BrowserPaneProps) {
         bucket={bucket}
         bucketLabel={pane.bucketLabel}
         bucketIcon={pane.profile ? rootIcon(pane.profile.id, bucket ?? "") : undefined}
-        canShare={actions.canShare}
         prefix={prefix}
-        selectionCount={selected.size}
-        singleFileSelected={singleFile}
         previewOpen={p.previewOpen}
         searchActive={!!search}
         searchRunning={!!search?.running && !search.stopped}
@@ -91,24 +84,16 @@ export function BrowserPane(p: BrowserPaneProps) {
         disabled={!profile || bucket == null}
         working={working}
         view={pane.view}
-        compact={p.compact}
+        compact={pane.compact}
         sort={sort}
-        tileSize={p.tile}
         onView={pane.setView}
-        onCompact={p.onCompact}
+        onCompact={pane.setCompact}
         onSortChange={setSort}
-        onTileSize={p.onTileSize}
         onNavigate={pane.navigate}
         onRefresh={ent.refresh}
         onUploadMenu={actions.onUploadMenu}
         onMoreMenu={actions.onMoreMenu}
         onNewFolder={newFolder}
-        // on this computer's own disk there's nothing to download (copy and move cover it)
-        onDownload={pane.caps?.localPaths ? undefined : () => ops.downloadEntries(selectedEntries, pane.relBase)}
-        onCopyLink={() => singleFile && actions.copyLink(selectedEntries[0], settings.linkExpiry)}
-        onRename={() => selectedEntries[0] && ops.askRename(selectedEntries[0])}
-        onMoveTo={() => actions.askMove(selectedEntries)}
-        onDelete={() => ops.askDelete(selectedEntries)}
         onQuery={(q) => {
           ent.setQuery(q);
           // editing the text after a deep search goes back to filtering the folder
@@ -129,7 +114,7 @@ export function BrowserPane(p: BrowserPaneProps) {
       <PaneBanners pane={pane} />
 
       <div className="content" style={p.contentStyle}>
-        <div className={`pane ${p.compact ? "compact" : ""}`}>
+        <div className={`pane ${pane.compact ? "compact" : ""}`}>
           {!profile && <Welcome actions={p.empty} />}
           {profile && bucket == null && <ChooseBucket profile={profile} note={p.bucketNote} reconnect={p.bucketReconnect} actions={p.empty} />}
           {profile && bucket != null && (
@@ -146,8 +131,7 @@ export function BrowserPane(p: BrowserPaneProps) {
                   hasMore={ent.hasMore}
                   searchMode={!!search || !!filter}
                   prefix={search ? search.loc.prefix : prefix}
-                  tileSize={p.tile}
-                  profileId={profile.id}
+                            profileId={profile.id}
                   bucket={bucket}
                   autoFocus={active}
                   folderSize={pane.folderSizes.view}

@@ -66,6 +66,9 @@ export function useShortcuts(opts: ShortcutOptions) {
       else if (mod && ev.shiftKey && k === "s") id = own("swap-panes");
       // by code: Option turns "s" into "ß"
       else if (mod && ev.altKey && ev.code === "KeyS") id = own("toggle-sidebar");
+      // grid view tile size (the list ignores them)
+      else if (mod && (k === "=" || k === "+") && o.current.listScope?.()?.querySelector(".grid-scroll")) id = "tiles-bigger";
+      else if (mod && k === "-" && o.current.listScope?.()?.querySelector(".grid-scroll")) id = "tiles-smaller";
       else if (settingsOpen) {
         // a dialog open on top of settings handles its own Escape
         if (ev.key === "Escape" && !overlayUp()) closeSettings();

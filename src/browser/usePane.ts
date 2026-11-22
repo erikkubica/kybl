@@ -90,14 +90,25 @@ function usePaneCore(env: PaneEnv) {
   const hereRef = useRef(here);
   hereRef.current = here;
 
-  const sort: Sort = useMemo(() => ({ key: settings.sort.by, dir: settings.sort.desc ? "desc" : "asc" }), [settings.sort]);
+  // the pane's own view choices (sort, hidden files, compact rows, tile size): what one pane does
+  // leaves the other alone. Until a pane is given its own, it follows the app's setting.
+  const [sortOwn, setSortOwn] = usePanePref<Settings["sort"]>(`s3b.sort.${env.id}`);
+  const [hiddenOwn, setShowHidden] = usePanePref<boolean>(`s3b.hidden.${env.id}`);
+  const [compactOwn, setCompact] = usePanePref<boolean>(`s3b.compact.${env.id}`);
+  const [tileOwn, setTile] = usePanePref<number>(`s3b.tile.${env.id}`);
+  const sortSetting = sortOwn ?? settings.sort;
+  const showHidden = hiddenOwn ?? settings.showHiddenFiles;
+  const compact = compactOwn ?? LS.get("s3b.compact") === "1";
+  const tile = tileOwn ?? settings.tileSize;
+  const sort: Sort = useMemo(() => ({ key: sortSetting.by, dir: sortSetting.desc ? "desc" : "asc" }), [sortSetting]);
+  const setSort = (s: Sort) => setSortOwn({ by: s.key, desc: s.dir === "desc" });
   const caps = useCaps(profile?.id);
   // this computer's disk hides dotfiles (.DS_Store and the like) unless "Show hidden files" is on
   // (asked per listing, so the old one greyed out while another place loads keeps its rule; caps
   // is a dependency so the answer is asked again once this connection's capabilities arrive)
   const hideDotfilesOf = useCallback(
-    (id: string) => !settings.showHiddenFiles && !!(id === profile?.id ? caps : peekCaps(id))?.localPaths,
-    [settings.showHiddenFiles, profile?.id, caps],
+    (id: string) => !showHidden && !!(id === profile?.id ? caps : peekCaps(id))?.localPaths,
+    [showHidden, profile?.id, caps],
   );
   const ent = useEntries(here, sort, settings.foldersFirst, onError, hideDotfilesOf);
   const { lst, sr, search, entries } = ent;
@@ -356,6 +367,13 @@ function usePaneCore(env: PaneEnv) {
     searchInput,
     view,
     setView,
+    setSort,
+    showHidden,
+    setShowHidden,
+    compact,
+    setCompact,
+    tile,
+    setTile,
     drag,
     onPress,
     go,
@@ -388,3 +406,27 @@ export function usePane(env: PaneEnv) {
 }
 
 export type Pane = ReturnType<typeof usePane>;
+
+/**
+ * One of a pane's own view choices, kept per pane in localStorage. `null` means "not chosen":
+ * the pane follows the app's setting (and setting null hands it back to it).
+ */
+function usePanePref<T>(key: string): [T | null, (v: T | null) => void] {
+  const [v, setV] = useState<T | null>(() => {
+    const raw = LS.get(key);
+    if (raw == null || raw === "") return null;
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return null;
+    }
+  });
+  const set = useCallback(
+    (next: T | null) => {
+      setV(next);
+      LS.set(key, next == null ? "" : JSON.stringify(next));
+    },
+    [key],
+  );
+  return [v, set];
+}

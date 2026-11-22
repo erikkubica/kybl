@@ -11,10 +11,7 @@ export function Toolbar({
   bucket,
   bucketLabel,
   bucketIcon,
-  canShare = true,
   prefix,
-  selectionCount,
-  singleFileSelected,
   previewOpen,
   searchActive,
   searchRunning,
@@ -25,21 +22,14 @@ export function Toolbar({
   view,
   compact,
   sort,
-  tileSize,
   onView,
   onCompact,
   onSortChange,
-  onTileSize,
   onNavigate,
   onRefresh,
   onUploadMenu,
   onMoreMenu,
   onNewFolder,
-  onDownload,
-  onCopyLink,
-  onRename,
-  onMoveTo,
-  onDelete,
   onQuery,
   onSearch,
   onStopSearch,
@@ -57,11 +47,7 @@ export function Toolbar({
   bucketLabel?: string | null;
   /** the root's icon in the breadcrumbs (a bucket, a drive, a folder, a server) */
   bucketIcon?: IconName;
-  /** the connection can make share links (false hides "Copy link") */
-  canShare?: boolean;
   prefix: string;
-  selectionCount: number;
-  singleFileSelected: boolean;
   previewOpen: boolean;
   /** showing deep search results */
   searchActive: boolean;
@@ -78,24 +64,15 @@ export function Toolbar({
   /** denser rows, applies to both views */
   compact: boolean;
   sort: Sort;
-  /** grid tile width in px */
-  tileSize: number;
   onView: (v: "list" | "grid") => void;
   onCompact: (c: boolean) => void;
   onSortChange: (s: Sort) => void;
-  onTileSize: (px: number) => void;
   onNavigate: (prefix: string) => void;
   onRefresh: () => void;
   onUploadMenu: (x: number, y: number) => void;
   /** the "…" button: Go to folder, Sync this folder, Add to favorites… */
   onMoreMenu: (x: number, y: number) => void;
   onNewFolder: () => void;
-  /** absent on this computer's own disk: there is nothing to download */
-  onDownload?: () => void;
-  onCopyLink: () => void;
-  onRename: () => void;
-  onMoveTo: () => void;
-  onDelete: () => void;
   onQuery: (q: string) => void;
   /** Enter: search this folder and everything below it */
   onSearch: (q: string) => void;
@@ -115,7 +92,6 @@ export function Toolbar({
   onToggleFavorite?: () => void;
 }) {
   const parts = prefix.split("/").filter(Boolean);
-  const hasSel = selectionCount > 0;
   const dialogs = useDialogs();
   /** grid view: one icon for the sort, its choices in a menu (as Finder's Sort By) */
   const sortMenu = (e: React.MouseEvent) => {
@@ -230,57 +206,9 @@ export function Toolbar({
           </button>
         </div>
 
-        {hasSel && (
-          <>
-            <div className="tb-sep" />
-            <div className="sel-actions">
-              {/* the count (and a ×) sits in the status line under the list */}
-              {onDownload && (
-                <button className="tool" onClick={onDownload} title="Download">
-                  <Icon name="download" />
-                  <span>Download</span>
-                </button>
-              )}
-              {singleFileSelected && canShare && (
-                <button className="tool" onClick={onCopyLink} title="Copy a share link">
-                  <Icon name="link" />
-                  <span>Copy link</span>
-                </button>
-              )}
-              <button className="tool" onClick={onMoveTo} title="Move or copy to another folder or bucket">
-                <Icon name="move" />
-                <span>Move to…</span>
-              </button>
-              {selectionCount === 1 && (
-                <button className="tool" onClick={onRename} title="Rename">
-                  <Icon name="edit" />
-                  <span>Rename</span>
-                </button>
-              )}
-              <button className="tool danger" onClick={onDelete} title="Delete (⌘⌫)">
-                <Icon name="trash" />
-                <span>Delete</span>
-              </button>
-            </div>
-          </>
-        )}
-
         <div className="spacer" />
         {view === "grid" && (
           <>
-            <label className="tile-slider" title="Thumbnail size">
-              <Icon name="image" size={12} />
-              <input
-                type="range"
-                min={TILE_MIN}
-                max={TILE_MAX}
-                step={8}
-                value={tileSize}
-                onChange={(e) => onTileSize(Number(e.target.value))}
-                aria-label="Thumbnail size"
-              />
-              <Icon name="image" size={16} />
-            </label>
             <button
               className="icon-btn"
               onClick={sortMenu}

@@ -363,20 +363,12 @@ code {
 }
 /* tight window: selection actions collapse to icons */
 @container (max-width: 860px) {
-  .sel-actions .tool span {
-    display: none;
-  }
-  .sel-actions .tool {
-    padding: 0 6px;
-  }
+
+
 }
 @container (max-width: 1080px) {
-  .actionbar.is-grid .sel-actions .tool span {
-    display: none;
-  }
-  .actionbar.is-grid .sel-actions .tool {
-    padding: 0 6px;
-  }
+
+
 }
 @container (max-width: 760px) {
   .actionbar.is-grid .tb-group .tool span {
@@ -589,12 +581,7 @@ kbd {
   background: var(--border);
   flex: none;
 }
-.sel-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  animation: slide-in 0.2s var(--ease);
-}
+
 .sel-chip {
   display: inline-flex;
   align-items: center;
@@ -2235,9 +2222,8 @@ input[type="checkbox"] {
 .grid {
   display: grid;
   gap: 10px;
-  /* tiles keep their size and their spacing: spare width stays at the end of the row, so
-     resizing the window or toggling a panel never moves the icons apart or together */
-  justify-content: start;
+  /* as many columns as fit (each may give up a fifth of the tile size for one more), sharing
+     the row's width evenly; the icons themselves keep their size */
   padding: 14px 14px 18px;
 }
 /* Finder-style tiles: an icon a bit narrower than the column, the name (up to two lines) right
@@ -2250,7 +2236,9 @@ input[type="checkbox"] {
   flex-direction: column;
   align-items: center;
   min-width: 0;
-  padding: 2px 2px 6px;
+  padding: 4px 4px 6px;
+  border-radius: 12px;
+  transition: background 0.12s;
 }
 .card-text {
   display: flex;
@@ -2268,15 +2256,17 @@ input[type="checkbox"] {
   flex: none;
   /* a little wider than tall: the folder and page art leave no empty bands above and below */
   aspect-ratio: 5 / 4;
-  width: 72%;
+  /* the icon keeps the tile size's proportion even when the columns share out spare width */
+  width: min(100%, calc(var(--tile, 160px) * 0.72));
   border-radius: 14px;
   overflow: hidden;
   transition: background 0.12s;
 }
-.card:hover .card-thumb {
+/* hover and selection cover the whole tile, name included (a long name is wider than the icon) */
+.card:hover {
   background: var(--hover);
 }
-.card.selected .card-thumb {
+.card.selected {
   background: var(--pressed);
 }
 .card-thumb img {
@@ -2418,7 +2408,7 @@ input[type="checkbox"] {
   padding: 12px 12px 16px;
 }
 .compact .card-thumb {
-  width: 74%;
+  width: min(100%, calc(var(--tile, 160px) * 0.74));
 }
 .compact .card-text {
   height: 52px;

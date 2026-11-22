@@ -39,8 +39,9 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   const onDisk = !!caps?.localPaths;
   const toggleHidden = () => {
     if (!onDisk) return;
-    const show = !settings.showHiddenFiles;
-    env.updateSettings({ showHiddenFiles: show });
+    // this pane only: the other one keeps showing (or hiding) them
+    const show = !pane.showHidden;
+    pane.setShowHidden(show);
     toast("info", show ? "Showing hidden files" : "Hiding hidden files");
   };
 
@@ -277,7 +278,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
           !onDisk && { type: "item", label: "Mount as drive…", icon: "server", onClick: () => askMount(prefix) },
           !!env.openMigration && { type: "item", label: prefix ? "Copy this folder to another connection…" : "Copy everything to another connection…", icon: "copy", onClick: migrateHere },
           isS3 && { type: "item", label: "Copy S3 URI", icon: "copy", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") },
-          onDisk && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: settings.showHiddenFiles, onClick: toggleHidden },
+          onDisk && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: pane.showHidden, onClick: toggleHidden },
           ...(env.extraPlaceItems?.() ?? []),
         ];
 

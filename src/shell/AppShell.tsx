@@ -13,6 +13,7 @@ import { useTransfers } from "../useTransfers";
 import { useJobs } from "../useJobs";
 import { getJobs, migrations as migrationStore } from "../jobs";
 import { Sidebar, SidebarRail } from "../components/Sidebar";
+import { TILE_MAX, TILE_MIN } from "../components/Toolbar";
 import { TransferPanel, type ActivityTab } from "../components/TransferPanel";
 import { ConnectionDialog } from "../components/ConnectionDialog";
 import { KyblConnectDialog } from "../components/KyblConnectDialog";
@@ -26,7 +27,7 @@ import { undoStack } from "../desktop/undo";
 import { usePane, type Pane, type PaneEnv } from "../browser/usePane";
 import { BrowserPane } from "../browser/BrowserPane";
 import type { EmptyActions } from "../browser/PaneEmpty";
-import { LS, THIS_MAC, type PaneId } from "../browser/types";
+import { THIS_MAC, type PaneId } from "../browser/types";
 import { forgetCaps, peekCaps } from "../useCaps";
 import { sendItems } from "./crossPane";
 import { clearAuthNeeded, useAuthNeeded } from "../connections/authNeeded";
@@ -109,24 +110,6 @@ export function AppShell() {
     [],
   );
   const sidePeek = useSidePeek(sideHidden, () => dialogs.isOpen());
-  // the slider moves the tiles at once; the setting is saved once it settles
-  // (the setting stays the source of truth, so a change in Settings shows at once too)
-  const [tileDraft, setTileDraft] = useState<number | null>(null);
-  const tile = tileDraft ?? settings.tileSize;
-  const tileTimer = useRef(0);
-  const changeTile = (px: number) => {
-    setTileDraft(px);
-    window.clearTimeout(tileTimer.current);
-    tileTimer.current = window.setTimeout(() => {
-      updateSettings({ tileSize: px });
-      setTileDraft(null);
-    }, 300);
-  };
-  const [compact, setCompactState] = useState(LS.get("s3b.compact") === "1");
-  const setCompact = (c: boolean) => {
-    setCompactState(c);
-    LS.set("s3b.compact", c ? "1" : "0");
-  };
   const dual = settings.layout === "dual";
   const [activeId, setActiveId] = useState<PaneId>("left");
   // two lists side by side leave little room: the details pane has its own switch there, off at first
@@ -305,6 +288,19 @@ export function AppShell() {
   const other = dual ? (active === left ? right : left) : null;
   panesRef.current = dual ? [left, right] : [left];
   allPanes.current = [left, right];
+  // a trackpad pinch over a grid (the web view sees a wheel with Ctrl) sizes that pane's tiles
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      const t = e.target as Element | null;
+      if (!e.ctrlKey || !t?.closest?.(".grid-scroll")) return;
+      e.preventDefault();
+      const id = t.closest<HTMLElement>("[data-pane]")?.dataset.pane;
+      const p = allPanes.current.find((x) => x.id === id);
+      if (p) p.setTile(Math.round(Math.min(TILE_MAX, Math.max(TILE_MIN, p.tile - e.deltaY * 2))));
+    };
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
+  }, []);
   dualCtx.current = {
     left,
     right,
@@ -583,6 +579,9 @@ export function AppShell() {
     free: {
       "new-connection": () => setConnDialog({ profile: null }),
       "toggle-sidebar": toggleSidebar,
+      // grid view: ⌘+ / ⌘− (and a pinch) size the tiles, as Finder's icon view
+      "tiles-bigger": () => active.setTile(Math.min(TILE_MAX, active.tile + 24)),
+      "tiles-smaller": () => active.setTile(Math.max(TILE_MIN, active.tile - 24)),
       ...dualPane.commands,
     },
     dual,
@@ -621,10 +620,6 @@ export function AppShell() {
     ) : undefined,
     settings,
     updateSettings,
-    compact,
-    onCompact: setCompact,
-    tile,
-    onTileSize: changeTile,
     previewOpen: preview.previewOpen,
     onTogglePreview: preview.togglePreview,
     dropUpload: dropOver === p.id,
@@ -761,10 +756,21 @@ export function AppShell() {
       {settingsOpen && (
         <SettingsPage
           settings={settings}
-          compact={compact}
+          compact={active.compact}
           profiles={saved}
-          onChange={updateSettings}
-          onCompact={setCompact}
+          onChange={(patch) => {
+            updateSettings(patch);
+            // a tile size picked in Settings applies to both panes again
+            if (patch.tileSize != null) {
+              left.setTile(null);
+              right.setTile(null);
+            }
+          }}
+          // Settings sets it for both panes (each can still change its own from its toolbar)
+          onCompact={(c) => {
+            left.setCompact(c);
+            right.setCompact(c);
+          }}
           onEditProfile={(p) => setConnDialog({ profile: p })}
           onNewProfile={() => setConnDialog({ profile: null })}
           onClearThumbnails={() =>

@@ -123,15 +123,15 @@ body.resizing-row * {
 }
 /* a narrow pane: tool labels go, so the view and pane switches stay in reach */
 @container (max-width: 700px) {
-  .actionbar .tb-group .tool span,
-  .sel-actions .tool span {
+  .actionbar .tb-group .tool span {
     display: none;
   }
-  .actionbar .tb-group .tool,
-  .sel-actions .tool {
+  .actionbar .tb-group .tool {
     padding: 0 6px;
   }
-  .actionbar .tile-slider,
+}
+/* a very narrow pane: the compact switch steps aside too (it's in Settings as well) */
+@container (max-width: 470px) {
   .actionbar [aria-label="Compact layout"] {
     display: none;
   }

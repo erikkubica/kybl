@@ -271,7 +271,8 @@ export function GridView({
     pressRef.current.onPress(e, ev);
   }, []);
 
-  const columnsCss = `repeat(auto-fill, min(${size}px, 100%))`;
+  // columns may narrow to 80% of the tile size to fit one more, then share the row evenly
+  const columnsCss = `repeat(auto-fill, minmax(min(${Math.round(size * 0.8)}px, 100%), 1fr))`;
   const empty = entries.length === 0;
 
   return (
