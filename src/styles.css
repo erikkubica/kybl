@@ -2263,7 +2263,17 @@ input[type="checkbox"] {
   transition: background 0.12s;
 }
 /* as Finder: the icon gets a box and the name its own pill (selected), never the whole tile */
-.card:hover .card-thumb {
+/* only the icon and the name are the tile: the rest of the cell is background (hover, clicks,
+   right-clicks and a marquee start there, as in Finder) */
+.card {
+  pointer-events: none;
+}
+.card-thumb,
+.card-name,
+.card-meta {
+  pointer-events: auto;
+}
+.card:has(.card-thumb:hover, .card-name:hover, .card-meta:hover) .card-thumb {
   background: var(--hover);
 }
 .card.selected .card-thumb {
