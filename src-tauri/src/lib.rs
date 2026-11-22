@@ -1,6 +1,8 @@
 mod commands;
 // where downloads land: safe paths and free names
 mod dest;
+// WP-D: open and save documents for the in-app viewers and editor
+mod doc;
 // "Connect Kybl Storage": browser sign-in on computers and phones
 mod kybl_connect;
 // the macOS menu bar
@@ -184,6 +186,9 @@ pub fn run() {
             prefs::get_app_prefs,
             #[cfg(desktop)]
             prefs::set_app_prefs,
+            // WP-D
+            doc::doc_open,
+            doc::doc_save,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
