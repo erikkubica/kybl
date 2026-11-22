@@ -31,8 +31,12 @@ export function useEntries(
   sort: Sort,
   foldersFirst: boolean,
   onError: (msg: string) => void,
-  /** leave out dotfiles (this computer's disk, unless "Show hidden files" is on) */
-  hideDotfiles = false,
+  /**
+   * leave out dotfiles of a connection's listing (this computer's disk, unless "Show hidden
+   * files" is on). Asked per listing: while another place loads, the old one stays on screen,
+   * greyed, and keeps its own rule
+   */
+  hideDotfilesOf: (profileId: string) => boolean = () => false,
 ) {
   const [query, setQuery] = useState("");
   const sr = useSearch(onError);
@@ -64,15 +68,15 @@ export function useEntries(
         ...[...folders].map(folderEntry),
         ...search.results.map<Entry>((o) => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native, mime: o.mime, id: o.id })),
       ];
-      return hideDotfiles ? found.filter((e) => !dotted(e.key.slice(base.length))) : found;
+      return hideDotfilesOf(search.loc.profileId) ? found.filter((e) => !dotted(e.key.slice(base.length))) : found;
     }
     if (!fresh && !stale) return [];
     const all = [
       ...listing.folders.map(folderEntry),
       ...listing.objects.map<Entry>((o) => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native, mime: o.mime, id: o.id })),
     ];
-    return hideDotfiles ? all.filter((e) => !e.name.startsWith(".")) : all;
-  }, [listing, search, fresh, stale, hideDotfiles]);
+    return listing.loc && hideDotfilesOf(listing.loc.profileId) ? all.filter((e) => !e.name.startsWith(".")) : all;
+  }, [listing, search, fresh, stale, hideDotfilesOf]);
 
   /** What the list shows. */
   const listEntries: Entry[] = useMemo(() => {

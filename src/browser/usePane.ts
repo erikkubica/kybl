@@ -9,7 +9,7 @@ import { baseName, parentPrefix } from "../format";
 import { localParent } from "../connections/roots";
 import { useFolderSizes } from "../useFolderSizes";
 import { useItemDrag } from "../useItemDrag";
-import { useCaps } from "../useCaps";
+import { peekCaps, useCaps } from "../useCaps";
 import { makeFileOps, type FileOps } from "../desktop/fileOps";
 import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
 import type { Sort } from "../components/FileTable";
@@ -93,8 +93,13 @@ function usePaneCore(env: PaneEnv) {
   const sort: Sort = useMemo(() => ({ key: settings.sort.by, dir: settings.sort.desc ? "desc" : "asc" }), [settings.sort]);
   const caps = useCaps(profile?.id);
   // this computer's disk hides dotfiles (.DS_Store and the like) unless "Show hidden files" is on
-  const hideDotfiles = !!caps?.localPaths && !settings.showHiddenFiles;
-  const ent = useEntries(here, sort, settings.foldersFirst, onError, hideDotfiles);
+  // (asked per listing, so the old one greyed out while another place loads keeps its rule; caps
+  // is a dependency so the answer is asked again once this connection's capabilities arrive)
+  const hideDotfilesOf = useCallback(
+    (id: string) => !settings.showHiddenFiles && !!(id === profile?.id ? caps : peekCaps(id))?.localPaths,
+    [settings.showHiddenFiles, profile?.id, caps],
+  );
+  const ent = useEntries(here, sort, settings.foldersFirst, onError, hideDotfilesOf);
   const { lst, sr, search, entries } = ent;
   const sel = useSelection(entries, ent.stale);
   const { setSelected, setCursor } = sel;
