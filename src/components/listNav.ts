@@ -19,6 +19,15 @@ export type SelectKeys = (keys: string[], cursor: string | null) => void;
 
 const TYPE_AHEAD_MS = 800;
 
+/**
+ * Where a move lands when nothing has the cursor yet: an arrow or page key goes to the first item
+ * (or the last, going back), as in Finder; Home and End (a step as long as the list) to that end.
+ */
+export function firstStep(delta: number, count: number): number {
+  const toEnd = Math.abs(delta) >= count;
+  return (delta > 0) !== toEnd ? 0 : count - 1;
+}
+
 /** A stand-in for a mouse event, for menus opened from the keyboard. */
 export function syntheticMouse(el: Element | null): React.MouseEvent {
   const { x, y } = menuPointFor(el);
@@ -122,7 +131,7 @@ export function useListNav({
   const step = (delta: number, shift: boolean) => {
     if (entries.length === 0) return;
     const cur = activeIndex;
-    const next = Math.max(0, Math.min(entries.length - 1, (cur < 0 ? (delta > 0 ? -1 : entries.length) : cur) + delta));
+    const next = cur < 0 ? firstStep(delta, entries.length) : Math.max(0, Math.min(entries.length - 1, cur + delta));
     if (activeKey === undefined) setOwn(entries[next].key);
     onMove(delta, shift);
   };

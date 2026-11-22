@@ -29,7 +29,7 @@ import { useItemDrag } from "./useItemDrag";
 import { applySettings, expiryLabel, loadSettings, saveSettings, type Favorite, type Settings } from "./settings";
 import { ConfirmDialog, ContextMenu, PromptDialog, Toasts, type MenuItem, type Toast } from "./components/Dialogs";
 import { useConflictPrompt } from "./components/ConflictDialog";
-import { focusList, type SelectKeys } from "./components/listNav";
+import { firstStep, focusList, type SelectKeys } from "./components/listNav";
 import { Icon } from "./Icons";
 import type { Entry, Profile } from "./types";
 import { sameLoc, useListing, type Loc } from "./desktop/useListing";
@@ -207,7 +207,14 @@ export default function App() {
   const conflicts = useConflictPrompt();
 
   const anchor = useRef<string | null>(null);
+  // the keyboard cursor: a ref for handlers, mirrored in state so the list highlights the same item
   const cursor = useRef<string | null>(null);
+  const [cursorKey, setCursorKey] = useState<string | null>(null);
+  const setCursor = useCallback((key: string | null, alsoAnchor = false) => {
+    cursor.current = key;
+    if (alsoAnchor) anchor.current = key;
+    setCursorKey(key);
+  }, []);
   /** a key to select once it shows up in the listing of that connection and bucket */
   const pendingSelect = useRef<{ profileId: string; bucket: string; key: string } | null>(null);
   const searchInput = useRef<HTMLInputElement>(null);
@@ -255,7 +262,7 @@ export default function App() {
       setQuery("");
       setQuick(null);
       setSelected(new Set());
-      anchor.current = cursor.current = null;
+      setCursor(null, true);
       pendingSelect.current = opts.selectKey ? { profileId: p.id, bucket: b, key: opts.selectKey } : null;
       LS.set("s3b.last", JSON.stringify(loc));
       if (opts.history !== false) hist.push(loc);
@@ -285,7 +292,7 @@ export default function App() {
     if (listing.objects.some((o) => o.key === ps.key) || listing.folders.includes(ps.key)) {
       pendingSelect.current = null;
       setSelected(new Set([ps.key]));
-      anchor.current = cursor.current = ps.key;
+      setCursor(ps.key, true);
     }
   }, [listing, fresh, here]);
 
@@ -539,30 +546,30 @@ export default function App() {
         setSelected(new Set([e.key]));
         anchor.current = e.key;
       }
-      cursor.current = e.key;
+      setCursor(e.key);
     },
-    [entries],
+    [entries, setCursor],
   );
 
   /** Rubber-band and type-to-select: the list hands over the whole new selection. */
   const selectKeys: SelectKeys = useCallback((keys, cur) => {
     if (staleRef.current) return;
     setSelected(new Set(keys));
-    anchor.current = cursor.current = cur;
-  }, []);
+    setCursor(cur, true);
+  }, [setCursor]);
 
   const selectOnly = (key: string) => {
     setSelected(new Set([key]));
-    anchor.current = cursor.current = key;
+    setCursor(key, true);
   };
 
   const moveSelection = useCallback(
     (delta: number, shift: boolean) => {
       if (entries.length === 0) return;
       const cur = cursor.current ? entries.findIndex((x) => x.key === cursor.current) : -1;
-      const next = Math.max(0, Math.min(entries.length - 1, (cur < 0 ? (delta > 0 ? -1 : entries.length) : cur) + delta));
+      const next = cur < 0 ? firstStep(delta, entries.length) : Math.max(0, Math.min(entries.length - 1, cur + delta));
       const key = entries[next].key;
-      cursor.current = key;
+      setCursor(key);
       if (shift && anchor.current) {
         const a = entries.findIndex((x) => x.key === anchor.current);
         const [lo, hi] = a < next ? [a, next] : [next, a];
@@ -572,7 +579,7 @@ export default function App() {
         setSelected(new Set([key]));
       }
     },
-    [entries],
+    [entries, setCursor],
   );
 
   // ------------------------------------------------------------ actions
@@ -790,7 +797,7 @@ export default function App() {
       items: tidyMenu([
         { type: "item", label: "New folder…", icon: "folder-plus", hint: "⇧⌘N", onClick: () => ops.askNewFolder() },
         { type: "item", label: "Upload files…", icon: "upload", hint: "⌘U", onClick: () => ops.pickAndUpload(false) },
-        { type: "item", label: "Upload folder…", icon: "folder", onClick: () => ops.pickAndUpload(true) },
+        { type: "item", label: "Upload folder…", icon: "folder", hint: "⇧⌘U", onClick: () => ops.pickAndUpload(true) },
         { type: "sep" },
         {
           type: "item",
@@ -824,7 +831,7 @@ export default function App() {
         : { type: "item", label: files.length > 1 ? `Open ${files.length} files` : "Open", icon: "reveal", hint: "⌘O", disabled: !files.length, onClick: () => openSelection(list) },
       one && e.kind === "file" && { type: "item", label: "Quick Look", icon: "eye", hint: "Space", onClick: () => setQuick(e.key) },
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => navigate(entryParent(e), e.key) },
-      { type: "item", label: "Download", icon: "download", onClick: () => ops.downloadEntries(list, relBase) },
+      { type: "item", label: "Download", icon: "download", hint: "⇧⌘D", onClick: () => ops.downloadEntries(list, relBase) },
       { type: "item", label: `Copy share link (${expiryLabel(settings.linkExpiry)})`, icon: "link", disabled: !(one && e.kind === "file"), onClick: () => copyLink(e, settings.linkExpiry) },
       { type: "item", label: "Copy S3 URI", icon: "copy", disabled: !one, onClick: () => copyText(`s3://${bucket}/${e.key}`, "S3 URI") },
       { type: "sep" },
@@ -1046,9 +1053,9 @@ export default function App() {
       if (!next) return;
       setQuick(next.key);
       setSelected(new Set([next.key]));
-      anchor.current = cursor.current = next.key;
+      setCursor(next.key, true);
     },
-    [entries, quick],
+    [entries, quick, setCursor],
   );
   const closeQuick = useCallback(() => setQuick(null), []);
   const openFromQuick = useCallback((e: Entry) => openEntry(e), [openEntry]);
@@ -1127,7 +1134,7 @@ export default function App() {
               y,
               items: [
                 { type: "item", label: "Files…", icon: "file", hint: "⌘U", onClick: () => ops.pickAndUpload(false) },
-                { type: "item", label: "Folder…", icon: "folder", onClick: () => ops.pickAndUpload(true) },
+                { type: "item", label: "Folder…", icon: "folder", hint: "⇧⌘U", onClick: () => ops.pickAndUpload(true) },
               ],
             })
           }
@@ -1281,6 +1288,7 @@ export default function App() {
                     folderSize={folderSizes.view}
                     onUpload={uploadFiles}
                     onNewFolder={newFolder}
+                    activeKey={cursorKey}
                     onSelectKeys={selectKeys}
                     onPress={onPress}
                     onOpen={openEntry}
@@ -1306,6 +1314,7 @@ export default function App() {
                     autoFocus
                     onUpload={uploadFiles}
                     onNewFolder={newFolder}
+                    activeKey={cursorKey}
                     onSelectKeys={selectKeys}
                     onSort={onSort}
                     onPress={onPress}
