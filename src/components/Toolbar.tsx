@@ -8,6 +8,8 @@ export const TILE_MAX = 320;
 
 export function Toolbar({
   bucket,
+  bucketLabel,
+  canShare = true,
   prefix,
   canUp,
   canBack,
@@ -48,8 +50,14 @@ export function Toolbar({
   onClearSearch,
   onTogglePreview,
   onClearSelection,
+  dual = false,
+  onToggleDual,
 }: {
   bucket: string | null;
+  /** what the root is called on screen (defaults to `bucket`) */
+  bucketLabel?: string | null;
+  /** the connection can make share links (false hides "Copy link") */
+  canShare?: boolean;
   prefix: string;
   canUp: boolean;
   canBack: boolean;
@@ -99,6 +107,10 @@ export function Toolbar({
   onClearSearch: () => void;
   onTogglePreview: () => void;
   onClearSelection: () => void;
+  /** two panes side by side are on screen */
+  dual?: boolean;
+  /** switches between one pane and two (the button shows only with this) */
+  onToggleDual?: () => void;
 }) {
   const parts = prefix.split("/").filter(Boolean);
   const hasSel = selectionCount > 0;
@@ -122,7 +134,7 @@ export function Toolbar({
           </button>
         </div>
         {bucket ? (
-          <Breadcrumbs bucket={bucket} parts={parts} onNavigate={onNavigate} />
+          <Breadcrumbs bucket={bucket} label={bucketLabel ?? bucket} parts={parts} onNavigate={onNavigate} />
         ) : (
           <nav className="crumbs" aria-label="Path" data-tauri-drag-region>
             <span className="crumb muted">No bucket selected</span>
@@ -137,7 +149,8 @@ export function Toolbar({
             disabled={disabled}
             onChange={(e) => onQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && query.trim()) onSearch(query.trim());
+              // Enter that confirms an input method's composition isn't a search
+              if (e.key === "Enter" && !e.nativeEvent.isComposing && query.trim()) onSearch(query.trim());
               if (e.key === "Escape") {
                 e.stopPropagation();
                 onClearSearch();
@@ -199,7 +212,7 @@ export function Toolbar({
                 <Icon name="download" />
                 <span>Download</span>
               </button>
-              {singleFileSelected && (
+              {singleFileSelected && canShare && (
                 <button className="tool" onClick={onCopyLink} title="Copy a share link">
                   <Icon name="link" />
                   <span>Copy link</span>
@@ -277,6 +290,17 @@ export function Toolbar({
         <button className={`icon-btn ${previewOpen ? "on" : ""}`} onClick={onTogglePreview} title="Toggle details panel (⌘I)" aria-label="Toggle details panel" aria-pressed={previewOpen}>
           <Icon name="panel" />
         </button>
+        {onToggleDual && (
+          <button
+            className={`icon-btn ${dual ? "on" : ""}`}
+            onClick={onToggleDual}
+            title={dual ? "Back to one pane (⌘\\)" : "Two panes side by side (⌘\\)"}
+            aria-label="Two panes"
+            aria-pressed={dual}
+          >
+            <Icon name="dual-pane" />
+          </button>
+        )}
       </div>
       {working && <div className="progress-line" />}
     </header>

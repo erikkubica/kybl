@@ -233,6 +233,8 @@ export type TransferPrefs = {
  * - `menu` (string): macOS menu bar / app menu item ids: "new-folder", "upload-files",
  *   "upload-folder", "download", "refresh", "go-up", "back", "forward", "go-to", "search",
  *   "select-all", "delete", "rename", "get-info", "settings", "new-connection".
+ *   Dual pane (frontend handles these; menu.rs can add a View item later): "toggle-dual" (⌘\),
+ *   "swap-panes" (⇧⌘S), "same-folder", "compare-folders", "pane-copy" (F5), "pane-move" (F6).
  * - `shared-files`: see `takeSharedFiles`.
  * - `open-transfers` (null): a transfer notification was tapped (phones).
  * - `app-resumed` (null): the app came back to the foreground (phones; desktop on window focus).

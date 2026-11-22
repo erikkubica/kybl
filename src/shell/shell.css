@@ -1,0 +1,154 @@
+/* Browser panes inside the shell: one pane fills the main area; two sit side by side (or stacked
+   in a narrow window) with a splitter between them. Uses the tokens from styles.css. */
+
+.browser-pane {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---------------------------------------------------------------- dual pane */
+.dual-wrap {
+  min-width: 0;
+}
+.dual {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+.dual.stacked {
+  flex-direction: column;
+}
+.dual > .browser-pane {
+  min-width: 0;
+  min-height: 0;
+}
+/* the active pane: an accent line along its top, and its selection in the accent colour */
+.browser-pane.is-active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--accent-solid);
+  z-index: 8;
+  pointer-events: none;
+}
+.browser-pane.is-inactive .chrome {
+  background: var(--panel);
+}
+.browser-pane.is-inactive .row.selected {
+  background: var(--pressed);
+}
+.browser-pane.is-inactive .card.selected .card-name {
+  background: var(--pressed);
+  color: var(--text);
+}
+/* the other pane as a drop target (items dragged from this one) */
+.browser-pane.drop-target::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--accent-solid);
+  background: var(--accent-soft);
+  pointer-events: none;
+  z-index: 9;
+}
+.dual-split {
+  position: relative;
+  z-index: 6;
+  flex: none;
+  width: 1px;
+  background: var(--border);
+  cursor: col-resize;
+  outline: none;
+}
+.dual-split::before {
+  content: "";
+  position: absolute;
+  inset: 0 -4px;
+}
+.dual.stacked .dual-split {
+  width: auto;
+  height: 1px;
+  cursor: row-resize;
+}
+.dual.stacked .dual-split::before {
+  inset: -4px 0;
+}
+.dual-split:hover,
+.dual-split:focus-visible {
+  background: var(--accent-solid);
+}
+body.resizing-row,
+body.resizing-row * {
+  cursor: row-resize !important;
+  user-select: none !important;
+}
+
+/* ---------------------------------------------------------------- compare folders */
+.compare-list {
+  margin: 0 0 10px;
+  padding-left: 18px;
+}
+.compare-list li {
+  margin: 2px 0;
+}
+.compare-list .dim {
+  color: var(--dim);
+}
+
+/* two toolbars share the width: the search field gives the path more room until it is used */
+@container (max-width: 620px) {
+  .search {
+    width: 150px;
+  }
+  .search:focus-within {
+    width: 210px;
+  }
+  .search kbd {
+    display: none;
+  }
+}
+/* a narrow pane: tool labels go, so the view and pane switches stay in reach */
+@container (max-width: 700px) {
+  .actionbar .tb-group .tool span,
+  .sel-actions .tool span {
+    display: none;
+  }
+  .actionbar .tb-group .tool,
+  .sel-actions .tool {
+    padding: 0 6px;
+  }
+  .actionbar .tile-slider,
+  .actionbar [aria-label="Compact layout"] {
+    display: none;
+  }
+}
+
+/* This Mac in the sidebar: a plain badge instead of a provider monogram */
+.pbadge.local {
+  --pc: var(--dim);
+}
+
+/* the details pane of a connection without share links or S3 properties (This Mac): stopgap
+   until PreviewPane reads the capabilities itself */
+.preview-caps {
+  display: contents;
+}
+.preview-caps[data-no-share] .section:has(> .share-row),
+.preview-caps[data-no-props] .props-edit {
+  display: none;
+}
+
+/* the sentence of a pane that couldn't list (like .empty p, as a div for its folded details) */
+.error-state .error-msg {
+  margin: 0 0 10px;
+  max-width: 420px;
+  line-height: 1.45;
+}

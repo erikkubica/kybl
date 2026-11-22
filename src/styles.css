@@ -66,7 +66,7 @@
   --pressed: rgba(255, 255, 255, 0.1);
   --text: #ececf1;
   --dim: #a0a3ae;
-  --faint: #6d707b;
+  --faint: #868a94; /* 4.5:1 on bg, panel and raised */
   --accent: #7aa2ff;
   --accent-solid: #3a70f2;
   --accent-solid-hover: #4a7ef6;

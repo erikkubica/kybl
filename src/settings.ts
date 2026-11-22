@@ -50,6 +50,12 @@ export type Settings = {
   tileSize: number;
   /** phones: ask for Face ID / fingerprint when Kybl opens or comes back after a minute away */
   appLock: boolean;
+  /** desktop: one browser pane, or two side by side (dual pane, like a commander) */
+  layout: "single" | "dual";
+  /** dual pane: opening a subfolder (or going up) in one pane does the same in the other when it can */
+  syncBrowsing: boolean;
+  /** files and folders whose name starts with "." show in panes of this computer's disk */
+  showHiddenFiles: boolean;
 };
 
 export type Favorite = { profileId: string; bucket: string; prefix: string; name: string };
@@ -75,6 +81,9 @@ export const DEFAULTS: Settings = {
   sort: { by: "name", desc: false },
   tileSize: 160,
   appLock: false,
+  layout: "single",
+  syncBrowsing: false,
+  showHiddenFiles: false,
 };
 
 export const ACCENTS: { id: Exclude<Accent, "scheme">; label: string; color: string }[] = [

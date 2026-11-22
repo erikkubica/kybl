@@ -299,6 +299,15 @@ export function FileTable({
 
   const press = (e: Entry, ev: React.MouseEvent) => {
     nav.notePress(e);
+    // like Finder: a press beside the name of an unselected row starts a rubber band (released in
+    // place it just selects the row); on the name or icon, or on a selected row, it drags
+    const t = ev.target as HTMLElement;
+    const plain = ev.button === 0 && !ev.shiftKey && !ev.metaKey && !ev.ctrlKey && !ev.altKey;
+    if (plain && onSelectKeys && !selected.has(e.key) && !t.closest(".name-text, .file-icon, svg, button, a")) {
+      nav.setKbd(false);
+      marquee.begin(ev, () => onSelectKeys([e.key], e.key));
+      return;
+    }
     onPress(e, ev);
   };
 

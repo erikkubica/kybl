@@ -93,11 +93,12 @@ function ConflictDialog({ ask }: { ask: Ask }) {
           <button className="btn" onClick={() => pick("skip")}>
             Skip
           </button>
-          <button className="btn" onClick={() => pick("keep")}>
-            Keep both
-          </button>
-          <button className="btn btn-primary" autoFocus onClick={() => pick("replace")}>
+          {/* Return keeps both: the choice that never loses anything */}
+          <button className="btn btn-danger-ghost" onClick={() => pick("replace")}>
             {folder ? "Merge" : "Replace"}
+          </button>
+          <button className="btn btn-primary" autoFocus data-autofocus onClick={() => pick("keep")}>
+            Keep both
           </button>
         </div>
       </div>

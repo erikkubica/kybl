@@ -24,7 +24,8 @@ function restoreFocus(prev: Element | null, fallback = true) {
     prev instanceof HTMLElement && prev.isConnected && prev !== document.body
       ? prev
       : fallback
-        ? document.querySelector<HTMLElement>("[data-list-focus]")
+        ? // with two browser panes, the active one's list
+          (document.querySelector<HTMLElement>("[data-active-pane] [data-list-focus]") ?? document.querySelector<HTMLElement>("[data-list-focus]"))
         : null;
   target?.focus({ preventScroll: true });
 }
@@ -55,15 +56,19 @@ export function Modal({
   const box = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  // what had focus before: read while rendering, before a child's autoFocus moves it
+  const [prev] = useState(() => document.activeElement);
 
   useEffect(() => {
     const id = Symbol(title);
     modalStack.push(id);
-    const prev = document.activeElement;
     const el = box.current;
-    // First focus: whatever the content focused itself (autoFocus), else the first field, else
-    // the main button, else the dialog itself so screen readers start at its title.
-    if (el && !el.contains(document.activeElement)) {
+    // First focus: whatever the content focused itself (autoFocus), else the button it marks as
+    // the default (data-autofocus), else the first field, else the main button, else the dialog
+    // itself so screen readers start at its title.
+    const preferred = el?.querySelector<HTMLElement>("[data-autofocus]:not(:disabled)");
+    if (el && preferred && !el.contains(document.activeElement)) preferred.focus({ preventScroll: true });
+    else if (el && !el.contains(document.activeElement)) {
       const field = coarse() ? null : el.querySelector<HTMLElement>('input:not(:disabled):not([type="hidden"]):not([type="checkbox"]), select:not(:disabled), textarea:not(:disabled)');
       const primary = el.querySelector<HTMLElement>(".btn-primary:not(:disabled), .btn-danger:not(:disabled)");
       (field && visible(field) ? field : primary && !coarse() ? primary : el).focus({ preventScroll: true });
@@ -169,12 +174,13 @@ export function ConfirmDialog({
     >
       <div className="modal-body">{message}</div>
       <div className="modal-foot">
-        <button className="btn" onClick={onClose}>
+        {/* a destructive confirm starts on Cancel, so Return twice never deletes or overwrites */}
+        <button className="btn" onClick={onClose} autoFocus={!!danger} data-autofocus={danger ? "" : undefined}>
           Cancel
         </button>
         <button
           className={`btn ${danger ? "btn-danger" : "btn-primary"}`}
-          autoFocus
+          autoFocus={!danger}
           onClick={() => {
             onConfirm();
             onClose();

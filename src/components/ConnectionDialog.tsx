@@ -433,11 +433,12 @@ export function ConnectionDialog({
             {initial &&
               (confirmDelete ? (
                 <>
-                  <button type="button" className="btn btn-danger" onClick={remove} disabled={busy !== null} autoFocus>
+                  <button type="button" className="btn btn-danger" onClick={remove} disabled={busy !== null}>
                     {busy === "delete" && <span className="spinner" />}
                     {busy === "delete" ? "Deleting…" : "Delete connection"}
                   </button>
-                  <button type="button" className="btn btn-ghost" onClick={() => setConfirmDelete(false)} disabled={busy === "delete"}>
+                  {/* focus starts on Keep, so a second Return doesn't delete the connection */}
+                  <button type="button" className="btn btn-ghost" onClick={() => setConfirmDelete(false)} disabled={busy === "delete"} autoFocus>
                     Keep
                   </button>
                 </>

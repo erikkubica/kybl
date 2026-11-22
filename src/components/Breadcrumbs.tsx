@@ -15,8 +15,11 @@ export function Breadcrumbs({
   parts,
   onNavigate,
   compact = false,
+  label = bucket,
 }: {
   bucket: string;
+  /** what the root is called on screen, when that isn't its id (this computer's folders) */
+  label?: string;
   parts: string[];
   onNavigate: (prefix: string) => void;
   /** narrow bars (phones): inside a folder the bucket shows as its icon only */
@@ -42,7 +45,7 @@ export function Breadcrumbs({
   useLayoutEffect(() => {
     const el = ruler.current;
     if (el) setWidths([...el.children].map((c) => c.getBoundingClientRect().width));
-  }, [bucket, path, iconOnly]);
+  }, [label, path, iconOnly]);
 
   const n = parts.length;
   let fold = 0; // how many leading folders hide behind "…"
@@ -61,7 +64,7 @@ export function Breadcrumbs({
         <span className="crumb-wrap">
           <span className="crumb current">
             <Icon name="bucket" size={15} />
-            {!iconOnly && <span className="crumb-label">{bucket}</span>}
+            {!iconOnly && <span className="crumb-label">{label}</span>}
           </span>
         </span>
         <span className="crumb-wrap">
@@ -79,9 +82,9 @@ export function Breadcrumbs({
       </div>
 
       <span className={`crumb-wrap crumb-root ${iconOnly ? "icon-only" : ""}`}>
-        <button className={`crumb ${n === 0 ? "current" : ""}`} data-drop="" title={bucket} aria-label={bucket} onClick={() => onNavigate("")}>
+        <button className={`crumb ${n === 0 ? "current" : ""}`} data-drop="" title={label} aria-label={label} onClick={() => onNavigate("")}>
           <Icon name="bucket" size={15} />
-          {!iconOnly && <span className="crumb-label">{bucket}</span>}
+          {!iconOnly && <span className="crumb-label">{label}</span>}
         </button>
       </span>
       {fold > 0 && (
