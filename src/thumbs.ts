@@ -1,24 +1,45 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { extOf } from "./format";
+import { api } from "./api";
+import { HEIC_IN_WEBVIEW, extOf, isHeic } from "./format";
 import type { Entry } from "./types";
 
 /** Formats the thumbnail engine can decode (EXIF thumbnails for jpg/tif, full decode for the rest). */
 const THUMB_EXT = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff"];
 /** Must match `MAX_FULL_DOWNLOAD` in thumbs.rs: bigger files are refused there anyway. */
 const MAX_BYTES = 40 * 1000 * 1000;
+/**
+ * HEIC/HEIF: the thumbnail engine can't decode it, but Apple's WebKit can (see HEIC_IN_WEBVIEW).
+ * Those photos are fetched whole, drawn small on a canvas and kept as a small JPEG, so a grid of
+ * iPhone photos doesn't keep dozens of 12-megapixel images decoded in memory. Elsewhere HEIC
+ * keeps its file icon, as before.
+ */
+const MAX_HEIC_BYTES = 25 * 1000 * 1000;
+const THUMB_PX = 360;
 
 /** Off by default: lists show file-type icons and download nothing until this is turned on. */
 let listThumbs = false;
 export function setListThumbs(on: boolean) {
   listThumbs = on;
 }
+/**
+ * Phones on mobile data with "Wi-Fi only" on: lists don't fetch new thumbnails (ones already
+ * loaded still show). A single opened photo still gets one.
+ */
+let paused = false;
+export function setThumbsPaused(on: boolean) {
+  paused = on;
+}
+export function thumbsPaused(): boolean {
+  return paused;
+}
 /** Thumbnails in folder lists and grids. A single opened image still uses its thumbnail. */
 export function canListThumb(e: Entry): boolean {
-  return listThumbs && canThumb(e);
+  return listThumbs && !paused && canThumb(e);
 }
 
 export function canThumb(e: Entry): boolean {
   if (e.kind !== "file") return false;
+  if (isHeic(e.name)) return HEIC_IN_WEBVIEW && e.size <= MAX_HEIC_BYTES;
   const ext = extOf(e.name);
   if (!THUMB_EXT.includes(ext)) return false;
   // jpg/tif can use the tiny embedded thumbnail regardless of size; other types are fully downloaded
@@ -32,10 +53,13 @@ export function canThumb(e: Entry): boolean {
  * its own memory. A failure is remembered for a while so it is not retried on every scroll.
  */
 const MAX_CACHE = 5000;
+/** HEIC thumbnails are blob URLs holding real bytes (~30 KB each), so fewer of them are kept. */
+const MAX_BLOBS = 400;
 const MAX_ACTIVE = 6;
 const RETRY_AFTER_MS = 60_000;
 // string = loaded URL, number = time it failed
 const cache = new Map<string, string | number>();
+const blobs: { k: string; url: string }[] = [];
 const inflight = new Map<string, Promise<string | null>>();
 const waiting: Array<() => void> = [];
 let active = 0;
@@ -78,13 +102,47 @@ function release() {
 }
 
 /** Resolves once the image has loaded (and so sits in the web view's cache), or rejects. */
-function preload(url: string): Promise<void> {
+function preload(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.onload = () => resolve();
+    img.onload = () => resolve(img);
     img.onerror = () => reject(new Error("no thumbnail"));
     img.src = url;
   });
+}
+
+/** One HEIC at a time: each is decoded at full size for a moment. */
+let heicChain: Promise<unknown> = Promise.resolve();
+
+function heicThumb(profileId: string, bucket: string, e: Entry, k: string): Promise<string> {
+  const run = async () => {
+    // through the backend, not a share link: a canvas can only export same-origin pixels
+    const bytes = await api.objectBytes(profileId, bucket, e.key, MAX_HEIC_BYTES);
+    const full = URL.createObjectURL(new Blob([bytes], { type: "image/heic" }));
+    try {
+      const img = await preload(full);
+      const s = Math.min(1, THUMB_PX / Math.max(img.naturalWidth, img.naturalHeight, 1));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.naturalWidth * s));
+      canvas.height = Math.max(1, Math.round(img.naturalHeight * s));
+      canvas.getContext("2d")?.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const small = await new Promise<Blob | null>((ok) => canvas.toBlob(ok, "image/jpeg", 0.8));
+      if (!small) throw new Error("no thumbnail");
+      const url = URL.createObjectURL(small);
+      blobs.push({ k, url });
+      if (blobs.length > MAX_BLOBS) {
+        const old = blobs.shift()!;
+        cache.delete(old.k);
+        URL.revokeObjectURL(old.url);
+      }
+      return url;
+    } finally {
+      URL.revokeObjectURL(full);
+    }
+  };
+  const p = heicChain.then(run, run);
+  heicChain = p.catch(() => {});
+  return p;
 }
 
 /**
@@ -107,8 +165,12 @@ export function loadThumb(
     await slot();
     try {
       if (!stillWanted()) return undefined;
-      const url = urlOf(profileId, bucket, e);
-      await preload(url);
+      let url: string;
+      if (isHeic(e.name)) url = await heicThumb(profileId, bucket, e, k);
+      else {
+        url = urlOf(profileId, bucket, e);
+        await preload(url);
+      }
       remember(k, url);
       return url;
     } catch {

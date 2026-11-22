@@ -20,9 +20,13 @@ export function Presence({ show, children, ms = 220 }: { show: boolean; children
   return <div className={`m-presence ${show ? "" : "m-leaving"}`}>{show ? children : last.current}</div>;
 }
 
-/** Tablets and landscape phones wide enough for a sidebar next to the files. */
-export function useWide(min = 900) {
-  const q = `(min-width: ${min}px)`;
+/**
+ * Tablets: wide enough for a sidebar next to the files, and tall enough for it to be useful. The
+ * height keeps big phones on the phone layout when turned sideways (a Pro Max is ~930 pt wide
+ * but only ~430 pt tall in landscape).
+ */
+export function useWide(minWidth = 900, minHeight = 600) {
+  const q = `(min-width: ${minWidth}px) and (min-height: ${minHeight}px)`;
   const [wide, setWide] = useState(() => matchMedia(q).matches);
   useEffect(() => {
     const m = matchMedia(q);

@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { api, errMessage } from "../api";
+import { api, errMessage, type TransferPrefs } from "../api";
 import { Icon } from "../Icons";
 import { ProviderBadge } from "../components/Sidebar";
-import { EXPIRIES, type Settings, type Theme } from "../settings";
+import { EXPIRIES, SCALES, type Settings, type Theme } from "../settings";
 import type { Toast } from "../components/Dialogs";
 import type { Profile } from "../types";
 import { useEffect } from "react";
@@ -20,6 +20,8 @@ export function SettingsScreen({
   savedWhere,
   toast,
   updates,
+  prefs,
+  onPrefs,
 }: {
   onBack: () => void;
   settings: Settings;
@@ -30,6 +32,9 @@ export function SettingsScreen({
   savedWhere: string;
   toast: (kind: Toast["kind"], text: string) => void;
   updates: UpdateStatus | null;
+  /** transfer settings from the backend; null while loading (or where it has none) */
+  prefs: TransferPrefs | null;
+  onPrefs: (p: Partial<TransferPrefs>) => Promise<void>;
 }) {
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => onChange({ ...settings, [k]: v });
   const [version, setVersion] = useState("");
@@ -59,14 +64,51 @@ export function SettingsScreen({
           </div>
         </div>
 
+        <h2 className="m-section">Text size</h2>
+        <div className="m-group m-pad">
+          <div className="m-seg" role="group" aria-label="Text size">
+            {SCALES.map((x) => (
+              <button
+                key={x.value}
+                className={settings.scale === x.value ? "on" : ""}
+                aria-pressed={settings.scale === x.value}
+                onClick={() => set("scale", x.value)}
+                style={{ fontSize: `${Math.round(14 * x.value)}px` }}
+              >
+                {x.label}
+              </button>
+            ))}
+          </div>
+          <p className="m-hint">Your phone's own text size setting is followed too.</p>
+        </div>
+
         <h2 className="m-section">Browsing</h2>
         <ul className="m-group">
-          <Toggle label="Photo thumbnails" on={settings.listThumbs} set={(v) => set("listThumbs", v)} />
+          <Toggle
+            label="Photo previews"
+            sub="Small pictures instead of icons in lists and grids"
+            on={settings.listThumbs}
+            set={(v) => set("listThumbs", v)}
+          />
           <Toggle label="Reopen the last folder" on={settings.restoreLast} set={(v) => set("restoreLast", v)} />
           <Toggle label="Ask before deleting" on={settings.confirmDelete} set={(v) => set("confirmDelete", v)} />
           <Toggle label="Binary sizes (1 KiB = 1024 B)" on={settings.binaryUnits} set={(v) => set("binaryUnits", v)} />
           <Toggle label="Full dates" on={settings.absoluteDates} set={(v) => set("absoluteDates", v)} />
         </ul>
+
+        {prefs && (
+          <>
+            <h2 className="m-section">Transfers</h2>
+            <ul className="m-group">
+              <Toggle
+                label="Wi-Fi only"
+                sub="Uploads, downloads and photo previews wait for Wi-Fi instead of using mobile data"
+                on={prefs.wifiOnly}
+                set={(v) => onPrefs({ wifiOnly: v }).catch((e) => toast("error", errMessage(e)))}
+              />
+            </ul>
+          </>
+        )}
 
         <h2 className="m-section">Share links expire after</h2>
         <div className="m-group m-pad">
@@ -164,11 +206,14 @@ export function SettingsScreen({
   );
 }
 
-function Toggle({ label, on, set }: { label: string; on: boolean; set: (v: boolean) => void }) {
+function Toggle({ label, sub, on, set }: { label: string; sub?: string; on: boolean; set: (v: boolean) => void }) {
   return (
     <li>
       <label className="m-setting-row">
-        <span className="m-grow">{label}</span>
+        <span className="m-grow">
+          {label}
+          {sub && <small className="m-sub">{sub}</small>}
+        </span>
         <input type="checkbox" className="m-switch" checked={on} onChange={(e) => set(e.target.checked)} />
       </label>
     </li>

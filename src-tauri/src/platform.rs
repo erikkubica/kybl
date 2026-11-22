@@ -265,6 +265,53 @@ pub async fn open_local(app: AppHandle, path: String) -> Result<(), String> {
 
 /// Shows the file in Finder / Explorer / the file manager. Phones have no such place to show:
 /// nothing happens.
+/// Saves bytes the web view holds (a photo or video just taken with the camera picker) as a new
+/// file in the temporary folder, for an upload. Raw body; name in the `x-file-name` header.
+#[tauri::command]
+pub async fn write_temp_file(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Expected the file's bytes".into());
+    };
+    let raw = request
+        .headers()
+        .get("x-file-name")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("photo.jpg");
+    let decoded = percent_decode(raw);
+    // only the last path part, never "..": the name comes from the page
+    let name = decoded
+        .rsplit(['/', '\\'])
+        .find(|n| !n.is_empty() && *n != "." && *n != "..")
+        .unwrap_or("photo.jpg")
+        .to_string();
+    let dir = std::path::PathBuf::from(temp_folder(app).await?).join(format!(
+        "{:x}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+    ));
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| format!("Couldn't save the file: {e}"))?;
+    let path = dir.join(name);
+    tokio::fs::write(&path, bytes).await.map_err(|e| format!("Couldn't save the file: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// A per-app scratch folder for files opened in another app ("Open" on desktop, "Open in…" on
 /// phones). Emptied at startup, so it never grows without bound.
 #[tauri::command]

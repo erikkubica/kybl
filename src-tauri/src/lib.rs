@@ -145,6 +145,7 @@ pub fn run() {
             platform::open_local,
             platform::reveal_local,
             platform::temp_folder,
+            platform::write_temp_file,
             platform::share_files,
             platform::share_text,
             platform::save_to_photos,

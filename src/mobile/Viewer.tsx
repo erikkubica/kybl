@@ -1,32 +1,51 @@
 /**
  * Full-screen photo and video viewer: swipe between the folder's media, pinch or double-tap to
  * zoom, drag down to close, tap to hide the controls.
+ *
+ * A photo shows its small thumbnail at once and the original when it arrives. Neighbours are
+ * preloaded so swiping is instant, but on mobile data only their thumbnails are (originals can
+ * be 10-25 MB each). Only the photo or video on screen has a player: a video swiped away stops
+ * and lets go of its stream.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, errMessage } from "../api";
-import { Icon, type IconName } from "../Icons";
-import { classify, formatBytes } from "../format";
-import { cachedThumb } from "../thumbs";
+import { api, errMessage, errSummary } from "../api";
+import { Icon } from "../Icons";
+import { classify, formatBytes, isPlayableVideo } from "../format";
+import { canThumb, cachedThumb, loadThumb } from "../thumbs";
 import type { Entry } from "../types";
+import { MIcon, type MIconName } from "./icons";
 
 type Props = {
   items: Entry[];
   index: number;
   profileId: string;
   bucket: string;
+  /** mobile data: don't preload the neighbours' originals */
+  lowData: boolean;
+  /** Save to Photos is offered (phones) */
+  photos: boolean;
   onIndex: (i: number) => void;
   onClose: () => void;
   onInfo: (e: Entry) => void;
   onShare: (e: Entry) => void;
   onDownload: (e: Entry) => void;
+  onSaveToPhotos: (e: Entry) => void;
+  onOpenIn: (e: Entry) => void;
   onDelete: (e: Entry) => void;
 };
 
 const isVideo = (e: Entry) => classify(e.name) === "video";
+/** the strip along the bottom of a video where its own controls sit */
+const VIDEO_CONTROLS_PX = 76;
 
-export function Viewer({ items, index, profileId, bucket, onIndex, onClose, onInfo, onShare, onDownload, onDelete }: Props) {
+export function Viewer({ items, index, profileId, bucket, lowData, photos, onIndex, onClose, onInfo, onShare, onDownload, onSaveToPhotos, onOpenIn, onDelete }: Props) {
   const [urls, setUrls] = useState<Record<string, string>>({});
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [failed, setFailed] = useState<Record<string, string>>({});
+  /** videos the web view couldn't play */
+  const [unplayable, setUnplayable] = useState<Record<string, boolean>>({});
+  /** originals that finished loading (their thumbnail can go) */
+  const [ready, setReady] = useState<Record<string, boolean>>({});
   const [chrome, setChrome] = useState(true);
   // gesture state: horizontal paging offset, vertical dismiss offset, zoom
   const [dx, setDx] = useState(0);
@@ -36,22 +55,44 @@ export function Viewer({ items, index, profileId, bucket, onIndex, onClose, onIn
   const stage = useRef<HTMLDivElement>(null);
   const cur = items[index];
 
-  // presign the current item and its neighbours
+  // thumbnails first (small and often cached), for the current item and both neighbours
   useEffect(() => {
     let live = true;
     for (const i of [index, index + 1, index - 1]) {
       const e = items[i];
-      if (!e || urls[e.key] || failed[e.key]) continue;
-      api
-        .presign(profileId, bucket, e.key, 3600)
-        .then((u) => live && setUrls((m) => ({ ...m, [e.key]: u })))
-        .catch((err) => live && setFailed((m) => ({ ...m, [e.key]: errMessage(err) })));
+      if (!e || isVideo(e) || thumbs[e.key] || !canThumb(e)) continue;
+      const known = cachedThumb(profileId, bucket, e);
+      if (known) {
+        setThumbs((m) => ({ ...m, [e.key]: known }));
+        continue;
+      }
+      if (known === null) continue;
+      loadThumb(profileId, bucket, e, () => live).then((u) => live && u && setThumbs((m) => ({ ...m, [e.key]: u })));
     }
     return () => {
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, items, profileId, bucket]);
+
+  // originals: the current item always, neighbours too unless on mobile data
+  useEffect(() => {
+    let live = true;
+    const want = lowData ? [index] : [index, index + 1, index - 1];
+    for (const i of want) {
+      const e = items[i];
+      if (!e || urls[e.key] || failed[e.key]) continue;
+      if (isVideo(e) && !isPlayableVideo(e.name)) continue;
+      api
+        .presign(profileId, bucket, e.key, 3600)
+        .then((u) => live && setUrls((m) => ({ ...m, [e.key]: u })))
+        .catch((err) => live && setFailed((m) => ({ ...m, [e.key]: errSummary(errMessage(err)) })));
+    }
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, items, profileId, bucket, lowData]);
 
   const resetZoom = () => setZoom({ s: 1, x: 0, y: 0 });
 
@@ -84,10 +125,12 @@ export function Viewer({ items, index, profileId, bucket, onIndex, onClose, onIn
     sy: number;
     t: number;
     moved: boolean;
+    /** started on a video: a tap belongs to the video's own controls */
+    onVideo: boolean;
     zoom0: { s: number; x: number; y: number };
     dist0: number;
     mid0: { x: number; y: number };
-  }>({ mode: "none", sx: 0, sy: 0, t: 0, moved: false, zoom0: { s: 1, x: 0, y: 0 }, dist0: 1, mid0: { x: 0, y: 0 } });
+  }>({ mode: "none", sx: 0, sy: 0, t: 0, moved: false, onVideo: false, zoom0: { s: 1, x: 0, y: 0 }, dist0: 1, mid0: { x: 0, y: 0 } });
   const lastTap = useRef(0);
   const tapTimer = useRef<number | undefined>(undefined);
 
@@ -97,6 +140,15 @@ export function Viewer({ items, index, profileId, bucket, onIndex, onClose, onIn
   };
 
   const onDown = (e: React.PointerEvent) => {
+    const target = e.target as HTMLElement;
+    // buttons inside a slide (the "Open in…" fallback) work as buttons
+    if (target.closest("button")) return;
+    const video = target.closest("video");
+    if (video) {
+      // the scrub bar and play button live along the bottom: leave those touches to the video
+      const r = video.getBoundingClientRect();
+      if (e.clientY > r.bottom - VIDEO_CONTROLS_PX) return;
+    }
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     setAnim(false);
@@ -117,6 +169,7 @@ export function Viewer({ items, index, profileId, bucket, onIndex, onClose, onIn
     s.sy = e.clientY;
     s.t = performance.now();
     s.moved = false;
+    s.onVideo = !!video;
     s.zoom0 = zoom;
   };
 
@@ -125,6 +178,7 @@ export function Viewer({ items, index, profileId, bucket, onIndex, onClose, onIn
     pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const s = g.current;
     if (s.mode === "pinch" && pts.current.size >= 2) {
+      if (s.onVideo) return;
       const [a, b] = [...pts.current.values()];
       const dist = Math.hypot(a.x - b.x, a.y - b.y);
       const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
@@ -174,6 +228,11 @@ export function Viewer({ items, index, profileId, bucket, onIndex, onClose, onIn
     const mx = e.clientX - s.sx;
     const my = e.clientY - s.sy;
     if (!s.moved) {
+      // a tap on a video shows its own controls; the viewer's bars follow along
+      if (s.onVideo) {
+        setChrome(true);
+        return;
+      }
       // tap: double tap zooms, a single tap shows / hides the controls
       const now = performance.now();
       if (now - lastTap.current < 280) {
@@ -219,11 +278,12 @@ export function Viewer({ items, index, profileId, bucket, onIndex, onClose, onIn
   const slide = (e: Entry | undefined, offset: number) => {
     if (!e) return null;
     const url = urls[e.key];
-    const thumb = cachedThumb(profileId, bucket, e);
+    const thumb = thumbs[e.key];
     const here = offset === 0;
     const t = here
       ? `translate3d(${dx + zoom.x}px, ${dy + zoom.y}px, 0) scale(${zoom.s * (1 - Math.min(dy, 400) / 1600)})`
       : `translate3d(calc(${offset * 100}% + ${offset * 16}px + ${dx}px), 0, 0)`;
+    const cantPlay = isVideo(e) && (!isPlayableVideo(e.name) || unplayable[e.key]);
     return (
       <div key={e.key} className={`m-vslide ${anim ? "anim" : ""}`} style={{ transform: t }}>
         {failed[e.key] ? (
@@ -231,13 +291,36 @@ export function Viewer({ items, index, profileId, bucket, onIndex, onClose, onIn
             <Icon name="alert" size={26} />
             <span>{failed[e.key]}</span>
           </div>
+        ) : cantPlay ? (
+          <div className="m-verror m-vfallback">
+            <Icon name="video" size={30} />
+            <strong>Can't play this video here</strong>
+            <span>Open it in another app on your phone.</span>
+            <button className="btn btn-primary" onClick={() => onOpenIn(e)}>
+              <MIcon name="open" size={15} /> Open in…
+            </button>
+          </div>
         ) : isVideo(e) ? (
-          url ? <video src={url} controls playsInline preload="metadata" /> : <span className="spinner" />
+          here && url ? (
+            <video
+              src={url}
+              controls
+              playsInline
+              preload="metadata"
+              onError={() => setUnplayable((m) => ({ ...m, [e.key]: true }))}
+            />
+          ) : here ? (
+            <span className="spinner" />
+          ) : (
+            <span className="m-vplay" aria-hidden="true">
+              <Icon name="play" size={30} />
+            </span>
+          )
         ) : (
           <>
-            {thumb && !url && <img className="m-vthumb" src={thumb} alt="" draggable={false} />}
-            {url && <img src={url} alt={e.name} draggable={false} />}
-            {!url && <span className="spinner m-vspin" />}
+            {thumb && !ready[e.key] && <img className="m-vthumb" src={thumb} alt="" draggable={false} />}
+            {url && <img className="m-vfull" src={url} alt={e.name} draggable={false} onLoad={() => setReady((m) => ({ ...m, [e.key]: true }))} />}
+            {!url && !thumb && <span className="spinner m-vspin" />}
           </>
         )}
       </div>
@@ -246,14 +329,7 @@ export function Viewer({ items, index, profileId, bucket, onIndex, onClose, onIn
 
   return (
     <div className={`m-viewer ${chrome ? "" : "bare"}`} style={{ background: `rgba(0,0,0,${fade})` }}>
-      <div
-        ref={stage}
-        className="m-vstage"
-        onPointerDown={onDown}
-        onPointerMove={onMove}
-        onPointerUp={onUp}
-        onPointerCancel={onUp}
-      >
+      <div ref={stage} className="m-vstage" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
         {slide(items[index - 1], -1)}
         {slide(cur, 0)}
         {slide(items[index + 1], 1)}
@@ -272,8 +348,9 @@ export function Viewer({ items, index, profileId, bucket, onIndex, onClose, onIn
       </header>
 
       <nav className="m-vtools" style={{ opacity: chrome ? fade : 0 }}>
-        <Tool icon="link" label="Share" onClick={() => onShare(cur)} />
-        <Tool icon="download" label="Save" onClick={() => onDownload(cur)} />
+        <Tool icon="share" label="Share" onClick={() => onShare(cur)} />
+        {photos && <Tool icon="photos" label="Save" aria="Save to Photos" onClick={() => onSaveToPhotos(cur)} />}
+        <Tool icon="download" label="Download" onClick={() => onDownload(cur)} />
         <Tool icon="info" label="Info" onClick={() => onInfo(cur)} />
         <Tool icon="trash" label="Delete" onClick={() => onDelete(cur)} />
       </nav>
@@ -281,10 +358,10 @@ export function Viewer({ items, index, profileId, bucket, onIndex, onClose, onIn
   );
 }
 
-function Tool({ icon, label, onClick }: { icon: IconName; label: string; onClick: () => void }) {
+function Tool({ icon, label, aria, onClick }: { icon: MIconName; label: string; aria?: string; onClick: () => void }) {
   return (
-    <button className="m-vtool" onClick={onClick}>
-      <Icon name={icon} size={22} />
+    <button className="m-vtool" onClick={onClick} aria-label={aria}>
+      <MIcon name={icon} size={22} />
       <span>{label}</span>
     </button>
   );
