@@ -2,6 +2,7 @@ import type { RefObject } from "react";
 import { Icon, type IconName } from "../Icons";
 import { Breadcrumbs } from "./Breadcrumbs";
 import type { Sort, SortKey } from "./FileTable";
+import { useDialogs } from "../shell/useDialogs";
 
 export const TILE_MIN = 96;
 export const TILE_MAX = 320;
@@ -115,6 +116,24 @@ export function Toolbar({
 }) {
   const parts = prefix.split("/").filter(Boolean);
   const hasSel = selectionCount > 0;
+  const dialogs = useDialogs();
+  /** grid view: one icon for the sort, its choices in a menu (as Finder's Sort By) */
+  const sortMenu = (e: React.MouseEvent) => {
+    const [x, y] = anchorOf(e);
+    const keys: [SortKey, string][] = [
+      ["name", "Name"],
+      ["modified", "Date modified"],
+      ["size", "Size"],
+      ["kind", "Kind"],
+    ];
+    dialogs.menu(x, y, [
+      { type: "label", label: "Sort by" },
+      ...keys.map(([key, label]) => ({ type: "item" as const, label, checked: sort.key === key, onClick: () => onSortChange({ ...sort, key }) })),
+      { type: "sep" },
+      { type: "item", label: "Ascending", checked: sort.dir === "asc", onClick: () => onSortChange({ ...sort, dir: "asc" }) },
+      { type: "item", label: "Descending", checked: sort.dir === "desc", onClick: () => onSortChange({ ...sort, dir: "desc" }) },
+    ]);
+  };
   const anchorOf = (e: React.MouseEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     return [r.left, r.bottom + 4] as const;
@@ -262,22 +281,15 @@ export function Toolbar({
               />
               <Icon name="image" size={16} />
             </label>
-            <div className="tb-group">
-              <select className="sort-select" value={sort.key} onChange={(e) => onSortChange({ ...sort, key: e.target.value as SortKey })} aria-label="Sort by">
-                <option value="name">Name</option>
-                <option value="modified">Date</option>
-                <option value="size">Size</option>
-                <option value="kind">Kind</option>
-              </select>
-              <button
-                className="icon-btn"
-                onClick={() => onSortChange({ ...sort, dir: sort.dir === "asc" ? "desc" : "asc" })}
-                title={sort.dir === "asc" ? "Ascending" : "Descending"}
-                aria-label="Toggle sort direction"
-              >
-                <Icon name="sort" size={15} />
-              </button>
-            </div>
+            <button
+              className="icon-btn"
+              onClick={sortMenu}
+              title={`Sort by ${{ name: "name", modified: "date modified", size: "size", kind: "kind" }[sort.key]}, ${sort.dir === "asc" ? "ascending" : "descending"}`}
+              aria-label="Sort"
+              aria-haspopup="menu"
+            >
+              <Icon name="sort" size={15} />
+            </button>
           </>
         )}
         <button
