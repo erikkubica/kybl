@@ -56,7 +56,11 @@ export function BrowserPane(p: BrowserPaneProps) {
   const listError = ent.listError;
   /** what this connection can't show: storage classes */
   const noClass = !!pane.caps && !pane.caps.storageClass;
-  const clearSel = () => sel.setSelected(new Set());
+  // a click on the empty background: nothing selected and no keyboard cursor left on a tile
+  const clearSel = () => {
+    sel.setSelected(new Set());
+    sel.setCursor(null, true);
+  };
   const uploadFiles = () => void ops.pickAndUpload(false);
   const newFolder = () => ops.askNewFolder();
 
