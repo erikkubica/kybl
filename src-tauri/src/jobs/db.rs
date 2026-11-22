@@ -42,6 +42,14 @@ CREATE TABLE items(
 );
 -- also gives take_pending its order without sorting a million rows
 CREATE INDEX items_pending ON items(job_id, state, is_dir DESC, src_path);
+"#, r#"
+-- the copy as it was written (a move checks it is still that before deleting the original)
+ALTER TABLE items ADD COLUMN dst_size INTEGER;
+ALTER TABLE items ADD COLUMN dst_mtime INTEGER;
+-- dst_path as the destination tells files apart (lowercased where case doesn't count), so two
+-- files that would land on one can't both be copied there
+ALTER TABLE items ADD COLUMN dst_fold TEXT;
+CREATE INDEX items_dst ON items(job_id, dst_fold);
 "#];
 
 pub fn now_ms() -> i64 {
@@ -64,6 +72,8 @@ pub struct NewItem {
     pub mtime: Option<i64>,
     pub md5: Option<String>,
     pub is_dir: bool,
+    /// `dst_path` folded (see `storage::fold_path`); empty: the same as `dst_path`
+    pub dst_fold: String,
 }
 
 /// One row of `items`, as the copier needs it.
@@ -165,12 +175,13 @@ pub fn save_page(c: &mut Connection, job_id: &str, items: &[NewItem], cursor_jso
     {
         let mut ins = tx
             .prepare_cached(
-                "INSERT OR IGNORE INTO items(job_id, src_path, dst_path, size, src_etag, src_mtime, src_md5, is_dir)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT OR IGNORE INTO items(job_id, src_path, dst_path, size, src_etag, src_mtime, src_md5, is_dir, dst_fold)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             )
             .map_err(e)?;
         for it in items {
-            ins.execute(params![job_id, it.src_path, it.dst_path, it.size, it.etag, it.mtime, it.md5, it.is_dir as i64]).map_err(e)?;
+            let fold = if it.dst_fold.is_empty() { &it.dst_path } else { &it.dst_fold };
+            ins.execute(params![job_id, it.src_path, it.dst_path, it.size, it.etag, it.mtime, it.md5, it.is_dir as i64, fold]).map_err(e)?;
         }
     }
     tx.execute("UPDATE jobs SET list_cursor_json = ?2, updated = ?3 WHERE id = ?1", params![job_id, cursor_json, now_ms()]).map_err(e)?;
@@ -224,22 +235,63 @@ pub enum End {
     Skipped,
     /// already there, and a move still deletes the original
     SkippedCopied,
+    /// a file of the same size is there but it couldn't be proven the same: a move keeps the
+    /// original
+    SkippedUnsure,
+    /// the destination is the source itself: nothing to copy, nothing to delete
+    InPlace,
+}
+
+impl End {
+    /// What the item's row says about how it ended, besides its state.
+    pub fn note(self) -> Option<&'static str> {
+        match self {
+            End::SkippedUnsure => {
+                Some("Kept the original: a file of the same size is already there, but Kybl couldn't confirm it's identical.")
+            }
+            End::InPlace => Some("Already in place: this is the same file."),
+            _ => None,
+        }
+    }
 }
 
 pub fn finish(c: &Connection, job_id: &str, src: &str, end: End, dst_etag: Option<&str>) -> DbResult<()> {
     let (state, skip) = match end {
         End::Done => ("done", 0),
         End::Copied => ("copied", 0),
-        End::Skipped => ("skipped", 1),
+        End::Skipped | End::SkippedUnsure => ("skipped", 1),
         End::SkippedCopied => ("copied", 1),
+        End::InPlace => ("done", 1),
     };
     c.execute(
-        "UPDATE items SET state = ?3, skip = ?4, error = NULL, dst_etag = COALESCE(?5, dst_etag), upload_id = NULL, parts_json = NULL
+        "UPDATE items SET state = ?3, skip = ?4, error = ?6, dst_etag = COALESCE(?5, dst_etag), upload_id = NULL, parts_json = NULL
          WHERE job_id = ?1 AND src_path = ?2",
-        params![job_id, src, state, skip, dst_etag],
+        params![job_id, src, state, skip, dst_etag, end.note()],
     )
     .map_err(e)?;
     Ok(())
+}
+
+/// The copy as it was written (or found, for a move's skipped file), so the original is only
+/// deleted while the copy is still exactly that.
+pub fn record_dst(c: &Connection, job_id: &str, src: &str, etag: Option<&str>, size: i64, mtime: Option<i64>) -> DbResult<()> {
+    c.execute(
+        "UPDATE items SET dst_etag = ?3, dst_size = ?4, dst_mtime = ?5 WHERE job_id = ?1 AND src_path = ?2",
+        params![job_id, src, etag, size, mtime],
+    )
+    .map_err(e)?;
+    Ok(())
+}
+
+/// Another file of the job lands on `fold` (a folded destination path).
+pub fn dst_taken(c: &Connection, job_id: &str, fold: &str, except_src: &str) -> DbResult<bool> {
+    c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM items WHERE job_id = ?1 AND dst_fold = ?2 AND src_path != ?3)",
+        params![job_id, fold, except_src],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n != 0)
+    .map_err(e)
 }
 
 /// Originals of a move deleted: their items are done.
@@ -284,8 +336,8 @@ pub fn update_src(c: &Connection, job_id: &str, src: &str, size: i64, etag: Opti
     Ok(())
 }
 
-pub fn set_dst_path(c: &Connection, job_id: &str, src: &str, dst: &str) -> DbResult<()> {
-    c.execute("UPDATE items SET dst_path = ?3 WHERE job_id = ?1 AND src_path = ?2", params![job_id, src, dst]).map_err(e)?;
+pub fn set_dst_path(c: &Connection, job_id: &str, src: &str, dst: &str, fold: &str) -> DbResult<()> {
+    c.execute("UPDATE items SET dst_path = ?3, dst_fold = ?4 WHERE job_id = ?1 AND src_path = ?2", params![job_id, src, dst, fold]).map_err(e)?;
     Ok(())
 }
 
@@ -311,12 +363,42 @@ pub fn clear_uploads(c: &Connection, job_id: &str) -> DbResult<()> {
     Ok(())
 }
 
+/// A copied file of a move whose original is still to be deleted, with what both sides were.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CopiedFile {
+    pub src_path: String,
+    pub dst_path: String,
+    pub size: i64,
+    pub src_etag: Option<String>,
+    pub src_mtime: Option<i64>,
+    pub dst_etag: Option<String>,
+    /// None for rows written before this was recorded
+    pub dst_size: Option<i64>,
+}
+
 /// Copied files of a move whose originals are still to be deleted.
-pub fn copied(c: &Connection, job_id: &str, limit: usize) -> DbResult<Vec<String>> {
+pub fn copied(c: &Connection, job_id: &str, limit: usize) -> DbResult<Vec<CopiedFile>> {
     let mut st = c
-        .prepare_cached("SELECT src_path FROM items WHERE job_id = ?1 AND state = 'copied' AND is_dir = 0 ORDER BY src_path LIMIT ?2")
+        .prepare_cached(
+            "SELECT src_path, dst_path, size, src_etag, src_mtime, dst_etag, dst_size FROM items
+             WHERE job_id = ?1 AND state = 'copied' AND is_dir = 0 ORDER BY src_path LIMIT ?2",
+        )
         .map_err(e)?;
-    let rows = st.query_map(params![job_id, limit as i64], |r| r.get(0)).map_err(e)?.collect::<Result<Vec<_>, _>>().map_err(e)?;
+    let rows = st
+        .query_map(params![job_id, limit as i64], |r| {
+            Ok(CopiedFile {
+                src_path: r.get(0)?,
+                dst_path: r.get(1)?,
+                size: r.get(2)?,
+                src_etag: r.get(3)?,
+                src_mtime: r.get(4)?,
+                dst_etag: r.get(5)?,
+                dst_size: r.get(6)?,
+            })
+        })
+        .map_err(e)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(e)?;
     Ok(rows)
 }
 
@@ -443,7 +525,11 @@ mod tests {
         finish(&c, "j", "b", End::SkippedCopied, None).unwrap();
         let n = counts(&c, "j").unwrap();
         assert_eq!((n.files_done, n.files_skipped, n.files_copied, n.files_left), (1, 1, 2, 0));
-        assert_eq!(copied(&c, "j", 10).unwrap(), ["a", "b"]);
+        let left = copied(&c, "j", 10).unwrap();
+        assert_eq!(left.iter().map(|f| f.src_path.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!((left[0].dst_etag.as_deref(), left[0].dst_path.as_str(), left[0].dst_size), (Some("e"), "d/a", None));
+        record_dst(&c, "j", "a", Some("e2"), 10, Some(5)).unwrap();
+        assert_eq!(copied(&c, "j", 10).unwrap()[0].dst_size, Some(10));
         deleted(&mut c, "j", &["a".into(), "b".into()]).unwrap();
         let n = counts(&c, "j").unwrap();
         assert_eq!((n.files_done, n.files_skipped, n.files_copied), (1, 1, 0));

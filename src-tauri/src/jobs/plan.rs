@@ -6,18 +6,22 @@
 //! S3 is listed flat (every key under a prefix, 1,000 a page); stores with real folders are
 //! walked folder by folder, and a folder left out by the ignore list isn't opened at all.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    collections::HashMap,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use serde::{Deserialize, Serialize};
 
 use super::{
+    copy::numbered,
     db::{self, NewItem},
     hash::md5_of,
     ignore::Ignore,
     types::JobSpec,
     Db,
 };
-use crate::storage::{Entry, SResult, Storage, StorageError};
+use crate::storage::{fold_path, ConnKind, Entry, ErrKind, SResult, Storage, StorageError};
 
 /// Where planning stopped.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -61,12 +65,23 @@ fn file_item(src: &dyn Storage, e: &Entry, dst: String) -> NewItem {
         mtime: e.modified,
         md5: md5_of(e, src.caps()),
         is_dir: false,
+        dst_fold: String::new(),
     }
 }
 
 /// Plans the job. Ok(true) when everything is recorded; Ok(false) when `stop` was set (the cursor
-/// is saved). `on_page(files, bytes)` hears what each page added.
-pub async fn plan(src: &dyn Storage, spec: &JobSpec, db: &Db, job_id: &str, stop: &AtomicBool, on_page: &(dyn Fn(u64, u64) + Send + Sync)) -> SResult<bool> {
+/// is saved). `on_page(files, bytes)` hears what each page added. `dst_kind` says how the
+/// destination tells names apart.
+pub async fn plan(
+    src: &dyn Storage,
+    dst_kind: ConnKind,
+    spec: &JobSpec,
+    db: &Db,
+    job_id: &str,
+    stop: &AtomicBool,
+    on_page: &(dyn Fn(u64, u64) + Send + Sync),
+) -> SResult<bool> {
+    let save = |items: &mut [NewItem], cur: &Cursor| save(db, job_id, dst_kind, items, cur, on_page);
     let ignore = Ignore::new(&spec.ignore);
     let saved = db::job(&db.lock().unwrap(), job_id).map_err(StorageError::other)?.and_then(|j| j.cursor_json);
     let mut cur: Cursor = saved.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
@@ -85,7 +100,7 @@ pub async fn plan(src: &dyn Storage, spec: &JobSpec, db: &Db, job_id: &str, stop
                 None => NewItem { src_path: sel.path.clone(), dst_path: base_dst, ..Default::default() },
             };
             let next = Cursor { sel: cur.sel + 1, ..Default::default() };
-            save(db, job_id, &[item], &next, on_page)?;
+            save(&mut [item], &next)?;
             cur = next;
             continue;
         }
@@ -101,7 +116,7 @@ pub async fn plan(src: &dyn Storage, spec: &JobSpec, db: &Db, job_id: &str, stop
                 current: src.as_s3().map(|_| (base.clone(), None)),
                 started: true,
             };
-            save(db, job_id, &first, &cur, on_page)?;
+            save(&mut first, &cur)?;
         }
         loop {
             if stop.load(Ordering::Relaxed) {
@@ -139,7 +154,16 @@ pub async fn plan(src: &dyn Storage, spec: &JobSpec, db: &Db, job_id: &str, stop
                 }
                 if out.is_truncated().unwrap_or(false) { out.next_continuation_token().map(str::to_string) } else { None }
             } else {
-                let page = src.list(root, &dir, token).await?;
+                let page = match src.list(root, &dir, token.clone()).await {
+                    Ok(p) => p,
+                    // a page token that no longer works (expired, or the folder changed under
+                    // it): list the folder again from the start rather than missing the rest
+                    // (what was recorded is ignored the second time)
+                    Err(e) if token.is_some() && !matches!(e.kind, ErrKind::Network | ErrKind::NeedsAuth | ErrKind::Cancelled) => {
+                        src.list(root, &dir, None).await?
+                    }
+                    Err(e) => return Err(e),
+                };
                 for f in &page.folders {
                     let Some(rel) = f.strip_prefix(&base) else { continue };
                     if rel.is_empty() || ignore.matches(rel, true) {
@@ -164,10 +188,10 @@ pub async fn plan(src: &dyn Storage, spec: &JobSpec, db: &Db, job_id: &str, stop
             if let Some(t) = next_token {
                 cur.current = Some((dir, Some(t)));
             }
-            save(db, job_id, &items, &cur, on_page)?;
+            save(&mut items, &cur)?;
         }
         cur = Cursor { sel: cur.sel + 1, ..Default::default() };
-        save(db, job_id, &[], &cur, on_page)?;
+        save(&mut [], &cur)?;
     }
     db::set_planned(&db.lock().unwrap(), job_id).map_err(StorageError::other)?;
     Ok(true)
@@ -179,9 +203,50 @@ pub fn normalize_dir(d: &str) -> String {
     if d.is_empty() || d.ends_with('/') { d.to_string() } else { format!("{d}/") }
 }
 
-fn save(db: &Db, job_id: &str, items: &[NewItem], cur: &Cursor, on_page: &(dyn Fn(u64, u64) + Send + Sync)) -> SResult<()> {
+/// Gives every file a destination no other file of the job lands on. Where the destination
+/// doesn't tell letter case apart ("Photo.JPG" and "photo.jpg"), the later one gets a numbered
+/// name instead of replacing the first (and a move then deleting both originals).
+pub fn unique_destinations(c: &rusqlite::Connection, job_id: &str, dst_kind: ConnKind, items: &mut [NewItem]) -> SResult<()> {
+    // folded destination → source, for this page
+    let mut page: HashMap<String, String> = HashMap::new();
+    for it in items.iter_mut() {
+        it.dst_fold = fold_path(dst_kind, &it.dst_path);
+        if it.is_dir {
+            continue;
+        }
+        let src = it.src_path.clone();
+        let taken = |fold: &str, page: &HashMap<String, String>| -> SResult<bool> {
+            if page.get(fold).is_some_and(|s| *s != src) {
+                return Ok(true);
+            }
+            db::dst_taken(c, job_id, fold, &src).map_err(StorageError::other)
+        };
+        if taken(&it.dst_fold, &page)? {
+            let mut n = 1;
+            loop {
+                let p = numbered(&it.dst_path, n);
+                let f = fold_path(dst_kind, &p);
+                if !taken(&f, &page)? {
+                    (it.dst_path, it.dst_fold) = (p, f);
+                    break;
+                }
+                n += 1;
+                if n > 10_000 {
+                    return Err(StorageError::exists());
+                }
+            }
+        }
+        page.insert(it.dst_fold.clone(), src);
+    }
+    Ok(())
+}
+
+fn save(db: &Db, job_id: &str, dst_kind: ConnKind, items: &mut [NewItem], cur: &Cursor, on_page: &(dyn Fn(u64, u64) + Send + Sync)) -> SResult<()> {
     let json = serde_json::to_string(cur).map_err(|e| StorageError::other(e.to_string()))?;
-    db::save_page(&mut db.lock().unwrap(), job_id, items, Some(&json)).map_err(StorageError::other)?;
+    let mut c = db.lock().unwrap();
+    unique_destinations(&c, job_id, dst_kind, items)?;
+    db::save_page(&mut c, job_id, items, Some(&json)).map_err(StorageError::other)?;
+    drop(c);
     let files = items.iter().filter(|i| !i.is_dir).count() as u64;
     on_page(files, items.iter().filter(|i| !i.is_dir).map(|i| i.size as u64).sum());
     Ok(())

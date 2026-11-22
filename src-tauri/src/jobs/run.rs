@@ -10,6 +10,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use futures_util::StreamExt;
+
 use super::{
     copy::{self, Ctx, Outcome},
     db, plan,
@@ -182,7 +184,7 @@ async fn work(r: &mut Runner<'_>, spec: &Arc<JobSpec>, ctl: &Arc<Ctl>) -> JobSta
                 live.files_total.fetch_add(files, Ordering::Relaxed);
                 live.bytes_total.fetch_add(bytes, Ordering::Relaxed);
             };
-            let res = ticking(r, plan::plan(&*src, spec, &inner.db, &id, &ctl.stop, &on_page)).await;
+            let res = ticking(r, plan::plan(&*src, dst.kind(), spec, &inner.db, &id, &ctl.stop, &on_page)).await;
             r.reload();
             match res {
                 Ok(true) => break,
@@ -371,13 +373,44 @@ async fn delete_originals(r: &mut Runner<'_>, ctx: &Ctx, ctl: &Arc<Ctl>) -> Resu
         if ctl.stop.load(Ordering::Relaxed) {
             return Err(stopped(r, ctl, ctx).await);
         }
-        let batch = db::copied(&inner.db.lock().unwrap(), &ctx.job_id, DELETE_BATCH).unwrap_or_default();
-        if batch.is_empty() {
+        let copied = db::copied(&inner.db.lock().unwrap(), &ctx.job_id, DELETE_BATCH).unwrap_or_default();
+        if copied.is_empty() {
             break;
         }
-        match delete_files(&*ctx.src, root, &batch, &ctl.stop).await {
-            Ok(()) => {
-                let _ = db::deleted(&mut inner.db.lock().unwrap(), &ctx.job_id, &batch);
+        // right before each original goes: its copy must still be the one written, and the
+        // original still the one copied
+        let checked: Vec<(db::CopiedFile, Option<String>)> =
+            futures_util::stream::iter(copied.into_iter().map(|f| async move {
+                let why = keep_reason(ctx, &f).await;
+                (f, why)
+            }))
+            .buffer_unordered(16)
+            .collect()
+            .await;
+        let mut batch = Vec::new();
+        {
+            let c = inner.db.lock().unwrap();
+            for (f, why) in checked {
+                match why {
+                    None => batch.push(f.src_path),
+                    Some(why) => {
+                        let _ = db::fail(&c, &ctx.job_id, &f.src_path, &why);
+                    }
+                }
+            }
+        }
+        if batch.is_empty() {
+            r.reload();
+            continue;
+        }
+        match delete_files(&*ctx.src, &ctx.spec, &batch, &ctl.stop).await {
+            Ok(kept) => {
+                let mut c = inner.db.lock().unwrap();
+                for (p, why) in &kept {
+                    let _ = db::fail(&c, &ctx.job_id, p, &format!("Copied, but the original couldn't be deleted: {why}"));
+                }
+                let gone: Vec<String> = batch.into_iter().filter(|p| !kept.iter().any(|(k, _)| k == p)).collect();
+                let _ = db::deleted(&mut c, &ctx.job_id, &gone);
             }
             Err(e) if ctl.stop.load(Ordering::Relaxed) || e.is_cancelled() => return Err(stopped(r, ctl, ctx).await),
             Err(e) => {
@@ -400,24 +433,88 @@ async fn delete_originals(r: &mut Runner<'_>, ctx: &Ctx, ctl: &Arc<Ctl>) -> Resu
     Ok(())
 }
 
+/// Why the original of a copied file must stay (None: it may be deleted). The copy is stat'ed
+/// again and compared with what was recorded when it was written (a later copy may have landed
+/// on it, e.g. "Photo.jpg" over "photo.jpg" where case doesn't count), and the original with
+/// what was copied.
+async fn keep_reason(ctx: &Ctx, f: &db::CopiedFile) -> Option<String> {
+    match ctx.dst.stat(&ctx.spec.dst.root, &f.dst_path).await {
+        Err(e) => return Some(format!("The copy couldn't be checked, so the original was kept: {e}")),
+        Ok(None) => return Some("The copy isn't at the destination any more, so the original was kept.".into()),
+        Ok(Some(d)) => {
+            let etag_differs = matches!((&f.dst_etag, &d.etag), (Some(a), Some(b)) if a.trim_matches('"') != b.trim_matches('"'));
+            if d.is_dir() || d.size != f.dst_size.unwrap_or(f.size) || etag_differs {
+                return Some("The copy changed before the original was deleted (another file may have replaced it), so the original was kept.".into());
+            }
+        }
+    }
+    match ctx.src.stat(&ctx.spec.src.root, &f.src_path).await {
+        Ok(None) => None,
+        Ok(Some(now)) => {
+            let was = db::Item { size: f.size, etag: f.src_etag.clone(), mtime: f.src_mtime, ..Default::default() };
+            (!copy::unchanged(&was, &now)).then(|| "The original changed after it was copied, so it was kept.".to_string())
+        }
+        Err(e) => Some(format!("The original couldn't be checked, so it was kept: {e}")),
+    }
+}
+
+/// The real folders (or files) selected on this device's disk, links resolved.
+fn selected_on_disk(src: &dyn Storage, spec: &JobSpec) -> Vec<(String, bool, std::path::PathBuf)> {
+    spec.src
+        .items
+        .iter()
+        .filter_map(|s| {
+            let key = if s.is_dir { plan::normalize_dir(&s.path) } else { s.path.clone() };
+            let real = std::fs::canonicalize(src.local_path(&spec.src.root, &key)?).ok()?;
+            Some((key, s.is_dir, real))
+        })
+        .collect()
+}
+
+/// A file to delete really lies inside what was selected: by its key, and on disk with links
+/// resolved (a folder reached through a link may be anywhere; its files are never deleted).
+fn inside_selection(selected: &[(String, bool, std::path::PathBuf)], key: &str, path: &std::path::Path) -> bool {
+    let Some(parent) = path.parent().and_then(|p| std::fs::canonicalize(p).ok()) else { return false };
+    selected.iter().any(|(sel, is_dir, real)| {
+        if *is_dir {
+            key.starts_with(sel.as_str()) && parent.starts_with(real)
+        } else {
+            key == sel && real.parent().is_some_and(|rp| rp == parent)
+        }
+    })
+}
+
 /// Originals on this device's disk are removed outright (not sent to the Trash): their copies
-/// were verified, as moving between disks in Finder or Explorer does. Elsewhere, the store's delete.
-async fn delete_files(src: &dyn Storage, root: &str, files: &[String], stop: &AtomicBool) -> SResult<()> {
+/// were verified, as moving between disks in Finder or Explorer does. Only files inside what was
+/// selected are removed, and a link is removed itself, never what it points to. Elsewhere, the
+/// store's delete. Answers the files that were kept, with why.
+async fn delete_files(src: &dyn Storage, spec: &JobSpec, files: &[String], stop: &AtomicBool) -> SResult<Vec<(String, String)>> {
+    let root = spec.src.root.as_str();
     if src.caps().local_paths {
+        let selected = selected_on_disk(src, spec);
+        let mut kept = Vec::new();
         for f in files {
             if stop.load(Ordering::Relaxed) {
+                // what wasn't reached stays copied, to delete when the job carries on
                 return Err(StorageError::cancelled());
             }
-            let p = src.local_path(root, f).ok_or_else(|| StorageError::other("This file is outside the folder being moved."))?;
+            let Some(p) = src.local_path(root, f) else {
+                kept.push((f.clone(), "This file is outside the folder being moved.".to_string()));
+                continue;
+            };
+            if !inside_selection(&selected, f, &p) {
+                kept.push((f.clone(), "This file is outside the folder being moved (it's reached through a link), so it was kept.".to_string()));
+                continue;
+            }
             match tokio::fs::remove_file(&p).await {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
+                Err(e) => kept.push((f.clone(), StorageError::from(e).to_string())),
             }
         }
-        return Ok(());
+        return Ok(kept);
     }
-    src.delete(root, files, &[], stop, &|_, _| {}).await.map(|_| ())
+    src.delete(root, files, &[], stop, &|_, _| {}).await.map(|_| vec![])
 }
 
 async fn remove_if_empty(src: &dyn Storage, root: &str, dir: &str) {

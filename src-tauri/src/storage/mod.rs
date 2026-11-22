@@ -764,6 +764,37 @@ pub trait Storage: Send + Sync + 'static {
     fn as_s3(&self) -> Option<&s3::S3Backend> {
         None
     }
+
+    /// Where this connection's data lives (e.g. an S3 endpoint), so two connections saved for the
+    /// same place are known to be the same storage. None when unknown.
+    fn place_id(&self) -> Option<String> {
+        None
+    }
+}
+
+/// Names that differ only in letter case are the same file here: this device's disk on macOS,
+/// iOS and Windows (their usual disks), and OneDrive, Dropbox and Box. Google Drive keeps both.
+pub fn case_insensitive(kind: ConnKind) -> bool {
+    let local_insensitive = cfg!(any(target_os = "macos", target_os = "ios", target_os = "windows"));
+    matches!(kind, ConnKind::Onedrive | ConnKind::Dropbox | ConnKind::BoxCom) || (kind == ConnKind::Local && local_insensitive)
+}
+
+/// A path as the store tells files apart: lowercased where case doesn't count, and on Windows
+/// without the trailing dots and spaces it drops from every name.
+pub fn fold_path(kind: ConnKind, path: &str) -> String {
+    if !case_insensitive(kind) {
+        return path.to_string();
+    }
+    let lower = path.to_lowercase();
+    if kind == ConnKind::Local && cfg!(windows) {
+        let dir = lower.ends_with('/');
+        let mut out = lower.trim_end_matches('/').split('/').map(|p| p.trim_end_matches(['.', ' '])).collect::<Vec<_>>().join("/");
+        if dir {
+            out.push('/');
+        }
+        return out;
+    }
+    lower
 }
 
 /// [`Storage::walk`] for stores that can only list one folder at a time.

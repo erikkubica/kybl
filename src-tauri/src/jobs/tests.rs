@@ -435,7 +435,7 @@ fn planning_carries_on_from_the_saved_page() {
         // stopped right after the first page
         let stop = AtomicBool::new(false);
         let pages = std::sync::atomic::AtomicU32::new(0);
-        let r = plan::plan(&*src, &sp, &dbh, "j", &stop, &|_, _| {
+        let r = plan::plan(&*src, ConnKind::Local, &sp, &dbh, "j", &stop, &|_, _| {
             if pages.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1 {
                 stop.store(true, std::sync::atomic::Ordering::SeqCst);
             }
@@ -448,7 +448,7 @@ fn planning_carries_on_from_the_saved_page() {
         assert!(db::job(&dbh.lock().unwrap(), "j").unwrap().unwrap().cursor_json.is_some());
         // a fresh start (after a restart) goes on from there
         let stop = AtomicBool::new(false);
-        assert!(plan::plan(&*src, &sp, &dbh, "j", &stop, &|_, _| {}).await.unwrap());
+        assert!(plan::plan(&*src, ConnKind::Local, &sp, &dbh, "j", &stop, &|_, _| {}).await.unwrap());
         let n = db::counts(&dbh.lock().unwrap(), "j").unwrap();
         assert_eq!(n.files_total, 1501);
         assert!(db::job(&dbh.lock().unwrap(), "j").unwrap().unwrap().planned);
@@ -799,3 +799,5 @@ mod s3 {
         });
     }
 }
+
+mod safety;
