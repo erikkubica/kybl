@@ -466,7 +466,16 @@ pub(crate) async fn upload(s: &dyn Storage, bucket: &str, key: &str, path: &str,
 
 /// Downloads through the backend into `<dest>.s3part`, renamed onto `dest` once whole. The
 /// bandwidth cap applies unless the source is this device's own disk.
-pub(crate) async fn download(s: &dyn Storage, bucket: &str, key: &str, dest: &Path, cancel: &AtomicBool, progress: Progress<'_>) -> Result<Outcome, String> {
+/// With `hold`, "Wi-Fi only" pauses it on mobile data (see `transfers::Hold`).
+pub(crate) async fn download(
+    s: &dyn Storage,
+    bucket: &str,
+    key: &str,
+    dest: &Path,
+    cancel: &AtomicBool,
+    progress: Progress<'_>,
+    hold: crate::transfers::Hold<'_>,
+) -> Result<Outcome, String> {
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent).await.map_err(|e| e.to_string())?;
     }
@@ -474,9 +483,11 @@ pub(crate) async fn download(s: &dyn Storage, bucket: &str, key: &str, dest: &Pa
     let throttle = !s.caps().local_paths;
     let mut r = s.read(bucket, key, None, None).await?;
     let total = r.total.or(r.len).unwrap_or(0);
+    let etag = r.etag.clone();
     let result: SResult<bool> = async {
         let mut file = tokio::fs::File::create(&part).await?;
-        let (mut got, mut last) = (0u64, Instant::now());
+        crate::leftovers::partial_started(&part);
+        let (mut got, mut last, mut checked_at) = (0u64, Instant::now(), 0u64);
         progress(0, total);
         while let Some(chunk) = r.body.next().await {
             if cancel.load(Ordering::Relaxed) {
@@ -492,6 +503,28 @@ pub(crate) async fn download(s: &dyn Storage, bucket: &str, key: &str, dest: &Pa
             if throttle {
                 LIMITER.throttle(chunk.len()).await;
             }
+            // "Wi-Fi only" and the phone moved to mobile data: let go of the connection, keep
+            // what arrived, and ask for the rest (of the same version) once back on Wi-Fi
+            if let Some(paused) = hold
+                && got - checked_at >= crate::tuning::WIFI_CHECK_BYTES
+                && got < total
+                && crate::tuning::hold_for_wifi()
+            {
+                checked_at = got;
+                r.body = Box::pin(futures_util::stream::empty());
+                file.flush().await?;
+                paused(got, total);
+                if !crate::tuning::wait_for_wifi(cancel).await {
+                    return Ok(false);
+                }
+                r = s.read(bucket, key, Some(got..total), etag.as_deref()).await?;
+                if r.range.as_ref().map(|g| g.start) != Some(got) {
+                    return Err(StorageError::other("The server can't carry on this download where it paused. Try again."));
+                }
+                progress(got, total);
+            } else if got - checked_at >= crate::tuning::WIFI_CHECK_BYTES {
+                checked_at = got;
+            }
         }
         file.flush().await?;
         file.sync_all().await?;
@@ -502,6 +535,7 @@ pub(crate) async fn download(s: &dyn Storage, bucket: &str, key: &str, dest: &Pa
     match result {
         Ok(true) => {
             tokio::fs::rename(&part, dest).await.map_err(|e| e.to_string())?;
+            crate::leftovers::partial_ended(&part);
             Ok(Outcome::Done)
         }
         Ok(false) => {
@@ -649,14 +683,14 @@ mod tests {
             let report = |d: u64, total: u64| *seen.lock().unwrap() = (d, total);
             let dest = t.0.join("down/cat.jpg");
             let never = Arc::new(AtomicBool::new(false));
-            assert!(matches!(download(&b, &root, "photos/2026/cat.jpg", &dest, &never, &report).await.unwrap(), Outcome::Done));
+            assert!(matches!(download(&b, &root, "photos/2026/cat.jpg", &dest, &never, &report, None).await.unwrap(), Outcome::Done));
             assert_eq!(std::fs::read(&dest).unwrap().len(), 1000);
             assert_eq!(*seen.lock().unwrap(), (1000, 1000));
             assert!(!dest::part_path(&dest).exists());
 
             let stop = AtomicBool::new(true);
             let dest2 = t.0.join("down/stopped.jpg");
-            assert!(matches!(download(&b, &root, "photos/2026/cat.jpg", &dest2, &stop, &report).await.unwrap(), Outcome::Cancelled));
+            assert!(matches!(download(&b, &root, "photos/2026/cat.jpg", &dest2, &stop, &report, None).await.unwrap(), Outcome::Cancelled));
             assert!(!dest2.exists() && !dest::part_path(&dest2).exists());
 
             assert!(matches!(upload(&b, &root, "up/again.jpg", dest.to_str().unwrap(), &never, &report).await.unwrap(), Outcome::Done));

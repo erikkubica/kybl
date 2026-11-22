@@ -1,8 +1,11 @@
 package app.kybl.mobile
 
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import java.security.KeyStore
+import java.security.UnrecoverableKeyException
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -40,7 +43,14 @@ object SecretBox {
   @Synchronized
   fun seal(plain: ByteArray): ByteArray {
     val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-    cipher.init(Cipher.ENCRYPT_MODE, existingKey() ?: newKey())
+    try {
+      cipher.init(Cipher.ENCRYPT_MODE, existingKey() ?: newKey())
+    } catch (e: KeyPermanentlyInvalidatedException) {
+      // a key the Keystore gave up on opens nothing any more (the file it sealed was already set
+      // aside by vault.rs): replace it
+      keyStore().deleteEntry(ALIAS)
+      cipher.init(Cipher.ENCRYPT_MODE, newKey())
+    }
     val iv = cipher.iv
     val body = cipher.doFinal(plain)
     return MAGIC + byteArrayOf(iv.size.toByte()) + iv + body
@@ -54,9 +64,23 @@ object SecretBox {
     val start = MAGIC.size + 1
     require(ivLen in 1..32 && sealed.size > start + ivLen) { "damaged sealed file" }
     // never make a new key to open with: that could only fail, and would replace nothing
-    val key = existingKey() ?: throw IllegalStateException("the key that sealed the secret keys is gone")
+    val key = try {
+      existingKey()
+    } catch (e: UnrecoverableKeyException) {
+      throw IllegalStateException("$KEY_GONE: the key that sealed the secret keys can't be read", e)
+    } ?: throw IllegalStateException("$KEY_GONE: the key that sealed the secret keys is gone")
     val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-    cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, sealed.copyOfRange(start, start + ivLen)))
-    return cipher.doFinal(sealed.copyOfRange(start + ivLen, sealed.size))
+    try {
+      cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, sealed.copyOfRange(start, start + ivLen)))
+      return cipher.doFinal(sealed.copyOfRange(start + ivLen, sealed.size))
+    } catch (e: KeyPermanentlyInvalidatedException) {
+      throw IllegalStateException("$KEY_GONE: the phone's key store invalidated the key", e)
+    } catch (e: AEADBadTagException) {
+      // sealed with a key that isn't this one any more
+      throw IllegalStateException("$KEY_GONE: the secret keys were sealed with another key", e)
+    }
   }
+
+  /** Marks an error vault.rs treats as "this file can never be opened again" (`KEY_GONE` there). */
+  private const val KEY_GONE = "kybl-vault-key-gone"
 }

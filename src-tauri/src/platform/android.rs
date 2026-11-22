@@ -4,10 +4,15 @@
 //! Kotlin → Rust: `KyblNative.kt` declares the `external` functions exported at the bottom.
 //! Rust → Kotlin: static methods of `Platform.kt` and `SecretBox.kt`.
 
-use std::path::PathBuf;
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 use jni::{
-    objects::{JByteArray, JClass, JObject, JString},
+    objects::{GlobalRef, JByteArray, JClass, JObject, JString},
     JNIEnv,
 };
 use tauri::AppHandle;
@@ -15,8 +20,27 @@ use tauri::AppHandle;
 use super::vault::Sealer;
 use crate::mobile::PickedFile;
 
-/// Runs `f` with one of the app's classes, loaded through the application context (registered
-/// by tao at start-up), which lives as long as the process.
+/// One of the app's classes, loaded once through the application context and kept (a global
+/// reference, so it survives the call that loaded it).
+fn app_class(env: &mut JNIEnv, context: &JObject, name: &str) -> jni::errors::Result<GlobalRef> {
+    static CLASSES: Mutex<Option<HashMap<String, GlobalRef>>> = Mutex::new(None);
+    if let Some(c) = CLASSES.lock().unwrap().as_ref().and_then(|m| m.get(name)) {
+        return Ok(c.clone());
+    }
+    let loader = env.call_method(context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?.l()?;
+    let jname = env.new_string(name)?;
+    let class = env.call_method(&loader, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", &[(&jname).into()])?.l()?;
+    let global = env.new_global_ref(class)?;
+    CLASSES.lock().unwrap().get_or_insert_with(HashMap::new).insert(name.to_string(), global.clone());
+    Ok(global)
+}
+
+/// Runs `f` with one of the app's classes and the application context (registered by tao at
+/// start-up), which lives as long as the process.
+///
+/// The thread stays attached to the JVM and never returns to Java, so local references made here
+/// would pile up for good: everything runs in a local frame, freed when `f` returns. A Java
+/// exception comes back as its own text ("java.lang.IllegalStateException: …").
 pub(crate) fn with_class<T>(
     name: &str,
     f: impl FnOnce(&mut JNIEnv, &JObject, &JClass) -> jni::errors::Result<T>,
@@ -25,21 +49,28 @@ pub(crate) fn with_class<T>(
     let ctx = ndk_context::android_context();
     let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }.map_err(|e| e.to_string())?;
     let mut env = vm.attach_current_thread_permanently().map_err(|e| e.to_string())?;
-    let result = (|| {
-        let context = unsafe { JObject::from_raw(ctx.context().cast()) };
-        let loader = env.call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?.l()?;
-        let name = env.new_string(name)?;
-        let class: JClass = env
-            .call_method(&loader, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", &[(&name).into()])?
-            .l()?
-            .into();
-        f(&mut env, &context, &class)
-    })();
-    if result.is_err() && env.exception_check().unwrap_or(false) {
-        let _ = env.exception_describe();
-        let _ = env.exception_clear();
+    let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+    let result = env.with_local_frame(16, |env| -> jni::errors::Result<T> {
+        let class = app_class(env, &context, name)?;
+        f(env, &context, class.as_obj().into())
+    });
+    result.map_err(|e| java_error(&mut env, e))
+}
+
+/// The text of the pending Java exception (cleared here), else of `e`.
+fn java_error(env: &mut JNIEnv, e: jni::errors::Error) -> String {
+    if !env.exception_check().unwrap_or(false) {
+        return e.to_string();
     }
-    result.map_err(|e| e.to_string())
+    let Ok(thrown) = env.exception_occurred() else { return e.to_string() };
+    let _ = env.exception_clear();
+    let text = env.with_local_frame(4, |env| -> jni::errors::Result<String> {
+        let s = env.call_method(&thrown, "toString", "()Ljava/lang/String;", &[])?.l()?;
+        Ok(env.get_string(&JString::from(s))?.into())
+    });
+    let _ = env.exception_clear();
+    let _ = env.delete_local_ref(thrown);
+    text.unwrap_or_else(|_| e.to_string())
 }
 
 /// `Platform.<method>(Context): String`
@@ -50,14 +81,24 @@ fn platform_string(method: &str) -> Result<String, String> {
     })
 }
 
+/// Mobile data or a metered Wi-Fi. Transfers ask this every part and every few megabytes, so the
+/// answer is asked of Android at most every few seconds.
 pub fn metered() -> bool {
-    with_class("app.kybl.mobile.Platform", |env, context, class| {
+    static LAST: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+    if let Some((at, m)) = *LAST.lock().unwrap()
+        && at.elapsed() < Duration::from_secs(3)
+    {
+        return m;
+    }
+    let m = with_class("app.kybl.mobile.Platform", |env, context, class| {
         env.call_static_method(class, "isMetered", "(Landroid/content/Context;)Z", &[context.into()])?.z()
     })
     .unwrap_or_else(|e| {
         eprintln!("metered: {e}");
         false
-    })
+    });
+    *LAST.lock().unwrap() = Some((Instant::now(), m));
+    m
 }
 
 #[derive(serde::Deserialize)]

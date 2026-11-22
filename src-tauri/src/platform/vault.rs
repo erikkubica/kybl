@@ -24,10 +24,19 @@ pub trait Sealer {
 const PLAIN: &str = "secrets.json";
 const SEALED: &str = "secrets.bin";
 
+/// In a sealer's error when the key that sealed the file is gone for good (the Keystore dropped
+/// or invalidated it, say after the screen lock was removed or a backup restored onto another
+/// phone). Sent by `SecretBox.kt`.
+pub const KEY_GONE: &str = "kybl-vault-key-gone";
+
 pub fn read(dir: &Path, sealer: &impl Sealer) -> Result<HashMap<String, String>, String> {
     match std::fs::read(dir.join(SEALED)) {
         Ok(raw) => {
-            let plain = sealer.open(&raw).map_err(|e| format!("Could not unlock the secret keys: {e}"))?;
+            let plain = match sealer.open(&raw) {
+                Ok(p) => p,
+                Err(e) if e.contains(KEY_GONE) => return Err(set_aside(dir, &e)),
+                Err(e) => return Err(format!("Could not unlock the secret keys: {e}")),
+            };
             return serde_json::from_slice(&plain).map_err(|e| format!("Could not read the secret keys: {e}"));
         }
         Err(e) if e.kind() == ErrorKind::NotFound => {}
@@ -79,6 +88,19 @@ pub fn write(dir: &Path, map: &HashMap<String, String>, sealer: &impl Sealer) ->
             Ok(())
         }
     }
+}
+
+/// A sealed file nothing can open any more would block every connection for good, so it is moved
+/// aside (never deleted: `secrets.bin.broken-<time>`), and the error says so once; after that the
+/// vault reads as empty and keys entered again are sealed with a new key.
+fn set_aside(dir: &Path, why: &str) -> String {
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let aside = format!("{SEALED}.broken-{stamp}");
+    if let Err(e) = std::fs::rename(dir.join(SEALED), dir.join(&aside)) {
+        return format!("Could not unlock the secret keys: {why} ({e})");
+    }
+    eprintln!("secret keys can't be opened any more ({why}): kept as {aside}");
+    "This phone can no longer unlock the secret keys Kybl saved (its secure key store dropped the key, which can happen after changing the screen lock). Edit each connection and enter its secret key again.".into()
 }
 
 /// The plain file, as before sealing. A sealed file would be read instead of it, so that goes,
@@ -164,6 +186,35 @@ mod tests {
         assert!(read(&d, &fake()).is_err(), "never 'no keys', which the next save would write over");
         assert_eq!(std::fs::read(d.join(SEALED)).unwrap(), b"garbage");
         assert!(d.join(PLAIN).exists());
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    /// Opens nothing: the key is gone.
+    struct KeyGone;
+
+    impl Sealer for KeyGone {
+        fn seal(&self, plain: &[u8]) -> Result<Vec<u8>, String> {
+            fake().seal(plain)
+        }
+        fn open(&self, _: &[u8]) -> Result<Vec<u8>, String> {
+            Err(format!("java.lang.IllegalStateException: {KEY_GONE}: the key is gone"))
+        }
+    }
+
+    #[test]
+    fn a_file_whose_key_is_gone_is_set_aside_once_and_kept() {
+        let d = dir();
+        write(&d, &keys(), &fake()).unwrap();
+        let sealed = std::fs::read(d.join(SEALED)).unwrap();
+        let e = read(&d, &KeyGone).unwrap_err();
+        assert!(e.contains("enter its secret key again"), "{e}");
+        let aside: Vec<_> = std::fs::read_dir(&d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        let broken = aside.iter().find(|n| n.starts_with("secrets.bin.broken-")).expect("kept, not deleted");
+        assert_eq!(std::fs::read(d.join(broken)).unwrap(), sealed);
+        // from now on: empty, and saving works with a new key
+        assert!(read(&d, &KeyGone).unwrap().is_empty());
+        write(&d, &keys(), &fake()).unwrap();
+        assert_eq!(read(&d, &fake()).unwrap(), keys());
         let _ = std::fs::remove_dir_all(d);
     }
 

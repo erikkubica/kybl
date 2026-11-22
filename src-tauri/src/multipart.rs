@@ -28,7 +28,7 @@ use http_body::{Body, Frame, SizeHint};
 
 use crate::{
     state::{err, sdk_err},
-    transfers::{Outcome, Progress},
+    transfers::{Hold, Outcome, Progress},
     tuning::LIMITER,
 };
 
@@ -186,10 +186,10 @@ type OpenUpload = (Client, String, String, String);
 static OPEN_IDS: AtomicU64 = AtomicU64::new(0);
 
 /// Removes its entry from [`OPEN`] when the upload is no longer running here.
-struct OpenGuard(u64);
+pub(crate) struct OpenGuard(u64);
 
 impl OpenGuard {
-    fn new(client: &Client, bucket: &str, key: &str, upload_id: &str) -> Self {
+    pub(crate) fn new(client: &Client, bucket: &str, key: &str, upload_id: &str) -> Self {
         let id = OPEN_IDS.fetch_add(1, Ordering::Relaxed);
         OPEN.lock().unwrap().insert(id, (client.clone(), bucket.into(), key.into(), upload_id.into()));
         Self(id)
@@ -203,7 +203,14 @@ impl Drop for OpenGuard {
 }
 
 async fn abort(client: &Client, bucket: &str, key: &str, upload_id: &str) {
-    let _ = client.abort_multipart_upload().bucket(bucket).key(key).upload_id(upload_id).send().await;
+    let gone = match client.abort_multipart_upload().bucket(bucket).key(key).upload_id(upload_id).send().await {
+        Ok(_) => true,
+        Err(e) => upload_gone(&sdk_err(e)),
+    };
+    // otherwise still on the server: the next start tries again (see leftovers.rs)
+    if gone {
+        crate::leftovers::upload_ended(upload_id);
+    }
 }
 
 /// Aborts every open and every kept multipart upload, waiting at most `limit` (used on quit).
@@ -237,8 +244,10 @@ fn upload_gone(e: &str) -> bool {
 
 /// Uploads a file, fresh, as sync does: a failed multipart upload is aborted, never kept.
 #[cfg_attr(mobile, allow(dead_code))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn upload_file(
     client: &Client,
+    profile_id: &str,
     bucket: &str,
     key: &str,
     path: &str,
@@ -246,7 +255,7 @@ pub(crate) async fn upload_file(
     progress: Progress<'_>,
 ) -> Result<Outcome, String> {
     let mut mp = None;
-    let r = upload(client, bucket, key, path, cancel, progress, &mut mp).await;
+    let r = upload(client, profile_id, bucket, key, path, cancel, progress, None, &mut mp).await;
     if r.is_err()
         && let Some(m) = mp
     {
@@ -267,6 +276,7 @@ pub(crate) async fn upload_resumable(
     path: &str,
     cancel: &Arc<AtomicBool>,
     progress: Progress<'_>,
+    hold: Hold<'_>,
 ) -> Result<Outcome, String> {
     let now = stamp(path).await?;
     let kept = PENDING.lock().unwrap().remove(id);
@@ -280,11 +290,13 @@ pub(crate) async fn upload_resumable(
         None => None,
     };
     let resumed = mp.is_some();
-    let mut r = upload(client, bucket, key, path, cancel, progress, &mut mp).await;
+    let mut r = upload(client, profile_id, bucket, key, path, cancel, progress, hold, &mut mp).await;
     if resumed && matches!(&r, Err(e) if upload_gone(e)) {
         // the server dropped the old upload (it expires them after a while): start over
-        mp = None;
-        r = upload(client, bucket, key, path, cancel, progress, &mut mp).await;
+        if let Some(m) = mp.take() {
+            crate::leftovers::upload_ended(&m.upload_id);
+        }
+        r = upload(client, profile_id, bucket, key, path, cancel, progress, hold, &mut mp).await;
     }
     if r.is_err()
         && let Some(m) = mp
@@ -306,13 +318,16 @@ pub(crate) async fn upload_resumable(
 /// The upload itself. `mp` carries a multipart upload in and out: given one, its finished parts
 /// are skipped; on error it holds what was done (the caller keeps or aborts it); on cancel the
 /// upload is aborted here and `mp` is cleared.
+#[allow(clippy::too_many_arguments)]
 async fn upload(
     client: &Client,
+    profile_id: &str,
     bucket: &str,
     key: &str,
     path: &str,
     cancel: &Arc<AtomicBool>,
     progress: Progress<'_>,
+    hold: Hold<'_>,
     mp: &mut Option<Multipart>,
 ) -> Result<Outcome, String> {
     let total = tokio::fs::metadata(path).await.map_err(err)?.len();
@@ -348,16 +363,15 @@ async fn upload(
             .send()
             .await
             .map_err(sdk_err)?;
-        *mp = Some(Multipart {
-            upload_id: created.upload_id().unwrap_or_default().to_string(),
-            part_size: part_size_for(total),
-            parts: BTreeMap::new(),
-        });
+        let upload_id = created.upload_id().unwrap_or_default().to_string();
+        // written down until completed or aborted, in case the app ends before either
+        crate::leftovers::upload_started(profile_id, bucket, key, &upload_id);
+        *mp = Some(Multipart { upload_id, part_size: part_size_for(total), parts: BTreeMap::new() });
     }
     let m = mp.as_mut().expect("set above");
     let _open = OpenGuard::new(client, bucket, key, &m.upload_id);
 
-    match send_parts(client, bucket, key, path, total, m, cancel, progress).await {
+    match send_parts(client, bucket, key, path, total, m, cancel, progress, hold).await {
         Ok(true) => {}
         Ok(false) => {
             abort(client, bucket, key, &m.upload_id).await;
@@ -371,18 +385,44 @@ async fn upload(
         .iter()
         .map(|(n, etag)| CompletedPart::builder().e_tag(etag).part_number(*n).build())
         .collect();
-    client
+    let asked = SystemTime::now();
+    let completed = client
         .complete_multipart_upload()
         .bucket(bucket)
         .key(key)
         .upload_id(&m.upload_id)
         .multipart_upload(CompletedMultipartUpload::builder().set_parts(Some(parts)).build())
         .send()
-        .await
-        .map_err(sdk_err)?;
+        .await;
+    if let Err(e) = completed {
+        let e = sdk_err(e);
+        // The answer can be lost (a timeout, a dropped connection) after the server put the file
+        // together. Aborting or retrying then would throw away a finished upload: look first.
+        if !completed_anyway(client, bucket, key, total, m.parts.len(), asked).await {
+            return Err(e);
+        }
+    }
+    crate::leftovers::upload_ended(&m.upload_id);
     *mp = None;
     progress(total, total);
     Ok(Outcome::Done)
+}
+
+/// Did a CompleteMultipartUpload whose answer went missing go through anyway? The object is
+/// there with the file's size, a multipart ETag of as many parts (`"…-3"`), and was written
+/// around the time it was asked for (servers' clocks may be up to 15 minutes off).
+async fn completed_anyway(client: &Client, bucket: &str, key: &str, total: u64, parts: usize, asked: SystemTime) -> bool {
+    let Ok(head) = client.head_object().bucket(bucket).key(key).send().await else { return false };
+    let modified = head.last_modified().and_then(|d| SystemTime::try_from(*d).ok());
+    looks_completed(head.content_length(), head.e_tag(), modified, total, parts, asked)
+}
+
+fn looks_completed(len: Option<i64>, etag: Option<&str>, modified: Option<SystemTime>, total: u64, parts: usize, asked: SystemTime) -> bool {
+    let skew = Duration::from_secs(15 * 60);
+    let size_ok = len == Some(total as i64);
+    let etag_ok = etag.is_some_and(|t| t.trim_matches('"').ends_with(&format!("-{parts}")));
+    let time_ok = modified.is_some_and(|m| m + skew >= asked);
+    size_ok && etag_ok && time_ok
 }
 
 /// Sends the parts not yet in `m.parts`, several at once. Ok(false) when cancelled.
@@ -396,6 +436,7 @@ async fn send_parts(
     m: &mut Multipart,
     cancel: &Arc<AtomicBool>,
     progress: Progress<'_>,
+    hold: Hold<'_>,
 ) -> Result<bool, String> {
     let plan = part_plan(total, m.part_size);
     let mut done_bytes: u64 = plan.iter().filter(|p| m.parts.contains_key(&p.0)).map(|p| p.2).sum();
@@ -408,6 +449,24 @@ async fn send_parts(
         if cancel.load(Ordering::Relaxed) {
             set.abort_all();
             return Ok(false);
+        }
+        // "Wi-Fi only" and the phone moved to mobile data: stop sending (the parts in flight go
+        // back in the queue), keep the parts that made it, and carry on once it is back on Wi-Fi
+        if let Some(paused) = hold
+            && crate::tuning::hold_for_wifi()
+        {
+            set.abort_all();
+            while set.join_next().await.is_some() {}
+            let again: Vec<_> = part_plan(total, m.part_size).into_iter().filter(|p| running.contains_key(&p.0)).collect();
+            running.clear();
+            for p in again.into_iter().rev() {
+                queue.push_front(p);
+            }
+            paused(done_bytes, total);
+            if !crate::tuning::wait_for_wifi(cancel).await {
+                return Ok(false);
+            }
+            progress(done_bytes, total);
         }
         // the setting is read as parts start, so a change applies to an upload already running
         while set.len() < crate::tuning::part_concurrency() {
@@ -505,6 +564,18 @@ mod tests {
     use std::time::Instant;
 
     #[test]
+    fn a_completed_upload_is_recognised_after_a_lost_answer() {
+        let asked = SystemTime::now();
+        let ago = |s: u64| Some(asked - Duration::from_secs(s));
+        assert!(looks_completed(Some(100), Some("\"abc-3\""), ago(5), 100, 3, asked));
+        assert!(!looks_completed(Some(99), Some("\"abc-3\""), ago(5), 100, 3, asked), "other size");
+        assert!(!looks_completed(Some(100), Some("\"abc\""), ago(5), 100, 3, asked), "a single PUT, not ours");
+        assert!(!looks_completed(Some(100), Some("\"abc-13\""), ago(5), 100, 3, asked), "other part count");
+        assert!(!looks_completed(Some(100), Some("\"abc-3\""), ago(3600), 100, 3, asked), "an older upload");
+        assert!(!looks_completed(None, None, None, 100, 3, asked));
+    }
+
+    #[test]
     fn parts_cover_the_file_exactly() {
         assert!(part_plan(0, 10).is_empty());
         assert_eq!(part_plan(25, 10), vec![(1, 0, 10), (2, 10, 10), (3, 20, 5)]);
@@ -587,7 +658,7 @@ mod tests {
                 if done >= MIN_PART_SIZE && !locked.swap(true, Ordering::SeqCst) {
                     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
                 }
-            })
+            }, None)
             .await;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
             crate::tuning::apply(crate::tuning::TransferPrefs::default());
@@ -597,7 +668,7 @@ mod tests {
 
             // Retry: the first progress after the start already counts the kept parts
             let seen = Mutex::new(Vec::<u64>::new());
-            let r = upload_resumable(&client, &id, "t", "testbucket", &key, &p, &cancel, &|done, _| seen.lock().unwrap().push(done))
+            let r = upload_resumable(&client, &id, "t", "testbucket", &key, &p, &cancel, &|done, _| seen.lock().unwrap().push(done), None)
                 .await
                 .unwrap();
             assert!(matches!(r, Outcome::Done));
@@ -647,7 +718,7 @@ mod tests {
                 let seen = Mutex::new(Vec::<u64>::new());
                 let started = Instant::now();
                 let cancel = Arc::new(AtomicBool::new(false));
-                let r = upload_file(&client, "testbucket", &format!("{base}{name}"), path.to_str().unwrap(), &cancel, &|done, total| {
+                let r = upload_file(&client, "t", "testbucket", &format!("{base}{name}"), path.to_str().unwrap(), &cancel, &|done, total| {
                     assert_eq!(total, size as u64);
                     seen.lock().unwrap().push(done);
                 })
@@ -671,7 +742,7 @@ mod tests {
             // a cancelled upload stops and leaves nothing behind
             let path = dir.join("big.bin");
             let stop = Arc::new(AtomicBool::new(true));
-            let r = upload_file(&client, "testbucket", &format!("{base}cancelled.bin"), path.to_str().unwrap(), &stop, &|_, _| {})
+            let r = upload_file(&client, "t", "testbucket", &format!("{base}cancelled.bin"), path.to_str().unwrap(), &stop, &|_, _| {})
                 .await
                 .unwrap();
             assert!(matches!(r, Outcome::Cancelled));

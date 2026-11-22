@@ -907,10 +907,14 @@ async fn copy_object_from(
         .set_content_language(headers.content_language)
         .set_metadata(Some(headers.metadata))
         .set_storage_class(headers.storage_class.as_deref().map(StorageClass::from))
+        // CopyObject keeps the tags, a multipart upload starts without: set them again
+        .set_tagging(crate::objects::tagging_header(client, src_bucket, src).await)
         .send()
         .await
         .map_err(sdk_err)?;
     let upload_id = upload.upload_id().unwrap_or_default().to_string();
+    // aborted if the app quits meanwhile
+    let _open = crate::multipart::OpenGuard::new(client, dst_bucket, dst, &upload_id);
     let result: Result<Vec<CompletedPart>, String> = async {
         let mut parts = Vec::new();
         let mut start = 0i64;

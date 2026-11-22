@@ -33,6 +33,10 @@ object ShareIntake {
     intent.clipData?.let { clip ->
       for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let { uris.add(it) }
     }
+    // Only what another app hands over through the system. Kybl's own files (its FileProvider,
+    // or plain paths) would be read with Kybl's own rights: another app could share Kybl's
+    // private files back into it and have them uploaded.
+    uris.retainAll { isForeign(activity, it) }
     val text = if (uris.isEmpty()) intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() else null
     val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
     if (uris.isEmpty() && text.isNullOrBlank()) return true
@@ -69,6 +73,23 @@ object ShareIntake {
       }
     }.start()
     return true
+  }
+
+  /** A `content://` URI of another app's provider (not Kybl's own, not a `file://` path). */
+  private fun isForeign(activity: Activity, uri: Uri): Boolean {
+    if (uri.scheme != "content") {
+      Log.w(TAG, "ignored a shared ${uri.scheme} URI")
+      return false
+    }
+    val authority = uri.authority ?: return false
+    val own = authority == "${activity.packageName}.fileprovider" ||
+      try {
+        activity.packageManager.resolveContentProvider(authority, 0)?.packageName == activity.packageName
+      } catch (e: Exception) {
+        false
+      }
+    if (own) Log.w(TAG, "ignored a shared URI of Kybl's own files")
+    return !own
   }
 
   private fun displayName(activity: Activity, uri: Uri): String {

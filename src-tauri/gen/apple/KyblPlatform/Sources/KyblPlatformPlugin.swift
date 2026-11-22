@@ -222,28 +222,61 @@ func initPlugin() -> Plugin {
 
 // MARK: - Called straight from Rust (src/platform/ios.rs)
 
-/// Keeps transfers going for a while after the app is left. Only touched on the main queue.
-private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+/// Keeps transfers going for a while after the app is left. iOS grants that time once per
+/// background task, and a task that ran out is gone: so while transfers run, a fresh one is asked
+/// for every time the app comes back and every time it is left again. Main queue only.
+private final class TransferTime: NSObject {
+  static let shared = TransferTime()
+  private var task: UIBackgroundTaskIdentifier = .invalid
+  /// transfers are running
+  private var wanted = false
+
+  private override init() {
+    super.init()
+    let center = NotificationCenter.default
+    for name in [UIApplication.willResignActiveNotification, UIApplication.didEnterBackgroundNotification, UIApplication.didBecomeActiveNotification] {
+      center.addObserver(self, selector: #selector(renew), name: name, object: nil)
+    }
+  }
+
+  func begin() {
+    wanted = true
+    start()
+  }
+
+  func end() {
+    wanted = false
+    stop()
+  }
+
+  @objc private func renew() {
+    if wanted { start() }
+  }
+
+  private func start() {
+    guard task == .invalid else { return }
+    task = UIApplication.shared.beginBackgroundTask(withName: "Kybl transfers") { [weak self] in
+      // out of time: iOS suspends the app now; what didn't finish resumes when it's back, and
+      // coming back asks for new time
+      self?.stop()
+    }
+  }
+
+  private func stop() {
+    guard task != .invalid else { return }
+    UIApplication.shared.endBackgroundTask(task)
+    task = .invalid
+  }
+}
 
 @_cdecl("kybl_background_begin")
 public func kyblBackgroundBegin() {
-  DispatchQueue.main.async {
-    guard backgroundTask == .invalid else { return }
-    backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Kybl transfers") {
-      // out of time: iOS suspends the app now, and what didn't finish resumes when it's back
-      UIApplication.shared.endBackgroundTask(backgroundTask)
-      backgroundTask = .invalid
-    }
-  }
+  DispatchQueue.main.async { TransferTime.shared.begin() }
 }
 
 @_cdecl("kybl_background_end")
 public func kyblBackgroundEnd() {
-  DispatchQueue.main.async {
-    guard backgroundTask != .invalid else { return }
-    UIApplication.shared.endBackgroundTask(backgroundTask)
-    backgroundTask = .invalid
-  }
+  DispatchQueue.main.async { TransferTime.shared.end() }
 }
 
 private let network: NWPathMonitor = {

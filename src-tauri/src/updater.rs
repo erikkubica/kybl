@@ -611,7 +611,29 @@ pub async fn update_restart(app: AppHandle, force: Option<bool>) -> Result<(), S
     if !force.unwrap_or(false) && !app.state::<crate::state::AppState>().cancels.lock().await.is_empty() {
         return Err("busy".into());
     }
-    restart(&app)
+    // Stop transfers and abort their uploads first, the way quitting does: the exit the restart
+    // makes then neither asks "Quit anyway?" again nor races the installer with the cleanup.
+    #[cfg(desktop)]
+    {
+        can_restart(&app)?;
+        crate::quit::clean_up(&app).await;
+    }
+    let r = restart(&app);
+    #[cfg(desktop)]
+    if r.is_err() {
+        crate::quit::stay();
+    }
+    r
+}
+
+/// What [`restart`] needs is there, checked before transfers are stopped for it.
+#[cfg(desktop)]
+fn can_restart(_app: &AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    appimage().ok_or("Not running from an AppImage")?;
+    #[cfg(windows)]
+    _app.state::<Updater>().file.lock().unwrap().as_ref().filter(|f| f.is_file()).ok_or("The installer is missing. Try again.")?;
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]

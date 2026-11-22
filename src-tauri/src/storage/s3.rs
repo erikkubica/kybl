@@ -82,6 +82,8 @@ pub fn s3_caps(provider: &str, q: Quirks) -> Capabilities {
 
 pub struct S3Backend {
     client: Client,
+    /// the connection's id, to write down multipart uploads in case the app ends mid-way (leftovers.rs)
+    profile_id: String,
     preset_bucket: Option<String>,
     quirks: Quirks,
     caps: Capabilities,
@@ -92,6 +94,7 @@ impl S3Backend {
         let quirks = Quirks::for_provider(&profile.provider);
         Self {
             client,
+            profile_id: profile.id.clone(),
             preset_bucket: profile.bucket.clone().filter(|b| !b.trim().is_empty()),
             quirks,
             caps: s3_caps(&profile.provider, quirks),
@@ -349,7 +352,7 @@ impl Storage for S3Backend {
         match src {
             WriteSource::Path(p) => {
                 let p = p.to_str().ok_or_else(|| StorageError::other("This file's name can't be read."))?.to_string();
-                match multipart::upload_file(&self.client, root, path, &p, cancel, progress).await? {
+                match multipart::upload_file(&self.client, &self.profile_id, root, path, &p, cancel, progress).await? {
                     Outcome::Done => {}
                     Outcome::Cancelled => return Ok(WriteOutcome::Cancelled),
                 }
