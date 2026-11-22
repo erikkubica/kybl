@@ -6,7 +6,7 @@
 //! uploads are aborted (so their parts stop costing storage) and partial downloads removed.
 
 use std::{
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU8, Ordering},
     time::Duration,
 };
 
@@ -15,16 +15,27 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use crate::state::AppState;
 
-/// Set once the person confirmed (or nothing was running): the exit that follows goes through.
-static QUITTING: AtomicBool = AtomicBool::new(false);
+/// Where quitting is at: [`RUNNING`], [`CLEANING`] (confirmed, or nothing was running: stopping
+/// transfers and aborting uploads) or [`LEAVING`] (cleaned up: the exit that follows goes through).
+static STAGE: AtomicU8 = AtomicU8::new(RUNNING);
+const RUNNING: u8 = 0;
+const CLEANING: u8 = 1;
+const LEAVING: u8 = 2;
 /// A prompt is already on screen; a second ⌘Q doesn't stack another.
 static ASKING: AtomicBool = AtomicBool::new(false);
 
 /// How long aborting open uploads may hold up quitting.
 const CLEANUP_LIMIT: Duration = Duration::from_secs(3);
 
+/// Quitting is under way (cleaning up, or done with that).
 pub fn quitting() -> bool {
-    QUITTING.load(Ordering::SeqCst)
+    STAGE.load(Ordering::SeqCst) != RUNNING
+}
+
+/// Cleaned up: an exit request now ends the app. Before that, while cleaning up, exit requests
+/// are held back; the cleanup exits on its own when done (within [`CLEANUP_LIMIT`] or so).
+pub fn leaving() -> bool {
+    STAGE.load(Ordering::SeqCst) == LEAVING
 }
 
 /// Transfers and bucket operations still running.
@@ -48,8 +59,8 @@ fn question(transfers: usize, jobs: usize) -> String {
 
 /// Quits, asking first when something is running.
 pub fn request(app: &AppHandle) {
+    // already on the way out: a second ⌘Q changes nothing, the cleanup ends the app shortly
     if quitting() {
-        app.exit(0);
         return;
     }
     let (transfers, jobs) = (crate::transfers::active_count(), crate::commands::running_jobs());
@@ -81,11 +92,26 @@ pub fn request(app: &AppHandle) {
 
 /// Stops everything, cleans up (waiting at most [`CLEANUP_LIMIT`]) and exits.
 fn exit_cleanly(app: AppHandle) {
-    QUITTING.store(true, Ordering::SeqCst);
+    STAGE.store(CLEANING, Ordering::SeqCst);
     tauri::async_runtime::spawn(async move {
-        crate::transfers::shutdown(&app.state::<AppState>(), CLEANUP_LIMIT).await;
+        clean_up(&app).await;
         app.exit(0);
     });
+}
+
+/// Stops every transfer and bucket operation, aborts open and kept multipart uploads and removes
+/// partial downloads (waiting at most [`CLEANUP_LIMIT`]); exit requests go through afterwards.
+/// Also run before an update restarts the app, so that neither asks again nor leaves parts behind.
+pub async fn clean_up(app: &AppHandle) {
+    STAGE.store(CLEANING, Ordering::SeqCst);
+    crate::transfers::shutdown(&app.state::<AppState>(), CLEANUP_LIMIT).await;
+    STAGE.store(LEAVING, Ordering::SeqCst);
+}
+
+/// The exit after [`clean_up`] didn't happen (an update's installer wouldn't start): the app
+/// carries on, and quitting works as usual again.
+pub fn stay() {
+    STAGE.store(RUNNING, Ordering::SeqCst);
 }
 
 #[cfg(test)]

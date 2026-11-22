@@ -44,6 +44,20 @@ use tauri::{Emitter, WindowEvent};
 #[cfg(desktop)]
 const HIDDEN_ARG: &str = "--hidden";
 
+/// Tracks the main window's focus. True when it comes back after at least 30 s away, the time
+/// after which what the page shows may be out of date.
+#[cfg(desktop)]
+fn focus_back_after_a_while(focused: bool) -> bool {
+    use std::{sync::Mutex, time::{Duration, Instant}};
+    static LEFT: Mutex<Option<Instant>> = Mutex::new(None);
+    let mut left = LEFT.lock().unwrap();
+    if !focused {
+        left.get_or_insert_with(Instant::now);
+        return false;
+    }
+    left.take().is_some_and(|t| t.elapsed() >= Duration::from_secs(30))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -72,9 +86,12 @@ pub fn run() {
                     quit::request(app);
                 }
             }
-            // the page refreshes what it shows when the window comes back to the front
-            WindowEvent::Focused(true) if window.label() == "main" => {
-                let _ = window.emit("app-resumed", ());
+            // the page refreshes what it shows when the window comes back to the front after a
+            // while away (not on every click between windows)
+            WindowEvent::Focused(focused) if window.label() == "main" => {
+                if focus_back_after_a_while(*focused) {
+                    let _ = window.emit("app-resumed", ());
+                }
             }
             _ => {}
         });
@@ -222,8 +239,13 @@ pub fn run() {
             RunEvent::ExitRequested { code: None, api, .. } if tray::REAPING.swap(false, Ordering::SeqCst) => {
                 api.prevent_exit();
             }
-            // any other way out while transfers run asks first (see quit.rs)
-            RunEvent::ExitRequested { api, .. } if !quit::quitting() && quit::busy() > 0 => {
+            // cleaning up on the way out: that ends the app itself in a moment
+            RunEvent::ExitRequested { api, .. } if quit::quitting() && !quit::leaving() => {
+                api.prevent_exit();
+            }
+            // any other way out goes through quit.rs: it asks first while something runs, and
+            // either way aborts uploads kept for Retry and removes partial downloads
+            RunEvent::ExitRequested { api, .. } if !quit::quitting() => {
                 api.prevent_exit();
                 quit::request(_app);
             }
