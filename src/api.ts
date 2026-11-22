@@ -160,9 +160,23 @@ export const api = {
   /**
    * Files other apps shared into Kybl (Android share sheet / iOS) that are waiting for an
    * upload destination. Taking them clears the queue. New ones also arrive as a
-   * `shared-files` event with the same payload.
+   * `shared-files` event with the same payload; the event doesn't clear the queue, so on the
+   * event call `takeSharedFiles()` (and once at start-up) and use what it returns.
    */
   takeSharedFiles: () => invoke<{ path: string; name: string; size: number }[]>("take_shared_files"),
+
+  // App lock (additive, native round): unlock prompt + privacy screen. The UI owns the setting.
+  /**
+   * Face ID / Touch ID / fingerprint, falling back to the device passcode. Resolves true when
+   * unlocked, false when cancelled; rejects when the phone has no screen lock (and on desktop).
+   */
+  biometricUnlock: (reason: string) => invoke<boolean>("biometric_unlock", { reason }),
+  /**
+   * While app lock is on: Android keeps the app out of the app switcher's preview and
+   * screenshots (FLAG_SECURE); iOS blurs it while inactive. Call at start-up with the setting
+   * and whenever it changes. No-op on desktop.
+   */
+  setPrivacyScreen: (enabled: boolean) => invoke<void>("set_privacy_screen", { enabled }),
 
   /** Transfer tuning; the backend applies changes to new transfers right away. */
   transferPrefs: () => invoke<TransferPrefs>("get_transfer_prefs"),

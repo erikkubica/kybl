@@ -22,6 +22,8 @@ class TransferSnapshot {
   var ok: Int = 0
   var failed: Int = 0
   var kind: String = "download"
+  /** where downloads went, as a file manager shows it ("Download/Kybl") */
+  var savedTo: String = ""
 }
 
 /**

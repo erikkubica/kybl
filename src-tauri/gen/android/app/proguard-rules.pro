@@ -27,3 +27,17 @@
 -keep class app.kybl.mobile.MainActivity {
     public static int screens();
 }
+# Called from Rust over JNI (src/platform/android.rs): the storage / network questions and the
+# Keystore sealing of the secret keys.
+-keep class app.kybl.mobile.Platform {
+    public static java.lang.String storage(android.content.Context);
+    public static boolean isMetered(android.content.Context);
+}
+-keep class app.kybl.mobile.SecretBox {
+    public static byte[] seal(byte[]);
+    public static byte[] open(byte[]);
+}
+# Implemented in Rust: the names must match the exported Java_app_kybl_mobile_KyblNative_* symbols.
+-keep class app.kybl.mobile.KyblNative {
+    native <methods>;
+}

@@ -47,6 +47,14 @@ targets:
         LSRequiresIPhoneOS: true
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+        # "Open in Kybl" / "Copy to Kybl" for any file (src/platform/ios.rs)
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Any file
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.item, public.data, public.content]
+        NSFaceIDUsageDescription: Kybl uses Face ID to unlock when app lock is on.
+        NSPhotoLibraryAddUsageDescription: Kybl saves the photos and videos you choose to your library.
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
         UISupportedInterfaceOrientations:
