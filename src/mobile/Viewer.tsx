@@ -8,10 +8,11 @@
  * and lets go of its stream.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, errMessage, errSummary } from "../api";
+import { errMessage, errSummary } from "../api";
 import { Icon } from "../Icons";
 import { classify, formatBytes, isPlayableVideo } from "../format";
 import { canThumb, cachedThumb, loadThumb } from "../thumbs";
+import { playableUrl } from "../media";
 import type { Entry } from "../types";
 import { MIcon, type MIconName } from "./icons";
 
@@ -99,8 +100,7 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onInd
       const e = items[i];
       if (!e || urls[e.key] || failed[e.key]) continue;
       if (isVideo(e) && !isPlayableVideo(e.name)) continue;
-      api
-        .presign(profileId, bucket, e.key, 3600)
+      playableUrl(profileId, bucket, e)
         .then((u) => live && setUrls((m) => ({ ...m, [e.key]: u })))
         .catch((err) => live && setFailed((m) => ({ ...m, [e.key]: errSummary(errMessage(err)) })));
     }
