@@ -127,17 +127,28 @@ pub fn received_upto(range_header: Option<&str>) -> u64 {
         .unwrap_or(0)
 }
 
-/// A download answer as a [`ReadStream`]. `asked` is the range that was requested: a server that
-/// sent the whole file anyway (200) reports no range, which callers that resume check.
+/// A download answer as a [`ReadStream`]. `asked` is the range that was requested. `range` says
+/// exactly what the body holds: a 206's Content-Range (which may differ from `asked`: callers
+/// that need a range check it), or None when the server sent the whole file anyway (200, with
+/// `total` its size). A 206 that doesn't say which bytes it holds (no Content-Range, or several
+/// ranges in one multipart body) can't be used: its body fails when read.
 pub fn read_stream(res: reqwest::Response, asked: Option<&Range<u64>>, etag: Option<String>) -> ReadStream {
     let status = res.status().as_u16();
     let header = |n: &str| res.headers().get(n).and_then(|v| v.to_str().ok()).map(str::to_string);
     let len = res.content_length().or_else(|| header("content-length").and_then(|v| v.parse().ok()));
     let content_type = header("content-type");
     let etag = etag.or_else(|| header("etag"));
+    let unusable = |say: &'static str, etag, content_type| {
+        let body: ByteStream = Box::pin(futures_util::stream::once(async move { Err(io::Error::other(say)) }));
+        ReadStream { body, len: None, total: None, range: asked.cloned(), etag, content_type }
+    };
     let (range, total) = match (status, header("content-range").and_then(|v| parse_content_range(&v))) {
+        (206, Some((r, _))) if len.is_some_and(|l| l != r.end - r.start) => {
+            return unusable("The server sent a different amount of the file than it said.", etag, content_type);
+        }
         (206 | 416, Some((r, t))) => (Some(r), t),
         (416, None) => (asked.map(|a| a.start..a.start), None),
+        (206, None) => return unusable("The server sent part of the file without saying which part.", etag, content_type),
         _ => (None, len),
     };
     let body: ByteStream = if status == 416 {
@@ -392,6 +403,44 @@ mod tests {
         assert_eq!(parse_content_range("items 0-1/2"), None);
         assert_eq!(received_upto(Some("bytes=0-524287")), 524_288);
         assert_eq!(received_upto(None), 0);
+    }
+
+    /// `range` says what the body really holds, whatever was asked for; answers that don't say
+    /// can't be read (a resumed copy would otherwise splice the wrong bytes in).
+    #[tokio::test]
+    async fn read_streams_report_the_range_the_server_sent() {
+        use crate::oauth::mock::{Mock, Resp};
+        let data: Vec<u8> = (0..100u8).collect();
+        let mock = Mock::start(move |req| match req.path.as_str() {
+            "/exact" => Resp::bytes(206, data[10..20].to_vec()).header("content-range", "bytes 10-19/100"),
+            "/other" => Resp::bytes(206, data[0..10].to_vec()).header("content-range", "bytes 0-9/100"),
+            "/whole" => Resp::bytes(200, data.clone()),
+            "/unsaid" => Resp::bytes(206, data[10..20].to_vec()),
+            "/short" => Resp::bytes(206, data[10..15].to_vec()).header("content-range", "bytes 10-19/100"),
+            _ => Resp::status(404),
+        })
+        .await;
+        let asked = 10..20;
+        let get = |p: &str| {
+            let url = format!("{}{p}", mock.base);
+            async move { crate::storage::net::http().get(url).header("range", "bytes=10-19").send().await.unwrap() }
+        };
+
+        let r = read_stream(get("/exact").await, Some(&asked), None);
+        assert_eq!((r.range.clone(), r.total), (Some(10..20), Some(100)));
+        assert_eq!(r.collect(1000).await.unwrap(), (10..20u8).collect::<Vec<_>>());
+
+        let r = read_stream(get("/other").await, Some(&asked), None);
+        assert_eq!(r.range, Some(0..10), "the range sent, not the one asked for");
+
+        let r = read_stream(get("/whole").await, Some(&asked), None);
+        assert_eq!((r.range.clone(), r.total), (None, Some(100)), "the whole file came");
+
+        let r = read_stream(get("/unsaid").await, Some(&asked), None);
+        assert!(r.collect(1000).await.is_err(), "a part without its place can't be used");
+
+        let r = read_stream(get("/short").await, Some(&asked), None);
+        assert!(r.collect(1000).await.is_err(), "less than the range it claims");
     }
 
     #[test]

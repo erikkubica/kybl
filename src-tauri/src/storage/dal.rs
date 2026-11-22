@@ -105,6 +105,19 @@ fn millis(m: &Metadata) -> Option<i64> {
     m.last_modified().and_then(|t| SystemTime::from(t).duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64)
 }
 
+/// A Content-MD5 as Azure and Google Cloud send it (base64 of the 16 bytes) as lowercase hex, the
+/// form every hash in Kybl takes. Hex is passed through; anything else is no hash at all (a wrong
+/// one would fail every verified copy, or worse, pass a bad one).
+pub fn md5_hex(v: &str) -> Option<String> {
+    use base64::Engine;
+    let v = v.trim();
+    if v.len() == 32 && v.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Some(v.to_ascii_lowercase());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD.decode(v).ok()?;
+    (bytes.len() == 16).then(|| bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
 /// OpenDAL's root is "/"; ours is "".
 fn dal_path(key: &str) -> String {
     if key.trim_matches('/').is_empty() { "/".to_string() } else { key.trim_start_matches('/').to_string() }
@@ -116,7 +129,7 @@ impl DalBackend {
     }
 
     fn entry(key: String, m: &Metadata) -> Entry {
-        let md5 = m.content_md5().map(str::to_string);
+        let md5 = m.content_md5().and_then(md5_hex);
         Entry {
             key,
             size: m.content_length() as i64,
@@ -136,39 +149,110 @@ impl DalBackend {
         }
     }
 
-    /// Every file below `dir` (recursive listing).
-    async fn files_below(&self, dir: &str) -> SResult<Vec<String>> {
+    async fn copy_any(&self, from: &str, to: &str, is_dir: bool) -> SResult<()> {
+        if !is_dir {
+            return self.copy_key(&dal_path(from), &dal_path(to)).await;
+        }
+        copy_folder(self, from, to).await.map(|_| ())
+    }
+}
+
+/// What folder copies and moves need of a prefix store, so their rules can be tested without one.
+#[async_trait]
+trait Keys: Sync {
+    /// Every key below the prefix `dir`: (key, is a folder marker).
+    async fn keys_below(&self, dir: &str) -> SResult<Vec<(String, bool)>>;
+    async fn copy_key(&self, from: &str, to: &str) -> SResult<()>;
+    async fn make_marker(&self, dir: &str) -> SResult<()>;
+    /// Deletes one key; one that is already gone is fine.
+    async fn delete_key(&self, key: &str) -> SResult<()>;
+}
+
+#[async_trait]
+impl Keys for DalBackend {
+    async fn keys_below(&self, dir: &str) -> SResult<Vec<(String, bool)>> {
         let opts = ListOptions { recursive: true, ..Default::default() };
         let mut l = self.op.lister_options(&dal_path(dir), opts).await.map_err(|e| dal_error(e, "list"))?;
         let mut out = Vec::new();
         while let Some(e) = l.try_next().await.map_err(|e| dal_error(e, "list"))? {
-            if e.metadata().mode() == EntryMode::FILE {
-                out.push(e.path().to_string());
+            let key = e.path().trim_start_matches('/').to_string();
+            match e.metadata().mode() {
+                EntryMode::FILE => out.push((key, false)),
+                EntryMode::DIR if !key.is_empty() => out.push((key, true)),
+                _ => {}
             }
         }
         Ok(out)
     }
 
-    async fn copy_any(&self, from: &str, to: &str, is_dir: bool) -> SResult<()> {
-        if !is_dir {
-            self.op.copy(&dal_path(from), &dal_path(to)).await.map_err(|e| dal_error(e, "copy"))?;
-            return Ok(());
-        }
-        let (src, dst) = (dir_prefix(from), dir_prefix(to));
-        if dst.starts_with(&src) {
-            return Err(StorageError::other("Cannot copy a folder into itself"));
-        }
-        let files = self.files_below(&src).await?;
-        let copies = futures_util::stream::iter(files.into_iter().map(|f| {
-            let target = format!("{dst}{}", &f[src.len().min(f.len())..]);
-            async move { self.op.copy(&f, &target).await.map_err(|e| dal_error(e, "copy")) }
-        }))
-        .buffer_unordered(8)
-        .collect::<Vec<_>>()
-        .await;
-        copies.into_iter().collect::<SResult<Vec<_>>>()?;
-        Ok(())
+    async fn copy_key(&self, from: &str, to: &str) -> SResult<()> {
+        self.op.copy(from, to).await.map(|_| ()).map_err(|e| dal_error(e, "copy"))
     }
+
+    async fn make_marker(&self, dir: &str) -> SResult<()> {
+        self.op.create_dir(dir).await.map_err(|e| dal_error(e, "make the folder"))
+    }
+
+    async fn delete_key(&self, key: &str) -> SResult<()> {
+        match self.op.delete(key).await {
+            Err(e) if e.kind() != DalKind::NotFound => Err(dal_error(e, "delete")),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// Copies everything below the folder `from` to `to` on the server. Answers the source keys that
+/// were copied (files, then folder markers) — only once every one of them made it.
+async fn copy_folder(k: &(impl Keys + ?Sized), from: &str, to: &str) -> SResult<Vec<String>> {
+    let (src, dst) = (dir_prefix(from), dir_prefix(to));
+    if dst.starts_with(&src) {
+        return Err(StorageError::other("Cannot copy a folder into itself"));
+    }
+    let listed = k.keys_below(&src).await?;
+    let target = |key: &str| format!("{dst}{}", &key[src.len().min(key.len())..]);
+    let (markers, files): (Vec<_>, Vec<_>) = listed.into_iter().filter(|(key, _)| key.starts_with(&src)).partition(|(_, m)| *m);
+    let copies = futures_util::stream::iter(files.into_iter().map(|(f, _)| async move {
+        let r = k.copy_key(&f, &target(&f)).await;
+        (f, r)
+    }))
+    .buffer_unordered(8)
+    .collect::<Vec<_>>()
+    .await;
+    let mut done = Vec::with_capacity(copies.len() + markers.len());
+    let mut failed: Option<StorageError> = None;
+    for (f, r) in copies {
+        match r {
+            Ok(()) => done.push(f),
+            Err(e) => failed = failed.or(Some(e)),
+        }
+    }
+    if let Some(e) = failed {
+        return Err(e);
+    }
+    // empty folders come along too
+    for (m, _) in markers {
+        k.make_marker(&target(&m)).await?;
+        done.push(m);
+    }
+    Ok(done)
+}
+
+/// Moves the folder `from` to `to`: copies, then deletes exactly the keys it copied — never a file
+/// it didn't copy (one added since the listing, or one whose copy failed: then nothing is deleted).
+async fn move_folder(k: &(impl Keys + ?Sized), from: &str, to: &str) -> SResult<()> {
+    let copied = copy_folder(k, from, to).await?;
+    // files first, then the markers deepest first, so a failure never leaves files in a folder
+    // whose marker is gone
+    let (mut markers, files): (Vec<_>, Vec<_>) = copied.into_iter().partition(|key| key.ends_with('/'));
+    markers.sort_by_key(|m| std::cmp::Reverse(m.len()));
+    let removals = futures_util::stream::iter(files.into_iter().map(|f| async move { k.delete_key(&f).await })).buffer_unordered(8).collect::<Vec<_>>().await;
+    removals.into_iter().collect::<SResult<Vec<_>>>().map_err(|e| e.with_detail("Copied, but removing the original failed."))?;
+    // the folder's own marker last (a listing may or may not include it)
+    markers.push(dir_prefix(from));
+    for m in &markers {
+        k.delete_key(m).await.map_err(|e| e.with_detail("Copied, but removing the original failed."))?;
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -372,13 +456,12 @@ impl Storage for DalBackend {
         if key_parts(&from.path)?.is_empty() {
             return Err(top_refused());
         }
-        self.copy_any(&from.path, &to.path, is_dir).await?;
-        let r = if is_dir {
-            self.op.delete_options(&dir_prefix(&from.path), DeleteOptions { recursive: true, ..Default::default() }).await
+        if is_dir {
+            move_folder(self, &from.path, &to.path).await?;
         } else {
-            self.op.delete(&from.path).await
-        };
-        r.map_err(|e| dal_error(e, "delete").with_detail("Copied, but removing the original failed."))?;
+            self.copy_any(&from.path, &to.path, false).await?;
+            self.delete_key(&dal_path(&from.path)).await.map_err(|e| e.with_detail("Copied, but removing the original failed."))?;
+        }
         self.pages.forget(&from.path);
         self.pages.forget(&to.path);
         Ok(())
@@ -427,5 +510,93 @@ mod tests {
         assert!(gcs(&g, None).is_err());
         assert_eq!(dal_path(""), "/");
         assert_eq!(dal_path("a/b/"), "a/b/");
+    }
+
+    #[test]
+    fn content_md5s_become_hex() {
+        // MD5("hello"), as Azure's Content-MD5 header and GCS's md5Hash send it
+        assert_eq!(md5_hex("XUFAKrxLKna5cZ2REBfFkg==").as_deref(), Some("5d41402abc4b2a76b9719d911017c592"));
+        assert_eq!(md5_hex("5D41402ABC4B2A76B9719D911017C592").as_deref(), Some("5d41402abc4b2a76b9719d911017c592"));
+        assert_eq!(md5_hex("not a hash"), None);
+        assert_eq!(md5_hex("aGVsbG8="), None, "base64, but not 16 bytes");
+        let mut b = opendal::MetadataBuilder::file(5);
+        b.content_md5("XUFAKrxLKna5cZ2REBfFkg==");
+        let m = b.build();
+        let e = DalBackend::entry("hello.txt".into(), &m);
+        assert_eq!(e.hashes.md5.as_deref(), Some("5d41402abc4b2a76b9719d911017c592"), "the MD5 of the bytes, as copies compare it");
+    }
+
+    /// A prefix store in memory: copies of keys in `fail` fail, and `late` is added right after
+    /// the first listing (someone uploading while the folder moves).
+    #[derive(Default)]
+    struct Fake {
+        keys: std::sync::Mutex<std::collections::BTreeSet<String>>,
+        fail: Vec<String>,
+        late: Option<String>,
+    }
+
+    #[async_trait]
+    impl Keys for Fake {
+        async fn keys_below(&self, dir: &str) -> SResult<Vec<(String, bool)>> {
+            let mut keys = self.keys.lock().unwrap();
+            let out = keys.iter().filter(|k| k.starts_with(dir)).map(|k| (k.clone(), k.ends_with('/'))).collect();
+            if let Some(l) = &self.late {
+                keys.insert(l.clone());
+            }
+            Ok(out)
+        }
+        async fn copy_key(&self, from: &str, to: &str) -> SResult<()> {
+            if self.fail.iter().any(|f| f == from) {
+                return Err(StorageError::other("copy failed"));
+            }
+            let mut keys = self.keys.lock().unwrap();
+            if !keys.contains(from) {
+                return Err(StorageError::not_found());
+            }
+            keys.insert(to.to_string());
+            Ok(())
+        }
+        async fn make_marker(&self, dir: &str) -> SResult<()> {
+            self.keys.lock().unwrap().insert(dir.to_string());
+            Ok(())
+        }
+        async fn delete_key(&self, key: &str) -> SResult<()> {
+            self.keys.lock().unwrap().remove(key);
+            Ok(())
+        }
+    }
+
+    fn fake(keys: &[&str], fail: &[&str], late: Option<&str>) -> Fake {
+        Fake {
+            keys: std::sync::Mutex::new(keys.iter().map(|k| k.to_string()).collect()),
+            fail: fail.iter().map(|k| k.to_string()).collect(),
+            late: late.map(str::to_string),
+        }
+    }
+
+    fn keys(f: &Fake) -> Vec<String> {
+        f.keys.lock().unwrap().iter().cloned().collect()
+    }
+
+    #[tokio::test]
+    async fn folder_moves_delete_only_what_they_copied() {
+        // everything copies: the originals go, empty folders come along
+        let f = fake(&["a/", "a/1.txt", "a/empty/", "a/sub/2.txt", "ab.txt"], &[], None);
+        move_folder(&f, "a/", "b/").await.unwrap();
+        assert_eq!(keys(&f), vec!["ab.txt", "b/", "b/1.txt", "b/empty/", "b/sub/2.txt"]);
+
+        // a file uploaded into the folder after it was listed was never copied: it stays
+        let f = fake(&["a/1.txt"], &[], Some("a/new.txt"));
+        move_folder(&f, "a/", "b/").await.unwrap();
+        assert_eq!(keys(&f), vec!["a/new.txt", "b/1.txt"]);
+
+        // one copy fails: nothing is deleted, and the move says so
+        let f = fake(&["a/1.txt", "a/2.txt"], &["a/2.txt"], None);
+        assert!(move_folder(&f, "a/", "b/").await.is_err());
+        let left = keys(&f);
+        assert!(left.contains(&"a/1.txt".to_string()) && left.contains(&"a/2.txt".to_string()), "{left:?}");
+        assert!(!left.contains(&"b/2.txt".to_string()));
+
+        assert!(copy_folder(&f, "a/", "a/inner/").await.is_err(), "not into itself");
     }
 }
