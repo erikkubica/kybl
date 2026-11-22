@@ -1,0 +1,71 @@
+/**
+ * A file fetched into the app's temporary folder, for handing to other apps: "Open in…", sharing
+ * the file itself, and "Save to Photos". These don't go through the Transfers list (they are a
+ * means to an end, and the temporary folder is cleaned when the app starts); progress comes from
+ * the same `transfer` events, matched by id.
+ */
+import { listen } from "@tauri-apps/api/event";
+import { api, errMessage } from "../api";
+import type { TransferEvent } from "../types";
+
+type Source = { profileId: string; bucket: string; key: string; name: string; etag?: string | null; size: number };
+
+/** Files already fetched this session, so Share after Open in… doesn't download twice. */
+const done = new Map<string, string>();
+const idOf = (s: Source) => `${s.profileId}|${s.bucket}|${s.key}|${s.etag ?? ""}|${s.size}`;
+
+export type LocalCopy = {
+  /** the local path once it is there */
+  path: Promise<string>;
+  cancel: () => void;
+};
+
+let tempDir: Promise<string> | null = null;
+
+/** Starts fetching; `onProgress` gets 0..1 (or null while the size is unknown). */
+export function localCopy(src: Source, onProgress?: (frac: number | null) => void): LocalCopy {
+  const have = done.get(idOf(src));
+  if (have) return { path: Promise.resolve(have), cancel: () => {} };
+  const id = crypto.randomUUID();
+  let cancelled = false;
+  const path = (async () => {
+    tempDir ??= api.tempFolder().catch((e) => {
+      tempDir = null;
+      throw e;
+    });
+    const dir = (await tempDir).replace(/[\\/]$/, "");
+    // a folder per file keeps the original name, which is what the other app shows
+    const dest = `${dir}/share/${id.slice(0, 8)}/${src.name.replace(/[\\/]/g, "_")}`;
+    let finish: (ok: boolean, err?: string) => void = () => {};
+    const ended = new Promise<void>((ok, fail) => {
+      finish = (good, err) => (good ? ok() : fail(new Error(err ?? "Download failed")));
+    });
+    const off = await listen<TransferEvent>("transfer", (e) => {
+      const ev = e.payload;
+      if (ev.id !== id) return;
+      if (ev.state === "running") onProgress?.(ev.total ? ev.bytes / ev.total : null);
+      else if (ev.state === "done") finish(true);
+      else if (ev.state === "error") finish(false, ev.error ?? undefined);
+      else if (ev.state === "cancelled") finish(false, "Cancelled");
+    });
+    try {
+      if (cancelled) throw new Error("Cancelled");
+      const written = await api.startDownload(id, src.profileId, src.bucket, src.key, dest, true);
+      await ended;
+      const at = written || dest;
+      done.set(idOf(src), at);
+      return at;
+    } catch (e) {
+      throw new Error(errMessage(e));
+    } finally {
+      off();
+    }
+  })();
+  return {
+    path,
+    cancel: () => {
+      cancelled = true;
+      api.cancelTransfer(id).catch(() => {});
+    },
+  };
+}

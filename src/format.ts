@@ -76,7 +76,7 @@ export type FileClass =
   | "doc"
   | "other";
 
-const IMAGE = ["jpg", "jpeg", "png", "gif", "webp", "avif", "svg", "bmp", "ico", "heic", "tif", "tiff"];
+const IMAGE = ["jpg", "jpeg", "png", "gif", "webp", "avif", "svg", "bmp", "ico", "heic", "heif", "tif", "tiff"];
 const VIDEO = ["mp4", "mov", "m4v", "webm", "mkv", "avi", "mts", "m2ts", "3gp", "mpg", "mpeg", "wmv"];
 const AUDIO = ["mp3", "m4a", "wav", "flac", "ogg", "aac", "opus"];
 const TEXT = [
@@ -156,9 +156,45 @@ export function kindLabel(name: string, isFolder: boolean): string {
   }
 }
 
+/**
+ * Apple's WebKit (iPhone, iPad, and the Mac's web view) shows HEIC/HEIF photos itself since
+ * Safari 17; other web views can't. The platform check keeps Chrome-based views out (they claim
+ * "Macintosh" too), and `font-size-adjust` shipped in the same WebKit release as HEIC images, so
+ * it stands in for a version check (web view user agents don't carry the OS version on a Mac).
+ */
+export const HEIC_IN_WEBVIEW: boolean = (() => {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  const apple = /iPhone|iPad|iPod|Macintosh/.test(ua) && !/Chrome|Chromium|CriOS|Edg|Android|Firefox/.test(ua);
+  try {
+    return apple && typeof CSS !== "undefined" && CSS.supports("font-size-adjust", "0.5");
+  } catch {
+    return false;
+  }
+})();
+
+export const isHeic = (name: string) => {
+  const e = extOf(name);
+  return e === "heic" || e === "heif";
+};
+
 /** Browsers/webviews can display these image types natively. */
 export function isWebImage(name: string): boolean {
+  if (isHeic(name)) return HEIC_IN_WEBVIEW;
   return ["jpg", "jpeg", "png", "gif", "webp", "avif", "svg", "bmp", "ico"].includes(extOf(name));
+}
+
+/**
+ * Videos this web view can't play at all, so the app offers "Open in…" straight away instead of
+ * a dead player. Apple's WebKit plays mp4/mov/m4v (and webm on recent versions); Android's
+ * Chromium also plays mkv and 3gp. Anything else that fails still gets the fallback once the
+ * player reports an error.
+ */
+export function isPlayableVideo(name: string): boolean {
+  const e = extOf(name);
+  if (["avi", "wmv", "mpg", "mpeg", "mts", "m2ts"].includes(e)) return false;
+  if (e === "mkv" || e === "3gp") return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+  return true;
 }
 
 export function baseName(key: string): string {

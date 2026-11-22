@@ -371,6 +371,8 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     }
     case "temp_folder":
       return "/tmp/kybl";
+    case "write_temp_file":
+      return `/tmp/kybl/capture-${Date.now()}.jpg`;
     case "open_local":
     case "reveal_local":
     case "share_files":

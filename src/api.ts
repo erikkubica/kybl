@@ -164,6 +164,14 @@ export const api = {
    */
   takeSharedFiles: () => invoke<{ path: string; name: string; size: number }[]>("take_shared_files"),
 
+  /**
+   * Phones: writes bytes the web view holds (a photo or video just taken with the camera picker)
+   * to a new file in the temporary folder and resolves to its path, for `startUpload`. The bytes
+   * go as the raw request body; the file name (URI-encoded) in the `x-file-name` header.
+   */
+  writeTempFile: (name: string, data: ArrayBuffer) =>
+    invoke<string>("write_temp_file", new Uint8Array(data), { headers: { "x-file-name": encodeURIComponent(name) } }),
+
   /** Transfer tuning; the backend applies changes to new transfers right away. */
   transferPrefs: () => invoke<TransferPrefs>("get_transfer_prefs"),
   setTransferPrefs: (p: Partial<TransferPrefs>) => invoke<TransferPrefs>("set_transfer_prefs", { prefs: p }),
