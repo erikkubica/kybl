@@ -124,7 +124,6 @@ export function BrowserPane(p: BrowserPaneProps) {
         onSearch={actions.doSearch}
         onStopSearch={ent.sr.stop}
         onClearSearch={actions.clearSearch}
-        onClearSelection={clearSel}
         onTogglePreview={p.onTogglePreview}
         dual={p.dual}
         onToggleDual={p.onToggleDual}

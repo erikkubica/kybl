@@ -4601,3 +4601,26 @@ input[type="range"]:focus-visible {
   font-style: normal;
   line-height: 1.35;
 }
+
+/* the status line's "clear selection" (the toolbar has no selection chip) */
+.statusbar .sel-clear {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  vertical-align: -3px;
+  cursor: pointer;
+}
+.statusbar .sel-clear:hover {
+  background: var(--hover);
+}
+.statusbar .sel-clear:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-ring);
+}

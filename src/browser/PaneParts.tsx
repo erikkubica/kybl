@@ -89,6 +89,9 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
         <span className="sel">
           · {selected.size} selected
           {selectedEntries.some(hasSize) ? ` (${formatBytes(sumSizes(selectedEntries))})` : ""}
+          <button className="sel-clear" onClick={() => sel.clear()} title="Clear selection (Esc)" aria-label="Clear selection">
+            <Icon name="x" size={10} />
+          </button>
         </span>
       )}
       {hereSize && !search && !stale && (

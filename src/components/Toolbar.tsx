@@ -50,7 +50,6 @@ export function Toolbar({
   onStopSearch,
   onClearSearch,
   onTogglePreview,
-  onClearSelection,
   dual = false,
   onToggleDual,
   onGoTo,
@@ -114,7 +113,6 @@ export function Toolbar({
   onStopSearch: () => void;
   onClearSearch: () => void;
   onTogglePreview: () => void;
-  onClearSelection: () => void;
   /** two panes side by side are on screen */
   dual?: boolean;
   /** switches between one pane and two (the button shows only with this) */
@@ -230,12 +228,7 @@ export function Toolbar({
           <>
             <div className="tb-sep" />
             <div className="sel-actions">
-              <span className="sel-chip">
-                {selectionCount} selected
-                <button onClick={onClearSelection} title="Clear selection (Esc)" aria-label="Clear selection">
-                  <Icon name="x" size={11} />
-                </button>
-              </span>
+              {/* the count (and a ×) sits in the status line under the list */}
               {onDownload && (
                 <button className="tool" onClick={onDownload} title="Download">
                   <Icon name="download" />
