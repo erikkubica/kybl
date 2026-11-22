@@ -136,6 +136,7 @@ export function BrowserPane(p: BrowserPaneProps) {
                   searchMode={!!search || !!filter}
                   prefix={search ? search.loc.prefix : prefix}
                   tileSize={pane.tile}
+                  compact={pane.compact}
                   profileId={profile.id}
                   bucket={bucket}
                   autoFocus={active}

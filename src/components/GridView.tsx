@@ -127,6 +127,7 @@ export function GridView({
   prefix,
   tile,
   tileSize,
+  compact = false,
   profileId,
   bucket,
   emptyAction,
@@ -156,6 +157,8 @@ export function GridView({
   tile?: number;
   /** tile width in px (settings.tileSize, 96..320) */
   tileSize?: number;
+  /** compact density: tiles a quarter smaller, so more columns and rows fit */
+  compact?: boolean;
   profileId: string;
   bucket: string;
   emptyAction?: ReactNode;
@@ -177,7 +180,7 @@ export function GridView({
   const grid = useRef<HTMLDivElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);
   const listId = useId();
-  const size = Math.round(Math.min(320, Math.max(96, tileSize ?? tile ?? DEFAULT_TILE)));
+  const size = Math.round(Math.min(320, Math.max(96, tileSize ?? tile ?? DEFAULT_TILE)) * (compact ? 0.75 : 1));
 
   useEffect(() => {
     const el = sentinel.current;
