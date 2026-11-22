@@ -580,8 +580,9 @@ export function AppShell() {
       "new-connection": () => setConnDialog({ profile: null }),
       "toggle-sidebar": toggleSidebar,
       // grid view: ⌘+ / ⌘− (and a pinch) size the tiles, as Finder's icon view
-      "tiles-bigger": () => active.setTile(Math.min(TILE_MAX, active.tile + 24)),
-      "tiles-smaller": () => active.setTile(Math.max(TILE_MIN, active.tile - 24)),
+      "tiles-bigger": () => (active.view === "grid" ? active.setTile(Math.min(TILE_MAX, active.tile + 24)) : false),
+      "tiles-smaller": () => (active.view === "grid" ? active.setTile(Math.max(TILE_MIN, active.tile - 24)) : false),
+      "toggle-compact": () => active.setCompact(!active.compact),
       ...dualPane.commands,
     },
     dual,

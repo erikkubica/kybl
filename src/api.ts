@@ -240,7 +240,7 @@ export type TransferPrefs = {
  *   "select-all", "delete", "rename", "duplicate" (⌘D), "get-info", "settings", "new-connection".
  *   Dual pane (View menu): "toggle-dual" (⌘\),
  *   "swap-panes" (⇧⌘S), "same-folder", "compare-folders", "pane-copy" (F5), "pane-move" (F6),
- *   "switch-pane", "toggle-hidden", "toggle-sidebar" (⌥⌘S) (all in the View menu).
+ *   "switch-pane", "toggle-hidden", "toggle-sidebar" (⌥⌘S), "tiles-bigger" (⌘+), "tiles-smaller" (⌘−), "toggle-compact" (all in the View menu).
  * - `shared-files`: see `takeSharedFiles`.
  * - `open-transfers` (null): a transfer notification was tapped (phones).
  * - `app-resumed` (null): the app came back to the foreground (phones; desktop on window focus).

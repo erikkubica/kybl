@@ -17,7 +17,7 @@ use tauri::{
 };
 
 /// Item ids passed to the page as they are.
-const PAGE_ITEMS: [&str; 25] = [
+const PAGE_ITEMS: [&str; 28] = [
     "duplicate",
     "new-connection",
     "new-folder",
@@ -43,6 +43,9 @@ const PAGE_ITEMS: [&str; 25] = [
     "pane-move",
     "toggle-hidden",
     "toggle-sidebar",
+    "tiles-bigger",
+    "tiles-smaller",
+    "toggle-compact",
 ];
 
 /// Handled here, not by the page (named apart from the tray menu's ids, which share the handler).
@@ -123,6 +126,11 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &item("search", "Search…", None)?,
             &item("toggle-hidden", "Show Hidden Files", Some("CmdOrCtrl+Shift+Period"))?,
             &item("toggle-sidebar", "Show or Hide Sidebar", Some("CmdOrCtrl+Alt+S"))?,
+            &sep()?,
+            // the pane in use: grid tile size and compact rows
+            &item("tiles-bigger", "Bigger Icons", Some("CmdOrCtrl+Equal"))?,
+            &item("tiles-smaller", "Smaller Icons", Some("CmdOrCtrl+Minus"))?,
+            &item("toggle-compact", "Compact Layout", None)?,
             &sep()?,
             // dual pane: F5, F6 and Tab stay with the page (they'd steal keys from text fields)
             &item("toggle-dual", "Dual Pane", Some("CmdOrCtrl+Backslash"))?,

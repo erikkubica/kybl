@@ -131,7 +131,8 @@ export function BrowserPane(p: BrowserPaneProps) {
                   hasMore={ent.hasMore}
                   searchMode={!!search || !!filter}
                   prefix={search ? search.loc.prefix : prefix}
-                            profileId={profile.id}
+                  tileSize={pane.tile}
+                  profileId={profile.id}
                   bucket={bucket}
                   autoFocus={active}
                   folderSize={pane.folderSizes.view}
