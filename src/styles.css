@@ -2313,6 +2313,8 @@ input[type="checkbox"] {
   height: 80%;
   display: grid;
   place-items: center;
+  /* the type label scales with the page */
+  container-type: size;
 }
 .ico .doc-art .doc-page {
   position: absolute;
@@ -2333,16 +2335,17 @@ input[type="checkbox"] {
   height: auto;
   stroke-width: 1.5;
 }
+/* glyph and label as one group, centred on the page: the label clear of the bottom edge */
 .doc-art.has-ext > svg:not(.doc-page) {
-  margin-bottom: 14%;
+  margin-bottom: 18%;
 }
 .doc-ext {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 10%;
+  bottom: 16%;
   color: var(--faint);
-  font-size: 12px;
+  font-size: clamp(8px, 13cqi, 13px);
   font-weight: 700;
   letter-spacing: 0.04em;
   line-height: 1;
