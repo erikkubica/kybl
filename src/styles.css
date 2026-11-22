@@ -2374,14 +2374,28 @@ input[type="checkbox"] {
   text-align: center;
   text-transform: uppercase;
 }
+/* a sweep moved with transform, so the GPU slides it without repainting the tile every frame */
 .shimmer {
   position: absolute;
   inset: 8%;
   border-radius: 8px;
-  background: linear-gradient(100deg, transparent 30%, var(--pressed) 50%, transparent 70%);
-  background-size: 220% 100%;
-  animation: shimmer 1.3s linear infinite;
+  overflow: hidden;
 }
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, var(--pressed) 50%, transparent 70%);
+  transform: translateX(-100%);
+  animation: tile-sweep 1.3s linear infinite;
+  will-change: transform;
+}
+@keyframes tile-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+/* the list's skeleton rows still slide their background */
 @keyframes shimmer {
   from {
     background-position: 130% 0;

@@ -61,6 +61,9 @@ const RETRY_AFTER_MS = 60_000;
 const cache = new Map<string, string | number>();
 const blobs: { k: string; url: string }[] = [];
 const inflight = new Map<string, Promise<string | null>>();
+/** thumbnails being made right now (past the queue), and who wants to know when one starts */
+const started = new Set<string>();
+const startHooks = new Map<string, Array<() => void>>();
 const waiting: Array<() => void> = [];
 let active = 0;
 
@@ -148,23 +151,32 @@ function heicThumb(profileId: string, bucket: string, e: Entry, k: string): Prom
 /**
  * Loads a thumbnail and resolves with its URL (null when none can be made). `stillWanted` is
  * checked just before the request starts, so tiles that scrolled out of view while queued are
- * skipped (resolving undefined) instead of wasting bandwidth.
+ * skipped (resolving undefined) instead of wasting bandwidth. `onStart` runs when its turn comes
+ * and the thumbnail is really being made (the tile shows it loading only then, not while queued).
  */
 export function loadThumb(
   profileId: string,
   bucket: string,
   e: Entry,
   stillWanted: () => boolean,
+  onStart?: () => void,
 ): Promise<string | null | undefined> {
   const k = keyOf(profileId, bucket, e);
   const known = cachedThumb(profileId, bucket, e);
   if (known !== undefined) return Promise.resolve(known);
   const existing = inflight.get(k);
-  if (existing) return existing;
+  if (existing) {
+    if (onStart) (startHooks.get(k) ?? startHooks.set(k, []).get(k)!).push(onStart);
+    if (started.has(k)) onStart?.();
+    return existing;
+  }
+  if (onStart) startHooks.set(k, [onStart]);
   const p = (async () => {
     await slot();
     try {
       if (!stillWanted()) return undefined;
+      started.add(k);
+      for (const f of startHooks.get(k) ?? []) f();
       let url: string;
       if (isHeic(e.name)) url = await heicThumb(profileId, bucket, e, k);
       else {
@@ -179,6 +191,8 @@ export function loadThumb(
     } finally {
       release();
       inflight.delete(k);
+      started.delete(k);
+      startHooks.delete(k);
     }
   })();
   inflight.set(k, p as Promise<string | null>);
