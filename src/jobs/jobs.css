@@ -561,10 +561,10 @@
 .jobs-screen .jobs-check small {
   font-size: calc(12.5 * var(--m-u, 1px));
 }
-.jobs-screen-bar {
+.m-actionbar.jobs-screen-bar {
   padding: 10px calc(16px + var(--m-right)) calc(10px + var(--m-bottom)) calc(16px + var(--m-left));
 }
-.jobs-screen-bar .m-big-btn {
+.m-actionbar.jobs-screen-bar .m-big-btn {
   width: 100%;
   max-width: none;
   margin: 0;
