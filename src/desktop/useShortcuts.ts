@@ -123,11 +123,23 @@ export function useShortcuts(opts: ShortcutOptions) {
       e.preventDefault();
     };
     const offs = [listen<string>("menu", (e) => void o.current.route(String(e.payload))), listen("app-resumed", () => o.current.onResume())];
+    // A clicked button doesn't take the keyboard (as in Finder): focus stays on the list, so Space
+    // and Enter go on acting on the selected file instead of pressing that button again. Dialogs
+    // and menus keep ordinary focus (their buttons are part of a keyboard flow); Tab still reaches
+    // every button.
+    const onMouseDown = (ev: MouseEvent) => {
+      const t = ev.target as Element | null;
+      const b = t?.closest?.("button, [role=button]");
+      if (!b || b.closest('[role=dialog], [role=menu], [aria-modal="true"]')) return;
+      ev.preventDefault();
+    };
+    window.addEventListener("mousedown", onMouseDown, true);
     window.addEventListener("keydown", onKey);
     window.addEventListener("mouseup", onMouse);
     window.addEventListener("contextmenu", onContextMenu);
     return () => {
       for (const off of offs) off.then((f) => f()).catch(() => {});
+      window.removeEventListener("mousedown", onMouseDown, true);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("mouseup", onMouse);
       window.removeEventListener("contextmenu", onContextMenu);

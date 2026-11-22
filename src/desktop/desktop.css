@@ -80,12 +80,14 @@
   -webkit-backdrop-filter: blur(4px);
   z-index: 120;
   animation: fade-in 0.14s;
+  /* clear of the window controls (they sit over the top 50px) */
+  padding: 52px 24px 24px;
 }
 .ql {
   display: flex;
   flex-direction: column;
   width: min(1100px, calc(100vw - 48px));
-  height: min(820px, calc(100vh - 48px));
+  height: min(820px, calc(100vh - 76px));
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--raised);
@@ -164,6 +166,20 @@
   padding: 24px;
   text-align: center;
   color: var(--dim);
+}
+/* the tile-sized file art fills its tile (position: absolute); here it gets a box of its own, or
+   it spreads over the whole window and takes the header's clicks */
+.ql-none .ico.big {
+  position: relative;
+  inset: auto;
+  display: block;
+  flex: none;
+  width: 132px;
+  height: 150px;
+}
+.ql-head {
+  position: relative;
+  z-index: 1;
 }
 .ql-none strong {
   color: var(--text);
