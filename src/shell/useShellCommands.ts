@@ -20,6 +20,8 @@ export function useShellCommands({
   shell,
   free,
   dual,
+  editorOpen,
+  closeEditor,
 }: {
   active: Pane;
   /** the panes on screen */
@@ -34,10 +36,20 @@ export function useShellCommands({
   free: Record<string, () => boolean | void>;
   /** two panes on screen (the commander keys work) */
   dual: boolean;
+  /** the full-window editor is up: it has the keyboard, and menu items wait for it to close */
+  editorOpen: () => boolean;
+  /** asks the editor to close (it may ask about unsaved changes); true once it did */
+  closeEditor: () => Promise<boolean>;
 }) {
   const commands: Record<string, () => void> = { ...active.actions.commands, ...shell };
 
   const route = (id: string): boolean => {
+    // a menu item (or the mouse's back button) while the editor is up: it closes first, asking
+    // about unsaved changes, and the command runs once it really did
+    if (editorOpen()) {
+      void closeEditor().then((closed) => closed && route(id));
+      return true;
+    }
     // nothing opens behind a dialog, Settings included
     if (overlayUp()) return false;
     if (id === "settings") {
@@ -71,6 +83,7 @@ export function useShellCommands({
     moveSelection: active.sel.moveSelection,
     listScope: () => document.querySelector(`[data-pane="${active.id}"]`),
     dual,
+    muted: editorOpen,
     onResume: () => {
       if (overlayUp() || Date.now() - lastResume.current < RESUME_REFRESH_MS) return;
       const due = visible.filter((p) => p.here && !p.ent.search && !p.ent.lst.loading);

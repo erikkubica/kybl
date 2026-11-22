@@ -24,6 +24,8 @@ export type ShortcutOptions = {
   listScope?: () => ParentNode | null;
   /** two panes on screen: the commander keys (Tab, F3, F5–F8) work */
   dual?: boolean;
+  /** something owns the keyboard (the full-window editor): no shortcut runs */
+  muted?: () => boolean;
 };
 
 export function useShortcuts(opts: ShortcutOptions) {
@@ -43,6 +45,12 @@ export function useShortcuts(opts: ShortcutOptions) {
       // keys with a menu-bar accelerator on macOS are handled there (the `menu` event)
       const own = (id: string) => (MENU_OWNS_SHORTCUTS && id in MENU_ACCELERATORS ? null : id);
       let id: string | null = null;
+      // the full-window editor owns the keyboard (⌘S, ⌘F, Esc, arrows); only keep the webview
+      // from reloading or opening its own location bar
+      if (o.current.muted?.()) {
+        if (mod && (k === "r" || k === "l")) ev.preventDefault();
+        return;
+      }
       if (mod && k === ",") id = own("settings");
       else if (mod && ev.shiftKey && k === "n") id = own("new-folder");
       else if (mod && k === "u") id = own(ev.shiftKey ? "upload-folder" : "upload-files");

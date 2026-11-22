@@ -3,7 +3,7 @@
  * Activity panel, Settings, connection dialogs and the update banner. It owns the panes (one, or
  * two side by side) and routes the sidebar, the keyboard and the menu bar to the active one.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage, errSummary } from "../api";
@@ -25,7 +25,10 @@ import { usePane, type Pane, type PaneEnv } from "../browser/usePane";
 import { BrowserPane } from "../browser/BrowserPane";
 import type { EmptyActions } from "../browser/PaneEmpty";
 import { LS, THIS_MAC, type PaneId } from "../browser/types";
-import { forgetCaps } from "../useCaps";
+import { forgetCaps, peekCaps } from "../useCaps";
+import { canView, LazyDocumentView, viewerFor } from "../viewers/registry";
+import type { DocumentHandle } from "../viewers/DocumentView";
+import type { Entry } from "../types";
 import type { Profile } from "../types";
 import { useDialogs } from "./useDialogs";
 import { loadExpanded, useConnections } from "./useConnections";
@@ -173,6 +176,29 @@ export function AppShell() {
     [updateSettings],
   );
 
+  // ------------------------------------------------------------ full-window editor
+  // Open on a text, code, Markdown, CSV, JSON or Office file shows it here, over everything
+  const [doc, setDoc] = useState<{ pane: PaneId; profileId: string; bucket: string; entry: Entry } | null>(null);
+  const docRef = useRef(doc);
+  docRef.current = doc;
+  const editor = useRef<DocumentHandle>(null);
+  const canOpenDocument = (id: PaneId, e: Entry) => {
+    const p = paneById(id);
+    if (e.kind !== "file" || !p.profile || !p.bucket) return false;
+    // this computer's own files open in their own apps, where they are
+    if (peekCaps(p.profile.id)?.localPaths) return false;
+    const v = viewerFor(e.name, null, e.size);
+    return !!v && v.kind !== "image" && canView(e.name, e.size);
+  };
+  const openDocument = (id: PaneId, e: Entry) => {
+    if (!canOpenDocument(id, e)) return false;
+    const p = paneById(id);
+    p.closeQuick();
+    setDoc({ pane: id, profileId: p.profile!.id, bucket: p.bucket!, entry: e });
+    return true;
+  };
+  const closeEditor = async () => (editor.current ? editor.current.requestClose() : true);
+
   const envFor = (id: PaneId): PaneEnv => ({
     id,
     storageKey: id === "left" ? "s3b.last" : `s3b.last.${id}`,
@@ -190,6 +216,8 @@ export function AppShell() {
     clearAllSizes,
     foldersChanged,
     rootLabel: conns.rootLabel,
+    openDocument: (e) => openDocument(id, e),
+    canOpenDocument: (e) => canOpenDocument(id, e),
     ...dualPane.envFor(id),
   });
   const left = usePane(envFor("left"));
@@ -387,6 +415,7 @@ export function AppShell() {
 
   /** A dialog, menu or preview is up: it owns the keyboard, and actions must not run behind it. */
   const overlayUp = () =>
+    !!docRef.current ||
     dialogs.isOpen() ||
     !!(connDialog || kyblDialog || allPanes.current.some((p) => p.quick)) ||
     !!document.querySelector(".modal-backdrop, .ctx-menu, .ql-backdrop");
@@ -407,6 +436,8 @@ export function AppShell() {
       ...dualPane.commands,
     },
     dual,
+    editorOpen: () => !!docRef.current,
+    closeEditor,
   });
 
   // ------------------------------------------------------------ drag & drop from Finder
@@ -568,6 +599,27 @@ export function AppShell() {
           }}
           onDeleted={forgetProfile}
         />
+      )}
+      {doc && (
+        <Suspense fallback={null}>
+          <LazyDocumentView
+            ref={editor}
+            profileId={doc.profileId}
+            bucket={doc.bucket}
+            entry={doc.entry}
+            mode="full"
+            onClose={() => {
+              setDoc(null);
+              requestAnimationFrame(() => focusPaneList(doc.pane));
+            }}
+            onSaved={({ key, asCopy }) => {
+              // size, date and ETag changed (or a copy appeared)
+              reloadIfShowing(doc.profileId, doc.bucket);
+              if (asCopy) toast("success", `Saved a copy as “${baseName(key)}”`);
+            }}
+            onOpenExternal={(e) => void paneById(doc.pane).ops.openInApp(e)}
+          />
+        </Suspense>
       )}
       {!settingsOpen && <UpdateBanner st={updates} />}
     </div>

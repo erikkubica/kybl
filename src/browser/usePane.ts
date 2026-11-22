@@ -55,6 +55,10 @@ export type PaneEnv = {
   extraPlaceItems?: () => MenuItem[];
   /** extra items for the menu of selected items */
   extraItemItems?: (list: Entry[]) => (MenuItem | false)[];
+  /** opens a file in the app's full-window viewer/editor; false when it should open in its own app */
+  openDocument?: (e: Entry) => boolean;
+  /** whether `openDocument` would take this file */
+  canOpenDocument?: (e: Entry) => boolean;
   /** what to call a root on screen ("Desktop" for this computer's /Users/me/Desktop) */
   rootLabel?: (profileId: string, root: string) => string;
   /** folders were renamed, moved or deleted (favorites follow) */
@@ -207,7 +211,8 @@ function usePaneCore(env: PaneEnv) {
   const openEntry = useCallback(
     (e: Entry) => {
       if (e.kind === "folder") navigate(e.key);
-      else void opsRef.current.openInApp(e);
+      // text, code, Markdown, CSV, JSON and Office files open in the app's editor
+      else if (!envRef.current.openDocument?.(e)) void opsRef.current.openInApp(e);
     },
     [navigate],
   );
