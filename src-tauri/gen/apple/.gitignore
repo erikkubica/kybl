@@ -12,3 +12,5 @@ KyblConnect/Package.resolved
 *.mobileprovision
 KyblPlatform/.build/
 KyblPlatform/Package.resolved
+KyblBackup/.build/
+KyblBackup/Package.resolved

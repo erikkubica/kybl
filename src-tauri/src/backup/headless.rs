@@ -14,6 +14,7 @@
 //! | `pending`  | `{setId, limit?}`                  | `[Offer]` still to upload   |
 //! | `fail`     | `{setId, sourceId, error}`         | `null`                      |
 //! | `gone`     | `{setId, sourceId}`                | `null`                      |
+//! | `wait`     | `{setId, reason: "wifi"/"network"}`| `null`                      |
 //! | `runEnd`   | `{setId, error?}`                  | `null`                      |
 //! | `cancel`   | `{setId?}`                         | `null`                      |
 //! | `status`   | `{setId}`                          | `SetStatus`                 |
@@ -37,6 +38,7 @@ struct Args {
     limit: Option<usize>,
     error: Option<String>,
     name: String,
+    reason: String,
 }
 
 /// Runs one method (see the module table).
@@ -63,6 +65,10 @@ pub fn call(method: &str, args: &str) -> String {
             }
             "cancel" => {
                 core.cancel(Some(a.set_id.as_str()).filter(|s| !s.is_empty()));
+                Ok(Value::Null)
+            }
+            "wait" => {
+                core.wait(&a.set_id, &a.reason);
                 Ok(Value::Null)
             }
             "status" => serde_json::to_value(core.status(&a.set_id)?),

@@ -350,6 +350,18 @@ impl Core {
         Ok(n)
     }
 
+    /// The phone holds the run back before uploading anything ("wifi": "Wi-Fi only" on mobile
+    /// data, so it doesn't even fetch originals from iCloud; "network": offline).
+    pub fn wait(&self, id: &str, reason: &str) {
+        let state = match reason {
+            "wifi" => RunState::WaitingWifi,
+            "network" => RunState::WaitingNetwork,
+            _ => return,
+        };
+        self.set_state(id, state, None);
+        self.emit_now(id);
+    }
+
     // ------------------------------------------------------------ uploads
 
     fn set_state(&self, id: &str, state: RunState, error: Option<String>) {

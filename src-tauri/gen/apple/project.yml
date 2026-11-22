@@ -55,6 +55,11 @@ targets:
             LSItemContentTypes: [public.item, public.data, public.content]
         NSFaceIDUsageDescription: Kybl uses Face ID to unlock when app lock is on.
         NSPhotoLibraryAddUsageDescription: Kybl saves the photos and videos you choose to your library.
+        # WP-C phone backup (gen/apple/KyblBackup): reading the library, and the background
+        # tasks that back up overnight while charging (registered before launch ends)
+        NSPhotoLibraryUsageDescription: Kybl backs up your photos and videos to the storage you choose.
+        UIBackgroundModes: [processing, fetch]
+        BGTaskSchedulerPermittedIdentifiers: [app.kybl.mobile.backup, app.kybl.mobile.refresh]
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
         UISupportedInterfaceOrientations:
