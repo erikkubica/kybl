@@ -257,6 +257,8 @@ async function handleLocal(cmd: string, a: any): Promise<unknown> {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function handle(cmd: string, a: any): Promise<unknown> {
+  // WP-B1: copies between connections (src/jobs/devJobs.ts)
+  if (cmd.startsWith("job_")) return (await import("./jobs/devJobs")).handleJob(cmd, a);
   if (a?.profileId === LOCAL) {
     const r = await handleLocal(cmd, a);
     if (r !== undefined) return r;

@@ -66,7 +66,12 @@ quick-xml = "0.42"
 suppaftp = { version = "13", default-features = false, features = ["tokio-rustls-ring", "deprecated"] }
 russh = { version = "0.65", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "4.0"
-# GCS takes its service account key base64-encoded
+# WP-B1 copying between connections: the job database (jobs.db, and `db.rs` for the other
+# engines' databases; SQLite is compiled in, also for iOS and Android), and Content-MD5 on every
+# part sent to S3 (md-5 is already in the tree through the S3 client; base64 for the header).
+rusqlite = { version = "0.40", features = ["bundled"] }
+md-5 = "0.11"
+# base64: GCS service account keys (WP-A1) and the Content-MD5 header (WP-B1)
 base64 = "0.22"
 
 # Desktop only: the menu-bar icon, launch at login and two-way folder sync (a phone has no folders
