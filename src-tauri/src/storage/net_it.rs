@@ -253,6 +253,25 @@ fn net(port: u16) -> NetConfig {
     NetConfig { host: "127.0.0.1".into(), port, user: USER.into(), tls: TlsMode::None, ..Default::default() }
 }
 
+/// Two connections saved for one server and folder are known as one place (so a move between
+/// them onto the same path keeps the file); another folder or server is another place.
+#[test]
+fn two_connections_to_one_place_are_known_as_one() {
+    let other = |c: NetConfig| NetConfig { user: "someone-else".into(), host: "127.0.0.1".to_uppercase(), ..c };
+    type Id = fn(&NetConfig) -> Option<String>;
+    let ftp: Id = |c| FtpBackend::new(c, Some(PASS.into())).unwrap().place_id();
+    let sftp: Id = |c| SftpBackend::new(c, Secrets { password: Some(PASS.into()), ssh: None }).unwrap().place_id();
+    let dav: Id = |c| WebdavBackend::new(c, Some(PASS.into())).unwrap().place_id();
+    for id in [ftp, sftp, dav] {
+        let here = id(&net(2000));
+        assert!(here.is_some());
+        assert_eq!(here, id(&other(net(2000))));
+        assert_ne!(here, id(&net(2001)), "another port");
+        assert_ne!(here, id(&NetConfig { base_path: "sub".into(), ..net(2000) }), "another folder");
+    }
+    assert_ne!(ftp(&net(2000)), sftp(&net(2000)));
+}
+
 #[test]
 fn webdav_against_rclone() {
     let Some(srv) = serve("webdav", &[]) else { return };

@@ -412,3 +412,67 @@ fn a_resumed_upload_of_a_changed_file_starts_over() {
         assert!(r.collect(u64::MAX).await.unwrap() == new, "the copy is the new file, not a mix of both");
     });
 }
+
+// ---------------------------------------------------------------- 18. a page token that stops working
+
+/// A store whose page tokens stop working once (expired, or the folder changed under them).
+struct ForgetfulPages {
+    inner: Arc<LocalBackend>,
+    failed: AtomicBool,
+}
+
+#[async_trait]
+impl Storage for ForgetfulPages {
+    fn kind(&self) -> ConnKind {
+        ConnKind::Webdav
+    }
+    fn caps(&self) -> &Capabilities {
+        self.inner.caps()
+    }
+    async fn roots(&self) -> SResult<Vec<RootInfo>> {
+        self.inner.roots().await
+    }
+    async fn list(&self, root: &str, dir: &str, token: Option<String>) -> SResult<Page> {
+        if token.is_some() && !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Err(StorageError::other("This page token has expired."));
+        }
+        self.inner.list(root, dir, token).await
+    }
+    async fn stat(&self, root: &str, path: &str) -> SResult<Option<Entry>> {
+        self.inner.stat(root, path).await
+    }
+    async fn read(&self, root: &str, path: &str, range: Option<Range<u64>>, if_match: Option<&str>) -> SResult<ReadStream> {
+        self.inner.read(root, path, range, if_match).await
+    }
+    async fn write(&self, root: &str, path: &str, src: WriteSource, opts: WriteOpts<'_>, progress: Progress<'_>, cancel: &Arc<AtomicBool>) -> SResult<WriteOutcome> {
+        self.inner.write(root, path, src, opts, progress, cancel).await
+    }
+    async fn mkdir(&self, root: &str, dir: &str) -> SResult<()> {
+        self.inner.mkdir(root, dir).await
+    }
+    async fn delete(&self, root: &str, files: &[String], dirs: &[String], cancel: &AtomicBool, on_progress: &(dyn Fn(u64, u64) + Send + Sync)) -> SResult<(u64, u64)> {
+        self.inner.delete(root, files, dirs, cancel, on_progress).await
+    }
+    async fn rename(&self, from: &Loc, to: &Loc, is_dir: bool) -> SResult<()> {
+        self.inner.rename(from, to, is_dir).await
+    }
+}
+
+#[test]
+fn planning_lists_a_folder_again_when_its_page_token_stops_working() {
+    tauri::async_runtime::block_on(async {
+        let s = tmp();
+        for i in 0..1200 {
+            write(&s.0, &format!("big/{i:04}.txt"), b"x");
+        }
+        let (b, sr) = local(&s.0);
+        let src = ForgetfulPages { inner: b, failed: AtomicBool::new(false) };
+        let dbh: Db = Arc::new(Mutex::new(crate::db::open_in_memory(db::MIGRATIONS).unwrap()));
+        db::insert_job(&dbh.lock().unwrap(), "j", "{}", JobState::Planning).unwrap();
+        let sp = spec(&sr, &[("big/", true)], "/nowhere", "");
+        let stop = AtomicBool::new(false);
+        assert!(plan::plan(&src, ConnKind::Local, &sp, &dbh, "j", &stop, &|_, _| {}).await.unwrap(), "planned");
+        assert!(src.failed.load(std::sync::atomic::Ordering::SeqCst), "the token did fail once");
+        assert_eq!(db::counts(&dbh.lock().unwrap(), "j").unwrap().files_total, 1200, "nothing missed, nothing doubled");
+    });
+}

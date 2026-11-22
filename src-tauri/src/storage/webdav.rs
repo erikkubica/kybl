@@ -414,6 +414,12 @@ impl Storage for WebdavBackend {
         &self.caps
     }
 
+    /// The folder address paths start from.
+    fn place_id(&self) -> Option<String> {
+        let base = self.base.get().or(self.candidates.first())?;
+        Some(format!("webdav:{}", base.as_str().trim_end_matches('/').to_ascii_lowercase()))
+    }
+
     /// Finds the WebDAV folder (and so checks the address and the sign-in).
     async fn roots(&self) -> SResult<Vec<RootInfo>> {
         self.base().await?;

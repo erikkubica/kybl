@@ -585,6 +585,13 @@ impl Storage for SftpBackend {
         &self.caps
     }
 
+    /// The server and the folder paths start from (two connections to one server and folder
+    /// see the same files, whoever signs in).
+    fn place_id(&self) -> Option<String> {
+        let base = self.base.get().cloned().unwrap_or_else(|| self.base_cfg.clone());
+        Some(format!("sftp:{}:{}:{base}", self.host.to_ascii_lowercase(), self.port))
+    }
+
     /// Connects (and so checks the address, the server's key, the sign-in and the folder).
     async fn roots(&self) -> SResult<Vec<RootInfo>> {
         self.conn().await?;
