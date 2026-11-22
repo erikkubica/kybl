@@ -264,10 +264,13 @@ struct PendingDownload {
 
 static PENDING_DOWNLOADS: LazyLock<Mutex<HashMap<String, PendingDownload>>> = LazyLock::new(Default::default);
 
-/// Forgets a failed download: removes its partial file and frees its name.
+/// Forgets a failed download and removes its partial file, unless another download is writing to
+/// that name now (one that replaces the file can pick a name a failed download left behind).
 fn forget_download(p: PendingDownload) {
-    let _ = std::fs::remove_file(dest::part_path(&p.chosen));
-    dest::release(&p.chosen);
+    if dest::try_hold(&p.chosen) {
+        let _ = std::fs::remove_file(dest::part_path(&p.chosen));
+        dest::release(&p.chosen);
+    }
 }
 
 /// Where an upload reads from.
@@ -393,6 +396,7 @@ async fn spawn_transfer(
             } => None,
         };
         let mut done_bytes = 0u64;
+        let mut etag = None;
         let result = if permit.is_none() || cancel.load(Ordering::Relaxed) {
             Ok(Outcome::Cancelled)
         } else {
@@ -421,28 +425,40 @@ async fn spawn_transfer(
                 },
                 Kind::Download { resume } => {
                     let chosen = PathBuf::from(&local);
-                    let mut etag = None;
                     let tag = if resume { resume_etag.as_deref() } else { None };
                     let r = download_to(&client, &bucket, &key, &chosen, tag, true, &cancel, &report, &mut etag).await;
-                    match &r {
-                        Ok(Outcome::Done) => {
-                            done_bytes = tokio::fs::metadata(&chosen).await.map(|m| m.len()).unwrap_or(0);
-                            dest::release(&chosen);
-                        }
-                        Ok(Outcome::Cancelled) => dest::release(&chosen),
-                        // keep the partial file and the name for Retry
-                        Err(_) => {
-                            PENDING_DOWNLOADS.lock().unwrap().insert(
-                                id.clone(),
-                                PendingDownload { profile_id: profile_id.clone(), bucket: bucket.clone(), key: key.clone(), requested, chosen, etag },
-                            );
-                        }
+                    if let Ok(Outcome::Done) = r {
+                        done_bytes = tokio::fs::metadata(&chosen).await.map(|m| m.len()).unwrap_or(0);
                     }
                     r
                 }
             }
         };
         drop(permit);
+        match (kind, &result) {
+            (Kind::Download { .. }, r) => {
+                let chosen = PathBuf::from(&local);
+                // the name is free for others again; a failed download's partial file still keeps
+                // it from being picked (see dest::reserve), so Retry can usually carry on
+                dest::release(&chosen);
+                match r {
+                    Err(_) => {
+                        let kept = PendingDownload { profile_id: profile_id.clone(), bucket: bucket.clone(), key: key.clone(), requested, chosen, etag };
+                        PENDING_DOWNLOADS.lock().unwrap().insert(id.clone(), kept);
+                    }
+                    // stopped before its turn came: a partial file from an earlier attempt goes too
+                    Ok(Outcome::Cancelled) => {
+                        let _ = tokio::fs::remove_file(dest::part_path(&chosen)).await;
+                    }
+                    Ok(Outcome::Done) => {}
+                }
+            }
+            // stopped before its turn came: what an earlier attempt left on the server goes too
+            (Kind::Upload, Ok(Outcome::Cancelled)) => {
+                multipart::forget(&id);
+            }
+            _ => {}
+        }
         ACTIVE.lock().unwrap().remove(&id);
         notice::finished(
             &app,
@@ -498,8 +514,9 @@ pub async fn start_download(
     }
     let kept = PENDING_DOWNLOADS.lock().unwrap().remove(&id);
     let (chosen, resume_etag) = match kept {
-        Some(p) if p.profile_id == profile_id && p.bucket == bucket && p.key == key && p.requested == dest_path => {
-            dest::hold(&p.chosen);
+        // the same download again: same name, carrying on from its partial file (unless another
+        // download took the name meanwhile)
+        Some(p) if p.profile_id == profile_id && p.bucket == bucket && p.key == key && p.requested == dest_path && dest::try_hold(&p.chosen) => {
             (p.chosen, p.etag)
         }
         other => {
@@ -513,6 +530,7 @@ pub async fn start_download(
     let kind = Kind::Download { resume: resume_etag.is_some() };
     if let Err(e) = spawn_transfer(app, &state, kind, id, profile_id, bucket, key, local.clone(), dest_path, resume_etag).await {
         dest::release(&chosen);
+        let _ = std::fs::remove_file(dest::part_path(&chosen));
         return Err(e);
     }
     Ok(local)

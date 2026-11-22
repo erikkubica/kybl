@@ -78,9 +78,10 @@ pub fn reserve(dest: &Path, overwrite: bool) -> PathBuf {
     chosen
 }
 
-/// Holds `path` again for a retried download that keeps the name it was given first.
-pub fn hold(path: &Path) {
-    RESERVED.lock().unwrap().get_or_insert_with(HashSet::new).insert(path.to_path_buf());
+/// Holds `path` again for a retried download that keeps the name it was given first; false if
+/// another download holds it now.
+pub fn try_hold(path: &Path) -> bool {
+    RESERVED.lock().unwrap().get_or_insert_with(HashSet::new).insert(path.to_path_buf())
 }
 
 pub fn release(path: &Path) {
@@ -135,6 +136,7 @@ mod tests {
         // overwrite takes the name as given, even though it exists
         assert_eq!(reserve(&want, true), want);
         release(&a);
+        assert!(!try_hold(&b), "held by the other download");
         assert_eq!(reserve(&want, false), a, "a released name is free again");
         for p in [&a, &b, &want] {
             release(p);
