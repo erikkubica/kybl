@@ -33,6 +33,8 @@ import { SkeletonList, type PressPoint, type RowHandlers } from "./rows";
 import { ActionSheet, type SheetItem } from "./ActionSheet";
 import { TransfersButton, TransfersScreen } from "./TransfersScreen";
 import { SettingsScreen } from "./SettingsScreen";
+// WP-C: phone backup
+import { BackupCard, BackupScreen, useBackup, type BackupHandle } from "./BackupScreen";
 import { Viewer } from "./Viewer";
 import { Lockup, Mascot } from "./Mascot";
 import { Layer, Presence, useCollapsed, useWide } from "./ui";
@@ -191,6 +193,12 @@ export default function MobileApp() {
   }, []);
   const [transfersOpen, setTransfersOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // WP-C: phone backup ("setup" opens straight into setting one up)
+  const [backupOpen, setBackupOpen] = useState<false | "list" | "setup">(false);
+  const backup = useBackup(PHONE_OS || import.meta.env.DEV);
+  const backupHandle = useRef<BackupHandle | null>(null);
+  const [backupCardHidden, setBackupCardHidden] = useState(() => LS.get("m.backupCard") === "hidden");
+  const backupHere = !!backup.overview && backup.overview.platform !== "desktop";
   const openTransfers = useCallback(() => setTransfersOpen(true), []);
   const [connDialog, setConnDialog] = useState<{ profile: Profile | null; reconnect?: boolean } | null>(null);
   const connRef = useRef<ConnectionDialogHandle>(null);
@@ -556,6 +564,7 @@ export default function MobileApp() {
     intake: !!intake,
     transfers: transfersOpen,
     settings: settingsOpen,
+    backup: !!backupOpen,
     folderInfo: !!folderInfo && !!loc,
     sheet: !!sheet,
     move: !!moveDialog && !!loc,
@@ -590,6 +599,10 @@ export default function MobileApp() {
     viewer: () => setViewerKey(null),
     transfers: () => setTransfersOpen(false),
     settings: () => setSettingsOpen(false),
+    // a set or a setup step goes back inside the screen first
+    backup: () => {
+      if (!backupHandle.current?.back()) setBackupOpen(false);
+    },
   };
   /**
    * One step back: the layer on top of the stack, then selection, search, the bucket picker and
@@ -1401,6 +1414,20 @@ export default function MobileApp() {
               onKybl={connectKybl}
               onTransfers={openTransfers}
               onSettings={() => setSettingsOpen(true)}
+              backupCard={
+                <BackupCard
+                  overview={backup.overview}
+                  onOpen={() => setBackupOpen(backup.overview?.sets.length ? "list" : "setup")}
+                  onHide={
+                    backupCardHidden
+                      ? undefined
+                      : () => {
+                          LS.set("m.backupCard", "hidden");
+                          setBackupCardHidden(true);
+                        }
+                  }
+                />
+              }
             />
           )}
           <Presence show={!!detail && !!loc} layer="detail" z={z("detail")}>
@@ -1521,7 +1548,13 @@ export default function MobileApp() {
           prefs={prefs}
           onPrefs={savePrefs}
           lockable={PHONE_OS || import.meta.env.DEV}
+          onBackup={backupHere ? () => setBackupOpen("list") : undefined}
         />
+      </Presence>
+      <Presence show={!!backupOpen} layer="backup" z={z("backup")}>
+        {backupOpen && (
+          <BackupScreen backup={backup} handle={backupHandle} startSetup={backupOpen === "setup"} onBack={() => backRef.current()} toast={toast} />
+        )}
       </Presence>
 
       <Presence show={!!sheet} ms={200} layer="sheet" z={z("sheet")}>

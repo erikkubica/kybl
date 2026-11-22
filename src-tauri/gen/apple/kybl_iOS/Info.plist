@@ -2,6 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>app.kybl.mobile.backup</string>
+		<string>app.kybl.mobile.refresh</string>
+	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDocumentTypes</key>
@@ -43,6 +48,13 @@
 	<string>Kybl uses Face ID to unlock when app lock is on.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Kybl saves the photos and videos you choose to your library.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Kybl backs up your photos and videos to the storage you choose.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+		<string>fetch</string>
+	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

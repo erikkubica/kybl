@@ -577,3 +577,103 @@ export const mountApi = {
   mountEject: (id: string) => invoke<MountInfo>("mount_eject", { id }),
   mountDismiss: (id: string) => invoke<void>("mount_dismiss", { id }),
 };
+
+// WP-C ─── phone backup ───────────────────────────────────────────────────────────────────────
+
+/** What a backup set copies: the camera roll, an Android folder, or an iOS Files folder. */
+export type BackupSource =
+  | { type: "cameraRoll" }
+  | { type: "androidTree"; uri: string; label: string }
+  | { type: "iosBookmark"; bookmark: string; label: string };
+
+/** One thing the phone backs up, to one connection. */
+export interface BackupSet {
+  id: string;
+  source: BackupSource;
+  profileId: string;
+  root: string;
+  /** folder inside root: "" or "phone/photos/" */
+  destPrefix: string;
+  /** "Connection › bucket/folder", for showing */
+  destLabel: string;
+  /** naming template, e.g. "{yyyy}/{MM}/{name}" */
+  template: string;
+  includeVideos: boolean;
+  livePhotoVideo: boolean;
+  heic: "keep" | "convertJpeg";
+  edited: "current" | "original" | "both";
+  wifiOnly: boolean;
+  chargingOnly: boolean;
+  /** only items made after this (ms); null backs up everything */
+  since: number | null;
+  /** false: paused */
+  enabled: boolean;
+  created: number;
+}
+
+export type BackupRunState = "idle" | "running" | "waitingWifi" | "waitingNetwork" | "needsAuth" | "paused";
+
+export interface BackupSetStatus {
+  set: BackupSet;
+  state: BackupRunState;
+  backedUp: number;
+  pending: number;
+  failed: number;
+  lastRun: number | null;
+  lastError: string | null;
+  current: { name: string; done: number; total: number } | null;
+  runDone: number;
+  runTotal: number;
+}
+
+export interface BackupFailure {
+  sourceId: string;
+  name: string;
+  error: string;
+  at: number;
+  attempts: number;
+}
+
+export type PhotoAccess = "granted" | "limited" | "denied" | "notDetermined" | "unsupported";
+
+export interface BackupPermission {
+  photos: PhotoAccess;
+  /** Android 13+: videos are a separate permission */
+  videos?: PhotoAccess;
+  /** photo locations are kept */
+  location?: boolean;
+  /** the progress notification can show */
+  notifications?: boolean;
+  sdk?: number;
+}
+
+export interface BackupOverview {
+  platform: "android" | "ios" | "desktop";
+  sets: BackupSetStatus[];
+}
+
+/** Sent with a BackupSetStatus whenever a set's progress or state changes. */
+export const BACKUP_STATUS_EVENT = "backup-status";
+
+/** A set as the setup sends it: no id creates one. */
+export type BackupSetDraft = Partial<BackupSet> & Pick<BackupSet, "source" | "profileId" | "root">;
+
+export const backupApi = {
+  overview: () => invoke<BackupOverview>("backup_overview"),
+  /** creates (empty id) or changes a set */
+  save: (set: BackupSetDraft) => invoke<BackupSetStatus>("backup_save", { set }),
+  delete: (id: string) => invoke<void>("backup_delete", { id }),
+  setPaused: (id: string, paused: boolean) => invoke<BackupSetStatus>("backup_set_paused", { id, paused }),
+  /** every set when id is omitted */
+  runNow: (id?: string) => invoke<void>("backup_run_now", { id: id ?? null }),
+  cancel: (id?: string) => invoke<void>("backup_cancel", { id: id ?? null }),
+  failures: (id: string) => invoke<BackupFailure[]>("backup_failures", { id }),
+  /** how many failed items will be tried again */
+  retry: (id: string) => invoke<number>("backup_retry", { id }),
+  permission: () => invoke<BackupPermission>("backup_permission"),
+  requestPermission: () => invoke<BackupPermission>("backup_request_permission"),
+  /** iOS limited access: choose more photos; elsewhere the app's settings */
+  manageAccess: () => invoke<unknown>("backup_manage_access"),
+  /** null when the picker was closed */
+  pickFolder: () => invoke<BackupSource | null>("backup_pick_folder"),
+};

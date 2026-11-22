@@ -24,6 +24,7 @@ export function SettingsScreen({
   prefs,
   onPrefs,
   lockable,
+  onBackup,
 }: {
   onBack: () => void;
   settings: Settings;
@@ -39,6 +40,8 @@ export function SettingsScreen({
   onPrefs: (p: Partial<TransferPrefs>) => Promise<void>;
   /** app lock is offered (phones) */
   lockable: boolean;
+  /** WP-C: phone backup, where the phone has it */
+  onBackup?: () => void;
 }) {
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => onChange({ ...settings, [k]: v });
   const [version, setVersion] = useState("");
@@ -99,6 +102,24 @@ export function SettingsScreen({
           <Toggle label="Binary sizes (1 KiB = 1024 B)" on={settings.binaryUnits} set={(v) => set("binaryUnits", v)} />
           <Toggle label="Full dates" on={settings.absoluteDates} set={(v) => set("absoluteDates", v)} />
         </ul>
+
+        {onBackup && (
+          <>
+            <h2 className="m-section">Backup</h2>
+            <ul className="m-group">
+              <li>
+                <button className="m-setting-row" onClick={onBackup}>
+                  <Icon name="image" size={16} />
+                  <span className="m-grow">
+                    Photo backup
+                    <small className="m-sub">Back up photos, videos and folders to your storage</small>
+                  </span>
+                  <Icon name="chevron" size={13} className="m-chev" />
+                </button>
+              </li>
+            </ul>
+          </>
+        )}
 
         {prefs && (
           <>

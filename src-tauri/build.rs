@@ -4,7 +4,7 @@ fn main() {
     tauri_build::build()
 }
 
-/// Builds the Swift packages (`gen/apple/KyblConnect`, `gen/apple/KyblPlatform`) into the iOS
+/// Builds the Swift packages (`gen/apple/KyblConnect`, `gen/apple/KyblPlatform`, `gen/apple/KyblBackup`) into the iOS
 /// library, the way a Tauri plugin crate links its `ios` folder: Tauri's Swift API is copied next
 /// to it (`gen/apple/.tauri/tauri-api`, ignored by git) and the package is linked statically.
 #[cfg(target_os = "macos")]
@@ -37,7 +37,13 @@ fn ios_plugins() {
     println!("cargo:rerun-if-changed=gen/apple/KyblPlatform/Package.swift");
     println!("cargo:rerun-if-changed=gen/apple/KyblPlatform/Sources");
     println!("cargo:rerun-if-changed=gen/apple/KyblConnect/Sources");
+    // WP-C: phone backup (src/backup)
+    println!("cargo:rerun-if-changed=gen/apple/KyblBackup/Package.swift");
+    println!("cargo:rerun-if-changed=gen/apple/KyblBackup/Sources");
+    println!("cargo:rerun-if-changed=gen/apple/KyblBackup/FFI");
     tauri_utils::build::link_apple_library("kybl-connect", apple.join("KyblConnect"));
     // open / share / Photos / haptics / app lock / background time (src/platform.rs)
     tauri_utils::build::link_apple_library("kybl-platform", apple.join("KyblPlatform"));
+    // WP-C: Photos backup, Files folders and the background tasks (src/backup)
+    tauri_utils::build::link_apple_library("kybl-backup", apple.join("KyblBackup"));
 }

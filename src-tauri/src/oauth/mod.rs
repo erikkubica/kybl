@@ -561,6 +561,45 @@ pub fn open<R: Runtime>(app: &AppHandle<R>, profile: &Profile) -> Result<Arc<dyn
     })
 }
 
+// WP-C: phone backup opens connections from a background worker with no app running
+
+/// The refresh token in the vault of a state that outlives the app (background backup).
+struct StateStore {
+    state: &'static AppState,
+    key: String,
+}
+
+#[async_trait::async_trait]
+impl TokenStore for StateStore {
+    async fn load(&self) -> SResult<Option<Stored>> {
+        let raw = get_secret(self.state, &self.key).await.map_err(StorageError::other)?;
+        Ok(raw.and_then(|r| token::parse_stored(&r)))
+    }
+    async fn save(&self, s: &Stored) -> SResult<()> {
+        // the app may have changed the vault since this state read it: read it again first, so
+        // writing the new token back never drops a secret saved meanwhile
+        *self.state.secrets.lock().await = None;
+        let raw = serde_json::to_string(s).map_err(|e| StorageError::other(e.to_string()))?;
+        set_secret(self.state, &self.key, &raw).await.map_err(StorageError::other)
+    }
+}
+
+/// [`open`] without an `AppHandle`: tokens from `state`'s vault, no Reconnect event (the backup
+/// shows "needs sign-in" itself).
+pub fn open_without_app(state: &'static AppState, profile: &Profile) -> Result<Arc<dyn Storage>, String> {
+    let p = provider(profile.kind).ok_or("Not a sign-in connection")?;
+    let tenant = profile.cloud.as_ref().and_then(|c| c.tenant.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| "common".into());
+    let store = Arc::new(StateStore { state, key: secret_key(&profile.id, "oauth") });
+    let tokens = Arc::new(TokenSource::new(&profile.id, profile.kind, p.token_url.replace("{tenant}", &tenant), builtin_secret, store, Box::new(|_: &str| {})));
+    let api = http::Api::new(profile.kind, tokens);
+    Ok(match profile.kind {
+        ConnKind::Gdrive => Arc::new(crate::storage::gdrive::GDrive::new(api)),
+        ConnKind::Onedrive => Arc::new(crate::storage::onedrive::OneDrive::new(api)),
+        ConnKind::Dropbox => Arc::new(crate::storage::dropbox::Dropbox::new(api)),
+        other => return Err(format!("{} doesn't use a browser sign-in.", other.label())),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

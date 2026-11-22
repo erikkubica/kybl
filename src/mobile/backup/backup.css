@@ -1,0 +1,475 @@
+/* Phone backup: the backup screen and the home screen card. Colours are the theme variables, so
+   light, dark and the colour schemes need nothing of their own; spacing keeps clear of the
+   notch and the home bar (--m-* insets), and every control is at least 44 px tall. */
+
+.bk-body {
+  padding-top: 6px;
+}
+
+.bk-lead {
+  margin: 18px 20px 10px;
+  font-size: calc(17 * var(--m-u));
+  font-weight: 650;
+  color: var(--text);
+}
+
+.bk-gap {
+  margin-top: 16px !important;
+}
+
+.bk-hint {
+  margin: 8px 24px 0 !important;
+}
+
+/* ------------------------------------------------------------ icons */
+.bk-ico {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.bk-ico.big {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+}
+.bk-ico.folder {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+.bk-ico.ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.bk-ico.warn {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.bk-tone-ok {
+  color: var(--ok) !important;
+}
+/* busy reads as plain text: the progress bar carries the colour, and red stays for problems */
+.bk-tone-busy {
+  color: var(--text) !important;
+}
+.bk-tone-warn {
+  color: var(--danger) !important;
+}
+.bk-tone-dim {
+  color: var(--dim) !important;
+}
+
+/* ------------------------------------------------------------ progress */
+.bk-bar {
+  height: 4px;
+  margin: 10px 0 0;
+  border-radius: 2px;
+  background: var(--pressed);
+  overflow: hidden;
+}
+.bk-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-solid, var(--accent));
+  transition: width 0.3s ease;
+}
+.bk-bar.busy > span {
+  width: 35%;
+  animation: bk-slide 1.2s ease-in-out infinite;
+}
+@keyframes bk-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bk-bar.busy > span {
+    animation: none;
+    width: 100%;
+    opacity: 0.4;
+  }
+}
+
+/* ------------------------------------------------------------ list of backups */
+.bk-list {
+  list-style: none;
+  margin: 12px 16px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bk-card {
+  padding: 14px 14px 6px;
+  border-radius: 16px;
+  background: var(--m-card);
+  box-shadow: 0 0 0 1px var(--border), var(--shadow-sm);
+}
+.bk-card .bk-bar {
+  margin: 12px 2px 2px;
+}
+
+.bk-card-main {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  min-height: 44px;
+}
+.bk-card-main .m-chev {
+  align-self: center;
+}
+
+.bk-card-text,
+.bk-home-text,
+.bk-hero-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bk-card-text strong,
+.bk-home-text strong {
+  font-size: calc(16 * var(--m-u));
+  font-weight: 650;
+  color: var(--text);
+}
+.bk-card-text small,
+.bk-home-text small,
+.bk-hero-text small {
+  font-size: calc(13 * var(--m-u));
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bk-dest-label,
+.bk-current {
+  white-space: nowrap;
+}
+.bk-current {
+  font-variant-numeric: tabular-nums;
+}
+
+.bk-card-acts {
+  display: flex;
+  gap: 4px;
+  margin: 8px -6px 0;
+  padding-top: 4px;
+  border-top: 1px solid var(--m-hair);
+}
+
+.bk-mini {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--accent) !important;
+  font-size: calc(14 * var(--m-u));
+  font-weight: 600;
+}
+.bk-mini:active {
+  background: var(--pressed);
+}
+.bk-mini:disabled {
+  color: var(--faint) !important;
+}
+
+/* ------------------------------------------------------------ first visit */
+.bk-intro {
+  padding-top: 7vh;
+}
+.bk-intro-art {
+  color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: none;
+}
+.bk-honest {
+  font-size: calc(13.5 * var(--m-u)) !important;
+  color: var(--faint);
+}
+
+/* ------------------------------------------------------------ photo access */
+.bk-note {
+  display: flex;
+  gap: 12px;
+  margin: 12px 16px 0;
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.bk-note.warn {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.bk-note > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.bk-note-body {
+  flex: 1;
+  min-width: 0;
+}
+.bk-note p {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: calc(14 * var(--m-u));
+  line-height: 1.45;
+}
+.bk-note-btn {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 12px;
+  font-size: calc(15 * var(--m-u));
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------ one backup */
+.bk-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin: 14px 20px 0;
+}
+.bk-hero .bk-ico {
+  width: 52px;
+  height: 52px;
+  border-radius: 15px;
+}
+.bk-hero-text strong {
+  font-size: calc(18 * var(--m-u));
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.bk-screen .bk-body > .bk-bar {
+  margin: 14px 20px 0;
+}
+
+.bk-actions {
+  display: flex;
+  gap: 10px;
+  margin: 16px 16px 0;
+}
+.bk-act {
+  flex: 1;
+  min-height: 46px;
+  border-radius: 14px !important;
+  font-size: calc(15 * var(--m-u)) !important;
+  font-weight: 600;
+  gap: 6px;
+}
+
+.bk-fail,
+.bk-static {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 8px 16px;
+  font-size: calc(15 * var(--m-u));
+}
+.bk-fail > svg {
+  flex: none;
+  color: var(--danger);
+}
+.bk-static > svg {
+  flex: none;
+  color: var(--dim);
+}
+.bk-fail .m-grow,
+.bk-static .m-grow {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.bk-fail.more {
+  color: var(--dim);
+  font-size: calc(13 * var(--m-u));
+}
+.bk-fail .m-sub,
+.bk-static .m-sub {
+  display: block;
+  margin-top: 2px;
+  color: var(--dim);
+  font-size: calc(13 * var(--m-u));
+}
+
+.bk-danger {
+  margin-top: 28px !important;
+}
+.bk-remove {
+  color: var(--danger) !important;
+}
+.bk-confirm {
+  padding: 14px 16px 16px;
+}
+.bk-confirm p {
+  margin: 0;
+  font-size: calc(15 * var(--m-u));
+  color: var(--text);
+}
+.bk-confirm .bk-actions {
+  margin: 14px 0 0;
+}
+
+/* ------------------------------------------------------------ setup */
+.bk-choice {
+  min-height: 68px !important;
+}
+.bk-choice:disabled {
+  opacity: 0.7;
+}
+
+.bk-path {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: calc(12 * var(--m-u)) !important;
+  white-space: nowrap !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bk-radio {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px var(--border-strong);
+  color: #fff;
+}
+.bk-radio.on {
+  background: var(--accent-solid, var(--accent));
+  box-shadow: none;
+}
+
+.bk-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 14px 16px 0;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--m-card);
+  box-shadow: 0 0 0 1px var(--border), var(--shadow-sm);
+}
+.bk-summary > div {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+  font-size: calc(15 * var(--m-u));
+}
+.bk-summary small {
+  flex: none;
+  width: 44px;
+  color: var(--dim);
+  font-size: calc(13 * var(--m-u));
+  line-height: calc(22 * var(--m-u));
+}
+.bk-summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+/* where it goes: the folder tree fills the screen above the button */
+.bk-dest {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 6px calc(16px + var(--m-right)) calc(var(--m-bottom) + 86px) calc(16px + var(--m-left));
+}
+.bk-dest .bk-lead {
+  margin: 12px 4px 10px;
+}
+.m-app .bk-dest .jobs-tree {
+  flex: 1;
+  height: auto;
+  min-height: 220px;
+  border-radius: 14px;
+  background: var(--m-card);
+  font-size: calc(15 * var(--m-u));
+}
+
+.m-actionbar.bk-bar-bottom {
+  padding: 10px calc(16px + var(--m-right)) calc(10px + var(--m-bottom)) calc(16px + var(--m-left));
+}
+.m-actionbar.bk-bar-bottom .m-big-btn {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  gap: 6px;
+}
+
+/* ------------------------------------------------------------ home screen card */
+.bk-home {
+  position: relative;
+  margin: 14px 16px 0;
+  border-radius: 18px;
+  background: var(--m-card);
+  box-shadow: 0 0 0 1px var(--border), var(--shadow-sm);
+}
+.bk-home-main {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 72px;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  text-align: left;
+}
+.bk-home-main:active {
+  background: var(--pressed);
+}
+.bk-home-text small {
+  white-space: normal;
+}
+.bk-home-text .bk-bar {
+  margin-top: 8px;
+}
+/* the hide button sits over the chevron's corner and keeps a full 44 px target */
+.bk-home-x {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 0 18px 0 12px;
+  background: transparent;
+  color: var(--faint) !important;
+}
+.bk-home-x:active {
+  background: var(--pressed);
+}
+.bk-home:has(.bk-home-x) .bk-home-main {
+  padding-right: 40px;
+}
+.bk-home:has(.bk-home-x) .m-chev {
+  display: none;
+}

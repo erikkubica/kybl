@@ -1,4 +1,6 @@
 mod commands;
+// WP-C: phone backup (camera roll and folders to any connection)
+mod backup;
 // WP-B1: SQLite open-with-migrations helper, and copy/move jobs between connections
 mod db;
 mod jobs;
@@ -82,6 +84,8 @@ pub fn run() {
         .plugin(mobile::plugin())
         .plugin(transfer_notice::plugin())
         .plugin(platform::plugin())
+        // WP-C
+        .plugin(backup::plugin())
         .manage(state::AppState::default())
         .register_asynchronous_uri_scheme_protocol("thumb", thumbs::protocol)
         // WP-A4: video and audio from connections that can't presign
@@ -129,6 +133,8 @@ pub fn run() {
             leftovers::start(&handle);
             // WP-B1: copy/move jobs resume where they stopped
             jobs::setup(&handle);
+            // WP-C: backup.db (background workers may have opened it first)
+            backup::setup(&handle);
             #[cfg(desktop)]
             {
                 app.manage(prefs::load(&handle));
@@ -279,6 +285,19 @@ pub fn run() {
             // unsaved edits in the editor: asked about before quitting
             #[cfg(desktop)]
             quit::set_unsaved_documents,
+            // WP-C: phone backup
+            backup::backup_overview,
+            backup::backup_save,
+            backup::backup_delete,
+            backup::backup_set_paused,
+            backup::backup_run_now,
+            backup::backup_cancel,
+            backup::backup_failures,
+            backup::backup_retry,
+            backup::backup_permission,
+            backup::backup_request_permission,
+            backup::backup_manage_access,
+            backup::backup_pick_folder,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
