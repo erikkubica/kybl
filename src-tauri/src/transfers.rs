@@ -314,7 +314,25 @@ enum Source {
     /// A file picked on Android (`content://…`): only readable through the system, so it is
     /// opened right away, while the app is on screen. Android's file and path APIs go through
     /// the app's screen, which may be gone (swiped away) by the time the upload's turn comes.
-    Picked { file: std::fs::File, cache: std::path::PathBuf },
+    Picked { file: std::fs::File, cache: std::path::PathBuf, uri: String },
+}
+
+/// Copies of picked files kept after a failed upload, by transfer id: (picked URI, its size, the
+/// copy's folder). Retry uploads the same copy, so the parts already sent still match and the
+/// upload carries on instead of starting over.
+static PICKED_COPIES: LazyLock<Mutex<HashMap<String, (String, u64, PathBuf)>>> = LazyLock::new(Default::default);
+
+/// Drops the kept copy of a picked file (its upload finished, or was given up).
+fn forget_picked(id: &str) {
+    if let Some((_, _, dir)) = PICKED_COPIES.lock().unwrap().remove(id) {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// The cache folder for a transfer's copy: its id, when that is a plain name.
+fn copy_dir_name(id: &str) -> String {
+    let plain = !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if plain { id.to_string() } else { uuid::Uuid::new_v4().to_string() }
 }
 
 /// A file picked on a phone comes as a URL, not a path: `content://…` on Android (a document
@@ -334,35 +352,56 @@ async fn open_source(app: &AppHandle, local: &str) -> Result<Source, String> {
     }
     let cache = app.path().app_cache_dir().map_err(err)?.join("uploads");
     let app = app.clone();
+    let uri = local.to_string();
     tokio::task::spawn_blocking(move || {
         let mut opts = OpenOptions::new();
         opts.read(true);
         let file = app.fs().open(fp, opts).map_err(|e| format!("Could not read the picked file: {e}"))?;
-        Ok(Source::Picked { file, cache })
+        Ok(Source::Picked { file, cache, uri })
     })
     .await
     .map_err(err)?
 }
 
-/// The path to upload from. A picked file is copied into the cache under the object's own name
-/// (so its content type still reads right); the second value is the copy to remove afterwards.
-async fn local_source(source: Source, key: &str) -> Result<(String, Option<std::path::PathBuf>), String> {
-    let (mut src, cache) = match source {
+/// The path to upload from. A picked file is copied into the cache (`uploads/<transfer id>/`)
+/// under the object's own name, so its content type still reads right; the second value is the
+/// copy, removed once the upload is done or given up (a failed one keeps it for Retry, which
+/// reuses it while the picked file is the same one, the same size).
+async fn local_source(source: Source, key: &str, id: &str) -> Result<(String, Option<std::path::PathBuf>), String> {
+    let (mut src, cache, uri) = match source {
         Source::Path(p) => return Ok((p, None)),
-        Source::Picked { file, cache } => (file, cache),
+        Source::Picked { file, cache, uri } => (file, cache, uri),
     };
-    let name = key.rsplit('/').next().filter(|n| !n.is_empty()).unwrap_or("upload");
-    let dir = cache.join(uuid::Uuid::new_v4().to_string());
-    let dest = dir.join(name);
-    let dest2 = dest.clone();
-    tokio::task::spawn_blocking(move || -> Result<(), String> {
-        std::fs::create_dir_all(&dir).map_err(err)?;
+    let name = key.rsplit('/').next().filter(|n| !n.is_empty()).unwrap_or("upload").to_string();
+    let size = src.metadata().map(|m| m.len()).ok();
+    let kept = PICKED_COPIES.lock().unwrap().get(id).cloned();
+    if let Some((was, was_size, dir)) = kept {
+        let copy = dir.join(&name);
+        let same_copy = std::fs::metadata(&copy).is_ok_and(|m| Some(m.len()) == size);
+        if was == uri && Some(was_size) == size && same_copy {
+            return Ok((copy.to_string_lossy().into_owned(), Some(copy)));
+        }
+        forget_picked(id);
+    }
+    let dir = cache.join(copy_dir_name(id));
+    let dest = dir.join(&name);
+    let (dir2, dest2) = (dir.clone(), dest.clone());
+    let copied = tokio::task::spawn_blocking(move || -> Result<u64, String> {
+        let _ = std::fs::remove_dir_all(&dir2);
+        std::fs::create_dir_all(&dir2).map_err(err)?;
         let mut out = std::fs::File::create(&dest2).map_err(err)?;
-        std::io::copy(&mut src, &mut out).map_err(err)?;
-        Ok(())
+        std::io::copy(&mut src, &mut out).map_err(err)
     })
     .await
-    .map_err(err)??;
+    .map_err(err)?;
+    let copied = match copied {
+        Ok(n) => n,
+        Err(e) => {
+            let _ = tokio::fs::remove_dir_all(&dir).await;
+            return Err(e);
+        }
+    };
+    PICKED_COPIES.lock().unwrap().insert(id.to_string(), (uri, size.unwrap_or(copied), dir));
     Ok((dest.to_string_lossy().into_owned(), Some(dest)))
 }
 
@@ -461,7 +500,7 @@ async fn spawn_transfer(
                 });
             };
             match kind {
-                Kind::Upload => match local_source(source.expect("an upload has a source"), &key).await {
+                Kind::Upload => match local_source(source.expect("an upload has a source"), &key, &id).await {
                     Ok((path, temp)) => {
                         let r = match &conn {
                             Conn::S3(client) => {
@@ -472,8 +511,9 @@ async fn spawn_transfer(
                         if let Ok(Outcome::Done) = r {
                             done_bytes = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
                         }
-                        if let Some(t) = temp.as_ref().and_then(|t| t.parent()) {
-                            let _ = tokio::fs::remove_dir_all(t).await;
+                        // a failed upload keeps its copy of a picked file for Retry
+                        if temp.is_some() && r.is_ok() {
+                            forget_picked(&id);
                         }
                         r
                     }
@@ -518,6 +558,7 @@ async fn spawn_transfer(
             // stopped before its turn came: what an earlier attempt left on the server goes too
             (Kind::Upload, Ok(Outcome::Cancelled)) => {
                 multipart::forget(&id);
+                forget_picked(&id);
             }
             _ => {}
         }
@@ -612,6 +653,7 @@ pub async fn cancel_transfer(state: State<'_, AppState>, id: String) -> Result<(
         forget_download(&id, p);
     }
     multipart::forget(&id);
+    forget_picked(&id);
     Ok(())
 }
 
@@ -641,6 +683,15 @@ mod tests {
     use super::*;
     use crate::state::{build_client, Profile};
     use std::sync::Mutex;
+
+    #[test]
+    fn a_picked_files_copy_lives_in_a_folder_named_after_its_transfer() {
+        assert_eq!(copy_dir_name("3f2a-91_b"), "3f2a-91_b");
+        for odd in ["", "../x", "a/b", "a\\b", "..", &"x".repeat(65)] {
+            let d = copy_dir_name(odd);
+            assert!(uuid::Uuid::parse_str(&d).is_ok(), "{odd:?} gets a fresh name, not {d}");
+        }
+    }
 
     /// A server that hangs up halfway through the file, then honours the ranged request for the
     /// rest: the download carries on from where it was and the file arrives whole.
