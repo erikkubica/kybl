@@ -69,6 +69,15 @@ russh-sftp = "4.0"
 # GCS takes its service account key base64-encoded
 base64 = "0.22"
 
+# WP-E1 two-way sync: the sync state database (sync.db; SQLite is compiled in, also for iOS and
+# Android, where phone backup reuses the planner), paths compared Unicode-normalised (macOS keeps
+# names decomposed), a downloaded file's time set to the remote one, and MD5 to tell an identical
+# copy from a real conflict. md-5 is already in the tree through the S3 client.
+rusqlite = { version = "0.40", features = ["bundled"] }
+unicode-normalization = "0.1"
+filetime = "0.2"
+md-5 = "0.11"
+
 # Desktop only: the menu-bar icon, launch at login and two-way folder sync (a phone has no folders
 # to keep in sync and no menu bar).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

@@ -27,7 +27,7 @@ mod quit;
 mod state;
 // one trait for S3, this device's disk and (later) other providers
 mod storage;
-#[cfg(desktop)]
+// folder sync (desktop); its planner (`sync::plan`) is shared with phone backup
 mod sync;
 mod thumbs;
 mod transfer_notice;
@@ -205,6 +205,19 @@ pub fn run() {
             sync::sync_set_paused,
             #[cfg(desktop)]
             sync::sync_pause_all,
+            // WP-E1: two-way sync
+            #[cfg(desktop)]
+            sync::sync_conflicts,
+            #[cfg(desktop)]
+            sync::sync_resolve_conflict,
+            #[cfg(desktop)]
+            sync::sync_pending,
+            #[cfg(desktop)]
+            sync::sync_confirm_deletes,
+            #[cfg(desktop)]
+            sync::sync_restore_deletes,
+            #[cfg(desktop)]
+            sync::sync_keep_offline,
             kybl_connect::kybl_default_app_url,
             kybl_connect::kybl_connect_browser,
             kybl_connect::kybl_device_start,
