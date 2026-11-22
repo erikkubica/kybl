@@ -1936,6 +1936,13 @@ select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
+/* a field inside a box that draws the focus ring itself: no second ring inside it */
+.search input:focus,
+.jobs-confirm-path input:focus,
+.m-search input:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
 input[type="checkbox"] {
   width: 15px;
   height: 15px;

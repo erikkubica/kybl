@@ -4,7 +4,6 @@
  * state lives in the pane object from usePane; this only draws it.
  */
 import type { CSSProperties, ReactNode } from "react";
-import { parentPrefix } from "../format";
 import { Icon } from "../Icons";
 import { Toolbar } from "../components/Toolbar";
 import { rootIcon } from "../connections/roots";
@@ -82,9 +81,6 @@ export function BrowserPane(p: BrowserPaneProps) {
         bucketIcon={pane.profile ? rootIcon(pane.profile.id, bucket ?? "") : undefined}
         canShare={actions.canShare}
         prefix={prefix}
-        canUp={pane.canUp}
-        canBack={pane.history.canBack}
-        canForward={pane.history.canForward}
         selectionCount={selected.size}
         singleFileSelected={singleFile}
         previewOpen={p.previewOpen}
@@ -103,9 +99,6 @@ export function BrowserPane(p: BrowserPaneProps) {
         onSortChange={setSort}
         onTileSize={p.onTileSize}
         onNavigate={pane.navigate}
-        onUp={() => pane.navigate(parentPrefix(prefix))}
-        onBack={() => pane.historyStep(-1)}
-        onForward={() => pane.historyStep(1)}
         onRefresh={ent.refresh}
         onUploadMenu={actions.onUploadMenu}
         onMoreMenu={actions.onMoreMenu}

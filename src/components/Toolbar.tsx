@@ -12,9 +12,6 @@ export function Toolbar({
   bucketIcon,
   canShare = true,
   prefix,
-  canUp,
-  canBack,
-  canForward,
   selectionCount,
   singleFileSelected,
   previewOpen,
@@ -33,9 +30,6 @@ export function Toolbar({
   onSortChange,
   onTileSize,
   onNavigate,
-  onUp,
-  onBack,
-  onForward,
   onRefresh,
   onUploadMenu,
   onMoreMenu,
@@ -65,9 +59,6 @@ export function Toolbar({
   /** the connection can make share links (false hides "Copy link") */
   canShare?: boolean;
   prefix: string;
-  canUp: boolean;
-  canBack: boolean;
-  canForward: boolean;
   selectionCount: number;
   singleFileSelected: boolean;
   previewOpen: boolean;
@@ -93,9 +84,6 @@ export function Toolbar({
   onSortChange: (s: Sort) => void;
   onTileSize: (px: number) => void;
   onNavigate: (prefix: string) => void;
-  onUp: () => void;
-  onBack: () => void;
-  onForward: () => void;
   onRefresh: () => void;
   onUploadMenu: (x: number, y: number) => void;
   /** the "…" button: Go to folder, Sync this folder, Add to favorites… */
@@ -135,17 +123,7 @@ export function Toolbar({
   return (
     <header className="chrome">
       <div className="toolbar" data-tauri-drag-region>
-        <div className="nav-btns">
-          <button className="icon-btn" onClick={onBack} disabled={!canBack} title="Back (⌘[)" aria-label="Back">
-            <Icon name="arrow-left" />
-          </button>
-          <button className="icon-btn" onClick={onForward} disabled={!canForward} title="Forward (⌘])" aria-label="Forward">
-            <Icon name="arrow-left" className="flip-x" />
-          </button>
-          <button className="icon-btn" onClick={onUp} disabled={!canUp} title="Up one level (⌘↑)" aria-label="Up one level">
-            <Icon name="arrow-up" />
-          </button>
-        </div>
+        {/* no ← → ↑ buttons: the path is one click per level, ".." and ⌘↑ go up, ⌘[ ⌘] and the mouse's side buttons go back and forward */}
         {bucket != null ? (
           <>
             <Breadcrumbs bucket={bucket} label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} onGoTo={onGoTo} />
