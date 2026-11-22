@@ -299,7 +299,7 @@ export function GridView({
       <div className="grid" ref={grid} role="presentation" style={{ gridTemplateColumns: columnsCss }}>
         {entries.slice(win.start, win.end).map((e, n) => {
           const i = win.start + n;
-          const rel = e.key.slice(prefix.length);
+          const rel = e.key.slice(prefix.length).replace(/\/$/, "");
           const fs = e.kind === "folder" ? folderSize?.(e.key) : undefined;
           return (
             <Card

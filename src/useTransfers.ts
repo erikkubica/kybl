@@ -4,7 +4,10 @@ import { api, errMessage } from "./api";
 import { createStore, useStore } from "./store";
 import type { Transfer, TransferEvent } from "./types";
 
-type NewTransfer = Pick<Transfer, "kind" | "name" | "profileId" | "bucket" | "key" | "local">;
+type NewTransfer = Pick<Transfer, "kind" | "name" | "profileId" | "bucket" | "key" | "local"> & {
+  /** downloads: replace a local file of the same name instead of saving next to it as "x (1)" */
+  overwrite?: boolean;
+};
 
 /** Finished transfers kept in the list once a batch is over; older successful ones are dropped. */
 const KEEP_DONE = 500;
@@ -20,6 +23,18 @@ const lastSample = new Map<string, { t: number; bytes: number }>();
 let dirty = false;
 let timer: number | undefined;
 let onErrorRef: (msg: string) => void = () => {};
+/** Downloads that may replace an existing local file (the user picked the path in a Save dialog). */
+const overwriteIds = new Set<string>();
+/** Callers waiting for a transfer to end (see `whenFinished`). */
+const waiters = new Map<string, ((t: Transfer) => void)[]>();
+
+function settle(t: Transfer) {
+  if (t.state !== "done" && t.state !== "error" && t.state !== "cancelled") return;
+  const list = waiters.get(t.id);
+  if (!list) return;
+  waiters.delete(t.id);
+  for (const w of list) w(t);
+}
 
 /** Uploads of the current batch: when all of them have finished, `settledListeners` hear about it. */
 const batch = new Set<string>();
@@ -73,6 +88,7 @@ function prune() {
     if (done <= KEEP_DONE) break;
     if (t.state === "done") {
       byId.delete(id);
+      overwriteIds.delete(id);
       done--;
     }
   }
@@ -107,14 +123,16 @@ function listenOnce() {
       speed = 0;
       lastSample.delete(ev.id);
     }
-    byId.set(ev.id, {
+    const next: Transfer = {
       ...cur,
       state: ev.state,
       bytes: ev.state === "done" ? ev.total || cur.total : ev.bytes || cur.bytes,
       total: ev.total || cur.total,
       error: ev.error,
       speed,
-    });
+    };
+    byId.set(ev.id, next);
+    settle(next);
     markDirty();
   }).catch(() => {
     listening = false;
@@ -144,26 +162,43 @@ async function start(t: Transfer) {
     if (t.kind === "upload") {
       await api.startUpload(t.id, t.profileId, t.bucket, t.key, t.local);
     } else {
-      await api.startDownload(t.id, t.profileId, t.bucket, t.key, t.local);
+      // the backend picks a free name ("photo (1).jpg") unless told to overwrite; keep the path it
+      // really writes, so Open and Show in Finder point at the right file
+      const local = await api.startDownload(t.id, t.profileId, t.bucket, t.key, t.local, overwriteIds.has(t.id));
+      const cur = byId.get(t.id);
+      if (cur && typeof local === "string" && local && local !== cur.local) {
+        byId.set(t.id, { ...cur, local });
+        markDirty();
+      }
     }
   } catch (e) {
-    byId.set(t.id, { ...t, state: "error", error: errMessage(e) });
+    const failed: Transfer = { ...(byId.get(t.id) ?? t), state: "error", error: errMessage(e) };
+    byId.set(t.id, failed);
+    settle(failed);
     markDirty();
     onErrorRef(errMessage(e));
   }
 }
 
+/** Puts a finished transfer back in the queue under the same id, so the backend can resume it. */
+function requeue(id: string): Transfer | null {
+  const t = byId.get(id);
+  if (!t || t.state === "queued" || t.state === "running" || t.state === "done") return null;
+  const fresh: Transfer = { ...t, state: "queued", error: null, speed: 0 };
+  byId.set(id, fresh);
+  lastSample.delete(id);
+  if (t.kind === "upload") batch.add(id);
+  return fresh;
+}
+
 const actions = {
   add(items: (NewTransfer & { total?: number })[]): Transfer[] {
     listenOnce();
-    const created: Transfer[] = items.map((it) => ({
-      ...it,
-      id: crypto.randomUUID(),
-      state: "queued" as const,
-      bytes: 0,
-      total: it.total ?? 0,
-      speed: 0,
-    }));
+    const created: Transfer[] = items.map(({ overwrite, ...it }) => {
+      const id = crypto.randomUUID();
+      if (overwrite) overwriteIds.add(id);
+      return { ...it, id, state: "queued" as const, bytes: 0, total: it.total ?? 0, speed: 0 };
+    });
     for (const t of created) {
       byId.set(t.id, t);
       if (t.kind === "upload") batch.add(t.id);
@@ -188,19 +223,42 @@ const actions = {
     }
   },
   retry(id: string) {
-    const t = byId.get(id);
-    if (!t) return;
-    const fresh: Transfer = { ...t, state: "queued", bytes: 0, error: null, speed: 0 };
-    byId.set(id, fresh);
-    if (t.kind === "upload") batch.add(id);
+    const fresh = requeue(id);
+    if (!fresh) return;
     dirty = true;
     flush();
     markDirty();
     start(fresh);
   },
+  /** Retries every failed or cancelled transfer; returns how many were started again. */
+  retryAll(): number {
+    const again: Transfer[] = [];
+    for (const t of [...byId.values()]) {
+      if (t.state !== "error" && t.state !== "cancelled") continue;
+      const fresh = requeue(t.id);
+      if (fresh) again.push(fresh);
+    }
+    if (!again.length) return 0;
+    dirty = true;
+    flush();
+    markDirty();
+    (async () => {
+      for (let i = 0; i < again.length; i += 50) await Promise.all(again.slice(i, i + 50).map(start));
+    })();
+    return again.length;
+  },
+  /** Resolves once the transfer is done, failed or cancelled (with its final state and local path). */
+  whenFinished(id: string): Promise<Transfer> {
+    const t = byId.get(id);
+    if (t && (t.state === "done" || t.state === "error" || t.state === "cancelled")) return Promise.resolve(t);
+    return new Promise((ok) => waiters.set(id, [...(waiters.get(id) ?? []), ok]));
+  },
   clearFinished() {
     for (const [id, t] of byId) {
-      if (t.state === "done" || t.state === "cancelled" || t.state === "error") byId.delete(id);
+      if (t.state === "done" || t.state === "cancelled" || t.state === "error") {
+        byId.delete(id);
+        overwriteIds.delete(id);
+      }
     }
     dirty = true;
     flush();

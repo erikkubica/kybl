@@ -417,7 +417,7 @@ export function FileTable({
         {entries.slice(win.start, win.end).map((e, n) => {
           const i = win.start + n;
           const sel = selected.has(e.key);
-          const rel = e.key.slice(prefix.length);
+          const rel = e.key.slice(prefix.length).replace(/\/$/, "");
           const slash = searchMode ? rel.lastIndexOf("/") : -1;
           const folder = e.kind === "folder";
           return (

@@ -4434,12 +4434,12 @@ input[aria-invalid="true"]:focus {
 .side-item.fav-row[aria-disabled="true"] {
   cursor: default;
 }
-body.dragging-items .bucket-row.droppable:hover {
+body.dragging-items .bucket-row.drop-target {
   background: var(--accent-soft);
   color: var(--accent);
   box-shadow: inset 0 0 0 1.5px var(--accent-solid);
 }
-body.dragging-items .bucket-row.droppable:hover svg {
+body.dragging-items .bucket-row.drop-target svg {
   color: var(--accent);
 }
 

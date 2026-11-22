@@ -9,10 +9,14 @@ import type { Entry } from "../types";
 
 const MAX_PAGES = 5;
 
-/** Folder picker for "Move to…" / "Copy to…" inside the current bucket. */
+/**
+ * Folder picker for "Move to…" / "Copy to…", in the current bucket or, when `buckets` lists more
+ * than one, in another bucket of the same connection (copied server-side).
+ */
 export function MoveDialog({
   profileId,
   bucket,
+  buckets,
   items,
   startPrefix,
   initialMode,
@@ -21,14 +25,18 @@ export function MoveDialog({
 }: {
   profileId: string;
   bucket: string;
+  /** buckets of this connection the items may go to; omitted = only `bucket` */
+  buckets?: string[];
   items: Entry[];
   startPrefix: string;
   initialMode: "move" | "copy";
-  onSubmit: (dest: string, mode: "move" | "copy") => void;
+  onSubmit: (dest: string, mode: "move" | "copy", destBucket: string) => void;
   onClose: () => void;
 }) {
   const [mode, setMode] = useState(initialMode);
+  const [target, setTarget] = useState(bucket);
   const [path, setPath] = useState(startPrefix);
+  const other = target !== bucket;
   const [folders, setFolders] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -48,7 +56,7 @@ export function MoveDialog({
       const found = new Set<string>();
       let token: string | null = null;
       for (let i = 0; i < MAX_PAGES; i++) {
-        const r = await api.listObjects(profileId, bucket, path, token);
+        const r = await api.listObjects(profileId, target, path, token);
         r.folders.forEach((f) => found.add(f));
         token = r.nextToken;
         if (!token) break;
@@ -60,16 +68,16 @@ export function MoveDialog({
     return () => {
       live = false;
     };
-  }, [profileId, bucket, path, attempt]);
+  }, [profileId, target, path, attempt]);
 
   const parts = path.split("/").filter(Boolean);
-  const blocked = (f: string) => items.some((e) => e.kind === "folder" && f.startsWith(e.key));
+  const blocked = (f: string) => !other && items.some((e) => e.kind === "folder" && f.startsWith(e.key));
   // a folder name still being typed counts as the destination, so "Move here" finishes the job
   // without a separate confirm step (touch keyboards can be dismissed without pressing Return)
   const pending = creating ? newName.trim().replace(/\/+$/, "") : "";
   const dest = pending && !pending.includes("/") ? `${path}${pending}/` : path;
-  const valid = isValidDest(items, dest);
-  const allHere = items.every((e) => entryParent(e) === dest);
+  const valid = other || isValidDest(items, dest);
+  const allHere = !other && items.every((e) => entryParent(e) === dest);
   const what = items.length === 1 ? `“${items[0].name}”` : `${items.length} items`;
   const verb = mode === "move" ? "Move" : "Copy";
 
@@ -109,10 +117,32 @@ export function MoveDialog({
           </button>
         </div>
 
+        {buckets && buckets.length > 1 && (
+          <label className="move-bucket">
+            <Icon name="bucket" size={14} />
+            <span>Bucket</span>
+            <select
+              value={target}
+              onChange={(e) => {
+                made.current.clear();
+                setTarget(e.target.value);
+                setPath("");
+              }}
+              aria-label="Destination bucket"
+            >
+              {buckets.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                  {b === bucket ? " (this bucket)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <nav className="move-crumbs" aria-label="Destination">
           <button className="crumb" onClick={() => setPath("")}>
             <Icon name="bucket" size={14} />
-            {bucket}
+            {target}
           </button>
           {parts.map((p, i) => (
             <span key={i} className="crumb-wrap">
@@ -194,7 +224,7 @@ export function MoveDialog({
             ? `${items.length === 1 ? "It’s" : "They’re"} already in this folder. Pick another one.`
             : !valid
               ? "A folder can’t be moved into itself."
-              : `${verb} to /${dest}`}
+              : `${verb} to ${other ? `${target}/` : "/"}${dest}`}
         </p>
       </div>
       <div className="modal-foot split">
@@ -213,9 +243,9 @@ export function MoveDialog({
               // the moment its last file is moved out. Best effort, the move itself doesn't need it.
               if (dest !== path) made.current.add(dest);
               for (const f of made.current) {
-                if (dest.startsWith(f)) api.createFolder(profileId, bucket, f).catch(() => {});
+                if (dest.startsWith(f)) api.createFolder(profileId, target, f).catch(() => {});
               }
-              onSubmit(dest, mode);
+              onSubmit(dest, mode, target);
               onClose();
             }}
           >

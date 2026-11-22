@@ -18,8 +18,13 @@ export type FolderSize = {
 const PARALLEL = 3;
 let seq = 0;
 
-export function useFolderSizes(profileId: string | null, bucket: string | null) {
+/** The shape the list, grid and details pane take (components/listNav): nothing while unknown or failed. */
+export type FolderSizeView = { bytes: number; objects: number; running: boolean };
+
+export function useFolderSizes(profileId: string | null, bucket: string | null, onError?: (prefix: string, message: string) => void) {
   const [sizes, setSizes] = useState<Record<string, FolderSize>>({});
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
   // read through a ref so `calc` keeps one identity instead of changing on every progress event
   const sizesRef = useRef(sizes);
   sizesRef.current = sizes;
@@ -50,6 +55,7 @@ export function useFolderSizes(profileId: string | null, bucket: string | null) 
         .then((res) => {
           ops.current.delete(job.id);
           running.current--;
+          if (res.state === "error" && res.error !== "Cancelled") onErrorRef.current?.(job.prefix, res.error ?? "");
           if (scopeRef.current.startsWith(`${pid}/${b}/`)) {
             // a stopped run just goes back to "not calculated"
             setSizes((s) => {
@@ -102,5 +108,14 @@ export function useFolderSizes(profileId: string | null, bucket: string | null) 
 
   const get = useCallback((prefix: string): FolderSize | undefined => sizes[scope + prefix], [sizes, scope]);
 
-  return { get, calc, cancel, clear };
+  /** `get` for the list and the details pane: a failed run reads as not calculated (Calculate shows again). */
+  const view = useCallback(
+    (prefix: string): FolderSizeView | undefined => {
+      const s = sizes[scope + prefix];
+      return s && s.state !== "error" ? { bytes: s.bytes, objects: s.objects, running: s.state === "loading" } : undefined;
+    },
+    [sizes, scope],
+  );
+
+  return { get, view, calc, cancel, clear };
 }

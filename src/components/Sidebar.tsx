@@ -62,7 +62,6 @@ export function Sidebar({
   favorites,
   onOpenFavorite,
   onRemoveFavorite,
-  onDropOnBucket,
 }: {
   profiles: Profile[];
   /** connection of the bucket on screen */
@@ -89,11 +88,6 @@ export function Sidebar({
   favorites?: Favorite[];
   onOpenFavorite?(f: Favorite): void;
   onRemoveFavorite?(f: Favorite): void;
-  /**
-   * Files dragged from the list (useItemDrag) were let go over a bucket. The app knows what was
-   * being dragged; `e.altKey` means copy, as for drops on folders.
-   */
-  onDropOnBucket?(profile: Profile, bucket: string, e: React.MouseEvent): void;
 }) {
   // connections whose hidden buckets are on show (to pick which to bring back)
   const [showHidden, setShowHidden] = useState<Set<string>>(new Set());
@@ -194,17 +188,15 @@ export function Sidebar({
                     return (
                       <div
                         key={b}
-                        className={`side-item sub bucket-row ${here ? "selected" : ""} ${isHidden ? "is-hidden" : ""} ${onDropOnBucket ? "droppable" : ""}`}
-                        onMouseUp={(e) => {
-                          // the list's own drag (useItemDrag) is pointer-driven: a release over a
-                          // bucket while it runs is a drop
-                          if (onDropOnBucket && e.button === 0 && document.body.classList.contains("dragging-items")) onDropOnBucket(p, b, e);
-                        }}
+                        className={`side-item sub bucket-row ${here ? "selected" : ""} ${isHidden ? "is-hidden" : ""}`}
                         onClick={() => onSelectBucket(p, b)}
                         onKeyDown={onActivate(() => onSelectBucket(p, b))}
                         role="button"
                         tabIndex={0}
                         aria-current={here}
+                        // the list's drag (useItemDrag) drops items here: at the bucket's top level
+                        data-drop-bucket={b}
+                        data-drop-profile={p.id}
                       >
                         <Icon name="bucket" size={14} />
                         <span className="side-label">{b}</span>
