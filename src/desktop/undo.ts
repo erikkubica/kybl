@@ -6,6 +6,8 @@ export type UndoEntry = { label: string; run: () => Promise<void> };
 
 const MAX = 20;
 const stack: UndoEntry[] = [];
+// undos run one after another: two quick ⌘Z must not move the same things at once
+let queue: Promise<void> = Promise.resolve();
 
 export const undoStack = {
   push(e: UndoEntry) {
@@ -20,5 +22,10 @@ export const undoStack = {
     if (i < 0) return false;
     stack.splice(i, 1);
     return true;
+  },
+  /** Runs an entry once every undo started before it has finished. */
+  runQueued(e: UndoEntry): Promise<void> {
+    queue = queue.then(() => e.run()).catch(() => {});
+    return queue;
   },
 };

@@ -15,7 +15,7 @@ import type { Toast } from "../components/Dialogs";
 import type { TransferActions } from "../useTransfers";
 import type { useJobs } from "../useJobs";
 import { applyChoices, findExisting, type Choice, type Clash } from "./conflicts";
-import { joinPath, safeRelPath, shortHash } from "./paths";
+import { joinPath, numberedName, safeRelPath, shortHash } from "./paths";
 import { undoStack, type UndoEntry } from "./undo";
 import { itemClipboard } from "./clipboard";
 
@@ -44,7 +44,16 @@ export type OpsContext = {
   selectAfterReload: (profileId: string, bucket: string, key: string | null) => void;
   deselect: (keys: string[]) => void;
   clearSizes: () => void;
+  /** a new item should show: leaves deep-search mode (which wouldn't list it) */
+  leaveSearch?: () => void;
+  /** folders were renamed, moved (to: the new prefix, maybe in `toBucket`) or deleted (to: null): favorites follow */
+  foldersChanged?: (profileId: string, fromBucket: string, toBucket: string, moves: { from: string; to: string | null }[]) => void;
+  /** the connection's files are this computer's own (open them in place, no temp download) */
+  localPaths?: boolean;
 };
+
+/** Undo of a copy deletes the copied objects; past this many it asks first. */
+const UNDO_CONFIRM_OVER = 100;
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 const whatOf = (list: { name: string }[]) => (list.length === 1 ? `“${list[0].name}”` : plural(list.length, "item"));
@@ -82,14 +91,24 @@ export function makeFileOps(c: OpsContext) {
   };
 
   /** Turns clashes into a destination per key (null = skip), asking the user. null = cancelled. */
-  const decide = async (pid: string, b: string, clashes: Clash[], verb: string, where: string, auto: Map<string, Choice> = new Map()) => {
+  const decide = async (
+    pid: string,
+    b: string,
+    clashes: Clash[],
+    verb: string,
+    where: string,
+    auto: Map<string, Choice> = new Map(),
+    /** keys this batch writes anyway: "Keep both" must not pick one of them */
+    reserved: Set<string> = new Set(),
+  ) => {
     const ask = clashes.filter((x) => !auto.has(x.key));
     const choices = await c.resolveConflicts(ask, verb, where);
     if (!choices) return null;
     for (const [k, v] of auto) choices.set(k, v);
     c.setBusy(choices.size ? "Finding free names…" : null);
     try {
-      return { dest: await applyChoices(pid, b, choices), replaced: [...choices.values()].includes("replace") };
+      for (const [k, v] of choices) if (v === "replace") reserved.add(k);
+      return { dest: await applyChoices(pid, b, choices, reserved), replaced: [...choices.values()].includes("replace") };
     } finally {
       c.setBusy(null);
     }
@@ -114,11 +133,21 @@ export function makeFileOps(c: OpsContext) {
       }
       // what lands directly in `dest`: single files, or the top folder of a dropped folder
       const groups = new Map<string, { folder: boolean; files: { f: LocalFile; rest: string }[] }>();
+      // files from different places can share a name (Finder search results), and so can picked
+      // folders: later ones get a number, as "Keep both" would, instead of overwriting each other
+      const originOf = new Map<string, string>(); // top in the batch -> where on disk it came from
       for (const f of files) {
         const rel = safeRelPath(f.rel.replace(/\\/g, "/"));
         if (!rel) continue;
         const cut = rel.indexOf("/");
-        const top = cut < 0 ? rel : rel.slice(0, cut + 1);
+        let top = cut < 0 ? rel : rel.slice(0, cut + 1);
+        const local = f.path.replace(/\\/g, "/");
+        const origin = cut < 0 ? local : local.slice(0, local.length - rel.length + cut);
+        for (let n = 1; originOf.has(top) && (cut < 0 || originOf.get(top) !== origin); n++) {
+          const base = cut < 0 ? rel : rel.slice(0, cut + 1);
+          top = numberedName(base, n);
+        }
+        originOf.set(top, origin);
         const g = groups.get(top) ?? { folder: cut >= 0, files: [] };
         g.files.push({ f, rest: cut < 0 ? "" : rel.slice(cut + 1) });
         groups.set(top, g);
@@ -127,7 +156,8 @@ export function makeFileOps(c: OpsContext) {
       const found = await existing(pid, bucket, targets);
       if (!found) return;
       const clashes = targets.filter((t) => found.has(t.key)).map((t) => ({ key: t.key, folder: t.folder, name: t.key.slice(dest.length).replace(/\/$/, "") }));
-      const d = await decide(pid, bucket, clashes, "Uploading", placeLabel(bucket, dest));
+      const reserved = new Set(targets.filter((t) => !found.has(t.key)).map((t) => t.key));
+      const d = await decide(pid, bucket, clashes, "Uploading", placeLabel(bucket, dest), new Map(), reserved);
       if (!d) return;
       const items: Parameters<TransferActions["add"]>[0] = [];
       for (const [top, g] of groups) {
@@ -220,6 +250,11 @@ export function makeFileOps(c: OpsContext) {
     const { profile, bucket } = c;
     if (!profile || !bucket || e.kind !== "file") return;
     try {
+      if (c.localPaths) {
+        // a file on this computer opens where it is
+        const path = await api.localPath(profile.id, bucket, e.key);
+        if (path) return void (await api.openLocal(path));
+      }
       const tmp = await api.tempFolder();
       const local = joinPath(tmp, `${shortHash(`${profile.id}\n${bucket}\n${e.key}`)}/${safeRelPath(e.name) || "file"}`);
       const [t] = transfers.add([{ kind: "download", name: e.name, profileId: profile.id, bucket, key: e.key, local, total: e.size, overwrite: true }]);
@@ -256,6 +291,7 @@ export function makeFileOps(c: OpsContext) {
       }
       c.clearSizes();
       c.reloadIfShowing(pid, b);
+      if (folders.length) c.foldersChanged?.(pid, b, b, folders.map((f) => ({ from: f.key, to: null })));
     };
     if (!settings.confirmDelete) {
       run();
@@ -289,13 +325,26 @@ export function makeFileOps(c: OpsContext) {
     toast("success", text, {
       label: "Undo",
       run: () => {
-        if (undoStack.take(entry)) void entry.run();
+        if (undoStack.take(entry)) undoStack.runQueued(entry);
       },
     });
   };
 
   /** Moves items back (`items` as they were moved: from → to, in `fromBucket` → `toBucket`). */
   const moveBack = (pid: string, fromBucket: string, toBucket: string, items: { from: string; to: string; isPrefix: boolean }[], label: string) => async () => {
+    // something new may sit at the old names by now: never overwrite it
+    let back: Set<string>;
+    try {
+      back = await findExisting(pid, fromBucket, items.map((i) => ({ key: i.from, folder: i.isPrefix })));
+    } catch (e) {
+      toast("error", `Couldn’t undo the ${label}. ${errMessage(e).split("\n\n")[0]}`);
+      return;
+    }
+    if (back.size) {
+      const first = [...back][0].replace(/\/$/, "").split("/").pop();
+      toast("error", `Couldn’t undo the ${label}: “${first}” is in the old place again${back.size > 1 ? `, and ${back.size - 1} more` : ""}. Move it away and try again.`);
+      return;
+    }
     const id = jobs.start({ kind: "move", title: `Undoing: ${label}`, profileId: pid, bucket: fromBucket });
     try {
       const r = await api.moveMany(pid, toBucket, items.map((i) => ({ from: i.to, to: i.from, isPrefix: i.isPrefix })), true, id, toBucket !== fromBucket ? fromBucket : null);
@@ -308,6 +357,8 @@ export function makeFileOps(c: OpsContext) {
     c.clearSizes();
     c.reloadIfShowing(pid, fromBucket);
     if (toBucket !== fromBucket) c.reloadIfShowing(pid, toBucket);
+    const folders = items.filter((i) => i.isPrefix);
+    if (folders.length) c.foldersChanged?.(pid, toBucket, fromBucket, folders.map((i) => ({ from: i.to, to: i.from })));
   };
 
   // ---------------------------------------------------------------- rename
@@ -370,6 +421,7 @@ export function makeFileOps(c: OpsContext) {
         }
         if (isFolder) c.clearSizes();
         c.reloadIfShowing(pid, b);
+        if (renamed && isFolder) c.foldersChanged?.(pid, b, b, [{ from: e.key, to }]);
       },
     });
   };
@@ -401,6 +453,8 @@ export function makeFileOps(c: OpsContext) {
           }
           await api.createFolder(pid, b, key);
           c.selectAfterReload(pid, b, key);
+          // in search results the new folder wouldn't show: back to the folder, with it selected
+          c.leaveSearch?.();
           c.reloadIfShowing(pid, b);
         } catch (e) {
           toast("error", errMessage(e));
@@ -415,32 +469,35 @@ export function makeFileOps(c: OpsContext) {
    * the same connection. Copying into the folder the items are already in duplicates them
    * ("photo (1).jpg") without asking.
    */
-  const relocate = async (list: Entry[], dest: string, mode: "move" | "copy", opts: { srcBucket?: string; destBucket?: string } = {}) => {
+  /** Resolves true when everything asked for was moved or copied. */
+  const relocate = async (list: Entry[], dest: string, mode: "move" | "copy", opts: { srcBucket?: string; destBucket?: string } = {}): Promise<boolean> => {
     const { profile } = c;
     const srcB = opts.srcBucket ?? c.bucket;
-    if (!profile || !srcB) return;
+    if (!profile || !srcB) return false;
     const pid = profile.id;
     const dstB = opts.destBucket ?? srcB;
     const cross = dstB !== srcB;
     const dup = (e: Entry) => !cross && mode === "copy" && entryParent(e) === dest;
     const todo = list.filter((e) => cross || ((entryParent(e) !== dest || dup(e)) && !(e.kind === "folder" && dest.startsWith(e.key))));
-    if (todo.length === 0) return;
+    if (todo.length === 0) return false;
     const where = placeLabel(dstB, dest);
 
     const targets = todo.map((e) => ({ key: destKey(e, dest), folder: e.kind === "folder", name: e.name }));
     const found = await existing(pid, dstB, targets.filter((t) => !todo.some((e) => dup(e) && destKey(e, dest) === t.key)));
-    if (!found) return;
+    if (!found) return false;
     const auto = new Map<string, Choice>(todo.filter(dup).map((e) => [destKey(e, dest), "keep"]));
     const clashes = targets.filter((t) => found.has(t.key) || auto.has(t.key));
-    const d = await decide(pid, dstB, clashes, mode === "move" ? "Moving" : "Copying", where, auto);
-    if (!d) return;
+    // what lands under its own name: "Keep both" must not pick one of these for another item
+    const reserved = new Set(targets.filter((t) => !found.has(t.key) && !auto.has(t.key)).map((t) => t.key));
+    const d = await decide(pid, dstB, clashes, mode === "move" ? "Moving" : "Copying", where, auto, reserved);
+    if (!d) return false;
     const items: { from: string; to: string; isPrefix: boolean }[] = [];
     for (const e of todo) {
       const key = destKey(e, dest);
       const to = d.dest.has(key) ? d.dest.get(key)! : key;
       if (to !== null) items.push({ from: e.key, to, isPrefix: e.kind === "folder" });
     }
-    if (!items.length) return;
+    if (!items.length) return false;
 
     const what = items.length === 1 ? `“${todo.find((e) => e.key === items[0].from)?.name}”` : plural(items.length, "item");
     const verb = mode === "move" ? "Moving" : "Copying";
@@ -469,30 +526,50 @@ export function makeFileOps(c: OpsContext) {
       const label = `${mode === "move" ? "move" : "copy"} of ${what}`;
       const done = `${mode === "move" ? "Moved" : "Copied"} ${what} to ${where}`;
       if (mode === "move") offerUndo({ label, run: moveBack(pid, srcB, dstB, items, label) }, done);
-      else
-        offerUndo(
-          {
-            label,
-            run: async () => {
-              const uid = jobs.start({ kind: "delete", title: `Undoing: ${label}` });
-              try {
-                const r = await api.deleteObjects(pid, dstB, items.filter((i) => !i.isPrefix).map((i) => i.to), items.filter((i) => i.isPrefix).map((i) => i.to), uid);
-                jobs.finish(uid, r);
-                if (r.error && r.error !== "Cancelled") toast("error", r.error, showAction);
-              } catch (e) {
-                jobs.finish(uid, { error: errMessage(e) });
-                toast("error", errMessage(e), showAction);
-              }
-              c.clearSizes();
-              c.reloadIfShowing(pid, dstB);
-            },
-          },
-          done,
-        );
+      else {
+        // the exact objects the copy made, so undoing it never takes anything added there later
+        let made: string[] | null = items.filter((i) => !i.isPrefix).map((i) => i.to);
+        try {
+          for (const i of items.filter((x) => x.isPrefix)) made.push(...(await api.listAllUnder(pid, dstB, i.to)).map((o) => o.key));
+        } catch {
+          made = null;
+        }
+        if (made) offerUndo({ label, run: deleteCopies(pid, dstB, made, label) }, done);
+        else toast("success", done);
+      }
+    }
+    if (ok && mode === "move") {
+      const folders = items.filter((i) => i.isPrefix);
+      if (folders.length) c.foldersChanged?.(pid, srcB, dstB, folders.map((i) => ({ from: i.from, to: i.to })));
     }
     c.clearSizes();
     c.reloadIfShowing(pid, srcB);
     if (cross) c.reloadIfShowing(pid, dstB);
+    return ok;
+  };
+
+  /** Undo of a copy: deletes exactly the objects it made (asks first when that's a lot). */
+  const deleteCopies = (pid: string, b: string, keys: string[], label: string) => async () => {
+    if (keys.length > UNDO_CONFIRM_OVER) {
+      const go = await c.confirm({
+        title: `Delete ${plural(keys.length, "copied object")}?`,
+        label: "Delete copies",
+        danger: true,
+        message: <p>Undoing the {label} deletes the {keys.length.toLocaleString()} objects it made. Anything added there since stays.</p>,
+      });
+      if (!go) return;
+    }
+    const uid = jobs.start({ kind: "delete", title: `Undoing: ${label}` });
+    try {
+      const r = await api.deleteObjects(pid, b, keys, [], uid);
+      jobs.finish(uid, r);
+      if (r.error && r.error !== "Cancelled") toast("error", r.error, showAction);
+    } catch (e) {
+      jobs.finish(uid, { error: errMessage(e) });
+      toast("error", errMessage(e), showAction);
+    }
+    c.clearSizes();
+    c.reloadIfShowing(pid, b);
   };
 
   /** ⌘C / ⌘X: remembers the items (and puts their S3 URIs on the clipboard as text). */
@@ -513,8 +590,10 @@ export function makeFileOps(c: OpsContext) {
       toast("error", "Items can only be pasted within the same connection.");
       return;
     }
-    if (cl.mode === "cut") itemClipboard.clear();
-    void relocate(cl.items, dest, cl.mode === "cut" ? "move" : "copy", { srcBucket: cl.bucket, destBucket: bucket });
+    // a cut is used up only once the move went through (not when cancelled, or into the same folder)
+    void relocate(cl.items, dest, cl.mode === "cut" ? "move" : "copy", { srcBucket: cl.bucket, destBucket: bucket }).then((ok) => {
+      if (ok && cl.mode === "cut" && itemClipboard.get() === cl) itemClipboard.clear();
+    });
   };
 
   return { uploadPaths, pickAndUpload, downloadEntries, openInApp, askDelete, askRename, askNewFolder, relocate, clip, paste };
