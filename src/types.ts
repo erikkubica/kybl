@@ -37,6 +37,9 @@ export type ObjectDetails = {
   etag: string | null;
   storageClass: string | null;
   metadata: Record<string, string>;
+  cacheControl?: string | null;
+  contentDisposition?: string | null;
+  contentEncoding?: string | null;
 };
 
 export type LocalFile = { path: string; rel: string; size: number };

@@ -73,13 +73,34 @@ export const api = {
     deleteSource: boolean,
   ) => invoke<number>("copy_or_move", { profileId, bucket, from, to, isPrefix, deleteSource }),
 
+  /**
+   * Copies or moves keys/prefixes. `destBucket` (same connection) copies across buckets
+   * server-side; null keeps them in `bucket`. Keeps Content-Type and metadata, also for big files.
+   */
   moveMany: (
     profileId: string,
     bucket: string,
     items: { from: string; to: string; isPrefix: boolean }[],
     deleteSource: boolean,
     opId: string,
-  ) => invoke<OpResult>("move_many", { profileId, bucket, items, deleteSource, opId }),
+    destBucket?: string | null,
+  ) => invoke<OpResult>("move_many", { profileId, bucket, items, deleteSource, opId, destBucket: destBucket ?? null }),
+
+  /**
+   * Which of these already exist, for name-clash prompts before upload, rename, new folder,
+   * move and copy. A prefix "exists" when at least one key starts with it. At most a few
+   * thousand entries per call; the backend checks them concurrently.
+   */
+  existing: (profileId: string, bucket: string, keys: string[], prefixes: string[] = []) =>
+    read<{ keys: string[]; prefixes: string[] }>("existing_keys", { profileId, bucket, keys, prefixes }),
+
+  /** Replaces the object's headers in place (copy onto itself, metadata REPLACE). Omitted fields keep their value. */
+  updateObjectProps: (profileId: string, bucket: string, key: string, props: ObjectProps) =>
+    invoke<ObjectDetails>("update_object_props", { profileId, bucket, key, props }),
+  objectTags: (profileId: string, bucket: string, key: string) =>
+    read<Record<string, string>>("get_object_tags", { profileId, bucket, key }),
+  setObjectTags: (profileId: string, bucket: string, key: string, tags: Record<string, string>) =>
+    invoke<void>("put_object_tags", { profileId, bucket, key, tags }),
 
   expandPaths: (paths: string[]) => invoke<LocalFile[]>("expand_paths", { paths }),
   listAllUnder: (profileId: string, bucket: string, prefix: string) =>
@@ -92,13 +113,19 @@ export const api = {
     key: string,
     localPath: string,
   ) => invoke<void>("start_upload", { id, profileId, bucket, key, localPath }),
+  /**
+   * Resolves to the local path actually written. Unless `overwrite`, an existing file is kept
+   * and the download gets a free name ("photo (1).jpg"), like Finder. Paths with ".." parts are
+   * refused. Retrying the same id resumes from the partial file where possible.
+   */
   startDownload: (
     id: string,
     profileId: string,
     bucket: string,
     key: string,
     destPath: string,
-  ) => invoke<void>("start_download", { id, profileId, bucket, key, destPath }),
+    overwrite = false,
+  ) => invoke<string>("start_download", { id, profileId, bucket, key, destPath, overwrite }),
   cancelTransfer: (id: string) => invoke<void>("cancel_transfer", { id }),
   /** Transfers still queued or running, including ones started before this page loaded. */
   activeTransfers: () => invoke<Omit<Transfer, "speed" | "error">[]>("active_transfers"),
@@ -110,7 +137,69 @@ export const api = {
     invoke<{ path: string; name: string; size: number }[]>("picked_files", { uris }),
   /** Where downloads are saved without asking (phones; Downloads on desktop). */
   downloadFolder: () => invoke<string>("download_folder"),
+  /** A per-app temporary folder (for "open in default app" on desktop); cleaned on start. */
+  tempFolder: () => invoke<string>("temp_folder"),
+
+  /** Bytes and object count under a prefix; progress as `size-progress` events, cancel with `cancelTransfer(opId)`. */
+  folderSize: (profileId: string, bucket: string, prefix: string, opId: string) =>
+    invoke<{ bytes: number; objects: number }>("folder_size", { profileId, bucket, prefix, opId }),
+
+  /** Opens a local file in its default app (desktop) or an "Open with" chooser (phones). */
+  openLocal: (path: string) => invoke<void>("open_local", { path }),
+  /** Shows the file in Finder / Explorer / the file manager. Desktop only. */
+  revealLocal: (path: string) => invoke<void>("reveal_local", { path }),
+  /** System share sheet with local files (phones; macOS share menu where available). */
+  shareFiles: (paths: string[]) => invoke<void>("share_files", { paths }),
+  /** System share sheet with text, such as a share link. */
+  shareText: (text: string) => invoke<void>("share_text", { text }),
+  /** iOS: adds an image or video to Photos. Android: copies it into Pictures/Kybl. */
+  saveToPhotos: (path: string) => invoke<void>("save_to_photos", { path }),
+  /** Light haptic feedback on phones; a no-op elsewhere. Never throws. */
+  haptic: (kind: "selection" | "light" | "medium" | "success" | "warning" | "error") =>
+    invoke<void>("haptic", { kind }).catch(() => {}),
+  /**
+   * Files other apps shared into Kybl (Android share sheet / iOS) that are waiting for an
+   * upload destination. Taking them clears the queue. New ones also arrive as a
+   * `shared-files` event with the same payload.
+   */
+  takeSharedFiles: () => invoke<{ path: string; name: string; size: number }[]>("take_shared_files"),
+
+  /** Transfer tuning; the backend applies changes to new transfers right away. */
+  transferPrefs: () => invoke<TransferPrefs>("get_transfer_prefs"),
+  setTransferPrefs: (p: Partial<TransferPrefs>) => invoke<TransferPrefs>("set_transfer_prefs", { prefs: p }),
 };
+
+/** Editable object headers; see `updateObjectProps`. `metadata` replaces all user metadata when given. */
+export type ObjectProps = {
+  contentType?: string | null;
+  cacheControl?: string | null;
+  contentDisposition?: string | null;
+  contentEncoding?: string | null;
+  storageClass?: string | null;
+  metadata?: Record<string, string>;
+};
+
+export type TransferPrefs = {
+  /** Files transferred at the same time per connection, 1..8 (default 3). */
+  concurrency: number;
+  /** Multipart parts in flight per file, 1..8 (default 4). */
+  partConcurrency: number;
+  /** Total download+upload cap in KiB/s; 0 = unlimited. */
+  bandwidthLimitKbps: number;
+  /** Phones: only transfer (and fetch thumbnails) on Wi-Fi / unmetered networks. */
+  wifiOnly: boolean;
+};
+
+/**
+ * Native app events (listen with `@tauri-apps/api/event`):
+ * - `menu` (string): macOS menu bar / app menu item ids: "new-folder", "upload-files",
+ *   "upload-folder", "download", "refresh", "go-up", "back", "forward", "go-to", "search",
+ *   "select-all", "delete", "rename", "get-info", "settings", "new-connection".
+ * - `shared-files`: see `takeSharedFiles`.
+ * - `open-transfers` (null): a transfer notification was tapped (phones).
+ * - `app-resumed` (null): the app came back to the foreground (phones; desktop on window focus).
+ */
+export type NativeEvent = "menu" | "shared-files" | "open-transfers" | "app-resumed";
 
 export function errMessage(e: unknown): string {
   if (typeof e === "string") return e;

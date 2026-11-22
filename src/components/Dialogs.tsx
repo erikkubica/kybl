@@ -240,15 +240,42 @@ export function ContextMenu({
   );
 }
 
-export type Toast = { id: number; kind: "info" | "error" | "success"; text: string };
+/**
+ * A short message. With `action`, the toast shows a button (Undo, Retry, Show…) that runs it and
+ * dismisses the toast; callers should keep such toasts up longer (about 8 s).
+ */
+export type Toast = {
+  id: number;
+  kind: "info" | "error" | "success";
+  text: string;
+  action?: { label: string; run: () => void };
+};
 
 export function Toasts({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number) => void }) {
   return (
-    <div className="toasts" role="status" aria-live="polite">
+    <div className="toasts" aria-live="polite">
       {toasts.map((t) => (
-        <div key={t.id} className={`toast toast-${t.kind}`} onClick={() => dismiss(t.id)}>
+        <div
+          key={t.id}
+          className={`toast toast-${t.kind}`}
+          role={t.kind === "error" ? "alert" : "status"}
+          onClick={() => dismiss(t.id)}
+        >
           <Icon name={t.kind === "error" ? "alert" : t.kind === "success" ? "check-circle" : "info"} size={16} />
           <span title={errDetail(t.text) ?? undefined}>{errSummary(t.text)}</span>
+          {t.action && (
+            <button
+              type="button"
+              className="toast-action"
+              onClick={(e) => {
+                e.stopPropagation();
+                dismiss(t.id);
+                t.action!.run();
+              }}
+            >
+              {t.action.label}
+            </button>
+          )}
         </div>
       ))}
     </div>

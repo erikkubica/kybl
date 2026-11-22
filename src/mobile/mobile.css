@@ -2354,3 +2354,16 @@ input[type="checkbox"].m-switch:checked {
 .m-setting-row:disabled {
   opacity: 0.6;
 }
+
+.toast-action {
+  margin-left: auto;
+  padding: 2px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  flex: none;
+}

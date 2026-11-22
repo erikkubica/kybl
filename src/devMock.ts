@@ -16,6 +16,9 @@ const profiles: Profile[] = [
   { id: "p3", name: "Local MinIO", provider: "custom", endpoint: "http://localhost:9000", region: "us-east-1", accessKeyId: "minio", bucket: null, pathStyle: true },
 ];
 
+const mockTags: Record<string, Record<string, string>> = {};
+const transferPrefs = { concurrency: 3, partConcurrency: 4, bandwidthLimitKbps: 0, wifiOnly: false };
+
 const buckets = ["media-prod", "backups", "static-assets", "logs-archive"];
 
 const obj = (key: string, size: number, ageHours: number): ObjInfo => ({
@@ -346,7 +349,43 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       return null;
     case "start_download":
       simulateTransfer(a.id, 18_000_000 + Math.random() * 60_000_000);
+      return a.destPath;
+    case "existing_keys": {
+      const all = new Set(Object.values(tree).flatMap((n) => n.objects.map((o) => o.key)));
+      const dirs = new Set(Object.keys(tree).concat(Object.values(tree).flatMap((n) => n.folders)));
+      return {
+        keys: (a.keys as string[]).filter((k) => all.has(k)),
+        prefixes: (a.prefixes as string[]).filter((p) => dirs.has(p)),
+      };
+    }
+    case "update_object_props":
+      return { key: a.key, size: 1000, contentType: a.props.contentType ?? "application/octet-stream", modified: Date.now(), etag: null, storageClass: a.props.storageClass ?? "STANDARD", metadata: a.props.metadata ?? {}, cacheControl: a.props.cacheControl ?? null, contentDisposition: a.props.contentDisposition ?? null, contentEncoding: a.props.contentEncoding ?? null };
+    case "get_object_tags":
+      return mockTags[a.key] ?? {};
+    case "put_object_tags":
+      mockTags[a.key] = a.tags;
       return null;
+    case "folder_size": {
+      const keys = Object.entries(tree).filter(([k]) => k.startsWith(a.prefix)).flatMap(([, n]) => n.objects);
+      return { bytes: keys.reduce((s, o) => s + o.size, 0), objects: keys.length };
+    }
+    case "temp_folder":
+      return "/tmp/kybl";
+    case "open_local":
+    case "reveal_local":
+    case "share_files":
+    case "share_text":
+    case "save_to_photos":
+    case "haptic":
+      console.info("[mock]", cmd, a);
+      return null;
+    case "take_shared_files":
+      return [];
+    case "get_transfer_prefs":
+      return transferPrefs;
+    case "set_transfer_prefs":
+      Object.assign(transferPrefs, a.prefs);
+      return transferPrefs;
     case "active_transfers":
       return [];
     case "cancel_transfer":
