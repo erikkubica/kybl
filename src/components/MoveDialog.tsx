@@ -40,6 +40,9 @@ export function MoveDialog({
   const [mode, setMode] = useState(initialMode);
   // roots by name (drives, a server's one root), not by id
   const label = useRootName();
+  // what the roots are called here: S3 buckets, cloud drives, this computer's places
+  const ico = rootIcon(profileId, bucket);
+  const word = ico === "bucket" ? "bucket" : ico === "cloud" ? "drive" : "place";
   const [target, setTarget] = useState(bucket);
   const [path, setPath] = useState(startPrefix);
   const other = target !== bucket;
@@ -126,7 +129,7 @@ export function MoveDialog({
         {buckets && buckets.length > 1 && (
           <label className="move-bucket">
             <Icon name={rootIcon(profileId, target)} size={14} />
-            <span>Bucket</span>
+            <span>{word.charAt(0).toUpperCase() + word.slice(1)}</span>
             <select
               value={target}
               onChange={(e) => {
@@ -134,12 +137,12 @@ export function MoveDialog({
                 setTarget(e.target.value);
                 setPath("");
               }}
-              aria-label="Destination bucket"
+              aria-label={`Destination ${word}`}
             >
               {buckets.map((b) => (
                 <option key={b} value={b}>
                   {label(profileId, b)}
-                  {b === bucket ? " (this bucket)" : ""}
+                  {b === bucket ? ` (this ${word})` : ""}
                 </option>
               ))}
             </select>

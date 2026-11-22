@@ -325,8 +325,10 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
 
   // why a text file is read-only, when it is
   let readOnlyWhy: string | null = null;
-  if (full && ready && native?.exports[0]) readOnlyWhy = `Shown read-only, as a ${native.exports[0].label}. Edit it in Google Drive.`;
-  else if (full && ready && textDoc && info?.canEdit === false && info.editMaxBytes > 0) readOnlyWhy = `Files over ${formatBytes(EDIT_MAX)} open read-only.`;
+  if (full && ready && native?.exports[0]) {
+    const label = native.exports[0].label;
+    readOnlyWhy = `Shown read-only, as ${/^[aeiou]/i.test(label) ? "an" : "a"} ${label}. Edit it in Google Drive.`;
+  } else if (full && ready && textDoc && info?.canEdit === false && info.editMaxBytes > 0) readOnlyWhy = `Files over ${formatBytes(EDIT_MAX)} open read-only.`;
   else if (full && ready && textDoc?.lossy) readOnlyWhy = "This file isn't UTF-8 text, so it opens read-only to keep it intact.";
   else if (full && ready && textDoc && info && ready.bytes.length > info.editMaxBytes && info.editMaxBytes > 0) readOnlyWhy = `Files over ${formatBytes(info.editMaxBytes)} open read-only.`;
 

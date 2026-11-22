@@ -61,7 +61,9 @@ export function NetForm({
   // a trusted key belongs to one server: another address or port must be checked anew (back to
   // the saved address, the saved key holds again)
   const placeChanged = (h: string, p: string) => {
-    const same = h.trim().toLowerCase() === start.host.trim().toLowerCase() && (Number(p.trim()) || 0) === (start.port || 0);
+    // an empty port is the usual one (22 for SFTP)
+    const portOf = (n: number) => n || defaultPort(kind, tls);
+    const same = h.trim().toLowerCase() === start.host.trim().toLowerCase() && portOf(Number(p.trim()) || 0) === portOf(start.port || 0);
     setHostKey(same ? (start.hostKey ?? null) : null);
   };
 

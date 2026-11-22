@@ -270,7 +270,7 @@ function ConnCard({
   // on a line of its own under the name, which stays readable on a narrow phone
   const signIn = authNeeded && onSignInAgain && !bl?.note && (
     <div className="m-auth-row">
-      <span>Kybl's access to this account ended.</span>
+      <span>Kybl's access ended.</span>
       <button className="auth-badge" onClick={() => onSignInAgain(p)} aria-label={`Sign in to ${connName(p)} again`}>
         Sign in again
       </button>
