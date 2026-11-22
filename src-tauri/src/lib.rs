@@ -1,4 +1,7 @@
 mod commands;
+// WP-B1: SQLite open-with-migrations helper, and copy/move jobs between connections
+mod db;
+mod jobs;
 // where downloads land: safe paths and free names
 mod dest;
 // WP-D: open and save documents for the in-app viewers and editor
@@ -96,6 +99,8 @@ pub fn run() {
                 let _ = handle.state::<state::AppState>().vault_dir.set(dir);
             }
             prefs::load_transfers(&handle);
+            // WP-B1: copy/move jobs resume where they stopped
+            jobs::setup(&handle);
             #[cfg(desktop)]
             {
                 app.manage(prefs::load(&handle));
@@ -198,6 +203,15 @@ pub fn run() {
             // WP-D
             doc::doc_open,
             doc::doc_save,
+            // WP-B1: copying and moving between connections
+            jobs::job_create,
+            jobs::job_list,
+            jobs::job_pause,
+            jobs::job_resume,
+            jobs::job_cancel,
+            jobs::job_delete,
+            jobs::job_failures,
+            jobs::job_retry_failed,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
