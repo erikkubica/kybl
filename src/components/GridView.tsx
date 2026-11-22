@@ -334,7 +334,9 @@ export function GridView({
           ))}
         </div>
       )}
-      {loading && !empty && !stale && (
+      {/* only while further pages load: a refresh of what's on screen adds no row (it made the
+          content taller than the view, and a scrollbar came and went) */}
+      {loading && !empty && !stale && hasMore && (
         <div className="loading-row" role="status">
           <span className="spinner" /> Loading more…
         </div>
