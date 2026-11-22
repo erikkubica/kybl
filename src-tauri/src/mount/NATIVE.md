@@ -13,6 +13,18 @@ rules (`junk.rs`) and the drive list / status UI (`MountInfo`, `mount-status`, S
 What changes is the front end the OS talks to: WebDAV → Cloud Files callbacks (Windows) or a File
 Provider extension (macOS).
 
+### The E4 drive's secret, and what it doesn't cover
+
+The WebDAV server listens on `127.0.0.1` only and every request must carry a 128-bit random token
+in its path (`server.rs`). `mount_webdav` can't take a password without a dialog, so the token is
+part of the URL, and the system's mount list (`mount`, `/sbin/mount`) shows that URL to every
+process and every account on the computer. Since round 3 the token is new for every mount (each
+mount start, eject and remount, and app start), so a token read from the mount list stops
+working as soon as that mount ends. The residual risk: while a drive is mounted, any program
+running on this computer (any account) can read the token and use the drive with the same access
+Kybl has. That is the same exposure as the mounted folder itself for the signed-in user, but wider
+for other accounts on a shared Mac. The native stages remove it (no network server at all).
+
 ---
 
 ## E2: Windows Cloud Files API (cfapi)

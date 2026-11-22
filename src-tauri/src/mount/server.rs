@@ -4,12 +4,13 @@
 //! - **Token**: every request must start with `/<token>/`; the drive is mounted at
 //!   `http://127.0.0.1:<port>/<token>/`. macOS's `mount_webdav` can't take a user name and
 //!   password without a dialog or a keychain item (a URL with `user:pass@` is refused), so the
-//!   secret lives in the path instead. It is 128 random bits; note that the mount table (`mount`)
-//!   shows the URL to other accounts on the same computer.
+//!   secret lives in the path instead. It is 128 random bits, new for every mount; note that the
+//!   mount table (`mount`) shows the URL to other accounts on the same computer while the drive
+//!   is mounted (see NATIVE.md).
 //! - **Host**: only `127.0.0.1:<port>` / `localhost:<port>`, so a web page can't reach the
 //!   server through a DNS name that points at this computer.
-//! - **Port**: the drive's previous port is tried first. When Kybl comes back after a crash while
-//!   the system still has the drive mounted, the old mount simply starts working again.
+//! - **Port**: the drive's previous port is tried first. A mount left behind by a crash has the
+//!   old token, so it is replaced by a fresh mount (`os::mount`).
 
 use std::{
     convert::Infallible,

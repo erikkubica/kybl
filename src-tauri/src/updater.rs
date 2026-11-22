@@ -621,7 +621,7 @@ pub async fn update_restart(app: AppHandle, force: Option<bool>) -> Result<(), S
     let r = restart(&app);
     #[cfg(desktop)]
     if r.is_err() {
-        crate::quit::stay();
+        crate::quit::stay(&app);
     }
     r
 }

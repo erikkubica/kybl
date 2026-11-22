@@ -690,18 +690,30 @@ impl Inner {
         let s = self.storage().await?;
         match (&remote, &pending) {
             (Some((real, Found::Dir)), _) => {
+                // what the server had under each waiting save before the move: the files move
+                // with the folder, and each save then builds on its file at the new name
+                let inside: Vec<_> = self.uploads.pending().into_iter().filter(|p| p.root == root && p.key.starts_with(&dirkey(&key))).collect();
+                let mut before = Vec::with_capacity(inside.len());
+                for p in &inside {
+                    let old = format!("{}{}", dirkey(real), &p.key[dirkey(&key).len()..]);
+                    before.push(s.stat(&root, &old).await.ok().flatten());
+                }
                 s.rename(&Loc::new(&root, dirkey(real)), &Loc::new(&root, dirkey(&key2)), true).await.map_err(fs_err)?;
-                for p in self.uploads.pending().into_iter().filter(|p| p.root == root && p.key.starts_with(&dirkey(&key))) {
+                for (p, pre) in inside.iter().zip(before) {
                     let moved = format!("{}{}", dirkey(&key2), &p.key[dirkey(&key).len()..]);
-                    self.uploads.rename(&root, &p.key, &moved, None);
+                    let post = s.stat(&root, &moved).await.ok().flatten();
+                    self.uploads.rename(&root, &p.key, &moved, super::writeback::rebase(p.base.as_ref(), pre.as_ref(), post.as_ref()));
                 }
                 self.forget_tree(&root, &dirkey(real));
                 self.forget_tree(&root, &dirkey(&key2));
             }
             (Some((real, Found::File(e))), _) => {
                 s.rename(&Loc::new(&root, real.clone()), &Loc::new(&root, key2.clone()), false).await.map_err(fs_err)?;
-                if pending.is_some() {
-                    self.uploads.rename(&root, &key, &key2, Some(BaseState::of(e)));
+                if let Some(p) = &pending {
+                    // the moved file can carry a new ETag or time: the save builds on it as it
+                    // is now at the new name, not on the old name's
+                    let post = s.stat(&root, &key2).await.ok().flatten();
+                    self.uploads.rename(&root, &key, &key2, super::writeback::rebase(p.base.as_ref(), Some(e), post.as_ref()));
                 }
             }
             (None, Some(_)) => {

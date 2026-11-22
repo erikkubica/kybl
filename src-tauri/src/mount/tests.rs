@@ -233,6 +233,20 @@ async fn renaming_a_save_before_it_uploads_uploads_it_under_the_new_name() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_edit_waiting_in_a_renamed_folder_is_not_a_conflict() {
+    let d = drive(false).await;
+    d.req("PROPFIND", "docs/").await.header("Depth", "1").send().await.unwrap();
+    d.req("PUT", "docs/b.md").await.body("# edited").send().await.unwrap();
+    // the folder is renamed before the edit went up
+    let r = d.req("MOVE", "docs/").await.header("Destination", d.url("documents/")).send().await.unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    d.drain().await;
+    assert_eq!(on_disk(&d.data, "documents/b.md").unwrap(), b"# edited");
+    let names: Vec<String> = std::fs::read_dir(d.data.join("documents")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(names, vec!["b.md".to_string()], "no conflict copy");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn locks_work_for_finder() {
     let d = drive(false).await;
     let body = r#"<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype><D:owner>kybl-test</D:owner></D:lockinfo>"#;
@@ -384,6 +398,25 @@ fn stores_without_ranges_fill_every_block_from_one_read() {
     });
 }
 
+#[test]
+fn a_short_read_is_never_cached_as_a_whole_block() {
+    let dir = std::env::temp_dir().join(format!("kybl-bc-{}", uuid::Uuid::new_v4()));
+    let _t = Tmp(dir.clone());
+    let data: Vec<u8> = (0..(BLOCK as usize + 100)).map(|i| (i % 5) as u8).collect();
+    // the listing said the file is longer than what the server now sends
+    let v = FileVersion { root: "r".into(), key: "f.bin".into(), size: 2 * BLOCK, version: "e".into() };
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        for ranges in [true, false] {
+            let store = MemStore::new(ranges).with("f.bin", data.clone());
+            let c = BlockCache::open(dir.join(ranges.to_string()), 10 * BLOCK);
+            let b = c.block(&store, &v, 1).await.unwrap();
+            assert_eq!(b.len(), 100);
+            assert!(!c.has(&v, 1), "short block kept (ranges: {ranges})");
+        }
+    });
+}
+
 /// A real mount: `mount_webdav` into a temp folder, then `ls`, `cat`, `cp`, `mkdir`, `mv` and a
 /// save through the mounted folder, and unmount. Needs no dialog and no admin rights, but it
 /// touches the system's mount table, so it only runs when asked:
@@ -444,6 +477,6 @@ async fn real_macos_mount() {
         .collect();
     assert!(clutter.is_empty(), "{clutter:?}");
     let m2 = m.clone();
-    tokio::task::spawn_blocking(move || super::os::unmount(&m2, "")).await.unwrap().expect("unmounted");
+    tokio::task::spawn_blocking(move || super::os::unmount(&m2, "", false)).await.unwrap().expect("unmounted");
     assert!(!super::os::is_mounted(&m));
 }

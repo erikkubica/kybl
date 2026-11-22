@@ -104,8 +104,17 @@ struct State {
     seq: u64,
     /// our last finished uploads: (root, key) → (what is there now, when)
     recent: HashMap<(String, String), (BaseState, Instant)>,
-    /// stop flags of the uploads under way
-    running: HashMap<(String, String), Arc<AtomicBool>>,
+    /// the uploads under way, one per key at most: a newer save of a key waits for the older
+    /// upload to stop before its own starts
+    running: HashMap<(String, String), Run>,
+}
+
+/// One upload under way.
+#[derive(Clone, Default)]
+struct Run {
+    stop: Arc<AtomicBool>,
+    /// bytes it has sent
+    sent: Arc<AtomicU64>,
 }
 
 pub struct WriteBack {
@@ -113,10 +122,17 @@ pub struct WriteBack {
     state: Mutex<State>,
     wake: tokio::sync::Notify,
     stopped: AtomicBool,
-    /// bytes sent by the uploads under way
-    sent: AtomicU64,
+    /// bumped by each `stop`: a worker runs only in the generation it started in
+    generation: AtomicU64,
     listener: Mutex<Option<Listener>>,
+    /// pending.json couldn't be written: the queue lives on in memory, but would not survive a
+    /// quit, so the status line says so
+    persist_error: Mutex<Option<String>>,
 }
+
+/// Where saves are kept aside when Kybl can't tell which file they belong to (pending.json
+/// unreadable, or a crash between a save and its record). Never deleted by Kybl.
+pub const RECOVERED: &str = "recovered";
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
@@ -151,6 +167,20 @@ fn civil(z: i64) -> (i64, u32, u32) {
     (yoe + era * 400 + i64::from(m <= 2), m, d)
 }
 
+/// A waiting save's base after its file was moved on the server (a rename of it or of a folder
+/// above it). `pre` is what the server had at the old name just before the move, `post` what it
+/// has at the new name after it. If the save built on what was there (or nothing was there
+/// either way), it now builds on the moved file, whose ETag or time the move may have changed;
+/// if someone else had changed the file already, the old base stays, so that edit is still
+/// noticed and the save goes up beside it.
+pub fn rebase(base: Option<&BaseState>, pre: Option<&Entry>, post: Option<&Entry>) -> Option<BaseState> {
+    match (base, pre) {
+        (Some(b), Some(pre)) if b.matches(pre) => post.map(BaseState::of),
+        (None, None) => post.map(BaseState::of),
+        _ => base.cloned(),
+    }
+}
+
 fn backoff(attempts: u32) -> Duration {
     Duration::from_secs(match attempts {
         0 | 1 => 5,
@@ -163,26 +193,65 @@ fn backoff(attempts: u32) -> Duration {
 
 impl WriteBack {
     /// Opens the queue in `dir`, picking up what an earlier run left.
+    ///
+    /// The saved files are the user's only copy until they're uploaded, so nothing that might
+    /// be one is ever deleted here: a `pending.json` that can't be read is set aside, and saved
+    /// files no record refers to are moved to [`RECOVERED`] instead. Only unfinished saves
+    /// (`.part`) are removed.
     pub fn open(dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(&dir);
         let mut st = State::default();
-        if let Some(list) = std::fs::read(dir.join("pending.json")).ok().and_then(|raw| serde_json::from_slice::<Vec<Pending>>(&raw).ok()) {
-            for p in list {
-                if dir.join(&p.file).is_file() {
-                    st.seq = st.seq.max(p.seq);
-                    st.pending.insert((p.root.clone(), p.key.clone()), p);
+        let json = dir.join("pending.json");
+        match std::fs::read(&json) {
+            Ok(raw) => match serde_json::from_slice::<Vec<Pending>>(&raw) {
+                Ok(list) => {
+                    for p in list {
+                        if dir.join(&p.file).is_file() {
+                            st.seq = st.seq.max(p.seq);
+                            st.pending.insert((p.root.clone(), p.key.clone()), p);
+                        }
+                    }
                 }
-            }
+                Err(e) => {
+                    let aside = dir.join(format!("pending.json.bad-{}", now_ms()));
+                    eprintln!("drive uploads: pending.json couldn't be read ({e}); set aside, saved files kept in {RECOVERED}/");
+                    let _ = std::fs::rename(&json, aside);
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => eprintln!("drive uploads: pending.json couldn't be read ({e}); saved files kept in {RECOVERED}/"),
         }
-        // files no pending upload refers to: a save that never finished
         let keep: Vec<String> = st.pending.values().map(|p| p.file.clone()).collect();
         for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name != "pending.json" && !keep.contains(&name) {
+            if keep.contains(&name) || !e.file_type().is_ok_and(|t| t.is_file()) {
+                continue;
+            }
+            if name.ends_with(".part") || name == "pending.json.tmp" {
+                // a save that never finished (or a record never moved into place)
                 let _ = std::fs::remove_file(e.path());
+            } else if name.ends_with(".bin") {
+                let rec = dir.join(RECOVERED);
+                let _ = std::fs::create_dir_all(&rec);
+                if let Err(err) = std::fs::rename(e.path(), rec.join(&name)) {
+                    eprintln!("drive uploads: couldn't keep {name} aside: {err}");
+                }
             }
         }
-        Self { dir, state: Mutex::new(st), wake: Default::default(), stopped: AtomicBool::new(false), sent: AtomicU64::new(0), listener: Mutex::new(None) }
+        Self {
+            dir,
+            state: Mutex::new(st),
+            wake: Default::default(),
+            stopped: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
+            listener: Mutex::new(None),
+            persist_error: Mutex::new(None),
+        }
+    }
+
+    /// Saved files kept aside in [`RECOVERED`] (see [`open`](Self::open)).
+    pub fn recovered(&self) -> usize {
+        std::fs::read_dir(self.dir.join(RECOVERED)).map(|rd| rd.flatten().count()).unwrap_or(0)
     }
 
     pub fn set_listener(&self, l: Listener) {
@@ -207,12 +276,34 @@ impl WriteBack {
         Ok(p)
     }
 
+    /// Writes pending.json: to a temporary file, flushed to the disk, then moved into place, so
+    /// a crash leaves the old record or the new one, never half of one. A failure is logged and
+    /// shown on the status line until a later write works.
     fn persist(&self, st: &State) {
-        let list: Vec<&Pending> = st.pending.values().collect();
-        if let Ok(raw) = serde_json::to_vec(&list) {
+        let res = (|| -> std::io::Result<()> {
+            use std::io::Write;
+            let list: Vec<&Pending> = st.pending.values().collect();
+            let raw = serde_json::to_vec(&list)?;
             let tmp = self.dir.join("pending.json.tmp");
-            if std::fs::write(&tmp, raw).is_ok() {
-                let _ = std::fs::rename(&tmp, self.dir.join("pending.json"));
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(&raw)?;
+            f.sync_all()?;
+            drop(f);
+            std::fs::rename(&tmp, self.dir.join("pending.json"))?;
+            // the rename itself, on disks that need the folder flushed too
+            if let Ok(d) = std::fs::File::open(&self.dir) {
+                let _ = d.sync_all();
+            }
+            Ok(())
+        })();
+        let mut err = self.persist_error.lock().unwrap();
+        match res {
+            Ok(()) => *err = None,
+            Err(e) => {
+                if err.is_none() {
+                    eprintln!("drive uploads: pending.json couldn't be saved: {e}");
+                }
+                *err = Some(format!("Kybl couldn't note the waiting uploads on this computer ({e}). Keep Kybl open until they're done."));
             }
         }
     }
@@ -275,7 +366,7 @@ impl WriteBack {
     fn drop_old(&self, st: &mut State, k: &(String, String), old: &Pending) {
         match st.running.get(k) {
             // the upload removes its own file when it stops
-            Some(stop) if old.uploading => stop.store(true, Ordering::SeqCst),
+            Some(run) if old.uploading => run.stop.store(true, Ordering::SeqCst),
             _ => {
                 let _ = std::fs::remove_file(self.dir.join(&old.file));
             }
@@ -335,8 +426,8 @@ impl WriteBack {
         let Some(mut p) = st.pending.remove(&k) else { return false };
         if p.uploading {
             // the upload under the old name stops; its file is still needed
-            if let Some(stop) = st.running.get(&k) {
-                stop.store(true, Ordering::SeqCst);
+            if let Some(run) = st.running.get(&k) {
+                run.stop.store(true, Ordering::SeqCst);
             }
             // a copy, so the stopped upload can remove the original
             let file = format!("{}-{}.bin", p.seq, uuid::Uuid::new_v4().simple());
@@ -364,12 +455,34 @@ impl WriteBack {
     /// (files waiting or uploading, their bytes, bytes sent of the ones uploading)
     pub fn stats(&self) -> (usize, u64, u64) {
         let st = self.state.lock().unwrap();
-        (st.pending.len(), st.pending.values().map(|p| p.size).sum(), self.sent.load(Ordering::Relaxed))
+        (st.pending.len(), st.pending.values().map(|p| p.size).sum(), st.running.values().map(|r| r.sent.load(Ordering::Relaxed)).sum())
     }
 
-    /// The latest error of a waiting upload, for the status line.
+    /// The latest error of a waiting upload (or of noting them down), for the status line.
     pub fn last_error(&self) -> Option<String> {
-        self.state.lock().unwrap().pending.values().find_map(|p| p.error.clone())
+        if let Some(e) = self.persist_error.lock().unwrap().clone() {
+            return Some(e);
+        }
+        if let Some(e) = self.state.lock().unwrap().pending.values().find_map(|p| p.error.clone()) {
+            return Some(e);
+        }
+        match self.recovered() {
+            0 => None,
+            n => Some(format!(
+                "Kybl kept {n} saved {} it couldn't match to a file on the drive. They're in the drive's uploads folder, under “{RECOVERED}”.",
+                if n == 1 { "file" } else { "files" }
+            )),
+        }
+    }
+
+    /// Clears the stop of [`stop`](Self::stop), so [`run`](Self::run) workers can start again
+    /// (after a quit that was called off).
+    pub fn rearm(&self) {
+        self.stopped.store(false, Ordering::SeqCst);
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.stopped.load(Ordering::SeqCst)
     }
 
     pub fn pending(&self) -> Vec<Pending> {
@@ -379,20 +492,24 @@ impl WriteBack {
     /// Stops the workers and the uploads under way (they carry on next start).
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::SeqCst);
-        for stop in self.state.lock().unwrap().running.values() {
-            stop.store(true, Ordering::SeqCst);
+        // workers started before this stop never come back, even after a `rearm`
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        for run in self.state.lock().unwrap().running.values() {
+            run.stop.store(true, Ordering::SeqCst);
         }
         self.wake.notify_waiters();
     }
 
-    /// Next upload due, or how long until one is.
-    fn take_next(&self) -> Result<Pending, Option<Duration>> {
+    /// Next upload due (with its stop flag and byte counter), or how long until one is.
+    fn take_next(&self) -> Result<(Pending, Run), Option<Duration>> {
         let mut st = self.state.lock().unwrap();
         let now = Instant::now();
         let mut soonest: Option<Duration> = None;
         let mut pick = None;
         for (k, p) in st.pending.iter() {
-            if p.uploading {
+            // one upload per key: a newer save waits until the older upload has stopped, so
+            // two workers never write the same key at once
+            if p.uploading || st.running.contains_key(k) {
                 continue;
             }
             match p.not_before {
@@ -410,8 +527,9 @@ impl WriteBack {
         let p = st.pending.get_mut(&k).expect("picked");
         p.uploading = true;
         let p = p.clone();
-        st.running.insert(k, Arc::new(AtomicBool::new(false)));
-        Ok(p)
+        let run = Run::default();
+        st.running.insert(k, run.clone());
+        Ok((p, run))
     }
 
     /// One upload worker; runs until [`stop`](Self::stop). `open` hands out the connection.
@@ -420,12 +538,13 @@ impl WriteBack {
         F: Fn() -> Fut + Send + Sync,
         Fut: std::future::Future<Output = Result<Arc<dyn Storage>, String>> + Send,
     {
+        let generation = self.generation.load(Ordering::SeqCst);
         loop {
-            if self.stopped.load(Ordering::SeqCst) {
+            if self.stopped.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst) != generation {
                 return;
             }
-            let p = match self.take_next() {
-                Ok(p) => p,
+            let (p, run) = match self.take_next() {
+                Ok(x) => x,
                 Err(wait) => {
                     let notified = self.wake.notified();
                     match wait {
@@ -437,18 +556,35 @@ impl WriteBack {
                     continue;
                 }
             };
-            let k = (p.root.clone(), p.key.clone());
-            let stop = self.state.lock().unwrap().running.get(&k).cloned().unwrap_or_default();
             let result = match open().await {
-                Ok(s) => self.upload(&*s, &p, &stop).await,
+                Ok(s) => {
+                    let r = self.upload(&*s, &p, &run).await;
+                    if let Ok(done) = &r {
+                        self.undo_if_deleted(&*s, &p, done, &run).await;
+                    }
+                    r
+                }
                 Err(e) => Err(crate::storage::StorageError::new(ErrKind::Network, e)),
             };
-            self.finish(&p, result, &stop);
+            self.finish(&p, result, &run);
+        }
+    }
+
+    /// The file was deleted (or renamed away) while its upload was finishing: the write went
+    /// through anyway, so the key just written is deleted again rather than bring the file
+    /// back. A newer save of the same key, if one came meanwhile, keeps it.
+    async fn undo_if_deleted(&self, s: &dyn Storage, p: &Pending, done: &Done, run: &Run) {
+        let gone = run.stop.load(Ordering::SeqCst) && self.get(&p.root, &p.key).is_none();
+        if gone {
+            let cancel = Arc::new(AtomicBool::new(false));
+            if let Err(e) = s.delete(&p.root, std::slice::from_ref(&done.key), &[], &cancel, &|_, _| {}).await {
+                eprintln!("drive uploads: a file deleted during its upload is still on the server: {}", e.message);
+            }
         }
     }
 
     /// Sends one pending file: checks for a conflict, then writes.
-    async fn upload(&self, s: &dyn Storage, p: &Pending, stop: &Arc<AtomicBool>) -> SResult<Done> {
+    async fn upload(&self, s: &dyn Storage, p: &Pending, run: &Run) -> SResult<Done> {
         let now = s.stat(&p.root, &p.key).await?;
         let conflict = match (&p.base, &now) {
             (_, None) => false,
@@ -456,13 +592,12 @@ impl WriteBack {
             (Some(b), Some(n)) => !b.matches(n),
         };
         let key = if conflict { conflict_name(&p.key, p.modified) } else { p.key.clone() };
-        self.sent.store(0, Ordering::Relaxed);
-        let sent = &self.sent;
+        let sent = run.sent.clone();
         let progress = move |done: u64, _total: u64| {
             sent.store(done, Ordering::Relaxed);
         };
         let opts = WriteOpts { modified: Some(p.modified), ..Default::default() };
-        match s.write(&p.root, &key, WriteSource::Path(self.path_of(p)), opts, &progress, stop).await? {
+        match s.write(&p.root, &key, WriteSource::Path(self.path_of(p)), opts, &progress, &run.stop).await? {
             WriteOutcome::Done(_) => {}
             WriteOutcome::Cancelled => return Err(crate::storage::StorageError::cancelled()),
             WriteOutcome::Conflict(_) => return Err(crate::storage::StorageError::conflict()),
@@ -472,11 +607,14 @@ impl WriteBack {
         Ok(Done { key, conflict, after })
     }
 
-    fn finish(&self, p: &Pending, result: SResult<Done>, stop: &AtomicBool) {
+    fn finish(&self, p: &Pending, result: SResult<Done>, run: &Run) {
+        let stop = &run.stop;
         let k = (p.root.clone(), p.key.clone());
         let mut st = self.state.lock().unwrap();
-        st.running.remove(&k);
-        self.sent.store(0, Ordering::Relaxed);
+        // only our own entry: never another upload's stop flag
+        if st.running.get(&k).is_some_and(|r| Arc::ptr_eq(&r.stop, &run.stop)) {
+            st.running.remove(&k);
+        }
         let current_seq = st.pending.get(&k).map(|c| c.seq);
         let ours = current_seq == Some(p.seq);
         let mut events = vec![Event::Changed];
@@ -588,5 +726,121 @@ mod tests {
         let e = Entry { etag: None, ..e };
         assert!(BaseState { etag: Some("y".into()), size: 3, modified: Some(5) }.matches(&e));
         assert!(!BaseState { etag: None, size: 3, modified: Some(6) }.matches(&e));
+    }
+
+    fn tmp() -> PathBuf {
+        std::env::temp_dir().join(format!("kybl-wbu-{}", uuid::Uuid::new_v4()))
+    }
+
+    fn save(wb: &WriteBack, key: &str, body: &[u8]) -> Pending {
+        let t = wb.new_temp().unwrap();
+        std::fs::write(&t, body).unwrap();
+        let p = wb.commit("r", key, &t, None).unwrap();
+        // due at once
+        wb.state.lock().unwrap().pending.values_mut().for_each(|p| p.not_before = None);
+        p
+    }
+
+    #[test]
+    fn a_newer_save_waits_for_the_older_upload_of_the_same_file() {
+        let dir = tmp();
+        let wb = WriteBack::open(dir.clone());
+        save(&wb, "a.txt", b"one");
+        let (p1, run1) = wb.take_next().ok().unwrap();
+        // saved again while the first upload runs: it is stopped, and the second waits
+        save(&wb, "a.txt", b"two");
+        assert!(run1.stop.load(Ordering::SeqCst));
+        assert!(wb.take_next().is_err(), "never two uploads of one key at once");
+        run1.sent.store(2, Ordering::Relaxed);
+        assert_eq!(wb.stats().2, 2, "bytes are counted per upload");
+        wb.finish(&p1, Err(crate::storage::StorageError::cancelled()), &run1);
+        let (p2, run2) = wb.take_next().ok().unwrap();
+        assert_eq!(std::fs::read(wb.path_of(&p2)).unwrap(), b"two");
+        // a late finish of the first upload can't take the second one's stop flag away
+        wb.finish(&p1, Err(crate::storage::StorageError::cancelled()), &run1);
+        assert!(wb.state.lock().unwrap().running.get(&("r".to_string(), "a.txt".to_string())).is_some_and(|r| Arc::ptr_eq(&r.stop, &run2.stop)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unreadable_record_never_costs_a_saved_file() {
+        let dir = tmp();
+        {
+            let wb = WriteBack::open(dir.clone());
+            save(&wb, "a.txt", b"only copy");
+        }
+        std::fs::write(dir.join("pending.json"), b"{ not json").unwrap();
+        let wb = WriteBack::open(dir.clone());
+        assert!(wb.pending().is_empty());
+        let kept: Vec<_> = std::fs::read_dir(dir.join(RECOVERED)).unwrap().flatten().map(|e| std::fs::read(e.path()).unwrap()).collect();
+        assert_eq!(kept, vec![b"only copy".to_vec()]);
+        assert!(std::fs::read_dir(&dir).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("pending.json.bad-")));
+        assert!(wb.last_error().unwrap().contains("kept 1 saved file"));
+        // and no record at all (a crash right after a save) keeps it too
+        let dir2 = tmp();
+        {
+            let wb = WriteBack::open(dir2.clone());
+            save(&wb, "b.txt", b"also mine");
+        }
+        std::fs::remove_file(dir2.join("pending.json")).unwrap();
+        let _ = WriteBack::open(dir2.clone());
+        assert_eq!(std::fs::read_dir(dir2.join(RECOVERED)).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dir2);
+    }
+
+    #[test]
+    fn a_moved_file_rebases_the_waiting_save() {
+        let at = |etag: &str| Entry { key: "k".into(), size: 3, etag: Some(etag.into()), ..Default::default() };
+        let b = BaseState::of(&at("old"));
+        // built on what was there: now builds on the moved file (with its new ETag)
+        assert_eq!(rebase(Some(&b), Some(&at("old")), Some(&at("moved"))), Some(BaseState::of(&at("moved"))));
+        // someone else had changed it already: the old base stays, so it is still a conflict
+        assert_eq!(rebase(Some(&b), Some(&at("theirs")), Some(&at("moved"))), Some(b.clone()));
+        // a new file that was never on the server stays new
+        assert_eq!(rebase(None, None, None), None);
+        assert_eq!(rebase(None, Some(&at("x")), Some(&at("y"))), None);
+    }
+
+    #[test]
+    fn a_file_deleted_while_its_upload_finished_is_not_brought_back() {
+        use crate::storage::{local::LocalBackend, RootKind};
+        let dir = tmp();
+        let data = dir.join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let s = LocalBackend::with_roots(vec![("d".into(), RootKind::Folder, data.clone())], false);
+            let root = s.roots().await.unwrap()[0].id.clone();
+            let wb = WriteBack::open(dir.join("uploads"));
+            let t = wb.new_temp().unwrap();
+            std::fs::write(&t, b"x").unwrap();
+            wb.commit(&root, "gone.txt", &t, None).unwrap();
+            wb.state.lock().unwrap().pending.values_mut().for_each(|p| p.not_before = None);
+            let (p, run) = wb.take_next().ok().unwrap();
+            // the write lands on the server just as the file is deleted on the drive
+            std::fs::write(data.join("gone.txt"), b"x").unwrap();
+            assert!(wb.remove(&root, "gone.txt"));
+            let done = Done { key: "gone.txt".into(), conflict: false, after: None };
+            wb.undo_if_deleted(&s, &p, &done, &run).await;
+            assert!(!data.join("gone.txt").exists());
+            // a newer save of the same name meanwhile keeps it
+            let t = wb.new_temp().unwrap();
+            std::fs::write(&t, b"y").unwrap();
+            wb.commit(&root, "kept.txt", &t, None).unwrap();
+            wb.state.lock().unwrap().pending.values_mut().for_each(|p| p.not_before = None);
+            let (p, run) = wb.take_next().ok().unwrap();
+            std::fs::write(data.join("kept.txt"), b"y").unwrap();
+            save_as(&wb, &root, "kept.txt");
+            wb.undo_if_deleted(&s, &p, &Done { key: "kept.txt".into(), conflict: false, after: None }, &run).await;
+            assert!(data.join("kept.txt").exists());
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn save_as(wb: &WriteBack, root: &str, key: &str) {
+        let t = wb.new_temp().unwrap();
+        std::fs::write(&t, b"newer").unwrap();
+        wb.commit(root, key, &t, None).unwrap();
     }
 }

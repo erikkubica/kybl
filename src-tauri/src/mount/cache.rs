@@ -219,7 +219,11 @@ impl BlockCache {
         let r = s.read(&v.root, &v.key, Some(want.clone()), None).await?;
         if r.range.is_some() {
             let bytes = collect(r.body, want.end - want.start).await?;
-            self.store(&Self::name(v, idx), &bytes);
+            // a short answer (a dropped connection, a file that shrank) is passed on but never
+            // kept: cached, it would be served as the whole block until the file changes
+            if bytes.len() as u64 == want.end - want.start {
+                self.store(&Self::name(v, idx), &bytes);
+            }
             return Ok(bytes);
         }
         // the store sent the whole file: keep every block on the way, answer with ours
@@ -245,7 +249,10 @@ impl BlockCache {
         }
         if !buf.is_empty() {
             let b = buf.freeze();
-            self.store(&Self::name(v, at), &b);
+            // the last block only when the file really ended there
+            if at * BLOCK + b.len() as u64 == v.size {
+                self.store(&Self::name(v, at), &b);
+            }
             if at == idx {
                 ours = Some(b);
             }
