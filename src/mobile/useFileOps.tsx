@@ -3,6 +3,7 @@
  * rename, move and copy (with name-clash choices and Undo), new folders, uploads (picker, camera,
  * files shared from other apps). MobileApp owns the state; these are the actions on it.
  */
+import { NO_EXPORT, exportable } from "../connections/native";
 import { useRef } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, errMessage, errSummary, type Capabilities } from "../api";
@@ -24,7 +25,7 @@ export type ToastFn = (kind: Toast["kind"], text: string, action?: ToastAction) 
 /** A progress pill: "Getting “photo.heic” 40%", with Cancel. One per running operation. */
 export type Pill = { text: string; frac: number | null; cancel?: () => void };
 type Confirm = { title: string; message: React.ReactNode; label: string; danger?: boolean; run: () => void };
-type Prompt = { title: string; label: string; initial: string; confirmLabel: string; run: (v: string) => void };
+type Prompt = { title: string; label: string; initial: string; confirmLabel: string; note?: string; run: (v: string) => void };
 type Sheet = { title?: string; message?: string; items: SheetItem[] };
 
 export type FileOpsCtx = {
@@ -129,10 +130,13 @@ export function useFileOps(c: FileOpsCtx) {
    * Fetches files into the app's temporary folder with a progress pill (Cancel stops it), for
    * handing them to another app. Resolves to the local paths, or null when cancelled/failed.
    */
-  const fetchLocal = async (list: Entry[], doing: string): Promise<string[] | null> => {
+  const fetchLocal = async (picked: Entry[], doing: string): Promise<string[] | null> => {
     const l = c.loc;
     if (!l) return null;
-    const files = list.filter((e) => e.kind === "file");
+    // Google Docs and friends come as their export ("Budget.xlsx")
+    const ex = exportable(picked);
+    if (ex.skipped) c.toast("info", NO_EXPORT);
+    const files = ex.list.filter((e) => e.kind === "file");
     if (!files.length) return null;
     const total = files.reduce((s, e) => s + e.size, 0) || 1;
     let before = 0;
@@ -224,8 +228,11 @@ export function useFileOps(c: FileOpsCtx) {
   };
 
   // ------------------------------------------------------------ download
-  const download = async (list: Entry[]) => {
+  const download = async (picked: Entry[]) => {
     const l = c.loc;
+    const ex = exportable(picked);
+    if (ex.skipped) c.toast("info", NO_EXPORT);
+    const list = ex.list;
     if (!l || list.length === 0) return;
     const guard = `${l.profileId}|${l.bucket}|${list.map((e) => e.key).join("\n")}`;
     if (listing.current.has(guard)) return;
@@ -479,6 +486,8 @@ export function useFileOps(c: FileOpsCtx) {
       label: "New name",
       initial: e.name,
       confirmLabel: "Rename",
+      // folders that are key prefixes (S3, Azure, GCS) have no rename: every file is copied
+      note: e.kind === "folder" && c.caps?.rename === "copy-delete" ? "Renaming a folder here copies every file in it, so it can take a while." : undefined,
       run: async (raw) => {
         const name = raw.trim();
         if (name.includes("/")) return c.toast("error", "A name cannot contain “/”");

@@ -56,6 +56,8 @@ export function BrowserPane(p: BrowserPaneProps) {
   const onSort = (key: SortKey) => setSort(sort.key === key ? { key, dir: sort.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
   const listLoading = search ? search.running && !search.stopped && entries.length === 0 : lst.loading || !fresh;
   const listError = ent.listError;
+  /** what this connection can't show: storage classes */
+  const noClass = !!pane.caps && !pane.caps.storageClass;
   const clearSel = () => sel.setSelected(new Set());
   const uploadFiles = () => void ops.pickAndUpload(false);
   const newFolder = () => ops.askNewFolder();
@@ -171,8 +173,12 @@ export function BrowserPane(p: BrowserPaneProps) {
                   hasMore={ent.hasMore}
                   searchMode={!!search || !!filter}
                   prefix={search ? search.loc.prefix : prefix}
-                  columns={settings.columns}
-                  onColumnsChange={(columns) => p.updateSettings({ columns })}
+                  // connections without storage classes (servers, drives, this computer) leave that column out;
+                  // the setting keeps it for the connections that have them
+                  columns={noClass ? settings.columns.filter((c) => c !== "storageClass") : settings.columns}
+                  onColumnsChange={(columns) =>
+                    p.updateSettings({ columns: noClass && settings.columns.includes("storageClass") && !columns.includes("storageClass") ? [...columns, "storageClass"] : columns })
+                  }
                   autoFocus={active}
                   onUpload={uploadFiles}
                   onNewFolder={newFolder}

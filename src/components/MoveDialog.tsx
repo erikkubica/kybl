@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
+import { useRootName } from "../connections/roots";
 import { Modal } from "./Dialogs";
 import { ErrorText } from "./ErrorText";
 import { FileIcon } from "./FileIcon";
@@ -34,6 +35,8 @@ export function MoveDialog({
   onClose: () => void;
 }) {
   const [mode, setMode] = useState(initialMode);
+  // roots by name (drives, a server's one root), not by id
+  const label = useRootName();
   const [target, setTarget] = useState(bucket);
   const [path, setPath] = useState(startPrefix);
   const other = target !== bucket;
@@ -132,7 +135,7 @@ export function MoveDialog({
             >
               {buckets.map((b) => (
                 <option key={b} value={b}>
-                  {b}
+                  {label(profileId, b)}
                   {b === bucket ? " (this bucket)" : ""}
                 </option>
               ))}
@@ -142,7 +145,7 @@ export function MoveDialog({
         <nav className="move-crumbs" aria-label="Destination">
           <button className="crumb" onClick={() => setPath("")}>
             <Icon name="bucket" size={14} />
-            {target}
+            {label(profileId, target)}
           </button>
           {parts.map((p, i) => (
             <span key={i} className="crumb-wrap">

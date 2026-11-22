@@ -120,7 +120,8 @@ export function Sidebar({
             </div>
             {favorites.map((f) => {
               const p = profiles.find((x) => x.id === f.profileId);
-              const where = [p?.name ?? "Removed connection", rootLabel(f.profileId, f.bucket), ...f.prefix.split("/").filter(Boolean)].join(" › ");
+              // a server's one root ("") is the connection itself: no second name for it
+              const where = [p?.name ?? "Removed connection", ...(f.bucket === "" ? [] : [rootLabel(f.profileId, f.bucket)]), ...f.prefix.split("/").filter(Boolean)].join(" › ");
               const open = () => p && onOpenFavorite?.(f);
               return (
                 <div

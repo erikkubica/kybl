@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { api, errMessage, errSummary } from "../api";
 import { Icon } from "../Icons";
+import { rootName } from "../connections/roots";
 import { FileIcon } from "../components/FileIcon";
 import { ProviderBadge } from "../components/Sidebar";
 import { baseName, formatBytes } from "../format";
@@ -55,7 +56,7 @@ export function DestinationScreen({
 
   const total = files.reduce((s, f) => s + f.size, 0);
   const what = files.length === 1 ? `“${files[0].name}”` : `${files.length} files`;
-  const title = at ? (at.prefix ? baseName(at.prefix) : at.bucket) : "Upload to…";
+  const title = at ? (at.prefix ? baseName(at.prefix) : rootName(at.profileId, at.bucket)) : "Upload to…";
   const here = at ? [...new Set([...(folders ?? []), ...made.filter((m) => m.startsWith(at.prefix) && !m.slice(at.prefix.length, -1).includes("/"))])] : [];
 
   return (
@@ -97,7 +98,7 @@ export function DestinationScreen({
                     <li key={b}>
                       <button className="m-setting-row" onClick={() => onAt({ profileId: p.id, bucket: b, prefix: "" })}>
                         <Icon name="bucket" size={18} />
-                        <span className="m-grow">{b}</span>
+                        <span className="m-grow">{rootName(p.id, b)}</span>
                         <Icon name="chevron" size={13} className="m-chev" />
                       </button>
                     </li>

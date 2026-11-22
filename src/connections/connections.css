@@ -385,3 +385,11 @@
   border-radius: 12px;
   font-size: calc(12.5 * var(--m-u));
 }
+
+/* the caution under a prompt's field (renaming a folder copied file by file) */
+.prompt-note {
+  margin-top: 10px !important;
+}
+.prompt-note span {
+  min-width: 0;
+}

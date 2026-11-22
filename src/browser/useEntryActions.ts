@@ -3,6 +3,7 @@
  * space, the toolbar's "…" menu, share links, Move to…, Go to folder, favorites, and the command
  * ids the keyboard and the menu bar run (see desktop/useShortcuts).
  */
+import { asExport } from "../connections/native";
 import { createElement } from "react";
 import { api, errMessage } from "../api";
 import { baseName, parentPrefix } from "../format";
@@ -146,7 +147,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       removeFavorite(have);
       return;
     }
-    const name = pre ? baseName(pre) : b;
+    const name = pre ? baseName(pre) : (env.rootLabel?.(profile.id, b) ?? b);
     env.updateSettings({ favorites: [...settings.favorites, { profileId: profile.id, bucket: b, prefix: pre, name }] });
     toast("success", `Added “${name}” to favorites`);
   };
@@ -225,7 +226,9 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       one && e.kind === "file" && env.canOpenDocument?.(e) && { type: "item", label: "Open in Default App", icon: "external", onClick: () => void ops.openInApp(e) },
       one && e.kind === "file" && { type: "item", label: "Quick Look", icon: "eye", hint: "Space", onClick: () => pane.setQuick(e.key) },
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => pane.navigate(entryParent(e), e.key) },
-      { type: "item", label: "Download", icon: "download", hint: "⇧⌘D", onClick: () => ops.downloadEntries(list, relBase) },
+      { type: "item", label: one && e.native?.exports.length ? `Download as ${e.native.exports[0].label}` : "Download", icon: "download", hint: "⇧⌘D", onClick: () => ops.downloadEntries(list, relBase) },
+      // a Google Doc / Sheet / Slides: its other formats (PDF…)
+      ...(one ? (e.native?.exports.slice(1) ?? []) : []).map((x) => ({ type: "item" as const, label: `Download as ${x.label}`, icon: "download" as const, onClick: () => ops.downloadEntries([asExport(e, x.ext) ?? e], relBase) })),
       canShare && { type: "item", label: `Copy share link (${expiryLabel(settings.linkExpiry)})`, icon: "link", disabled: !(one && e.kind === "file"), onClick: () => copyLink(e, settings.linkExpiry) },
       isS3 && { type: "item", label: "Copy S3 URI", icon: "copy", disabled: !one, onClick: () => copyText(`s3://${bucket}/${e.key}`, "S3 URI") },
       { type: "sep" },

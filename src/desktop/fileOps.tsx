@@ -4,6 +4,8 @@
  * names checks for clashes first, and moves, renames and copies that can be reversed safely leave
  * an Undo behind.
  */
+import { NO_EXPORT, asExport, exportable } from "../connections/native";
+import { peekCaps } from "../useCaps";
 import type { ReactNode } from "react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { api, errMessage } from "../api";
@@ -37,7 +39,7 @@ export type OpsContext = {
   showActivity: () => void;
   setBusy: (text: string | null) => void;
   confirm: (o: { title: string; message: ReactNode; label: string; danger?: boolean }) => Promise<boolean>;
-  prompt: (o: { title: string; label: string; initial: string; confirmLabel: string; run: (v: string) => void }) => void;
+  prompt: (o: { title: string; label: string; initial: string; confirmLabel: string; note?: string; run: (v: string) => void }) => void;
   resolveConflicts: (clashes: Clash[], verb: string, where: string) => Promise<Map<string, Choice> | null>;
   reloadIfShowing: (profileId: string, bucket: string) => boolean;
   /** select this key once the listing on screen has reloaded (if it is still that place) */
@@ -190,9 +192,13 @@ export function makeFileOps(c: OpsContext) {
    * Downloads files and folders. `relBase` (search results) keeps each file's folders below that
    * prefix, so two "report.pdf" from different folders never land on the same local file.
    */
-  const downloadEntries = async (list: Entry[], relBase: string | null = null) => {
+  const downloadEntries = async (picked: Entry[], relBase: string | null = null) => {
     const { profile, bucket, settings } = c;
-    if (!profile || bucket == null || list.length === 0) return;
+    if (!profile || bucket == null || picked.length === 0) return;
+    // Google Docs and friends download as their export ("Budget.xlsx")
+    const { list, skipped } = exportable(picked);
+    if (skipped) toast("info", NO_EXPORT);
+    if (!list.length) return;
     const pid = profile.id;
     try {
       if (list.length === 1 && list[0].kind === "file" && relBase === null) {
@@ -246,9 +252,11 @@ export function makeFileOps(c: OpsContext) {
   };
 
   /** Downloads a file to Kybl's temporary folder and opens it in its default app. */
-  const openInApp = async (e: Entry) => {
+  const openInApp = async (picked: Entry) => {
     const { profile, bucket } = c;
-    if (!profile || bucket == null || e.kind !== "file") return;
+    if (!profile || bucket == null || picked.kind !== "file") return;
+    const e = asExport(picked);
+    if (!e) return void toast("info", NO_EXPORT);
     try {
       if (c.localPaths) {
         // a file on this computer opens where it is
@@ -372,6 +380,8 @@ export function makeFileOps(c: OpsContext) {
       label: "New name",
       initial: e.name,
       confirmLabel: "Rename",
+      // folders that are key prefixes (S3, Azure, GCS) have no rename: every file is copied
+      note: e.kind === "folder" && peekCaps(pid)?.rename === "copy-delete" ? "Renaming a folder here copies every file in it, so it can take a while." : undefined,
       run: async (name) => {
         if (name.includes("/")) {
           toast("error", "A name can’t contain “/”");

@@ -7,6 +7,7 @@
  * gesture / button (or a swipe from the left edge on iPhone) walks back up. Tablets (≥ 900 × 600):
  * connections in a sidebar, files in the middle, details in a panel on the right, like the desktop.
  */
+import { asExport } from "../connections/native";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage, errSummary } from "../api";
@@ -96,7 +97,7 @@ const sameLoc = (a: Loc, b: Loc) => a.profileId === b.profileId && a.bucket === 
 const isMedia = (e: Entry) => e.kind === "file" && ((classify(e.name) === "image" && isWebImage(e.name)) || classify(e.name) === "video");
 /** Documents (text, code, Markdown, CSV, Office files) open in the app's own document screen; photos keep the viewer. */
 const opensAsDoc = (e: Entry) => e.kind === "file" && canView(e.name, e.size) && (viewerFor(e.name)?.kind !== "image" || !isMedia(e));
-const toEntry = (o: ObjInfo): Entry => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass });
+const toEntry = (o: ObjInfo): Entry => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native });
 
 /** Where downloads land, in the words people see in their Files app. */
 function friendlyFolder(path: string): string {
@@ -196,7 +197,7 @@ export default function MobileApp() {
   const authNeeded = useAuthNeeded();
   const connectKybl = useCallback(() => setKyblDialog({ existing: null }), []);
   const [confirm, setConfirm] = useState<null | { title: string; message: React.ReactNode; label: string; danger?: boolean; run: () => void }>(null);
-  const [prompt, setPrompt] = useState<null | { title: string; label: string; initial: string; confirmLabel: string; run: (v: string) => void }>(null);
+  const [prompt, setPrompt] = useState<null | { title: string; label: string; initial: string; confirmLabel: string; note?: string; run: (v: string) => void }>(null);
   const [moveDialog, setMoveDialog] = useState<null | { items: Entry[]; mode: "move" | "copy" }>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -672,7 +673,7 @@ export default function MobileApp() {
   const isFavorite = (l: Loc) => favorites.some((f) => sameLoc(f, l));
   const setFavorite = (l: Loc, on: boolean) => {
     const rest = favorites.filter((f) => !sameLoc(f, l));
-    const name = l.prefix ? baseName(l.prefix) : l.bucket;
+    const name = l.prefix ? baseName(l.prefix) : rootName(l.profileId, l.bucket);
     const next: Favorite[] = on ? [...rest, { ...l, name }] : rest;
     updateSettings({ ...settings, favorites: next });
     void api.haptic("success");
@@ -689,7 +690,9 @@ export default function MobileApp() {
       // photos and documents open full screen: their details (size, link, properties) are here
       if (detail?.key !== e.key) items.push({ icon: "info", label: "Info", run: () => setDetail(e) });
     }
-    items.push({ icon: "download", label: e.kind === "folder" ? "Download folder" : "Download", run: () => ops.download([e]) });
+    items.push({ icon: "download", label: e.kind === "folder" ? "Download folder" : e.native?.exports.length ? `Download as ${e.native.exports[0].label}` : "Download", run: () => ops.download([e]) });
+    // a Google Doc / Sheet / Slides: its other formats (PDF…)
+    for (const x of e.native?.exports.slice(1) ?? []) items.push({ icon: "download", label: `Download as ${x.label}`, run: () => ops.download([asExport(e, x.ext) ?? e]) });
     if (e.kind === "folder") {
       const at = loc && { ...loc, prefix: e.key };
       items.push({ icon: "info", label: "Info", run: () => setFolderInfo({ prefix: e.key, name: e.name }) });
@@ -1592,6 +1595,7 @@ export default function MobileApp() {
             label={prompt.label}
             initial={prompt.initial}
             confirmLabel={prompt.confirmLabel}
+            note={prompt.note}
             onSubmit={(v) => {
               const run = prompt.run;
               setPrompt(null);

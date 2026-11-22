@@ -126,6 +126,8 @@ export type Entry = {
   modified: number | null;
   etag?: string | null;
   storageClass?: string | null;
+  /** Google Docs / Sheets / Slides: downloads are exports (connections/native.ts) */
+  native?: ObjInfo["native"];
 };
 
 export type TransferState = "queued" | "running" | "done" | "error" | "cancelled";

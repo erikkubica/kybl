@@ -11,7 +11,7 @@ import type { ToastAction } from "../desktop/fileOps";
 import type { Choice, Clash } from "../desktop/conflicts";
 
 export type ConfirmOptions = { title: string; message: ReactNode; label: string; danger?: boolean };
-export type PromptOptions = { title: string; label: string; initial: string; confirmLabel: string; run: (v: string) => void };
+export type PromptOptions = { title: string; label: string; initial: string; confirmLabel: string; note?: string; run: (v: string) => void };
 
 export type Dialogs = {
   /** resolves true when confirmed, false when cancelled */
@@ -89,6 +89,7 @@ export function DialogsProvider({ children }: { children: ReactNode }) {
           label={prompt.label}
           initial={prompt.initial}
           confirmLabel={prompt.confirmLabel}
+          note={prompt.note}
           onSubmit={prompt.run}
           onClose={() => setPrompt(null)}
         />
