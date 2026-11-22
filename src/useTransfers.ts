@@ -256,6 +256,9 @@ const actions = {
   clearFinished() {
     for (const [id, t] of byId) {
       if (t.state === "done" || t.state === "cancelled" || t.state === "error") {
+        // a failed or stopped one can't be retried once it is off the list: let the backend drop
+        // what it kept to resume it (a partial download, an open multipart upload)
+        if (t.state !== "done") api.cancelTransfer(id).catch(() => {});
         byId.delete(id);
         overwriteIds.delete(id);
       }
