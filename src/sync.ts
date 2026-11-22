@@ -4,7 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { createStore, useStore } from "./store";
 
-export type SyncDirection = "upload" | "download";
+/** upload: back the folder up · download: keep a local mirror · twoway: keep both sides the same */
+export type SyncDirection = "upload" | "download" | "twoway";
 
 export type SyncMapping = {
   id: string;
@@ -18,6 +19,13 @@ export type SyncMapping = {
   mirrorDeletes: boolean;
   intervalMins: number;
   paused: boolean;
+  /**
+   * Deleted remote files go to a `.kybl-trash/<date>/` folder (on connections without a trash of
+   * their own). null: on for two-way, off for one-way.
+   */
+  remoteTrash?: boolean | null;
+  /** Ask before deleting more than 50 files (and a fifth of the folder) at once. Default on. */
+  deleteGuard?: boolean;
 };
 
 export type SyncState = "idle" | "scanning" | "syncing" | "error" | "paused";
@@ -35,7 +43,29 @@ export type SyncStatus = {
   /** bytes sent/received so far in this run, and the run's total */
   bytes: number;
   totalBytes: number;
+  /** conflict copies waiting to be looked at (two-way) */
+  conflicts?: number;
+  /** deletions held until the user confirms them */
+  pendingDeletes?: number;
 };
+
+/** A file changed on both sides: the other side's version kept the name, this computer's is the copy. */
+export type SyncConflict = {
+  path: string;
+  copy: string;
+  createdAt: number;
+  /** absolute paths on this computer */
+  localPath: string;
+  copyLocalPath: string;
+};
+
+/** A deletion the guard is holding: `side` is where the file would be deleted. */
+export type PendingDelete = { path: string; side: "local" | "remote"; size: number };
+
+/** Remote trash on, unless set otherwise (two-way) or asked for (one-way). */
+export function remoteTrashOn(m: Pick<SyncMapping, "remoteTrash" | "direction">): boolean {
+  return m.remoteTrash ?? m.direction === "twoway";
+}
 
 export type SyncOverview = { pausedAll: boolean; mappings: SyncMapping[]; statuses: SyncStatus[] };
 
@@ -57,6 +87,15 @@ export const syncApi = {
   now: (id: string) => invoke<void>("sync_now", { id }),
   setPaused: (id: string, paused: boolean) => invoke<void>("sync_set_paused", { id, paused }),
   pauseAll: (paused: boolean) => invoke<void>("sync_pause_all", { paused }),
+  conflicts: (id: string) => invoke<SyncConflict[]>("sync_conflicts", { id }),
+  /** keep: "both", "original" (the version that kept the name) or "copy" (this computer's) */
+  resolveConflict: (id: string, copy: string, keep: "both" | "original" | "copy") => invoke<void>("sync_resolve_conflict", { id, copy, keep }),
+  pending: (id: string) => invoke<PendingDelete[]>("sync_pending", { id }),
+  confirmDeletes: (id: string) => invoke<void>("sync_confirm_deletes", { id }),
+  restoreDeletes: (id: string) => invoke<void>("sync_restore_deletes", { id }),
+  /** "Keep on this device": a two-way synced copy, by default in ~/Kybl/<connection>/<bucket>/<folder> */
+  keepOffline: (profileId: string, bucket: string, prefix: string, localPath?: string | null) =>
+    invoke<SyncMapping>("sync_keep_offline", { profileId, bucket, prefix, localPath: localPath ?? null }),
   getPrefs: () => invoke<AppPrefs>("get_app_prefs"),
   setPrefs: (p: Partial<AppPrefs>) =>
     invoke<AppPrefs>("set_app_prefs", { closeToTray: p.closeToTray ?? null, launchAtLogin: p.launchAtLogin ?? null }),

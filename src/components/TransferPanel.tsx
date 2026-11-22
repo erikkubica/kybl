@@ -11,7 +11,7 @@ import type { JobSummary } from "../api";
 import { JobsPanel, isActive as migrationActive, useMigrations } from "../jobs";
 
 /** A synced folder that is busy right now (shown read-only). */
-export type SyncActivity = { id: string; name: string; direction: "upload" | "download"; state: "scanning" | "syncing"; done: number; total: number; current: string | null; bytes: number; totalBytes: number };
+export type SyncActivity = { id: string; name: string; direction: "upload" | "download" | "twoway"; state: "scanning" | "syncing"; done: number; total: number; current: string | null; bytes: number; totalBytes: number };
 
 const JOB_ICON: Record<JobKind, IconName> = { move: "move", copy: "copy", delete: "trash", rename: "edit" };
 const JOB_DONE: Record<JobKind, string> = { move: "Moved", copy: "Copied", delete: "Deleted", rename: "Renamed" };
