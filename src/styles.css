@@ -2232,6 +2232,8 @@ input[type="checkbox"] {
    as row spacing. The grid only renders the rows on screen and works out the rest from that one
    height. */
 .card {
+  /* the icon box's width; the name never runs wider than it */
+  --thumb-w: min(100%, calc(var(--tile, 160px) * 0.72));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2242,7 +2244,7 @@ input[type="checkbox"] {
   display: flex;
   flex-direction: column;
   align-items: center;
-  max-width: 100%;
+  max-width: var(--thumb-w);
   height: 56px;
   margin-top: 4px;
   overflow: hidden;
@@ -2255,7 +2257,7 @@ input[type="checkbox"] {
   /* a little wider than tall: the folder and page art leave no empty bands above and below */
   aspect-ratio: 5 / 4;
   /* the icon keeps the tile size's proportion even when the columns share out spare width */
-  width: min(100%, calc(var(--tile, 160px) * 0.72));
+  width: var(--thumb-w);
   border-radius: 14px;
   overflow: hidden;
   transition: background 0.12s;
@@ -2405,8 +2407,8 @@ input[type="checkbox"] {
   gap: 6px;
   padding: 12px 12px 16px;
 }
-.compact .card-thumb {
-  width: min(100%, calc(var(--tile, 160px) * 0.74));
+.compact .card {
+  --thumb-w: min(100%, calc(var(--tile, 160px) * 0.74));
 }
 .compact .card-text {
   height: 52px;
