@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
 import { classify, extOf, formatBytes, formatDateFull, isWebImage, kindLabel } from "../format";
@@ -11,6 +11,9 @@ import { storageClassLabel } from "./storageClasses";
 import type { FolderSizeInfo } from "./listNav";
 import { EXPIRIES } from "../settings";
 import type { Entry, ObjectDetails } from "../types";
+import { useCaps } from "../useCaps";
+// data and import() calls only: the viewers themselves load on first use (see viewers/INTEGRATION.md)
+import { LazyDocumentView, viewerFor } from "../viewers/registry";
 
 const BIG_IMAGE = 25 * 1000 * 1000;
 
@@ -25,6 +28,13 @@ const isNotFound = (msg: string) => /NotFound|NoSuchKey|status: 404|\b404\b/i.te
 type SizeProps = {
   folderSize?(key: string): FolderSizeInfo | undefined;
   onCalcSize?(key: string): void;
+};
+
+type DocProps = {
+  /** documents: "Open" in the full document view (editing where it can) */
+  onOpenFull?(e: Entry): void;
+  /** documents: "Open in another app" (download to the temporary folder, then open it) */
+  onOpenExternal?(e: Entry): void;
 };
 
 /** Folder size line: the total once known, live progress while it adds up, else a button. */
@@ -65,7 +75,9 @@ export function PreviewPane({
   onChanged,
   folderSize,
   onCalcSize,
-}: SizeProps & {
+  onOpenFull,
+  onOpenExternal,
+}: SizeProps & DocProps & {
   profileId: string;
   bucket: string;
   selection: Entry[];
@@ -179,6 +191,8 @@ export function PreviewPane({
         onChanged={onChanged}
         folderSize={folderSize}
         onCalcSize={onCalcSize}
+        onOpenFull={onOpenFull}
+        onOpenExternal={onOpenExternal}
       />
     </aside>
   );
@@ -200,7 +214,9 @@ function FileDetails({
   onChanged,
   folderSize,
   onCalcSize,
-}: SizeProps & {
+  onOpenFull,
+  onOpenExternal,
+}: SizeProps & DocProps & {
   profileId: string;
   bucket: string;
   entry: Entry;
@@ -228,6 +244,16 @@ function FileDetails({
   // null = not loaded yet; providers without tagging just list none
   const [tags, setTags] = useState<Record<string, string> | null>(null);
   const gone = !!headError && isNotFound(headError);
+  // what the connection can't do is left out (no share links on this device's own folders, say);
+  // while its answer loads, S3's usual actions show
+  const caps = useCaps(profileId);
+  const canShare = caps?.share !== "none";
+  const canProps = !caps || caps.metadata === "s3";
+  const canTags = !caps || caps.tags;
+  // text, code, JSON, Markdown, CSV, Word, Excel and slides show in the document viewer; images
+  // keep the thumbnail flow below (cheaper than downloading the original)
+  const viewer = isFolder ? null : viewerFor(entry.name, details?.contentType, entry.size);
+  const showsDoc = !!viewer && viewer.kind !== "image";
 
   // Images show the small cached thumbnail (the same one the grid uses) instead of downloading
   // the original; "Full size" fetches the real file on demand. null = no thumbnail could be made.
@@ -273,7 +299,7 @@ function FileDetails({
           .presign(profileId, bucket, entry.key, 3600)
           .then((u) => live && setUrl(u))
           .catch((e) => live && setError(errMessage(e)));
-      } else if (cls === "text" && entry.size <= 50 * 1000 * 1000) {
+      } else if (cls === "text" && !showsDoc && entry.size <= 50 * 1000 * 1000) {
         api
           .textPreview(profileId, bucket, entry.key)
           .then((t) => live && setText(t))
@@ -284,7 +310,7 @@ function FileDetails({
       live = false;
       clearTimeout(timer);
     };
-  }, [profileId, bucket, entry.key, entry.size, cls, previewable, gated, isFolder, gone]);
+  }, [profileId, bucket, entry.key, entry.size, cls, previewable, gated, isFolder, gone, showsDoc]);
 
   const s3Uri = `s3://${bucket}/${entry.key}`;
   // "Photos / 2026" instead of a raw key; the full key lives under Technical details
@@ -309,7 +335,7 @@ function FileDetails({
   };
   // tags show under Technical details, fetched the first time that is open
   useEffect(() => {
-    if (isFolder || !techOpen || tags !== null || gone) return;
+    if (isFolder || !techOpen || tags !== null || gone || !canTags) return;
     let live = true;
     api
       .objectTags(profileId, bucket, entry.key)
@@ -318,21 +344,21 @@ function FileDetails({
     return () => {
       live = false;
     };
-  }, [profileId, bucket, entry.key, isFolder, techOpen, tags, gone]);
+  }, [profileId, bucket, entry.key, isFolder, techOpen, tags, gone, canTags]);
 
   const etag = details?.etag ?? entry.etag;
   const storageClass = details?.storageClass ?? entry.storageClass;
-  const loadingMedia = !gone && !error && !gated && ((previewable && !url) || (cls === "text" && !text));
-  const unsupported = !gone && !isFolder && !error && !previewable && !showsPdf && cls !== "text" && !useThumb;
+  const loadingMedia = !gone && !error && !gated && ((previewable && !url) || (cls === "text" && !showsDoc && !text));
+  const unsupported = !gone && !isFolder && !error && !previewable && !showsPdf && !showsDoc && cls !== "text" && !useThumb;
   const showsImage = !isFolder && !error && !!url && cls === "image";
 
   return (
     <div className="preview-inner">
       <div
-        className={`preview-media ${showsPdf ? "pdf" : ""} ${showsImage && !["jpg", "jpeg"].includes(extOf(entry.name)) ? "" : "plain"}`}
+        className={`preview-media ${showsPdf ? "pdf" : ""} ${showsDoc && !gone ? "doc" : ""} ${showsImage && !["jpg", "jpeg"].includes(extOf(entry.name)) ? "" : "plain"}`}
         onContextMenu={(ev) => {
           // text previews keep the native menu (Copy, and on phones the long-press selection)
-          if ((ev.target as HTMLElement).closest(".text-preview")) return;
+          if ((ev.target as HTMLElement).closest(".text-preview, .dv")) return;
           ev.preventDefault();
           onContext(ev, entry);
         }}
@@ -391,7 +417,18 @@ function FileDetails({
         {!error && url && cls === "video" && <video src={url} controls preload="metadata" />}
         {!error && url && cls === "audio" && <audio src={url} controls preload="metadata" />}
         {showsPdf && !error && !gone && <PdfView profileId={profileId} bucket={bucket} objectKey={entry.key} onError={setError} />}
-        {!error && text && (
+        {showsDoc && !gone && (
+          <Suspense
+            fallback={
+              <div className="preview-note">
+                <span className="spinner" />
+              </div>
+            }
+          >
+            <LazyDocumentView key={entry.key} profileId={profileId} bucket={bucket} entry={entry} mode="preview" onOpenFull={onOpenFull} onOpenExternal={onOpenExternal} />
+          </Suspense>
+        )}
+        {!error && text && !showsDoc && (
           <pre className="text-preview">
             {text.text}
             {text.truncated && "\n… (truncated)"}
@@ -433,7 +470,7 @@ function FileDetails({
         </button>
       </div>
 
-      {!isFolder && !gone && (
+      {!isFolder && !gone && canShare && (
         <div className="section">
           <div className="section-title">Share link</div>
           <div className="share-row">
@@ -529,7 +566,7 @@ function FileDetails({
               ))}
           </dl>
         )}
-        {!isFolder && !gone && (
+        {!isFolder && !gone && canProps && (
           <button className="btn btn-sm props-edit" onClick={() => setEditing(true)} disabled={!details} title={details ? undefined : "Loading the details…"}>
             <Icon name="edit" size={13} /> Edit properties…
           </button>

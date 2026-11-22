@@ -1,11 +1,11 @@
 /**
  * What the phone does with files: download, share, open in another app, save to Photos, delete,
- * rename, move and copy (with name-clash choices and Undo), new folders, camera uploads.
- * MobileApp owns the state; these are the actions on it.
+ * rename, move and copy (with name-clash choices and Undo), new folders, uploads (picker, camera,
+ * files shared from other apps). MobileApp owns the state; these are the actions on it.
  */
 import { useRef } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, errMessage, errSummary } from "../api";
+import { api, errMessage, errSummary, type Capabilities } from "../api";
 import { baseName, classify, parentPrefix } from "../format";
 import { destKey, destLabel, entryParent } from "../moving";
 import type { Settings } from "../settings";
@@ -14,25 +14,29 @@ import type { TransferActions } from "../useTransfers";
 import type { useJobs } from "../useJobs";
 import type { Entry, ObjInfo } from "../types";
 import type { SheetItem } from "./ActionSheet";
-import { findClashes, resolveClashes, type ClashChoice, type Target } from "./clash";
+import { clashIndices, findClashes, resolveClashes, type ClashChoice, type Target } from "./clash";
 import { localCopy } from "./localCopy";
 import type { Loc } from "./useListing";
 import type { SharedFile } from "./DestinationScreen";
 
 export type ToastAction = NonNullable<Toast["action"]>;
 export type ToastFn = (kind: Toast["kind"], text: string, action?: ToastAction) => void;
-export type Busy = { text: string; frac: number | null; cancel?: () => void } | null;
+/** A progress pill: "Getting “photo.heic” 40%", with Cancel. One per running operation. */
+export type Pill = { text: string; frac: number | null; cancel?: () => void };
 type Confirm = { title: string; message: React.ReactNode; label: string; danger?: boolean; run: () => void };
 type Prompt = { title: string; label: string; initial: string; confirmLabel: string; run: (v: string) => void };
 type Sheet = { title?: string; message?: string; items: SheetItem[] };
 
 export type FileOpsCtx = {
   loc: Loc | null;
+  /** what the connection can do; null while it loads */
+  caps: Capabilities | null;
   settings: Settings;
   transfers: TransferActions;
   jobs: ReturnType<typeof useJobs>;
   toast: ToastFn;
-  setBusy: (b: Busy) => void;
+  /** shows (or with null, removes) the progress pill of operation `id` */
+  setPill: (id: string, p: Pill | null) => void;
   setConfirm: (c: Confirm | null) => void;
   setPrompt: (p: Prompt | null) => void;
   setSheet: (s: Sheet | null) => void;
@@ -46,12 +50,16 @@ export type FileOpsCtx = {
   go: (l: Loc) => void;
   clearSelection: () => void;
   closeDetail: () => void;
-  /** the item in the detail screen was renamed */
+  /** the item in the detail screen was renamed (or put back by Undo) */
   renamedDetail: (from: string, e: Entry) => void;
 };
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 const what = (list: { name: string }[]) => (list.length === 1 ? `“${list[0].name}”` : plural(list.length, "item"));
+/** Camera captures go to the temporary file in pieces this big, so a long video is never all in memory. */
+const CAPTURE_CHUNK = 8 * 1024 * 1024;
+
+let pillSeq = 0;
 
 async function copyToClipboard(text: string) {
   try {
@@ -81,10 +89,16 @@ function cameraName(f: File): string {
 }
 
 export function useFileOps(c: FileOpsCtx) {
-  /** downloads being listed, so a second tap doesn't queue everything twice */
-  const listing = useRef(new Set<string>());
+  /** downloads being listed (by what they download), so a second tap doesn't queue everything twice */
+  const listing = useRef(new Map<string, object>());
 
   const toastErr = (e: unknown) => c.toast("error", errSummary(errMessage(e)));
+
+  /** A pill of its own for one operation, so two at once don't overwrite each other's progress. */
+  const newPill = () => {
+    const id = `op${++pillSeq}`;
+    return { set: (p: Pill) => c.setPill(id, p), done: () => c.setPill(id, null) };
+  };
 
   const copyText = async (text: string, label: string) => {
     try {
@@ -126,13 +140,14 @@ export function useFileOps(c: FileOpsCtx) {
     let cancelCur = () => {};
     const paths: string[] = [];
     const label = files.length === 1 ? `“${files[0].name}”` : plural(files.length, "file");
+    const pill = newPill();
     try {
       for (const e of files) {
-        const job = localCopy({ ...l, key: e.key, name: e.name, etag: e.etag, size: e.size }, (f) =>
-          c.setBusy({ text: `${doing} ${label}`, frac: f == null ? null : (before + f * e.size) / total, cancel }),
-        );
+        const job = localCopy({ ...l, key: e.key, name: e.name, etag: e.etag, size: e.size }, (f) => {
+          if (!stop) pill.set({ text: `${doing} ${label}`, frac: f == null ? null : (before + f * e.size) / total, cancel });
+        });
         cancelCur = job.cancel;
-        c.setBusy({ text: `${doing} ${label}`, frac: before / total, cancel });
+        pill.set({ text: `${doing} ${label}`, frac: before / total, cancel });
         paths.push(await job.path);
         before += e.size;
         if (stop) return null;
@@ -142,12 +157,12 @@ export function useFileOps(c: FileOpsCtx) {
       if (!stop) toastErr(err);
       return null;
     } finally {
-      c.setBusy(null);
+      pill.done();
     }
     function cancel() {
       stop = true;
       cancelCur();
-      c.setBusy(null);
+      pill.done();
     }
   };
 
@@ -182,7 +197,9 @@ export function useFileOps(c: FileOpsCtx) {
     const files = list.filter((e) => e.kind === "file");
     if (!files.length) return;
     const items: SheetItem[] = [];
-    if (files.length === 1) {
+    // connections without links (this phone's own folder, say) share the file itself only
+    if (c.caps?.share === "none") items.push({ icon: "share", label: files.length === 1 ? "Share file" : `Share ${plural(files.length, "file")}`, run: () => shareFiles(files) });
+    else if (files.length === 1) {
       items.push(
         { icon: "link", label: `Share link (expires in ${expiryWords(c.settings.linkExpiry)})`, run: () => shareLink(files[0]) },
         { icon: "share", label: "Share file", run: () => shareFiles(files) },
@@ -212,38 +229,44 @@ export function useFileOps(c: FileOpsCtx) {
     if (!l || list.length === 0) return;
     const guard = `${l.profileId}|${l.bucket}|${list.map((e) => e.key).join("\n")}`;
     if (listing.current.has(guard)) return;
-    listing.current.add(guard);
+    const mine = {};
+    listing.current.set(guard, mine);
+    // a newer tap of the same download may own the guard by the time this one ends
+    const release = () => {
+      if (listing.current.get(guard) === mine) listing.current.delete(guard);
+    };
     const folders = list.filter((e) => e.kind === "folder");
+    const pill = newPill();
+    // listing a folder can't be stopped on the server: Cancel lets go of it here and the late
+    // answer is ignored, so tapping Download again starts over at once
     let stopped = false;
+    const stop = () => {
+      stopped = true;
+      pill.done();
+      release();
+    };
     try {
       // listing a big folder takes a while: say so at once, so nobody taps again
-      if (folders.length)
-        c.setBusy({
-          text: `Finding files in ${folders.length === 1 ? `“${folders[0].name}”` : plural(folders.length, "folder")}…`,
-          frac: null,
-          cancel: () => {
-            stopped = true;
-            c.setBusy(null);
-          },
-        });
+      if (folders.length) pill.set({ text: `Finding files in ${folders.length === 1 ? `“${folders[0].name}”` : plural(folders.length, "folder")}…`, frac: null, cancel: stop });
       const dir = await c.downloadDir();
+      if (stopped) return;
       const join = (rel: string) => `${dir.replace(/[\\/]$/, "")}/${rel}`;
       const items: Parameters<TransferActions["add"]>[0] = [];
       for (const e of list) {
         if (e.kind === "file") {
           items.push({ kind: "download", name: e.name, profileId: l.profileId, bucket: l.bucket, key: e.key, local: join(e.name), total: e.size });
-        } else {
-          const base = parentPrefix(e.key);
-          for (const rf of await api.listAllUnder(l.profileId, l.bucket, e.key)) {
-            if (stopped) return;
-            const rel = rf.key.slice(base.length);
-            if (rel.endsWith("/")) continue;
-            items.push({ kind: "download", name: rel, profileId: l.profileId, bucket: l.bucket, key: rf.key, local: join(rel), total: rf.size });
-          }
+          continue;
+        }
+        const base = parentPrefix(e.key);
+        const found = await api.listAllUnder(l.profileId, l.bucket, e.key);
+        if (stopped) return;
+        for (const rf of found) {
+          const rel = rf.key.slice(base.length);
+          if (rel.endsWith("/")) continue;
+          items.push({ kind: "download", name: rel, profileId: l.profileId, bucket: l.bucket, key: rf.key, local: join(rel), total: rf.size });
         }
       }
-      if (stopped) return;
-      c.setBusy(null);
+      pill.done();
       if (items.length === 0) {
         c.toast("info", "Nothing to download");
         return;
@@ -263,10 +286,10 @@ export function useFileOps(c: FileOpsCtx) {
         },
       );
     } catch (e) {
-      c.setBusy(null);
-      toastErr(e);
+      if (!stopped) toastErr(e);
     } finally {
-      listing.current.delete(guard);
+      pill.done();
+      release();
     }
   };
 
@@ -310,13 +333,69 @@ export function useFileOps(c: FileOpsCtx) {
     });
   };
 
+  // ------------------------------------------------------------ name clashes
+  /**
+   * Checks `items` against the bucket and runs `proceed` with the final list: straight away when
+   * nothing is taken, else after "Keep both / Replace (Merge for folders) / Skip". `replaced`
+   * says something may have been overwritten, which Undo can't bring back. A check that fails is
+   * not "no clashes": people are asked whether to go on regardless.
+   */
+  const checkClashes = async <T extends Target>(pid: string, b: string, items: T[], where: string, proceed: (final: T[], replaced: boolean) => void | Promise<void>) => {
+    const folders = items.some((t) => t.isPrefix);
+    let existing: Set<string>;
+    try {
+      existing = await findClashes(pid, b, items);
+    } catch {
+      c.setConfirm({
+        title: "Couldn't check for existing files",
+        label: "Continue",
+        danger: false,
+        message: <p>Continue anyway? Anything with the same name in {where} will be replaced{folders ? ", and folders merged" : ""}.</p>,
+        run: () => void proceed(items, true),
+      });
+      return;
+    }
+    const clashing = clashIndices(items, existing).map((i) => items[i]);
+    if (!clashing.length) return proceed(items, false);
+    const n = clashing.length;
+    const allFolders = clashing.every((t) => t.isPrefix);
+    const someFolders = clashing.some((t) => t.isPrefix);
+    const choose = (choice: ClashChoice) => () =>
+      resolveClashes(pid, b, items, existing, choice)
+        .then((final) => proceed(final, choice === "replace"))
+        .catch(toastErr);
+    const them = n === 1 ? "it" : "them";
+    // S3 has no folders to replace: writing into one that exists adds to it
+    const replaceLabel = allFolders ? (n === 1 ? "Merge the folders" : "Merge them") : someFolders ? "Replace files, merge folders" : n === 1 ? "Replace it" : "Replace them";
+    const replaceWord = allFolders ? "merge" : someFolders ? "replace (folders merge)" : "replace";
+    c.setSheet({
+      title: n === 1 ? `“${baseName(clashing[0].to.replace(/\/$/, ""))}” is already in ${where}` : `${plural(n, "item")} are already in ${where}`,
+      message:
+        n < items.length
+          ? `Keep both, ${replaceWord} ${them}, or skip ${them} and do the rest?`
+          : `Keep both, or ${replaceWord} ${them}?${someFolders ? " Merging puts everything in one folder; files with the same names inside are replaced." : ""}`,
+      items: [
+        { icon: "copy", label: "Keep both", run: choose("keep") },
+        { icon: "refresh", label: replaceLabel, danger: true, run: choose("replace") },
+        ...(n < items.length ? [{ icon: "x" as const, label: n === 1 ? "Skip this one" : "Skip these", run: choose("skip") }] : []),
+      ],
+    });
+  };
+
   // ------------------------------------------------------------ move, copy, rename
   /**
-   * Runs a move/copy. The toast offers Undo for a move, Open (the destination) for a copy, and
-   * nothing after an undo itself.
+   * Runs a move/copy. The toast offers Undo for a move (unless something was replaced, which
+   * Undo can't bring back), Open (the destination) for a copy, and nothing after an undo itself.
+   * `onUndone` runs once an Undo of this move has gone through.
    */
-  const runMove = async (pid: string, b: string, items: Target[], mode: "move" | "copy", title: string, done: string, dest: string, isUndo = false) => {
-    const id = c.jobs.start({ kind: mode, title, dest, profileId: pid, bucket: b });
+  const runMove = async (
+    pid: string,
+    b: string,
+    items: Target[],
+    mode: "move" | "copy",
+    o: { title: string; done: string; dest: string; isUndo?: boolean; noUndo?: boolean; onUndone?: () => void },
+  ) => {
+    const id = c.jobs.start({ kind: mode, title: o.title, dest: o.dest, profileId: pid, bucket: b });
     let ok = false;
     try {
       const r = await api.moveMany(pid, b, items, mode === "move", id);
@@ -325,15 +404,21 @@ export function useFileOps(c: FileOpsCtx) {
       else if (r.error !== "Cancelled") {
         ok = true;
         const back = items.map((t) => ({ from: t.to, to: t.from, isPrefix: t.isPrefix }));
-        const label = items.length === 1 ? `“${baseName(items[0].from)}”` : plural(items.length, "item");
+        const label = items.length === 1 ? `“${baseName(items[0].from.replace(/\/$/, ""))}”` : plural(items.length, "item");
+        const undo = async () => {
+          const undone = await runMove(pid, b, back, "move", { title: `Putting back ${label}`, done: `Put back ${label}`, dest: parentPrefix(items[0].from), isUndo: true });
+          if (undone) o.onUndone?.();
+        };
         c.toast(
           "success",
-          done,
-          isUndo
+          o.done,
+          o.isUndo
             ? undefined
             : mode === "move"
-              ? { label: "Undo", run: () => runMove(pid, b, back, "move", `Putting back ${label}`, `Put back ${label}`, parentPrefix(items[0].from), true) }
-              : { label: "Open", run: () => c.go({ profileId: pid, bucket: b, prefix: dest }) },
+              ? o.noUndo
+                ? undefined
+                : { label: "Undo", run: () => void undo() }
+              : { label: "Open", run: () => c.go({ profileId: pid, bucket: b, prefix: o.dest }) },
         );
       }
     } catch (err) {
@@ -373,31 +458,15 @@ export function useFileOps(c: FileOpsCtx) {
     if (mode === "move") c.closeDetail();
     const items: Target[] = todo.map((e) => ({ from: e.key, to: destKey(e, dest), isPrefix: e.kind === "folder" }));
     const where = destLabel(dest, b);
-    const go = async (final: Target[]) => {
+    await checkClashes(pid, b, items, where, async (final, replaced) => {
       if (!final.length) return;
-      const label = final.length === 1 ? `“${baseName(final[0].from)}”` : plural(final.length, "item");
-      await runMove(pid, b, final, mode, `${mode === "move" ? "Moving" : "Copying"} ${label} to ${where}`, `${mode === "move" ? "Moved" : "Copied"} ${label} to ${where}`, dest);
-    };
-    let clashing: Set<string>;
-    try {
-      clashing = await findClashes(pid, b, items);
-    } catch {
-      clashing = new Set();
-    }
-    if (!clashing.size) return go(items);
-    const choose = (choice: ClashChoice) => () =>
-      resolveClashes(pid, b, items, clashing, choice)
-        .then(go)
-        .catch(toastErr);
-    const n = clashing.size;
-    c.setSheet({
-      title: n === 1 ? `“${baseName(items.find((t) => clashing.has(t.to))!.to)}” is already in ${where}` : `${plural(n, "item")} are already in ${where}`,
-      message: n < items.length ? `Keep both, replace ${n === 1 ? "it" : "them"}, or skip ${n === 1 ? "it" : "them"} and do the rest?` : `Keep both, or replace ${n === 1 ? "it" : "them"}?`,
-      items: [
-        { icon: "copy", label: "Keep both", run: choose("keep") },
-        { icon: "refresh", label: n === 1 ? "Replace it" : "Replace them", danger: true, run: choose("replace") },
-        ...(n < items.length ? [{ icon: "x" as const, label: n === 1 ? "Skip this one" : "Skip these", run: choose("skip") }] : []),
-      ],
+      const label = final.length === 1 ? `“${baseName(final[0].from.replace(/\/$/, ""))}”` : plural(final.length, "item");
+      await runMove(pid, b, final, mode, {
+        title: `${mode === "move" ? "Moving" : "Copying"} ${label} to ${where}`,
+        done: `${mode === "move" ? "Moved" : "Copied"} ${label} to ${where}`,
+        dest,
+        noUndo: replaced,
+      });
     });
   };
 
@@ -418,19 +487,42 @@ export function useFileOps(c: FileOpsCtx) {
         const parent = entryParent(e);
         const to = isFolder ? `${parent}${name}/` : `${parent}${name}`;
         const item: Target = { from: e.key, to, isPrefix: isFolder };
-        const run = async () => {
-          const ok = await runMove(pid, b, [item], "move", `Renaming “${e.name}” to “${name}”`, `Renamed to “${name}”`, parent);
+        const run = async (replaced: boolean) => {
+          const ok = await runMove(pid, b, [item], "move", {
+            title: `Renaming “${e.name}” to “${name}”`,
+            done: `Renamed to “${name}”`,
+            dest: parent,
+            noUndo: replaced,
+            // the detail screen follows the file back to its old name
+            onUndone: () => c.renamedDetail(to, e),
+          });
           if (ok) c.renamedDetail(e.key, { ...e, key: to, name });
         };
-        // renaming onto an existing name would replace that file without a word
-        const taken = await findClashes(pid, b, [item]).catch(() => new Set<string>());
-        if (!taken.size) return run();
+        // renaming onto an existing name would replace that file (or merge that folder) without a word
+        let taken: Set<string>;
+        try {
+          taken = await findClashes(pid, b, [item]);
+        } catch {
+          c.setConfirm({
+            title: "Couldn't check for existing files",
+            label: "Rename anyway",
+            danger: false,
+            message: <p>Continue anyway? If something called “{name}” is already in this folder, renaming {isFolder ? "merges the two folders" : "replaces it"}.</p>,
+            run: () => void run(true),
+          });
+          return;
+        }
+        if (!taken.size) return run(false);
         c.setConfirm({
-          title: `Replace “${name}”?`,
-          label: "Replace",
+          title: isFolder ? `Merge with “${name}”?` : `Replace “${name}”?`,
+          label: isFolder ? "Merge" : "Replace",
           danger: true,
-          message: <p>Something called “{name}” is already in this folder. Renaming replaces it.</p>,
-          run,
+          message: isFolder ? (
+            <p>A folder called “{name}” is already here. Renaming puts everything in it; files with the same names inside are replaced.</p>
+          ) : (
+            <p>Something called “{name}” is already in this folder. Renaming replaces it.</p>
+          ),
+          run: () => void run(true),
         });
       },
     });
@@ -458,10 +550,21 @@ export function useFileOps(c: FileOpsCtx) {
   };
 
   // ------------------------------------------------------------ uploads
-  const queueUploads = (to: Loc, files: SharedFile[]) => {
-    c.transfers.add(files.map((f) => ({ kind: "upload" as const, name: f.name, profileId: to.profileId, bucket: to.bucket, key: to.prefix + f.name, local: f.path, total: f.size })));
-    const here = c.loc && c.loc.profileId === to.profileId && c.loc.bucket === to.bucket && c.loc.prefix === to.prefix;
-    c.toast("info", `Uploading ${files.length === 1 ? `“${files[0].name}”` : plural(files.length, "file")} to ${destLabel(to.prefix, to.bucket)}`, here ? { label: "Show", run: c.openTransfers } : { label: "Open", run: () => c.go(to) });
+  /** Queues uploads into `to`, asking first about names already there (S3 would overwrite them). */
+  const queueUploads = async (to: Loc, files: SharedFile[]) => {
+    if (!files.length) return;
+    const items = files.map((f) => ({ from: f.path, to: to.prefix + f.name, isPrefix: false, file: f }));
+    const where = destLabel(to.prefix, to.bucket);
+    await checkClashes(to.profileId, to.bucket, items, where, (final) => {
+      if (!final.length) return;
+      c.transfers.add(final.map((t) => ({ kind: "upload" as const, name: baseName(t.to), profileId: to.profileId, bucket: to.bucket, key: t.to, local: t.file.path, total: t.file.size })));
+      const here = c.loc && c.loc.profileId === to.profileId && c.loc.bucket === to.bucket && c.loc.prefix === to.prefix;
+      c.toast(
+        "info",
+        `Uploading ${final.length === 1 ? `“${baseName(final[0].to)}”` : plural(final.length, "file")} to ${where}`,
+        here ? { label: "Show", run: c.openTransfers } : { label: "Open", run: () => c.go(to) },
+      );
+    });
   };
 
   const upload = async (mode: "media" | "document") => {
@@ -471,29 +574,46 @@ export function useFileOps(c: FileOpsCtx) {
       const r = await openDialog({ multiple: true, pickerMode: mode, title: "Choose files to upload" });
       const picked = r == null ? [] : Array.isArray(r) ? r : [r];
       if (picked.length === 0) return;
-      queueUploads(l, await api.pickedFiles(picked));
+      await queueUploads(l, await api.pickedFiles(picked));
     } catch (e) {
       toastErr(e);
     }
   };
 
-  /** Photos and videos from the camera (an `<input capture>`), written to a temporary file first. */
+  /**
+   * Photos and videos from the camera (an `<input capture>`), written to a temporary file first.
+   * They go over in 8 MiB pieces: a few minutes of 4K video is gigabytes, too much to hold at once.
+   */
   const uploadCaptured = async (list: FileList | null) => {
     const l = c.loc;
     if (!l || !list?.length) return;
+    const pill = newPill();
+    let stopped = false;
+    const cancel = () => {
+      stopped = true;
+      pill.done();
+    };
     try {
       const files: SharedFile[] = [];
       for (const f of Array.from(list)) {
         const name = cameraName(f);
-        c.setBusy({ text: `Preparing “${name}”`, frac: null });
-        const path = await api.writeTempFile(name, await f.arrayBuffer());
-        files.push({ path, name, size: f.size });
+        let path: string | null = null;
+        for (let off = 0; off === 0 || off < f.size; off += CAPTURE_CHUNK) {
+          if (stopped) return;
+          pill.set({ text: `Preparing “${name}”`, frac: f.size > CAPTURE_CHUNK ? off / f.size : null, cancel });
+          const piece = await f.slice(off, off + CAPTURE_CHUNK).arrayBuffer();
+          const written: string = await api.writeTempFile(name, piece, path ?? undefined);
+          path ??= written;
+        }
+        if (stopped) return;
+        files.push({ path: path!, name, size: f.size });
       }
-      queueUploads(l, files);
+      pill.done();
+      await queueUploads(l, files);
     } catch (e) {
-      toastErr(e);
+      if (!stopped) toastErr(e);
     } finally {
-      c.setBusy(null);
+      pill.done();
     }
   };
 

@@ -17,13 +17,26 @@ import { SkeletonList, usePress } from "./rows";
 import { TransfersButton } from "./TransfersScreen";
 import { useCollapsed } from "./ui";
 import type { Loc } from "./useListing";
+import { connName } from "./connName";
 
 /** `revoked`: a Kybl Storage key the storage no longer knows (offer "Connect again") */
-export type Buckets = { names: string[]; note: string | null; loading: boolean; revoked?: boolean };
+export type Buckets = {
+  names: string[];
+  note: string | null;
+  loading: boolean;
+  revoked?: boolean;
+  /** names to show, where a root's id isn't one (this phone's folders are ids by path) */
+  labels?: Record<string, string>;
+  /** the "+" row: make a bucket, open one by name, or neither (what the connection can do) */
+  add?: "new" | "open" | null;
+};
+
+/** What the "+" row under a connection does; until its capabilities are known, Kybl Storage makes buckets. */
+export const addKind = (p: Profile, bl: Buckets | undefined) => (bl?.add !== undefined ? bl.add : p.provider === KYBL ? "new" : "open");
 
 /** One bucket in a connection's list: tap opens it, long-press offers to hide it (or show it). */
 function BucketItem({
-  name,
+  label,
   here,
   hidden,
   compact,
@@ -32,7 +45,7 @@ function BucketItem({
   onMenu,
   onToggle,
 }: {
-  name: string;
+  label: string;
   here: boolean;
   hidden: boolean;
   compact: boolean;
@@ -42,21 +55,42 @@ function BucketItem({
   onMenu: () => void;
   onToggle: () => void;
 }) {
-  const press = usePress(choosing ? onToggle : onOpen, onMenu);
+  const press = usePress(onOpen, onMenu);
+  if (choosing) {
+    // the row is not a button here: the switch is the one control, so screen readers get a
+    // switch with its state (a tap anywhere on the row still flips it)
+    return (
+      <li className="m-bucket-li">
+        <div className={`m-bucket ${here ? "here" : ""} ${hidden ? "is-hidden" : ""}`} onClick={onToggle}>
+          <span className="m-bucket-ico">
+            <Icon name="bucket" size={compact ? 16 : 18} />
+          </span>
+          <span className="m-bucket-name">{label}</span>
+          <button
+            type="button"
+            className={`m-bucket-eye ${hidden ? "" : "on"}`}
+            role="switch"
+            aria-checked={!hidden}
+            aria-label={`Show ${label} in the list`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle();
+            }}
+          >
+            <Icon name={hidden ? "eye-off" : "eye"} size={18} />
+          </button>
+        </div>
+      </li>
+    );
+  }
   return (
     <li className="m-bucket-li">
       <button className={`m-bucket ${here ? "here" : ""} ${hidden ? "is-hidden" : ""}`} {...press}>
         <span className="m-bucket-ico">
           <Icon name="bucket" size={compact ? 16 : 18} />
         </span>
-        <span className="m-bucket-name">{name}</span>
-        {choosing ? (
-          <span className={`m-bucket-eye ${hidden ? "" : "on"}`} role="switch" aria-checked={!hidden} aria-label={hidden ? `Show ${name}` : `Hide ${name}`}>
-            <Icon name={hidden ? "eye-off" : "eye"} size={18} />
-          </span>
-        ) : (
-          !compact && <Icon name="chevron" size={13} className="m-chev" />
-        )}
+        <span className="m-bucket-name">{label}</span>
+        {!compact && <Icon name="chevron" size={13} className="m-chev" />}
       </button>
     </li>
   );
@@ -138,10 +172,10 @@ export function Connections({
             <header className="m-conn-head">
               <ProviderBadge provider={p.provider} />
               <span className="m-conn-text">
-                <strong>{p.name || p.endpoint}</strong>
-                {!compact && <small>{p.endpoint.replace(/^https?:\/\//, "")}</small>}
+                <strong>{connName(p)}</strong>
+                {!compact && p.endpoint && <small>{p.endpoint.replace(/^https?:\/\//, "")}</small>}
               </span>
-              <button className="m-icon m-conn-edit" onClick={() => onConnMenu(p)} aria-label={`Options for ${p.name || p.endpoint}`}>
+              <button className="m-icon m-conn-edit" onClick={() => onConnMenu(p)} aria-label={`Options for ${connName(p)}`}>
                 <Icon name="more" size={compact ? 16 : 18} />
               </button>
             </header>
@@ -169,7 +203,7 @@ export function Connections({
               {names.slice(0, limit).map((b) => (
                 <BucketItem
                   key={b}
-                  name={b}
+                  label={bl?.labels?.[b] ?? b}
                   here={current?.profileId === p.id && current.bucket === b}
                   hidden={hiddenSet.has(b)}
                   compact={compact}
@@ -201,13 +235,13 @@ export function Connections({
                   </li>
                 )
               )}
-              {!bl?.loading && !picking && (
+              {!bl?.loading && !picking && addKind(p, bl) && (
                 <li>
                   <button className="m-bucket m-bucket-add" onClick={() => onAddBucket(p)}>
                     <span className="m-bucket-ico">
                       <Icon name="plus" size={compact ? 15 : 17} />
                     </span>
-                    <span className="m-bucket-name">{p.provider === KYBL ? "New bucket" : "Open bucket by name"}</span>
+                    <span className="m-bucket-name">{addKind(p, bl) === "new" ? "New bucket" : "Open bucket by name"}</span>
                   </button>
                 </li>
               )}

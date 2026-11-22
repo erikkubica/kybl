@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { api, errMessage, type TransferPrefs } from "../api";
+import { api, errMessage, errSummary, type TransferPrefs } from "../api";
 import { Icon } from "../Icons";
 import { ProviderBadge } from "../components/Sidebar";
 import { EXPIRIES, SCALES, type Settings, type Theme } from "../settings";
@@ -9,6 +9,7 @@ import type { Profile } from "../types";
 import { useEffect } from "react";
 import { actionLabel, ago, updatesApi, type UpdateStatus } from "../updates";
 import { formatBytes } from "../format";
+import { LOCK_LABEL, LOCK_SUB } from "./AppLock";
 
 export function SettingsScreen({
   onBack,
@@ -22,6 +23,7 @@ export function SettingsScreen({
   updates,
   prefs,
   onPrefs,
+  lockable,
 }: {
   onBack: () => void;
   settings: Settings;
@@ -35,6 +37,8 @@ export function SettingsScreen({
   /** transfer settings from the backend; null while loading (or where it has none) */
   prefs: TransferPrefs | null;
   onPrefs: (p: Partial<TransferPrefs>) => Promise<void>;
+  /** app lock is offered (phones) */
+  lockable: boolean;
 }) {
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => onChange({ ...settings, [k]: v });
   const [version, setVersion] = useState("");
@@ -104,7 +108,30 @@ export function SettingsScreen({
                 label="Wi-Fi only"
                 sub="Uploads, downloads and photo previews wait for Wi-Fi instead of using mobile data"
                 on={prefs.wifiOnly}
-                set={(v) => onPrefs({ wifiOnly: v }).catch((e) => toast("error", errMessage(e)))}
+                // the switch goes back by itself if this fails
+                set={(v) => onPrefs({ wifiOnly: v }).catch((e) => toast("error", `Couldn't change Wi-Fi only. ${errSummary(errMessage(e))}`))}
+              />
+            </ul>
+          </>
+        )}
+
+        {lockable && (
+          <>
+            <h2 className="m-section">Privacy</h2>
+            <ul className="m-group">
+              <Toggle
+                label={LOCK_LABEL}
+                sub={LOCK_SUB}
+                on={settings.appLock}
+                set={async (v) => {
+                  if (!v) return set("appLock", false);
+                  // unlock once now: it proves the phone can, and that it is really you turning it on
+                  try {
+                    if (await api.biometricUnlock("Turn on app lock")) set("appLock", true);
+                  } catch (e) {
+                    toast("error", `Set up a screen lock on your phone first. ${errSummary(errMessage(e))}`);
+                  }
+                }}
               />
             </ul>
           </>

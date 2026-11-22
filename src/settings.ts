@@ -48,6 +48,8 @@ export type Settings = {
   sort: { by: "name" | "size" | "modified" | "kind"; desc: boolean };
   /** desktop grid tile size in px (96..320) */
   tileSize: number;
+  /** phones: ask for Face ID / fingerprint when Kybl opens or comes back after a minute away */
+  appLock: boolean;
 };
 
 export type Favorite = { profileId: string; bucket: string; prefix: string; name: string };
@@ -72,6 +74,7 @@ export const DEFAULTS: Settings = {
   columns: ["size", "modified", "kind"],
   sort: { by: "name", desc: false },
   tileSize: 160,
+  appLock: false,
 };
 
 export const ACCENTS: { id: Exclude<Accent, "scheme">; label: string; color: string }[] = [

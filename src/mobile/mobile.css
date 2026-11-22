@@ -85,8 +85,10 @@ body {
   background: var(--m-page);
 }
 
+/* every layer (screens, the viewer, documents, sheets, dialogs) gets its z-index from its place in
+   MobileApp's layer stack, as --m-z on its wrapper: whatever opened last is on top */
 .m-overlay {
-  z-index: 20;
+  z-index: var(--m-z, 20);
   box-shadow: -18px 0 40px rgba(0, 0, 0, 0.12);
   animation: m-slide-in 0.36s var(--m-spring) both;
 }
@@ -1280,7 +1282,7 @@ body {
 .m-sheet-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--m-z, 60);
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -1376,7 +1378,7 @@ body {
 .m-viewer {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: var(--m-z, 40);
   background: #000;
   color: #fff;
   animation: m-viewer-in 0.3s var(--m-spring) both;
@@ -1513,10 +1515,6 @@ body {
 .m-viewer .spinner {
   border-color: rgba(255, 255, 255, 0.25);
   border-top-color: #fff;
-}
-
-.m-detail.over-viewer {
-  z-index: 45;
 }
 
 /* ------------------------------------------------------------ transfers */
@@ -1790,7 +1788,7 @@ input[type="checkbox"].m-switch:checked {
 .m-app .modal-backdrop {
   align-items: flex-end;
   padding: 0;
-  z-index: 70;
+  z-index: var(--m-z, 70);
   animation: m-fade 0.2s ease both;
 }
 
@@ -2603,7 +2601,7 @@ input[type="checkbox"].m-switch:checked {
   position: absolute;
   top: calc(var(--m-top) + var(--m-bar-h) + 6px);
   left: 50%;
-  z-index: 30;
+  z-index: 90;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -2628,11 +2626,21 @@ input[type="checkbox"].m-switch:checked {
 
 /* ------------------------------------------------------------ busy pill */
 /* "Getting “photo.heic” 40%" while a file is fetched for another app, with Cancel */
-.m-busy {
+.m-pills {
   position: absolute;
   left: 50%;
   bottom: calc(96px + var(--m-bottom));
-  z-index: 70;
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: calc(100% - 32px);
+  max-width: 480px;
+  transform: translateX(-50%);
+}
+
+.m-busy {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -2645,7 +2653,6 @@ input[type="checkbox"].m-switch:checked {
   background: var(--m-card);
   box-shadow: 0 0 0 1px var(--border), var(--shadow-lg);
   font-size: calc(14.5 * var(--m-u));
-  transform: translateX(-50%);
   animation: m-rise 0.3s var(--m-spring) both;
 }
 
@@ -2815,8 +2822,13 @@ input[type="checkbox"].m-switch:checked {
   height: 36px;
   display: grid;
   place-items: center;
+  margin: -4px -6px -4px 0;
+  padding: 0;
+  border: 0;
   border-radius: 50%;
+  background: none;
   color: var(--faint);
+  font: inherit;
 }
 
 .m-bucket-eye.on {
@@ -2903,4 +2915,128 @@ input[type="checkbox"].m-switch:checked {
 .m-actionbar .m-barbtn {
   min-width: 0;
   min-height: 52px;
+}
+
+/* ------------------------------------------------------------ toasts while a sheet or the keyboard is up */
+/* sheets and dialogs sit at the bottom, where toasts are: toasts move to the top, clear of their
+   text fields and buttons */
+.m-app.m-toasts-top .toasts,
+.m-kb .m-app .toasts {
+  top: calc(var(--m-top) + 10px) !important;
+  bottom: auto !important;
+}
+
+/* ------------------------------------------------------------ drag to select */
+/* while a long-press drag selects rows the list scrolls only from code, at its edges */
+.m-scroll.m-drag-lock {
+  overflow-y: hidden !important;
+}
+
+/* the folder list: pulling down at the top refreshes, so no bounce of its own there */
+.m-browse .m-scroll {
+  overscroll-behavior-y: none;
+}
+
+/* ------------------------------------------------------------ viewer: previous / next */
+/* for VoiceOver and TalkBack, which can't swipe the photos: out of sight until focused */
+.m-vstep {
+  position: absolute;
+  top: 50%;
+  z-index: 3;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  transform: translateY(-50%);
+  clip-path: inset(50%);
+  opacity: 0;
+}
+
+.m-vstep:focus-visible {
+  clip-path: none;
+  opacity: 1;
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.m-vstep.prev {
+  left: calc(var(--m-left) + 10px);
+}
+
+.m-vstep.prev svg {
+  transform: rotate(180deg);
+}
+
+.m-vstep.next {
+  right: calc(var(--m-right) + 10px);
+}
+
+/* ------------------------------------------------------------ documents */
+.m-doc {
+  background: var(--bg);
+}
+
+.m-doc-wait {
+  flex: 1;
+  display: grid;
+  place-items: center;
+}
+
+/* the document preview in the details screen gets a good part of it */
+.m-detail-body .preview-media.doc {
+  height: min(52vh, 420px);
+  max-height: none;
+}
+
+/* ------------------------------------------------------------ app lock */
+/* locked: nothing of the app is drawn, only the lock screen */
+.m-app.m-locked > :not(.m-lock) {
+  display: none !important;
+}
+
+.m-lock {
+  position: absolute;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: calc(var(--m-top) + 24px) calc(var(--m-right) + 32px) calc(var(--m-bottom) + 24px) calc(var(--m-left) + 32px);
+  background: var(--m-page);
+  text-align: center;
+  animation: m-fade 0.2s ease both;
+}
+
+.m-lock h1 {
+  margin: 12px 0 0;
+  font-size: calc(24 * var(--m-u));
+  letter-spacing: -0.02em;
+}
+
+.m-lock p {
+  margin: 0;
+  max-width: 320px;
+  color: var(--dim);
+  font-size: calc(15 * var(--m-u));
+}
+
+.m-lock .m-lock-err {
+  color: var(--danger, #d9381f);
+}
+
+.m-lock .m-big-btn {
+  margin-top: 18px;
+  min-width: 200px;
+}
+
+/* progress pills step out of the way of a sheet too, to just below the top edge */
+.m-app.m-toasts-top .m-pills {
+  top: calc(var(--m-top) + 10px);
+  bottom: auto;
 }

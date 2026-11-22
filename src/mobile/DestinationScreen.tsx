@@ -10,6 +10,7 @@ import { ProviderBadge } from "../components/Sidebar";
 import { baseName, formatBytes } from "../format";
 import type { Profile } from "../types";
 import type { Loc } from "./useListing";
+import { connName } from "./connName";
 
 export type SharedFile = { path: string; name: string; size: number };
 
@@ -81,7 +82,7 @@ export function DestinationScreen({
             profiles.map((p) => (
               <section key={p.id} className="m-dest-conn">
                 <h2 className="m-section">
-                  <ProviderBadge provider={p.provider} /> {p.name || p.endpoint}
+                  <ProviderBadge provider={p.provider} /> {connName(p)}
                 </h2>
                 <ul className="m-group">
                   {buckets[p.id]?.loading && !buckets[p.id]?.names.length && (

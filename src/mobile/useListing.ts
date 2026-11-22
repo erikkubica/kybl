@@ -196,6 +196,9 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
     if (hit) hit.scroll = top;
   }, []);
 
+  /** Where the folder was last scrolled to (0 when not known). */
+  const scrollOf = useCallback((l: Loc) => cache.current.get(locKey(l))?.scroll ?? 0, []);
+
   /** Drops cached folders of a bucket (after changes made there), except the one on screen. */
   const forget = useCallback((profileId: string, bucket: string) => {
     for (const k of [...cache.current.keys()]) {
@@ -207,5 +210,5 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
     }
   }, []);
 
-  return { listing, loading, refreshing, error, loadingAll, open, reload, loadMore, loadAll, stopAll, saveScroll, forget };
+  return { listing, loading, refreshing, error, loadingAll, open, reload, loadMore, loadAll, stopAll, saveScroll, scrollOf, forget };
 }

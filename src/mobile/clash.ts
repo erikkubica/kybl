@@ -1,55 +1,67 @@
-/** Name clashes when moving or copying on the phone: which targets exist, and free names for "Keep both". */
-import { api } from "../api";
+/**
+ * Name clashes on the phone (move, copy, rename, uploads): which targets exist, and free names for
+ * "Keep both". The checks themselves are the desktop's (chunked `existing` calls, batched free-name
+ * search); this only adapts them to the phone's move targets.
+ */
+import { findExisting, freeKeys } from "../desktop/conflicts";
 
+/** `from` is a key (move/copy) or a local path (upload); `to` is the key it will be written to. */
 export type Target = { from: string; to: string; isPrefix: boolean };
+/** "replace" merges for a folder: files with the same names inside are replaced. */
 export type ClashChoice = "replace" | "skip" | "keep";
 
-/** The targets that already exist in the bucket. */
-export async function findClashes(profileId: string, bucket: string, items: Target[]): Promise<Set<string>> {
-  const keys = items.filter((t) => !t.isPrefix).map((t) => t.to);
-  const prefixes = items.filter((t) => t.isPrefix).map((t) => t.to);
-  const found = new Set<string>();
-  // a few thousand per call at most
-  for (let i = 0; i < Math.max(keys.length, prefixes.length); i += 2000) {
-    const r = await api.existing(profileId, bucket, keys.slice(i, i + 2000), prefixes.slice(i, i + 2000));
-    for (const k of r.keys) found.add(k);
-    for (const p of r.prefixes) found.add(p);
-  }
-  return found;
+/** The targets that already exist in the bucket. Throws when the storage couldn't be asked. */
+export function findClashes(profileId: string, bucket: string, items: Target[]): Promise<Set<string>> {
+  return findExisting(
+    profileId,
+    bucket,
+    items.map((t) => ({ key: t.to, folder: t.isPrefix })),
+  );
 }
 
-/** "photo.jpg" → "photo (n).jpg"; "Trip/" → "Trip (n)/". */
-function numbered(to: string, isPrefix: boolean, n: number): string {
-  if (isPrefix) return `${to.replace(/\/$/, "")} (${n})/`;
-  const slash = to.lastIndexOf("/") + 1;
-  const name = to.slice(slash);
-  const dot = name.lastIndexOf(".");
-  const stem = dot > 0 ? name.slice(0, dot) : name;
-  const ext = dot > 0 ? name.slice(dot) : "";
-  return `${to.slice(0, slash)}${stem} (${n})${ext}`;
+/**
+ * The items that would replace something: the target exists in the bucket, or an earlier item
+ * of the same batch writes it too (two shared files both called "image.jpg", or two search
+ * results with the same name moved into one folder).
+ */
+export function clashIndices(items: Target[], existing: Set<string>): number[] {
+  const seen = new Set<string>();
+  const out: number[] = [];
+  items.forEach((t, i) => {
+    if (existing.has(t.to) || seen.has(t.to)) out.push(i);
+    seen.add(t.to);
+  });
+  return out;
 }
 
-/** A name next to `to` that is neither in the bucket nor already handed out in `taken`. */
-export async function freeName(profileId: string, bucket: string, t: Target, taken: Set<string>): Promise<string> {
-  for (let start = 1; start < 1000; start += 8) {
-    const tries = Array.from({ length: 8 }, (_, i) => numbered(t.to, t.isPrefix, start + i)).filter((c) => !taken.has(c));
-    const r = await api.existing(profileId, bucket, t.isPrefix ? [] : tries, t.isPrefix ? tries : []);
-    const used = new Set([...r.keys, ...r.prefixes]);
-    const free = tries.find((c) => !used.has(c));
-    if (free) {
-      taken.add(free);
-      return free;
-    }
-  }
-  throw new Error("Couldn't find a free name");
-}
-
-/** Applies the choice: drops clashing items ("skip") or renames them ("keep"). */
-export async function resolveClashes(profileId: string, bucket: string, items: Target[], clashing: Set<string>, choice: ClashChoice): Promise<Target[]> {
+/** Applies the choice: drops clashing items ("skip") or gives them free names ("keep"). */
+export async function resolveClashes<T extends Target>(profileId: string, bucket: string, items: T[], existing: Set<string>, choice: ClashChoice): Promise<T[]> {
   if (choice === "replace") return items;
-  if (choice === "skip") return items.filter((t) => !clashing.has(t.to));
-  const taken = new Set(items.map((t) => t.to));
-  const out: Target[] = [];
-  for (const t of items) out.push(clashing.has(t.to) ? { ...t, to: await freeName(profileId, bucket, t, taken) } : t);
+  const needs = clashIndices(items, existing);
+  if (choice === "skip") {
+    const drop = new Set(needs);
+    return items.filter((_, i) => !drop.has(i));
+  }
+  // names this batch writes are taken too, so two "Keep both" picks never land on the same name
+  // (freeKeys adds each name it hands out to `reserved`)
+  const reserved = new Set(items.map((t) => t.to));
+  const out = items.slice();
+  let pending = needs;
+  while (pending.length) {
+    // one free name per original key per round; repeats of the same key wait for the next round
+    const firsts = new Map<string, number>();
+    const rest: number[] = [];
+    for (const i of pending) {
+      if (firsts.has(items[i].to)) rest.push(i);
+      else firsts.set(items[i].to, i);
+    }
+    const free = await freeKeys(profileId, bucket, [...firsts.keys()], reserved);
+    for (const [k, i] of firsts) {
+      const name = free.get(k);
+      if (!name) throw new Error("Couldn't find a free name");
+      out[i] = { ...items[i], to: name };
+    }
+    pending = rest;
+  }
   return out;
 }
