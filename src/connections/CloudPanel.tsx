@@ -4,7 +4,7 @@
  * signs an expired connection in again (`reconnect`), keeping its id.
  */
 import { useEffect, useRef, useState } from "react";
-import { api, errMessage, oauthBuiltinClients, oauthCancel, oauthStart, type OAuthClient, type OAuthKind } from "../api";
+import { api, errMessage, oauthBuiltinClients, oauthCancel, oauthStart, type OAuthClient, type CloudKind } from "../api";
 import { Icon } from "../Icons";
 import { ProviderBadge } from "../components/Sidebar";
 import { ErrorText } from "../components/ErrorText";
@@ -16,7 +16,7 @@ import { DeleteControl } from "./DeleteControl";
 const newFlowId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
 
 /** Where people make their own app, in one line (no links: they open the console they know). */
-const OWN_APP_HINT: Record<OAuthKind, string> = {
+const OWN_APP_HINT: Record<CloudKind, string> = {
   gdrive: "In Google Cloud Console, create an OAuth client of type “Desktop app” under APIs & Services › Credentials.",
   onedrive: "In Microsoft Entra, register an app under App registrations as a public client with http://localhost as its redirect.",
   dropbox: "In the Dropbox App Console, create a scoped app with full Dropbox access and use its app key.",
@@ -31,7 +31,7 @@ export function CloudPanel({
   onClose,
   onBack,
 }: {
-  kind: OAuthKind;
+  kind: CloudKind;
   initial: Profile | null;
   /** start signing in again right away (the connection's sign-in expired) */
   reconnect?: boolean;
@@ -47,6 +47,8 @@ export function CloudPanel({
   const [ownOpen, setOwnOpen] = useState(!!initial?.cloud?.clientId);
   const [clientId, setClientId] = useState(initial?.cloud?.clientId ?? "");
   const [clientSecret, setClientSecret] = useState("");
+  // Microsoft: an app limited to one organization signs in through its tenant
+  const [tenant, setTenant] = useState(initial?.cloud?.tenant ?? "");
   const [name, setName] = useState(initial?.name ?? "");
   const [waiting, setWaiting] = useState(false);
   const [busy, setBusy] = useState<"save" | "delete" | null>(null);
@@ -77,7 +79,10 @@ export function CloudPanel({
   useEffect(() => () => void (flow.current && oauthCancel(flow.current).catch(() => {})), []);
 
   const needsOwn = builtin === false;
-  const client: OAuthClient | null = ownOpen && clientId.trim() ? { clientId: clientId.trim(), clientSecret: kind === "gdrive" && clientSecret ? clientSecret : null } : null;
+  const client: OAuthClient | null =
+    ownOpen && clientId.trim()
+      ? { clientId: clientId.trim(), clientSecret: kind === "gdrive" && clientSecret ? clientSecret : null, tenant: kind === "onedrive" && tenant.trim() ? tenant.trim() : null }
+      : null;
   const canStart = builtin !== null && (!needsOwn || !!client);
 
   const start = async () => {
@@ -198,6 +203,11 @@ export function CloudPanel({
               {kind === "gdrive" && (
                 <Field label="Client secret" optional hint="Google shows one for desktop apps too. It isn't really secret, but it's needed.">
                   {(c) => <SecretInput control={c} value={clientSecret} onChange={setClientSecret} editing={!!initial?.cloud?.clientId} label="client secret" />}
+                </Field>
+              )}
+              {kind === "onedrive" && (
+                <Field label="Tenant" optional wide hint="Only for an app limited to one organization: its tenant ID or domain. Empty: any account.">
+                  {(c) => <input {...c} className="mono" value={tenant} onChange={(e) => setTenant(e.target.value)} placeholder="contoso.onmicrosoft.com" disabled={waiting} {...RAW} />}
                 </Field>
               )}
             </div>

@@ -8,7 +8,7 @@ import { Icon } from "../Icons";
 import type { Profile } from "../types";
 import { useCaps } from "../useCaps";
 import { rootsMode } from "../connections/roots";
-import { isOAuthKind } from "../connections/kinds";
+import { isCloudKind } from "../connections/kinds";
 
 /** The shell's ways out of an empty pane. */
 export type EmptyActions = {
@@ -76,7 +76,7 @@ export function ChooseBucket({ profile, note, reconnect, actions }: { profile: P
 export function ListError({ profile, error, onRetry, onReconnect }: { profile: Profile; error: string; onRetry: () => void; onReconnect: (p: Profile) => void }) {
   const revoked = profile.provider === KYBL && isRevokedKey(error);
   // a Google Drive / OneDrive / Dropbox sign-in that ended: sign in again, then it loads
-  const signIn = isOAuthKind(profile.kind) && /sign in again|invalid_grant|expired or revoked/i.test(error);
+  const signIn = isCloudKind(profile.kind) && /sign in again|no longer signed in|invalid_grant|expired or revoked/i.test(error);
   return (
     <div className="empty error-state">
       <div className="empty-art">

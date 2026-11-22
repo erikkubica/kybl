@@ -8,12 +8,12 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, errMessage, type OAuthKind } from "../api";
+import { api, errMessage, type CloudKind } from "../api";
 import { Icon } from "../Icons";
 import { Modal } from "../components/Dialogs";
 import { ErrorText } from "../components/ErrorText";
 import type { Profile } from "../types";
-import { KINDS, hostKeyChanged, hostKeyUnknown, isOAuthKind, kindInfo, pickOf, type BlobKind, type NetKind, type PickId } from "./kinds";
+import { KINDS, hostKeyChanged, hostKeyUnknown, isCloudKind, kindInfo, pickOf, type BlobKind, type NetKind, type PickId } from "./kinds";
 import { SECRET_NOTE, type Draft, type FormApi } from "./fields";
 import { KindPicker } from "./KindPicker";
 import { S3Form } from "./S3Form";
@@ -63,10 +63,10 @@ export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl,
   const back = initial || startKind ? undefined : () => setPick(null);
   const title = initial ? `Edit ${info.label} connection` : `Add ${info.label}`;
 
-  if (isOAuthKind(pick)) {
+  if (isCloudKind(pick)) {
     return (
       <Modal title={title} onClose={onClose} width={480}>
-        <CloudPanel kind={pick as OAuthKind} initial={initial} reconnect={reconnect} onSaved={onSaved} onDeleted={onDeleted} onClose={onClose} onBack={back} />
+        <CloudPanel kind={pick as CloudKind} initial={initial} reconnect={reconnect} onSaved={onSaved} onDeleted={onDeleted} onClose={onClose} onBack={back} />
       </Modal>
     );
   }
@@ -88,7 +88,7 @@ function KeyedForm({
   onClose,
   onBack,
 }: {
-  pick: Exclude<PickId, OAuthKind | "kybl">;
+  pick: Exclude<PickId, CloudKind | "kybl">;
   initial: Profile | null;
   onSaved: (p: Profile) => void;
   onDeleted: (id: string) => void;

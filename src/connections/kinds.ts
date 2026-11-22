@@ -2,11 +2,11 @@
  * The kinds of connection people can add, as the "New connection" picker shows them, and the
  * helpers the forms share (field defaults, profile building, the host-key error format).
  */
-import type { OAuthKind } from "../api";
+import type { CloudKind } from "../api";
 import type { BlobConfig, ConnKind, NetConfig, Profile } from "../types";
 
 /** What the picker offers: Kybl Storage has its own sign-in flow, S3 its presets. */
-export type PickId = "kybl" | "s3" | OAuthKind | "webdav" | "sftp" | "ftp" | "azblob" | "gcs";
+export type PickId = "kybl" | "s3" | CloudKind | "webdav" | "sftp" | "ftp" | "azblob" | "gcs";
 
 export type KindInfo = {
   id: PickId;
@@ -37,11 +37,11 @@ export const GROUPS: { id: KindInfo["group"]; label: string }[] = [
   { id: "servers", label: "Servers" },
 ];
 
-export const OAUTH_KINDS: OAuthKind[] = ["gdrive", "onedrive", "dropbox"];
-export const isOAuthKind = (k: string | undefined): k is OAuthKind => !!k && (OAUTH_KINDS as string[]).includes(k);
+export const OAUTH_KINDS: CloudKind[] = ["gdrive", "onedrive", "dropbox"];
+export const isCloudKind = (k: string | undefined): k is CloudKind => !!k && (OAUTH_KINDS as string[]).includes(k);
 
 /** Who you sign in with, for the button ("Sign in with Google"). */
-export const SIGN_IN_WITH: Record<OAuthKind, string> = { gdrive: "Google", onedrive: "Microsoft", dropbox: "Dropbox" };
+export const SIGN_IN_WITH: Record<CloudKind, string> = { gdrive: "Google", onedrive: "Microsoft", dropbox: "Dropbox" };
 
 export const kindInfo = (id: PickId) => KINDS.find((k) => k.id === id)!;
 
