@@ -271,12 +271,16 @@ export function useMarquee({
   const stop = useRef<(() => void) | null>(null);
   useEffect(() => () => stop.current?.(), []);
 
-  const begin = (ev: React.MouseEvent) => {
+  /**
+   * Starts a rubber band at this press. With `onClick` (a press on a row), nothing changes until the
+   * pointer moves; released in place it is a plain click and `onClick` runs instead.
+   */
+  const begin = (ev: React.MouseEvent, onClick?: () => void) => {
     const el = scroller.current;
     if (!el || ev.button !== 0) return;
     const additive = ev.shiftKey ? "add" : ev.metaKey || ev.ctrlKey ? "toggle" : null;
     const base = additive ? new Set(latest.current.selected) : new Set<string>();
-    if (!additive) latest.current.onClearSelection();
+    if (!additive && !onClick) latest.current.onClearSelection();
     const at = (cx: number, cy: number) => {
       const r = el.getBoundingClientRect();
       return { x: cx - r.left + el.scrollLeft, y: cy - r.top + el.scrollTop };
@@ -343,6 +347,7 @@ export function useMarquee({
       pointer = { x: e.clientX, y: e.clientY };
       if (!started) {
         if (Math.hypot(e.clientX - ev.clientX, e.clientY - ev.clientY) < 4) return;
+        if (onClick && !additive) latest.current.onClearSelection();
         started = true;
         live.current = true;
         document.body.classList.add("marquee-selecting");
@@ -353,6 +358,7 @@ export function useMarquee({
     const end = () => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", end);
+      if (!started && onClick && stop.current === end) onClick();
       if (frame) cancelAnimationFrame(frame);
       document.body.classList.remove("marquee-selecting");
       live.current = false;

@@ -25,8 +25,9 @@ export function useSelection(entries: Entry[], stale: boolean) {
   const select = useCallback(
     (e: Entry, mods: { meta: boolean; shift: boolean }) => {
       const idx = entries.findIndex((x) => x.key === e.key);
-      if (mods.shift && anchor.current) {
-        const a = entries.findIndex((x) => x.key === anchor.current);
+      // an anchor the filter hides can't start a range: the click starts a new one
+      const a = mods.shift && anchor.current ? entries.findIndex((x) => x.key === anchor.current) : -1;
+      if (a >= 0) {
         const [lo, hi] = a < idx ? [a, idx] : [idx, a];
         setSelected(new Set(entries.slice(lo, hi + 1).map((x) => x.key)));
       } else if (mods.meta) {
@@ -71,8 +72,8 @@ export function useSelection(entries: Entry[], stale: boolean) {
       const next = cur < 0 ? firstStep(delta, entries.length) : Math.max(0, Math.min(entries.length - 1, cur + delta));
       const key = entries[next].key;
       setCursor(key);
-      if (shift && anchor.current) {
-        const a = entries.findIndex((x) => x.key === anchor.current);
+      const a = shift && anchor.current ? entries.findIndex((x) => x.key === anchor.current) : -1;
+      if (a >= 0) {
         const [lo, hi] = a < next ? [a, next] : [next, a];
         setSelected(new Set(entries.slice(lo, hi + 1).map((x) => x.key)));
       } else {
@@ -93,6 +94,18 @@ export function useSelection(entries: Entry[], stale: boolean) {
       }),
     [],
   );
+
+  // what the list no longer shows (filtered out, deleted, moved) leaves the selection, so the count
+  // and the actions always agree with what is on screen
+  useEffect(() => {
+    if (stale) return;
+    setSelected((cur) => {
+      if (!cur.size) return cur;
+      const shown = new Set(entries.map((e) => e.key));
+      const next = new Set([...cur].filter((k) => shown.has(k)));
+      return next.size === cur.size ? cur : next;
+    });
+  }, [entries, stale]);
 
   const selectedEntries = useMemo(() => entries.filter((e) => selected.has(e.key)), [entries, selected]);
   // refs so the memoised grid cards don't re-render on every selection change
