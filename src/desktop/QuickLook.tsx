@@ -35,7 +35,8 @@ export function QuickLook({
   onStep: (delta: number) => void;
   onClose: () => void;
   onOpen: (e: Entry) => void;
-  onDownload: (e: Entry) => void;
+  /** absent on this computer's own disk */
+  onDownload?: (e: Entry) => void;
 }) {
   // the list underneath must not see these keys while the preview is up
   useEffect(() => {
@@ -77,9 +78,11 @@ export function QuickLook({
           </div>
           {entry.kind === "file" && (
             <>
-              <button className="btn btn-sm" onClick={() => onDownload(entry)}>
-                <Icon name="download" size={14} /> Download
-              </button>
+              {onDownload && (
+                <button className="btn btn-sm" onClick={() => onDownload(entry)}>
+                  <Icon name="download" size={14} /> Download
+                </button>
+              )}
               <button className="btn btn-sm btn-primary" onClick={() => onOpen(entry)} title="Open in its app (⌘O)">
                 <Icon name="reveal" size={14} /> Open
               </button>

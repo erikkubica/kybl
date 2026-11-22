@@ -102,7 +102,8 @@ export function Toolbar({
   /** the "…" button: Go to folder, Sync this folder, Add to favorites… */
   onMoreMenu: (x: number, y: number) => void;
   onNewFolder: () => void;
-  onDownload: () => void;
+  /** absent on this computer's own disk: there is nothing to download */
+  onDownload?: () => void;
   onCopyLink: () => void;
   onRename: () => void;
   onMoveTo: () => void;
@@ -235,10 +236,12 @@ export function Toolbar({
                   <Icon name="x" size={11} />
                 </button>
               </span>
-              <button className="tool" onClick={onDownload} title="Download">
-                <Icon name="download" />
-                <span>Download</span>
-              </button>
+              {onDownload && (
+                <button className="tool" onClick={onDownload} title="Download">
+                  <Icon name="download" />
+                  <span>Download</span>
+                </button>
+              )}
               {singleFileSelected && canShare && (
                 <button className="tool" onClick={onCopyLink} title="Copy a share link">
                   <Icon name="link" />

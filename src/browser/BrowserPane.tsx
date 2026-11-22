@@ -110,7 +110,8 @@ export function BrowserPane(p: BrowserPaneProps) {
         onUploadMenu={actions.onUploadMenu}
         onMoreMenu={actions.onMoreMenu}
         onNewFolder={newFolder}
-        onDownload={() => ops.downloadEntries(selectedEntries, pane.relBase)}
+        // on this computer's own disk there's nothing to download (copy and move cover it)
+        onDownload={pane.caps?.localPaths ? undefined : () => ops.downloadEntries(selectedEntries, pane.relBase)}
         onCopyLink={() => singleFile && actions.copyLink(selectedEntries[0], settings.linkExpiry)}
         onRename={() => selectedEntries[0] && ops.askRename(selectedEntries[0])}
         onMoveTo={() => actions.askMove(selectedEntries)}
@@ -233,7 +234,7 @@ export function BrowserPane(p: BrowserPaneProps) {
           onStep={pane.stepQuick}
           onClose={pane.closeQuick}
           onOpen={pane.openEntry}
-          onDownload={pane.downloadOne}
+          onDownload={pane.caps?.localPaths ? undefined : pane.downloadOne}
         />
       )}
       {pane.drag && profile && <DragGhost drag={pane.drag} bucket={bucket} profileId={profile.id} />}

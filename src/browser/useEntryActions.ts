@@ -280,7 +280,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       one && e.kind === "file" && env.canOpenDocument?.(e) && { type: "item", label: "Open in default app", icon: "external", onClick: () => void ops.openInApp(e) },
       one && e.kind === "file" && { type: "item", label: "Quick Look", icon: "eye", hint: "Space", onClick: () => pane.setQuick(e.key) },
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => pane.navigate(entryParent(e), e.key) },
-      { type: "item", label: one && e.native?.exports.length ? `Download as ${e.native.exports[0].label}` : "Download", icon: "download", hint: "⇧⌘D", onClick: () => ops.downloadEntries(list, relBase) },
+      // this computer's own files aren't downloaded: Copy, Move and F5/F6 put them elsewhere
+      !onDisk && { type: "item", label: one && e.native?.exports.length ? `Download as ${e.native.exports[0].label}` : "Download", icon: "download", hint: "⇧⌘D", onClick: () => ops.downloadEntries(list, relBase) },
       // a Google Doc / Sheet / Slides: its other formats (PDF…)
       ...(one ? (e.native?.exports.slice(1) ?? []) : []).map((x) => ({ type: "item" as const, label: `Download as ${x.label}`, icon: "download" as const, onClick: () => ops.downloadEntries([asExport(e, x.ext) ?? e], relBase) })),
       canShare && { type: "item", label: `Copy share link (${expiryLabel(settings.linkExpiry)})`, icon: "link", disabled: !(one && e.kind === "file"), onClick: () => copyLink(e, settings.linkExpiry) },
@@ -336,7 +337,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     "new-folder": () => ops.askNewFolder(),
     "upload-files": () => void ops.pickAndUpload(false),
     "upload-folder": () => void ops.pickAndUpload(true),
-    download: () => void ops.downloadEntries(selectedEntries, relBase),
+    download: () =>
+      onDisk ? toast("info", "These files are already on this computer. Copy (⌘C) or Copy or move to… puts them somewhere else.") : void ops.downloadEntries(selectedEntries, relBase),
     refresh: ent.refresh,
     "go-up": () => void pane.goUp(),
     back: () => pane.historyStep(-1),

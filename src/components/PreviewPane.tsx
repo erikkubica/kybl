@@ -88,7 +88,8 @@ export function PreviewPane({
   defaultExpiry: number;
   onCopyLink: (secs: number) => void;
   onCopyText: (text: string, what: string) => void;
-  onDownload: () => void;
+  /** absent on this computer's own disk: there is nothing to download */
+  onDownload?: () => void;
   onRename: () => void;
   onMoveTo: () => void;
   onDelete: () => void;
@@ -159,9 +160,11 @@ export function PreviewPane({
             </button>
           )}
           <div className="preview-actions col">
-            <button className="btn" onClick={onDownload}>
-              <Icon name="download" size={15} /> Download
-            </button>
+            {onDownload && (
+              <button className="btn" onClick={onDownload}>
+                <Icon name="download" size={15} /> Download
+              </button>
+            )}
             <button className="btn" onClick={onMoveTo}>
               <Icon name="move" size={15} /> Move to…
             </button>
@@ -227,7 +230,8 @@ function FileDetails({
   setExpiry: (n: number) => void;
   onCopyLink: (secs: number) => void;
   onCopyText: (text: string, what: string) => void;
-  onDownload: () => void;
+  /** absent on this computer's own disk: there is nothing to download */
+  onDownload?: () => void;
   onRename: () => void;
   onMoveTo: () => void;
   onDelete: () => void;
@@ -461,9 +465,19 @@ function FileDetails({
       </p>
 
       <div className="preview-actions">
-        <button className="btn btn-primary grow" onClick={onDownload}>
-          <Icon name="download" size={15} /> Download
-        </button>
+        {onDownload ? (
+          <button className="btn btn-primary grow" onClick={onDownload}>
+            <Icon name="download" size={15} /> Download
+          </button>
+        ) : (
+          // already on this computer: open it in its app instead
+          onOpenExternal &&
+          !isFolder && (
+            <button className="btn btn-primary grow" onClick={() => onOpenExternal(entry)}>
+              <Icon name="external" size={15} /> Open
+            </button>
+          )
+        )}
         <button className="btn" onClick={onMoveTo} title="Move or copy to…" aria-label="Move or copy to another folder">
           <Icon name="move" size={15} />
         </button>

@@ -107,7 +107,7 @@ export function PreviewAside({
         selection={selectedEntries}
         onCopyLink={(secs) => selectedEntries[0] && actions.copyLink(selectedEntries[0], secs)}
         onCopyText={actions.copyText}
-        onDownload={() => ops.downloadEntries(selectedEntries, pane.relBase)}
+        onDownload={pane.caps?.localPaths ? undefined : () => ops.downloadEntries(selectedEntries, pane.relBase)}
         onRename={() => selectedEntries[0] && ops.askRename(selectedEntries[0])}
         onMoveTo={() => actions.askMove(selectedEntries)}
         onDelete={() => ops.askDelete(selectedEntries)}
