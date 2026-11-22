@@ -250,7 +250,9 @@ pub fn mime_of(key: &str) -> String {
 // ---------------------------------------------------------------- listing pages
 
 /// Servers list a whole folder in one go. The listing is kept for a minute so the next pages
-/// come from it instead of listing again; a fresh first page always asks the server.
+/// come from it instead of listing again; a fresh first page always asks the server. Pages are
+/// cut with [`page_after`], so a listing taken again in between (it expired, or something was
+/// written there) carries on after the last name sent instead of at a count that has shifted.
 #[derive(Default)]
 pub struct PageCache {
     inner: Mutex<HashMap<String, (Instant, Arc<Listing>)>>,
@@ -269,8 +271,7 @@ impl PageCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = SResult<(Vec<String>, Vec<Entry>)>>,
     {
-        let start: usize = token.as_deref().and_then(|t| t.parse().ok()).unwrap_or(0);
-        let kept = if start > 0 {
+        let kept = if token.is_some() {
             let mut m = self.inner.lock().unwrap();
             m.retain(|_, (at, _)| at.elapsed() < Self::KEEP);
             m.get(dir).map(|(_, l)| l.clone())
@@ -281,8 +282,7 @@ impl PageCache {
             Some(l) => l,
             None => {
                 let (mut folders, mut files) = fetch().await?;
-                folders.sort_by_key(|f| f.to_lowercase());
-                files.sort_by_key(|f| f.key.to_lowercase());
+                sort_listing(&mut folders, &mut files);
                 let l = Arc::new((folders, files));
                 if folders_and_files(&l) > PAGE {
                     self.inner.lock().unwrap().insert(dir.to_string(), (Instant::now(), l.clone()));
@@ -291,13 +291,7 @@ impl PageCache {
             }
         };
         let (folders, files) = &*listing;
-        let total = folders.len() + files.len();
-        let start = start.min(total);
-        let end = (start + PAGE).min(total);
-        let nf = folders.len();
-        let page_folders = if start < nf { folders[start..end.min(nf)].to_vec() } else { vec![] };
-        let page_files = files[start.max(nf) - nf..end.max(nf) - nf].to_vec();
-        Ok(Page { folders: page_folders, objects: page_files, next_token: (end < total).then(|| end.to_string()) })
+        Ok(page_after(folders, files, token.as_deref()))
     }
 
     /// Something changed below `dir` (or anywhere, for ""): forget kept listings there.
@@ -309,6 +303,37 @@ impl PageCache {
 
 fn folders_and_files(l: &Listing) -> usize {
     l.0.len() + l.1.len()
+}
+
+/// Name order, ignoring case; names that differ only in case keep a fixed order between them.
+fn order(key: &str) -> (String, &str) {
+    (key.to_lowercase(), key)
+}
+
+/// Sorts a whole folder the way [`page_after`] cuts it.
+pub fn sort_listing(folders: &mut [String], files: &mut [Entry]) {
+    folders.sort_by(|a, b| order(a).cmp(&order(b)));
+    files.sort_by(|a, b| order(&a.key).cmp(&order(&b.key)));
+}
+
+/// One page of a folder sorted by [`sort_listing`]: folders first, then files, [`PAGE`] at a time.
+/// The next-page token is the last entry sent (`d:<folder key>` or `f:<file key>`), and a page
+/// starts right after it, wherever that now falls. Entries added or removed between pages can't
+/// make a page skip or repeat the others. A token that doesn't read starts from the top.
+pub fn page_after(folders: &[String], files: &[Entry], token: Option<&str>) -> Page {
+    let (fstart, gstart) = match token.and_then(|t| t.split_once(':')) {
+        Some(("d", k)) => (folders.partition_point(|f| order(f) <= order(k)), 0),
+        Some(("f", k)) => (folders.len(), files.partition_point(|e| order(&e.key) <= order(k))),
+        _ => (0, 0),
+    };
+    let page_folders: Vec<String> = folders[fstart..].iter().take(PAGE).cloned().collect();
+    let page_files: Vec<Entry> = files[gstart..].iter().take(PAGE - page_folders.len()).cloned().collect();
+    let left = (folders.len() - fstart) + (files.len() - gstart) - page_folders.len() - page_files.len();
+    let next_token = (left > 0).then(|| match page_files.last() {
+        Some(e) => format!("f:{}", e.key),
+        None => format!("d:{}", page_folders.last().map(String::as_str).unwrap_or_default()),
+    });
+    Page { folders: page_folders, objects: page_files, next_token }
 }
 
 // ---------------------------------------------------------------- writes
@@ -558,6 +583,43 @@ mod tests {
         let p2 = rt.block_on(cache.page("", p1.next_token.clone(), || async { panic!("listed again") })).unwrap();
         assert_eq!(p2.objects.len(), 501);
         assert!(p2.next_token.is_none());
+    }
+
+    #[test]
+    fn pages_carry_on_after_the_last_name_when_listed_again() {
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let cache = PageCache::default();
+        let names = |r: std::ops::Range<usize>| -> Vec<Entry> { r.map(|i| Entry { key: format!("f{i:04}"), ..Default::default() }).collect() };
+        let p1 = rt.block_on(cache.page("", None, || async { Ok((vec![], names(0..2500))) })).unwrap();
+        assert_eq!(p1.objects.len(), PAGE);
+        // the kept listing goes (a write there, or a minute passed) and 300 already-sent files go too
+        cache.forget("f0000");
+        let p2 = rt.block_on(cache.page("", p1.next_token.clone(), || async { Ok((vec![], names(300..2500))) })).unwrap();
+        assert_eq!(p2.objects.first().unwrap().key, "f1000", "nothing skipped");
+        let p3 = rt.block_on(cache.page("", p2.next_token.clone(), || async { panic!("kept") })).unwrap();
+        assert!(p3.next_token.is_none());
+        let mut seen: Vec<String> = [p1, p2, p3].into_iter().flat_map(|p| p.objects).map(|e| e.key).collect();
+        let n = seen.len();
+        seen.dedup();
+        assert_eq!(seen.len(), n, "nothing twice");
+        assert_eq!(seen.last().unwrap(), "f2499");
+        assert_eq!(n, 2500);
+    }
+
+    #[test]
+    fn cursors_cross_from_folders_to_files() {
+        let folders: Vec<String> = (0..1200).map(|i| format!("d{i:04}/")).collect();
+        let files: Vec<Entry> = (0..5).map(|i| Entry { key: format!("A{i}"), ..Default::default() }).collect();
+        let p1 = page_after(&folders, &files, None);
+        assert_eq!((p1.folders.len(), p1.objects.len()), (PAGE, 0));
+        assert_eq!(p1.next_token.as_deref(), Some("d:d0999/"));
+        let p2 = page_after(&folders, &files, p1.next_token.as_deref());
+        assert_eq!((p2.folders.len(), p2.objects.len()), (200, 5));
+        assert!(p2.next_token.is_none());
+        // a folder created before the cursor doesn't shift the next page
+        let mut more = folders.clone();
+        more.insert(0, "a-new/".into());
+        assert_eq!(page_after(&more, &files, p1.next_token.as_deref()).folders[0], "d1000/");
     }
 
     #[test]
