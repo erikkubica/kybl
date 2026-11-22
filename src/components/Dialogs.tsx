@@ -129,8 +129,9 @@ export function Modal({
         aria-label={title}
         tabIndex={-1}
       >
-        {icon}
+        {/* an icon sits in the title row; the text below lines up with the title (as a macOS alert) */}
         <div className="modal-head">
+          {icon}
           <h2>{title}</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close (Esc)">
             <Icon name="x" />

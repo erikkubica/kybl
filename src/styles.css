@@ -1892,15 +1892,26 @@ body.resizing-col .preview-inner {
 .confirm-icon {
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
-  margin: 20px 0 0 20px;
-  border-radius: 11px;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
   background: var(--danger-soft);
   color: var(--danger);
 }
+/* with an icon: icon, title and × in one row, the text under the title */
 .modal.compact .modal-head {
-  padding-top: 12px;
+  justify-content: flex-start;
+  gap: 12px;
+  padding-top: 18px;
+}
+.modal.compact .modal-head h2 {
+  flex: 1;
+  min-width: 0;
+}
+.modal.compact .modal-body {
+  padding-left: 66px;
+  padding-right: 22px;
 }
 .form-grid {
   display: grid;
