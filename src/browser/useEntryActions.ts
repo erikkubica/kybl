@@ -136,6 +136,24 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     );
   };
 
+  /** "Copy to another connection…": a background job to any connection or this computer. */
+  const migrate = (list: Entry[], mode: "copy" | "move") => {
+    if (!profile || bucket == null || !list.length || !env.openMigration) return;
+    env.openMigration(
+      {
+        profileId: profile.id,
+        root: bucket,
+        items: list.map((e) => ({ path: e.key, isDir: e.kind === "folder", size: e.kind === "folder" ? undefined : e.size })),
+      },
+      mode,
+    );
+  };
+  /** The folder on screen, or the whole root at its top, to another connection. */
+  const migrateHere = () => {
+    if (!profile || bucket == null || !env.openMigration) return;
+    env.openMigration({ profileId: profile.id, root: bucket, items: [{ path: prefix, isDir: true }] }, "copy");
+  };
+
   // ------------------------------------------------------------ favorites
   const favoriteOf = (pid: string, b: string, pre: string) => settings.favorites.find((f) => f.profileId === pid && f.bucket === b && f.prefix === pre);
   const removeFavorite = (f: Favorite) =>
@@ -173,6 +191,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
           { type: "item", label: "Calculate folder size", icon: "info", onClick: () => calcSizes([prefix]) },
           favoriteItem(bucket, prefix),
           !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(prefix) },
+          !!env.openMigration && { type: "item", label: prefix ? "Copy this folder to another connection…" : "Copy everything to another connection…", icon: "copy", onClick: migrateHere },
           isS3 && { type: "item", label: "Copy S3 URI", icon: "copy", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") },
           onDisk && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: settings.showHiddenFiles, onClick: toggleHidden },
           { type: "sep" },
@@ -237,6 +256,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       folder && clip && { type: "item", label: `Paste into “${e.name}”`, icon: "copy", onClick: () => ops.paste(e.key) },
       { type: "item", label: "Move to…", icon: "move", onClick: () => askMove(list, "move") },
       { type: "item", label: "Copy to…", icon: "copy", onClick: () => askMove(list, "copy") },
+      !!env.openMigration && { type: "item", label: "Copy to another connection…", icon: "copy", onClick: () => migrate(list, "copy") },
+      !!env.openMigration && { type: "item", label: "Move to another connection…", icon: "move", onClick: () => migrate(list, "move") },
       ...(env.extraItemItems?.(list) ?? []),
       !!prefix && !search && {
         type: "item",
@@ -307,6 +328,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     copyLink,
     canShare,
     askMove,
+    migrate,
     askGoTo,
     calcSizes,
     removeFavorite,

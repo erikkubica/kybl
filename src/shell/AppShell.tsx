@@ -11,7 +11,7 @@ import { baseName } from "../format";
 import { useTransfers } from "../useTransfers";
 import { useJobs } from "../useJobs";
 import { Sidebar } from "../components/Sidebar";
-import { TransferPanel } from "../components/TransferPanel";
+import { TransferPanel, type ActivityTab } from "../components/TransferPanel";
 import { ConnectionDialog } from "../components/ConnectionDialog";
 import { KyblConnectDialog } from "../components/KyblConnectDialog";
 import { SettingsPage, type SettingsPageId } from "../components/SettingsPage";
@@ -27,6 +27,7 @@ import type { EmptyActions } from "../browser/PaneEmpty";
 import { LS, THIS_MAC, type PaneId } from "../browser/types";
 import { forgetCaps, peekCaps } from "../useCaps";
 import { clearAuthNeeded, useAuthNeeded } from "../connections/authNeeded";
+import { rootsMode } from "../connections/roots";
 import { canView, LazyDocumentView, viewerFor } from "../viewers/registry";
 import type { DocumentHandle } from "../viewers/DocumentView";
 import type { Entry } from "../types";
@@ -39,6 +40,7 @@ import { useShellCommands } from "./useShellCommands";
 import { DualPane } from "./DualPane";
 import { makeDualActions, type DualContext } from "./dualActions";
 import { PaneContext } from "./PaneContext";
+import { useMigrationHost } from "./useMigrationHost";
 
 /** Gives a pane's file list keyboard focus (after a sidebar click the arrows should move in it). */
 export function focusPaneList(id: PaneId) {
@@ -57,6 +59,8 @@ export function AppShell() {
   const [transfersOpen, setTransfersOpen] = useState(true);
   // the activity panel was opened on purpose: it stays up with a note even with nothing going on
   const [activityAsked, setActivityAsked] = useState(false);
+  // the Activity panel's tab: transfers and moves, or copies between connections (Jobs)
+  const [activityTab, setActivityTab] = useState<ActivityTab>("activity");
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<SettingsPageId | undefined>(undefined);
@@ -155,6 +159,14 @@ export function AppShell() {
   const clearAllSizes = useCallback(() => {
     for (const p of allPanes.current) p.folderSizes.clear();
   }, []);
+  /** Opens the Activity panel on its Jobs tab (a copy between connections started or ended). */
+  const showJobs = useCallback(() => {
+    setActivityTab("jobs");
+    setTransfersOpen(true);
+    setActivityAsked(true);
+  }, []);
+  // copies between connections: their dialog, the quick F5 / F6 confirm, and what happens when one ends
+  const migrations = useMigrationHost({ dialogs, reloadIfShowing, clearAllSizes, showJobs });
 
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -221,6 +233,7 @@ export function AppShell() {
     rootLabel: conns.rootLabel,
     openDocument: (e) => openDocument(id, e),
     canOpenDocument: (e) => canOpenDocument(id, e),
+    openMigration: migrations.open,
     ...dualPane.envFor(id),
   });
   const left = usePane(envFor("left"));
@@ -243,6 +256,7 @@ export function AppShell() {
     autoShowActivity: () => void (settings.autoOpenTransfers && setTransfersOpen(true)),
     focusPane: (id: PaneId) => requestAnimationFrame(() => focusPaneList(id)),
     reloadIfShowing,
+    confirmMigration: migrations.confirm,
   };
 
   /** Sidebar clicks, favorites and new connections open here. */
@@ -407,6 +421,40 @@ export function AppShell() {
     onOpenBucketByName: (p) => askBucketName(p, id),
   });
 
+  /** Right-click on a connection: everything in it (its buckets shown in the sidebar) to another connection. */
+  const connectionMenu = (p: Profile, x: number, y: number) => {
+    const copyAll = async () => {
+      const names = conns.bucketsBy[p.id]?.names?.length ? conns.bucketsBy[p.id].names : await conns.loadBuckets(p);
+      const hidden = new Set(conns.hiddenBuckets[p.id] ?? []);
+      const shown = names.filter((b) => !hidden.has(b));
+      if (!shown.length) return toast("info", "There's nothing in this connection to copy yet.");
+      if (shown.length === 1) migrations.open({ profileId: p.id, root: shown[0], items: [{ path: "", isDir: true }] }, "copy");
+      else migrations.open({ profileId: p.id, root: shown[0], items: [], roots: shown.map((b) => ({ id: b, name: conns.rootLabel(p.id, b) })) }, "copy");
+    };
+    const own = p.id === THIS_MAC.id;
+    // a server's one root has no row of its own: the connection row is the place
+    const single = rootsMode(p, peekCaps(p.id)) === "single";
+    dialogs.menu(x, y, [
+      ...(authNeeded.has(p.id) ? [{ type: "item" as const, label: "Sign in again…", icon: "refresh" as const, onClick: () => setConnDialog({ profile: p, reconnect: true }) }] : []),
+      single
+        ? { type: "item" as const, label: "Open", icon: "folder" as const, onClick: () => (active.openBucket(p, ""), focusListSoon()) }
+        : { type: "item" as const, label: conns.expanded.has(p.id) ? "Collapse" : "Expand", icon: "chevron" as const, onClick: () => toggleConnection(p) },
+      // all of this computer is too much to copy in one go: its folders have their own menus
+      ...(own ? [] : [{ type: "item" as const, label: "Copy everything to…", icon: "copy" as const, onClick: () => void copyAll() }]),
+      ...(own ? [] : [{ type: "sep" as const }, { type: "item" as const, label: "Edit connection…", icon: "edit" as const, onClick: () => setConnDialog({ profile: p }) }]),
+    ]);
+  };
+  /** Right-click on a bucket (or one of this computer's folders) in the sidebar. */
+  const bucketMenu = (p: Profile, b: string, x: number, y: number) => {
+    const hidden = (conns.hiddenBuckets[p.id] ?? []).includes(b);
+    dialogs.menu(x, y, [
+      { type: "item", label: "Open", icon: p.id === THIS_MAC.id ? "folder" : "bucket", onClick: () => (active.openBucket(p, b), focusListSoon()) },
+      { type: "item", label: "Copy everything to…", icon: "copy", onClick: () => migrations.open({ profileId: p.id, root: b, items: [{ path: "", isDir: true }] }, "copy") },
+      { type: "sep" },
+      { type: "item", label: hidden ? "Show in the sidebar" : "Hide from the sidebar", icon: hidden ? "eye" : "eye-off", onClick: () => conns.setBucketHidden(p, b, !hidden) },
+    ]);
+  };
+
   // ------------------------------------------------------------ commands (keyboard + menu bar)
   const undo = () => {
     const u = undoStack.pop();
@@ -514,6 +562,8 @@ export function AppShell() {
         onRemoveFavorite={active.actions.removeFavorite}
         rootLabel={conns.rootLabel}
         builtIn={(p) => p.id === THIS_MAC.id}
+        onConnectionMenu={connectionMenu}
+        onBucketMenu={bucketMenu}
       />
 
       <main className="main">
@@ -543,6 +593,15 @@ export function AppShell() {
             setTransfersOpen(!transfersOpen);
           }}
           showEmpty={activityAsked}
+          tab={activityTab}
+          onTab={setActivityTab}
+          onOpenMigrationDest={(j) => {
+            const p = profiles.find((x) => x.id === j.spec.dst.profileId);
+            if (!p) return toast("error", "That connection no longer exists.");
+            conns.expand(p.id);
+            active.go(p, j.spec.dst.root, j.spec.dst.dir);
+            focusListSoon();
+          }}
           onCancel={transfers.cancel}
           onCancelAll={transfers.cancelAll}
           onRetry={transfers.retry}
@@ -630,6 +689,7 @@ export function AppShell() {
           />
         </Suspense>
       )}
+      {migrations.element}
       {!settingsOpen && <UpdateBanner st={updates} />}
     </div>
   );

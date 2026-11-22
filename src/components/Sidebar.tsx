@@ -69,6 +69,8 @@ export function Sidebar({
   builtIn = () => false,
   authNeeded,
   onSignInAgain,
+  onConnectionMenu,
+  onBucketMenu,
 }: {
   profiles: Profile[];
   /** connection of the bucket on screen */
@@ -103,6 +105,9 @@ export function Sidebar({
   authNeeded?: Set<string>;
   /** "Sign in again" on one of those */
   onSignInAgain?: (p: Profile) => void;
+  /** right-click on a connection / a bucket (at the pointer) */
+  onConnectionMenu?(p: Profile, x: number, y: number): void;
+  onBucketMenu?(p: Profile, bucket: string, x: number, y: number): void;
 }) {
   // connections whose hidden buckets are on show (to pick which to bring back)
   const [showHidden, setShowHidden] = useState<Set<string>>(new Set());
@@ -189,6 +194,8 @@ export function Sidebar({
             onHideBucket={onHideBucket}
             onReconnect={onReconnect}
             onSignInAgain={onSignInAgain}
+            onConnectionMenu={onConnectionMenu}
+            onBucketMenu={onBucketMenu}
           />
         ))}
       </div>
@@ -238,6 +245,8 @@ function SidebarConnection({
   onHideBucket,
   onReconnect,
   onSignInAgain,
+  onConnectionMenu,
+  onBucketMenu,
 }: {
   p: Profile;
   active: boolean;
@@ -258,6 +267,8 @@ function SidebarConnection({
   onHideBucket: (p: Profile, bucket: string, hide: boolean) => void;
   onReconnect: (p: Profile) => void;
   onSignInAgain?: (p: Profile) => void;
+  onConnectionMenu?(p: Profile, x: number, y: number): void;
+  onBucketMenu?(p: Profile, bucket: string, x: number, y: number): void;
 }) {
   const caps = useCaps(p.id);
   const mode = rootsMode(p, caps);
@@ -283,6 +294,13 @@ function SidebarConnection({
         aria-current={here || undefined}
         aria-label={p.name}
         title={own ? undefined : addressOf(p)}
+        onContextMenu={
+          onConnectionMenu &&
+          ((e) => {
+            e.preventDefault();
+            onConnectionMenu(p, e.clientX, e.clientY);
+          })
+        }
         // a server's one root takes dropped items at its top level, like a bucket row
         {...(single ? { "data-drop-bucket": "", "data-drop-profile": p.id } : {})}
       >
@@ -344,6 +362,13 @@ function SidebarConnection({
                 // the list's drag (useItemDrag) drops items here: at the bucket's top level
                 data-drop-bucket={b}
                 data-drop-profile={p.id}
+                onContextMenu={
+                  onBucketMenu &&
+                  ((e) => {
+                    e.preventDefault();
+                    onBucketMenu(p, b, e.clientX, e.clientY);
+                  })
+                }
               >
                 <Icon name={rootIcon} size={14} />
                 <span className="side-label" title={own ? b : undefined}>

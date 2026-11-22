@@ -7,6 +7,8 @@ import { useJobList, type Job, type JobKind } from "../useJobs";
 import { useTransferList } from "../useTransfers";
 import { useSync } from "../sync";
 import { useMemo } from "react";
+import type { JobSummary } from "../api";
+import { JobsPanel, isActive as migrationActive, useMigrations } from "../jobs";
 
 /** A synced folder that is busy right now (shown read-only). */
 export type SyncActivity = { id: string; name: string; direction: "upload" | "download"; state: "scanning" | "syncing"; done: number; total: number; current: string | null; bytes: number; totalBytes: number };
@@ -36,7 +38,7 @@ const STATE_ICON: Record<TransferState, "upload" | "download" | "check-circle" |
 };
 
 /** The Activity panel, subscribed to the live transfer, job and sync lists itself. */
-export function TransferPanel(props: Omit<PanelProps, "transfers" | "jobs" | "syncs">) {
+export function TransferPanel(props: Omit<PanelProps, "transfers" | "jobs" | "syncs" | "migrations" | "migrationsActive">) {
   const transfers = useTransferList();
   const jobs = useJobList();
   const sync = useSync();
@@ -50,13 +52,25 @@ export function TransferPanel(props: Omit<PanelProps, "transfers" | "jobs" | "sy
       }),
     [sync],
   );
-  return <TransferPanelView {...props} transfers={transfers} jobs={jobs} syncs={syncs} />;
+  const migs = useMigrations();
+  const migsActive = useMemo(() => migs.filter(migrationActive), [migs]);
+  return <TransferPanelView {...props} transfers={transfers} jobs={jobs} syncs={syncs} migrations={migs.length} migrationsActive={migsActive} />;
 }
+
+export type ActivityTab = "activity" | "jobs";
 
 type PanelProps = {
   transfers: Transfer[];
   jobs: Job[];
   syncs: SyncActivity[];
+  /** copies between connections (src/jobs): how many are listed, and the ones still going */
+  migrations: number;
+  migrationsActive: JobSummary[];
+  /** which tab shows: Activity (transfers, moves, syncs) or Jobs (copies between connections) */
+  tab?: ActivityTab;
+  onTab?(tab: ActivityTab): void;
+  /** a finished copy's "Show where it went" */
+  onOpenMigrationDest?(job: JobSummary): void;
   onCancelJob: (id: string) => void;
   onDismissJob: (id: string) => void;
   onOpenJob: (j: Job) => void;
@@ -97,10 +111,20 @@ function TransferPanelView({
   onDismissJob,
   onOpenJob,
   onOpenSync,
+  migrations,
+  migrationsActive,
+  tab = "activity",
+  onTab,
+  onOpenMigrationDest,
 }: PanelProps) {
   const nothing = transfers.length === 0 && jobs.length === 0 && syncs.length === 0;
-  // no activity: no panel, unless it was opened on purpose
-  if (nothing && !(showEmpty && open)) return null;
+  // no activity and no copies between connections: no panel, unless it was opened on purpose
+  if (nothing && migrations === 0 && !(showEmpty && open)) return null;
+  const onJobs = tab === "jobs";
+  const pickTab = (t: ActivityTab) => {
+    onTab?.(t);
+    if (!open) onToggle();
+  };
 
   const jobsRunning = jobs.filter((j) => j.state === "running");
   const jobsFailed = jobs.filter((j) => j.state === "error");
@@ -130,12 +154,15 @@ function TransferPanelView({
   ];
 
   const cancelledCount = transfers.length - active - done.length - failed.length + jobsCancelled.length;
-  const activeAll = active + jobsRunning.length + syncs.length;
+  const activeAll = active + jobsRunning.length + syncs.length + migrationsActive.length;
   const doneAll = done.length + jobsDone.length;
   const failedAll = failed.length + jobsFailed.length;
   const finishedAll = transfers.length - active + jobs.length - jobsRunning.length;
-  // with no transfers running, the header summarises the first running job
+  // with no transfers running, the header summarises the first running job, then the first copy
+  // between connections
   const leadJob = active === 0 ? jobsRunning[0] : undefined;
+  const leadMig = active === 0 && !leadJob ? migrationsActive[0] : undefined;
+  const leadMigFrac = leadMig && leadMig.progress.state !== "planning" && leadMig.progress.bytesTotal > 0 ? leadMig.progress.bytesDone / leadMig.progress.bytesTotal : null;
   const retryAll = () => (onRetryAll ? onRetryAll() : failed.forEach((t) => onRetry(t.id)));
   const openLocal = (t: Transfer) => (onOpenLocal ? onOpenLocal(t) : api.openLocal(t.local).catch(() => onReveal(t)));
 
@@ -153,14 +180,31 @@ function TransferPanelView({
           }}
         >
           <Icon name="chevron" size={13} className={`tp-caret ${open ? "open" : ""}`} />
-          <strong>Activity</strong>
-          <span className="tp-counts">
-            {activeAll > 0 && <span className="pill accent">{activeAll} active</span>}
-            {doneAll > 0 && <span className="pill ok">{doneAll} done</span>}
-            {failedAll > 0 && <span className="pill bad">{failedAll} failed</span>}
-            {cancelledCount > 0 && <span className="pill">{cancelledCount} cancelled</span>}
-          </span>
+          {!onTab && <strong>Activity</strong>}
         </button>
+        {onTab && (
+          <div className="tp-tabs" role="tablist" aria-label="Activity" onClick={(e) => e.stopPropagation()}>
+            <button role="tab" aria-selected={open && !onJobs} className={open && !onJobs ? "on" : ""} onClick={() => pickTab("activity")}>
+              Activity
+            </button>
+            <button
+              role="tab"
+              aria-selected={open && onJobs}
+              className={open && onJobs ? "on" : ""}
+              onClick={() => pickTab("jobs")}
+              title="Copies and moves between connections"
+            >
+              Jobs
+              {migrationsActive.length > 0 && <span className="pill accent">{migrationsActive.length}</span>}
+            </button>
+          </div>
+        )}
+        <span className="tp-counts">
+          {activeAll > 0 && <span className="pill accent">{activeAll} active</span>}
+          {doneAll > 0 && <span className="pill ok">{doneAll} done</span>}
+          {failedAll > 0 && <span className="pill bad">{failedAll} failed</span>}
+          {cancelledCount > 0 && <span className="pill">{cancelledCount} cancelled</span>}
+        </span>
         <div className="tp-summary">
           {active > 0 && (
             <>
@@ -183,8 +227,17 @@ function TransferPanelView({
               </div>
             </>
           )}
+          {leadMig && (
+            <>
+              <span className="tp-lead">{leadMig.title}</span>
+              {leadMig.progress.etaSecs != null && leadMig.progress.etaSecs > 0 && <span>{formatEta(leadMig.progress.etaSecs)} left</span>}
+              <div className={`bar ${leadMigFrac == null ? "indeterminate" : ""}`}>
+                <div style={{ width: `${Math.round((leadMigFrac ?? 0) * 100)}%` }} />
+              </div>
+            </>
+          )}
         </div>
-        <div className="tp-actions" onClick={(e) => e.stopPropagation()}>
+        <div className="tp-actions" onClick={(e) => e.stopPropagation()} hidden={open && onJobs}>
           {failed.length > 0 && (
             <button className="btn btn-ghost btn-sm" onClick={retryAll} title="Try every failed transfer again">
               <Icon name="retry" size={13} /> Retry {failed.length === 1 ? "failed" : `all ${failed.length} failed`}
@@ -202,13 +255,18 @@ function TransferPanelView({
           )}
         </div>
       </header>
-      {open && nothing && (
+      {open && onJobs && (
+        <div className="tp-list tp-jobs" id="tp-list">
+          <JobsPanel onOpenDest={onOpenMigrationDest} />
+        </div>
+      )}
+      {open && !onJobs && nothing && (
         <div className="tp-empty" id="tp-list">
           <Icon name="transfers" size={18} />
           <span>Nothing is uploading or downloading. Transfers, moves and deletes you start show up here.</span>
         </div>
       )}
-      {open && !nothing && (
+      {open && !onJobs && !nothing && (
         <div className="tp-list" id="tp-list">
           {jobList.map((j) => (
             <div key={j.id} className={`tp-row job st-${j.state}`}>

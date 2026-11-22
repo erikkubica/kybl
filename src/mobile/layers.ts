@@ -17,13 +17,14 @@ export type LayerId =
   | "folderInfo"
   | "sheet"
   | "move"
+  | "migrate"
   | "prompt"
   | "confirm"
   | "conn"
   | "kybl";
 
 /** Full-screen layers the iPhone edge swipe can slide away (the viewer has its own drag-down). */
-export const SWIPEABLE: ReadonlySet<LayerId> = new Set<LayerId>(["detail", "doc", "intake", "transfers", "settings"]);
+export const SWIPEABLE: ReadonlySet<LayerId> = new Set<LayerId>(["detail", "doc", "intake", "transfers", "settings", "migrate"]);
 /** Sheets and dialogs: they take the bottom of the screen, where toasts usually are. */
 export const SHEETS: ReadonlySet<LayerId> = new Set<LayerId>(["folderInfo", "sheet", "move", "prompt", "confirm", "conn", "kybl"]);
 

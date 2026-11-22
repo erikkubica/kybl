@@ -7,7 +7,8 @@
  * | same connection (any bucket)  | move_many, with destBucket across buckets (clash + undo)   |
  * | this computer → cloud         | an upload of the files on disk (clash check)               |
  * | cloud → this computer         | a download into the pane's folder                          |
- * | cloud → another cloud         | the migration job (package B); "coming soon" until then    |
+ * | cloud → another cloud         | a background job (src/jobs), after a short confirm         |
+ * | same connection, other root   | the same job when the connection can't copy across roots   |
  *
  * Between this computer and the cloud nothing is moved: the originals stay, so F6 there copies.
  */
@@ -17,7 +18,9 @@ import { joinPath, safeRelPath } from "../desktop/paths";
 import type { Pane } from "../browser/usePane";
 import type { Entry } from "../types";
 import type { TransferActions } from "../useTransfers";
+import { peekCaps } from "../useCaps";
 import type { Dialogs } from "./useDialogs";
+import type { ConfirmMigration } from "./useMigrationHost";
 
 /** Where a key of this computer's disk is (the root's own folder for ""). */
 async function onDisk(root: string, key: string): Promise<string> {
@@ -29,12 +32,25 @@ async function onDisk(root: string, key: string): Promise<string> {
 /** One pane shows this computer's disk and the other a cloud: copies only (see above). */
 export const crossesDisk = (a: Pane, b: Pane) => !!a.here && !!b.here && (a.here.profileId === LOCAL_ID) !== (b.here.profileId === LOCAL_ID);
 
+/**
+ * Two clouds the server can't copy between: different connections, or roots of one connection
+ * that only copies inside a root. These go through a background job (see above).
+ */
+export function viaJob(a: Pane, b: Pane): boolean {
+  if (!a.here || !b.here || a.here.profileId === LOCAL_ID || b.here.profileId === LOCAL_ID) return false;
+  if (a.here.profileId !== b.here.profileId) return true;
+  // caps load with the pane; S3 (the default while they load) copies across buckets
+  return a.here.bucket !== b.here.bucket && (peekCaps(a.here.profileId)?.serverCopy ?? "cross-root") !== "cross-root";
+}
+
 type Ctx = {
   dialogs: Dialogs;
   transfers: TransferActions;
   autoShowActivity: () => void;
   /** refreshes the panes showing this place */
   reloadIfShowing: (profileId: string, bucket: string) => boolean;
+  /** the quick confirm that starts a job between connections */
+  confirmMigration?: ConfirmMigration;
 };
 
 export async function sendToPane(src: Pane, dst: Pane, items: Entry[], mode: "copy" | "move", dest: string, c: Ctx) {
@@ -43,6 +59,23 @@ export async function sendToPane(src: Pane, dst: Pane, items: Entry[], mode: "co
   if (!a || !b || !items.length) return;
   const fromLocal = a.profileId === LOCAL_ID;
   const toLocal = b.profileId === LOCAL_ID;
+  if (viaJob(src, dst)) {
+    if (!c.confirmMigration || !dst.profile) {
+      c.dialogs.toast("info", "Copying between these connections isn't available here");
+      return;
+    }
+    c.confirmMigration(
+      {
+        profileId: a.profileId,
+        root: a.bucket,
+        items: items.map((e) => ({ path: e.key, isDir: e.kind === "folder", size: e.kind === "folder" ? undefined : e.size })),
+      },
+      mode,
+      { profileId: b.profileId, root: b.bucket, dir: dest, connectionName: dst.profile.name, rootName: dst.bucketLabel ?? b.bucket },
+      peekCaps(b.profileId)?.roots === "single",
+    );
+    return;
+  }
   if (fromLocal && toLocal) {
     // both on this computer: the Local provider does it like any connection
   } else if (fromLocal) {
@@ -65,9 +98,6 @@ export async function sendToPane(src: Pane, dst: Pane, items: Entry[], mode: "co
       return;
     }
     await downloadInto(src, items, dir, c, () => c.reloadIfShowing(b.profileId, b.bucket));
-    return;
-  } else if (a.profileId !== b.profileId) {
-    c.dialogs.toast("info", "Copying between connections is coming soon");
     return;
   }
   await src.ops.relocate(items, dest, mode, { destBucket: b.bucket });
