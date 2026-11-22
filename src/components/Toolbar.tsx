@@ -48,6 +48,8 @@ export function Toolbar({
   onClearSearch,
   onTogglePreview,
   onClearSelection,
+  dual = false,
+  onToggleDual,
 }: {
   bucket: string | null;
   prefix: string;
@@ -99,6 +101,10 @@ export function Toolbar({
   onClearSearch: () => void;
   onTogglePreview: () => void;
   onClearSelection: () => void;
+  /** two panes side by side are on screen */
+  dual?: boolean;
+  /** switches between one pane and two (the button shows only with this) */
+  onToggleDual?: () => void;
 }) {
   const parts = prefix.split("/").filter(Boolean);
   const hasSel = selectionCount > 0;
@@ -277,6 +283,17 @@ export function Toolbar({
         <button className={`icon-btn ${previewOpen ? "on" : ""}`} onClick={onTogglePreview} title="Toggle details panel (⌘I)" aria-label="Toggle details panel" aria-pressed={previewOpen}>
           <Icon name="panel" />
         </button>
+        {onToggleDual && (
+          <button
+            className={`icon-btn ${dual ? "on" : ""}`}
+            onClick={onToggleDual}
+            title={dual ? "Back to one pane (⌘\\)" : "Two panes side by side (⌘\\)"}
+            aria-label="Two panes"
+            aria-pressed={dual}
+          >
+            <Icon name="dual-pane" />
+          </button>
+        )}
       </div>
       {working && <div className="progress-line" />}
     </header>

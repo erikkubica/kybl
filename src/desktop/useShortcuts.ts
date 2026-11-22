@@ -20,6 +20,8 @@ export type ShortcutOptions = {
   moveSelection: (delta: number, shift: boolean) => void;
   /** the window came back to the front (`app-resumed`) */
   onResume: () => void;
+  /** where the active list lives (with two panes, the active pane); default the whole page */
+  listScope?: () => ParentNode | null;
 };
 
 export function useShortcuts(opts: ShortcutOptions) {
@@ -73,7 +75,7 @@ export function useShortcuts(opts: ShortcutOptions) {
       else if (ev.key === "Escape") id = "deselect";
       else if (ev.key.startsWith("Arrow") && (document.activeElement === document.body || !document.activeElement) && listShown && !overlayUp()) {
         // nothing focused (after a sidebar click or a closed dialog): arrows still move in the list
-        const list = document.querySelector<HTMLElement>(".table, .grid-scroll");
+        const list = (o.current.listScope?.() ?? document).querySelector<HTMLElement>(".table, .grid-scroll");
         const grid = list?.classList.contains("grid-scroll");
         const tiles = grid ? list!.querySelector(".grid") : null;
         const cols = tiles ? getComputedStyle(tiles).gridTemplateColumns.split(" ").length || 1 : 1;
