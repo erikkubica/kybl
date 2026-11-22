@@ -359,6 +359,7 @@ mod tests {
             access_key_id: "testkey".into(),
             bucket: None,
             path_style: true,
+            ..Default::default()
         };
         let client = build_client(&p, "testsecret");
         let h = app.handle().clone();

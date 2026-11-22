@@ -169,8 +169,8 @@ async fn abort_left(app: &AppHandle, u: Upload) {
     let client = match crate::state::client_for(app, &state, &u.profile_id).await {
         Ok(c) => c,
         Err(e) => {
-            // the connection was removed: nothing can abort it any more
-            if e.contains("not found") || now().saturating_sub(u.created) > GIVE_UP_AFTER.as_secs() {
+            // the connection (or its key) was removed: nothing can abort it any more
+            if e.contains("not found") || e.contains("No secret key") || now().saturating_sub(u.created) > GIVE_UP_AFTER.as_secs() {
                 upload_ended(&u.upload_id);
             }
             return;

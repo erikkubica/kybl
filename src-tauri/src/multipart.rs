@@ -635,6 +635,7 @@ mod tests {
             access_key_id: "testkey".into(),
             bucket: None,
             path_style: true,
+            ..Default::default()
         };
         let client = build_client(&p, "testsecret");
         tauri::async_runtime::block_on(async move {
@@ -703,6 +704,7 @@ mod tests {
             access_key_id: "testkey".into(),
             bucket: None,
             path_style: true,
+            ..Default::default()
         };
         let client = build_client(&p, "testsecret");
         tauri::async_runtime::block_on(async move {

@@ -15,8 +15,15 @@ use tokio::{sync::Semaphore, task::JoinSet};
 
 use crate::{
     commands::{copy_object, details, Headers, ObjectDetails},
-    state::{client_for, err, sdk_err, AppState},
+    state::{err, sdk_err, AppState},
+    storage::{self, generic_cmds, Conn, StorageError},
 };
+
+/// Headers, metadata and tags are S3's own; other kinds of connection don't offer them
+/// (`capabilities.metadata` / `tags`).
+fn s3_only() -> String {
+    StorageError::unsupported().into()
+}
 
 /// Requests in flight at once when checking many names.
 const CHECKS_AT_ONCE: usize = 16;
@@ -24,8 +31,8 @@ const CHECKS_AT_ONCE: usize = 16;
 #[derive(Serialize, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Existing {
-    keys: Vec<String>,
-    prefixes: Vec<String>,
+    pub(crate) keys: Vec<String>,
+    pub(crate) prefixes: Vec<String>,
 }
 
 /// Which of `keys` exist (HEAD each), and which `prefixes` have at least one object under them
@@ -40,7 +47,10 @@ pub async fn existing_keys(
     keys: Vec<String>,
     prefixes: Vec<String>,
 ) -> Result<Existing, String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return generic_cmds::existing_keys(&*s, &bucket, keys, prefixes).await,
+    };
     check_existing(&client, &bucket, keys, prefixes).await
 }
 
@@ -192,7 +202,10 @@ pub async fn update_object_props(
     key: String,
     props: ObjectProps,
 ) -> Result<ObjectDetails, String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return { drop(s); Err(s3_only()) },
+    };
     let head = client.head_object().bucket(&bucket).key(&key).send().await.map_err(sdk_err)?;
     let size = head.content_length().unwrap_or(0);
     let next = merged(Headers::of(&head), props)?;
@@ -254,7 +267,10 @@ pub async fn get_object_tags(
     bucket: String,
     key: String,
 ) -> Result<HashMap<String, String>, String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return { drop(s); Err(s3_only()) },
+    };
     let out = client.get_object_tagging().bucket(&bucket).key(&key).send().await.map_err(sdk_err)?;
     Ok(out.tag_set().iter().map(|t| (t.key().to_string(), t.value().to_string())).collect())
 }
@@ -269,7 +285,10 @@ pub async fn put_object_tags(
     key: String,
     tags: HashMap<String, String>,
 ) -> Result<(), String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return { drop(s); Err(s3_only()) },
+    };
     let mut set = Vec::new();
     for (k, v) in tags {
         let k = k.trim().to_string();
@@ -366,6 +385,7 @@ mod tests {
             access_key_id: "testkey".into(),
             bucket: None,
             path_style: true,
+            ..Default::default()
         };
         let client = build_client(&p, "testsecret");
         tauri::async_runtime::block_on(async move {
