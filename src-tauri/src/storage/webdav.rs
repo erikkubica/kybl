@@ -414,6 +414,12 @@ impl Storage for WebdavBackend {
         &self.caps
     }
 
+    /// The folder address paths start from.
+    fn place_id(&self) -> Option<String> {
+        let base = self.base.get().or(self.candidates.first())?;
+        Some(format!("webdav:{}", base.as_str().trim_end_matches('/').to_ascii_lowercase()))
+    }
+
     /// Finds the WebDAV folder (and so checks the address and the sign-in).
     async fn roots(&self) -> SResult<Vec<RootInfo>> {
         self.base().await?;
@@ -480,13 +486,17 @@ impl Storage for WebdavBackend {
         let content_len = resp.content_length();
         match status {
             StatusCode::PARTIAL_CONTENT => {
-                let cr = h.get(header::CONTENT_RANGE).and_then(|v| v.to_str().ok()).and_then(parse_content_range);
-                let body = resp.bytes_stream().map(|c| c.map_err(std::io::Error::other));
-                let (sent, total) = match cr {
-                    Some((s, e, t)) => (Some(s..e + 1), t),
-                    None => (range.clone(), None),
+                // report the bytes the server says it sent (callers check them against what they
+                // asked for); a part that doesn't say where it belongs can't be used at all
+                let cr = h.get(header::CONTENT_RANGE).and_then(|v| v.to_str().ok()).and_then(extras::parse_content_range);
+                let Some((sent, total)) = cr else {
+                    return Err(StorageError::other("The server sent part of the file without saying which part."));
                 };
-                Ok(ReadStream { body: Box::pin(body), len: content_len, total, range: sent, etag, content_type })
+                if content_len.is_some_and(|l| l != sent.end - sent.start) {
+                    return Err(StorageError::other("The server sent a different amount of the file than it said."));
+                }
+                let body = resp.bytes_stream().map(|c| c.map_err(std::io::Error::other));
+                Ok(ReadStream { body: Box::pin(body), len: content_len, total, range: Some(sent), etag, content_type })
             }
             StatusCode::OK => {
                 let total = content_len;
@@ -762,14 +772,6 @@ fn key_of(base: &Url, href: &str, is_dir: bool) -> Option<String> {
     })
 }
 
-/// "bytes 0-99/1234" → (0, 99, Some(1234))
-fn parse_content_range(v: &str) -> Option<(u64, u64, Option<u64>)> {
-    let v = v.trim().strip_prefix("bytes")?.trim();
-    let (range, total) = v.split_once('/')?;
-    let (s, e) = range.split_once('-')?;
-    Some((s.trim().parse().ok()?, e.trim().parse().ok()?, total.trim().parse().ok()))
-}
-
 // ---------------------------------------------------------------- PROPFIND answers
 
 /// The `<d:response>`s of a 207 Multi-Status answer. Only properties under a 200 `propstat`
@@ -1016,7 +1018,37 @@ mod tests {
         assert_eq!(parse_http_date("Thu, 01 Jan 1970 00:00:01 GMT"), Some(1000));
         assert_eq!(parse_http_date("Sat, 22 Nov 2026 10:00:00 GMT"), Some(1_795_341_600_000));
         assert_eq!(parse_http_date("garbage"), None);
-        assert_eq!(parse_content_range("bytes 0-99/1234"), Some((0, 99, Some(1234))));
-        assert_eq!(parse_content_range("bytes 5-9/*"), Some((5, 9, None)));
+    }
+
+    /// Reads report the bytes the server sent: a 206 for other bytes than asked says so, a 206
+    /// that doesn't say which bytes it holds is refused, a 200 is cut to the range asked for.
+    #[tokio::test]
+    async fn ranged_reads_report_what_came() {
+        use crate::oauth::mock::{Mock, Resp};
+        let data: Vec<u8> = (0..100u8).collect();
+        let listing = r#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"#;
+        let mock = Mock::start(move |req| match (req.method.as_str(), req.path.as_str()) {
+            ("PROPFIND", "/") => Resp::bytes(207, listing).header("content-type", "application/xml"),
+            ("GET", "/exact.bin") => Resp::bytes(206, data[10..20].to_vec()).header("content-range", "bytes 10-19/100"),
+            ("GET", "/other.bin") => Resp::bytes(206, data[0..10].to_vec()).header("content-range", "bytes 0-9/100"),
+            ("GET", "/unsaid.bin") => Resp::bytes(206, data[10..20].to_vec()),
+            ("GET", "/whole.bin") => Resp::bytes(200, data.clone()),
+            _ => Resp::status(404),
+        })
+        .await;
+        let w = WebdavBackend::new(&cfg(Some(&format!("{}/", mock.base)), "", "", ""), None).unwrap();
+
+        let r = w.read("", "exact.bin", Some(10..20), None).await.unwrap();
+        assert_eq!((r.range.clone(), r.total), (Some(10..20), Some(100)));
+        assert_eq!(r.collect(1000).await.unwrap(), (10..20u8).collect::<Vec<_>>());
+
+        let r = w.read("", "other.bin", Some(10..20), None).await.unwrap();
+        assert_eq!(r.range, Some(0..10), "the bytes sent, not the ones asked for");
+
+        assert!(w.read("", "unsaid.bin", Some(10..20), None).await.is_err(), "no Content-Range: unusable");
+
+        let r = w.read("", "whole.bin", Some(10..20), None).await.unwrap();
+        assert_eq!(r.range, Some(10..20));
+        assert_eq!(r.collect(1000).await.unwrap(), (10..20u8).collect::<Vec<_>>(), "the whole file, cut to the range");
     }
 }

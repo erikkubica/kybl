@@ -9,6 +9,7 @@
 //! sends keepalives, and a dropped connection is opened again on the next request.
 
 pub mod hostkey;
+pub mod replace;
 
 use std::{
     collections::HashSet,
@@ -35,11 +36,17 @@ use tokio::{
     sync::OnceCell,
 };
 
-use self::hostkey::HostCheck;
+use self::{
+    hostkey::HostCheck,
+    replace::{put_in_place, Renames},
+};
 use super::{net::*, *};
 use crate::state::{NetAuth, NetConfig};
 
 const REQUEST_TIMEOUT_SECS: u64 = 30;
+/// Opening the SFTP session on a signed-in connection (channel, subsystem, first requests). A
+/// server that stops answering here would otherwise hold the connection lock for good.
+const SESSION_TIMEOUT: Duration = Duration::from_secs(30);
 /// Files deleted at once inside a folder.
 const DELETE_PARALLEL: usize = 16;
 
@@ -82,6 +89,8 @@ pub struct SftpBackend {
     name: String,
     caps: Capabilities,
     pub(super) conn: tokio::sync::Mutex<Option<Arc<Conn>>>,
+    /// [`SESSION_TIMEOUT`], shorter in tests
+    session_timeout: Duration,
     pages: PageCache,
     known_dirs: Mutex<HashSet<String>>,
 }
@@ -108,12 +117,14 @@ impl SftpBackend {
             base: OnceCell::new(),
             caps: sftp_caps(),
             conn: tokio::sync::Mutex::new(None),
+            session_timeout: SESSION_TIMEOUT,
             pages: PageCache::default(),
             known_dirs: Mutex::default(),
         })
     }
 
-    async fn connect(&self) -> SResult<Conn> {
+    /// The TCP connection, the server's key checked and signed in.
+    async fn sign_in_connection(&self) -> SResult<client::Handle<HostCheck>> {
         let config = Arc::new(client::Config {
             keepalive_interval: Some(Duration::from_secs(20)),
             keepalive_max: 3,
@@ -129,37 +140,53 @@ impl SftpBackend {
             Ok(Err(e)) => return Err(hostkey::refusal(&e, seen.lock().unwrap().clone(), self.host_key.as_deref()).unwrap_or_else(|| ssh_error(e, &self.host))),
         };
         with_timeout(&self.host, CONNECT_TIMEOUT, self.sign_in(&mut handle)).await?;
-        let channel = handle.channel_open_session().await.map_err(|e| ssh_error(e, &self.host))?;
-        channel
-            .request_subsystem(true, "sftp")
-            .await
-            .map_err(|e| StorageError::new(ErrKind::Unsupported, "This server doesn't offer SFTP.").with_detail(e.to_string()))?;
-        let cfg = russh_sftp::client::Config { request_timeout_secs: REQUEST_TIMEOUT_SECS, ..Default::default() };
-        let sftp = with_timeout(&self.host, CONNECT_TIMEOUT, async {
-            SftpSession::new_with_config(channel.into_stream(), cfg)
+        Ok(handle)
+    }
+
+    /// The SFTP session on a signed-in connection, within `session_timeout` as a whole.
+    async fn open_sftp(&self, handle: client::Handle<HostCheck>) -> SResult<Conn> {
+        let opening = async {
+            let channel = handle.channel_open_session().await.map_err(|e| ssh_error(e, &self.host))?;
+            channel
+                .request_subsystem(true, "sftp")
                 .await
-                .map_err(|e| StorageError::new(ErrKind::Unsupported, "This server doesn't offer SFTP.").with_detail(e.to_string()))
-        })
-        .await?;
-        if !self.base.initialized() {
-            let base = if self.base_cfg.starts_with('/') {
-                clean_base(&self.base_cfg)
-            } else {
-                // relative to the user's home folder
-                let start = if self.base_cfg.is_empty() { ".".to_string() } else { self.base_cfg.clone() };
-                let abs = sftp.canonicalize(start).await.map_err(|e| {
-                    StorageError::new(ErrKind::NotFound, format!("The folder {} isn't on the server.", self.base_cfg)).with_detail(e.to_string())
-                })?;
-                clean_base(&abs)
-            };
-            match sftp.metadata(base.clone()).await {
-                Ok(m) if m.is_dir() => {}
-                Ok(_) => return Err(StorageError::new(ErrKind::NotFound, format!("{base} is a file, not a folder."))),
-                Err(e) => return Err(StorageError::new(ErrKind::NotFound, format!("The folder {base} isn't on the server.")).with_detail(e.to_string())),
+                .map_err(|e| StorageError::new(ErrKind::Unsupported, "This server doesn't offer SFTP.").with_detail(e.to_string()))?;
+            let cfg = russh_sftp::client::Config { request_timeout_secs: REQUEST_TIMEOUT_SECS, ..Default::default() };
+            let sftp = with_timeout(&self.host, CONNECT_TIMEOUT, async {
+                SftpSession::new_with_config(channel.into_stream(), cfg)
+                    .await
+                    .map_err(|e| StorageError::new(ErrKind::Unsupported, "This server doesn't offer SFTP.").with_detail(e.to_string()))
+            })
+            .await?;
+            if !self.base.initialized() {
+                let base = if self.base_cfg.starts_with('/') {
+                    clean_base(&self.base_cfg)
+                } else {
+                    // relative to the user's home folder
+                    let start = if self.base_cfg.is_empty() { ".".to_string() } else { self.base_cfg.clone() };
+                    let abs = sftp.canonicalize(start).await.map_err(|e| {
+                        StorageError::new(ErrKind::NotFound, format!("The folder {} isn't on the server.", self.base_cfg)).with_detail(e.to_string())
+                    })?;
+                    clean_base(&abs)
+                };
+                match sftp.metadata(base.clone()).await {
+                    Ok(m) if m.is_dir() => {}
+                    Ok(_) => return Err(StorageError::new(ErrKind::NotFound, format!("{base} is a file, not a folder."))),
+                    Err(e) => return Err(StorageError::new(ErrKind::NotFound, format!("The folder {base} isn't on the server.")).with_detail(e.to_string())),
+                }
+                let _ = self.base.set(base);
             }
-            let _ = self.base.set(base);
+            Ok(sftp)
+        };
+        match tokio::time::timeout(self.session_timeout, opening).await {
+            Ok(Ok(sftp)) => Ok(Conn { handle, sftp }),
+            Ok(Err(e)) => Err(e),
+            Err(_) => {
+                // a half-open connection: let it go rather than keep waiting on it
+                let _ = tokio::time::timeout(Duration::from_secs(1), handle.disconnect(russh::Disconnect::ByApplication, "", "")).await;
+                Err(timed_out(&self.host))
+            }
         }
-        Ok(Conn { handle, sftp })
     }
 
     async fn sign_in(&self, handle: &mut client::Handle<HostCheck>) -> SResult<()> {
@@ -256,12 +283,24 @@ impl SftpBackend {
     }
 
     /// The live connection, opened (again) when there is none or it dropped.
+    /// Every step has a time limit, so the lock is never held for good; a connection that signed
+    /// in but then stopped answering is dropped and opened once more.
     async fn conn(&self) -> SResult<Arc<Conn>> {
         let mut guard = self.conn.lock().await;
         if let Some(c) = guard.as_ref().filter(|c| !c.is_closed()) {
             return Ok(c.clone());
         }
-        let c = Arc::new(self.connect().await?);
+        *guard = None;
+        let mut attempt = 0;
+        let c = loop {
+            attempt += 1;
+            let handle = self.sign_in_connection().await?;
+            match self.open_sftp(handle).await {
+                Ok(c) => break Arc::new(c),
+                Err(e) if attempt == 1 && e.kind == ErrKind::Network => continue,
+                Err(e) => return Err(e),
+            }
+        };
         *guard = Some(c.clone());
         Ok(c)
     }
@@ -388,26 +427,37 @@ impl SftpBackend {
         Ok(())
     }
 
-    /// Renames `from` onto `to`, replacing a file there: posix-rename where the server has it,
-    /// else rename, removing the old file first if the server won't rename over it.
-    async fn rename_over(&self, from: String, to: String, replace: bool) -> SResult<()> {
-        self.with(move |c| {
+    /// Renames `from` onto `to`. With `replace`, a file at `to` is replaced: by posix-rename
+    /// (atomic) where the server has it, else by moving the old file aside first, so it is only
+    /// deleted once the new one is in place. Without, a file at `to` makes it fail.
+    async fn rename_over(&self, from: String, to: String, replace: bool) -> Result<(), replace::NotReplaced> {
+        let not = |error| replace::NotReplaced { error, original_at: None };
+        if replace {
             let (f, t) = (from.clone(), to.clone());
-            Box::pin(async move {
-                if replace && c.sftp.posix_rename(f.clone(), t.clone()).await? {
+            let posix = self
+                .with(move |c| {
+                    let (f, t) = (f.clone(), t.clone());
+                    Box::pin(async move { c.sftp.posix_rename(f, t).await })
+                })
+                .await;
+            match posix {
+                Ok(true) => return Ok(()),
+                Ok(false) => {}
+                // the rename may have gone through before the connection dropped
+                Err(e) if e.kind == ErrKind::NotFound && !self.file_exists(&from).await.map_err(not)? && self.file_exists(&to).await.map_err(not)? => {
                     return Ok(());
                 }
-                match c.sftp.rename(f.clone(), t.clone()).await {
-                    Ok(()) => Ok(()),
-                    Err(SftpError::Status(s)) if replace && s.status_code == StatusCode::Failure => {
-                        let _ = c.sftp.remove_file(t.clone()).await;
-                        c.sftp.rename(f, t).await
-                    }
-                    Err(e) => Err(e),
-                }
-            })
+                Err(e) => return Err(not(e)),
+            }
+            let backup = sibling_temp(&to);
+            return put_in_place(self, &from, &to, &backup).await;
+        }
+        self.with(move |c| {
+            let (f, t) = (from.clone(), to.clone());
+            Box::pin(async move { c.sftp.rename(f, t).await })
         })
         .await
+        .map_err(not)
     }
 
     /// Deletes a folder and everything in it, depth first.
@@ -491,6 +541,40 @@ impl SftpBackend {
     }
 }
 
+/// A free name next to `path` (a full path) for a file moved aside while another takes its place.
+fn sibling_temp(path: &str) -> String {
+    match path.rfind('/') {
+        Some(i) => format!("{}{}", &path[..=i], temp_key(&path[i + 1..])),
+        None => temp_key(path),
+    }
+}
+
+/// On full paths, each step asked of the server on its own (never repeated as a whole).
+#[async_trait]
+impl Renames for SftpBackend {
+    async fn rename_file(&self, from: &str, to: &str) -> SResult<()> {
+        let (from, to) = (from.to_string(), to.to_string());
+        self.with(move |c| {
+            let (f, t) = (from.clone(), to.clone());
+            Box::pin(async move { c.sftp.rename(f, t).await })
+        })
+        .await
+    }
+
+    async fn file_exists(&self, path: &str) -> SResult<bool> {
+        Ok(self.metadata(path.to_string()).await?.is_some_and(|m| !m.is_dir()))
+    }
+
+    async fn remove_file(&self, path: &str) -> SResult<()> {
+        let path = path.to_string();
+        self.with(move |c| {
+            let p = path.clone();
+            Box::pin(async move { c.sftp.remove_file(p).await })
+        })
+        .await
+    }
+}
+
 #[async_trait]
 impl Storage for SftpBackend {
     fn kind(&self) -> ConnKind {
@@ -499,6 +583,13 @@ impl Storage for SftpBackend {
 
     fn caps(&self) -> &Capabilities {
         &self.caps
+    }
+
+    /// The server and the folder paths start from (two connections to one server and folder
+    /// see the same files, whoever signs in).
+    fn place_id(&self) -> Option<String> {
+        let base = self.base.get().cloned().unwrap_or_else(|| self.base_cfg.clone());
+        Some(format!("sftp:{}:{}:{base}", self.host.to_ascii_lowercase(), self.port))
     }
 
     /// Connects (and so checks the address, the server's key, the sign-in and the folder).
@@ -634,9 +725,10 @@ impl Storage for SftpBackend {
                 return Err(e);
             }
         }
+        // the temporary file is kept when it can't go in place: it may be all there is of the
+        // new version, and the old one is never deleted before the new one is there
         if let Err(e) = self.rename_over(tmp.clone(), target, true).await {
-            self.remove_quietly(tmp).await;
-            return Err(e);
+            return Err(e.explain(Some(file_name(&tmp))));
         }
         self.pages.forget(path);
         let entry = self.stat(root, path).await?.unwrap_or_else(|| Entry { key: path.to_string(), size: len.unwrap_or(0) as i64, ..Default::default() });
@@ -700,7 +792,7 @@ impl Storage for SftpBackend {
         }
         self.ensure_dir(&parent_key(&to.path)).await?;
         // a file replaces what is there (like S3); a folder never replaces another
-        self.rename_over(src, dst, !is_dir).await?;
+        self.rename_over(src, dst, !is_dir).await.map_err(|e| e.explain(None))?;
         let k = if is_dir { dir_prefix(&from.path) } else { from.path.clone() };
         self.pages.forget(&k);
         self.pages.forget(&to.path);
@@ -823,5 +915,64 @@ mod tests {
         assert_eq!(key_error(russh::keys::Error::KeyIsEncrypted).kind, ErrKind::NeedsAuth);
         let e = decode_secret_key("not a key", None).map_err(key_error).err().unwrap();
         assert!(e.message.contains("couldn't be read"), "{}", e.message);
+    }
+
+    /// An SSH server that signs anyone in and then never answers the request for a session.
+    struct Silent {
+        held: Vec<russh::server::ChannelOpenHandle>,
+    }
+
+    impl russh::server::Handler for Silent {
+        type Error = russh::Error;
+
+        async fn auth_password(&mut self, _user: &str, _password: &str) -> Result<russh::server::Auth, Self::Error> {
+            Ok(russh::server::Auth::Accept)
+        }
+
+        async fn channel_open_session(
+            &mut self,
+            _channel: russh::Channel<russh::server::Msg>,
+            reply: russh::server::ChannelOpenHandle,
+            _session: &mut russh::server::Session,
+        ) -> Result<(), Self::Error> {
+            self.held.push(reply);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_server_that_stops_answering_after_sign_in_doesnt_hold_the_connection() {
+        use russh::keys::{ssh_key::private::Ed25519Keypair, HashAlg, PrivateKey};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let key = PrivateKey::from(Ed25519Keypair::from_seed(&[7; 32]));
+            let fp = key.public_key().fingerprint(HashAlg::Sha256).to_string();
+            let config = Arc::new(russh::server::Config { keys: vec![key], auth_rejection_time: Duration::from_millis(10), ..Default::default() });
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let accepted = Arc::new(AtomicUsize::new(0));
+            let count = accepted.clone();
+            tokio::spawn(async move {
+                while let Ok((tcp, _)) = listener.accept().await {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    let config = config.clone();
+                    tokio::spawn(async move {
+                        if let Ok(s) = russh::server::run_stream(config, tcp, Silent { held: vec![] }).await {
+                            let _ = s.await;
+                        }
+                    });
+                }
+            });
+            let cfg = NetConfig { host: "127.0.0.1".into(), port, user: "me".into(), host_key: Some(fp), ..Default::default() };
+            let mut b = SftpBackend::new(&cfg, Secrets { password: Some("pw".into()), ssh: None }).unwrap();
+            b.session_timeout = Duration::from_millis(500);
+            let e = tokio::time::timeout(Duration::from_secs(15), b.roots()).await.expect("waited on the server for good").unwrap_err();
+            assert_eq!(e.kind, ErrKind::Network, "{e}");
+            assert_eq!(accepted.load(Ordering::SeqCst), 2, "tried once more on a fresh connection");
+            assert!(b.conn.lock().await.is_none(), "the stuck connection isn't kept");
+            // and the lock is free for the next request
+            assert!(tokio::time::timeout(Duration::from_secs(15), b.list("", "", None)).await.expect("the lock was still held").is_err());
+        });
     }
 }

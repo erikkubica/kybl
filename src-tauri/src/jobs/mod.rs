@@ -154,7 +154,14 @@ impl JobManager {
                     return Err("A folder can't be copied into itself. Pick another destination.".into());
                 }
             }
-            if spec.mode == JobMode::Move && spec.src.items.iter().all(|i| plan::dst_base(&i.path, i.is_dir, &spec.dst.dir) == i.path) {
+            // each item that would land on itself is left out (moving it "there" must not delete
+            // it); the copier checks every file again, for places that are one under two names
+            let dst_dir = spec.dst.dir.clone();
+            spec.src.items.retain(|i| {
+                let path = if i.is_dir { plan::normalize_dir(&i.path) } else { i.path.clone() };
+                plan::dst_base(&i.path, i.is_dir, &dst_dir) != path
+            });
+            if spec.src.items.is_empty() {
                 return Err("These are already there. Pick another destination.".into());
             }
         }

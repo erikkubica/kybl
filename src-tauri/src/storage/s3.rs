@@ -87,12 +87,17 @@ pub struct S3Backend {
     preset_bucket: Option<String>,
     quirks: Quirks,
     caps: Capabilities,
+    /// the endpoint's host (and port), lowercased; "" for AWS itself
+    endpoint: String,
 }
 
 impl S3Backend {
     pub fn new(client: Client, profile: &Profile) -> Self {
         let quirks = Quirks::for_provider(&profile.provider);
+        let ep = profile.endpoint.trim().to_ascii_lowercase();
+        let ep = ep.split_once("://").map_or(ep.as_str(), |(_, rest)| rest).trim_end_matches('/').to_string();
         Self {
+            endpoint: ep,
             client,
             profile_id: profile.id.clone(),
             preset_bucket: profile.bucket.clone().filter(|b| !b.trim().is_empty()),
@@ -218,6 +223,11 @@ impl Storage for S3Backend {
 
     fn caps(&self) -> &Capabilities {
         &self.caps
+    }
+
+    /// The endpoint: bucket names are unique per endpoint (AWS's are global).
+    fn place_id(&self) -> Option<String> {
+        Some(format!("s3:{}", if self.endpoint.is_empty() { "aws" } else { &self.endpoint }))
     }
 
     /// The buckets, with the connection's own bucket first; just that bucket when the key may

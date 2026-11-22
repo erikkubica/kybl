@@ -16,11 +16,13 @@ fn is_md5_hex(s: &str) -> bool {
     s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// The MD5 of a file as its store reports it: a hash the provider gives, or an S3 ETag on
-/// providers where a single-request upload's ETag is the MD5 (multipart ETags, "…-N", aren't).
+/// The MD5 of a file as its store reports it, as lowercase hex: a hash the provider gives, or an
+/// S3 ETag on providers where a single-request upload's ETag is the MD5 (multipart ETags, "…-N",
+/// aren't). A provider hash that isn't 32 hex digits (base64 slipping through, say) is no hash:
+/// lowercasing base64 makes a different value, and a wrong hash fails or passes copies wrongly.
 pub fn md5_of(e: &Entry, caps: &Capabilities) -> Option<String> {
     if let Some(m) = &e.hashes.md5 {
-        return Some(m.to_ascii_lowercase());
+        return is_md5_hex(m).then(|| m.to_ascii_lowercase());
     }
     if !caps.hashes.contains(&HashKind::Md5) {
         return None;
@@ -73,8 +75,13 @@ mod tests {
         // Kybl Storage encrypts at rest: its ETags say nothing about the content
         let kybl = crate::storage::s3::s3_caps("kybl", crate::storage::s3::Quirks::for_provider("kybl"));
         assert_eq!(md5_of(&e, &kybl), None);
-        let given = Entry { hashes: Hashes { md5: Some("ABC".into()), ..Default::default() }, ..Default::default() };
-        assert_eq!(md5_of(&given, &Capabilities::default()).as_deref(), Some("abc"));
+        let given = Entry { hashes: Hashes { md5: Some("5D41402ABC4B2A76B9719D911017C592".into()), ..Default::default() }, ..Default::default() };
+        assert_eq!(md5_of(&given, &Capabilities::default()).as_deref(), Some("5d41402abc4b2a76b9719d911017c592"));
+        // base64 (as Azure and Google Cloud send it) is never lowercased into a "hash"
+        let b64 = Entry { hashes: Hashes { md5: Some("XUFAKrxLKna5cZ2REBfFkg==".into()), ..Default::default() }, ..Default::default() };
+        assert_eq!(md5_of(&b64, &Capabilities::default()), None);
+        let short = Entry { hashes: Hashes { md5: Some("ABC".into()), ..Default::default() }, ..Default::default() };
+        assert_eq!(md5_of(&short, &Capabilities::default()), None);
     }
 
     #[test]

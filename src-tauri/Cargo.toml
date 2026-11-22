@@ -104,6 +104,11 @@ dav-server = { version = "0.12", default-features = false, features = ["proppatc
 # Finder sends decomposed (NFD) names; keys are usually composed (NFC)
 unicode-normalization = "0.1"
 
+# Local disk: renames that never replace an existing file (renameat2 / renamex_np); already in
+# the tree through tokio
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # Phones have no root certificate files for rustls to load: trust Mozilla's root set instead
 # (see `state::http_client`).
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]

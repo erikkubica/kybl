@@ -25,8 +25,9 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use super::*;
 
-/// Files listed per page.
-const PAGE: usize = 1000;
+mod fsops;
+use fsops::{check_not_into_itself, copy_tree, remove_copied, rename_noreplace, through_link, Copied};
+
 const CHUNK: usize = 256 * 1024;
 /// Clutter the system leaves in folders; never shown.
 const HIDDEN: [&str; 3] = [".DS_Store", "Thumbs.db", "desktop.ini"];
@@ -87,6 +88,13 @@ fn file_entry(key: String, meta: &std::fs::Metadata) -> Entry {
     }
 }
 
+/// A link to a folder (or to something that isn't a file): listed so it can be seen, as a
+/// file-like entry, never as a folder to go into.
+fn link_entry(key: String, meta: &std::fs::Metadata) -> Entry {
+    let modified = millis_of(meta.modified());
+    Entry { etag: Some(weak_etag(0, modified)), size: 0, modified, key, mime: Some("inode/symlink".into()), ..Default::default() }
+}
+
 /// Windows answers `canonicalize` with `\\?\C:\…`, which nobody wants to see (or join with `/`).
 fn plain(p: &Path) -> String {
     let s = p.to_string_lossy();
@@ -143,29 +151,28 @@ fn confine(root: &Path, p: &Path, follow_last: bool) -> SResult<()> {
     }
 }
 
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> SResult<T> + Send + 'static) -> SResult<T> {
-    tokio::task::spawn_blocking(f).await.map_err(|e| StorageError::other(e.to_string()))?
+/// A move to another disk: copy, then remove the originals of exactly what was copied. Never
+/// the whole folder: something left out, or added meanwhile, would go with it.
+fn move_across(src: &Path, dst: &Path) -> SResult<()> {
+    let mut done = Copied::default();
+    copy_tree(src, dst, false, &mut done)?;
+    remove_copied(&done).map_err(|e| StorageError::from(e).with_detail("Copied, but removing the original failed."))?;
+    left_behind(&done.skipped)
 }
 
-/// Copies a file or a folder with everything in it (used across disks, where a rename can't).
-fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
-    let meta = std::fs::symlink_metadata(from)?;
-    if meta.is_dir() {
-        std::fs::create_dir_all(to)?;
-        for e in std::fs::read_dir(from)? {
-            let e = e?;
-            copy_tree(&e.path(), &to.join(e.file_name()))?;
-        }
-        Ok(())
-    } else if meta.file_type().is_symlink() {
-        // links are copied as what they point to only when that is a file
-        match std::fs::metadata(from) {
-            Ok(m) if m.is_file() => std::fs::copy(from, to).map(|_| ()),
-            _ => Ok(()),
-        }
-    } else {
-        std::fs::copy(from, to).map(|_| ())
+/// Special system files (pipes, sockets, devices) aren't copied; say which stayed behind.
+fn left_behind(skipped: &[PathBuf]) -> SResult<()> {
+    if skipped.is_empty() {
+        return Ok(());
     }
+    let n = skipped.len();
+    let what = if n == 1 { "1 special system item (like a pipe or a device) was".to_string() } else { format!("{n} special system items (like pipes or devices) were") };
+    Err(StorageError::new(ErrKind::Unsupported, format!("Everything else was done, but {what} left where it was."))
+        .with_detail(skipped.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("\n")))
+}
+
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> SResult<T> + Send + 'static) -> SResult<T> {
+    tokio::task::spawn_blocking(f).await.map_err(|e| StorageError::other(e.to_string()))?
 }
 
 impl LocalBackend {
@@ -256,6 +263,26 @@ impl LocalBackend {
         Ok((r.canon, p))
     }
 
+    /// `key`'s own path (a link itself, not where it points) for deleting or moving it: inside
+    /// the root, and not reached through a linked folder, which would act on whatever that
+    /// folder really is instead of on what was picked.
+    async fn resolve_own(&self, root: &str, key: &str) -> SResult<PathBuf> {
+        let (canon, p) = self.join(root, key)?;
+        let q = p.clone();
+        blocking(move || {
+            confine(&canon, &q, false)?;
+            if through_link(&canon, &q) {
+                return Err(StorageError::new(
+                    ErrKind::PermissionDenied,
+                    "This is inside a linked folder, so Kybl won't change it from here. Open the folder the link points to instead.",
+                ));
+            }
+            Ok(())
+        })
+        .await?;
+        Ok(p)
+    }
+
     /// `key`'s path, checked to stay inside the root.
     async fn resolve(&self, root: &str, key: &str, follow_last: bool) -> SResult<PathBuf> {
         let (canon, p) = self.join(root, key)?;
@@ -266,7 +293,18 @@ impl LocalBackend {
 
     async fn stat_path(&self, key: &str, p: PathBuf) -> SResult<Option<Entry>> {
         let key = key.strip_suffix('/').unwrap_or(key).to_string();
-        blocking(move || match std::fs::metadata(&p) {
+        blocking(move || match std::fs::symlink_metadata(&p) {
+            // a link to a folder is a file-like entry here too (see `list`)
+            Ok(l) if l.file_type().is_symlink() => match std::fs::metadata(&p) {
+                Ok(m) if m.is_file() => {
+                    let mut e = file_entry(key, &m);
+                    e.mime = Some(mime_guess::from_path(&p).first_or_octet_stream().to_string());
+                    Ok(Some(e))
+                }
+                Ok(_) => Ok(Some(link_entry(key, &l))),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(e.into()),
+            },
             Ok(m) if m.is_dir() => Ok(Some(Entry { key: if key.is_empty() { key } else { format!("{key}/") }, modified: millis_of(m.modified()), ..Default::default() })),
             Ok(m) => {
                 let mut e = file_entry(key, &m);
@@ -379,14 +417,17 @@ impl Storage for LocalBackend {
         Ok(self.all_roots().into_iter().map(|r| r.info).collect())
     }
 
-    /// Folders first, then files, each in name order; 1,000 a page.
+    /// Folders first, then files, each in name order; 1,000 a page. Each page is read afresh and
+    /// starts after the last name the previous one sent (see [`net::page_after`]), so files
+    /// coming and going meanwhile can't make a walk skip others. Links show as files (a link to a
+    /// file with that file's size and time) and are never descended into: a walk or a move of a
+    /// folder stays inside it.
     async fn list(&self, root: &str, dir: &str, token: Option<String>) -> SResult<Page> {
         let p = self.resolve(root, dir, true).await?;
         let prefix = match dir.strip_suffix('/').unwrap_or(dir) {
             "" => String::new(),
             d => format!("{d}/"),
         };
-        let start: usize = token.as_deref().and_then(|t| t.parse().ok()).unwrap_or(0);
         blocking(move || {
             let mut folders = Vec::new();
             let mut files = Vec::new();
@@ -397,22 +438,23 @@ impl Storage for LocalBackend {
                 if HIDDEN.contains(&name.as_str()) {
                     continue;
                 }
-                // follows links; a broken one has nothing to show
-                let Ok(meta) = std::fs::metadata(e.path()) else { continue };
-                if meta.is_dir() {
-                    folders.push(format!("{prefix}{name}/"));
+                let Ok(meta) = std::fs::symlink_metadata(e.path()) else { continue };
+                let key = format!("{prefix}{name}");
+                if meta.file_type().is_symlink() {
+                    match std::fs::metadata(e.path()) {
+                        Ok(target) if target.is_file() => files.push(file_entry(key, &target)),
+                        Ok(_) => files.push(link_entry(key, &meta)),
+                        // a broken link has nothing to show
+                        Err(_) => {}
+                    }
+                } else if meta.is_dir() {
+                    folders.push(format!("{key}/"));
                 } else {
-                    files.push(file_entry(format!("{prefix}{name}"), &meta));
+                    files.push(file_entry(key, &meta));
                 }
             }
-            folders.sort_by_key(|f| f.to_lowercase());
-            files.sort_by_key(|f| f.key.to_lowercase());
-            let total = folders.len() + files.len();
-            let end = (start + PAGE).min(total);
-            let nf = folders.len();
-            let page_folders = if start < nf { folders[start..end.min(nf)].to_vec() } else { vec![] };
-            let page_files = files[start.max(nf) - nf..end.max(nf) - nf].to_vec();
-            Ok(Page { folders: page_folders, objects: page_files, next_token: (end < total).then(|| end.to_string()) })
+            net::sort_listing(&mut folders, &mut files);
+            Ok(net::page_after(&folders, &files, token.as_deref()))
         })
         .await
     }
@@ -424,6 +466,12 @@ impl Storage for LocalBackend {
 
     async fn read(&self, root: &str, path: &str, range: Option<Range<u64>>, if_match: Option<&str>) -> SResult<ReadStream> {
         let p = self.resolve(root, path, true).await?;
+        // a pipe or device would block opening (or never end): only plain files and folders
+        let q = p.clone();
+        let kind = blocking(move || Ok(std::fs::metadata(&q)?.file_type())).await?;
+        if !kind.is_file() && !kind.is_dir() {
+            return Err(StorageError::new(ErrKind::Unsupported, "This is a special system file (like a pipe or a device), not a file Kybl can read."));
+        }
         let mut file = tokio::fs::File::open(&p).await?;
         let meta = file.metadata().await?;
         if meta.is_dir() {
@@ -546,8 +594,16 @@ impl Storage for LocalBackend {
         .await;
         match result {
             Ok(true) => {
-                if let Err(e) = tokio::fs::rename(&tmp, &target).await {
+                // "only if nothing is there" must still hold at the very end: a file that
+                // appeared while this one was being written is never replaced
+                let exclusive = opts.precondition == Precondition::IfNoneMatch;
+                let (t, d) = (tmp.clone(), target.clone());
+                let placed = blocking(move || Ok(if exclusive { rename_noreplace(&t, &d) } else { std::fs::rename(&t, &d) })).await?;
+                if let Err(e) = placed {
                     let _ = tokio::fs::remove_file(&tmp).await;
+                    if e.kind() == io::ErrorKind::AlreadyExists {
+                        return Ok(WriteOutcome::Conflict(self.stat(root, path).await?));
+                    }
                     return Err(e.into());
                 }
                 let entry = self.stat_path(path, target).await?.unwrap_or_default();
@@ -589,7 +645,7 @@ impl Storage for LocalBackend {
             if parts(key)?.is_empty() {
                 return Err(StorageError::other("The top of a folder list can't be deleted."));
             }
-            let p = self.resolve(root, key, false).await?;
+            let p = self.resolve_own(root, key).await?;
             self.remove(p, is_dir).await?;
             done += 1;
             on_progress(done, total);
@@ -603,14 +659,16 @@ impl Storage for LocalBackend {
         if src == dst {
             return Err(StorageError::other("Source and destination are the same"));
         }
-        if is_dir && dst.starts_with(&src) {
-            return Err(StorageError::other("Cannot copy a folder into itself"));
-        }
         blocking(move || {
+            if is_dir && check_not_into_itself(&src, &dst)? {
+                return Err(StorageError::other("Cannot copy a folder into itself"));
+            }
             if let Some(parent) = dst.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            Ok(copy_tree(&src, &dst)?)
+            let mut done = Copied::default();
+            copy_tree(&src, &dst, true, &mut done)?;
+            left_behind(&done.skipped)
         })
         .await
     }
@@ -619,12 +677,13 @@ impl Storage for LocalBackend {
         if parts(&from.path)?.is_empty() {
             return Err(StorageError::other("The top of a folder list can't be moved."));
         }
-        let src = self.resolve(&from.root, &from.path, false).await?;
+        let src = self.resolve_own(&from.root, &from.path).await?;
         let dst = self.resolve(&to.root, &to.path, false).await?;
         if src == dst {
             return Err(StorageError::other("Source and destination are the same"));
         }
-        if is_dir && dst.starts_with(&src) {
+        let (s, d) = (src.clone(), dst.clone());
+        if is_dir && blocking(move || Ok(check_not_into_itself(&s, &d)?)).await? {
             return Err(StorageError::other("Cannot move a folder into itself"));
         }
         if let Some(parent) = dst.parent() {
@@ -633,12 +692,8 @@ impl Storage for LocalBackend {
         match tokio::fs::rename(&src, &dst).await {
             Ok(()) => Ok(()),
             // another disk: copy, then remove the original once the copy is whole
-            Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
-                let (s, d) = (src.clone(), dst.clone());
-                blocking(move || Ok(copy_tree(&s, &d)?)).await?;
-                let r = if is_dir { tokio::fs::remove_dir_all(&src).await } else { tokio::fs::remove_file(&src).await };
-                r.map_err(|e| StorageError::from(e).with_detail("Copied, but removing the original failed."))
-            }
+            // another disk
+            Err(e) if e.kind() == io::ErrorKind::CrossesDevices => blocking(move || move_across(&src, &dst)).await,
             Err(e) => Err(e.into()),
         }
     }
@@ -863,5 +918,139 @@ mod tests {
             assert!(t.0.join("outside/secret.txt").exists());
             assert!(!r.join("secret-link").exists() && !r.join("escape").exists());
         });
+    }
+
+    #[test]
+    fn pages_carry_on_after_the_last_name() {
+        let (t, b, root) = setup();
+        let big = t.0.join("root/big");
+        std::fs::create_dir_all(&big).unwrap();
+        for i in 0..1500 {
+            std::fs::write(big.join(format!("f{i:04}")), b"").unwrap();
+        }
+        rt().block_on(async {
+            let p1 = b.list(&root, "big/", None).await.unwrap();
+            assert_eq!(p1.objects.last().unwrap().key, "big/f0999");
+            // files already listed go away before the next page is asked for
+            for i in 0..300 {
+                std::fs::remove_file(big.join(format!("f{i:04}"))).unwrap();
+            }
+            let p2 = b.list(&root, "big/", p1.next_token.clone()).await.unwrap();
+            assert_eq!(p2.objects.first().unwrap().key, "big/f1000", "nothing skipped");
+            assert_eq!(p2.objects.len(), 500);
+            assert!(p2.next_token.is_none());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_inside_a_folder_are_never_gone_into() {
+        let (t, b, root) = setup();
+        let never = AtomicBool::new(false);
+        let r = t.0.join("root");
+        std::fs::create_dir_all(r.join("sel")).unwrap();
+        std::fs::create_dir_all(r.join("other")).unwrap();
+        std::fs::write(r.join("other/keep.txt"), b"keep").unwrap();
+        std::fs::write(r.join("sel/own.txt"), b"own").unwrap();
+        std::os::unix::fs::symlink(r.join("other"), r.join("sel/link")).unwrap();
+        std::os::unix::fs::symlink(r.join("other/keep.txt"), r.join("sel/file-link")).unwrap();
+        std::os::unix::fs::symlink(r.join("sel"), r.join("sel/loop")).unwrap();
+        rt().block_on(async {
+            let page = b.list(&root, "sel/", None).await.unwrap();
+            assert!(page.folders.is_empty(), "{:?}", page.folders);
+            let keys: Vec<_> = page.objects.iter().map(|o| o.key.as_str()).collect();
+            assert_eq!(keys, vec!["sel/file-link", "sel/link", "sel/loop", "sel/own.txt"]);
+            assert_eq!(page.objects[0].size, 4, "a link to a file shows that file");
+            assert!(b.stat(&root, "sel/link").await.unwrap().is_some_and(|e| !e.is_dir()));
+
+            let mut keys = Vec::new();
+            let mut w = b.walk(&root, "sel/");
+            while let Some(batch) = w.next().await {
+                keys.extend(batch.unwrap().into_iter().map(|e| e.key));
+            }
+            assert!(keys.iter().all(|k| !k.contains("keep.txt") && !k.starts_with("sel/loop/")), "{keys:?}");
+
+            // a move's clean-up can't reach through the link to what it points to
+            assert!(b.delete(&root, &["sel/link/keep.txt".into()], &[], &never, &no_progress).await.is_err());
+            assert!(b.rename(&Loc::new(&root, "sel/link/keep.txt"), &Loc::new(&root, "x.txt"), false).await.is_err());
+            assert!(r.join("other/keep.txt").exists());
+            // deleting the links themselves leaves their targets
+            b.delete(&root, &["sel/link".into(), "sel/file-link".into()], &["sel/loop/".into()], &never, &no_progress).await.unwrap();
+            assert_eq!(std::fs::read(r.join("other/keep.txt")).unwrap(), b"keep");
+            assert!(r.join("sel/own.txt").exists());
+        });
+    }
+
+    #[test]
+    fn only_if_absent_holds_to_the_end() {
+        let (t, b, root) = setup();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let target = t.0.join("root/race.txt");
+        rt().block_on(async {
+            // someone else creates the file while this write is under way
+            let racer = target.clone();
+            let body: ByteStream = Box::pin(futures_util::stream::once(async move {
+                std::fs::write(&racer, b"theirs").unwrap();
+                Ok(Bytes::from_static(b"mine"))
+            }));
+            let pre = WriteOpts { precondition: Precondition::IfNoneMatch, ..Default::default() };
+            let out = b.write(&root, "race.txt", WriteSource::Stream { len: Some(4), body, reopen: None }, pre, &no_progress, &cancel).await.unwrap();
+            assert!(matches!(out, WriteOutcome::Conflict(Some(_))), "refused, not replaced");
+            assert_eq!(std::fs::read(&target).unwrap(), b"theirs");
+            let left: Vec<_> = std::fs::read_dir(t.0.join("root")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().contains(".kybl-")).collect();
+            assert!(left.is_empty());
+        });
+    }
+
+    /// Runs `f` on a thread, failing instead of hanging the suite when it blocks.
+    #[cfg(unix)]
+    fn within<T: Send + 'static>(secs: u64, f: impl FnOnce() -> T + Send + 'static) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx.recv_timeout(Duration::from_secs(secs)).expect("blocked (a pipe was opened?)")
+    }
+
+    #[cfg(unix)]
+    fn mkfifo(p: &Path) {
+        use std::os::unix::ffi::OsStrExt;
+        let c = std::ffi::CString::new(p.as_os_str().as_bytes()).unwrap();
+        // SAFETY: a valid NUL-terminated path
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o644) }, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn moves_across_disks_keep_what_they_could_not_copy() {
+        let base = std::env::temp_dir().join(format!("kybl-across-{}", uuid::Uuid::new_v4()));
+        let _t = Tmp(base.clone());
+        let src = base.join("src");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::create_dir_all(base.join("elsewhere")).unwrap();
+        std::fs::write(base.join("elsewhere/precious.txt"), b"p").unwrap();
+        std::fs::write(src.join("a.txt"), b"a").unwrap();
+        std::fs::write(src.join("sub/b.txt"), b"b").unwrap();
+        mkfifo(&src.join("sub/pipe"));
+        std::os::unix::fs::symlink(base.join("elsewhere"), src.join("out")).unwrap();
+        let (s, d) = (src.clone(), base.join("dst"));
+        let r = within(10, move || move_across(&s, &d));
+        let e = r.unwrap_err();
+        assert_eq!(e.kind, ErrKind::Unsupported, "{e}");
+        let dst = base.join("dst");
+        assert_eq!(std::fs::read(dst.join("a.txt")).unwrap(), b"a");
+        assert_eq!(std::fs::read(dst.join("sub/b.txt")).unwrap(), b"b");
+        assert!(std::fs::symlink_metadata(dst.join("out")).unwrap().file_type().is_symlink(), "a link comes along as a link");
+        // the copied originals are gone; the pipe and its folder stay
+        assert!(!src.join("a.txt").exists() && !src.join("sub/b.txt").exists() && std::fs::symlink_metadata(src.join("out")).is_err());
+        assert!(std::fs::symlink_metadata(src.join("sub/pipe")).is_ok());
+        assert_eq!(std::fs::read(base.join("elsewhere/precious.txt")).unwrap(), b"p", "never followed out");
+
+        // reading a pipe is refused instead of waiting forever
+        let (_t2, b, root) = setup();
+        let r = b.fixed[0].canon.clone();
+        mkfifo(&r.join("pipe"));
+        let res = within(10, move || rt().block_on(async move { b.read(&root, "pipe", None, None).await.map(|_| ()) }));
+        assert!(res.is_err_and(|e| e.kind == ErrKind::Unsupported));
     }
 }

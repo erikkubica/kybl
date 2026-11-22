@@ -16,7 +16,8 @@ pub mod paths;
 pub mod upload;
 
 use std::{
-    collections::HashMap,
+    cell::RefCell,
+    collections::{HashMap, HashSet},
     ops::Range,
     sync::{atomic::AtomicBool, Arc},
 };
@@ -28,7 +29,7 @@ use serde_json::{json, Value};
 
 use self::{
     api::{exports_of, quote, Corpus, DFile, Drive, Export, FILE_FIELDS},
-    paths::{drive_name, number_page, parse_dup, Carry, Node, PathCache},
+    paths::{drive_name, dup_index, number_page_with, parse_dup, Carry, Node, PathCache},
 };
 use super::{extras, *};
 use crate::oauth::http::{enc, Api};
@@ -91,6 +92,19 @@ struct Token {
     carry: Carry,
 }
 
+/// The query part that picks a folder's children (None: the top of Shared with me).
+fn scope_of(parent: Option<&Node>) -> String {
+    match parent {
+        Some(p) => format!("{} in parents", quote(&p.id)),
+        None => "sharedWithMe = true".to_string(),
+    }
+}
+
+/// Same-named files oldest first, ties by id: the order duplicates are numbered in.
+fn oldest_first(files: &mut [DFile]) {
+    files.sort_by(|a, b| (a.created_time.as_deref(), a.id.as_str()).cmp(&(b.created_time.as_deref(), b.id.as_str())));
+}
+
 fn read_only() -> StorageError {
     StorageError::new(ErrKind::PermissionDenied, "Nothing can be added to Shared with me itself. Open a shared folder and add it there.")
 }
@@ -137,26 +151,74 @@ impl GDrive {
     }
 
     /// The file named `display` (a name as Kybl shows it) in `parent` (None: the top of Shared
-    /// with me). A numbered duplicate ("a (2).txt") finds the second "a.txt", oldest first.
+    /// with me). A numbered duplicate ("a (2).txt") finds the second "a.txt", oldest first; numbers
+    /// that are real names in the folder are skipped, as listings skip them.
     async fn lookup(&self, root: &str, parent: Option<&Node>, display: &str, folder: bool) -> SResult<Option<DFile>> {
-        let scope = match parent {
-            Some(p) => format!("{} in parents", quote(&p.id)),
-            None => "sharedWithMe = true".to_string(),
-        };
+        let scope = scope_of(parent);
         let find = |name: String| {
             let q = format!("{scope} and name = {} and trashed = false", quote(&name));
             async move {
                 let list = self.d().list(&q, self.corpus(root), "createdTime", None, 100).await?;
-                Ok::<_, StorageError>(list.files.into_iter().filter(|f| f.is_folder() == folder).collect::<Vec<_>>())
+                let mut same: Vec<DFile> = list.files.into_iter().filter(|f| f.is_folder() == folder).collect();
+                oldest_first(&mut same);
+                Ok::<_, StorageError>(same)
             }
         };
         let mut same = find(drive_name(display)).await?;
         if !same.is_empty() {
             return Ok(Some(same.remove(0)));
         }
-        match parse_dup(display, folder) {
-            Some((base, n)) => Ok(find(drive_name(&base)).await?.into_iter().nth(n as usize - 1)),
-            None => Ok(None),
+        let Some((base, n)) = parse_dup(display, folder) else { return Ok(None) };
+        let base = drive_name(&base);
+        let Some(i) = self.with_taken(root, &scope, HashMap::new(), |taken| dup_index(&base, folder, n, taken)).await? else { return Ok(None) };
+        Ok(find(base).await?.into_iter().nth(i))
+    }
+
+    /// Which of `names` ((folder, Drive name)) are real files or folders in `scope`.
+    async fn real_names(&self, root: &str, scope: &str, names: &[(bool, String)]) -> SResult<HashSet<(bool, String)>> {
+        let mut real = HashSet::new();
+        for chunk in names.chunks(20) {
+            let any = chunk.iter().map(|(_, n)| format!("name = {}", quote(n))).collect::<Vec<_>>().join(" or ");
+            let q = format!("{scope} and ({any}) and trashed = false");
+            let mut token: Option<String> = None;
+            loop {
+                let list = self.d().list(&q, self.corpus(root), "name", token.as_deref(), PAGE).await?;
+                real.extend(list.files.iter().map(|f| (f.is_folder(), f.name.clone())));
+                token = list.next_page_token;
+                if token.is_none() {
+                    break;
+                }
+            }
+        }
+        Ok(real)
+    }
+
+    /// Runs the duplicate-numbering rule `f` with a `taken(folder, name)` that answers whether a
+    /// name is a real one in `scope`: names it doesn't know yet are asked of Drive (a batch at a
+    /// time) and `f` runs again, until it ran without needing any. `known` starts with names
+    /// already known to be real.
+    async fn with_taken<R>(&self, root: &str, scope: &str, mut known: HashMap<(bool, String), bool>, f: impl Fn(&dyn Fn(bool, &str) -> bool) -> R) -> SResult<R> {
+        loop {
+            let unknown: RefCell<Vec<(bool, String)>> = RefCell::default();
+            let r = f(&|folder: bool, name: &str| match known.get(&(folder, name.to_string())) {
+                Some(t) => *t,
+                None => {
+                    unknown.borrow_mut().push((folder, name.to_string()));
+                    false
+                }
+            });
+            let mut unknown = unknown.into_inner();
+            if unknown.is_empty() {
+                return Ok(r);
+            }
+            drop(r);
+            unknown.sort();
+            unknown.dedup();
+            let real = self.real_names(root, scope, &unknown).await?;
+            for k in unknown {
+                let t = real.contains(&k);
+                known.insert(k, t);
+            }
         }
     }
 
@@ -408,23 +470,33 @@ impl Storage for GDrive {
         let tok: Token = token.as_deref().and_then(|t| serde_json::from_str(t).ok()).unwrap_or_default();
         let page_token = (!tok.page.is_empty()).then_some(tok.page.as_str());
         let mut retried = false;
-        let list = loop {
-            let q = if root == SHARED && dir.is_empty() {
-                "sharedWithMe = true and trashed = false".to_string()
+        let (scope, mut list) = loop {
+            let scope = if root == SHARED && dir.is_empty() {
+                scope_of(None)
             } else {
                 let Some(found) = self.resolve(root, &dir).await? else { return Err(StorageError::not_found()) };
-                format!("{} in parents and trashed = false", quote(&found.node.id))
+                scope_of(Some(&found.node))
             };
+            let q = format!("{scope} and trashed = false");
             match self.d().list(&q, self.corpus(root), ORDER, page_token, PAGE).await {
                 Err(e) if e.kind == ErrKind::NotFound && !retried => {
                     retried = true;
                     self.cache.forget(root, &dir);
                 }
-                r => break r?,
+                r => break (scope, r?),
             }
         };
+        // same-named files in a fixed order (Drive's own order of equal times isn't promised)
+        let mut i = 0;
+        while i < list.files.len() {
+            let j = i + list.files[i..].iter().take_while(|f| f.name == list.files[i].name).count();
+            oldest_first(&mut list.files[i..j]);
+            i = j;
+        }
         let items: Vec<(String, bool)> = list.files.iter().map(|f| (f.name.clone(), f.is_folder())).collect();
-        let (names, carry) = number_page(&items, &tok.carry);
+        // what this page shows is real; numbers for duplicates skip those and any other real name
+        let known: HashMap<(bool, String), bool> = items.iter().map(|(n, f)| ((*f, n.clone()), true)).collect();
+        let (names, carry) = self.with_taken(root, &scope, known, |taken| number_page_with(&items, &tok.carry, taken)).await?;
         let mut page = Page::default();
         for (f, name) in list.files.iter().zip(names) {
             let folder = f.is_folder();

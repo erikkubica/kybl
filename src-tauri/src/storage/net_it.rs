@@ -253,6 +253,25 @@ fn net(port: u16) -> NetConfig {
     NetConfig { host: "127.0.0.1".into(), port, user: USER.into(), tls: TlsMode::None, ..Default::default() }
 }
 
+/// Two connections saved for one server and folder are known as one place (so a move between
+/// them onto the same path keeps the file); another folder or server is another place.
+#[test]
+fn two_connections_to_one_place_are_known_as_one() {
+    let other = |c: NetConfig| NetConfig { user: "someone-else".into(), host: "127.0.0.1".to_uppercase(), ..c };
+    type Id = fn(&NetConfig) -> Option<String>;
+    let ftp: Id = |c| FtpBackend::new(c, Some(PASS.into())).unwrap().place_id();
+    let sftp: Id = |c| SftpBackend::new(c, Secrets { password: Some(PASS.into()), ssh: None }).unwrap().place_id();
+    let dav: Id = |c| WebdavBackend::new(c, Some(PASS.into())).unwrap().place_id();
+    for id in [ftp, sftp, dav] {
+        let here = id(&net(2000));
+        assert!(here.is_some());
+        assert_eq!(here, id(&other(net(2000))));
+        assert_ne!(here, id(&net(2001)), "another port");
+        assert_ne!(here, id(&NetConfig { base_path: "sub".into(), ..net(2000) }), "another folder");
+    }
+    assert_ne!(ftp(&net(2000)), sftp(&net(2000)));
+}
+
 #[test]
 fn webdav_against_rclone() {
     let Some(srv) = serve("webdav", &[]) else { return };
@@ -379,5 +398,36 @@ fn https_works_with_the_shared_client() {
         let e = http().get("https://expired.badssl.com/").send().await.err().unwrap();
         let e = crate::storage::webdav::http_error(e);
         assert!(e.message.contains("certificate"), "{e}");
+    });
+}
+
+/// Replacing a file (an upload over it, or a file moved onto it) on a real server: the new
+/// content is there and no temporary or backup file is left.
+async fn replaces_cleanly(s: &dyn Storage, disk: &Path) {
+    put(s, "r/a.txt", b"old").await;
+    put(s, "r/a.txt", b"new").await;
+    assert_eq!(std::fs::read(disk.join("r/a.txt")).unwrap(), b"new");
+    put(s, "r/b.txt", b"moved").await;
+    s.rename(&Loc::new("", "r/b.txt"), &Loc::new("", "r/a.txt"), false).await.unwrap();
+    assert_eq!(std::fs::read(disk.join("r/a.txt")).unwrap(), b"moved");
+    assert!(!disk.join("r/b.txt").exists());
+    assert_eq!(temp_files(disk), Vec::<String>::new());
+}
+
+#[test]
+fn ftp_and_sftp_replace_files_without_leftovers() {
+    let passive = |port: u16| {
+        let lo = if port < 30000 { 41000 } else { 21000 } + (port % 1000) * 10;
+        vec!["--passive-port".to_string(), format!("{lo}-{}", lo + 9)]
+    };
+    let Some(ftp) = serve_with("ftp", &[], passive) else { return };
+    let Some(sftp) = serve("sftp", &[]) else { return };
+    rt().block_on(async {
+        replaces_cleanly(&FtpBackend::new(&net(ftp.port), Some(PASS.into())).unwrap(), &ftp.root).await;
+        let pw = || Secrets { password: Some(PASS.into()), ssh: None };
+        let e = SftpBackend::new(&net(sftp.port), pw()).unwrap().roots().await.err().unwrap();
+        let fp = sftp::hostkey::fingerprint_in(&e.to_string()).unwrap().to_string();
+        let b = SftpBackend::new(&NetConfig { host_key: Some(fp), ..net(sftp.port) }, pw()).unwrap();
+        replaces_cleanly(&b, &sftp.root).await;
     });
 }

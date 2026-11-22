@@ -104,7 +104,7 @@ impl Live {
                 self.bytes_done.fetch_add(size, Ordering::Relaxed);
                 self.moved.fetch_add(size, Ordering::Relaxed);
             }
-            End::Skipped | End::SkippedCopied => {
+            End::Skipped | End::SkippedCopied | End::SkippedUnsure | End::InPlace => {
                 self.files_skipped.fetch_add(1, Ordering::Relaxed);
                 self.bytes_skipped.fetch_add(size, Ordering::Relaxed);
             }

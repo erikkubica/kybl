@@ -22,6 +22,8 @@ class SignInArgs {
   lateinit var url: String
   /** the scheme that ends the sign-in; "kybl" when not given (see the intent filters) */
   var callbackScheme: String? = null
+  /** the one address under that scheme that ends this sign-in (see [SignInCallback]) */
+  var callbackUrl: String? = null
 }
 
 /**
@@ -37,6 +39,8 @@ class KyblConnectPlugin(private val activity: Activity) : Plugin(activity) {
   private val main = Handler(Looper.getMainLooper())
   private var pending: Invoke? = null
   private var pendingScheme = "kybl"
+  /** the address that ends the pending sign-in; null: any link with [pendingScheme] */
+  private var pendingCallback: String? = SignInCallback.CONNECT
   /** the tab took over the screen since signIn: coming back without a redirect means it was closed */
   private var away = false
 
@@ -47,6 +51,7 @@ class KyblConnectPlugin(private val activity: Activity) : Plugin(activity) {
       pending?.resolve(JSObject().put("cancelled", true))
       pending = invoke
       pendingScheme = args.callbackScheme?.takeIf { it.isNotBlank() } ?: "kybl"
+      pendingCallback = SignInCallback.expected(pendingScheme, args.callbackUrl)
       away = false
       val uri = Uri.parse(args.url)
       try {
@@ -100,7 +105,8 @@ class KyblConnectPlugin(private val activity: Activity) : Plugin(activity) {
 
   override fun onNewIntent(intent: Intent) {
     val data = intent.data ?: return
-    if (data.scheme != pendingScheme) return
+    // another kybl:// link (a web page, another app) leaves the sign-in waiting
+    if (!SignInCallback.matches(data.toString(), pendingScheme, pendingCallback)) return
     val inv = pending ?: return
     pending = null
     inv.resolve(JSObject().put("url", data.toString()))

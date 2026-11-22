@@ -8,7 +8,9 @@
 //!
 //! An FTP connection does one thing at a time, so a few are kept open and lent out: a read holds
 //! its connection until the body is finished. Uploads go to a temporary name next to the target
-//! and are renamed over it once whole.
+//! and are renamed over it once whole; a server that won't rename over a file gets the old one
+//! moved aside first (see [`super::sftp::replace`]), so it is never deleted before the new one is
+//! in place.
 
 use std::{
     collections::HashSet,
@@ -31,7 +33,11 @@ use tokio::{
     sync::{OnceCell, OwnedSemaphorePermit, Semaphore},
 };
 
-use super::{net::*, *};
+use super::{
+    net::*,
+    sftp::replace::{put_in_place, Renames},
+    *,
+};
 use crate::state::{NetConfig, TlsMode};
 
 type Xfer = TransferStream<suppaftp::tokio::AsyncRustlsStream>;
@@ -397,6 +403,13 @@ impl Storage for FtpBackend {
         &self.caps
     }
 
+    /// The server and the folder paths start from (two connections to one server and folder
+    /// see the same files, whoever signs in).
+    fn place_id(&self) -> Option<String> {
+        let base = self.base.get().cloned().unwrap_or_else(|| self.base_cfg.clone());
+        Some(format!("ftp:{}:{}:{base}", self.host.to_ascii_lowercase(), self.port))
+    }
+
     /// Signs in (and so checks the address, the password and the starting folder).
     async fn roots(&self) -> SResult<Vec<RootInfo>> {
         drop(self.lease().await?);
@@ -544,53 +557,49 @@ impl Storage for FtpBackend {
         }
         self.ensure_dir(&parent_key(path)).await?;
         let target = self.path(path).await?;
-        let tmp = self.path(&temp_key(path)).await?;
         let (mut body, len) = source_stream(src).await?;
-        let mut stored = self.store(&tmp, &mut body, len, progress, cancel).await;
-        let mut direct = false;
-        // some servers refuse names starting with a dot: write in place instead
-        if matches!(&stored, Ok(Stored::Refused(e)) if matches!(e.kind, ErrKind::PermissionDenied | ErrKind::NotFound)) {
-            direct = true;
+        let mut tmp_key = temp_key(path);
+        let mut stored = self.store(&self.path(&tmp_key).await?, &mut body, len, progress, cancel).await;
+        let mut plain = false;
+        // some servers refuse names starting with a dot: a temporary name like the file's own
+        if temp_refused(&stored) {
+            plain = true;
+            tmp_key = plain_temp_key(path);
+            stored = self.store(&self.path(&tmp_key).await?, &mut body, len, progress, cancel).await;
+        }
+        // and some only take certain names (extensions): write in place as a last resort
+        let mut direct = None;
+        if temp_refused(&stored) {
+            let existed = self.stat(root, path).await?.is_some();
+            direct = Some(existed);
             stored = self.store(&target, &mut body, len, progress, cancel).await;
         }
-        let written = if direct { target.clone() } else { tmp.clone() };
-        match stored {
-            Ok(Stored::Done) => {}
-            Ok(Stored::Cancelled) => {
-                self.remove_partial(written).await;
-                return Ok(WriteOutcome::Cancelled);
-            }
+        let written = if direct.is_some() { target.clone() } else { self.path(&tmp_key).await? };
+        let failed = match stored {
+            Ok(Stored::Done) => None,
             Ok(Stored::Refused(e)) => return Err(e),
-            Err(e) => {
+            Ok(Stored::Cancelled) => Some(None),
+            Err(e) => Some(Some(e)),
+        };
+        if let Some(err) = failed {
+            if remove_after_failed_store(direct) {
                 self.remove_partial(written).await;
-                return Err(e);
             }
-        }
-        if direct {
-            self.pages.forget(path);
-            let entry = self.stat(root, path).await?.unwrap_or_else(|| Entry { key: path.to_string(), size: len.unwrap_or(0) as i64, ..Default::default() });
-            return Ok(WriteOutcome::Done(entry));
-        }
-        let (t, d) = (tmp.clone(), target.clone());
-        let renamed = self
-            .run(move |ftp, _| {
-                let (t, d) = (t.clone(), d.clone());
-                Box::pin(async move {
-                    match ftp.rename(&t, &d).await {
-                        Ok(()) => Ok(()),
-                        // some servers won't rename over a file: remove it first
-                        Err(FtpError::UnexpectedResponse(_)) => {
-                            let _ = ftp.rm(&d).await;
-                            ftp.rename(&t, &d).await
-                        }
-                        Err(e) => Err(e),
+            return match err {
+                None => Ok(WriteOutcome::Cancelled),
+                Some(mut e) => {
+                    if direct == Some(true) {
+                        e.message = format!("{} This server doesn't allow temporary names, so the file was being replaced in place and may be incomplete now.", e.message);
                     }
-                })
-            })
-            .await;
-        if let Err(e) = renamed {
-            self.remove_quietly(tmp).await;
-            return Err(e);
+                    Err(e)
+                }
+            };
+        }
+        if direct.is_none() {
+            let backup = if plain { plain_temp_key(path) } else { temp_key(path) };
+            // the temporary file is kept when it can't go in place: the old file is never
+            // deleted before the new one is there
+            put_in_place(self, &tmp_key, path, &backup).await.map_err(|e| e.explain(Some(file_name(&tmp_key))))?;
         }
         self.pages.forget(path);
         let entry = self.stat(root, path).await?.unwrap_or_else(|| Entry { key: path.to_string(), size: len.unwrap_or(0) as i64, ..Default::default() });
@@ -653,11 +662,17 @@ impl Storage for FtpBackend {
             return Err(StorageError::other("Cannot move a folder into itself"));
         }
         self.ensure_dir(&parent_key(&to.path)).await?;
-        self.run(move |ftp, _| {
-            let (s, d) = (src.clone(), dst.clone());
-            Box::pin(async move { ftp.rename(&s, &d).await })
-        })
-        .await?;
+        if is_dir {
+            // a folder never replaces another
+            self.run(move |ftp, _| {
+                let (s, d) = (src.clone(), dst.clone());
+                Box::pin(async move { ftp.rename(&s, &d).await })
+            })
+            .await?;
+        } else {
+            // a file replaces what is there (like S3), which is only deleted once this one is in its place
+            put_in_place(self, &from.path, &to.path, &temp_key(&to.path)).await.map_err(|e| e.explain(None))?;
+        }
         let k = if is_dir { dir_prefix(&from.path) } else { from.path.clone() };
         self.pages.forget(&k);
         self.pages.forget(&to.path);
@@ -666,10 +681,61 @@ impl Storage for FtpBackend {
     }
 }
 
+/// Each step asked of the server on its own (never repeated as a whole), on keys.
+#[async_trait]
+impl Renames for FtpBackend {
+    async fn rename_file(&self, from: &str, to: &str) -> SResult<()> {
+        let (f, t) = (self.path(from).await?, self.path(to).await?);
+        self.run(move |ftp, _| {
+            let (f, t) = (f.clone(), t.clone());
+            Box::pin(async move { ftp.rename(&f, &t).await })
+        })
+        .await
+    }
+
+    async fn file_exists(&self, key: &str) -> SResult<bool> {
+        Ok(self.stat("", key).await?.is_some())
+    }
+
+    async fn remove_file(&self, key: &str) -> SResult<()> {
+        let p = self.path(key).await?;
+        self.run(move |ftp, _| {
+            let p = p.clone();
+            Box::pin(async move { ftp.rm(&p).await })
+        })
+        .await
+    }
+}
+
 enum Stored {
     Done,
     Cancelled,
     Refused(StorageError),
+}
+
+/// The server refused the name before any byte went (553 "name not allowed", 550 "denied" or
+/// "no such file" for a hidden name): another name may work, and the body is still unread.
+fn temp_refused(stored: &SResult<Stored>) -> bool {
+    matches!(stored, Ok(Stored::Refused(e)) if matches!(e.kind, ErrKind::PermissionDenied | ErrKind::NotFound))
+}
+
+/// Whether what a STOR that didn't finish left is removed (`direct`: written in place, and
+/// whether a file was there before). A file that was there before an in-place write is never
+/// deleted: what is left of it is all there is.
+fn remove_after_failed_store(direct: Option<bool>) -> bool {
+    direct != Some(true)
+}
+
+/// A temporary name for servers that refuse names starting with a dot: "dir/name.kybl-…ext",
+/// keeping the extension for servers that only take certain kinds of files.
+fn plain_temp_key(key: &str) -> String {
+    let (dir, name) = (parent_key(key), file_name(key));
+    let id = &uuid::Uuid::new_v4().simple().to_string()[..12];
+    match name.rfind('.') {
+        Some(i) if i > 0 => format!("{dir}{}.kybl-{id}{}", &name[..i], &name[i..]),
+        _ if name.starts_with('.') => format!("{dir}kybl-{id}{name}"),
+        _ => format!("{dir}{name}.kybl-{id}"),
+    }
 }
 
 /// FTP errors, said plainly.
@@ -707,6 +773,34 @@ fn ftp_error(e: FtpError, host: &str) -> StorageError {
 mod tests {
     use super::*;
     use suppaftp::Status;
+
+    #[test]
+    fn temporary_names_without_a_leading_dot() {
+        let k = plain_temp_key("d/photo.jpg");
+        assert!(k.starts_with("d/photo.kybl-") && k.ends_with(".jpg"), "{k}");
+        let k = plain_temp_key(".env");
+        assert!(k.starts_with("kybl-") && k.ends_with(".env"), "{k}");
+        let k = plain_temp_key("d/README");
+        assert!(k.starts_with("d/README.kybl-"), "{k}");
+        assert_ne!(plain_temp_key("a.txt"), plain_temp_key("a.txt"));
+    }
+
+    #[test]
+    fn only_a_refused_name_tries_another() {
+        let refused = |kind| Ok(Stored::Refused(StorageError::new(kind, "x")));
+        assert!(temp_refused(&refused(ErrKind::PermissionDenied)));
+        assert!(temp_refused(&refused(ErrKind::NotFound)));
+        assert!(!temp_refused(&refused(ErrKind::Other)), "out of space isn't about the name");
+        assert!(!temp_refused(&Err(StorageError::new(ErrKind::PermissionDenied, "x"))), "refused mid-way: the body is spent");
+        assert!(!temp_refused(&Ok(Stored::Done)));
+    }
+
+    #[test]
+    fn an_unfinished_in_place_write_never_deletes_the_file_that_was_there() {
+        assert!(remove_after_failed_store(None), "a temporary file goes");
+        assert!(remove_after_failed_store(Some(false)), "a new file nobody had goes");
+        assert!(!remove_after_failed_store(Some(true)), "what is left of the old file stays");
+    }
 
     #[test]
     fn defaults_and_names() {

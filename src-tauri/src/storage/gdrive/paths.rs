@@ -113,26 +113,47 @@ pub fn parse_dup(name: &str, folder: bool) -> Option<(String, u32)> {
     Some((format!("{}{ext}", &stem[..open]), n))
 }
 
-/// Counts carried from one listing page to the next for the names the page ended on, so a run of
-/// equal names split over two pages keeps counting. Serialized into the page token.
+/// The last number given to each of the names the page ended on, so a run of equal names split
+/// over two pages keeps counting. Serialized into the page token.
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq, Eq)]
 pub struct Carry {
-    /// (folder, name) → how many seen
+    /// (folder, name) → the last number used (1: the plain name)
     #[serde(default)]
     pub seen: Vec<(bool, String, u32)>,
 }
 
+/// The next free number after `last` for a duplicate of `name`: one whose numbered name isn't a
+/// real name in the folder (`taken(folder, drive name)`), so a duplicate never shows under the
+/// name of another file (which would hide one of them, and a move could delete the wrong one).
+fn next_number(name: &str, folder: bool, last: u32, taken: &dyn Fn(bool, &str) -> bool) -> u32 {
+    let mut n = last + 1;
+    while n < u32::MAX && taken(folder, &with_number(name, n, folder)) {
+        n += 1;
+    }
+    n
+}
+
 /// Names for one page of a listing ordered by name, then age: duplicates numbered as above.
 /// `items` are (Drive name, is folder). Returns the display names and the carry for the next
-/// page.
+/// page. Numbering doesn't skip real names here; Drive listings use [`number_page_with`].
 pub fn number_page(items: &[(String, bool)], carry: &Carry) -> (Vec<String>, Carry) {
+    number_page_with(items, carry, &|_, _| false)
+}
+
+/// [`number_page`], skipping numbered names that `taken(folder, drive name)` says are real names
+/// in the folder.
+pub fn number_page_with(items: &[(String, bool)], carry: &Carry, taken: &dyn Fn(bool, &str) -> bool) -> (Vec<String>, Carry) {
     let mut seen: HashMap<(bool, String), u32> = carry.seen.iter().map(|(f, n, c)| ((*f, n.clone()), *c)).collect();
     let mut out = Vec::with_capacity(items.len());
     for (name, folder) in items {
-        let shown = display_name(name);
-        let c = seen.entry((*folder, name.clone())).or_insert(0);
-        *c += 1;
-        out.push(if *c == 1 { shown } else { with_number(&shown, *c, *folder) });
+        let last = seen.entry((*folder, name.clone())).or_insert(0);
+        if *last == 0 {
+            *last = 1;
+            out.push(display_name(name));
+        } else {
+            *last = next_number(name, *folder, *last, taken);
+            out.push(display_name(&with_number(name, *last, *folder)));
+        }
     }
     // Drive may order names regardless of case, so a run of one name can be interleaved with the
     // same name in other cases: carry every name equal (ignoring case) to the last one
@@ -146,6 +167,17 @@ pub fn number_page(items: &[(String, bool)], carry: &Carry) -> (Vec<String>, Car
         None => carry.clone(),
     };
     (out, next)
+}
+
+/// Which of the files named `base` (oldest first, 0-based) shows as number `n`, with the same
+/// skipping as [`number_page_with`]; None when `n` is never given out (it is a real name).
+pub fn dup_index(base: &str, folder: bool, n: u32, taken: &dyn Fn(bool, &str) -> bool) -> Option<usize> {
+    let (mut last, mut index) = (1u32, 0usize);
+    while last < n {
+        last = next_number(base, folder, last, taken);
+        index += 1;
+    }
+    (last == n).then_some(index)
 }
 
 #[cfg(test)]
@@ -215,5 +247,34 @@ mod tests {
         // the same files listed in one page get the same names
         let all: Vec<(String, bool)> = page1.iter().chain(&page2).cloned().collect();
         assert_eq!(number_page(&all, &Carry::default()).0, [n1, n2].concat());
+    }
+
+    #[test]
+    fn duplicate_numbers_skip_real_names() {
+        // the folder also holds a real "a (2).txt" (and "a (4).txt"): the copies of "a.txt" must
+        // not show under those names
+        let real = ["a (2).txt", "a (4).txt", "a.txt"];
+        let taken = |folder: bool, n: &str| !folder && real.contains(&n);
+        let items: Vec<(String, bool)> = [("a (2).txt", false), ("a (4).txt", false), ("a.txt", false), ("a.txt", false), ("a.txt", false), ("a.txt", true), ("a.txt", true)]
+            .iter()
+            .map(|(n, f)| (n.to_string(), *f))
+            .collect();
+        let (names, _) = number_page_with(&items, &Carry::default(), &taken);
+        assert_eq!(names, vec!["a (2).txt", "a (4).txt", "a.txt", "a (3).txt", "a (5).txt", "a.txt", "a.txt (2)"], "folders are numbered on their own");
+        let mut unique = names[..5].to_vec();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), 5, "no two files share a name");
+        // and the names map back to the same files
+        assert_eq!(dup_index("a.txt", false, 3, &taken), Some(1));
+        assert_eq!(dup_index("a.txt", false, 5, &taken), Some(2));
+        assert_eq!(dup_index("a.txt", false, 2, &taken), None, "a real name, never a number");
+        assert_eq!(dup_index("a.txt", false, 4, &taken), None);
+        assert_eq!(dup_index("a.txt", true, 2, &taken), Some(1));
+
+        // a run split over two pages keeps skipping
+        let (n1, carry) = number_page_with(&items[..4], &Carry::default(), &taken);
+        let (n2, _) = number_page_with(&items[4..5], &carry, &taken);
+        assert_eq!([n1, n2].concat(), names[..5].to_vec());
     }
 }
