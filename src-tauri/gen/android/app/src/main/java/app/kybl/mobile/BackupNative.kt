@@ -27,8 +27,8 @@ object BackupNative {
   /** Uploads one item from `fd`, which Rust takes over and closes. Answers `{status, remotePath?, error?}`. */
   @JvmStatic external fun upload(setId: String, sourceId: String, remotePath: String, fd: Int, size: Long, mtime: Long): String
 
-  /** Stops every run: the upload in flight ends and answers "cancelled". */
-  @JvmStatic external fun cancel()
+  /** Stops one set's run (null: every run): the upload in flight ends and answers "cancelled". */
+  @JvmStatic external fun cancel(setId: String?)
 
   @Volatile private var ready = false
 

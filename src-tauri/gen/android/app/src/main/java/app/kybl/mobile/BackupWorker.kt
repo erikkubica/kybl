@@ -46,16 +46,19 @@ import java.util.concurrent.TimeUnit
  */
 class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
   private var foreground = false
+  /** The set this worker is running right now (other workers may be running other sets). */
+  @Volatile private var current: String? = null
 
   override suspend fun getForegroundInfo(): ForegroundInfo = BackupScheduler.foregroundInfo(applicationContext, "Backing up", 0, 0)
 
   override suspend fun doWork(): Result = coroutineScope {
-    // a stop cancels this scope: the watcher's `finally` ends the blocking upload in Rust
+    // a stop cancels this scope: the watcher's `finally` ends the blocking upload in Rust, of
+    // this worker's set only (a stopped media-trigger run must not end a "Back up now")
     val watcher = launch {
       try {
         awaitCancellation()
       } finally {
-        if (isStopped) BackupNative.cancel()
+        if (isStopped) current?.let { BackupNative.cancel(it) }
       }
     }
     val result = withContext(Dispatchers.IO) { runAll() }
@@ -76,7 +79,12 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         if (only != null && set.optString("id") != only) continue
         // "Back up now" goes ahead on battery; automatic runs respect the setting
         if (!manual && set.optBoolean("chargingOnly") && !BackupScheduler.charging(ctx)) continue
-        if (runSet(set)) retry = true
+        current = set.optString("id")
+        try {
+          if (runSet(set)) retry = true
+        } finally {
+          current = null
+        }
       }
     } catch (e: Exception) {
       retry = true
@@ -208,7 +216,9 @@ object BackupScheduler {
         .build()
       // UPDATE keeps the schedule's timing and only changes its constraints
       wm.enqueueUniquePeriodicWork(periodicName(id), ExistingPeriodicWorkPolicy.UPDATE, periodic)
-      if (set.optJSONObject("source")?.optString("type") == "cameraRoll") watchMedia(ctx, id, set, ExistingWorkPolicy.REPLACE)
+      // KEEP: this runs on every app open, and replacing would cancel a media run under way
+      // (a waiting trigger picks up new constraints the next time it puts itself back)
+      if (set.optJSONObject("source")?.optString("type") == "cameraRoll") watchMedia(ctx, id, set, ExistingWorkPolicy.KEEP)
       else wm.cancelUniqueWork(mediaName(id))
     }
     prefs.edit().putStringSet("scheduled", ids).apply()
@@ -237,7 +247,9 @@ object BackupScheduler {
 
   /**
    * A run right away: "Back up now" (`manual`, expedited where the quota allows, ignores "only
-   * while charging") or the app opening. A run already going on is left to finish.
+   * while charging") or the app opening. Each set and kind has its own queue: "Back up now"
+   * waits behind a run of the same kind already going on (never dropped), an app-open run
+   * already queued is enough.
    */
   fun runNow(ctx: Context, setId: String?, manual: Boolean) {
     val data = Data.Builder().putBoolean(BackupWorker.KEY_MANUAL, manual)
@@ -247,7 +259,9 @@ object BackupScheduler {
       .setInputData(data.build())
       .addTag(TAG)
     if (manual) b.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-    WorkManager.getInstance(ctx).enqueueUniqueWork("backup-now", ExistingWorkPolicy.KEEP, b.build())
+    val name = "backup-now-${setId ?: "all"}-${if (manual) "manual" else "open"}"
+    val policy = if (manual) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.KEEP
+    WorkManager.getInstance(ctx).enqueueUniqueWork(name, policy, b.build())
   }
 
   fun charging(ctx: Context): Boolean {

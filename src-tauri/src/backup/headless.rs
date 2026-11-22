@@ -108,9 +108,15 @@ pub fn upload(set_id: &str, source_id: &str, src: Source, size: i64, mtime_ms: i
 }
 
 /// Stops every run.
+#[cfg_attr(target_os = "android", allow(dead_code))]
 pub fn cancel_all() {
+    cancel(None);
+}
+
+/// Stops one set's run, or every run (`None`).
+pub fn cancel(set_id: Option<&str>) {
     if let Ok(core) = core() {
-        core.cancel(None);
+        core.cancel(set_id);
     }
 }
 
@@ -213,9 +219,12 @@ mod android {
         answer(&mut env, out)
     }
 
+    /// Stops one set's run (`set_id`), or every run when it is null or empty: a worker stopped by
+    /// Android ends only the run it was doing, not another worker's.
     #[unsafe(no_mangle)]
-    pub extern "system" fn Java_app_kybl_mobile_BackupNative_cancel(_: JNIEnv, _: JClass) {
-        cancel_all();
+    pub extern "system" fn Java_app_kybl_mobile_BackupNative_cancel(mut env: JNIEnv, _: JClass, set_id: JString) {
+        let id = if set_id.is_null() { String::new() } else { text(&mut env, &set_id) };
+        cancel(Some(id.as_str()).filter(|s| !s.is_empty()));
     }
 }
 

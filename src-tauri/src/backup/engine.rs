@@ -416,7 +416,7 @@ impl Core {
         let replacing = index::backed_up(&self.db.lock().unwrap(), id, source_id).ok().flatten().map(|(_, p)| p);
         let target = match &replacing {
             Some(p) => p.clone(),
-            None => match self.free_path(&*dst, &set, source_id, &row.remote_path, size).await {
+            None => match self.free_path(&*dst, &set, source_id, &row.remote_path, size, mtime, &src).await {
                 Ok(Place::Free(p)) => p,
                 Ok(Place::Adopt(p)) => {
                     let _ = index::record(&self.db.lock().unwrap(), id, source_id, &row.version_key, &p, size);
@@ -503,7 +503,11 @@ impl Core {
         }
     }
 
-    async fn free_path(&self, dst: &dyn Storage, set: &BackupSet, source_id: &str, planned: &str, size: i64) -> SResult<Place> {
+    #[allow(clippy::too_many_arguments)]
+    async fn free_path(&self, dst: &dyn Storage, set: &BackupSet, source_id: &str, planned: &str, size: i64, mtime: Option<i64>, src: &Source) -> SResult<Place> {
+        let etag_md5 = dst.caps().hashes.contains(&crate::storage::HashKind::Md5);
+        // worked out once, only when a same-named file of the same size has an MD5 to compare
+        let mut local_md5: Option<Option<String>> = None;
         for n in 1..=999u32 {
             let path = naming::numbered(planned, n);
             match dst.stat(&set.root, &path).await? {
@@ -511,7 +515,14 @@ impl Core {
                 Some(e) if e.is_dir() => continue,
                 Some(e) => {
                     let claimed = index::path_claimed(&self.db.lock().unwrap(), &set.id, &path, source_id).map_err(StorageError::other)?;
-                    if !claimed && size > 0 && e.size == size {
+                    if claimed || size <= 0 || e.size != size {
+                        continue;
+                    }
+                    let remote_md5 = remote_md5(&e, etag_md5);
+                    if remote_md5.is_some() && local_md5.is_none() {
+                        local_md5 = Some(md5_of(src).await);
+                    }
+                    if same_file(&e, size, mtime, local_md5.as_ref().and_then(|m| m.as_deref()), remote_md5.as_deref()) {
                         return Ok(Place::Adopt(path));
                     }
                 }
@@ -523,8 +534,62 @@ impl Core {
 
 enum Place {
     Free(String),
-    /// the same file is already there (name and size): count it as backed up
+    /// the same file is already there (name, size and content or time): count it as backed up
     Adopt(String),
+}
+
+/// The MD5 a stored file reports, as hex: its own hash, or an ETag that is one on stores whose
+/// ETags are MD5s (not multipart ones, which end in "-N").
+fn remote_md5(e: &crate::storage::Entry, etag_is_md5: bool) -> Option<String> {
+    e.hashes.md5.clone().map(|m| m.to_lowercase()).or_else(|| {
+        let bare = e.etag.as_deref()?.trim_matches('"');
+        (etag_is_md5 && bare.len() == 32 && bare.bytes().all(|b| b.is_ascii_hexdigit())).then(|| bare.to_lowercase())
+    })
+}
+
+/// Is the file already at the planned name the one being backed up? The same name and size
+/// alone could be a different photo (camera counters restart), and adopting it would leave
+/// this one never backed up: it must also have the same MD5 where both are known, else a
+/// modification time within 2 s. Anything unsure is uploaded beside it as "name (2).ext".
+pub(crate) fn same_file(e: &crate::storage::Entry, size: i64, mtime: Option<i64>, local_md5: Option<&str>, remote_md5: Option<&str>) -> bool {
+    if size <= 0 || e.size != size {
+        return false;
+    }
+    if let (Some(a), Some(b)) = (local_md5, remote_md5) {
+        return a.eq_ignore_ascii_case(b);
+    }
+    matches!((mtime, e.modified), (Some(a), Some(b)) if (a - b).abs() <= 2000)
+}
+
+/// The MD5 of what an upload would send, when it can be read without using it up: a file, or a
+/// regular file descriptor (read with positioned reads, so its offset is untouched). None for
+/// a pipe or on any read error.
+async fn md5_of(src: &Source) -> Option<String> {
+    use md5::{Digest, Md5};
+    let file = match src {
+        Source::Path(p) => std::fs::File::open(p).ok()?,
+        Source::File(f) => f.try_clone().ok()?,
+    };
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    tokio::task::spawn_blocking(move || {
+        let mut h = Md5::new();
+        let mut buf = vec![0u8; CHUNK];
+        let mut off = 0u64;
+        loop {
+            let n = read_at(&file, &mut buf, off).ok()?;
+            if n == 0 {
+                break;
+            }
+            h.update(&buf[..n]);
+            off += n as u64;
+        }
+        Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>())
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 // ---------------------------------------------------------------- reading the source
