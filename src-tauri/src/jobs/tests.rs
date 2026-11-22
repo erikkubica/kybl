@@ -476,6 +476,19 @@ fn pause_resume_and_cancel() {
         assert_eq!((j.progress.state, j.progress.files_done + j.progress.files_skipped), (JobState::Done, 20));
         assert_eq!(files(&d.0).len(), 20);
 
+        // Resume pressed while the pause is still winding down: it carries on anyway
+        let d3 = tmp();
+        let (dst3, dr3) = local(&d3.0);
+        let (src3, _) = wrapped(&s.0, 60, false);
+        let m3 = JobManager::open(None, TestHost::with(vec![("src", src3), ("dst", dst3)])).unwrap();
+        let id3 = m3.create(spec(&sr, &[("p/", true)], &dr3, "")).unwrap();
+        wait_for(&m3, &id3, false, |j| j.progress.files_done >= 1).await;
+        m3.pause(&id3).unwrap();
+        assert_eq!(find(&m3, &id3).progress.state, JobState::Paused, "shown as paused at once");
+        m3.resume(&id3).unwrap();
+        let j = finished(&m3, &id3).await;
+        assert_eq!((j.progress.state, j.progress.files_done + j.progress.files_skipped), (JobState::Done, 20));
+
         // cancel: stops for good; what was copied stays
         let d2 = tmp();
         let (dst2, dr2) = local(&d2.0);

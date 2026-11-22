@@ -143,6 +143,8 @@ const WANT_CANCEL: u8 = 2;
 const WANT_DELETE: u8 = 3;
 /// set by the runner itself: a connection needs signing in again
 const WANT_AUTH: u8 = 4;
+/// paused, and Resume pressed before the pause finished: run again once stopped
+const WANT_RESTART: u8 = 5;
 
 struct Ctl {
     stop: Arc<AtomicBool>,
@@ -375,8 +377,17 @@ impl JobManager {
         let last = self.inner.last.lock().unwrap();
         let mut out = Vec::new();
         for row in db::jobs(&c)? {
-            let progress = match last.get(&row.id) {
-                Some(p) if live.contains_key(&row.id) => p.clone(),
+            let progress = match (last.get(&row.id), live.get(&row.id)) {
+                (Some(p), Some(ctl)) => {
+                    let mut p = p.clone();
+                    // asked to pause or stop: say so while the copies under way wind down
+                    match ctl.want.load(Ordering::SeqCst) {
+                        WANT_PAUSE => p.state = JobState::Paused,
+                        WANT_CANCEL | WANT_DELETE => p.state = JobState::Cancelled,
+                        _ => {}
+                    }
+                    p
+                }
                 _ => idle_progress(&row.id, row.state, row.error.clone(), &db::counts(&c, &row.id)?),
             };
             out.extend(summary_of(&row, progress));
@@ -411,7 +422,9 @@ impl JobManager {
     }
 
     pub fn resume(&self, id: &str) -> Result<(), String> {
-        if self.inner.live.lock().unwrap().contains_key(id) {
+        if let Some(ctl) = self.inner.live.lock().unwrap().get(id) {
+            // still winding down from a pause: run again right after
+            let _ = ctl.want.compare_exchange(WANT_PAUSE, WANT_RESTART, Ordering::SeqCst, Ordering::SeqCst);
             return Ok(());
         }
         let row = self.state_of(id)?;
@@ -496,28 +509,7 @@ impl JobManager {
 
     /// Starts the runner of a job (nothing if it is already running).
     fn start(&self, id: &str) {
-        let mut live = self.inner.live.lock().unwrap();
-        if live.contains_key(id) {
-            return;
-        }
-        let ctl = Arc::new(Ctl { stop: Arc::new(AtomicBool::new(false)), want: AtomicU8::new(WANT_NONE), handle: Mutex::new(None) });
-        live.insert(id.to_string(), ctl.clone());
-        RUNNING.fetch_add(1, Ordering::SeqCst);
-        drop(live);
-        let (inner, id2, ctl2) = (self.inner.clone(), id.to_string(), ctl.clone());
-        let handle = tauri::async_runtime::spawn(async move {
-            // whatever happens to the runner, it is no longer at work afterwards
-            struct Gone(Arc<Inner>, String);
-            impl Drop for Gone {
-                fn drop(&mut self) {
-                    self.0.live.lock().unwrap().remove(&self.1);
-                    RUNNING.fetch_sub(1, Ordering::SeqCst);
-                }
-            }
-            let _gone = Gone(inner.clone(), id2.clone());
-            run(&inner, &id2, &ctl2).await;
-        });
-        *ctl.handle.lock().unwrap() = Some(handle);
+        start_job(&self.inner, id);
     }
 
     /// Kills every runner without letting it record anything, like a crash (tests).
@@ -534,6 +526,38 @@ impl JobManager {
     fn is_running(&self, id: &str) -> bool {
         self.inner.live.lock().unwrap().contains_key(id)
     }
+}
+
+/// Starts the runner of a job (nothing if it is already running).
+fn start_job(inner: &Arc<Inner>, id: &str) {
+    let mut live = inner.live.lock().unwrap();
+    if live.contains_key(id) {
+        return;
+    }
+    let ctl = Arc::new(Ctl { stop: Arc::new(AtomicBool::new(false)), want: AtomicU8::new(WANT_NONE), handle: Mutex::new(None) });
+    live.insert(id.to_string(), ctl.clone());
+    RUNNING.fetch_add(1, Ordering::SeqCst);
+    drop(live);
+    let (inner2, id2, ctl2) = (inner.clone(), id.to_string(), ctl.clone());
+    let handle = tauri::async_runtime::spawn(async move {
+        // whatever happens to the runner, it is no longer at work afterwards
+        struct Gone(Arc<Inner>, String);
+        impl Drop for Gone {
+            fn drop(&mut self) {
+                self.0.live.lock().unwrap().remove(&self.1);
+                RUNNING.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        {
+            let _gone = Gone(inner2.clone(), id2.clone());
+            run(&inner2, &id2, &ctl2).await;
+        }
+        // Resume was pressed while it was still pausing: start it again now that it has stopped
+        if ctl2.want.load(Ordering::SeqCst) == WANT_RESTART {
+            start_job(&inner2, &id2);
+        }
+    });
+    *ctl.handle.lock().unwrap() = Some(handle);
 }
 
 // ---------------------------------------------------------------- the runner

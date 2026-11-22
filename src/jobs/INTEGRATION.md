@@ -152,8 +152,10 @@ Under the transfer list in `TransfersScreen.tsx`:
 ```
 
 and add `useActiveJobCount()` to the Transfers tab badge. On Android the backend keeps the process
-alive through the transfer notification while a job runs; on iOS a job pauses when the app is
-left and resumes on `app-resumed`, which the store already re-lists on.
+alive through the transfer notification while a job runs. On iOS a running job holds the same
+background task as transfers (about half a minute after the app is left); after that its
+requests fail and it shows "waiting for the network" until the app comes back, when
+`app-resumed` makes it carry on at once (the store re-lists then too). Nothing to do in the page.
 
 ## 4. Looking at it in a browser
 
