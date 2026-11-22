@@ -201,7 +201,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   const askMount = (pre: string) => {
     if (!profile || bucket == null) return;
     const [p, b] = [profile, bucket];
-    dialogs.show((close) => createElement(MountDialog, { profileId: p.id, connection: p.name, bucket: b, prefix: pre, onClose: close, onToast: (k, t) => toast(k, t) }));
+    dialogs.show((close) => createElement(MountDialog, { profileId: p.id, connection: p.name, bucket: b, prefix: pre, onClose: close, onToast: (k, t) => toast(k, t), onOpenSettings: env.openDriveSettings }));
   };
 
   const askSync = (pre: string) => {

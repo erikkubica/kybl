@@ -280,6 +280,7 @@ export function AppShell() {
     openDocument: (e) => openDocument(id, e),
     canOpenDocument: (e) => canOpenDocument(id, e),
     openMigration: migrations.open,
+    openDriveSettings: () => openSettings("drives"),
     sendItems: (ops, src, items, mode, dst, dest, onStarted) => {
       const to = profiles.find((x) => x.id === dst.profileId);
       const names = { connectionName: to?.name ?? "", rootName: conns.rootLabel(dst.profileId, dst.bucket), singleRoot: peekCaps(dst.profileId)?.roots === "single" };

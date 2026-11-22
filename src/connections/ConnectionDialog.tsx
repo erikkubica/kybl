@@ -51,6 +51,25 @@ const editable = (p: Profile) => p.provider === "kybl" || KINDS.some((k) => k.id
 
 export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl, kyblFirst, startKind, reconnect, ref }: ConnectionDialogProps) {
   const [pick, setPick] = useState<PickId | null>(initial ? pickOf(initial) : (startKind ?? null));
+  // the keyboard follows the step: the form's first field after a kind is chosen, the first kind
+  // again after "All kinds" or a discard (the dialog box can stay the same, so it won't refocus by itself)
+  const firstPick = useRef(true);
+  useEffect(() => {
+    if (firstPick.current) {
+      firstPick.current = false;
+      return;
+    }
+    const raf = requestAnimationFrame(() => {
+      const boxes = document.querySelectorAll<HTMLElement>(".modal-backdrop [role=\"dialog\"]");
+      const box = boxes[boxes.length - 1];
+      if (!box) return;
+      const target = pick
+        ? box.querySelector<HTMLElement>('.modal-body input:not(:disabled):not([type="hidden"]):not([type="checkbox"]), .modal-body select:not(:disabled), .modal-body textarea:not(:disabled), .modal-body button:not(:disabled)')
+        : box.querySelector<HTMLElement>(".kybl-offer, .kind-tile");
+      target?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [pick]);
   const choose = (id: PickId) => {
     dirty.current = false;
     if (id === "kybl") onKybl?.();

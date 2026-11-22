@@ -40,3 +40,10 @@
 .sync-error.mount-notice .btn {
   flex: none;
 }
+
+/* under the list of drives: how to add another */
+.mount-add-hint {
+  margin: 2px 4px 0;
+  color: var(--dim);
+  font-size: 12px;
+}

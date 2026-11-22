@@ -70,6 +70,8 @@ export type PaneEnv = {
   /** "Copy to another connection…": opens the job dialog for these items (src/jobs) */
   openMigration?: OpenMigration;
   /** copies or moves items into another place by the route the two need (shell/crossPane.ts) */
+  /** opens Settings on its Drives page (the mount dialog's "Open Settings") */
+  openDriveSettings?: () => void;
   sendItems?: (ops: FileOps, src: Place, items: Entry[], mode: "copy" | "move", dst: Place, dest: string, onStarted?: () => void) => void;
 };
 
