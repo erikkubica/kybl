@@ -20,18 +20,23 @@ import app.tauri.plugin.Plugin
 @InvokeArg
 class SignInArgs {
   lateinit var url: String
+  /** the scheme that ends the sign-in; "kybl" when not given (see the intent filters) */
+  var callbackScheme: String? = null
 }
 
 /**
- * "Connect Kybl Storage" on Android (see src/kybl_connect.rs). `signIn` opens the account site in a
- * Custom Tab and resolves with the `kybl://connect?code=…&state=…` redirect the page sends back;
- * MainActivity is singleTask, so that redirect closes the tab and lands here in onNewIntent.
- * Closing the tab without approving resolves with `{cancelled: true}`.
+ * Browser sign-in on Android: "Connect Kybl Storage" (src/kybl_connect.rs) and the cloud drives
+ * (src/oauth/mod.rs). `signIn` opens the page in a Custom Tab and resolves with the redirect to
+ * `callbackScheme` (`kybl://connect?code=…&state=…`, `kybl://oauth/onedrive?code=…`, or
+ * `kybl://oauth/done` after a sign-in that came back to Kybl's loopback address); MainActivity is
+ * singleTask, so that redirect closes the tab and lands here in onNewIntent. Closing the tab
+ * without approving resolves with `{cancelled: true}`.
  */
 @TauriPlugin
 class KyblConnectPlugin(private val activity: Activity) : Plugin(activity) {
   private val main = Handler(Looper.getMainLooper())
   private var pending: Invoke? = null
+  private var pendingScheme = "kybl"
   /** the tab took over the screen since signIn: coming back without a redirect means it was closed */
   private var away = false
 
@@ -41,6 +46,7 @@ class KyblConnectPlugin(private val activity: Activity) : Plugin(activity) {
     main.post {
       pending?.resolve(JSObject().put("cancelled", true))
       pending = invoke
+      pendingScheme = args.callbackScheme?.takeIf { it.isNotBlank() } ?: "kybl"
       away = false
       val uri = Uri.parse(args.url)
       try {
@@ -62,6 +68,18 @@ class KyblConnectPlugin(private val activity: Activity) : Plugin(activity) {
     main.post {
       pending?.resolve(JSObject().put("cancelled", true))
       pending = null
+      // the tab is still open (the sign-in ended elsewhere, or timed out): bring Kybl back, which
+      // closes the tab above it in this singleTask activity's task
+      if (away) {
+        away = false
+        try {
+          activity.startActivity(
+            Intent(activity, activity.javaClass).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+          )
+        } catch (e: Exception) {
+          // nothing to bring back
+        }
+      }
       invoke.resolve()
     }
   }
@@ -82,7 +100,7 @@ class KyblConnectPlugin(private val activity: Activity) : Plugin(activity) {
 
   override fun onNewIntent(intent: Intent) {
     val data = intent.data ?: return
-    if (data.scheme != "kybl") return
+    if (data.scheme != pendingScheme) return
     val inv = pending ?: return
     pending = null
     inv.resolve(JSObject().put("url", data.toString()))

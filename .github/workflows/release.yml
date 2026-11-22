@@ -21,6 +21,16 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Built-in sign-in for Google Drive, OneDrive and Dropbox (src-tauri/src/oauth). Compiled in with
+# option_env!; a secret that isn't set leaves the variable empty, and that provider then asks
+# for the user's own OAuth client ID. See src-tauri/src/oauth/README.md for the registrations.
+env:
+  KYBL_GOOGLE_CLIENT_ID: ${{ secrets.KYBL_GOOGLE_CLIENT_ID }}
+  KYBL_GOOGLE_CLIENT_SECRET: ${{ secrets.KYBL_GOOGLE_CLIENT_SECRET }}
+  KYBL_GOOGLE_IOS_CLIENT_ID: ${{ secrets.KYBL_GOOGLE_IOS_CLIENT_ID }}
+  KYBL_MS_CLIENT_ID: ${{ secrets.KYBL_MS_CLIENT_ID }}
+  KYBL_DROPBOX_APP_KEY: ${{ secrets.KYBL_DROPBOX_APP_KEY }}
+
 jobs:
   # One draft release up front: the build jobs run in parallel, and when each of them had to
   # create it, two could race and make two drafts for the same tag.

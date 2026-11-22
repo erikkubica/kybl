@@ -307,7 +307,7 @@ async fn browser_code(app: &AppHandle, flow: &Flow, redirect: &Redirect, _label:
         Redirect::Scheme { uri, scheme } => {
             let url = url_for(uri);
             let back = tokio::select! {
-                r = native.0.run_mobile_plugin_async::<Back>("signIn", json!({ "url": url, "callbackScheme": scheme })) => r.map_err(|e| format!("Couldn't open the browser: {e}"))?,
+                r = native.0.run_mobile_plugin_async::<Back>("signIn", json!({ "url": url, "callbackScheme": scheme })) => r.map_err(|e| format!("Couldn't open the browser: {}", e.to_string().replace(" Use a code instead.", "")))?,
                 _ = flow.cancel.notified() => { cancel_native().await; return Err(CANCELLED.into()) }
                 _ = tokio::time::sleep(TIMEOUT) => { cancel_native().await; return Err(NOTHING_BACK.into()) }
             };
@@ -329,7 +329,7 @@ async fn browser_code(app: &AppHandle, flow: &Flow, redirect: &Redirect, _label:
                 r = &mut tab => match r {
                     Ok(b) if b.cancelled || b.url.is_none() => Err(CANCELLED.to_string()),
                     Ok(_) => Err(NOTHING_BACK.to_string()),
-                    Err(e) => Err(format!("Couldn't open the browser: {e}")),
+                    Err(e) => Err(format!("Couldn't open the browser: {}", e.to_string().replace(" Use a code instead.", ""))),
                 },
                 _ = flow.cancel.notified() => Err(CANCELLED.into()),
                 _ = tokio::time::sleep(TIMEOUT) => Err(NOTHING_BACK.into()),
