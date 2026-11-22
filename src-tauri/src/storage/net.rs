@@ -572,3 +572,7 @@ mod tests {
         assert!(!precondition_holds(&Precondition::IfUnchanged { etag: None, size: 4, modified: Some(5) }, Some(&e)));
     }
 }
+
+#[cfg(test)]
+#[path = "net_it.rs"]
+mod it;

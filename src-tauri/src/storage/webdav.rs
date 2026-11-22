@@ -450,7 +450,9 @@ impl Storage for WebdavBackend {
     }
 
     async fn stat(&self, _root: &str, path: &str) -> SResult<Option<Entry>> {
-        key_parts(path)?;
+        if key_parts(path)?.is_empty() {
+            return Ok(self.stat_url("").await?.map(|_| Entry::default()));
+        }
         let found = self.stat_url(path).await?;
         // asked for a folder, found a file (or the other way round)
         Ok(found.filter(|e| e.is_dir() == (path.ends_with('/') || path.trim_matches('/').is_empty())))
@@ -549,26 +551,62 @@ impl Storage for WebdavBackend {
         if let Some(ms) = opts.modified {
             headers.insert("X-OC-Mtime", (ms / 1000).into());
         }
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(WriteOutcome::Cancelled);
+        }
         let (body, len) = source_stream(src).await?;
         let url = self.url(path).await?;
         let base = self.base().await?.clone();
-        let resp = match (Self::chunk_home(&base), len) {
-            (Some(uploads), Some(n)) if n > CHUNKED_ABOVE => self.put_chunked(uploads, url, body, n, headers, progress, cancel).await,
-            _ => self.put_once(url, body, len, headers, progress, cancel).await,
+        let chunked = Self::chunk_home(&base).filter(|_| len.is_some_and(|n| n > CHUNKED_ABOVE));
+        // Plain uploads go to a temporary name and are moved over the target once whole, so a
+        // cancelled or broken upload never leaves half a file (many servers write a PUT in
+        // place). A conditional write (an editor save) goes straight to the target, where the
+        // server can check If-Match; Nextcloud's chunked uploads come together at the end anyway.
+        let via_temp = chunked.is_none() && opts.precondition == Precondition::None;
+        let tmp = via_temp.then(|| temp_key(path));
+        let resp = match (chunked, &tmp) {
+            (Some(uploads), _) => self.put_chunked(uploads, url.clone(), body, len.unwrap_or(0), headers, progress, cancel).await,
+            (None, Some(t)) => self.put_once(self.url(t).await?, body, len, headers, progress, cancel).await,
+            (None, None) => self.put_once(url.clone(), body, len, headers, progress, cancel).await,
+        };
+        let drop_tmp = || async {
+            if let Some(t) = &tmp
+                && let Ok(u) = self.url(t).await
+            {
+                let _ = self.req(Method::DELETE, u).send().await;
+            }
         };
         let resp = match resp {
             Ok(r) => r,
-            Err(e) if e.is_cancelled() => return Ok(WriteOutcome::Cancelled),
-            Err(e) => return Err(e),
+            Err(e) => {
+                drop_tmp().await;
+                return if e.is_cancelled() { Ok(WriteOutcome::Cancelled) } else { Err(e) };
+            }
         };
         self.pages.forget(path);
         match resp.status() {
             s if s.is_success() => {
+                if let Some(t) = &tmp {
+                    let moved = self
+                        .req(Method::from_bytes(b"MOVE").expect("method"), self.url(t).await?)
+                        .header("Destination", url.to_string())
+                        .header("Overwrite", "T")
+                        .send()
+                        .await
+                        .map_err(http_error)?;
+                    if !moved.status().is_success() {
+                        drop_tmp().await;
+                        return Err(status_error(moved, "upload").await);
+                    }
+                }
                 let entry = self.stat_url(path).await?.unwrap_or_else(|| Entry { key: path.to_string(), size: len.unwrap_or(0) as i64, ..Default::default() });
                 Ok(WriteOutcome::Done(entry))
             }
             StatusCode::PRECONDITION_FAILED => Ok(WriteOutcome::Conflict(self.stat_url(path).await?)),
-            _ => Err(status_error(resp, "upload").await),
+            _ => {
+                drop_tmp().await;
+                Err(status_error(resp, "upload").await)
+            }
         }
     }
 

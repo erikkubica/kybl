@@ -57,8 +57,8 @@ pub fn sftp_caps() -> Capabilities {
     }
 }
 
-struct Conn {
-    handle: client::Handle<HostCheck>,
+pub(super) struct Conn {
+    pub(super) handle: client::Handle<HostCheck>,
     sftp: SftpSession,
 }
 
@@ -81,7 +81,7 @@ pub struct SftpBackend {
     base: OnceCell<String>,
     name: String,
     caps: Capabilities,
-    conn: tokio::sync::Mutex<Option<Arc<Conn>>>,
+    pub(super) conn: tokio::sync::Mutex<Option<Arc<Conn>>>,
     pages: PageCache,
     known_dirs: Mutex<HashSet<String>>,
 }
@@ -708,14 +708,18 @@ impl Storage for SftpBackend {
         Ok(())
     }
 
+    /// From statvfs, where the server has it (OpenSSH does); nothing otherwise.
     async fn quota(&self) -> SResult<Option<Quota>> {
         let base = self.base().await?;
-        let st = self
+        let Ok(st) = self
             .with(move |c| {
                 let b = base.clone();
                 Box::pin(async move { c.sftp.fs_info(b).await })
             })
-            .await?;
+            .await
+        else {
+            return Ok(None);
+        };
         Ok(st.map(|s| {
             let unit = if s.fragment_size > 0 { s.fragment_size } else { s.block_size };
             Quota { used: s.blocks.saturating_sub(s.blocks_free) * unit, total: Some(s.blocks * unit) }

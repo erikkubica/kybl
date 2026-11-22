@@ -450,7 +450,7 @@ impl Storage for FtpBackend {
         let mut lease = self.lease().await?;
         let total = match tokio::time::timeout(CMD_TIMEOUT, lease.ftp().size(&full)).await {
             Ok(Ok(n)) => Some(n as u64),
-            Ok(Err(FtpError::UnexpectedResponse(r))) if r.status.code() == 550 => {
+            Ok(Err(FtpError::UnexpectedResponse(r))) if matches!(r.status.code(), 550 | 551) => {
                 return Err(StorageError::not_found().with_detail(r.to_string()));
             }
             _ => None,
@@ -676,11 +676,11 @@ fn ftp_error(e: FtpError, host: &str) -> StorageError {
                 530 | 430 => (ErrKind::NeedsAuth, "Wrong user name or password."),
                 421 => (ErrKind::RateLimited, "The server closed the connection. It may allow only a few connections at a time; try again in a moment."),
                 425 | 426 => (ErrKind::Network, "Couldn't open a data connection to the server. A firewall may be blocking passive mode."),
-                450 | 550 if low.contains("permission") || low.contains("denied") || low.contains("not allowed") => {
+                450 | 550 | 551 if low.contains("permission") || low.contains("denied") || low.contains("not allowed") => {
                     (ErrKind::PermissionDenied, "The server didn't allow that. Check the account's permissions.")
                 }
-                450 | 550 if low.contains("exist") && !low.contains("not exist") && !low.contains("no such") => (ErrKind::Exists, "Something with this name is already there."),
-                450 | 550 => (ErrKind::NotFound, "This file or folder isn't there any more. It may have been moved or deleted."),
+                450 | 550 | 551 if low.contains("exist") && !low.contains("not exist") && !low.contains("no such") => (ErrKind::Exists, "Something with this name is already there."),
+                450 | 550 | 551 => (ErrKind::NotFound, "This file or folder isn't there any more. It may have been moved or deleted."),
                 452 | 552 => (ErrKind::Other, "The server is out of space, or the account is over its quota."),
                 553 => (ErrKind::PermissionDenied, "The server doesn't allow this file name."),
                 522 | 534 => (ErrKind::PermissionDenied, "The server requires encryption. Turn on encryption in this connection's settings."),
