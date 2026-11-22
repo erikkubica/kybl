@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
-import { classify, formatDateFull, isWebImage, entrySize, entryKind } from "../format";
+import { classify, formatBytes, formatDateFull, isWebImage, entrySize, entryKind } from "../format";
 import { FileIcon } from "../components/FileIcon";
 import { ErrorText } from "../components/ErrorText";
 import { MAX_PDF_BYTES, PdfView } from "../components/PdfView";
@@ -212,7 +212,15 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
     );
   if (thumbable && thumb) return <img className="ql-image thumb" src={thumb} alt={entry.name} />;
   if (((thumbable && thumb === undefined) || (media && cls === "image" && !url)) && placeholder)
-    return <img className="ql-image ph" src={placeholder} alt="" />;
+    return (
+      <>
+        <img className="ql-image ph" src={placeholder} alt="" />
+        {/* the blur alone reads as a bad photo: say the real one is on its way */}
+        <span className="load-badge" role="status">
+          <span className="spinner" /> {thumbable ? "Loading preview…" : `Loading ${formatBytes(entry.size)}…`}
+        </span>
+      </>
+    );
   if (thumbable && thumb === undefined)
     return (
       <div className="ql-none">

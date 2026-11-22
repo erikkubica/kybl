@@ -422,7 +422,15 @@ function FileDetails({
             )}
           </>
         )}
-        {imageLoading && placeholder && <img className="ph" src={placeholder} alt="" />}
+        {imageLoading && placeholder && (
+          <>
+            <img className="ph" src={placeholder} alt="" />
+            {/* the blur alone reads as a bad photo: say the real one is on its way */}
+            <span className="load-badge" role="status">
+              <span className="spinner" /> {useThumb ? "Loading preview…" : `Loading ${formatBytes(entry.size)}…`}
+            </span>
+          </>
+        )}
         {!gone && !isFolder && !error && useThumb && thumb === undefined && !placeholder && (
           <div className="preview-note">
             <span className="spinner" />
