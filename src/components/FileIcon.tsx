@@ -68,32 +68,69 @@ function DocArt({ ext, children }: { ext: string; children: ReactNode }) {
 }
 
 /** Shared "nothing here" block for the list and grid views. */
-export function EmptyState({ searchMode, action }: { searchMode: boolean; action?: ReactNode }) {
+export function EmptyState({
+  searchMode,
+  action,
+  onUpload,
+  onNewFolder,
+}: {
+  searchMode: boolean;
+  /** a custom button row; `onUpload` / `onNewFolder` draw the standard ones instead */
+  action?: ReactNode;
+  onUpload?: () => void;
+  onNewFolder?: () => void;
+}) {
+  const standard = !!(onUpload || onNewFolder);
   return (
     <div className="empty">
       <div className="empty-art">
         <Icon name={searchMode ? "search" : "folder"} size={26} />
       </div>
       <h3>{searchMode ? "No matches" : "This folder is empty"}</h3>
-      <p>{searchMode ? "Nothing in this folder matches your search. Try a shorter or different term." : "Drop files here to upload them, or use the button below."}</p>
-      {!searchMode && action}
+      <p>
+        {searchMode
+          ? "Nothing in this folder matches your search. Try a shorter or different term."
+          : standard
+            ? "Drop files here to upload them, or start with one of these."
+            : "Drop files here to upload them, or use the button below."}
+      </p>
+      {!searchMode &&
+        (standard ? (
+          <div className="empty-actions">
+            {onUpload && (
+              <button className="btn btn-sm btn-primary" onClick={onUpload}>
+                <Icon name="upload" size={14} /> Upload files
+              </button>
+            )}
+            {onNewFolder && (
+              <button className="btn btn-sm" onClick={onNewFolder}>
+                <Icon name="folder-plus" size={14} /> New folder
+              </button>
+            )}
+          </div>
+        ) : (
+          action
+        ))}
     </div>
   );
 }
 
 const WIDTHS = [46, 62, 38, 54, 70, 42, 58, 34, 50, 66];
 
+const CELL_WIDTHS = [44, 96, 64, 60, 90];
+
+/** Placeholder rows while a folder loads; `columns` is how many columns follow the name. */
 export function SkeletonRows({ columns = 3 }: { columns?: number }) {
   return (
-    <div aria-hidden="true">
+    <div aria-hidden="true" className="skel-rows">
       {WIDTHS.map((w, i) => (
         <div key={i} className="skel-row" style={{ opacity: 1 - i * 0.085 }}>
           <div className="skel-name">
             <div className="skel" style={{ width: `${w}%` }} />
           </div>
-          {columns >= 1 && <div className="skel" style={{ width: 44, justifySelf: "end" }} />}
-          {columns >= 2 && <div className="skel" style={{ width: 96 }} />}
-          {columns >= 3 && <div className="skel" style={{ width: 64 }} />}
+          {Array.from({ length: columns }, (_, c) => (
+            <div key={c} className="skel" style={{ width: CELL_WIDTHS[c % CELL_WIDTHS.length], justifySelf: c === 0 ? "end" : undefined, maxWidth: "100%" }} />
+          ))}
         </div>
       ))}
     </div>

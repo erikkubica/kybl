@@ -4051,3 +4051,164 @@ body.dragging-items * {
 .modal:focus {
   outline: none;
 }
+
+/* ---------------------------------------------------------------- file list: headers, cursor, marquee */
+/* the header cell is the grid item; the sort button inside fills it */
+.th-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  justify-content: inherit;
+  text-align: inherit;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.th-btn:focus-visible {
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+.th-btn.static {
+  display: block;
+  line-height: 30px;
+}
+.compact .th-btn.static {
+  line-height: 26px;
+}
+.col-grip:focus-visible {
+  outline: none;
+}
+.col-grip:focus-visible::after {
+  opacity: 1;
+  width: 3px;
+  left: 4.5px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.c-sc,
+.c-etag {
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.c-etag {
+  font-size: 11px;
+}
+.row .c-sc.faint,
+.row .c-etag.faint {
+  color: var(--faint);
+}
+
+/* the list itself takes focus; the row with the keyboard cursor gets the ring */
+.table:focus-visible,
+.grid-scroll:focus-visible {
+  outline: none;
+}
+.table.kbd:focus .row.active,
+.table:focus-visible .row.active {
+  box-shadow: inset 0 0 0 2px var(--accent-ring);
+}
+.grid-scroll.kbd:focus .card.active .card-thumb,
+.grid-scroll:focus-visible .card.active .card-thumb {
+  box-shadow: 0 0 0 2px var(--accent-ring);
+}
+/* focused with nothing under the cursor: ring the whole list so it's clear where keys go */
+.table:focus-visible:not(:has(.row.active)) .table-body,
+.grid-scroll:focus-visible:not(:has(.card.active)) {
+  box-shadow: inset 0 0 0 2px var(--accent-ring);
+  border-radius: 4px;
+}
+
+/* rows of the previous place while the next one loads: visible, but not something to act on */
+.table.stale .table-body > .row,
+.grid-scroll.stale .card {
+  opacity: 0.45;
+  pointer-events: none;
+  transition: opacity 0.15s 0.12s;
+}
+
+.table-body,
+.grid-scroll {
+  position: relative;
+}
+.marquee {
+  position: absolute;
+  z-index: 3;
+  border: 1px solid var(--accent-solid);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-solid) 14%, transparent);
+  pointer-events: none;
+}
+body.marquee-selecting,
+body.marquee-selecting * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+/* folder sizes in the Size column */
+.fsize {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+.spinner.sm {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+}
+.fsize-calc {
+  display: none;
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--hover);
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+.fsize-calc:hover {
+  background: var(--accent-soft);
+}
+.row:hover .fsize-calc,
+.row.selected .fsize-calc,
+.row.active .fsize-calc {
+  display: inline-block;
+}
+.row:hover .fsize-dash,
+.row.selected .fsize-dash,
+.row.active .fsize-dash {
+  display: none;
+}
+
+/* empty folder: the two ways to fill it */
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* grid placeholders while a folder loads: a tile and a name line each */
+.skel-grid .card {
+  gap: 8px;
+}
+.skel-grid .skel-thumb {
+  width: 72%;
+  height: auto;
+  aspect-ratio: 5 / 4;
+  border-radius: 14px;
+}
+.skel-grid .skel-line {
+  width: 58%;
+  height: 9px;
+}

@@ -1,25 +1,42 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useMeasured, useWindowed } from "../useWindowed";
 import { formatBytes } from "../format";
 import { EmptyState, FileIcon } from "./FileIcon";
 import { cachedThumb, canListThumb, loadThumb } from "../thumbs";
+import { useListNav, useMarquee, type Box, type FolderSizeInfo, type SelectKeys } from "./listNav";
 import type { Entry } from "../types";
+
+/** Tile width when the app passes none (settings.tileSize defaults to the same). */
+const DEFAULT_TILE = 160;
 
 const Card = memo(function Card({
   entry,
   selected,
+  active,
+  id,
+  index,
+  count,
   profileId,
   bucket,
   label,
+  size,
   onPress,
   onOpen,
   onContext,
 }: {
   entry: Entry;
   selected: boolean;
+  /** has the keyboard cursor */
+  active: boolean;
+  id: string;
+  index: number;
+  /** total items, for screen readers ("12 of 340") */
+  count: number;
   profileId: string;
   bucket: string;
   label: string;
+  /** folder size, once worked out */
+  size?: FolderSizeInfo;
   onPress: (e: Entry, ev: React.MouseEvent) => void;
   onOpen: (e: Entry) => void;
   onContext: (ev: React.MouseEvent, e: Entry) => void;
@@ -59,14 +76,22 @@ const Card = memo(function Card({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eligible, profileId, bucket, entry.key, entry.etag, entry.size]);
 
-
+  const folder = entry.kind === "folder";
+  const meta = folder ? (size && !size.running ? formatBytes(size.bytes) : "") : formatBytes(entry.size);
   return (
     <div
       ref={ref}
+      id={id}
       data-key={entry.key}
-      data-drop={entry.kind === "folder" ? entry.key : undefined}
-      data-spring={entry.kind === "folder" ? "" : undefined}
-      className={`card ${selected ? "selected" : ""}`}
+      data-index={index}
+      data-drop={folder ? entry.key : undefined}
+      data-spring={folder ? "" : undefined}
+      className={`card ${selected ? "selected" : ""} ${active ? "active" : ""}`}
+      role="option"
+      aria-selected={selected}
+      aria-posinset={index + 1}
+      aria-setsize={count}
+      aria-label={folder ? `${label}, folder` : `${label}, ${meta}`}
       onMouseDown={(ev) => onPress(entry, ev)}
       onDoubleClick={() => onOpen(entry)}
       onContextMenu={(ev) => {
@@ -75,7 +100,7 @@ const Card = memo(function Card({
       }}
       title={entry.key}
     >
-      <div className={`card-thumb ${thumb ? "has-img" : ""} ${entry.kind === "folder" ? "is-folder" : ""}`}>
+      <div className={`card-thumb ${thumb ? "has-img" : ""} ${folder ? "is-folder" : ""}`}>
         {thumb ? (
           <img src={thumb} alt="" draggable={false} />
         ) : (
@@ -86,7 +111,7 @@ const Card = memo(function Card({
       </div>
       <div className="card-text">
         <div className="card-name">{label}</div>
-        {entry.kind === "file" && <div className="card-meta">{formatBytes(entry.size)}</div>}
+        {meta && <div className="card-meta">{meta}</div>}
       </div>
     </div>
   );
@@ -95,41 +120,64 @@ const Card = memo(function Card({
 export function GridView({
   entries,
   selected,
-  loading,
+  loading = false,
+  stale = false,
   hasMore,
   searchMode,
   prefix,
   tile,
+  tileSize,
   profileId,
   bucket,
   emptyAction,
+  activeKey,
+  autoFocus,
+  folderSize,
   onPress,
   onOpen,
   onContext,
+  onBackgroundContextMenu,
   onLoadMore,
   onClearSelection,
   onMove,
+  onSelectKeys,
+  onUpload,
+  onNewFolder,
 }: {
   entries: Entry[];
   selected: Set<string>;
-  loading: boolean;
+  loading?: boolean;
+  /** the tiles belong to the previous place while the new one loads: dimmed and inert */
+  stale?: boolean;
   hasMore: boolean;
   searchMode: boolean;
   prefix: string;
-  tile: number;
+  /** @deprecated use `tileSize` */
+  tile?: number;
+  /** tile width in px (settings.tileSize, 96..320) */
+  tileSize?: number;
   profileId: string;
   bucket: string;
   emptyAction?: ReactNode;
+  activeKey?: string | null;
+  autoFocus?: boolean;
+  folderSize?(key: string): FolderSizeInfo | undefined;
   onPress: (e: Entry, ev: React.MouseEvent) => void;
   onOpen: (e: Entry) => void;
   onContext: (ev: React.MouseEvent, e: Entry) => void;
+  onBackgroundContextMenu?(ev: React.MouseEvent): void;
   onLoadMore: () => void;
   onClearSelection: () => void;
   onMove: (delta: number, shift: boolean) => void;
+  onSelectKeys?: SelectKeys;
+  onUpload?(): void;
+  onNewFolder?(): void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const grid = useRef<HTMLDivElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);
+  const listId = useId();
+  const size = Math.round(Math.min(320, Math.max(96, tileSize ?? tile ?? DEFAULT_TILE)));
 
   useEffect(() => {
     const el = sentinel.current;
@@ -142,74 +190,131 @@ export function GridView({
     return () => io.disconnect();
   }, [hasMore, onLoadMore, entries.length]);
 
-  const columns = () => {
-    const g = grid.current;
-    if (!g) return 1;
-    return getComputedStyle(g).gridTemplateColumns.split(" ").length || 1;
-  };
-
-  // Only the rows of tiles near the viewport are rendered. Column count, row gap and the grid's
-  // top padding come from the layout, so they follow the window size, tile size and density.
-  const [layout, setLayout] = useState({ cols: 1, gap: 6, top: 12 });
+  // Only the rows of tiles near the viewport are rendered. Column count, gaps and the grid's
+  // padding come from the layout, so they follow the window size, tile size and density.
+  const [layout, setLayout] = useState({ cols: 1, gap: 6, colGap: 6, top: 12, left: 12 });
   useLayoutEffect(() => {
     const g = grid.current;
     if (!g) return;
     const read = () => {
       const cs = getComputedStyle(g);
-      const next = { cols: cs.gridTemplateColumns.split(" ").length || 1, gap: parseFloat(cs.rowGap) || 0, top: parseFloat(cs.paddingTop) || 0 };
-      setLayout((l) => (l.cols === next.cols && l.gap === next.gap && l.top === next.top ? l : next));
+      const next = {
+        cols: cs.gridTemplateColumns.split(" ").length || 1,
+        gap: parseFloat(cs.rowGap) || 0,
+        colGap: parseFloat(cs.columnGap) || 0,
+        top: parseFloat(cs.paddingTop) || 0,
+        left: parseFloat(cs.paddingLeft) || 0,
+      };
+      setLayout((l) => (l.cols === next.cols && l.gap === next.gap && l.colGap === next.colGap && l.top === next.top && l.left === next.left ? l : next));
     };
     read();
     const ro = new ResizeObserver(read);
     ro.observe(g);
     return () => ro.disconnect();
-  }, [tile]);
-  const cardH = useMeasured(grid, ".card", tile + 40);
-  const win = useWindowed({ scroller, count: entries.length, columns: layout.cols, rowHeight: cardH + layout.gap, offset: layout.top });
+  }, [size, entries.length === 0]);
+  const cardH = useMeasured(grid, ".card", size + 40);
+  const rowH = cardH + layout.gap;
+  const win = useWindowed({ scroller, count: entries.length, columns: layout.cols, rowHeight: rowH, offset: layout.top });
+
+  const itemEl = useCallback((i: number) => scroller.current?.querySelector(`[data-index="${i}"]`) ?? null, []);
+  const nav = useListNav({
+    entries,
+    selected,
+    activeKey,
+    columns: () => layout.cols,
+    pageItems: () => Math.max(1, Math.floor((scroller.current?.clientHeight ?? 400) / rowH)) * layout.cols,
+    container: scroller,
+    itemEl,
+    autoFocus,
+    focusKey: `${prefix}|${searchMode}`,
+    onMove,
+    onSelectKeys,
+    onContext,
+    onBackgroundContextMenu,
+  });
+
+  // tiles are `size` wide on a fixed pitch, so the rectangle maps straight to rows and columns
+  const hitTest = useCallback(
+    (b: Box) => {
+      const pitchX = size + layout.colGap;
+      const out: number[] = [];
+      const r0 = Math.max(0, Math.floor((b.y0 - layout.top) / rowH));
+      const r1 = Math.floor((b.y1 - layout.top) / rowH);
+      for (let r = r0; r <= r1; r++) {
+        const top = layout.top + r * rowH;
+        if (b.y1 < top || b.y0 > top + cardH) continue;
+        for (let c = 0; c < layout.cols; c++) {
+          const left = layout.left + c * pitchX;
+          if (b.x1 < left || b.x0 > left + size) continue;
+          const i = r * layout.cols + c;
+          if (i < entries.length) out.push(i);
+        }
+      }
+      return out;
+    },
+    [size, layout, rowH, cardH, entries.length],
+  );
+  const marquee = useMarquee({ scroller, entries, selected, hitTest, onSelectKeys, onMove, onClearSelection });
 
   const { reveal } = win;
   useEffect(() => {
-    const [first] = selected;
-    if (first === undefined) return;
-    reveal(entries.findIndex((e) => e.key === first));
+    if (marquee.selecting.current || nav.activeIndex < 0) return;
+    reveal(nav.activeIndex);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, reveal]);
+  }, [nav.active, selected, reveal]);
+
+  // memoised cards need a stable handler; the latest props are read through a ref
+  const pressRef = useRef({ notePress: nav.notePress, onPress });
+  pressRef.current = { notePress: nav.notePress, onPress };
+  const press = useCallback((e: Entry, ev: React.MouseEvent) => {
+    pressRef.current.notePress(e);
+    pressRef.current.onPress(e, ev);
+  }, []);
+
+  const columnsCss = `repeat(auto-fill, min(${size}px, 100%))`;
+  const empty = entries.length === 0;
 
   return (
     <div
-      className="grid-scroll"
+      className={`grid-scroll ${stale ? "stale" : ""} ${nav.kbd ? "kbd" : ""}`}
       ref={scroller}
       tabIndex={0}
-      onKeyDown={(ev) => {
-        const cols = columns();
-        const map: Record<string, number> = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: cols, ArrowUp: -cols };
-        if (ev.key in map) {
-          ev.preventDefault();
-          onMove(map[ev.key], ev.shiftKey);
-        }
-      }}
+      data-list-focus=""
+      role={empty ? undefined : "listbox"}
+      aria-label={searchMode ? "Search results" : "Files"}
+      aria-multiselectable={empty ? undefined : true}
+      aria-activedescendant={nav.activeIndex >= 0 ? `${listId}-o${nav.activeIndex}` : undefined}
+      aria-busy={loading || stale || undefined}
+      style={{ "--tile": `${size}px` } as React.CSSProperties}
+      onKeyDown={nav.onKeyDown}
+      onContextMenu={(ev) => nav.onContextMenu(ev, ".card")}
       onMouseDown={(ev) => {
         const t = ev.target as HTMLElement;
-        if (t === scroller.current || t === grid.current) onClearSelection();
+        if (t.closest(".card, button, a, .empty")) return;
+        nav.setKbd(false);
+        marquee.begin(ev);
       }}
     >
       {win.padTop > 0 && <div style={{ height: win.padTop }} aria-hidden="true" />}
-      <div
-        className="grid"
-        ref={grid}
-        style={{ gridTemplateColumns: `repeat(auto-fill, min(${tile}px, 100%))` }}
-      >
-        {entries.slice(win.start, win.end).map((e) => {
+      <div className="grid" ref={grid} role="presentation" style={{ gridTemplateColumns: columnsCss }}>
+        {entries.slice(win.start, win.end).map((e, n) => {
+          const i = win.start + n;
           const rel = e.key.slice(prefix.length);
+          const fs = e.kind === "folder" ? folderSize?.(e.key) : undefined;
           return (
             <Card
               key={e.key}
               entry={e}
+              id={`${listId}-o${i}`}
+              index={i}
+              count={entries.length}
               selected={selected.has(e.key)}
+              active={i === nav.activeIndex}
               profileId={profileId}
               bucket={bucket}
               label={searchMode ? rel : e.name}
-              onPress={onPress}
+              size={fs}
+              onPress={press}
               onOpen={onOpen}
               onContext={onContext}
             />
@@ -217,22 +322,30 @@ export function GridView({
         })}
       </div>
       {win.padBottom > 0 && <div style={{ height: win.padBottom }} aria-hidden="true" />}
-      {entries.length === 0 && !loading && <EmptyState searchMode={searchMode} action={emptyAction} />}
-      {loading && entries.length === 0 && (
-        <div className="grid" style={{ gridTemplateColumns: `repeat(auto-fill, min(${tile}px, 100%))` }} aria-hidden="true">
+      {empty && !loading && <EmptyState searchMode={searchMode} action={emptyAction} onUpload={onUpload} onNewFolder={onNewFolder} />}
+      {loading && empty && (
+        <div className="grid skel-grid" style={{ gridTemplateColumns: columnsCss }} aria-hidden="true">
           {Array.from({ length: 12 }, (_, i) => (
-            <div key={i} className="card">
-              <div className="skel skel-card" style={{ alignSelf: "stretch" }} />
+            <div key={i} className="card" style={{ opacity: 1 - i * 0.06 }}>
+              <div className="skel skel-thumb" />
+              <div className="skel skel-line" />
             </div>
           ))}
         </div>
       )}
-      {loading && entries.length > 0 && (
-        <div className="loading-row">
+      {loading && !empty && !stale && (
+        <div className="loading-row" role="status">
           <span className="spinner" /> Loading more…
         </div>
       )}
       {hasMore && <div ref={sentinel} className="sentinel" />}
+      {marquee.box && (
+        <div
+          className="marquee"
+          aria-hidden="true"
+          style={{ left: marquee.box.x0, top: marquee.box.y0, width: marquee.box.x1 - marquee.box.x0, height: marquee.box.y1 - marquee.box.y0 }}
+        />
+      )}
     </div>
   );
 }
