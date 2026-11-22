@@ -1,0 +1,151 @@
+/* WP-E1: two-way sync — the third direction card, and the conflicts and held-deletions panels
+   in the sync section. Base sync styles live in styles.css. */
+
+.dir-grid.three {
+  grid-template-columns: repeat(3, 1fr);
+}
+@media (max-width: 620px) {
+  .dir-grid.three {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sync-dir.twoway {
+  background: color-mix(in srgb, var(--c-video) 13%, transparent);
+  color: var(--c-video);
+}
+
+.sync-attn {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--hover);
+  font-size: 12px;
+}
+.sync-attn.warn {
+  border-color: color-mix(in srgb, var(--warn) 35%, var(--border));
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+}
+.sync-attn-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.sync-attn-head > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--dim);
+}
+.sync-attn.warn .sync-attn-head > svg {
+  color: var(--warn);
+}
+.sync-attn-head > span {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+.sync-attn-head b {
+  font-weight: 600;
+}
+.sync-attn-head small {
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.sync-attn-head .link-btn {
+  flex: none;
+  font-size: 12px;
+}
+.sync-attn-list {
+  display: grid;
+  gap: 4px;
+}
+.sync-attn-list ul,
+.sync-conflicts {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sync-attn-list ul {
+  max-height: 180px;
+  overflow: auto;
+}
+.sync-attn-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font: 12px var(--mono);
+}
+.sync-attn-list li svg {
+  flex: none;
+  color: var(--faint);
+}
+.sync-attn-list li span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-attn-list li em {
+  flex: none;
+  color: var(--faint);
+  font: 11px var(--font);
+  font-style: normal;
+}
+.sync-attn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sync-conflicts li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.sync-conflicts li:first-child {
+  border-top: 0;
+}
+.sync-conflict-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.sync-conflict-name svg {
+  flex: none;
+  color: var(--faint);
+}
+.sync-conflict-name b {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-conflict-name .dim {
+  flex: none;
+  color: var(--faint);
+}
+.sync-conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.sync-attn .dim {
+  color: var(--faint);
+}
+.sync-pill.waiting {
+  background: color-mix(in srgb, var(--warn) 15%, transparent);
+  color: var(--warn);
+}

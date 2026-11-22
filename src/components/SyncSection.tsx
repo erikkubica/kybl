@@ -1,22 +1,35 @@
 import { useEffect, useRef, useState } from "react";
 import { ErrorText } from "./ErrorText";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { errMessage } from "../api";
+import { api, errMessage } from "../api";
 import { formatBytes, formatSpeed } from "../format";
 import { etaLabel } from "../useJobs";
 import { Icon } from "../Icons";
-import { ago, prettyPath, syncApi, type SyncMapping, type SyncStatus, useSync } from "../sync";
+import { ago, prettyPath, syncApi, type PendingDelete, type SyncConflict, type SyncMapping, type SyncStatus, useSync } from "../sync";
 import type { Profile } from "../types";
 import { SyncDialog } from "./SyncDialog";
+import "./sync.css";
+
+const DIR_ICON = { upload: "upload", download: "download", twoway: "sync" } as const;
+const DIR_TITLE = { upload: "Uploads to the remote folder", download: "Mirrors the remote folder", twoway: "Two-way: changes go both ways" };
+const DIR_ARROW = { upload: " → ", download: " ← ", twoway: " ⇄ " };
+const DIR_VERB = { upload: "Uploading", download: "Downloading", twoway: "Syncing" };
 
 function baseName(p: string) {
   const parts = p.split("/").filter(Boolean);
   return parts[parts.length - 1] ?? p;
 }
 
+/** The only problem is deletions waiting for a confirmation: the panel below says it better. */
+function heldOnly(st: SyncStatus): boolean {
+  return (st.pendingDeletes ?? 0) > 0 && !!st.error && !st.error.includes("\n") && st.error.endsWith("confirm the deletions.");
+}
+
 function StatusPill({ st, paused }: { st: SyncStatus | undefined; paused: boolean }) {
-  const state = paused ? "paused" : (st?.state ?? "idle");
-  const label = { idle: "Up to date", scanning: "Checking…", syncing: "Syncing", error: "Problem", paused: "Paused" }[state];
+  const raw = paused ? "paused" : (st?.state ?? "idle");
+  // held deletions are a question for the user, not a failure
+  const state = (raw === "error" || raw === "idle") && (st?.pendingDeletes ?? 0) > 0 ? "waiting" : raw;
+  const label = { idle: "Up to date", scanning: "Checking…", syncing: "Syncing", error: "Problem", paused: "Paused", waiting: "Waiting for you" }[state];
   return (
     <span className={`sync-pill ${state}`}>
       {state === "syncing" || state === "scanning" ? <span className="spinner" /> : <i />}
@@ -46,7 +59,7 @@ function StatusLine({ m, st, paused }: { m: SyncMapping; st: SyncStatus | undefi
           <i style={{ width: `${pct}%` }} />
         </div>
         <span>
-          {m.direction === "upload" ? "Uploading" : "Downloading"} {st.done.toLocaleString()} of {st.total.toLocaleString()} files
+          {DIR_VERB[m.direction]} {st.done.toLocaleString()} of {st.total.toLocaleString()} files
           {st.totalBytes > 0 && ` · ${formatBytes(st.bytes)} of ${formatBytes(st.totalBytes)}`}
           {rate > 0 && ` · ${formatSpeed(rate)}`}
           {eta && ` · ${eta}`}
@@ -68,13 +81,142 @@ function StatusLine({ m, st, paused }: { m: SyncMapping; st: SyncStatus | undefi
   ].filter(Boolean);
   return (
     <>
-      {st?.state === "error" && st.error && !paused && (
+      {st?.state === "error" && st.error && !paused && !heldOnly(st) && (
         <p className="sync-error selectable">
           <Icon name="alert" size={13} /> <ErrorText message={st.error} />
         </p>
       )}
       <p className="sync-facts">{facts.join(" · ")}</p>
     </>
+  );
+}
+
+/** Deletions held by the guard: what would go, with "Delete them" and "Keep the files". */
+function PendingPanel({ m, count, run }: { m: SyncMapping; count: number; run: (fn: () => Promise<unknown>) => Promise<void> }) {
+  const [items, setItems] = useState<PendingDelete[] | null>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    syncApi
+      .pending(m.id)
+      .then((p) => live && setItems(p))
+      .catch(() => live && setItems([]));
+    return () => {
+      live = false;
+    };
+  }, [open, m.id, count]);
+  const here = items?.filter((i) => i.side === "local").length ?? 0;
+  const there = (items?.length ?? 0) - here;
+  return (
+    <div className="sync-attn warn" role="group" aria-label="Deletions waiting">
+      <div className="sync-attn-head">
+        <Icon name="trash" size={14} />
+        <span>
+          <b>
+            {count.toLocaleString()} {count === 1 ? "deletion is" : "deletions are"} waiting for you
+          </b>
+          <small>Nothing was deleted yet. Check the list, then delete them or keep the files.</small>
+        </span>
+        <button className="link-btn" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+          {open ? "Hide files" : "Show files"}
+        </button>
+      </div>
+      {open && (
+        <div className="sync-attn-list selectable">
+          {items === null ? (
+            <span className="dim">Loading…</span>
+          ) : (
+            <>
+              {items.length > 0 && (
+                <span className="dim">
+                  {there > 0 && `${there.toLocaleString()} would be deleted there`}
+                  {there > 0 && here > 0 && " · "}
+                  {here > 0 && `${here.toLocaleString()} would go to the Trash here`}
+                </span>
+              )}
+              <ul>
+                {items.slice(0, 200).map((i) => (
+                  <li key={`${i.side}:${i.path}`} title={i.path}>
+                    <Icon name="file" size={12} />
+                    <span>{i.path}</span>
+                    <em>{i.side === "local" ? "here" : "there"}</em>
+                  </li>
+                ))}
+              </ul>
+              {items.length > 200 && <span className="dim">and {(items.length - 200).toLocaleString()} more</span>}
+            </>
+          )}
+        </div>
+      )}
+      <div className="sync-attn-actions">
+        <button className="btn btn-sm btn-danger" onClick={() => run(() => syncApi.confirmDeletes(m.id))}>
+          Delete them
+        </button>
+        <button className="btn btn-sm" onClick={() => run(() => syncApi.restoreDeletes(m.id))}>
+          Keep the files
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Conflict copies: open both, or keep one. */
+function ConflictsPanel({ m, count, run }: { m: SyncMapping; count: number; run: (fn: () => Promise<unknown>) => Promise<void> }) {
+  const [items, setItems] = useState<SyncConflict[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    syncApi
+      .conflicts(m.id)
+      .then((c) => live && setItems(c))
+      .catch(() => live && setItems([]));
+    return () => {
+      live = false;
+    };
+  }, [m.id, count]);
+  if (!items || items.length === 0) return null;
+  const open = (c: SyncConflict) => {
+    api.openLocal(c.localPath).catch(() => {});
+    api.openLocal(c.copyLocalPath).catch(() => {});
+  };
+  return (
+    <div className="sync-attn" role="group" aria-label="Conflicts">
+      <div className="sync-attn-head">
+        <Icon name="copy" size={14} />
+        <span>
+          <b>
+            {items.length} {items.length === 1 ? "file was" : "files were"} changed on both sides
+          </b>
+          <small>Both versions are kept: the other one under the file’s name, yours as a copy next to it.</small>
+        </span>
+      </div>
+      <ul className="sync-conflicts">
+        {items.map((c) => (
+          <li key={c.copy}>
+            <div className="sync-conflict-name selectable" title={c.path}>
+              <Icon name="file" size={12} />
+              <b>{c.path.split("/").pop()}</b>
+              {c.path.includes("/") && <span className="dim">in {c.path.slice(0, c.path.lastIndexOf("/"))}</span>}
+              <span className="dim">· {ago(c.createdAt)}</span>
+            </div>
+            <div className="sync-conflict-actions">
+              <button className="btn btn-sm btn-ghost" onClick={() => open(c)} title="Opens both versions">
+                <Icon name="external" size={12} /> Open both
+              </button>
+              <button className="btn btn-sm" onClick={() => run(() => syncApi.resolveConflict(m.id, c.copy, "copy"))} title="Your version replaces the other one, on both sides">
+                Keep mine
+              </button>
+              <button className="btn btn-sm" onClick={() => run(() => syncApi.resolveConflict(m.id, c.copy, "original"))} title="Your copy goes to the Trash">
+                Keep theirs
+              </button>
+              <button className="btn btn-sm btn-ghost" onClick={() => run(() => syncApi.resolveConflict(m.id, c.copy, "both"))} title="Keeps both files and stops showing this">
+                Keep both
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -135,8 +277,8 @@ export function SyncSection({
           <div className="empty-art">
             <Icon name="sync" size={24} />
           </div>
-          <h4>Keep a folder in sync with S3</h4>
-          <p>Back up a folder from this Mac to a bucket, or keep a local mirror of a bucket folder. Syncing keeps running in the menu bar when the window is closed.</p>
+          <h4>Keep a folder in sync</h4>
+          <p>Back up a folder from this Mac, keep a local mirror of a remote folder, or keep both sides the same. Syncing keeps running in the menu bar when the window is closed.</p>
           <button className="btn btn-primary btn-sm" onClick={() => setEditing("new")} disabled={profiles.length === 0}>
             <Icon name="plus" size={14} /> Add folder
           </button>
@@ -150,21 +292,24 @@ export function SyncSection({
             return (
               <div key={m.id} className={`set-card sync-card ${paused ? "is-paused" : ""}`}>
                 <div className="sync-head">
-                  <span className={`sync-dir ${m.direction}`} title={m.direction === "upload" ? "Backs up to S3" : "Mirrors from S3"}>
-                    <Icon name={m.direction === "upload" ? "upload" : "download"} size={15} />
+                  <span className={`sync-dir ${m.direction}`} title={DIR_TITLE[m.direction]}>
+                    <Icon name={DIR_ICON[m.direction]} size={15} />
                   </span>
                   <div className="sync-title">
                     <strong title={m.localPath}>{baseName(m.localPath)}</strong>
                     <small className="selectable">
                       {prettyPath(m.localPath)}
-                      <span className="sync-arrow">{m.direction === "upload" ? " → " : " ← "}</span>
-                      {m.bucket}/{m.prefix}
+                      <span className="sync-arrow">{DIR_ARROW[m.direction]}</span>
+                      {/* single-root connections (SFTP, WebDAV…) have no bucket: the connection name follows */}
+                      {m.bucket ? `${m.bucket}/${m.prefix}` : `/${m.prefix}`}
                       <span className="dim"> · {profileName(m.profileId)}</span>
                     </small>
                   </div>
                   <StatusPill st={st} paused={paused} />
                 </div>
                 <StatusLine m={m} st={st} paused={paused} />
+                {(st?.pendingDeletes ?? 0) > 0 && <PendingPanel m={m} count={st?.pendingDeletes ?? 0} run={run} />}
+                {(st?.conflicts ?? 0) > 0 && <ConflictsPanel m={m} count={st?.conflicts ?? 0} run={run} />}
                 <div className="sync-actions">
                   <button className="btn btn-sm" disabled={paused || st?.state === "syncing" || st?.state === "scanning"} onClick={() => run(() => syncApi.now(m.id))}>
                     <Icon name="sync" size={13} /> Sync now

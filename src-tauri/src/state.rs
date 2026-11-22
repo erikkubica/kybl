@@ -274,7 +274,8 @@ pub fn sdk_err<E: std::error::Error + 'static>(e: E) -> String {
 }
 
 /// Just the plain sentence when there is one, for short lists such as sync problems.
-#[cfg_attr(mobile, allow(dead_code))]
+/// (Sync reports the backends' own plain errors since it works over any connection.)
+#[allow(dead_code)]
 pub fn sdk_err_brief<E: std::error::Error + 'static>(e: E) -> String {
     let raw = DisplayErrorContext(&e).to_string();
     friendly(&e, &raw).map(str::to_string).unwrap_or(raw)

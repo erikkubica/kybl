@@ -76,6 +76,12 @@ base64 = "0.22"
 # WP-A2 cloud drives (Google Drive, OneDrive, Dropbox) and their sign-in are hand-written on the
 # reqwest/rustls lines above (one HTTP stack, rustls on ring).
 
+# WP-E1 two-way sync (sync.db goes through rusqlite and md-5 from WP-B1 above): paths compared
+# Unicode-normalised (macOS keeps names decomposed), and a downloaded file's time set to the
+# remote one.
+unicode-normalization = "0.1"
+filetime = "0.2"
+
 # Desktop only: the menu-bar icon, launch at login and two-way folder sync (a phone has no folders
 # to keep in sync and no menu bar).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

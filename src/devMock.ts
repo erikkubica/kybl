@@ -118,14 +118,26 @@ async function simulateTransfer(id: string, total: number, fail = false) {
 let uploadCount = 0;
 
 // ---- folder sync
-type MockMapping = { id: string; profileId: string; bucket: string; prefix: string; localPath: string; direction: "upload" | "download"; ignore: string[]; mirrorDeletes: boolean; intervalMins: number; paused: boolean };
+type MockMapping = { id: string; profileId: string; bucket: string; prefix: string; localPath: string; direction: "upload" | "download" | "twoway"; ignore: string[]; mirrorDeletes: boolean; intervalMins: number; paused: boolean; remoteTrash?: boolean | null; deleteGuard?: boolean };
 const syncMappings: MockMapping[] = [
   { id: "s1", profileId: "p1", bucket: "media-prod", prefix: "photos/", localPath: "/Users/demo/Pictures/Exports", direction: "upload", ignore: [".DS_Store", "*.tmp"], mirrorDeletes: false, intervalMins: 5, paused: false },
   { id: "s2", profileId: "p1", bucket: "static-assets", prefix: "", localPath: "/Users/demo/Sites/assets", direction: "download", ignore: [".DS_Store"], mirrorDeletes: true, intervalMins: 15, paused: false },
+  // WP-E1: two-way over a single-root connection (no bucket), with conflicts and held deletions
+  { id: "s3", profileId: "n1", bucket: "", prefix: "site/", localPath: "/Users/demo/Kybl/Web server/site", direction: "twoway", ignore: [".DS_Store"], mirrorDeletes: true, intervalMins: 5, paused: false, remoteTrash: null, deleteGuard: true },
 ];
+const syncConflicts: Record<string, { path: string; copy: string; createdAt: number; localPath: string; copyLocalPath: string }[]> = {
+  s3: [
+    { path: "index.html", copy: "index (conflict Demo Mac 2026-11-22).html", createdAt: now - 20 * 60_000, localPath: "/Users/demo/Kybl/Web server/site/index.html", copyLocalPath: "/Users/demo/Kybl/Web server/site/index (conflict Demo Mac 2026-11-22).html" },
+    { path: "css/main.css", copy: "css/main (conflict Demo Mac 2026-11-22).css", createdAt: now - 2 * HOUR, localPath: "/Users/demo/Kybl/Web server/site/css/main.css", copyLocalPath: "/Users/demo/Kybl/Web server/site/css/main (conflict Demo Mac 2026-11-22).css" },
+  ],
+};
+const syncPending: Record<string, { path: string; side: "local" | "remote"; size: number }[]> = {
+  s3: Array.from({ length: 64 }, (_, i) => ({ path: `img/gallery/photo-${String(i + 1).padStart(3, "0")}.jpg`, side: i < 60 ? ("remote" as const) : ("local" as const), size: 240_000 + i * 1000 })),
+};
 const syncStatus: Record<string, Record<string, unknown>> = {
   s1: { id: "s1", state: "idle", lastSync: now - 4 * 60_000, error: null, current: null, done: 0, total: 0, files: 1284, summary: "3 uploaded" },
-  s2: { id: "s2", state: "error", lastSync: now - 3 * HOUR, error: "AccessDenied: this key cannot list objects in static-assets", current: null, done: 0, total: 0, files: 312, summary: null },
+  s2: { id: "s2", state: "error", lastSync: now - 3 * HOUR, error: "This key can't list the files in static-assets.\n\nAccessDenied: Access Denied (request 7F3A9C)", current: null, done: 0, total: 0, files: 312, summary: null },
+  s3: { id: "s3", state: "error", lastSync: now - 20 * 60_000, error: "64 files would be deleted at once, so Kybl is waiting for you to confirm the deletions.", current: null, done: 0, total: 0, files: 418, summary: "2 uploaded · 5 downloaded · 2 conflicts kept as copies", conflicts: 2, pendingDeletes: 64 },
 };
 let syncPausedAll = false;
 const prefs = { closeToTray: true, launchAtLogin: false };
@@ -609,6 +621,33 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     case "sync_pause_all":
       syncPausedAll = a.paused;
       return null;
+    // WP-E1: two-way sync
+    case "sync_conflicts":
+      return syncConflicts[a.id] ?? [];
+    case "sync_resolve_conflict": {
+      syncConflicts[a.id] = (syncConflicts[a.id] ?? []).filter((c) => c.copy !== a.copy);
+      await pushStatus(a.id, { conflicts: syncConflicts[a.id].length });
+      return null;
+    }
+    case "sync_pending":
+      return syncPending[a.id] ?? [];
+    case "sync_confirm_deletes":
+    case "sync_restore_deletes": {
+      const n = syncPending[a.id]?.length ?? 0;
+      syncPending[a.id] = [];
+      await pushStatus(a.id, { pendingDeletes: 0, state: "idle", error: null, lastSync: Date.now(), summary: cmd === "sync_confirm_deletes" ? `${n} deleted` : `${n} files kept` });
+      return null;
+    }
+    case "sync_keep_offline": {
+      const found = syncMappings.find((x) => x.profileId === a.profileId && x.bucket === a.bucket && x.prefix === a.prefix);
+      if (found) return found;
+      const name = profiles.find((x) => x.id === a.profileId)?.name ?? "Connection";
+      const parts = [name, a.bucket, ...String(a.prefix).split("/")].filter(Boolean);
+      const m: MockMapping = { id: `s${Date.now()}`, profileId: a.profileId, bucket: a.bucket, prefix: a.prefix, localPath: a.localPath ?? `/Users/demo/Kybl/${parts.join("/")}`, direction: "twoway", ignore: [".DS_Store"], mirrorDeletes: true, intervalMins: 5, paused: false, remoteTrash: true, deleteGuard: true };
+      syncMappings.push(m);
+      setTimeout(() => simulateSync(m.id), 600);
+      return m;
+    }
     case "update_status":
       return { ...updateState };
     case "update_check":

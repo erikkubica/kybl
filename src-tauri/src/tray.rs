@@ -35,7 +35,13 @@ static REAPER_RUNNING: AtomicBool = AtomicBool::new(false);
 static HIDES: AtomicU64 = AtomicU64::new(0);
 
 pub struct TrayItems {
+    menu: Menu<Wry>,
     status: MenuItem<Wry>,
+    /// "Review 2 conflicts…" and "Confirm deletions…": only in the menu while something waits
+    conflicts: MenuItem<Wry>,
+    deletions: MenuItem<Wry>,
+    /// which of the two are in the menu now
+    shown: Mutex<(bool, bool)>,
     pause: MenuItem<Wry>,
     sync_now: MenuItem<Wry>,
     /// "Check for updates…", or "Update to Kybl x.y.z…" once one is found
@@ -46,6 +52,8 @@ pub struct TrayItems {
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let status = MenuItem::with_id(app, "status", "No folders synced yet", false, None::<&str>)?;
+    let conflicts = MenuItem::with_id(app, "sync_conflicts", "Review conflicts…", true, None::<&str>)?;
+    let deletions = MenuItem::with_id(app, "sync_deletions", "Confirm deletions…", true, None::<&str>)?;
     let open = MenuItem::with_id(app, "open", "Open Kybl", true, None::<&str>)?;
     let sync_now = MenuItem::with_id(app, "sync_now", "Sync now", false, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "Pause syncing", true, None::<&str>)?;
@@ -74,7 +82,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app, e| match e.id().as_ref() {
             "open" => show_main(app),
-            "sync_settings" => show_main_at(app, Some("sync")),
+            "sync_settings" | "sync_conflicts" | "sync_deletions" => show_main_at(app, Some("sync")),
             "sync_now" => {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
@@ -101,7 +109,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             _ => {}
         })
         .build(app)?;
-    app.manage(TrayItems { status, pause, sync_now, update, last: Mutex::new(String::new()) });
+    app.manage(TrayItems { menu, status, conflicts, deletions, shown: Mutex::new((false, false)), pause, sync_now, update, last: Mutex::new(String::new()) });
     refresh(app);
     Ok(())
 }
@@ -141,20 +149,50 @@ pub fn refresh<R: Runtime>(app: &AppHandle<R>) {
     let paused = mgr.paused_flag.load(Ordering::Relaxed);
     let st = mgr.statuses();
     let text = summarize(&st, paused);
+    let conflicts: u32 = st.iter().map(|s| s.conflicts).sum();
+    let held = st.iter().filter(|s| s.pending_deletes > 0).count();
     {
         let mut last = items.last.lock().unwrap();
-        let key = format!("{paused}|{}|{text}", st.iter().any(|s| s.state != "paused"));
+        let key = format!("{paused}|{}|{text}|{conflicts}|{held}", st.iter().any(|s| s.state != "paused"));
         if *last == key {
             return;
         }
         *last = key;
     }
     let _ = items.status.set_text(&text);
+    attention(&items, conflicts, held);
     let _ = items.pause.set_text(if paused { "Resume syncing" } else { "Pause syncing" });
     let _ = items.sync_now.set_enabled(!paused && st.iter().any(|s| s.state != "paused"));
     if let Some(tray) = app.tray_by_id("main") {
         let _ = tray.set_tooltip(Some(format!("Kybl · {text}")));
     }
+}
+
+/// Shows the deletion and conflict items right below the status while something waits.
+fn attention(items: &TrayItems, conflicts: u32, held: usize) {
+    let mut shown = items.shown.lock().unwrap();
+    let _ = items.conflicts.set_text(if conflicts == 1 { "Review 1 conflict…".to_string() } else { format!("Review {conflicts} conflicts…") });
+    let _ = items.deletions.set_text(if held == 1 { "Confirm deletions in 1 folder…".to_string() } else { format!("Confirm deletions in {held} folders…") });
+    let want = (conflicts > 0, held > 0);
+    if *shown == want {
+        return;
+    }
+    // take both out and put back what is needed, so their order never changes
+    if shown.0 {
+        let _ = items.menu.remove(&items.conflicts);
+    }
+    if shown.1 {
+        let _ = items.menu.remove(&items.deletions);
+    }
+    let mut at = 1;
+    if want.1 {
+        let _ = items.menu.insert(&items.deletions, at);
+        at += 1;
+    }
+    if want.0 {
+        let _ = items.menu.insert(&items.conflicts, at);
+    }
+    *shown = want;
 }
 
 /// Names a found update in the menu.
