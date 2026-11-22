@@ -385,3 +385,94 @@ export type Capabilities = {
   /** Files are real files on this device: `localPath`, open and reveal work on them. */
   localPaths: boolean;
 };
+
+// ---------------------------------------------------------------- WP-B1: copying between connections (src/jobs)
+
+/**
+ * What to do when a file is already at the destination:
+ * - `skipIdentical` (default): skip it when it has the same size (and the same content hash or a
+ *   time no older than the source's), copy it over otherwise
+ * - `skip`: never touch what is there
+ * - `overwrite`: always replace it
+ * - `keepBoth`: copy next to it as "name (1).ext"
+ * - `newerWins`: replace it only when the source was changed more recently
+ */
+export type JobConflict = "skipIdentical" | "skip" | "overwrite" | "keepBoth" | "newerWins";
+
+/**
+ * A copy or move between any two places, even on different connections (or this device,
+ * LOCAL_ID). `items` are files and folders (`isDir`, path ending with "/") in `src.root`; each
+ * lands inside `dst.dir` under its own name. A folder item with path "" means everything in the
+ * root (its contents go straight into `dst.dir`).
+ */
+export type JobSpec = {
+  /** leave empty: the backend picks one */
+  id?: string;
+  mode: "copy" | "move";
+  src: { profileId: string; root: string; items: { path: string; isDir: boolean }[] };
+  /** `dir` is "" for the top of the root, else ends with "/" */
+  dst: { profileId: string; root: string; dir: string };
+  conflict: JobConflict;
+  /**
+   * `size`: sizes must match. `hash`: also compares content hashes where both sides have one
+   * (S3 uploads are always checked by the server per part, with Content-MD5). Move only deletes
+   * an original once its copy is verified.
+   */
+  verify: "size" | "hash";
+  /** keep modification times where the destination stores them (this device, SFTP) */
+  preserveMtime: boolean;
+  /** names or paths to leave out, with `*`, `?` and `**` (".DS_Store", "node_modules/", "*.tmp") */
+  ignore: string[];
+  /** shown in the jobs list, e.g. "Photos to Kybl Storage"; the backend makes one when empty */
+  title?: string;
+};
+
+export type JobState = "planning" | "running" | "paused" | "waitingNetwork" | "needsAuth" | "done" | "failed" | "cancelled";
+
+/** Event `job-progress`, at most 4 a second per job (and once on every state change). */
+export type JobProgress = {
+  id: string;
+  state: JobState;
+  /** what a running job is doing right now */
+  phase: "planning" | "copying" | "deleting" | "finished";
+  filesDone: number;
+  filesTotal: number;
+  filesFailed: number;
+  filesSkipped: number;
+  bytesDone: number;
+  bytesTotal: number;
+  /** bytes per second, smoothed */
+  rateBps: number;
+  etaSecs: number | null;
+  /** paths being copied right now */
+  current: string[];
+  /** why a job failed or waits (needsAuth, waitingNetwork) */
+  error: string | null;
+};
+
+export type JobSummary = {
+  id: string;
+  title: string;
+  spec: JobSpec;
+  created: number;
+  updated: number;
+  progress: JobProgress;
+};
+
+export type JobFailure = { path: string; error: string };
+
+export const jobsApi = {
+  /** Plans and starts the job right away; resolves to its id. Jobs survive restarts. */
+  jobCreate: (spec: JobSpec) => invoke<string>("job_create", { spec }),
+  /** Every job, newest first, including finished ones until deleted. */
+  jobList: () => invoke<JobSummary[]>("job_list"),
+  jobPause: (id: string) => invoke<void>("job_pause", { id }),
+  jobResume: (id: string) => invoke<void>("job_resume", { id }),
+  /** Stops for good (copies already made stay); unfinished uploads are cleaned up. */
+  jobCancel: (id: string) => invoke<void>("job_cancel", { id }),
+  /** Removes a job that isn't running from the list. */
+  jobDelete: (id: string) => invoke<void>("job_delete", { id }),
+  jobFailures: (id: string, offset = 0, limit = 100) => invoke<JobFailure[]>("job_failures", { id, offset, limit }),
+  /** Puts the failed files back in line and runs the job again. */
+  jobRetryFailed: (id: string) => invoke<void>("job_retry_failed", { id }),
+};
