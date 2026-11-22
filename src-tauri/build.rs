@@ -41,6 +41,13 @@ fn ios_plugins() {
     println!("cargo:rerun-if-changed=gen/apple/KyblBackup/Package.swift");
     println!("cargo:rerun-if-changed=gen/apple/KyblBackup/Sources");
     println!("cargo:rerun-if-changed=gen/apple/KyblBackup/FFI");
+    // the Tauri CLI passes the app's minimum iOS (14.0); a plain `cargo check --target …-ios` doesn't,
+    // and the Swift packages need 14 (limited Photos access)
+    println!("cargo:rerun-if-env-changed=IPHONEOS_DEPLOYMENT_TARGET");
+    if std::env::var_os("IPHONEOS_DEPLOYMENT_TARGET").is_none() {
+        // SAFETY: the build script is single-threaded here
+        unsafe { std::env::set_var("IPHONEOS_DEPLOYMENT_TARGET", "14.0") };
+    }
     tauri_utils::build::link_apple_library("kybl-connect", apple.join("KyblConnect"));
     // open / share / Photos / haptics / app lock / background time (src/platform.rs)
     tauri_utils::build::link_apple_library("kybl-platform", apple.join("KyblPlatform"));
