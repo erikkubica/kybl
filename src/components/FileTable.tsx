@@ -4,6 +4,7 @@ import { Icon } from "../Icons";
 import { formatBytes, formatDate, formatDateFull, kindLabel } from "../format";
 import { EmptyState, FileIcon, SkeletonRows } from "./FileIcon";
 import type { Entry } from "../types";
+import type { FolderSize } from "../useFolderSizes";
 
 export type SortKey = "name" | "size" | "modified" | "kind";
 export type Sort = { key: SortKey; dir: "asc" | "desc" };
@@ -47,6 +48,9 @@ export function FileTable({
   onLoadMore,
   onClearSelection,
   onMove,
+  onBackgroundContextMenu,
+  folderSize,
+  onCalcSize,
 }: {
   entries: Entry[];
   selected: Set<string>;
@@ -63,6 +67,12 @@ export function FileTable({
   onLoadMore: () => void;
   onClearSelection: () => void;
   onMove: (delta: number, shift: boolean) => void;
+  /** right-click on empty space in the list */
+  onBackgroundContextMenu?: (e: React.MouseEvent) => void;
+  /** a folder's calculated size, if any (see useFolderSizes) */
+  folderSize?: (key: string) => FolderSize | undefined;
+  /** "Calculate" in a folder's Size cell */
+  onCalcSize?: (key: string) => void;
 }) {
   const sentinel = useRef<HTMLDivElement>(null);
   const table = useRef<HTMLDivElement>(null);
@@ -199,6 +209,11 @@ export function FileTable({
       onMouseDown={(ev) => {
         if ((ev.target as HTMLElement).classList.contains("table-body")) onClearSelection();
       }}
+      onContextMenu={(ev) => {
+        if (!onBackgroundContextMenu || (ev.target as HTMLElement).closest(".row, .thead")) return;
+        ev.preventDefault();
+        onBackgroundContextMenu(ev);
+      }}
     >
       <div className="thead">
         {head("name", "Name", "c-name")}
@@ -231,7 +246,7 @@ export function FileTable({
                   {slash >= 0 ? rel.slice(slash + 1) : e.name}
                 </span>
               </div>
-              {shown.some((c) => c.key === "size") && <div className={`c-size ${e.kind === "folder" ? "faint" : ""}`}>{e.kind === "folder" ? "—" : formatBytes(e.size)}</div>}
+              {shown.some((c) => c.key === "size") && <div className={`c-size ${e.kind === "folder" ? "faint" : ""}`}>{e.kind === "folder" ? <FolderSizeCell size={folderSize?.(e.key)} onCalc={onCalcSize && (() => onCalcSize(e.key))} /> : formatBytes(e.size)}</div>}
               {shown.some((c) => c.key === "mod") && (
                 <div className={`c-mod ${e.modified ? "" : "faint"}`} title={e.modified ? formatDateFull(e.modified) : undefined}>
                   {formatDate(e.modified)}
@@ -252,5 +267,26 @@ export function FileTable({
         {hasMore && <div ref={sentinel} className="sentinel" />}
       </div>
     </div>
+  );
+}
+
+/** A folder's Size cell: the calculated size, progress, or "Calculate" on hover. */
+function FolderSizeCell({ size, onCalc }: { size?: FolderSize; onCalc?: () => void }) {
+  if (size?.state === "done") return <span title={`${size.objects.toLocaleString()} objects`}>{formatBytes(size.bytes)}</span>;
+  if (size?.state === "loading") return <span title="Calculating…">{size.bytes ? `${formatBytes(size.bytes)}…` : "…"}</span>;
+  if (!onCalc) return <>—</>;
+  return (
+    <span className="size-cell">
+      <span className="size-dash">—</span>
+      <button
+        className="size-calc"
+        title={size?.state === "error" ? size.error : "Work out how much this folder holds"}
+        onMouseDown={(ev) => ev.stopPropagation()}
+        onDoubleClick={(ev) => ev.stopPropagation()}
+        onClick={onCalc}
+      >
+        {size?.state === "error" ? "Retry" : "Calculate"}
+      </button>
+    </span>
   );
 }

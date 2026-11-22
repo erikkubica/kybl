@@ -1,0 +1,55 @@
+/** Small path helpers for the desktop file browser: local download paths and typed locations. */
+
+export const joinPath = (dir: string, rel: string) => `${dir.replace(/[\\/]+$/, "")}/${rel.replace(/^[\\/]+/, "")}`;
+
+/**
+ * Makes an object key (or the part of it below a folder) safe to use as a path under a local
+ * folder: no "..", ".", empty or drive-letter parts, so a key like `x/../../.zshrc` can't write
+ * outside the folder the user picked. Returns "" when nothing usable is left.
+ */
+export function safeRelPath(rel: string): string {
+  return rel
+    .split(/[\\/]+/)
+    .filter((p) => p && p !== "." && p !== ".." && !/^[a-zA-Z]:$/.test(p))
+    .map((p) => p.replace(/[\0<>:"|?*]/g, "_"))
+    .join("/");
+}
+
+/** "photo.jpg", 2 → "photo (2).jpg"; folders ("dir/") keep their trailing slash. */
+export function numberedName(name: string, n: number): string {
+  const folder = name.endsWith("/");
+  const base = folder ? name.slice(0, -1) : name;
+  const dot = folder ? -1 : base.lastIndexOf(".");
+  return dot > 0 ? `${base.slice(0, dot)} (${n})${base.slice(dot)}` : `${base} (${n})${folder ? "/" : ""}`;
+}
+
+/** Short stable hash, for per-object temp folders. */
+export function shortHash(s: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return (h >>> 0).toString(36);
+}
+
+export type Location = { bucket: string | null; prefix: string };
+
+/**
+ * Reads what someone typed into Go to folder. Accepts `s3://bucket/path`, `/path` (from the
+ * root of the bucket on screen), and `bucket/path` when the first part names a bucket of this
+ * connection; anything else is a path from the root of the current bucket. A null bucket means
+ * "stay in this bucket". The prefix has no leading slash and keeps a trailing one if typed.
+ */
+export function parseLocation(input: string, buckets: string[]): Location | null {
+  let s = input.trim();
+  if (!s) return null;
+  const uri = /^s3:\/\/([^/]+)\/?(.*)$/i.exec(s);
+  if (uri) return { bucket: uri[1], prefix: tidy(uri[2]) };
+  if (s.startsWith("/")) return { bucket: null, prefix: tidy(s) };
+  s = tidy(s);
+  const first = s.split("/")[0];
+  if (buckets.includes(first)) return { bucket: first, prefix: s.slice(first.length + 1) };
+  return { bucket: null, prefix: s };
+}
+
+function tidy(p: string): string {
+  return p.replace(/^\/+/, "").replace(/\/{2,}/g, "/");
+}

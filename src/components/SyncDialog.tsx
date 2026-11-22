@@ -28,8 +28,11 @@ export function SyncDialog({
   defaultProfileId,
   onSave,
   onClose,
+  prefill,
 }: {
   initial: SyncMapping | null;
+  /** a new folder's starting values, e.g. the bucket and folder on screen ("Sync this folder…") */
+  prefill?: Partial<SyncMapping>;
   profiles: Profile[];
   defaultProfileId: string | null;
   onSave: (m: SyncMapping) => Promise<void>;
@@ -49,6 +52,7 @@ export function SyncDialog({
         mirrorDeletes: false,
         intervalMins: 5,
         paused: false,
+        ...prefill,
       },
   );
   const [ignoreText, setIgnoreText] = useState(() => m.ignore.join("\n"));

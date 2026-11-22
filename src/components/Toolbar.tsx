@@ -1,35 +1,50 @@
-import { useEffect, useRef, useState } from "react";
+import type { RefObject } from "react";
 import { Icon } from "../Icons";
 import { Breadcrumbs } from "./Breadcrumbs";
 import type { Sort, SortKey } from "./FileTable";
+
+export const TILE_MIN = 96;
+export const TILE_MAX = 320;
 
 export function Toolbar({
   bucket,
   prefix,
   canUp,
+  canBack,
+  canForward,
   selectionCount,
   singleFileSelected,
   previewOpen,
   searchActive,
+  searchRunning,
+  query,
+  searchInput,
   disabled,
   working,
   view,
   compact,
   sort,
+  tileSize,
   onView,
   onCompact,
   onSortChange,
+  onTileSize,
   onNavigate,
   onUp,
+  onBack,
+  onForward,
   onRefresh,
   onUploadMenu,
+  onMoreMenu,
   onNewFolder,
   onDownload,
   onCopyLink,
   onRename,
   onMoveTo,
   onDelete,
+  onQuery,
   onSearch,
+  onStopSearch,
   onClearSearch,
   onTogglePreview,
   onClearSelection,
@@ -37,63 +52,75 @@ export function Toolbar({
   bucket: string | null;
   prefix: string;
   canUp: boolean;
+  canBack: boolean;
+  canForward: boolean;
   selectionCount: number;
   singleFileSelected: boolean;
   previewOpen: boolean;
+  /** showing deep search results */
   searchActive: boolean;
+  /** a deep search is still scanning */
+  searchRunning: boolean;
+  /** text in the search field; filters the folder on screen as you type */
+  query: string;
+  /** the search field, so ⌘F (handled by App with the other shortcuts) can focus it */
+  searchInput: RefObject<HTMLInputElement | null>;
   disabled: boolean;
   /** something is loading: show the thin progress line */
   working: boolean;
   view: "list" | "grid";
-  /** denser rows / smaller tiles, applies to both views */
+  /** denser rows, applies to both views */
   compact: boolean;
   sort: Sort;
+  /** grid tile width in px */
+  tileSize: number;
   onView: (v: "list" | "grid") => void;
   onCompact: (c: boolean) => void;
   onSortChange: (s: Sort) => void;
+  onTileSize: (px: number) => void;
   onNavigate: (prefix: string) => void;
   onUp: () => void;
+  onBack: () => void;
+  onForward: () => void;
   onRefresh: () => void;
   onUploadMenu: (x: number, y: number) => void;
+  /** the "…" button: Go to folder, Sync this folder, Add to favorites… */
+  onMoreMenu: (x: number, y: number) => void;
   onNewFolder: () => void;
   onDownload: () => void;
   onCopyLink: () => void;
   onRename: () => void;
   onMoveTo: () => void;
   onDelete: () => void;
+  onQuery: (q: string) => void;
+  /** Enter: search this folder and everything below it */
   onSearch: (q: string) => void;
+  onStopSearch: () => void;
   onClearSearch: () => void;
   onTogglePreview: () => void;
   onClearSelection: () => void;
 }) {
-  const [q, setQ] = useState("");
-  const input = useRef<HTMLInputElement>(null);
   const parts = prefix.split("/").filter(Boolean);
-
-  useEffect(() => {
-    if (!searchActive) setQ("");
-  }, [searchActive]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
-        e.preventDefault();
-        input.current?.focus();
-        input.current?.select();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
   const hasSel = selectionCount > 0;
+  const anchorOf = (e: React.MouseEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    return [r.left, r.bottom + 4] as const;
+  };
 
   return (
     <header className="chrome">
       <div className="toolbar" data-tauri-drag-region>
-        <button className="icon-btn" onClick={onUp} disabled={!canUp} title="Up one level (⌫)" aria-label="Up one level">
-          <Icon name="arrow-up" />
-        </button>
+        <div className="nav-btns">
+          <button className="icon-btn" onClick={onBack} disabled={!canBack} title="Back (⌘[)" aria-label="Back">
+            <Icon name="arrow-left" />
+          </button>
+          <button className="icon-btn" onClick={onForward} disabled={!canForward} title="Forward (⌘])" aria-label="Forward">
+            <Icon name="arrow-left" className="flip-x" />
+          </button>
+          <button className="icon-btn" onClick={onUp} disabled={!canUp} title="Up one level (⌘↑)" aria-label="Up one level">
+            <Icon name="arrow-up" />
+          </button>
+        </div>
         {bucket ? (
           <Breadcrumbs bucket={bucket} parts={parts} onNavigate={onNavigate} />
         ) : (
@@ -105,31 +132,33 @@ export function Toolbar({
         <div className="search">
           <Icon name="search" size={14} />
           <input
-            ref={input}
-            value={q}
+            ref={searchInput}
+            value={query}
             disabled={disabled}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={(e) => onQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && q.trim()) onSearch(q.trim());
+              if (e.key === "Enter" && query.trim()) onSearch(query.trim());
               if (e.key === "Escape") {
-                setQ("");
+                e.stopPropagation();
                 onClearSearch();
-                input.current?.blur();
+                searchInput.current?.blur();
+              }
+              if (e.key === "ArrowDown") {
+                // hand the keyboard to the list
+                e.preventDefault();
+                searchInput.current?.blur();
               }
             }}
-            placeholder="Search this folder"
-            aria-label="Search this folder"
+            placeholder="Filter, ↵ to search subfolders"
+            aria-label="Filter this folder, or press Return to search its subfolders"
             spellCheck={false}
           />
-          {q || searchActive ? (
-            <button
-              className="icon-btn"
-              onClick={() => {
-                setQ("");
-                onClearSearch();
-              }}
-              aria-label="Clear search"
-            >
+          {searchRunning ? (
+            <button className="icon-btn search-stop" onClick={onStopSearch} title="Stop searching" aria-label="Stop searching">
+              <span className="spinner" />
+            </button>
+          ) : query || searchActive ? (
+            <button className="icon-btn" onClick={onClearSearch} aria-label="Clear search">
               <Icon name="x" size={12} />
             </button>
           ) : (
@@ -139,24 +168,20 @@ export function Toolbar({
       </div>
 
       <div className={`actionbar ${view === "grid" ? "is-grid" : ""}`}>
-        <button
-          className="btn btn-primary btn-sm"
-          disabled={disabled}
-          onClick={(e) => {
-            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            onUploadMenu(r.left, r.bottom + 4);
-          }}
-        >
+        <button className="btn btn-primary btn-sm" disabled={disabled} onClick={(e) => onUploadMenu(...anchorOf(e))}>
           <Icon name="upload" size={14} />
           Upload
         </button>
         <div className="tb-group">
-          <button className="tool" disabled={disabled} onClick={onNewFolder} title="New folder">
+          <button className="tool" disabled={disabled} onClick={onNewFolder} title="New folder (⇧⌘N)">
             <Icon name="folder-plus" />
             <span>New folder</span>
           </button>
           <button className="icon-btn" disabled={disabled} onClick={onRefresh} title="Refresh (⌘R)" aria-label="Refresh">
             <Icon name="refresh" />
+          </button>
+          <button className="icon-btn" disabled={disabled} onClick={(e) => onMoreMenu(...anchorOf(e))} title="More" aria-label="More actions">
+            <Icon name="more" />
           </button>
         </div>
 
@@ -180,7 +205,7 @@ export function Toolbar({
                   <span>Copy link</span>
                 </button>
               )}
-              <button className="tool" onClick={onMoveTo} title="Move or copy to another folder">
+              <button className="tool" onClick={onMoveTo} title="Move or copy to another folder or bucket">
                 <Icon name="move" />
                 <span>Move to…</span>
               </button>
@@ -201,6 +226,19 @@ export function Toolbar({
         <div className="spacer" />
         {view === "grid" && (
           <>
+            <label className="tile-slider" title="Thumbnail size">
+              <Icon name="image" size={12} />
+              <input
+                type="range"
+                min={TILE_MIN}
+                max={TILE_MAX}
+                step={8}
+                value={tileSize}
+                onChange={(e) => onTileSize(Number(e.target.value))}
+                aria-label="Thumbnail size"
+              />
+              <Icon name="image" size={16} />
+            </label>
             <div className="tb-group">
               <select className="sort-select" value={sort.key} onChange={(e) => onSortChange({ ...sort, key: e.target.value as SortKey })} aria-label="Sort by">
                 <option value="name">Name</option>
@@ -210,12 +248,7 @@ export function Toolbar({
               </select>
               <button
                 className="icon-btn"
-                onClick={() =>
-                  onSortChange({
-                    ...sort,
-                    dir: sort.dir === "asc" ? "desc" : "asc",
-                  })
-                }
+                onClick={() => onSortChange({ ...sort, dir: sort.dir === "asc" ? "desc" : "asc" })}
                 title={sort.dir === "asc" ? "Ascending" : "Descending"}
                 aria-label="Toggle sort direction"
               >
@@ -241,7 +274,7 @@ export function Toolbar({
             <Icon name="grid" size={15} />
           </button>
         </div>
-        <button className={`icon-btn ${previewOpen ? "on" : ""}`} onClick={onTogglePreview} title="Toggle details panel" aria-label="Toggle details panel" aria-pressed={previewOpen}>
+        <button className={`icon-btn ${previewOpen ? "on" : ""}`} onClick={onTogglePreview} title="Toggle details panel (⌘I)" aria-label="Toggle details panel" aria-pressed={previewOpen}>
           <Icon name="panel" />
         </button>
       </div>

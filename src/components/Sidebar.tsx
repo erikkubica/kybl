@@ -4,6 +4,7 @@ import { KYBL } from "../kybl";
 import { KyblLockup, KyblMark } from "./KyblMark";
 import { providerMeta } from "../providers";
 import type { Profile } from "../types";
+import type { Favorite } from "../settings";
 import type { SyncState } from "../sync";
 
 const SYNC_LABEL: Record<SyncState, string> = {
@@ -80,6 +81,10 @@ export function Sidebar({
   hiddenBuckets: Record<string, string[]>;
   onHideBucket: (p: Profile, bucket: string, hide: boolean) => void;
   onReconnect: (p: Profile) => void;
+  /** pinned places (rendered by the sidebar once it shows favorites) */
+  favorites?: Favorite[];
+  onOpenFavorite?: (f: Favorite) => void;
+  onRemoveFavorite?: (f: Favorite) => void;
 }) {
   // connections whose hidden buckets are on show (to pick which to bring back)
   const [showHidden, setShowHidden] = useState<Set<string>>(new Set());
@@ -144,6 +149,8 @@ export function Sidebar({
                         role="button"
                         tabIndex={0}
                         aria-current={here}
+                        data-drop-bucket={b}
+                        data-drop-profile={p.id}
                       >
                         <Icon name="bucket" size={14} />
                         <span className="side-label">{b}</span>

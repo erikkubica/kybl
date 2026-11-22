@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ErrorText } from "./components/ErrorText";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, errMessage, errSummary } from "./api";
@@ -25,27 +24,30 @@ import { useUpdates } from "./updates";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { listen } from "@tauri-apps/api/event";
 import { MoveDialog } from "./components/MoveDialog";
-import { destKey, destLabel, entryParent } from "./moving";
+import { destLabel, entryParent } from "./moving";
 import { useItemDrag } from "./useItemDrag";
-import { applySettings, expiryLabel, loadSettings, saveSettings, type Settings } from "./settings";
-import {
-  ConfirmDialog,
-  ContextMenu,
-  PromptDialog,
-  Toasts,
-  type MenuItem,
-  type Toast,
-} from "./components/Dialogs";
+import { applySettings, expiryLabel, loadSettings, saveSettings, type Favorite, type Settings } from "./settings";
+import { ConfirmDialog, ContextMenu, PromptDialog, Toasts, type MenuItem, type Toast } from "./components/Dialogs";
+import { useConflictPrompt } from "./components/ConflictDialog";
 import { Icon } from "./Icons";
-import type { Entry, ObjInfo, Profile } from "./types";
+import type { Entry, Profile } from "./types";
+import { sameLoc, useListing, type Loc } from "./desktop/useListing";
+import { useSearch } from "./desktop/useSearch";
+import { useHistory } from "./desktop/useHistory";
+import { makeFileOps, type ToastAction } from "./desktop/fileOps";
+import { itemClipboard } from "./desktop/clipboard";
+import { undoStack } from "./desktop/undo";
+import { parseLocation } from "./desktop/paths";
+import { MENU_OWNS_SHORTCUTS, tidyMenu } from "./desktop/menus";
+import { QuickLook } from "./desktop/QuickLook";
+import { GoToDialog } from "./desktop/GoToDialog";
+import { SyncThisFolder } from "./desktop/SyncThisFolder";
 import "./styles.css";
+import "./desktop/desktop.css";
 
 const PREVIEW_MIN = 260;
 const PREVIEW_MAX = 760;
 const PREVIEW_DEFAULT = 336;
-
-type Listing = { folders: string[]; objects: ObjInfo[]; next: string | null };
-type SearchState = { query: string; results: ObjInfo[]; scanned: number; truncated: boolean };
 
 const EXPANDED_KEY = "s3b.expanded";
 function loadExpanded(): Set<string> {
@@ -85,12 +87,19 @@ const LS = {
   },
 };
 
+/**
+ * Folders up to this many items are loaded whole in the background, so the list is in its final
+ * order (S3's byte order differs from ours, and later pages would otherwise slot in above what
+ * you are reading). About ten requests; bigger folders load further as you scroll.
+ */
+const AUTO_ALL = 10_000;
 /** Sorting by anything but name needs the whole folder; stop pulling pages past this many objects. */
 const MAX_SORT_ITEMS = 200_000;
 const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+/** At most this often, a window coming back to the front reloads the folder on screen. */
+const RESUME_REFRESH_MS = 15_000;
 
-const toArray = (r: unknown): string[] => (Array.isArray(r) ? (r as string[]) : r ? [r as string] : []);
-const joinPath = (dir: string, rel: string) => `${dir.replace(/[\\/]$/, "")}/${rel}`;
+type ConfirmState = { title: string; message: React.ReactNode; label: string; safe?: boolean; run: () => void; cancel?: () => void };
 
 export default function App() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -110,12 +119,8 @@ export default function App() {
   }, []);
   const [bucket, setBucket] = useState<string | null>(null);
   const [prefix, setPrefix] = useState("");
-  const [listing, setListing] = useState<Listing>({ folders: [], objects: [], next: null });
-  const [loading, setLoading] = useState(false);
-  const [listError, setListError] = useState<string | null>(null);
-  const [search, setSearch] = useState<SearchState | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [sort, setSort] = useState<Sort>({ key: "name", dir: "asc" });
+  const [query, setQuery] = useState("");
   const [previewOpen, setPreviewOpen] = useState(LS.get("s3b.preview") !== "0");
   const [view, setViewState] = useState<"list" | "grid">(LS.get("s3b.view") === "grid" ? "grid" : "list");
   const [compact, setCompactState] = useState(LS.get("s3b.compact") === "1");
@@ -151,13 +156,27 @@ export default function App() {
       .catch(() => {});
     return () => un?.();
   }, [openSettings]);
-  const updateSettings = (patch: Partial<Settings>) =>
-    setSettings((cur) => {
-      const next = { ...cur, ...patch };
-      saveSettings(next);
-      applySettings(next);
-      return next;
-    });
+  const updateSettings = useCallback(
+    (patch: Partial<Settings>) =>
+      setSettings((cur) => {
+        const next = { ...cur, ...patch };
+        saveSettings(next);
+        applySettings(next);
+        return next;
+      }),
+    [],
+  );
+  const sort: Sort = useMemo(() => ({ key: settings.sort.by, dir: settings.sort.desc ? "desc" : "asc" }), [settings.sort]);
+  const setSort = (s: Sort) => updateSettings({ sort: { by: s.key, desc: s.dir === "desc" } });
+  // the slider moves the tiles at once; the setting is saved once it settles
+  const [tile, setTile] = useState(settings.tileSize);
+  const tileTimer = useRef(0);
+  const changeTile = (px: number) => {
+    setTile(px);
+    window.clearTimeout(tileTimer.current);
+    tileTimer.current = window.setTimeout(() => updateSettings({ tileSize: px }), 300);
+  };
+
   const [busy, setBusy] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -168,8 +187,11 @@ export default function App() {
     if (d?.profile?.provider === KYBL) setKyblDialog({ existing: d.profile });
     else setConnDialogState(d);
   }, []);
-  const [confirm, setConfirm] = useState<null | { title: string; message: React.ReactNode; label: string; run: () => void; safe?: boolean }>(null);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [moveDialog, setMoveDialog] = useState<null | { items: Entry[]; mode: "move" | "copy" }>(null);
+  const [goTo, setGoTo] = useState(false);
+  const [syncFor, setSyncFor] = useState<null | { profileId: string; bucket: string; prefix: string }>(null);
+  const [quick, setQuick] = useState<string | null>(null);
   const [previewWidth, setPreviewWidth] = useState(() => {
     const w = Number(LS.get("s3b.previewWidth"));
     return w >= PREVIEW_MIN && w <= PREVIEW_MAX ? w : PREVIEW_DEFAULT;
@@ -177,107 +199,95 @@ export default function App() {
   const [prompt, setPrompt] = useState<null | { title: string; label: string; initial: string; confirmLabel: string; run: (v: string) => void }>(null);
   const [menu, setMenu] = useState<null | { x: number; y: number; items: MenuItem[] }>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const conflicts = useConflictPrompt();
 
   const anchor = useRef<string | null>(null);
   const cursor = useRef<string | null>(null);
-  const reqId = useRef(0);
-  const pendingSelect = useRef<string | null>(null);
+  /** a key to select once it shows up in the listing of that connection and bucket */
+  const pendingSelect = useRef<{ profileId: string; bucket: string; key: string } | null>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
 
   // ------------------------------------------------------------ toasts
-  const toast = useCallback((kind: Toast["kind"], text: string) => {
+  const toast = useCallback((kind: Toast["kind"], text: string, action?: ToastAction) => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t.slice(-3), { id, kind, text }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 7000 : 3200);
+    setToasts((t) => [...t.slice(-3), { id, kind, text, action }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 8000 : kind === "error" ? 7000 : 3200);
   }, []);
   const onError = useCallback((m: string) => toast("error", m), [toast]);
+  const showActivity = useCallback(() => setTransfersOpen(true), []);
 
   const transfers = useTransfers(onError);
   const jobs = useJobs();
+  const hist = useHistory();
+  const sr = useSearch(onError);
 
   const profile = useMemo(() => profiles.find((p) => p.id === activeId) ?? null, [profiles, activeId]);
   const folderSizes = useFolderSizes(profile?.id ?? null, bucket);
+  const here: Loc | null = useMemo(() => (profile && bucket ? { profileId: profile.id, bucket, prefix } : null), [profile, bucket, prefix]);
+  const search = sr.search && sameLoc(sr.search.loc, here) ? sr.search : null;
 
   // ------------------------------------------------------------ listing
-  const load = useCallback(
-    async (profileId: string, b: string, p: string, token: string | null = null) => {
-      const id = ++reqId.current;
-      setLoading(true);
-      setListError(null);
-      try {
-        const res = await api.listObjects(profileId, b, p, token);
-        if (id !== reqId.current) return;
-        setListing((prev) =>
-          token
-            ? { folders: [...prev.folders, ...res.folders], objects: [...prev.objects, ...res.objects], next: res.nextToken }
-            : { folders: res.folders, objects: res.objects, next: res.nextToken },
-        );
-        if (!token && pendingSelect.current) {
-          const key = pendingSelect.current;
-          pendingSelect.current = null;
-          if (res.objects.some((o) => o.key === key)) {
-            setSelected(new Set([key]));
-            anchor.current = cursor.current = key;
-          }
-        }
-      } catch (e) {
-        if (id !== reqId.current) return;
-        setListError(errMessage(e));
-        if (!token) setListing({ folders: [], objects: [], next: null });
-      } finally {
-        if (id === reqId.current) setLoading(false);
-      }
+  const needsAll = !search && (sort.key !== "name" || sort.dir !== "asc");
+  const lst = useListing(needsAll ? MAX_SORT_ITEMS : AUTO_ALL);
+  const { listing } = lst;
+  // rows only ever show for the place they were listed for
+  const fresh = sameLoc(listing.loc, here);
+
+  /** Shows a place: the one central way to change connection, bucket or folder. */
+  const go = useCallback(
+    (p: Profile, b: string, pre: string, opts: { selectKey?: string; history?: boolean } = {}) => {
+      const loc = { profileId: p.id, bucket: b, prefix: pre };
+      setActiveId(p.id);
+      setBucket(b);
+      setPrefix(pre);
+      sr.clear();
+      setQuery("");
+      setQuick(null);
+      setSelected(new Set());
+      anchor.current = cursor.current = null;
+      pendingSelect.current = opts.selectKey ? { profileId: p.id, bucket: b, key: opts.selectKey } : null;
+      LS.set("s3b.last", JSON.stringify(loc));
+      if (opts.history !== false) hist.push(loc);
+      void lst.open(loc);
     },
-    [],
+    [sr, hist, lst],
   );
 
-  /**
-   * Pulls every remaining page (for sorts S3 can't do). Pages are gathered and shown about once a
-   * second instead of one by one, so a 200,000-object folder is not re-sorted 200 times.
-   */
-  const loadRest = useCallback(async (profileId: string, b: string, p: string, token: string, have: number) => {
-    const id = ++reqId.current;
-    setLoading(true);
-    setListError(null);
-    let folders: string[] = [];
-    let objects: ObjInfo[] = [];
-    let next: string | null = token;
-    let last = performance.now();
-    const commit = () => {
-      const [f, o, n] = [folders, objects, next];
-      folders = [];
-      objects = [];
-      setListing((prev) => ({ folders: f.length ? prev.folders.concat(f) : prev.folders, objects: o.length ? prev.objects.concat(o) : prev.objects, next: n }));
-      last = performance.now();
-    };
-    try {
-      while (next && have < MAX_SORT_ITEMS) {
-        const res = await api.listObjects(profileId, b, p, next);
-        if (id !== reqId.current) return;
-        for (const f of res.folders) folders.push(f);
-        for (const o of res.objects) objects.push(o);
-        have += res.folders.length + res.objects.length;
-        next = res.nextToken;
-        if (performance.now() - last > 1000) commit();
-      }
-      commit();
-    } catch (e) {
-      if (id !== reqId.current) return;
-      commit();
-      setListError(errMessage(e));
-    } finally {
-      if (id === reqId.current) setLoading(false);
+  const navigate = useCallback(
+    (p: string, selectKey?: string) => {
+      if (profile && bucket) go(profile, bucket, p, { selectKey });
+    },
+    [profile, bucket, go],
+  );
+  const openBucket = useCallback((p: Profile, b: string, startPrefix = "") => go(p, b, startPrefix), [go]);
+
+  const historyStep = (delta: number) => {
+    const loc = hist.step(delta);
+    const p = loc && profiles.find((x) => x.id === loc.profileId);
+    if (loc && p) go(p, loc.bucket, loc.prefix, { history: false });
+  };
+
+  // select a key once it is in the listing (after a rename, new folder, Go to a file…)
+  useEffect(() => {
+    const ps = pendingSelect.current;
+    if (!ps || !fresh || !here || ps.profileId !== here.profileId || ps.bucket !== here.bucket) return;
+    if (listing.objects.some((o) => o.key === ps.key) || listing.folders.includes(ps.key)) {
+      pendingSelect.current = null;
+      setSelected(new Set([ps.key]));
+      anchor.current = cursor.current = ps.key;
     }
-  }, []);
+  }, [listing, fresh, here]);
 
+  /** Reloads what is on screen: the search when searching, else the folder (keeping rows meanwhile). */
   const refresh = useCallback(() => {
-    if (profile && bucket) load(profile.id, bucket, prefix);
-  }, [profile, bucket, prefix, load]);
+    if (!here) return;
+    if (search) void sr.run(search.loc, search.query);
+    else void lst.refresh(here);
+  }, [here, search, sr, lst]);
 
-  // async actions finish after the user may have navigated: always reload what is on screen now
-  const refreshRef = useRef(refresh);
-  refreshRef.current = refresh;
   // what is on screen right now, for work that finishes later (uploads, moves, deletes, renames)
-  const onScreen = useRef<{ profileId?: string; bucket: string | null; query?: string; doSearch?: (q: string) => Promise<void> }>({ bucket: null });
+  const onScreen = useRef<{ profileId?: string; bucket: string | null; refresh: () => void }>({ bucket: null, refresh: () => {} });
+  onScreen.current = { profileId: profile?.id, bucket, refresh };
   /**
    * After a job in `pid`/`b` finishes, reloads the listing only if that bucket is still the one on
    * screen. Work in another connection or bucket carries on undisturbed in the meantime.
@@ -285,37 +295,9 @@ export default function App() {
   const reloadIfShowing = useCallback((pid: string, b: string) => {
     const v = onScreen.current;
     if (v.profileId !== pid || v.bucket !== b) return false;
-    if (v.query !== undefined && v.doSearch) void v.doSearch(v.query);
-    else refreshRef.current();
+    v.refresh();
     return true;
   }, []);
-
-  const navigate = useCallback(
-    (p: string, selectKey?: string) => {
-      if (!profile || !bucket) return;
-      setPrefix(p);
-      setSearch(null);
-      setSelected(new Set());
-      anchor.current = cursor.current = null;
-      pendingSelect.current = selectKey ?? null;
-      LS.set("s3b.last", JSON.stringify({ profileId: profile.id, bucket, prefix: p }));
-      load(profile.id, bucket, p);
-    },
-    [profile, bucket, load],
-  );
-
-  const openBucket = useCallback(
-    (p: Profile, b: string, startPrefix = "") => {
-      setActiveId(p.id);
-      setBucket(b);
-      setPrefix(startPrefix);
-      setSearch(null);
-      setSelected(new Set());
-      LS.set("s3b.last", JSON.stringify({ profileId: p.id, bucket: b, prefix: startPrefix }));
-      load(p.id, b, startPrefix);
-    },
-    [load],
-  );
 
   const setExpandedSaved = useCallback((fn: (cur: Set<string>) => Set<string>) => {
     setExpanded((cur) => {
@@ -325,6 +307,8 @@ export default function App() {
     });
   }, []);
 
+  const bucketsRef = useRef(bucketsBy);
+  bucketsRef.current = bucketsBy;
   /** Fetches a connection's bucket list into the sidebar (again, when `force`). */
   const loadBuckets = useCallback(async (p: Profile, force = false): Promise<string[]> => {
     const have = bucketsRef.current[p.id];
@@ -348,24 +332,32 @@ export default function App() {
     setBucketsBy((m) => ({ ...m, [p.id]: { names, note: names.length ? null : note, loading: false, reconnect } }));
     return names;
   }, []);
-  const bucketsRef = useRef(bucketsBy);
-  bucketsRef.current = bucketsBy;
+
+  /** Remembers a bucket opened by name, so it shows in the sidebar and the Move dialog. */
+  const rememberBucket = useCallback((p: Profile, name: string) => {
+    setBucketsBy((m) => {
+      const cur = m[p.id] ?? { names: [], note: null, loading: false };
+      return cur.names.includes(name) ? m : { ...m, [p.id]: { ...cur, names: [...cur.names, name], note: null } };
+    });
+  }, []);
 
   /** Shows a connection: expands it in the sidebar and opens a bucket of it. */
   const connect = useCallback(
     async (p: Profile, preferBucket?: string, startPrefix = "") => {
       setActiveId(p.id);
       setBucket(null);
-      setListing({ folders: [], objects: [], next: null });
-      setListError(null);
+      lst.clear();
+      sr.clear();
       setExpandedSaved((cur) => (cur.has(p.id) ? cur : new Set(cur).add(p.id)));
       const names = await loadBuckets(p, true);
       const pick = preferBucket && names.includes(preferBucket) ? preferBucket : p.bucket || names[0];
       if (pick) openBucket(p, pick, pick === preferBucket ? startPrefix : "");
     },
-    [openBucket, loadBuckets, setExpandedSaved],
+    [openBucket, loadBuckets, setExpandedSaved, lst, sr],
   );
 
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
   /** Sidebar click on a connection: folds it open or shut, without leaving what is on screen. */
   const toggleConnection = useCallback(
     (p: Profile) => {
@@ -384,10 +376,8 @@ export default function App() {
     },
     [expanded, connect, loadBuckets, setExpandedSaved],
   );
-  const activeIdRef = useRef(activeId);
-  activeIdRef.current = activeId;
 
-  /** A connection was deleted: drop it from the sidebar and the screen. */
+  /** A connection was deleted: drop it from the sidebar, the history and the screen. */
   const forgetProfile = useCallback(
     (id: string) => {
       setProfiles((list) => list.filter((x) => x.id !== id));
@@ -396,13 +386,15 @@ export default function App() {
         next.delete(id);
         return next;
       });
+      hist.forget(id);
       if (id === activeIdRef.current) {
         setActiveId(null);
         setBucket(null);
-        setListing({ folders: [], objects: [], next: null });
+        lst.clear();
+        sr.clear();
       }
     },
-    [setExpandedSaved],
+    [setExpandedSaved, hist, lst, sr],
   );
 
   // initial load
@@ -427,43 +419,49 @@ export default function App() {
   }, []);
 
   // refresh listing once all uploads have finished
+  const clearSizes = folderSizes.clear;
   useEffect(
     () =>
       transfers.onUploadsSettled((ok, bad, where) => {
-        if (bad) toast("error", `${bad} ${bad === 1 ? "upload" : "uploads"} failed`);
+        if (bad) toast("error", `${bad} ${bad === 1 ? "upload" : "uploads"} failed`, { label: "Show", run: showActivity });
         else if (ok) toast("success", `Uploaded ${ok} ${ok === 1 ? "file" : "files"}`);
+        if (ok) clearSizes();
         for (const w of where) if (reloadIfShowing(w.profileId, w.bucket)) break;
       }),
-    [transfers, toast, reloadIfShowing],
+    [transfers, toast, reloadIfShowing, showActivity, clearSizes],
   );
 
   // ------------------------------------------------------------ entries
-  const entries: Entry[] = useMemo(() => {
-    let list: Entry[];
+  const filter = !search ? query.trim().toLowerCase() : "";
+  const allEntries: Entry[] = useMemo(() => {
     if (search) {
-      list = search.results.map((o) => ({
-        kind: "file",
-        key: o.key,
-        name: baseName(o.key),
-        size: o.size,
-        modified: o.modified,
-        etag: o.etag,
-        storageClass: o.storageClass,
-      }));
-    } else {
-      list = [
-        ...listing.folders.map<Entry>((f) => ({ kind: "folder", key: f, name: baseName(f), size: 0, modified: null })),
-        ...listing.objects.map<Entry>((o) => ({
-          kind: "file",
-          key: o.key,
-          name: baseName(o.key),
-          size: o.size,
-          modified: o.modified,
-          etag: o.etag,
-          storageClass: o.storageClass,
-        })),
+      // folders whose own name matches: every object below such a folder matched too (the search
+      // looks at the whole path), so they can be read off the results
+      const needle = search.query.toLowerCase();
+      const base = search.loc.prefix;
+      const folders = new Set<string>();
+      for (const o of search.results) {
+        const parts = o.key.slice(base.length).split("/");
+        let acc = base;
+        for (let i = 0; i < parts.length - 1; i++) {
+          acc += `${parts[i]}/`;
+          if (parts[i].toLowerCase().includes(needle)) folders.add(acc);
+        }
+      }
+      return [
+        ...[...folders].map<Entry>((f) => ({ kind: "folder", key: f, name: baseName(f), size: 0, modified: null })),
+        ...search.results.map<Entry>((o) => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass })),
       ];
     }
+    if (!fresh) return [];
+    return [
+      ...listing.folders.map<Entry>((f) => ({ kind: "folder", key: f, name: baseName(f), size: 0, modified: null })),
+      ...listing.objects.map<Entry>((o) => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass })),
+    ];
+  }, [listing, search, fresh]);
+
+  const entries: Entry[] = useMemo(() => {
+    const list = filter ? allEntries.filter((e) => e.name.toLowerCase().includes(filter)) : allEntries.slice();
     const dir = sort.dir === "asc" ? 1 : -1;
     const cmp = (a: Entry, b: Entry): number => {
       switch (sort.key) {
@@ -481,31 +479,31 @@ export default function App() {
       }
     };
     return list.sort((a, b) => {
-      if (!search && settings.foldersFirst && a.kind !== b.kind) return a.kind === "folder" ? -1 : 1;
+      if (settings.foldersFirst && a.kind !== b.kind) return a.kind === "folder" ? -1 : 1;
       return cmp(a, b);
     });
-  }, [listing, search, sort, settings.foldersFirst]);
+  }, [allEntries, filter, sort, settings.foldersFirst]);
 
   const selectedEntries = useMemo(() => entries.filter((e) => selected.has(e.key)), [entries, selected]);
   const singleFile = selectedEntries.length === 1 && selectedEntries[0].kind === "file";
+  // refs so the memoised grid cards don't re-render on every selection change
+  const selRef = useRef({ selected, selectedEntries: [] as Entry[] });
   useEffect(() => {
     selRef.current = { selected, selectedEntries };
   });
 
-  // S3 only lists in key order, one page at a time. Any other order is only correct once the whole
-  // folder is in memory, so keep pulling pages until it is (or the cap is hit).
-  const needsAll = !search && (sort.key !== "name" || sort.dir !== "asc");
-  const loadedCount = listing.folders.length + listing.objects.length;
+  const loadedCount = lst.count;
   const sortCapped = needsAll && !!listing.next && loadedCount >= MAX_SORT_ITEMS;
-  const loadingAll = needsAll && !!listing.next && !sortCapped && !listError;
-  useEffect(() => {
-    if (loadingAll && !loading && profile && bucket && listing.next) loadRest(profile.id, bucket, prefix, listing.next, loadedCount);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadingAll, loading, profile, bucket, prefix, listing.next, loadRest]);
+  // folders bigger than AUTO_ALL in name order: the rest loads as you scroll
+  const hasMore = !search && fresh && !!listing.next && !lst.pulling && !needsAll;
+  const listLoading = useRef(false);
+  listLoading.current = lst.loading;
+  const listLoadMore = lst.loadMore;
+  const loadMore = useCallback(() => {
+    if (!listLoading.current) void listLoadMore();
+  }, [listLoadMore]);
 
-
-  const onSort = (key: SortKey) =>
-    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
+  const onSort = (key: SortKey) => setSort(sort.key === key ? { key, dir: sort.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
 
   // ------------------------------------------------------------ selection
   const select = useCallback(
@@ -532,8 +530,10 @@ export default function App() {
     [entries],
   );
 
-  // refs so the memoised grid cards don't re-render on every selection change
-  const selRef = useRef({ selected, selectedEntries: [] as Entry[] });
+  const selectOnly = (key: string) => {
+    setSelected(new Set([key]));
+    anchor.current = cursor.current = key;
+  };
 
   const moveSelection = useCallback(
     (delta: number, shift: boolean) => {
@@ -554,31 +554,70 @@ export default function App() {
     [entries],
   );
 
+  // ------------------------------------------------------------ actions
+  const confirmAsync = useCallback(
+    (o: { title: string; message: React.ReactNode; label: string; danger?: boolean }) =>
+      new Promise<boolean>((resolve) =>
+        setConfirm({ title: o.title, message: o.message, label: o.label, safe: !o.danger, run: () => resolve(true), cancel: () => resolve(false) }),
+      ),
+    [],
+  );
+
+  const ops = makeFileOps({
+    profile,
+    bucket,
+    prefix,
+    folderKeys: new Set(fresh ? listing.folders : []),
+    settings,
+    transfers,
+    jobs,
+    toast,
+    autoShowActivity: () => settings.autoOpenTransfers && setTransfersOpen(true),
+    showActivity,
+    setBusy,
+    confirm: confirmAsync,
+    prompt: setPrompt,
+    resolveConflicts: conflicts.resolve,
+    reloadIfShowing,
+    selectAfterReload: (profileId, b, key) => {
+      pendingSelect.current = key ? { profileId, bucket: b, key } : null;
+    },
+    deselect: (keys) =>
+      setSelected((sel) => {
+        const next = new Set(sel);
+        keys.forEach((k) => next.delete(k));
+        return next;
+      }),
+    clearSizes: folderSizes.clear,
+  });
+  const relBase = search ? search.loc.prefix : null;
+
   const openEntry = useCallback(
     (e: Entry) => {
       if (e.kind === "folder") navigate(e.key);
-      else if (search) navigate(parentPrefix(e.key), e.key);
-      else setPreviewOpen(true);
+      else void opsRef.current.openInApp(e);
     },
-    [navigate, search],
+    [navigate],
   );
+  const opsRef = useRef(ops);
+  opsRef.current = ops;
 
-  // ------------------------------------------------------------ actions
-  const doSearch = async (query: string) => {
-    if (!profile || !bucket) return;
-    setBusy(`Searching for “${query}”…`);
-    try {
-      const r = await api.searchObjects(profile.id, bucket, prefix, query);
-      setSearch({ query, results: r.objects, scanned: r.scanned, truncated: r.truncated });
-      setSelected(new Set());
-    } catch (e) {
-      toast("error", errMessage(e));
-    } finally {
-      setBusy(null);
-    }
+  /** Enter / ⌘O / ⌘↓: a folder opens in the list; files open in their apps (a few at most). */
+  const openSelection = (list: Entry[] = selectedEntries) => {
+    if (list.length === 1 && list[0].kind === "folder") return navigate(list[0].key);
+    const files = list.filter((e) => e.kind === "file");
+    if (files.length > 10) toast("info", "Opening the first 10 files");
+    for (const f of files.slice(0, 10)) void ops.openInApp(f);
   };
 
-  onScreen.current = { profileId: profile?.id, bucket, query: search?.query, doSearch };
+  const doSearch = (q: string) => {
+    if (here) void sr.run(here, q);
+    setSelected(new Set());
+  };
+  const clearSearch = () => {
+    sr.clear();
+    setQuery("");
+  };
 
   const copyText = async (text: string, what: string) => {
     try {
@@ -602,273 +641,8 @@ export default function App() {
     }
   };
 
-  const uploadPaths = useCallback(
-    async (paths: string[]) => {
-      if (!profile || !bucket || paths.length === 0) return;
-      try {
-        const files = await api.expandPaths(paths);
-        if (files.length === 0) {
-          toast("info", "Nothing to upload");
-          return;
-        }
-        transfers.add(
-          files.map((f) => ({
-            kind: "upload" as const,
-            name: f.rel,
-            profileId: profile.id,
-            bucket,
-            key: prefix + f.rel,
-            local: f.path,
-            total: f.size,
-          })),
-        );
-        if (settings.autoOpenTransfers) setTransfersOpen(true);
-      } catch (e) {
-        toast("error", errMessage(e));
-      }
-    },
-    [profile, bucket, prefix, transfers, toast],
-  );
-
-  const pickAndUpload = async (directory: boolean) => {
-    const r = await openDialog({ multiple: true, directory, title: directory ? "Choose folders to upload" : "Choose files to upload" });
-    await uploadPaths(toArray(r));
-  };
-
-  const downloadEntries = async (list: Entry[]) => {
-    if (!profile || !bucket || list.length === 0) return;
-    try {
-      if (list.length === 1 && list[0].kind === "file") {
-        const f = list[0];
-        const dest = await saveDialog({ defaultPath: f.name, title: "Save as" });
-        if (!dest) return;
-        transfers.add([{ kind: "download", name: f.name, profileId: profile.id, bucket, key: f.key, local: dest, total: f.size }]);
-        if (settings.autoOpenTransfers) setTransfersOpen(true);
-        return;
-      }
-      const dir = toArray(await openDialog({ directory: true, multiple: false, title: "Choose a download folder" }))[0];
-      if (!dir) return;
-      const items: Parameters<typeof transfers.add>[0] = [];
-      for (const e of list) {
-        if (e.kind === "file") {
-          items.push({ kind: "download", name: e.name, profileId: profile.id, bucket, key: e.key, local: joinPath(dir, e.name), total: e.size });
-        } else {
-          setBusy(`Listing ${e.name}…`);
-          const base = parentPrefix(e.key);
-          for (const rf of await api.listAllUnder(profile.id, bucket, e.key)) {
-            const rel = rf.key.slice(base.length);
-            items.push({ kind: "download", name: rel, profileId: profile.id, bucket, key: rf.key, local: joinPath(dir, rel), total: rf.size });
-          }
-        }
-      }
-      setBusy(null);
-      if (items.length === 0) {
-        toast("info", "Nothing to download");
-        return;
-      }
-      transfers.add(items);
-      if (settings.autoOpenTransfers) setTransfersOpen(true);
-      toast("info", `Downloading ${items.length} ${items.length === 1 ? "file" : "files"} to ${dir}`);
-    } catch (e) {
-      setBusy(null);
-      toast("error", errMessage(e));
-    }
-  };
-
-  const askDelete = (list: Entry[]) => {
-    if (!profile || !bucket || list.length === 0) return;
-    const folders = list.filter((e) => e.kind === "folder");
-    const files = list.filter((e) => e.kind === "file");
-    const what = list.length === 1 ? `“${list[0].name}”` : `${list.length} items`;
-    const pid = profile.id;
-    const b = bucket;
-    const run = async () => {
-      const id = jobs.start({ kind: "delete", title: `Deleting ${what}` });
-      if (settings.autoOpenTransfers) setTransfersOpen(true);
-      setSelected((sel) => {
-        const next = new Set(sel);
-        list.forEach((e) => next.delete(e.key));
-        return next;
-      });
-      try {
-        const r = await api.deleteObjects(pid, b, files.map((e) => e.key), folders.map((e) => e.key), id);
-        jobs.finish(id, r);
-        if (r.error && r.error !== "Cancelled") toast("error", `Deleting stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`);
-      } catch (e) {
-        jobs.finish(id, { error: errMessage(e) });
-        toast("error", errMessage(e));
-      }
-      folderSizes.clear();
-      reloadIfShowing(pid, b);
-    };
-    if (!settings.confirmDelete) {
-      run();
-      return;
-    }
-    setConfirm({
-      title: `Delete ${what}?`,
-      label: "Delete",
-      message: (
-        <>
-          <p>
-            {folders.length > 0
-              ? "Folders are deleted together with everything inside them. "
-              : ""}
-            This permanently removes the {files.length + folders.length === 1 ? "item" : "items"} from the bucket and{" "}
-            <strong>cannot be undone</strong>.
-          </p>
-          {!list.every((e) => e.kind === "folder") && files.length > 0 && (
-            <p>
-              {files.length} {files.length === 1 ? "file" : "files"}, {formatBytes(files.reduce((s, e) => s + e.size, 0))}
-            </p>
-          )}
-        </>
-      ),
-      run,
-    });
-  };
-
-  const askRename = (e: Entry) => {
-    if (!profile || !bucket) return;
-    setPrompt({
-      title: e.kind === "folder" ? "Rename folder" : "Rename file",
-      label: "New name",
-      initial: e.name,
-      confirmLabel: "Rename",
-      run: async (name) => {
-        if (name.includes("/")) {
-          toast("error", "A name cannot contain “/”");
-          return;
-        }
-        if (name === e.name) return;
-        const parent = e.kind === "folder" ? parentPrefix(e.key) : e.key.slice(0, e.key.lastIndexOf("/") + 1);
-        const isFolder = e.kind === "folder";
-        const to = isFolder ? `${parent}${name}/` : `${parent}${name}`;
-        // a single file renames instantly; a folder is every object inside it
-        const pid = profile.id;
-        const b = bucket;
-        const id = jobs.start({ kind: "rename", title: `Renaming “${e.name}” to “${name}”`, dest: parent, profileId: pid, bucket: b });
-        if (isFolder && settings.autoOpenTransfers) setTransfersOpen(true);
-        let renamed = false;
-        try {
-          const r = await api.moveMany(pid, b, [{ from: e.key, to, isPrefix: isFolder }], true, id);
-          jobs.finish(id, r);
-          if (r.error && r.error !== "Cancelled") toast("error", `Renaming stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`);
-          else renamed = !r.error;
-        } catch (err) {
-          jobs.finish(id, { error: errMessage(err) });
-          toast("error", errMessage(err));
-        }
-        const v = onScreen.current;
-        if (renamed && v.profileId === pid && v.bucket === b) {
-          pendingSelect.current = isFolder ? null : to;
-          setSelected(new Set());
-        }
-        reloadIfShowing(pid, b);
-      },
-    });
-  };
-
-  /** Moves or copies entries into `dest` (same bucket), asking before replacing existing files. */
-  const relocate = async (list: Entry[], dest: string, mode: "move" | "copy") => {
-    if (!profile || !bucket) return;
-    const pid = profile.id;
-    const b = bucket;
-    const todo = list.filter((e) => entryParent(e) !== dest && !(e.kind === "folder" && dest.startsWith(e.key)));
-    if (todo.length === 0) return;
-    const where = destLabel(dest, b);
-
-    const run = async () => {
-      const what = todo.length === 1 ? `“${todo[0].name}”` : `${todo.length} items`;
-      const id = jobs.start({ kind: mode, title: `${mode === "move" ? "Moving" : "Copying"} ${what} to ${where}`, dest, profileId: pid, bucket: b });
-      if (settings.autoOpenTransfers) setTransfersOpen(true);
-      if (mode === "move")
-        setSelected((sel) => {
-          const next = new Set(sel);
-          todo.forEach((e) => next.delete(e.key));
-          return next;
-        });
-      try {
-        const r = await api.moveMany(
-          pid,
-          b,
-          todo.map((e) => ({ from: e.key, to: destKey(e, dest), isPrefix: e.kind === "folder" })),
-          mode === "move",
-          id,
-        );
-        jobs.finish(id, r);
-        if (r.error && r.error !== "Cancelled")
-          toast(
-            "error",
-            `Stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}` +
-              (mode === "move" ? " Everything not moved yet is still in its old place." : ""),
-          );
-      } catch (err) {
-        jobs.finish(id, { error: errMessage(err) });
-        toast("error", errMessage(err));
-      }
-      folderSizes.clear();
-      reloadIfShowing(pid, b);
-    };
-
-    // files that already exist at the destination would be silently overwritten
-    const files = todo.filter((e) => e.kind === "file");
-    let clashes: Entry[] = [];
-    if (files.length && files.length <= 200) {
-      setBusy("Checking the destination…");
-      const found = await Promise.all(
-        files.map((e) =>
-          api
-            .headObject(pid, b, destKey(e, dest))
-            .then(() => true)
-            .catch(() => false),
-        ),
-      );
-      setBusy(null);
-      clashes = files.filter((_, i) => found[i]);
-    }
-    if (clashes.length === 0) {
-      run();
-      return;
-    }
-    setConfirm({
-      title: clashes.length === 1 ? `Replace “${clashes[0].name}”?` : `Replace ${clashes.length} files?`,
-      label: "Replace",
-      safe: true,
-      message: (
-        <p>
-          {clashes.length === 1 ? "A file with this name already exists" : `${clashes.length} files with the same names already exist`} in{" "}
-          <strong>/{dest}</strong>. {mode === "move" ? "Moving" : "Copying"} will overwrite {clashes.length === 1 ? "it" : "them"}.
-        </p>
-      ),
-      run,
-    });
-  };
-
   const askMove = (list: Entry[], mode: "move" | "copy" = "move") => {
     if (list.length) setMoveDialog({ items: list, mode });
-  };
-
-  const askNewFolder = () => {
-    if (!profile || !bucket) return;
-    setPrompt({
-      title: "New folder",
-      label: "Folder name",
-      initial: "New folder",
-      confirmLabel: "Create",
-      run: async (name) => {
-        if (name.includes("/")) {
-          toast("error", "A name cannot contain “/”");
-          return;
-        }
-        try {
-          await api.createFolder(profile.id, bucket, `${prefix}${name}/`);
-          refresh();
-        } catch (e) {
-          toast("error", errMessage(e));
-        }
-      },
-    });
   };
 
   const askBucketName = (p: Profile | null = profile) => {
@@ -879,10 +653,7 @@ export default function App() {
       initial: "",
       confirmLabel: "Open",
       run: (name) => {
-        setBucketsBy((m) => {
-          const cur = m[p.id] ?? { names: [], note: null, loading: false };
-          return cur.names.includes(name) ? m : { ...m, [p.id]: { ...cur, names: [...cur.names, name], note: null } };
-        });
+        rememberBucket(p, name);
         openBucket(p, name);
       },
     });
@@ -911,89 +682,334 @@ export default function App() {
     });
   };
 
-  // ------------------------------------------------------------ context menu
-  const onContext = (ev: React.MouseEvent, e: Entry) => {
-    const list = selected.has(e.key) ? selectedEntries : [e];
-    if (!selected.has(e.key)) {
-      setSelected(new Set([e.key]));
-      anchor.current = cursor.current = e.key;
+  /** Go to folder: a path in this bucket, `bucket/path` or an s3:// address. */
+  const goToPath = async (input: string) => {
+    if (!profile) return;
+    const names = bucketsBy[profile.id]?.names ?? [];
+    const loc = parseLocation(input, names);
+    const b = loc?.bucket ?? bucket;
+    if (!loc || !b) return;
+    if (loc.bucket) rememberBucket(profile, loc.bucket);
+    let pre = loc.prefix;
+    if (pre && !pre.endsWith("/")) {
+      // the path of a file opens its folder with the file selected
+      try {
+        const r = await api.existing(profile.id, b, [pre], [`${pre}/`]);
+        if (!r.prefixes.length && r.keys.length) return go(profile, b, parentPrefix(pre), { selectKey: pre });
+      } catch {
+        /* treat it as a folder */
+      }
+      pre += "/";
     }
+    go(profile, b, pre);
+  };
+
+  // ------------------------------------------------------------ favorites
+  const favoriteOf = (pid: string, b: string, pre: string) => settings.favorites.find((f) => f.profileId === pid && f.bucket === b && f.prefix === pre);
+  const toggleFavorite = (b: string, pre: string) => {
+    if (!profile) return;
+    const have = favoriteOf(profile.id, b, pre);
+    if (have) {
+      removeFavorite(have);
+      return;
+    }
+    const name = pre ? baseName(pre) : b;
+    updateSettings({ favorites: [...settings.favorites, { profileId: profile.id, bucket: b, prefix: pre, name }] });
+    toast("success", `Added “${name}” to favorites`);
+  };
+  const removeFavorite = (f: Favorite) =>
+    updateSettings({ favorites: settings.favorites.filter((x) => !(x.profileId === f.profileId && x.bucket === f.bucket && x.prefix === f.prefix)) });
+  const openFavorite = (f: Favorite) => {
+    const p = profiles.find((x) => x.id === f.profileId);
+    if (!p) {
+      toast("error", "That connection no longer exists.");
+      return;
+    }
+    setExpandedSaved((cur) => (cur.has(p.id) ? cur : new Set(cur).add(p.id)));
+    void loadBuckets(p);
+    go(p, f.bucket, f.prefix);
+  };
+
+  // ------------------------------------------------------------ context menus
+  const calcSizes = (keys: string[]) => folderSizes.calc(keys);
+  const clipFor = () => {
+    const c = itemClipboard.get();
+    return c && profile && c.profileId === profile.id ? c : null;
+  };
+  const favoriteItem = (b: string, pre: string): MenuItem => ({
+    type: "item",
+    label: profile && favoriteOf(profile.id, b, pre) ? "Remove from favorites" : "Add to favorites",
+    icon: "plus",
+    onClick: () => toggleFavorite(b, pre),
+  });
+
+  /** What applies to the folder on screen: from the empty-space menu and the toolbar's "…". */
+  const placeItems = (): (MenuItem | false)[] =>
+    !profile || !bucket
+      ? []
+      : [
+          { type: "item", label: "Calculate folder size", icon: "info", onClick: () => calcSizes([prefix]) },
+          favoriteItem(bucket, prefix),
+          { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => setSyncFor({ profileId: profile.id, bucket, prefix }) },
+          { type: "item", label: "Copy S3 URI", icon: "copy", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") },
+          { type: "sep" },
+          { type: "item", label: "Go to folder…", icon: "arrow-up", hint: "⇧⌘G", onClick: () => setGoTo(true) },
+        ];
+
+  const onBackgroundContext = (ev: React.MouseEvent) => {
+    if (!profile || !bucket) return;
+    const clip = clipFor();
+    setMenu({
+      x: ev.clientX,
+      y: ev.clientY,
+      items: tidyMenu([
+        { type: "item", label: "New folder…", icon: "folder-plus", hint: "⇧⌘N", onClick: () => ops.askNewFolder() },
+        { type: "item", label: "Upload files…", icon: "upload", hint: "⌘U", onClick: () => ops.pickAndUpload(false) },
+        { type: "item", label: "Upload folder…", icon: "folder", onClick: () => ops.pickAndUpload(true) },
+        { type: "sep" },
+        {
+          type: "item",
+          label: clip ? `Paste ${clip.items.length === 1 ? `“${clip.items[0].name}”` : `${clip.items.length} items`}` : "Paste",
+          icon: "copy",
+          hint: "⌘V",
+          disabled: !clip,
+          onClick: () => ops.paste(),
+        },
+        { type: "item", label: "Select all", icon: "check", hint: "⌘A", disabled: !entries.length, onClick: () => setSelected(new Set(entries.map((e) => e.key))) },
+        { type: "item", label: search ? "Search again" : "Refresh", icon: "refresh", hint: "⌘R", onClick: refresh },
+        search && { type: "item", label: "Clear search", icon: "x", onClick: clearSearch },
+        { type: "sep" },
+        ...placeItems(),
+      ]),
+    });
+  };
+
+  const onContext = (ev: React.MouseEvent, e: Entry) => {
+    if (!profile || !bucket) return;
+    const list = selected.has(e.key) ? selectedEntries : [e];
+    if (!selected.has(e.key)) selectOnly(e.key);
     const one = list.length === 1;
-    const items: MenuItem[] = [
-      { type: "item", label: e.kind === "folder" && one ? "Open" : "Details", icon: e.kind === "folder" ? "folder" : "eye", hint: "↵", disabled: !one, onClick: () => openEntry(e) },
-      { type: "item", label: "Download", icon: "download", onClick: () => downloadEntries(list) },
-      {
-        type: "item",
-        label: `Copy share link (${expiryLabel(settings.linkExpiry)})`,
-        icon: "link",
-        disabled: !(one && e.kind === "file"),
-        onClick: () => copyLink(e, settings.linkExpiry),
-      },
-      {
-        type: "item",
-        label: "Copy S3 URI",
-        icon: "copy",
-        disabled: !one || !bucket,
-        onClick: () => copyText(`s3://${bucket}/${e.key}`, "S3 URI"),
-      },
+    const folder = one && e.kind === "folder";
+    const files = list.filter((x) => x.kind === "file");
+    const folders = list.filter((x) => x.kind === "folder");
+    const clip = clipFor();
+    const items = tidyMenu([
+      folder
+        ? { type: "item", label: "Open", icon: "folder", hint: "↵", onClick: () => navigate(e.key) }
+        : { type: "item", label: files.length > 1 ? `Open ${files.length} files` : "Open", icon: "reveal", hint: "⌘O", disabled: !files.length, onClick: () => openSelection(list) },
+      one && e.kind === "file" && { type: "item", label: "Quick Look", icon: "eye", hint: "Space", onClick: () => setQuick(e.key) },
+      search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => navigate(entryParent(e), e.key) },
+      { type: "item", label: "Download", icon: "download", onClick: () => ops.downloadEntries(list, relBase) },
+      { type: "item", label: `Copy share link (${expiryLabel(settings.linkExpiry)})`, icon: "link", disabled: !(one && e.kind === "file"), onClick: () => copyLink(e, settings.linkExpiry) },
+      { type: "item", label: "Copy S3 URI", icon: "copy", disabled: !one, onClick: () => copyText(`s3://${bucket}/${e.key}`, "S3 URI") },
       { type: "sep" },
+      { type: "item", label: "Copy", icon: "copy", hint: "⌘C", onClick: () => ops.clip(list, "copy") },
+      { type: "item", label: "Cut", icon: "move", hint: "⌘X", onClick: () => ops.clip(list, "cut") },
+      folder && clip && { type: "item", label: `Paste into “${e.name}”`, icon: "copy", onClick: () => ops.paste(e.key) },
       { type: "item", label: "Move to…", icon: "move", onClick: () => askMove(list, "move") },
       { type: "item", label: "Copy to…", icon: "copy", onClick: () => askMove(list, "copy") },
-      ...(prefix && !search
-        ? [{ type: "item" as const, label: `Move to “${destLabel(parentPrefix(prefix), bucket ?? "")}”`, icon: "arrow-up" as const, onClick: () => relocate(list, parentPrefix(prefix), "move") }]
-        : []),
+      !!prefix && !search && {
+        type: "item",
+        label: `Move to “${destLabel(parentPrefix(prefix), bucket)}”`,
+        icon: "arrow-up",
+        onClick: () => ops.relocate(list, parentPrefix(prefix), "move"),
+      },
       { type: "sep" },
-      { type: "item", label: "Rename…", icon: "edit", disabled: !one, onClick: () => askRename(e) },
-      { type: "item", label: list.length > 1 ? `Delete ${list.length} items…` : "Delete…", icon: "trash", hint: "⌘⌫", danger: true, onClick: () => askDelete(list) },
-    ];
+      folders.length > 0 && {
+        type: "item",
+        label: folders.length > 1 ? `Calculate sizes of ${folders.length} folders` : "Calculate size",
+        icon: "info",
+        onClick: () => calcSizes(folders.map((f) => f.key)),
+      },
+      folder && favoriteItem(bucket, e.key),
+      folder && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => setSyncFor({ profileId: profile.id, bucket, prefix: e.key }) },
+      { type: "sep" },
+      { type: "item", label: "Rename…", icon: "edit", disabled: !one, onClick: () => ops.askRename(e) },
+      { type: "item", label: list.length > 1 ? `Delete ${list.length} items…` : "Delete…", icon: "trash", hint: "⌘⌫", danger: true, onClick: () => ops.askDelete(list) },
+    ]);
     setMenu({ x: ev.clientX, y: ev.clientY, items });
   };
 
-  // ------------------------------------------------------------ keyboard
+  const onMoreMenu = (x: number, y: number) => setMenu({ x, y, items: tidyMenu(placeItems()) });
+
+  // ------------------------------------------------------------ commands (keyboard + menu bar)
+  const togglePreview = () =>
+    setPreviewOpen((o) => {
+      LS.set("s3b.preview", o ? "0" : "1");
+      return !o;
+    });
+  const focusSearch = () => {
+    searchInput.current?.focus();
+    searchInput.current?.select();
+  };
+  const undo = () => {
+    const u = undoStack.pop();
+    if (!u) {
+      toast("info", "Nothing to undo");
+      return;
+    }
+    toast("info", `Undoing the ${u.label}…`);
+    void u.run();
+  };
+  const quickLook = () => {
+    if (quick) return setQuick(null);
+    const key = cursor.current && selected.has(cursor.current) ? cursor.current : selectedEntries[0]?.key;
+    if (key) setQuick(key);
+  };
+
+  /** Every action reachable from a shortcut or the menu bar, by menu id. */
+  const commands: Record<string, () => void> = {
+    "new-folder": () => ops.askNewFolder(),
+    "upload-files": () => void ops.pickAndUpload(false),
+    "upload-folder": () => void ops.pickAndUpload(true),
+    download: () => void ops.downloadEntries(selectedEntries, relBase),
+    refresh,
+    "go-up": () => prefix && !search && navigate(parentPrefix(prefix)),
+    back: () => historyStep(-1),
+    forward: () => historyStep(1),
+    "go-to": () => bucket && setGoTo(true),
+    search: focusSearch,
+    "select-all": () => setSelected(new Set(entries.map((e) => e.key))),
+    delete: () => selectedEntries.length && ops.askDelete(selectedEntries),
+    rename: () => selectedEntries.length === 1 && ops.askRename(selectedEntries[0]),
+    "get-info": togglePreview,
+    settings: () => openSettings(),
+    "new-connection": () => setConnDialog({ profile: null }),
+    open: () => openSelection(),
+    "quick-look": quickLook,
+    copy: () => ops.clip(selectedEntries, "copy"),
+    cut: () => ops.clip(selectedEntries, "cut"),
+    paste: () => ops.paste(),
+    undo,
+    deselect: () => setSelected(new Set()),
+  };
+
+  /** A dialog, menu or preview is up: it owns the keyboard, and actions must not run behind it. */
+  const overlayUp = () =>
+    !!(confirm || prompt || connDialog || moveDialog || kyblDialog || menu || conflicts.open || goTo || syncFor || quick) ||
+    !!document.querySelector(".modal-backdrop, .ctx-menu, .ql-backdrop");
+
+  const route = (id: string): boolean => {
+    if (id === "settings") {
+      openSettings();
+      return true;
+    }
+    if (overlayUp()) return false;
+    if (settingsOpen) {
+      if (id === "new-connection") commands[id]();
+      return id === "new-connection";
+    }
+    const run = commands[id];
+    if (!run || !bucket) {
+      // without a bucket on screen only connection-level actions make sense
+      if (id === "new-connection" || id === "back" || id === "forward") run?.();
+      return !!run;
+    }
+    run();
+    return true;
+  };
+  const routeRef = useRef(route);
+  routeRef.current = route;
+
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
+      if (ev.defaultPrevented || ev.isComposing) return;
       const t = ev.target as HTMLElement;
-      const typing = t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT";
+      const typing = t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable;
+      const onControl = !!t.closest?.("button, a[href], [role=button], [role=menuitem], [role=tab], [role=switch]");
       const mod = ev.metaKey || ev.ctrlKey;
-      if (mod && ev.key === ",") {
-        ev.preventDefault();
-        openSettings();
-        return;
-      }
-      if (confirm || prompt || connDialog || moveDialog) return;
-      if (settingsOpen) {
+      const k = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
+      const textSelected = !!window.getSelection()?.toString();
+      // keys with a menu-bar accelerator on macOS are handled there (the `menu` event)
+      const own = (id: string) => (MENU_OWNS_SHORTCUTS ? null : id);
+      let id: string | null = null;
+      if (mod && k === ",") id = own("settings");
+      else if (mod && ev.shiftKey && k === "n") id = own("new-folder");
+      else if (mod && !ev.shiftKey && k === "u") id = own("upload-files");
+      else if (mod && k === "[") id = own("back");
+      else if (mod && k === "]") id = own("forward");
+      else if (mod && ev.shiftKey && k === "g") id = own("go-to");
+      else if (mod && k === "i") id = own("get-info");
+      else if (mod && k === "l") id = "go-to";
+      else if (mod && k === "r") id = "refresh";
+      else if (mod && k === "f") id = "search";
+      else if (settingsOpen) {
         // a dialog open on top of settings handles its own Escape
-        if (ev.key === "Escape" && !document.querySelector(".modal")) setSettingsOpen(false);
+        if (ev.key === "Escape" && !overlayUp()) setSettingsOpen(false);
         return;
-      }
-      if (mod && ev.key.toLowerCase() === "r") {
-        ev.preventDefault();
-        refresh();
-      } else if (typing) {
-        return;
-      } else if (mod && ev.key.toLowerCase() === "a") {
-        ev.preventDefault();
-        setSelected(new Set(entries.map((e) => e.key)));
-      } else if (ev.key === "Delete" || (mod && ev.key === "Backspace")) {
-        if (selectedEntries.length) {
+      } else if (typing) return;
+      else if (mod && k === "a") id = "select-all";
+      else if (ev.key === "Delete" || (mod && ev.key === "Backspace")) id = "delete";
+      else if (mod && k === "c" && !textSelected) id = "copy";
+      else if (mod && k === "x" && !textSelected) id = "cut";
+      else if (mod && k === "v") id = "paste";
+      else if (mod && k === "z" && !ev.shiftKey) id = "undo";
+      else if (mod && k === "o") id = "open";
+      else if (mod && ev.key === "ArrowUp") id = "go-up";
+      else if (mod && ev.key === "ArrowDown") id = "open";
+      else if (mod) return;
+      else if (ev.key === "Backspace") id = "go-up";
+      else if (ev.key === "F2") id = "rename";
+      else if (onControl && (ev.key === "Enter" || ev.key === " ")) return;
+      else if (ev.key === "Enter") id = selectedEntries.length ? "open" : null;
+      else if (ev.key === " ") id = selectedEntries.length ? "quick-look" : null;
+      else if (ev.key === "Escape") id = "deselect";
+      else if (ev.key.startsWith("Arrow") && (document.activeElement === document.body || !document.activeElement) && !overlayUp()) {
+        // nothing focused (after a sidebar click or a closed dialog): arrows still move in the list
+        const list = document.querySelector<HTMLElement>(".table, .grid-scroll");
+        const grid = list?.classList.contains("grid-scroll");
+        const cols = grid ? getComputedStyle(list!.querySelector(".grid")!).gridTemplateColumns.split(" ").length || 1 : 1;
+        const delta = { ArrowDown: cols, ArrowUp: -cols, ArrowRight: grid ? 1 : 0, ArrowLeft: grid ? -1 : 0 }[ev.key] ?? 0;
+        if (delta && bucket) {
           ev.preventDefault();
-          askDelete(selectedEntries);
+          moveSelection(delta, ev.shiftKey);
+          list?.focus();
         }
-      } else if (ev.key === "Enter" && selectedEntries.length === 1) {
-        openEntry(selectedEntries[0]);
-      } else if (ev.key === "Escape") {
-        setSelected(new Set());
-      } else if ((mod && ev.key === "ArrowUp") || ev.key === "Backspace") {
-        if (prefix) navigate(parentPrefix(prefix));
+        return;
       }
+      if (!id) return;
+      if (routeRef.current(id)) ev.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  // menu bar items, the window coming back to the front, mouse back/forward buttons
+  const lastResume = useRef(0);
+  const resumeRef = useRef(() => {});
+  resumeRef.current = () => {
+    if (!here || search || lst.loading || overlayUp() || Date.now() - lastResume.current < RESUME_REFRESH_MS) return;
+    lastResume.current = Date.now();
+    void lst.refresh(here);
+  };
+  useEffect(() => {
+    const offs = [
+      listen<string>("menu", (e) => void routeRef.current(String(e.payload))),
+      listen("app-resumed", () => resumeRef.current()),
+    ];
+    const onMouse = (e: MouseEvent) => {
+      if (e.button !== 3 && e.button !== 4) return;
+      e.preventDefault();
+      routeRef.current(e.button === 3 ? "back" : "forward");
+    };
+    // WebKit's own menu (Reload, Inspect…) means nothing here; text fields and selected text keep theirs
+    const onContextMenu = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.closest?.("input, textarea, [contenteditable=true]") || window.getSelection()?.toString()) return;
+      e.preventDefault();
+    };
+    window.addEventListener("mouseup", onMouse);
+    window.addEventListener("contextmenu", onContextMenu);
+    return () => {
+      for (const off of offs) off.then((f) => f()).catch(() => {});
+      window.removeEventListener("mouseup", onMouse);
+      window.removeEventListener("contextmenu", onContextMenu);
+    };
+  }, []);
+
   // ------------------------------------------------------------ drag & drop from Finder
-  const dropRef = useRef(uploadPaths);
-  dropRef.current = uploadPaths;
+  const dropRef = useRef(ops.uploadPaths);
+  dropRef.current = ops.uploadPaths;
   const canDrop = useRef(false);
   canDrop.current = !!(profile && bucket);
   useEffect(() => {
@@ -1005,7 +1021,7 @@ export default function App() {
         else if (p.type === "leave") setDragOver(false);
         else if (p.type === "drop") {
           setDragOver(false);
-          if (canDrop.current) dropRef.current(p.paths);
+          if (canDrop.current) void dropRef.current(p.paths);
         }
       })
       .then((u) => {
@@ -1016,13 +1032,12 @@ export default function App() {
   }, []);
 
   // ------------------------------------------------------------ press, drag to move
-  const relocateRef = useRef(relocate);
-  relocateRef.current = relocate;
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
   const { drag, begin: beginDrag } = useItemDrag({
-    onDrop: (items, dest, copy) => relocateRef.current(items, dest, copy ? "copy" : "move"),
+    onDrop: (items, dest, copy, destBucket) => void opsRef.current.relocate(items, dest, copy ? "copy" : "move", destBucket ? { destBucket } : {}),
     onSpring: (dest) => navigateRef.current(dest),
+    bucketTarget: (pid, b) => (pid === profile?.id && !search ? (b === bucket ? "same" : "other") : null),
   });
 
   const onPress = useCallback(
@@ -1031,7 +1046,7 @@ export default function App() {
       const mods = { meta: ev.metaKey || ev.ctrlKey, shift: ev.shiftKey };
       if (ev.button !== 0) {
         if (ev.button === 2 && sel.has(e.key)) return;
-        select(e, mods);
+        if (ev.button === 2) select(e, mods);
         return;
       }
       const was = sel.has(e.key);
@@ -1071,19 +1086,37 @@ export default function App() {
     LS.set("s3b.previewWidth", String(w));
   };
 
+  // ------------------------------------------------------------ Quick Look
+  const quickIndex = quick ? entries.findIndex((e) => e.key === quick) : -1;
+  useEffect(() => {
+    if (quick && quickIndex < 0) setQuick(null);
+  }, [quick, quickIndex]);
+  const stepQuick = useCallback(
+    (delta: number) => {
+      const i = entries.findIndex((e) => e.key === quick);
+      const next = entries[i + delta];
+      if (!next) return;
+      setQuick(next.key);
+      setSelected(new Set([next.key]));
+      anchor.current = cursor.current = next.key;
+    },
+    [entries, quick],
+  );
+  const closeQuick = useCallback(() => setQuick(null), []);
+  const openFromQuick = useCallback((e: Entry) => openEntry(e), [openEntry]);
+  const downloadFromQuick = useCallback((e: Entry) => void opsRef.current.downloadEntries([e]), []);
+
   // ------------------------------------------------------------ render
   const emptyAction = (
-    <button className="btn btn-sm" onClick={() => pickAndUpload(false)}>
+    <button className="btn btn-sm" onClick={() => ops.pickAndUpload(false)}>
       <Icon name="upload" size={14} /> Upload files
     </button>
   );
-  const moreOnServer = !search && !!listing.next;
-  // only the rows on screen are rendered (see useWindowed); this pulls the next page from S3
-  const hasMore = moreOnServer && !needsAll;
-  const loadMore = () => {
-    if (profile && bucket && listing.next && !loading && !needsAll) load(profile.id, bucket, prefix, listing.next);
-  };
+  const moreOnServer = !search && fresh && !!listing.next;
+  const listError = fresh ? lst.error : null;
   const totalSize = entries.reduce((s, e) => s + (e.kind === "file" ? e.size : 0), 0);
+  const hereSize = folderSizes.get(prefix);
+  const working = lst.loading || !!busy || !!search?.running;
 
   return (
     <div className="app">
@@ -1105,67 +1138,107 @@ export default function App() {
         hiddenBuckets={hiddenBuckets}
         onHideBucket={setBucketHidden}
         onReconnect={(p) => setKyblDialog({ existing: p, reconnect: true })}
+        favorites={settings.favorites}
+        onOpenFavorite={openFavorite}
+        onRemoveFavorite={removeFavorite}
       />
 
       <main className="main">
         <Toolbar
           bucket={bucket}
           prefix={prefix}
-          canUp={!!prefix}
+          canUp={!!prefix && !search}
+          canBack={hist.canBack}
+          canForward={hist.canForward}
           selectionCount={selected.size}
           singleFileSelected={singleFile}
           previewOpen={previewOpen}
           searchActive={!!search}
+          searchRunning={!!search?.running && !search.stopped}
+          query={query}
+          searchInput={searchInput}
           disabled={!profile || !bucket}
-          working={loading || !!busy}
+          working={working}
           view={view}
           compact={compact}
           sort={sort}
+          tileSize={tile}
           onView={setView}
           onCompact={setCompact}
           onSortChange={setSort}
+          onTileSize={changeTile}
           onNavigate={navigate}
           onUp={() => navigate(parentPrefix(prefix))}
+          onBack={() => historyStep(-1)}
+          onForward={() => historyStep(1)}
           onRefresh={refresh}
           onUploadMenu={(x, y) =>
             setMenu({
               x,
               y,
               items: [
-                { type: "item", label: "Files…", icon: "file", onClick: () => pickAndUpload(false) },
-                { type: "item", label: "Folder…", icon: "folder", onClick: () => pickAndUpload(true) },
+                { type: "item", label: "Files…", icon: "file", hint: "⌘U", onClick: () => ops.pickAndUpload(false) },
+                { type: "item", label: "Folder…", icon: "folder", onClick: () => ops.pickAndUpload(true) },
               ],
             })
           }
-          onNewFolder={askNewFolder}
-          onDownload={() => downloadEntries(selectedEntries)}
+          onMoreMenu={onMoreMenu}
+          onNewFolder={() => ops.askNewFolder()}
+          onDownload={() => ops.downloadEntries(selectedEntries, relBase)}
           onCopyLink={() => singleFile && copyLink(selectedEntries[0], settings.linkExpiry)}
-          onRename={() => selectedEntries[0] && askRename(selectedEntries[0])}
+          onRename={() => selectedEntries[0] && ops.askRename(selectedEntries[0])}
           onMoveTo={() => askMove(selectedEntries)}
-          onDelete={() => askDelete(selectedEntries)}
-          onSearch={doSearch}
-          onClearSearch={() => setSearch(null)}
-          onClearSelection={() => setSelected(new Set())}
-          onTogglePreview={() => {
-            setPreviewOpen((o) => {
-              LS.set("s3b.preview", o ? "0" : "1");
-              return !o;
-            });
+          onDelete={() => ops.askDelete(selectedEntries)}
+          onQuery={(q) => {
+            setQuery(q);
+            // editing the text after a deep search goes back to filtering the folder
+            if (search && q.trim() !== search.query) sr.clear();
           }}
+          onSearch={doSearch}
+          onStopSearch={sr.stop}
+          onClearSearch={clearSearch}
+          onClearSelection={() => setSelected(new Set())}
+          onTogglePreview={togglePreview}
         />
 
         {search && (
           <div className="banner">
+            {search.running && !search.stopped ? <span className="spinner" /> : <Icon name="search" size={14} />}
+            <span>
+              <strong>
+                {entries.length.toLocaleString()} {entries.length === 1 ? "result" : "results"}
+              </strong>{" "}
+              for “{search.query}” in <code>/{search.loc.prefix}</code>
+              {search.running && !search.stopped
+                ? ` · searching, ${search.scanned.toLocaleString()} objects checked so far`
+                : search.stopped
+                  ? " · stopped early"
+                  : search.truncated
+                    ? " · showing the first matches only, refine your search"
+                    : ` · ${search.scanned.toLocaleString()} objects checked`}
+            </span>
+            {search.running && !search.stopped ? (
+              <button className="btn btn-sm" onClick={sr.stop}>
+                Stop
+              </button>
+            ) : (
+              <button className="btn btn-ghost btn-sm" onClick={clearSearch}>
+                Clear search
+              </button>
+            )}
+          </div>
+        )}
+        {!search && filter && fresh && (
+          <div className="banner">
             <Icon name="search" size={14} />
             <span>
               <strong>
-                {search.results.length.toLocaleString()} {search.results.length === 1 ? "result" : "results"}
+                {entries.length.toLocaleString()} of {allEntries.length.toLocaleString()}
               </strong>{" "}
-              for “{search.query}” in <code>/{prefix}</code>
-              {search.truncated ? " · showing the first matches only, refine your search" : ` · ${search.scanned.toLocaleString()} objects scanned`}
+              {moreOnServer ? "loaded items" : "items"} in this folder match “{query.trim()}”
             </span>
-            <button className="btn btn-ghost btn-sm" onClick={() => setSearch(null)}>
-              Clear search
+            <button className="btn btn-sm" onClick={() => doSearch(query.trim())}>
+              Search subfolders too
             </button>
           </div>
         )}
@@ -1223,7 +1296,7 @@ export default function App() {
             )}
             {profile && bucket && (
               <>
-                {listError && entries.length === 0 ? (
+                {listError && entries.length === 0 && !search ? (
                   <div className="empty error-state">
                     <div className="empty-art">
                       <Icon name="alert" size={26} />
@@ -1247,11 +1320,11 @@ export default function App() {
                     key={`${settings.binaryUnits}${settings.absoluteDates}${settings.listThumbs}`}
                     entries={entries}
                     selected={selected}
-                    loading={loading}
+                    loading={search ? search.running && !search.stopped && entries.length === 0 : lst.loading || !fresh}
                     hasMore={hasMore}
                     searchMode={!!search}
-                    prefix={prefix}
-                    tile={compact ? 128 : 192}
+                    prefix={search ? search.loc.prefix : prefix}
+                    tile={tile}
                     profileId={profile.id}
                     bucket={bucket}
                     emptyAction={emptyAction}
@@ -1261,6 +1334,7 @@ export default function App() {
                     onLoadMore={loadMore}
                     onClearSelection={() => setSelected(new Set())}
                     onMove={moveSelection}
+                    onBackgroundContextMenu={onBackgroundContext}
                   />
                 ) : (
                   <FileTable
@@ -1268,10 +1342,10 @@ export default function App() {
                     entries={entries}
                     selected={selected}
                     sort={sort}
-                    loading={loading}
+                    loading={search ? search.running && !search.stopped && entries.length === 0 : lst.loading || !fresh}
                     hasMore={hasMore}
                     searchMode={!!search}
-                    prefix={prefix}
+                    prefix={search ? search.loc.prefix : prefix}
                     emptyAction={emptyAction}
                     onSort={onSort}
                     onPress={onPress}
@@ -1280,12 +1354,15 @@ export default function App() {
                     onLoadMore={loadMore}
                     onClearSelection={() => setSelected(new Set())}
                     onMove={moveSelection}
+                    onBackgroundContextMenu={onBackgroundContext}
+                    folderSize={folderSizes.get}
+                    onCalcSize={(k) => calcSizes([k])}
                   />
                 )}
                 <footer className="statusbar">
                   <span>
                     {entries.length.toLocaleString()}
-                    {moreOnServer ? "+" : ""} {entries.length === 1 && !moreOnServer ? "item" : "items"}
+                    {moreOnServer && !filter ? "+" : ""} {entries.length === 1 && !moreOnServer ? "item" : "items"}
                     {totalSize > 0 ? ` · ${formatBytes(totalSize)}` : ""}
                   </span>
                   {selected.size > 0 && (
@@ -1296,13 +1373,24 @@ export default function App() {
                         : ""}
                     </span>
                   )}
+                  {hereSize && !search && (
+                    <span title={hereSize.error}>
+                      ·{" "}
+                      {hereSize.state === "done"
+                        ? `Whole folder: ${formatBytes(hereSize.bytes)} in ${hereSize.objects.toLocaleString()} objects`
+                        : hereSize.state === "loading"
+                          ? `Adding up the folder… ${formatBytes(hereSize.bytes)} so far`
+                          : "Couldn’t work out the folder size"}
+                    </span>
+                  )}
                   <span className="spacer" />
-                  {loadingAll && !busy && (
+                  {lst.pulling && !busy && !search && (
                     <span className="busy">
-                      <span className="spinner" /> Loading the whole folder to sort it…
+                      <span className="spinner" /> {needsAll ? "Loading the whole folder to sort it" : "Loading the rest of the folder"}… {loadedCount.toLocaleString()} so far
                     </span>
                   )}
                   {sortCapped && !busy && <span>Sorted the first {MAX_SORT_ITEMS.toLocaleString()} items only</span>}
+                  {hasMore && !lst.loading && !busy && <span title="S3 lists big folders in pages">In order: the first {loadedCount.toLocaleString()} items. More load as you scroll</span>}
                   {busy && (
                     <span className="busy">
                       <span className="spinner" /> {busy}
@@ -1353,11 +1441,14 @@ export default function App() {
               selection={selectedEntries}
               onCopyLink={(secs) => selectedEntries[0] && copyLink(selectedEntries[0], secs)}
               onCopyText={copyText}
-              onDownload={() => downloadEntries(selectedEntries)}
-              onRename={() => selectedEntries[0] && askRename(selectedEntries[0])}
+              onDownload={() => ops.downloadEntries(selectedEntries, relBase)}
+              onRename={() => selectedEntries[0] && ops.askRename(selectedEntries[0])}
               onMoveTo={() => askMove(selectedEntries)}
-              onDelete={() => askDelete(selectedEntries)}
+              onDelete={() => ops.askDelete(selectedEntries)}
               onContext={onContext}
+              onChanged={() => reloadIfShowing(profile.id, bucket)}
+              folderSize={folderSizes.get}
+              onCalcSize={(k) => calcSizes([k])}
             />
           )}
         </div>
@@ -1367,8 +1458,8 @@ export default function App() {
           onDismissJob={jobs.dismiss}
           onOpenJob={(j) => {
             if (j.dest == null) return;
-            if (j.profileId === profile?.id && j.bucket === bucket) navigate(j.dest);
-            else toast("info", "That was in another bucket. Open it from the sidebar.");
+            const p = profiles.find((x) => x.id === j.profileId);
+            if (p && j.bucket) go(p, j.bucket, j.dest);
           }}
           onOpenSync={() => openSettings("sync")}
           open={transfersOpen}
@@ -1440,7 +1531,10 @@ export default function App() {
           confirmLabel={confirm.label}
           danger={!confirm.safe}
           onConfirm={confirm.run}
-          onClose={() => setConfirm(null)}
+          onClose={() => {
+            confirm.cancel?.();
+            setConfirm(null);
+          }}
         />
       )}
       {prompt && (
@@ -1457,11 +1551,37 @@ export default function App() {
         <MoveDialog
           profileId={profile.id}
           bucket={bucket}
+          buckets={bucketsBy[profile.id]?.names}
           items={moveDialog.items}
           initialMode={moveDialog.mode}
-          startPrefix={prefix}
-          onSubmit={(dest, mode) => relocate(moveDialog.items, dest, mode)}
+          startPrefix={search ? entryParent(moveDialog.items[0]) : prefix}
+          onSubmit={(dest, mode, destBucket) => ops.relocate(moveDialog.items, dest, mode, { destBucket })}
           onClose={() => setMoveDialog(null)}
+        />
+      )}
+      {goTo && bucket && <GoToDialog bucket={bucket} prefix={prefix} onGo={goToPath} onClose={() => setGoTo(false)} />}
+      {syncFor && (
+        <SyncThisFolder
+          profiles={profiles}
+          profileId={syncFor.profileId}
+          bucket={syncFor.bucket}
+          prefix={syncFor.prefix}
+          onDone={() => toast("success", "Folder added. The first sync starts in a moment.")}
+          onClose={() => setSyncFor(null)}
+        />
+      )}
+      {conflicts.element}
+      {quick && quickIndex >= 0 && profile && bucket && (
+        <QuickLook
+          profileId={profile.id}
+          bucket={bucket}
+          entry={entries[quickIndex]}
+          index={quickIndex}
+          count={entries.length}
+          onStep={stepQuick}
+          onClose={closeQuick}
+          onOpen={openFromQuick}
+          onDownload={downloadFromQuick}
         />
       )}
       {drag && (
@@ -1474,7 +1594,7 @@ export default function App() {
             <strong>{drag.items.length === 1 ? drag.items[0].name : `${drag.items.length} items`}</strong>
             <span>
               {drag.dest != null
-                ? `${drag.copy ? "Copy" : "Move"} to ${destLabel(drag.dest, bucket ?? "")}`
+                ? `${drag.copy ? "Copy" : "Move"} to ${drag.bucket ?? destLabel(drag.dest, bucket ?? "")}${drag.bucket ? (drag.copy ? " · ⌘ to move" : "") : ""}`
                 : "Drop on a folder · ⌥ to copy"}
             </span>
           </span>

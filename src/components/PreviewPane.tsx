@@ -7,6 +7,7 @@ import { FileIcon } from "./FileIcon";
 import { MAX_PDF_BYTES, PdfView } from "./PdfView";
 import { EXPIRIES } from "../settings";
 import type { Entry, ObjectDetails } from "../types";
+import type { FolderSize } from "../useFolderSizes";
 
 const BIG_IMAGE = 25 * 1000 * 1000;
 
@@ -27,6 +28,8 @@ export function PreviewPane({
   onMoveTo,
   onDelete,
   onContext,
+  folderSize,
+  onCalcSize,
 }: {
   profileId: string;
   bucket: string;
@@ -41,6 +44,12 @@ export function PreviewPane({
   onDelete: () => void;
   /** right-click on the preview: the app's own menu for this item */
   onContext: (ev: React.MouseEvent, e: Entry) => void;
+  /** called after properties or tags were saved */
+  onChanged?: () => void;
+  /** a folder's calculated size and object count, if any (see useFolderSizes) */
+  folderSize?: (key: string) => FolderSize | undefined;
+  /** "Calculate" for a folder's size */
+  onCalcSize?: (key: string) => void;
 }) {
   const [expiry, setExpiry] = useState(defaultExpiry);
   useEffect(() => setExpiry(defaultExpiry), [defaultExpiry]);
@@ -102,6 +111,8 @@ export function PreviewPane({
         onMoveTo={onMoveTo}
         onDelete={onDelete}
         onContext={onContext}
+        folderSize={entry.kind === "folder" ? folderSize?.(entry.key) : undefined}
+        onCalcSize={onCalcSize && (() => onCalcSize(entry.key))}
       />
     </aside>
   );
@@ -120,6 +131,8 @@ function FileDetails({
   onMoveTo,
   onDelete,
   onContext,
+  folderSize,
+  onCalcSize,
 }: {
   profileId: string;
   bucket: string;
@@ -133,6 +146,8 @@ function FileDetails({
   onMoveTo: () => void;
   onDelete: () => void;
   onContext: (ev: React.MouseEvent, e: Entry) => void;
+  folderSize?: FolderSize;
+  onCalcSize?: () => void;
 }) {
   const isFolder = entry.kind === "folder";
   const cls = classify(entry.name);
@@ -338,6 +353,21 @@ function FileDetails({
         <div className="section-title">About this {isFolder ? "folder" : "file"}</div>
         <dl className="props">
           {!isFolder && <Prop label="Size">{formatBytes(entry.size)}</Prop>}
+          {isFolder && (folderSize || onCalcSize) && (
+            <Prop label="Size">
+              {folderSize?.state === "done" ? (
+                `${formatBytes(folderSize.bytes)} · ${folderSize.objects.toLocaleString()} ${folderSize.objects === 1 ? "object" : "objects"}`
+              ) : folderSize?.state === "loading" ? (
+                <span className="dim">
+                  Calculating… {folderSize.objects ? `${formatBytes(folderSize.bytes)} in ${folderSize.objects.toLocaleString()} objects so far` : ""}
+                </span>
+              ) : (
+                <button className="size-calc" onClick={onCalcSize} title={folderSize?.error}>
+                  {folderSize?.state === "error" ? "Couldn’t work it out. Try again" : "Calculate"}
+                </button>
+              )}
+            </Prop>
+          )}
           {(details?.modified ?? entry.modified) && <Prop label="Modified">{formatDateFull(details?.modified ?? entry.modified)}</Prop>}
           <Prop label="Kind">{kindLabel(entry.name, isFolder)}</Prop>
           <Prop label="Location">{where}</Prop>

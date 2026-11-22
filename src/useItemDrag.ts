@@ -2,7 +2,10 @@
  * Pointer-driven drag of files/folders onto folders (rows, tiles, breadcrumb segments). Plain
  * mouse events rather than HTML5 drag-and-drop: the native webview drop handler (used for
  * Finder uploads) swallows HTML5 drags on some platforms, and this gives full control over the
- * ghost and hit-testing. Drop targets are any element with a `data-drop="<prefix>"` attribute.
+ * ghost and hit-testing. Drop targets are any element with a `data-drop="<prefix>"` attribute, and
+ * sidebar buckets marked `data-drop-bucket="<bucket>" data-drop-profile="<connection id>"` (the
+ * items land at that bucket's top level). Between buckets a drop copies, like Finder between
+ * disks; hold ⌘ to move instead. Within a bucket it moves; hold ⌥ to copy.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isValidDest } from "./moving";
@@ -14,6 +17,8 @@ export type DragState = {
   y: number;
   /** destination prefix under the pointer, if it accepts the items */
   dest: string | null;
+  /** destination bucket when it is another bucket of the connection (a sidebar bucket) */
+  bucket: string | null;
   copy: boolean;
 };
 
@@ -23,14 +28,20 @@ const SPRING_MS = 900;
 export function useItemDrag({
   onDrop,
   onSpring,
+  bucketTarget,
 }: {
-  onDrop: (items: Entry[], dest: string, copy: boolean) => void;
+  onDrop: (items: Entry[], dest: string, copy: boolean, destBucket: string | null) => void;
   /** hovering a folder for a moment opens it (Finder's spring-loaded folders) */
   onSpring: (dest: string) => void;
+  /**
+   * Whether a sidebar bucket accepts the items: null = no, "same" = the bucket they are in (a
+   * move to its top level), "other" = another bucket of the same connection.
+   */
+  bucketTarget?: (profileId: string, bucket: string) => "same" | "other" | null;
 }) {
   const [drag, setDrag] = useState<DragState | null>(null);
-  const cbs = useRef({ onDrop, onSpring });
-  cbs.current = { onDrop, onSpring };
+  const cbs = useRef({ onDrop, onSpring, bucketTarget });
+  cbs.current = { onDrop, onSpring, bucketTarget };
   const cleanup = useRef<(() => void) | null>(null);
 
   useEffect(() => () => cleanup.current?.(), []);
@@ -43,9 +54,12 @@ export function useItemDrag({
     let active = false;
     let lit: HTMLElement | null = null;
     let dest: string | null = null;
-    let copy = false;
+    let destBucket: string | null = null;
+    let alt = false;
+    let meta = false;
     let springTimer = 0;
     let springFor: string | null = null;
+    const isCopy = () => (destBucket != null ? !meta : alt);
 
     const light = (el: HTMLElement | null) => {
       if (lit === el) return;
@@ -55,13 +69,20 @@ export function useItemDrag({
     };
 
     const hit = (x: number, y: number) => {
-      const el = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-drop]") ?? null;
-      const d = el?.getAttribute("data-drop");
-      const ok = el && d != null && isValidDest(items, d);
+      const el = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-drop], [data-drop-bucket]") ?? null;
+      let d = el?.getAttribute("data-drop") ?? null;
+      destBucket = null;
+      if (el && d == null) {
+        const kind = cbs.current.bucketTarget?.(el.getAttribute("data-drop-profile") ?? "", el.getAttribute("data-drop-bucket") ?? "") ?? null;
+        if (kind) d = "";
+        if (kind === "other") destBucket = el.getAttribute("data-drop-bucket");
+      }
+      const ok = !!el && d != null && (destBucket != null || isValidDest(items, d));
       light(ok ? el : null);
-      dest = ok ? d! : null;
+      dest = ok ? d : null;
+      if (!ok) destBucket = null;
       // spring-load folder rows/tiles (not breadcrumbs: those are one click away anyway)
-      const springable = ok && el!.hasAttribute("data-spring") ? d! : null;
+      const springable = ok && el!.hasAttribute("data-spring") ? d : null;
       if (springable !== springFor) {
         window.clearTimeout(springTimer);
         springFor = springable;
@@ -69,7 +90,8 @@ export function useItemDrag({
           springTimer = window.setTimeout(() => {
             light(null);
             dest = null;
-            setDrag((st) => (st ? { ...st, dest: null } : st));
+            destBucket = null;
+            setDrag((st) => (st ? { ...st, dest: null, bucket: null } : st));
             cbs.current.onSpring(springable);
           }, SPRING_MS);
       }
@@ -81,25 +103,31 @@ export function useItemDrag({
         active = true;
         document.body.classList.add("dragging-items");
       }
-      copy = e.altKey;
+      alt = e.altKey;
+      meta = e.metaKey;
       hit(e.clientX, e.clientY);
-      setDrag({ items, x: e.clientX, y: e.clientY, dest, copy });
+      setDrag({ items, x: e.clientX, y: e.clientY, dest, bucket: destBucket, copy: isCopy() });
     };
     const up = (e: MouseEvent) => {
       const wasActive = active;
       const d = dest;
-      const c = e.altKey;
+      const b = destBucket;
+      alt = e.altKey;
+      meta = e.metaKey;
+      const c = isCopy();
       end();
       if (!wasActive) onClick?.();
-      else if (d != null) cbs.current.onDrop(items, d, c);
+      else if (d != null) cbs.current.onDrop(items, d, c, b);
     };
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape" && active) {
         e.preventDefault();
         e.stopPropagation();
         end();
-      } else if (e.key === "Alt" && active) {
-        copy = e.type === "keydown";
+      } else if ((e.key === "Alt" || e.key === "Meta") && active) {
+        if (e.key === "Alt") alt = e.type === "keydown";
+        else meta = e.type === "keydown";
+        const copy = isCopy();
         setDrag((s) => (s ? { ...s, copy } : s));
       }
     };

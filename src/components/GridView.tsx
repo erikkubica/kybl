@@ -109,6 +109,7 @@ export function GridView({
   onLoadMore,
   onClearSelection,
   onMove,
+  onBackgroundContextMenu,
 }: {
   entries: Entry[];
   selected: Set<string>;
@@ -126,6 +127,8 @@ export function GridView({
   onLoadMore: () => void;
   onClearSelection: () => void;
   onMove: (delta: number, shift: boolean) => void;
+  /** right-click on empty space in the grid */
+  onBackgroundContextMenu?: (e: React.MouseEvent) => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const grid = useRef<HTMLDivElement>(null);
@@ -191,6 +194,11 @@ export function GridView({
       onMouseDown={(ev) => {
         const t = ev.target as HTMLElement;
         if (t === scroller.current || t === grid.current) onClearSelection();
+      }}
+      onContextMenu={(ev) => {
+        if (!onBackgroundContextMenu || (ev.target as HTMLElement).closest(".card")) return;
+        ev.preventDefault();
+        onBackgroundContextMenu(ev);
       }}
     >
       {win.padTop > 0 && <div style={{ height: win.padTop }} aria-hidden="true" />}
