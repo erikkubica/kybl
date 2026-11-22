@@ -1,9 +1,20 @@
 mod commands;
+// where downloads land: safe paths and free names
+mod dest;
 // "Connect Kybl Storage": browser sign-in on computers and phones
 mod kybl_connect;
+// the macOS menu bar
+#[cfg(target_os = "macos")]
+mod menu;
 mod mobile;
-#[cfg(desktop)]
+// parallel, resumable multipart uploads
+mod multipart;
+// name checks, object headers and tags
+mod objects;
 mod prefs;
+// asking before quitting with transfers running
+#[cfg(desktop)]
+mod quit;
 mod state;
 #[cfg(desktop)]
 mod sync;
@@ -12,6 +23,8 @@ mod transfer_notice;
 mod transfers;
 #[cfg(desktop)]
 mod tray;
+// transfer settings and the bandwidth cap
+mod tuning;
 // update checks and installs from GitHub Releases
 mod updater;
 
@@ -21,7 +34,7 @@ use std::sync::atomic::Ordering;
 use tauri::Manager;
 use tauri::RunEvent;
 #[cfg(desktop)]
-use tauri::WindowEvent;
+use tauri::{Emitter, WindowEvent};
 
 /// Passed by the login item: start in the menu bar without opening the window.
 #[cfg(desktop)]
@@ -42,15 +55,27 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_autostart::Builder::new().args([HIDDEN_ARG]).build())
         .manage(sync::SyncManager::default())
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
                 let app = window.app_handle();
-                if window.label() == "main" && app.state::<prefs::Prefs>().close_to_tray.load(Ordering::Relaxed) {
+                if app.state::<prefs::Prefs>().close_to_tray.load(Ordering::Relaxed) {
                     api.prevent_close();
                     tray::hide_main(app);
+                } else if !quit::quitting() && quit::busy() > 0 {
+                    // closing the window quits the app: ask first, like Quit does
+                    api.prevent_close();
+                    quit::request(app);
                 }
             }
+            // the page refreshes what it shows when the window comes back to the front
+            WindowEvent::Focused(true) if window.label() == "main" => {
+                let _ = window.emit("app-resumed", ());
+            }
+            _ => {}
         });
+
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(menu::build).on_menu_event(menu::on_event);
 
     let builder = builder.plugin(kybl_connect::plugin());
 
@@ -60,6 +85,7 @@ pub fn run() {
             if let Ok(dir) = handle.path().app_data_dir() {
                 let _ = handle.state::<state::AppState>().vault_dir.set(dir);
             }
+            prefs::load_transfers(&handle);
             #[cfg(desktop)]
             {
                 app.manage(prefs::load(&handle));
@@ -104,6 +130,12 @@ pub fn run() {
             commands::move_many,
             commands::expand_paths,
             commands::list_all_under,
+            objects::existing_keys,
+            objects::update_object_props,
+            objects::get_object_tags,
+            objects::put_object_tags,
+            tuning::get_transfer_prefs,
+            tuning::set_transfer_prefs,
             mobile::download_folder,
             mobile::native_theme,
             mobile::picked_files,
@@ -170,6 +202,11 @@ pub fn run() {
             // the hidden window was destroyed to free memory (see tray::hide_main): keep running
             RunEvent::ExitRequested { code: None, api, .. } if tray::REAPING.swap(false, Ordering::SeqCst) => {
                 api.prevent_exit();
+            }
+            // any other way out while transfers run asks first (see quit.rs)
+            RunEvent::ExitRequested { api, .. } if !quit::quitting() && quit::busy() > 0 => {
+                api.prevent_exit();
+                quit::request(_app);
             }
             _ => {}
         }

@@ -38,7 +38,8 @@ use tokio::{
 use crate::{
     commands::list_all,
     state::{client_for, err, sdk_err_brief, AppState},
-    transfers::{download_file, upload_file, Outcome},
+    multipart::upload_file,
+    transfers::{download_file, Outcome},
 };
 
 /// Parallel transfers per mapping.

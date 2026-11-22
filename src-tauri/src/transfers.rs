@@ -1,27 +1,23 @@
 use std::{
-    future::Future,
-    pin::Pin,
+    collections::HashMap,
+    path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc,
+        atomic::{AtomicBool, Ordering},
+        Arc, LazyLock, Mutex,
     },
-    task::{Context, Poll},
     time::{Duration, Instant},
 };
 
-use aws_sdk_s3::{
-    primitives::{ByteStream, Length, SdkBody},
-    types::{CompletedMultipartUpload, CompletedPart},
-    Client,
-};
-use bytes::Bytes;
-use http_body::{Body, Frame, SizeHint};
+use aws_sdk_s3::Client;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::AsyncWriteExt;
 
+use crate::dest;
+use crate::multipart;
 use crate::state::{client_for, err, sdk_err, AppState};
 use crate::transfer_notice::{self as notice, Dir};
+use crate::tuning::LIMITER;
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -60,8 +56,12 @@ pub struct ActiveTransfer {
 
 /// Every transfer that has not ended. The page only learns of transfers it started; on Android
 /// the process (and its transfers) can outlive the page, and a page opened again asks for these.
-static ACTIVE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, ActiveTransfer>>> =
-    std::sync::LazyLock::new(Default::default);
+static ACTIVE: LazyLock<Mutex<HashMap<String, ActiveTransfer>>> = LazyLock::new(Default::default);
+
+/// How many transfers have not ended (for the quit prompt).
+pub fn active_count() -> usize {
+    ACTIVE.lock().unwrap().len()
+}
 
 fn track(id: &str, f: impl FnOnce(&mut ActiveTransfer)) {
     if let Some(t) = ACTIVE.lock().unwrap().get_mut(id) {
@@ -79,200 +79,8 @@ pub(crate) enum Outcome {
     Cancelled,
 }
 
-const SINGLE_PUT_LIMIT: u64 = 16 * 1024 * 1024;
-const MIN_PART_SIZE: u64 = 16 * 1024 * 1024;
-
 /// Progress callback: (bytes done, total bytes).
 pub(crate) type Progress<'a> = &'a (dyn Fn(u64, u64) + Send + Sync);
-
-/// How much of a file is read and handed to the network at a time. Smaller chunks mean smoother
-/// progress; a request is one SDK call, so without this a 16 MB upload shows 0% until it ends.
-const CHUNK: usize = 64 * 1024;
-
-/// A request body that counts the bytes it hands over, so progress can follow a single request.
-struct Counting<B> {
-    inner: B,
-    sent: Arc<AtomicU64>,
-}
-
-impl<B: Body<Data = Bytes> + Unpin> Body for Counting<B> {
-    type Data = Bytes;
-    type Error = B::Error;
-
-    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, B::Error>>> {
-        let polled = Pin::new(&mut self.inner).poll_frame(cx);
-        if let Poll::Ready(Some(Ok(frame))) = &polled {
-            if let Some(data) = frame.data_ref() {
-                self.sent.fetch_add(data.len() as u64, Ordering::Relaxed);
-            }
-        }
-        polled
-    }
-
-    fn is_end_stream(&self) -> bool {
-        self.inner.is_end_stream()
-    }
-
-    fn size_hint(&self) -> SizeHint {
-        self.inner.size_hint()
-    }
-}
-
-/// `len` bytes of the file from `offset`, streamed from disk `CHUNK` bytes at a time (nothing is
-/// held in memory) and counted into `sent`. The SDK can restart it to retry a failed request: the
-/// file is opened again and the counter restarts with it.
-async fn file_body(path: &str, offset: u64, len: u64, sent: Arc<AtomicU64>) -> Result<ByteStream, String> {
-    let stream = ByteStream::read_from()
-        .path(path)
-        .offset(offset)
-        .length(Length::Exact(len))
-        .buffer_size(CHUNK)
-        .build()
-        .await
-        .map_err(err)?;
-    let body = stream.into_inner().map(move |inner| {
-        sent.store(0, Ordering::Relaxed);
-        SdkBody::from_body_1_x(Counting { inner, sent: sent.clone() })
-    });
-    Ok(ByteStream::new(body))
-}
-
-/// Runs a request while reporting `base + bytes sent so far` every 150 ms. Returns None when the
-/// transfer was cancelled (the request is dropped, which stops it).
-async fn drive<T>(
-    request: impl Future<Output = T>,
-    sent: &AtomicU64,
-    base: u64,
-    total: u64,
-    cancel: &AtomicBool,
-    progress: Progress<'_>,
-) -> Option<T> {
-    tokio::pin!(request);
-    let mut tick = tokio::time::interval(Duration::from_millis(150));
-    loop {
-        tokio::select! {
-            out = &mut request => return Some(out),
-            _ = tick.tick() => {
-                if cancel.load(Ordering::Relaxed) {
-                    return None;
-                }
-                progress((base + sent.load(Ordering::Relaxed)).min(total), total);
-            }
-        }
-    }
-}
-
-pub(crate) async fn upload_file(
-    client: &Client,
-    bucket: &str,
-    key: &str,
-    path: &str,
-    cancel: &AtomicBool,
-    progress: Progress<'_>,
-) -> Result<Outcome, String> {
-    let total = tokio::fs::metadata(path).await.map_err(err)?.len();
-    let content_type = mime_guess::from_path(path).first_or_octet_stream().to_string();
-    progress(0, total);
-
-    if total <= SINGLE_PUT_LIMIT {
-        if cancel.load(Ordering::Relaxed) {
-            return Ok(Outcome::Cancelled);
-        }
-        let sent = Arc::new(AtomicU64::new(0));
-        let body = file_body(path, 0, total, sent.clone()).await?;
-        let request = client
-            .put_object()
-            .bucket(bucket)
-            .key(key)
-            .content_type(&content_type)
-            .content_length(total as i64)
-            .body(body)
-            .send();
-        return match drive(request, &sent, 0, total, cancel, progress).await {
-            None => Ok(Outcome::Cancelled),
-            Some(r) => r.map(|_| Outcome::Done).map_err(sdk_err),
-        };
-    }
-
-    // S3 allows at most 10,000 parts: grow the part size for very large files.
-    let part_size = MIN_PART_SIZE.max(total.div_ceil(9000));
-    let created = client
-        .create_multipart_upload()
-        .bucket(bucket)
-        .key(key)
-        .content_type(&content_type)
-        .send()
-        .await
-        .map_err(sdk_err)?;
-    let upload_id = created.upload_id().unwrap_or_default().to_string();
-
-    let run = async {
-        let mut parts: Vec<CompletedPart> = Vec::new();
-        let mut sent = 0u64;
-        let mut n = 1i32;
-        while sent < total {
-            if cancel.load(Ordering::Relaxed) {
-                return Ok::<Option<Vec<CompletedPart>>, String>(None);
-            }
-            let want = part_size.min(total - sent);
-            let in_part = Arc::new(AtomicU64::new(0));
-            let body = file_body(path, sent, want, in_part.clone()).await?;
-            let request = client
-                .upload_part()
-                .bucket(bucket)
-                .key(key)
-                .upload_id(&upload_id)
-                .part_number(n)
-                .content_length(want as i64)
-                .body(body)
-                .send();
-            let Some(r) = drive(request, &in_part, sent, total, cancel, progress).await else {
-                return Ok(None);
-            };
-            let r = r.map_err(sdk_err)?;
-            parts.push(
-                CompletedPart::builder()
-                    .set_e_tag(r.e_tag().map(|s| s.to_string()))
-                    .part_number(n)
-                    .build(),
-            );
-            sent += want;
-            n += 1;
-            progress(sent, total);
-        }
-        Ok(Some(parts))
-    }
-    .await;
-
-    match run {
-        Ok(Some(parts)) => {
-            client
-                .complete_multipart_upload()
-                .bucket(bucket)
-                .key(key)
-                .upload_id(&upload_id)
-                .multipart_upload(CompletedMultipartUpload::builder().set_parts(Some(parts)).build())
-                .send()
-                .await
-                .map_err(sdk_err)?;
-            Ok(Outcome::Done)
-        }
-        other => {
-            let _ = client
-                .abort_multipart_upload()
-                .bucket(bucket)
-                .key(key)
-                .upload_id(&upload_id)
-                .send()
-                .await;
-            match other {
-                Ok(None) => Ok(Outcome::Cancelled),
-                Err(e) => Err(e),
-                Ok(Some(_)) => unreachable!(),
-            }
-        }
-    }
-}
 
 /// How many times in a row a download picks up again after the connection drops, waiting a
 /// little longer each time (1 s, 2 s, 4 s … up to 30 s) before it gives up.
@@ -283,6 +91,7 @@ fn resume_delay(n: u32) -> Duration {
     Duration::from_secs((1u64 << (n - 1).min(5)).min(30))
 }
 
+/// Downloads to `dest`, replacing a file already there, as sync does. Nothing is kept if it fails.
 pub(crate) async fn download_file(
     client: &Client,
     bucket: &str,
@@ -291,26 +100,80 @@ pub(crate) async fn download_file(
     cancel: &AtomicBool,
     progress: Progress<'_>,
 ) -> Result<Outcome, String> {
-    let mut out = client
+    let mut etag = None;
+    download_to(client, bucket, key, Path::new(dest), None, false, cancel, progress, &mut etag).await
+}
+
+/// Opens the partial file of an earlier attempt to carry on from its end, asking the server for
+/// the rest of the same version of the object. None when that can't work (no partial file, the
+/// object changed, or the server ignores ranges); the download then starts over.
+async fn resume_from(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    part: &Path,
+    etag: &str,
+) -> Option<(tokio::fs::File, u64, aws_sdk_s3::operation::get_object::GetObjectOutput)> {
+    let have = tokio::fs::metadata(part).await.ok()?.len();
+    if have == 0 {
+        return None;
+    }
+    let out = client
         .get_object()
         .bucket(bucket)
         .key(key)
+        .range(format!("bytes={have}-"))
+        .if_match(etag)
         .send()
         .await
-        .map_err(sdk_err)?;
-    let total = out.content_length().unwrap_or(0).max(0) as u64;
-    // A resumed request asks for the same version of the object, so a file changed meanwhile
-    // fails cleanly instead of being stitched together from two versions.
-    let etag = out.e_tag().map(str::to_string);
-    progress(0, total);
+        .ok()?;
+    out.content_range()?;
+    let file = tokio::fs::OpenOptions::new().append(true).open(part).await.ok()?;
+    Some((file, have, out))
+}
 
-    let dest_path = std::path::PathBuf::from(dest);
-    if let Some(parent) = dest_path.parent() {
+/// The download itself, into `<dest>.s3part` and renamed onto `dest` once whole. With
+/// `resume_etag`, a partial file from an earlier attempt is continued. With `keep_partial`, a
+/// failed download leaves its partial file for a later retry (a cancelled one never does).
+/// `etag_out` receives the object's ETag, which a retry needs to resume.
+#[allow(clippy::too_many_arguments)]
+async fn download_to(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    dest: &Path,
+    resume_etag: Option<&str>,
+    keep_partial: bool,
+    cancel: &AtomicBool,
+    progress: Progress<'_>,
+    etag_out: &mut Option<String>,
+) -> Result<Outcome, String> {
+    if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent).await.map_err(err)?;
     }
-    let part_path = std::path::PathBuf::from(format!("{dest}.s3part"));
-    let mut file = tokio::fs::File::create(&part_path).await.map_err(err)?;
-    let mut got = 0u64;
+    let part_path = dest::part_path(dest);
+    let resumed = match resume_etag {
+        Some(tag) => resume_from(client, bucket, key, &part_path, tag).await,
+        None => None,
+    };
+    let (mut file, mut got, mut out, total, etag) = match resumed {
+        Some((file, have, out)) => {
+            let total = have + out.content_length().unwrap_or(0).max(0) as u64;
+            (file, have, out, total, resume_etag.map(str::to_string))
+        }
+        None => {
+            let out = client.get_object().bucket(bucket).key(key).send().await.map_err(sdk_err)?;
+            let total = out.content_length().unwrap_or(0).max(0) as u64;
+            // A resumed request asks for the same version of the object, so a file changed
+            // meanwhile fails cleanly instead of being stitched together from two versions.
+            let etag = out.e_tag().map(str::to_string);
+            let file = tokio::fs::File::create(&part_path).await.map_err(err)?;
+            (file, 0, out, total, etag)
+        }
+    };
+    etag_out.clone_from(&etag);
+    progress(got, total);
+
     let mut last_emit = Instant::now();
     let result: Result<bool, String> = async {
         let mut failures = 0u32;
@@ -327,6 +190,7 @@ pub(crate) async fn download_file(
                         progress(got, total);
                         last_emit = Instant::now();
                     }
+                    LIMITER.throttle(chunk.len()).await;
                 }
                 Ok(None) => break,
                 // The connection dropped mid-file: the phone went to the background, the network
@@ -362,10 +226,12 @@ pub(crate) async fn download_file(
         Ok(true)
     }
     .await;
+    // flushed to disk before anything else looks at it
+    let _ = file.sync_all().await;
     drop(file);
     match result {
         Ok(true) => {
-            tokio::fs::rename(&part_path, &dest_path).await.map_err(err)?;
+            tokio::fs::rename(&part_path, dest).await.map_err(err)?;
             Ok(Outcome::Done)
         }
         Ok(false) => {
@@ -373,10 +239,33 @@ pub(crate) async fn download_file(
             Ok(Outcome::Cancelled)
         }
         Err(e) => {
-            let _ = tokio::fs::remove_file(&part_path).await;
+            if !keep_partial {
+                let _ = tokio::fs::remove_file(&part_path).await;
+            }
             Err(e)
         }
     }
+}
+
+/// A download that failed, kept so Retry (the same transfer id) continues its partial file under
+/// the name it was given.
+struct PendingDownload {
+    profile_id: String,
+    bucket: String,
+    key: String,
+    /// the path the page asked for
+    requested: String,
+    /// the path actually written (a free name unless overwriting)
+    chosen: PathBuf,
+    etag: Option<String>,
+}
+
+static PENDING_DOWNLOADS: LazyLock<Mutex<HashMap<String, PendingDownload>>> = LazyLock::new(Default::default);
+
+/// Forgets a failed download: removes its partial file and frees its name.
+fn forget_download(p: PendingDownload) {
+    let _ = std::fs::remove_file(dest::part_path(&p.chosen));
+    dest::release(&p.chosen);
 }
 
 /// Where an upload reads from.
@@ -440,9 +329,11 @@ async fn local_source(source: Source, key: &str) -> Result<(String, Option<std::
 #[derive(Clone, Copy)]
 enum Kind {
     Upload,
-    Download,
+    /// `resume`: continue the partial file of an earlier attempt
+    Download { resume: bool },
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn spawn_transfer(
     app: AppHandle,
     state: &AppState,
@@ -452,11 +343,13 @@ async fn spawn_transfer(
     bucket: String,
     key: String,
     local: String,
+    requested: String,
+    resume_etag: Option<String>,
 ) -> Result<(), String> {
     let client = client_for(&app, state, &profile_id).await?;
     let source = match kind {
         Kind::Upload => Some(open_source(&app, &local).await?),
-        Kind::Download => None,
+        Kind::Download { .. } => None,
     };
     let cancel = Arc::new(AtomicBool::new(false));
     state.cancels.lock().await.insert(id.clone(), cancel.clone());
@@ -464,7 +357,7 @@ async fn spawn_transfer(
     emit(&app, &id, "queued", 0, 0, None);
     let dir = match kind {
         Kind::Upload => Dir::Upload,
-        Kind::Download => Dir::Download,
+        Kind::Download { .. } => Dir::Download,
     };
     let name = key.rsplit('/').find(|n| !n.is_empty()).unwrap_or(&key).to_string();
     notice::queued(&app, &id, dir, &name);
@@ -474,7 +367,7 @@ async fn spawn_transfer(
             id: id.clone(),
             kind: match kind {
                 Kind::Upload => "upload",
-                Kind::Download => "download",
+                Kind::Download { .. } => "download",
             },
             name: name.clone(),
             state: "queued",
@@ -488,9 +381,17 @@ async fn spawn_transfer(
     );
 
     tauri::async_runtime::spawn(async move {
-        let _permit = slots.acquire_owned().await;
+        // a transfer cancelled while it waits for its turn ends right away, not when its turn comes
+        let permit = tokio::select! {
+            p = slots.acquire() => Some(p),
+            _ = async {
+                while !cancel.load(Ordering::Relaxed) {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+            } => None,
+        };
         let mut done_bytes = 0u64;
-        let result = if cancel.load(Ordering::Relaxed) {
+        let result = if permit.is_none() || cancel.load(Ordering::Relaxed) {
             Ok(Outcome::Cancelled)
         } else {
             let report = |done: u64, total: u64| {
@@ -505,7 +406,7 @@ async fn spawn_transfer(
             match kind {
                 Kind::Upload => match local_source(source.expect("an upload has a source"), &key).await {
                     Ok((path, temp)) => {
-                        let r = upload_file(&client, &bucket, &key, &path, &cancel, &report).await;
+                        let r = multipart::upload_resumable(&client, &id, &profile_id, &bucket, &key, &path, &cancel, &report).await;
                         if let Ok(Outcome::Done) = r {
                             done_bytes = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
                         }
@@ -516,13 +417,30 @@ async fn spawn_transfer(
                     }
                     Err(e) => Err(e),
                 },
-                Kind::Download => {
-                    let r = download_file(&client, &bucket, &key, &local, &cancel, &report).await;
-                    done_bytes = tokio::fs::metadata(&local).await.map(|m| m.len()).unwrap_or(0);
+                Kind::Download { resume } => {
+                    let chosen = PathBuf::from(&local);
+                    let mut etag = None;
+                    let tag = if resume { resume_etag.as_deref() } else { None };
+                    let r = download_to(&client, &bucket, &key, &chosen, tag, true, &cancel, &report, &mut etag).await;
+                    match &r {
+                        Ok(Outcome::Done) => {
+                            done_bytes = tokio::fs::metadata(&chosen).await.map(|m| m.len()).unwrap_or(0);
+                            dest::release(&chosen);
+                        }
+                        Ok(Outcome::Cancelled) => dest::release(&chosen),
+                        // keep the partial file and the name for Retry
+                        Err(_) => {
+                            PENDING_DOWNLOADS.lock().unwrap().insert(
+                                id.clone(),
+                                PendingDownload { profile_id: profile_id.clone(), bucket: bucket.clone(), key: key.clone(), requested, chosen, etag },
+                            );
+                        }
+                    }
                     r
                 }
             }
         };
+        drop(permit);
         ACTIVE.lock().unwrap().remove(&id);
         notice::finished(
             &app,
@@ -553,9 +471,14 @@ pub async fn start_upload(
     key: String,
     local_path: String,
 ) -> Result<(), String> {
-    spawn_transfer(app, &state, Kind::Upload, id, profile_id, bucket, key, local_path).await
+    let requested = local_path.clone();
+    spawn_transfer(app, &state, Kind::Upload, id, profile_id, bucket, key, local_path, requested, None).await
 }
 
+/// Starts a download and answers with the local path it writes to: `dest_path` itself when
+/// `overwrite`, else the first free name ("photo (1).jpg") if a file is already there. Starting
+/// the same id again after it failed continues its partial file under the same name.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn start_download(
     app: AppHandle,
@@ -565,16 +488,68 @@ pub async fn start_download(
     bucket: String,
     key: String,
     dest_path: String,
-) -> Result<(), String> {
-    spawn_transfer(app, &state, Kind::Download, id, profile_id, bucket, key, dest_path).await
+    overwrite: Option<bool>,
+) -> Result<String, String> {
+    let wanted = dest::validate(&dest_path)?;
+    if state.cancels.lock().await.contains_key(&id) {
+        return Err("This download is already running.".into());
+    }
+    let kept = PENDING_DOWNLOADS.lock().unwrap().remove(&id);
+    let (chosen, resume_etag) = match kept {
+        Some(p) if p.profile_id == profile_id && p.bucket == bucket && p.key == key && p.requested == dest_path => {
+            dest::hold(&p.chosen);
+            (p.chosen, p.etag)
+        }
+        other => {
+            if let Some(p) = other {
+                forget_download(p);
+            }
+            (dest::reserve(&wanted, overwrite.unwrap_or(false)), None)
+        }
+    };
+    let local = chosen.to_string_lossy().into_owned();
+    let kind = Kind::Download { resume: resume_etag.is_some() };
+    if let Err(e) = spawn_transfer(app, &state, kind, id, profile_id, bucket, key, local.clone(), dest_path, resume_etag).await {
+        dest::release(&chosen);
+        return Err(e);
+    }
+    Ok(local)
 }
 
+/// Stops a transfer. For one that already failed (and was kept for Retry) it drops what was
+/// kept: the partial download file, or the multipart upload on the server.
 #[tauri::command]
 pub async fn cancel_transfer(state: State<'_, AppState>, id: String) -> Result<(), String> {
     if let Some(flag) = state.cancels.lock().await.get(&id) {
         flag.store(true, Ordering::Relaxed);
+        return Ok(());
     }
+    if let Some(p) = PENDING_DOWNLOADS.lock().unwrap().remove(&id) {
+        forget_download(p);
+    }
+    multipart::forget(&id);
     Ok(())
+}
+
+/// On quit: stops every transfer and bucket operation, aborts open multipart uploads (waiting at
+/// most `limit`) and removes partial download files, so nothing is left behind.
+#[cfg_attr(mobile, allow(dead_code))]
+pub async fn shutdown(state: &AppState, limit: Duration) {
+    for flag in state.cancels.lock().await.values() {
+        flag.store(true, Ordering::Relaxed);
+    }
+    let parts: Vec<PathBuf> = ACTIVE
+        .lock()
+        .unwrap()
+        .values()
+        .filter(|t| t.kind == "download")
+        .map(|t| dest::part_path(Path::new(&t.local)))
+        .chain(PENDING_DOWNLOADS.lock().unwrap().drain().map(|(_, p)| dest::part_path(&p.chosen)))
+        .collect();
+    multipart::abort_all(limit).await;
+    for p in parts {
+        let _ = std::fs::remove_file(p);
+    }
 }
 
 #[cfg(test)]
@@ -649,89 +624,63 @@ mod tests {
         });
     }
 
+    /// Retry of a failed download: the partial file from the first attempt is continued with a
+    /// ranged request for the same version, not fetched again from the start.
     #[test]
-    fn file_body_streams_the_range_in_small_chunks_and_counts_it() {
-        tauri::async_runtime::block_on(async {
-            let path = std::env::temp_dir().join(format!("kybl-body-{}", uuid::Uuid::new_v4()));
-            let data: Vec<u8> = (0..CHUNK * 3 + 100).map(|i| (i % 251) as u8).collect();
-            tokio::fs::write(&path, &data).await.unwrap();
-            let sent = Arc::new(AtomicU64::new(0));
-            let (offset, len) = (100u64, (CHUNK * 2 + 50) as u64);
-            let mut body = file_body(path.to_str().unwrap(), offset, len, sent.clone()).await.unwrap().into_inner();
-            assert_eq!(http_body::Body::size_hint(&body).exact(), Some(len));
-            let mut got = Vec::new();
-            while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
-                let chunk = frame.unwrap().into_data().unwrap();
-                assert!(chunk.len() <= CHUNK, "read in small chunks, not all at once");
-                got.extend_from_slice(&chunk);
-                assert_eq!(sent.load(Ordering::Relaxed), got.len() as u64, "progress follows every chunk");
-            }
-            assert_eq!(got, data[offset as usize..(offset + len) as usize]);
-            // a retry starts over from the beginning of the range, and so does the count
-            let mut again = body.try_clone().expect("retryable");
-            assert_eq!(sent.load(Ordering::Relaxed), 0);
-            let first = std::future::poll_fn(|cx| Pin::new(&mut again).poll_frame(cx)).await.unwrap().unwrap();
-            assert_eq!(first.into_data().unwrap()[0], data[offset as usize]);
-            let _ = tokio::fs::remove_file(&path).await;
-        });
-    }
-
-    /// Needs a multipart-capable throwaway S3 server in `KYBL_TEST_MULTIPART_ENDPOINT`. Set
-    /// `KYBL_TEST_SLOW=1` behind a rate-limited proxy to also check that progress moves inside a file.
-    #[test]
-    fn uploads_arrive_intact_and_report_progress_inside_a_file() {
-        // rclone's S3 server can't do multipart uploads, so this test has its own server,
-        // for example adobe/s3mock with a `testbucket` bucket.
-        let Ok(endpoint) = std::env::var("KYBL_TEST_MULTIPART_ENDPOINT") else {
-            return eprintln!("skipped: KYBL_TEST_MULTIPART_ENDPOINT not set");
-        };
-        let p = Profile {
-            id: "t".into(),
-            name: "t".into(),
-            provider: "custom".into(),
-            endpoint,
-            region: "us-east-1".into(),
-            access_key_id: "testkey".into(),
-            bucket: None,
-            path_style: true,
-        };
-        let client = build_client(&p, "testsecret");
-        tauri::async_runtime::block_on(async move {
-            let dir = std::env::temp_dir().join(format!("kybl-up-{}", uuid::Uuid::new_v4()));
-            tokio::fs::create_dir_all(&dir).await.unwrap();
-            let base = format!("up-{}/", uuid::Uuid::new_v4());
-            for (name, size) in [("small.bin", 3usize << 20), ("big.bin", 20 << 20)] {
-                let path = dir.join(name);
-                tokio::fs::write(&path, vec![42u8; size]).await.unwrap();
-                let seen = Mutex::new(Vec::<u64>::new());
-                let started = Instant::now();
-                let cancel = AtomicBool::new(false);
-                let r = upload_file(&client, "testbucket", &format!("{base}{name}"), path.to_str().unwrap(), &cancel, &|done, total| {
-                    assert_eq!(total, size as u64);
-                    seen.lock().unwrap().push(done);
-                })
-                .await
-                .unwrap();
-                assert!(matches!(r, Outcome::Done));
-                let head = client.head_object().bucket("testbucket").key(format!("{base}{name}")).send().await.unwrap();
-                assert_eq!(head.content_length(), Some(size as i64), "{name} arrived whole");
-                let seen = seen.into_inner().unwrap();
-                assert!(seen.iter().all(|&d| d <= size as u64));
-                assert!(seen.windows(2).all(|w| w[0] <= w[1]), "progress never goes backwards: {seen:?}");
-                if std::env::var("KYBL_TEST_SLOW").is_ok() && started.elapsed() > Duration::from_secs(2) {
-                    let inside = seen.iter().filter(|&&d| d > 0 && d < size as u64).count();
-                    assert!(inside >= 3, "{name}: expected progress inside the file, got {seen:?}");
+    fn a_retried_download_continues_its_partial_file() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let data: Vec<u8> = (0..200_000u32).map(|i| (i % 249) as u8).collect();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            let served = data.clone();
+            let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+            let seen = requests.clone();
+            tokio::spawn(async move {
+                loop {
+                    let (mut sock, _) = listener.accept().await.unwrap();
+                    let mut buf = vec![0u8; 8192];
+                    let len = sock.read(&mut buf).await.unwrap();
+                    let req = String::from_utf8_lossy(&buf[..len]).to_lowercase();
+                    seen.lock().unwrap().push(req.clone());
+                    let total = served.len();
+                    let from: usize = req.split("range: bytes=").nth(1).unwrap().split('-').next().unwrap().trim().parse().unwrap();
+                    let head = format!(
+                        "HTTP/1.1 206 Partial Content\r\ncontent-length: {}\r\ncontent-range: bytes {from}-{}/{total}\r\netag: \"v1\"\r\nconnection: close\r\n\r\n",
+                        total - from,
+                        total - 1
+                    );
+                    sock.write_all(head.as_bytes()).await.unwrap();
+                    sock.write_all(&served[from..]).await.unwrap();
+                    let _ = sock.shutdown().await;
                 }
-            }
-            // a cancelled upload stops and leaves nothing behind
-            let path = dir.join("big.bin");
-            let stop = AtomicBool::new(true);
-            let r = upload_file(&client, "testbucket", &format!("{base}cancelled.bin"), path.to_str().unwrap(), &stop, &|_, _| {})
-                .await
-                .unwrap();
-            assert!(matches!(r, Outcome::Cancelled));
-            assert!(client.head_object().bucket("testbucket").key(format!("{base}cancelled.bin")).send().await.is_err());
-            let _ = tokio::fs::remove_dir_all(&dir).await;
+            });
+            let p = Profile {
+                id: "t".into(),
+                name: "t".into(),
+                provider: "custom".into(),
+                endpoint,
+                region: "us-east-1".into(),
+                access_key_id: "k".into(),
+                bucket: None,
+                path_style: true,
+            };
+            let client = build_client(&p, "s");
+            let dir = std::env::temp_dir().join(format!("kybl-retry-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let dest = dir.join("file.bin");
+            // what the failed first attempt left behind
+            std::fs::write(dest::part_path(&dest), &data[..70_000]).unwrap();
+            let mut etag = None;
+            let r = download_to(&client, "b", "file.bin", &dest, Some("\"v1\""), true, &AtomicBool::new(false), &|_, _| {}, &mut etag).await;
+            assert!(matches!(r, Ok(Outcome::Done)), "download failed: {:?}", r.err());
+            assert_eq!(std::fs::read(&dest).unwrap(), data, "the continued file is whole and in order");
+            assert!(!dest::part_path(&dest).exists());
+            let reqs = requests.lock().unwrap();
+            assert_eq!(reqs.len(), 1);
+            assert!(reqs[0].contains("range: bytes=70000-"), "{}", reqs[0]);
+            assert!(reqs[0].contains("if-match: \"v1\""), "{}", reqs[0]);
+            let _ = std::fs::remove_dir_all(dir);
         });
     }
 }
