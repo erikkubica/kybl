@@ -340,6 +340,12 @@ export function ContextMenu({
       restore.current = false;
       closeRef.current();
     };
+    // caught on the way down: a window drag strip (the toolbar's empty space) stops the event
+    // before it would bubble here, and the menu stayed open
+    const downAway = (e: MouseEvent) => {
+      if (ref.current?.contains(e.target as Node)) return;
+      away();
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -347,13 +353,13 @@ export function ContextMenu({
         closeRef.current();
       }
     };
-    window.addEventListener("mousedown", away);
+    window.addEventListener("mousedown", downAway, true);
     window.addEventListener("blur", away);
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("wheel", away, { passive: true });
     window.addEventListener("resize", away);
     return () => {
-      window.removeEventListener("mousedown", away);
+      window.removeEventListener("mousedown", downAway, true);
       window.removeEventListener("blur", away);
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("wheel", away);
