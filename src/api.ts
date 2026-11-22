@@ -188,6 +188,20 @@ export const api = {
   /** Transfer tuning; the backend applies changes to new transfers right away. */
   transferPrefs: () => invoke<TransferPrefs>("get_transfer_prefs"),
   setTransferPrefs: (p: Partial<TransferPrefs>) => invoke<TransferPrefs>("set_transfer_prefs", { prefs: p }),
+
+  // WP0: storage core. Every command above also works for non-S3 connections (and for
+  // LOCAL_ID) with `bucket` = a root id from `listRoots`, except presign / props / tags, which
+  // reject where `capabilities` says the connection can't.
+  /** Where browsing starts: buckets, drives, one server folder, or this device's folders. */
+  listRoots: (profileId: string) => read<RootInfo[]>("list_roots", { profileId }),
+  /** What the connection can do; `useCaps` caches it per connection. */
+  capabilities: (profileId: string) => invoke<Capabilities>("connection_capabilities", { profileId }),
+  /**
+   * The real path of a key, for connections that are this device's disk (`localPaths`), e.g. to
+   * download into the folder a local pane shows. Null elsewhere or outside the root.
+   */
+  localPath: (profileId: string, bucket: string, key: string) =>
+    invoke<string | null>("local_path", { profileId, bucket, key }),
 };
 
 /** Editable object headers; see `updateObjectProps`. `metadata` replaces all user metadata when given. */
@@ -243,3 +257,133 @@ export function errDetail(msg: string): string | null {
   const i = msg.indexOf("\n\n");
   return i < 0 ? null : msg.slice(i + 2);
 }
+
+// ---------------------------------------------------------------- WP-D: documents (src/viewers)
+
+/** What the backend knows about an opened or saved document. ETags come without quotes. */
+export type DocMeta = {
+  etag: string | null;
+  size: number;
+  modified: number | null;
+  contentType: string | null;
+  version: string | null;
+};
+
+/**
+ * What a save expects to find:
+ * - `match`: the file as it was opened (anything else is a conflict),
+ * - `absent`: a new name ("Save as copy"); `headersFrom` lends its content type and headers,
+ * - `any`: overwrite whatever is there.
+ */
+export type DocPrecondition =
+  | { kind: "match"; etag: string | null; size: number; modified: number | null; version: string | null }
+  | { kind: "absent"; headersFrom?: string | null }
+  | { kind: "any" };
+
+/** A save was refused because the file changed (or, with `current` null, was deleted) meanwhile. */
+export class DocConflict extends Error {
+  current: DocMeta | null;
+  constructor(current: DocMeta | null) {
+    super(current ? "This file was changed somewhere else since you opened it." : "This file was deleted since you opened it.");
+    this.current = current;
+  }
+}
+
+/** The opened state as a `match` precondition for the next save. */
+export const expectMeta = (m: DocMeta): DocPrecondition => ({ kind: "match", etag: m.etag, size: m.size, modified: m.modified, version: m.version });
+
+/**
+ * The whole file plus its metadata, from one read. The body is framed as
+ * `[u32 BE json length][json DocMeta][bytes]`. Rejects above `maxBytes`.
+ */
+export async function docOpen(profileId: string, bucket: string, key: string, maxBytes: number): Promise<{ meta: DocMeta; bytes: Uint8Array }> {
+  const raw = await read<ArrayBuffer>("doc_open", { profileId, root: bucket, path: key, maxBytes });
+  const len = new DataView(raw).getUint32(0);
+  const meta = JSON.parse(new TextDecoder().decode(new Uint8Array(raw, 4, len))) as DocMeta;
+  return { meta, bytes: new Uint8Array(raw, 4 + len) };
+}
+
+/** Saves `bytes` (sent raw, no JSON) if `expect` still holds; throws `DocConflict` otherwise. */
+export async function docSave(profileId: string, bucket: string, key: string, bytes: Uint8Array, expect: DocPrecondition): Promise<DocMeta> {
+  try {
+    return await invoke<DocMeta>("doc_save", bytes, {
+      headers: {
+        // IPC headers must be plain ASCII
+        "x-kybl-profile": encodeURIComponent(profileId),
+        "x-kybl-root": encodeURIComponent(bucket),
+        "x-kybl-path": encodeURIComponent(key),
+        "x-kybl-expect": encodeURIComponent(JSON.stringify(expect)),
+      },
+    });
+  } catch (e) {
+    const msg = errMessage(e);
+    if (msg.startsWith("CONFLICT\n\n")) throw new DocConflict(JSON.parse(msg.slice(10)) as DocMeta | null);
+    throw e;
+  }
+}
+
+// ---------------------------------------------------------------- WP0: storage core
+
+export type { ConnKind } from "./types";
+
+/** The reserved connection id of this computer or phone. Never in `listProfiles`. */
+export const LOCAL_ID = "local";
+
+export type RootKind =
+  | "bucket"
+  | "drive"
+  | "shared"
+  | "folder"
+  | "home"
+  | "desktop"
+  | "documents"
+  | "downloads"
+  | "volume";
+
+/**
+ * A place browsing starts in. `id` is what every command takes as `bucket`; show `name`.
+ * For LOCAL_ID the id is the folder's absolute path.
+ */
+export type RootInfo = {
+  id: string;
+  name: string;
+  kind: RootKind;
+  created: number | null;
+  readOnly: boolean;
+};
+
+/** What a connection can do; the UI hides what it can't. */
+export type Capabilities = {
+  /** "single": one root, so skip the root level; "drives": a few named roots. */
+  roots: "buckets" | "single" | "drives";
+  createRoot: boolean;
+  /** "prefix": folders are key prefixes (empty ones need a marker). */
+  folders: "prefix" | "real";
+  /** "copy-delete": renaming a folder copies everything, so warn for big ones. */
+  rename: "native" | "copy-delete";
+  serverCopy: "none" | "same-root" | "cross-root";
+  /** "none": hide "Share link". */
+  share: "presign" | "link" | "none";
+  shareExpiry: boolean;
+  /** "proxy": media plays through the app's media:// scheme instead of a presigned URL. */
+  streaming: "presign" | "proxy";
+  rangeRead: boolean;
+  conditionalWrite: "if-match" | "compare" | "rev" | "none";
+  hashes: Array<"md5" | "sha1" | "sha256" | "quickxor" | "dropbox">;
+  thumbnails: "local" | "remote" | "local+remote";
+  /** "s3": the Properties editor (headers, metadata). */
+  metadata: "s3" | "none";
+  tags: boolean;
+  storageClass: boolean;
+  /** Deleting moves things to a trash the user can restore from (say "Move to Trash"). */
+  trash: boolean;
+  versions: boolean;
+  search: "scan" | "server";
+  changes: boolean;
+  multipart: boolean;
+  maxObjectSize: number | null;
+  /** iOS background uploads can work. */
+  backgroundUpload: boolean;
+  /** Files are real files on this device: `localPath`, open and reveal work on them. */
+  localPaths: boolean;
+};

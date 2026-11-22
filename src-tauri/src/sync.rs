@@ -1097,6 +1097,7 @@ mod tests {
             access_key_id: "testkey".into(),
             bucket: None,
             path_style: true,
+            ..Default::default()
         };
         let client = build_client(&profile, "testsecret");
         tauri::async_runtime::block_on(async {

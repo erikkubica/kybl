@@ -6,6 +6,8 @@
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import type { ObjInfo, Profile } from "./types";
+import type { Capabilities, RootInfo } from "./api";
+import { S3_CAPS } from "./useCaps";
 
 const HOUR = 3600_000;
 const now = Date.now();
@@ -165,9 +167,114 @@ async function simulateSync(id: string) {
   await pushStatus(id, { state: "idle", done: 0, total: 0, current: null, files, lastSync: Date.now(), summary: `${total} uploaded` });
 }
 
+// ---- WP0: this computer ("local") and per-connection capabilities
+const LOCAL = "local";
+const HOME = "/Users/demo";
+const localRoots: RootInfo[] = [
+  { id: HOME, name: "Home", kind: "home", created: null, readOnly: false },
+  { id: `${HOME}/Desktop`, name: "Desktop", kind: "desktop", created: null, readOnly: false },
+  { id: `${HOME}/Documents`, name: "Documents", kind: "documents", created: null, readOnly: false },
+  { id: `${HOME}/Downloads`, name: "Downloads", kind: "downloads", created: null, readOnly: false },
+  { id: "/", name: "Macintosh HD", kind: "volume", created: null, readOnly: false },
+];
+const localObj = (key: string, size: number, ageHours: number): ObjInfo => ({ ...obj(key, size, ageHours), etag: `${size.toString(16)}-local`, storageClass: null });
+/** root id -> prefix -> listing */
+const localTree: Record<string, Record<string, { folders: string[]; objects: ObjInfo[] }>> = {
+  [HOME]: {
+    "": { folders: ["Desktop/", "Documents/", "Downloads/", "Pictures/"], objects: [localObj("notes.txt", 1_200, 3)] },
+    "Pictures/": { folders: [], objects: [localObj("Pictures/beach.jpg", 3_400_000, 30), localObj("Pictures/hanoi.jpg", 2_800_000, 50)] },
+  },
+  [`${HOME}/Desktop`]: { "": { folders: ["Screenshots/"], objects: [localObj("todo.md", 640, 1), localObj("invoice-0042.pdf", 184_000, 26)] }, "Screenshots/": { folders: [], objects: [localObj("Screenshots/shot-1.png", 900_000, 2)] } },
+  [`${HOME}/Documents`]: { "": { folders: ["Contracts/"], objects: [localObj("budget-2026.xlsx", 48_000, 70)] }, "Contracts/": { folders: [], objects: [localObj("Contracts/lease.pdf", 320_000, 900)] } },
+  [`${HOME}/Downloads`]: { "": { folders: [], objects: [localObj("Kybl_0.3.2_aarch64.dmg", 9_800_000, 5), localObj("photo (1).jpg", 2_100_000, 8)] } },
+  "/": { "": { folders: ["Applications/", "Users/"], objects: [] } },
+};
+const localCaps: Capabilities = {
+  ...S3_CAPS,
+  roots: "drives",
+  createRoot: false,
+  folders: "real",
+  rename: "native",
+  share: "none",
+  shareExpiry: false,
+  streaming: "proxy",
+  metadata: "none",
+  tags: false,
+  storageClass: false,
+  trash: true,
+  multipart: false,
+  maxObjectSize: null,
+  backgroundUpload: false,
+  localPaths: true,
+};
+function s3Caps(p: Profile | undefined): Capabilities {
+  const provider = p?.provider ?? "custom";
+  return {
+    ...S3_CAPS,
+    createRoot: provider === "kybl",
+    conditionalWrite: ["aws", "r2", "minio"].includes(provider) ? "if-match" : "compare",
+    hashes: provider === "kybl" ? [] : ["md5"],
+  };
+}
+
+/** The local connection's commands; undefined for anything it doesn't answer specially. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function handleLocal(cmd: string, a: any): Promise<unknown> {
+  const dirs = localTree[a.bucket] ?? {};
+  switch (cmd) {
+    case "list_buckets":
+      return localRoots.map((r) => ({ name: r.id, created: null }));
+    case "list_objects": {
+      await sleep(80);
+      if (a.bucket && !localTree[a.bucket]) throw "This folder or disk isn't available any more.";
+      const d = dirs[a.prefix] ?? { folders: [], objects: [] };
+      return { folders: d.folders, objects: d.objects, nextToken: null };
+    }
+    case "head_object": {
+      const o = Object.values(dirs).flatMap((d) => d.objects).find((x) => x.key === a.key);
+      if (!o) throw "This file or folder isn't there any more. It may have been moved or deleted.";
+      return { key: a.key, size: o.size, contentType: null, modified: o.modified, etag: o.etag, storageClass: null, metadata: {} };
+    }
+    case "presign_get":
+    case "update_object_props":
+    case "get_object_tags":
+    case "put_object_tags":
+      throw "This connection doesn't support that.";
+    case "folder_size": {
+      const keys = Object.entries(dirs).filter(([k]) => k.startsWith(a.prefix)).flatMap(([, n]) => n.objects);
+      return { bytes: keys.reduce((s, o) => s + o.size, 0), objects: keys.length, children: [] };
+    }
+    case "create_folder":
+      (dirs[""] ??= { folders: [], objects: [] }).folders.push(a.prefix.endsWith("/") ? a.prefix : `${a.prefix}/`);
+      return null;
+    default:
+      return undefined;
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function handle(cmd: string, a: any): Promise<unknown> {
+  if (a?.profileId === LOCAL) {
+    const r = await handleLocal(cmd, a);
+    if (r !== undefined) return r;
+  }
   switch (cmd) {
+    case "list_roots": {
+      await sleep(120);
+      if (a.profileId === LOCAL) return localRoots;
+      const p = profiles.find((x) => x.id === a.profileId);
+      if (!p) throw "Connection not found";
+      if (a.profileId === "p3" && !p.bucket) throw "Access denied. This key isn't allowed to do that.";
+      const names = p.bucket && !buckets.includes(p.bucket) ? [p.bucket, ...buckets] : buckets;
+      return names.map((name) => ({ id: name, name, kind: "bucket", created: now - 400 * HOUR, readOnly: false }) satisfies RootInfo);
+    }
+    case "connection_capabilities":
+      await sleep(40);
+      if (a.profileId === LOCAL) return localCaps;
+      if (!profiles.some((x) => x.id === a.profileId)) throw "Connection not found";
+      return s3Caps(profiles.find((x) => x.id === a.profileId));
+    case "local_path":
+      return a.profileId === LOCAL ? `${a.bucket.replace(/\/$/, "")}/${a.key}` : null;
     case "list_profiles":
       return profiles;
     case "save_profile": {
@@ -507,4 +614,18 @@ function demoPdf(): ArrayBuffer {
   for (let i = 1; i < objs.length; i++) out += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
   out += `trailer\n<< /Size ${objs.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
   return new TextEncoder().encode(out).buffer as ArrayBuffer;
+}
+
+// ---------------------------------------------------------------- WP-D: documents (src/viewers)
+// doc_save sends raw bytes plus headers, and mockIPC drops the headers, so these two commands are
+// answered before the mock: sample files of every viewer kind, saves kept in memory.
+{
+  type Invoke = (cmd: string, args?: unknown, options?: { headers?: Record<string, string> }) => Promise<unknown>;
+  const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: Invoke } }).__TAURI_INTERNALS__;
+  const mocked = internals.invoke;
+  internals.invoke = async (cmd, args, options) => {
+    if (cmd !== "doc_open" && cmd !== "doc_save") return mocked(cmd, args, options);
+    const { handleDoc } = await import("./viewers/devSamples");
+    return handleDoc(cmd, args, options);
+  };
 }

@@ -24,24 +24,117 @@ use tokio::sync::{Mutex, Notify, Semaphore};
 #[cfg_attr(target_os = "android", allow(dead_code))]
 pub const KEYRING_SERVICE: &str = "app.kybl.desktop";
 
-/// Account name of the single keychain item that holds every connection's secret key
-/// (a JSON map of profile id -> secret). One item means one keychain prompt, not one per connection.
-#[cfg_attr(target_os = "android", allow(dead_code))]
-const VAULT_ACCOUNT: &str = "connection-secrets";
+pub use crate::storage::ConnKind;
 
 /// A saved connection. The secret key never lives in this struct on disk:
-/// it is kept in the OS keychain (see [`get_secret`]).
-#[derive(Serialize, Deserialize, Clone, Debug)]
+/// it is kept in the vault (see [`get_secret`]).
+///
+/// Profiles saved before other kinds existed have only the S3 fields; they load as `kind: s3`
+/// with nothing to migrate. The S3 fields stay flat at the top level for that reason.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub kind: ConnKind,
+    /// the visual id (logo, presets): "aws", "hetzner", "kybl", later "sftp", "gdrive"...
+    #[serde(default)]
     pub provider: String,
+    #[serde(default)]
     pub endpoint: String,
+    #[serde(default)]
     pub region: String,
+    #[serde(default)]
     pub access_key_id: String,
+    #[serde(default)]
     pub bucket: Option<String>,
+    #[serde(default)]
     pub path_style: bool,
+    /// FTP, SFTP, WebDAV
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net: Option<NetConfig>,
+    /// the sign-in kinds (Google Drive, OneDrive, Dropbox, Box)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<CloudConfig>,
+    /// Azure Blob Storage, Google Cloud Storage
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blob: Option<BlobConfig>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TlsMode {
+    #[default]
+    None,
+    /// STARTTLS / AUTH TLS on the plain port
+    Explicit,
+    /// TLS from the first byte (FTPS on 990, HTTPS)
+    Implicit,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum NetAuth {
+    /// the password is the connection's secret (`{id}` in the vault)
+    #[default]
+    Password,
+    /// a private key, kept in the vault as `{id}#ssh`
+    Key,
+    /// the SSH agent
+    Agent,
+}
+
+/// Where and how a server connection (FTP, SFTP, WebDAV) signs in.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NetConfig {
+    pub host: String,
+    /// 0: the kind's usual port
+    pub port: u16,
+    pub user: String,
+    /// the folder the connection starts in ("" for the server's own start)
+    pub base_path: String,
+    pub tls: TlsMode,
+    pub auth: NetAuth,
+    /// SFTP: the server key's SHA-256 fingerprint, trusted on first use
+    pub host_key: Option<String>,
+    /// WebDAV: the full address, when given instead of host and port
+    pub url: Option<String>,
+}
+
+/// The account behind a sign-in connection. Tokens live in the vault (`{id}#oauth`).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CloudConfig {
+    pub account_email: String,
+    pub account_id: String,
+    /// "use your own OAuth app": its client id (its secret, if any, is in `{id}#oauth`)
+    pub client_id: Option<String>,
+    /// Microsoft: the tenant ("common" when None)
+    pub tenant: Option<String>,
+    pub scopes: Vec<String>,
+}
+
+/// Azure Blob Storage / Google Cloud Storage. The account key or service account JSON is the
+/// connection's secret.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct BlobConfig {
+    /// Azure: the storage account name; GCS: the project id
+    pub account: String,
+    /// a custom endpoint (Azurite, a sovereign cloud); "" for the usual one
+    pub endpoint: String,
+    /// a single container / bucket to open, for keys limited to one
+    pub container: Option<String>,
+}
+
+/// The vault name of a connection's extra secret: `{id}#oauth` (refresh token and the user's
+/// own client secret, as JSON) or `{id}#ssh` (private key and passphrase). The main secret
+/// (S3 secret key, password, account key) is stored under the bare id.
+#[allow(dead_code)]
+pub fn secret_key(profile_id: &str, namespace: &str) -> String {
+    format!("{profile_id}#{namespace}")
 }
 
 pub struct AppState {
@@ -259,7 +352,12 @@ fn profiles_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
 }
 
 pub fn load_profiles<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<Profile>, String> {
-    let path = profiles_path(app)?;
+    load_profiles_from(&profiles_path(app)?)
+}
+
+/// The saved connections in `profiles.json` at `path`, without an `AppHandle` (for code that
+/// runs without the app's window, such as background backup).
+pub fn load_profiles_from(path: &std::path::Path) -> Result<Vec<Profile>, String> {
     if !path.exists() {
         return Ok(vec![]);
     }
@@ -273,11 +371,16 @@ pub fn save_profiles<R: Runtime>(app: &AppHandle<R>, profiles: &[Profile]) -> Re
     std::fs::write(path, raw).map_err(err)
 }
 
+/// Computers and iOS: vault v2 (see `keyvault`), an encrypted file whose key is the one keychain
+/// item. The secrets of earlier versions (one keychain item holding them all) move into it on
+/// the first read.
 #[cfg(not(target_os = "android"))]
 mod vault {
     use std::collections::HashMap;
+    use std::path::Path;
 
-    use super::{err, KEYRING_SERVICE, VAULT_ACCOUNT};
+    use super::KEYRING_SERVICE;
+    use crate::keyvault::{self, Keychain};
 
     /// Legacy storage: one keychain item per connection. Only read to migrate into the vault.
     pub struct Legacy(keyring::Entry);
@@ -295,23 +398,34 @@ mod vault {
         keyring::Entry::new(KEYRING_SERVICE, profile_id).ok().map(Legacy)
     }
 
-    fn entry() -> Result<keyring::Entry, String> {
-        keyring::Entry::new(KEYRING_SERVICE, VAULT_ACCOUNT).map_err(err)
-    }
+    /// The OS keychain (macOS / iOS Keychain, Windows Credential Manager, Secret Service).
+    struct Os;
 
-    pub fn read(_dir: Option<&std::path::Path>) -> Result<HashMap<String, String>, String> {
-        match entry()?.get_password() {
-            Ok(raw) => Ok(serde_json::from_str(&raw).unwrap_or_default()),
-            Err(keyring::Error::NoEntry) => Ok(HashMap::new()),
-            Err(e) => Err(format!("Could not read the secret keys from the keychain: {e}")),
+    impl Keychain for Os {
+        fn get(&self, account: &str) -> Result<Option<String>, String> {
+            match keyring::Entry::new(KEYRING_SERVICE, account).map_err(|e| e.to_string())?.get_password() {
+                Ok(v) => Ok(Some(v)),
+                Err(keyring::Error::NoEntry) => Ok(None),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        fn set(&self, account: &str, value: &str) -> Result<(), String> {
+            keyring::Entry::new(KEYRING_SERVICE, account).map_err(|e| e.to_string())?.set_password(value).map_err(|e| e.to_string())
+        }
+        fn delete(&self, account: &str) -> Result<(), String> {
+            match keyring::Entry::new(KEYRING_SERVICE, account).map_err(|e| e.to_string())?.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                Err(e) => Err(e.to_string()),
+            }
         }
     }
 
-    pub fn write(_dir: Option<&std::path::Path>, map: &HashMap<String, String>) -> Result<(), String> {
-        let raw = serde_json::to_string(map).map_err(err)?;
-        entry()?
-            .set_password(&raw)
-            .map_err(|e| format!("Could not save the secret key to the keychain: {e}"))
+    pub fn read(dir: Option<&Path>) -> Result<HashMap<String, String>, String> {
+        keyvault::read(dir.ok_or("No private storage folder")?, &Os)
+    }
+
+    pub fn write(dir: Option<&Path>, map: &HashMap<String, String>) -> Result<(), String> {
+        keyvault::write(dir.ok_or("No private storage folder")?, &Os, map)
     }
 }
 
@@ -359,6 +473,10 @@ pub async fn get_secret(state: &AppState, profile_id: &str) -> Result<Option<Str
     if let Some(s) = map.get(profile_id) {
         return Ok(Some(s.clone()));
     }
+    // the oldest versions only ever kept main secrets, one keychain item per connection
+    if profile_id.contains('#') {
+        return Ok(None);
+    }
     let Some(legacy) = vault::legacy(profile_id) else { return Ok(None) };
     match legacy.get() {
         Some(secret) => {
@@ -382,12 +500,15 @@ pub async fn set_secret(state: &AppState, profile_id: &str, secret: &str) -> Res
     let map = guard.as_mut().expect("vault loaded above");
     map.insert(profile_id.to_string(), secret.to_string());
     vault::write(dir, map)?;
-    if let Some(legacy) = vault::legacy(profile_id) {
+    if !profile_id.contains('#')
+        && let Some(legacy) = vault::legacy(profile_id)
+    {
         legacy.delete();
     }
     Ok(())
 }
 
+/// Forgets a connection's secrets: the main one and every `{id}#…` one (sign-in tokens, SSH key).
 pub async fn delete_secret(state: &AppState, profile_id: &str) -> Result<(), String> {
     let dir = state.vault_dir.get().map(PathBuf::as_path);
     let mut guard = state.secrets.lock().await;
@@ -395,7 +516,10 @@ pub async fn delete_secret(state: &AppState, profile_id: &str) -> Result<(), Str
         *guard = Some(vault::read(dir)?);
     }
     let map = guard.as_mut().expect("vault loaded above");
-    if map.remove(profile_id).is_some() {
+    let before = map.len();
+    let extra = format!("{profile_id}#");
+    map.retain(|k, _| k != profile_id && !k.starts_with(&extra));
+    if map.len() != before {
         vault::write(dir, map)?;
     }
     if let Some(legacy) = vault::legacy(profile_id) {
@@ -539,6 +663,7 @@ mod tests {
             access_key_id: "k".into(),
             bucket: None,
             path_style: true,
+            ..Default::default()
         };
         let client = build_client(&p, "s");
         let e = tauri::async_runtime::block_on(client.list_buckets().send()).unwrap_err();
