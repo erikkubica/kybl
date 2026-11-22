@@ -229,6 +229,7 @@ async fn listen(ports: &[u16]) -> Result<TcpListener, String> {
 /// What the browser sees once the code arrived: a page (computers) or a redirect back into the
 /// app (phones, where the tab must close).
 enum Reply<'a> {
+    #[cfg_attr(mobile, allow(dead_code))]
     Page(&'a str),
     #[cfg_attr(desktop, allow(dead_code))]
     Redirect(&'a str),

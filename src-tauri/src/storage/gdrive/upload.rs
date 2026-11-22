@@ -105,7 +105,7 @@ async fn start(api: &Api, base: &str, t: &Target<'_>, total: Option<u64>) -> SRe
 enum Status {
     /// the server has everything before this byte
     At(u64),
-    Done(DFile),
+    Done(Box<DFile>),
     /// the session expired or never existed
     Gone,
 }
@@ -116,7 +116,7 @@ async fn status(api: &Api, session: &str, total: Option<u64>) -> SResult<Status>
     let res = api.send(|c| c.put(session).header("content-range", &range).header("content-length", 0)).await?;
     match res.status().as_u16() {
         308 => Ok(Status::At(extras::received_upto(res.headers().get("range").and_then(|v| v.to_str().ok())))),
-        200 | 201 => Ok(Status::Done(read_json(api.kind, res).await?)),
+        200 | 201 => Ok(Status::Done(Box::new(read_json(api.kind, res).await?))),
         404 | 410 => Ok(Status::Gone),
         _ => Err(check(api.kind, res).await.err().unwrap_or_else(|| unexpected(api.kind, "upload status"))),
     }
@@ -129,7 +129,7 @@ async fn resumable(api: &Api, base: &str, t: &Target<'_>, mut src: Source, opts:
     let mut session = None;
     if let Some(rs) = &opts.resume {
         match status(api, &rs.upload_id, total).await? {
-            Status::Done(f) => return Ok(Some(f)),
+            Status::Done(f) => return Ok(Some(*f)),
             Status::At(o) => {
                 session = Some(rs.upload_id.clone());
                 offset = o;
@@ -185,7 +185,7 @@ async fn resumable(api: &Api, base: &str, t: &Target<'_>, mut src: Source, opts:
                 failures += 1;
                 tokio::time::sleep(backoff(failures)).await;
                 match status(api, &session, total).await? {
-                    Status::Done(f) => return Ok(Some(f)),
+                    Status::Done(f) => return Ok(Some(*f)),
                     Status::At(o) => offset = o,
                     Status::Gone => return Err(StorageError::other("Google Drive dropped the upload. Try again.")),
                 }
@@ -224,7 +224,7 @@ async fn resumable(api: &Api, base: &str, t: &Target<'_>, mut src: Source, opts:
                 failures += 1;
                 tokio::time::sleep(backoff(failures)).await;
                 match status(api, &session, total).await? {
-                    Status::Done(f) => return Ok(Some(f)),
+                    Status::Done(f) => return Ok(Some(*f)),
                     Status::At(o) => offset = o,
                     Status::Gone => return Err(StorageError::other("Google Drive dropped the upload. Try again.")),
                 }

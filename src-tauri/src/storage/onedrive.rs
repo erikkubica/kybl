@@ -631,7 +631,7 @@ impl Storage for OneDrive {
         let body = json!({ "parentReference": parent, "name": name }).to_string();
         let res = self.api.ok(|c| c.post(&url).header("content-type", "application/json").body(body.clone())).await?;
         match res.headers().get("location").and_then(|v| v.to_str().ok()) {
-            Some(monitor) => self.wait_copy(&monitor.to_string()).await,
+            Some(monitor) => self.wait_copy(monitor).await,
             None => Ok(()),
         }
     }

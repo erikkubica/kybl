@@ -230,6 +230,7 @@ impl GDrive {
         }
         let _one_at_a_time = self.mkdir.lock().await;
         let mut parent = self.root_node(root)?;
+        #[allow(clippy::needless_range_loop)] // i also names the path so far
         for i in 0..parts.len() {
             if let Some(n) = self.cache.get(root, &path_of(i)).filter(|n| n.folder) {
                 parent = Some(n);
