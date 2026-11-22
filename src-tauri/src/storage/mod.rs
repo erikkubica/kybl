@@ -836,6 +836,7 @@ pub fn walk_by_listing<'a, S: Storage + ?Sized>(s: &'a S, root: &'a str, dir: &'
 
 /// What a command works with: the S3 client (the existing code path, unchanged) or another
 /// backend (the generic code in [`generic_cmds`]).
+#[derive(Clone)]
 pub enum Conn {
     S3(aws_sdk_s3::Client),
     Other(Arc<dyn Storage>),

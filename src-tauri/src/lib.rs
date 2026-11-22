@@ -6,6 +6,8 @@ mod db;
 mod jobs;
 // where downloads land: safe paths and free names
 mod dest;
+// recently fetched file bytes, shared by the viewers, downloads and "Open"
+mod filecache;
 // WP-D: open and save documents for the in-app viewers and editor
 mod doc;
 // "Connect Kybl Storage": browser sign-in on computers and phones
@@ -158,6 +160,7 @@ pub fn run() {
                 mobile::edge_to_edge(&_window);
             }
             updater::start(&handle);
+            tauri::async_runtime::spawn(filecache::prune(handle.clone()));
             tauri::async_runtime::spawn(thumbs::prune_cache(handle));
             Ok(())
         })
@@ -202,6 +205,8 @@ pub fn run() {
             platform::biometric_unlock,
             platform::set_privacy_screen,
             thumbs::clear_thumbnail_cache,
+            filecache::cache_usage,
+            filecache::clear_caches,
             // WP0: storage core
             storage::generic_cmds::list_roots,
             storage::generic_cmds::connection_capabilities,

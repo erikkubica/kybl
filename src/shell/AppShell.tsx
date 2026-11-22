@@ -774,12 +774,6 @@ export function AppShell() {
           }}
           onEditProfile={(p) => setConnDialog({ profile: p })}
           onNewProfile={() => setConnDialog({ profile: null })}
-          onClearThumbnails={() =>
-            api
-              .clearThumbnailCache()
-              .then(() => toast("success", "Thumbnail cache cleared"))
-              .catch((e) => toast("error", errMessage(e)))
-          }
           onClose={() => setSettingsOpen(false)}
           initialPage={settingsPage}
           activeProfileId={active.profile?.id ?? null}

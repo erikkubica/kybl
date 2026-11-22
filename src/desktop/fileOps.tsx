@@ -225,7 +225,7 @@ export function makeFileOps(c: OpsContext) {
         } else {
           local = joinPath(await api.downloadFolder(), safeRelPath(f.name) || "download");
         }
-        transfers.add([{ kind: "download", name: f.name, profileId: pid, bucket, key: f.key, local, total: f.size, overwrite }]);
+        transfers.add([{ kind: "download", name: f.name, profileId: pid, bucket, key: f.key, local, total: f.size, overwrite, etag: f.etag }]);
         c.autoShowActivity();
         if (!settings.downloadAsk) toast("info", `Downloading “${f.name}” to your Downloads folder`);
         return;
@@ -235,13 +235,13 @@ export function makeFileOps(c: OpsContext) {
         : await api.downloadFolder();
       if (!dir) return;
       const items: Parameters<TransferActions["add"]>[0] = [];
-      const add = (key: string, size: number, rel: string) => {
+      const add = (key: string, size: number, rel: string, etag?: string | null) => {
         const safe = safeRelPath(rel);
-        if (safe) items.push({ kind: "download", name: safe, profileId: pid, bucket, key, local: joinPath(dir, safe), total: size });
+        if (safe) items.push({ kind: "download", name: safe, profileId: pid, bucket, key, local: joinPath(dir, safe), total: size, etag });
       };
       for (const e of list) {
         if (e.kind === "file") {
-          add(e.key, e.size, relBase !== null && e.key.startsWith(relBase) ? e.key.slice(relBase.length) : e.name);
+          add(e.key, e.size, relBase !== null && e.key.startsWith(relBase) ? e.key.slice(relBase.length) : e.name, e.etag);
         } else {
           c.setBusy(`Listing ${e.name}…`);
           const base = relBase !== null && e.key.startsWith(relBase) ? relBase : parentPrefix(e.key);
@@ -276,6 +276,8 @@ export function makeFileOps(c: OpsContext) {
       }
       const tmp = await api.tempFolder();
       const local = joinPath(tmp, `${shortHash(`${profile.id}\n${bucket}\n${e.key}`)}/${safeRelPath(e.name) || "file"}`);
+      // no listed ETag: the backend asks for the current one, so a copy from the file cache is
+      // only used while it is still the newest version
       const [t] = transfers.add([{ kind: "download", name: e.name, profileId: profile.id, bucket, key: e.key, local, total: e.size, overwrite: true }]);
       if (e.size > 20_000_000) toast("info", `Opening “${e.name}” once it has downloaded…`);
       const done = await transfers.whenFinished(t.id);

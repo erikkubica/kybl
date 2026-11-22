@@ -172,6 +172,42 @@ function Row({ label, hint, stack, children }: { label: ReactNode; hint?: string
   );
 }
 
+/** Thumbnails and recently opened files, with what they take on disk; one button clears both. */
+function CacheRow({ onToast }: { onToast: (kind: "success" | "error" | "info", text: string) => void }) {
+  const [usage, setUsage] = useState<{ thumbnails: number; files: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = () =>
+    api
+      .cacheUsage()
+      .then(setUsage)
+      .catch(() => setUsage(null));
+  useEffect(() => {
+    void load();
+  }, []);
+  const clear = async () => {
+    setBusy(true);
+    try {
+      const freed = await api.clearCaches();
+      onToast("success", freed ? `Cache cleared (${formatBytes(freed)} freed)` : "The cache was already empty");
+    } catch (e) {
+      onToast("error", errMessage(e));
+    } finally {
+      setBusy(false);
+      void load();
+    }
+  };
+  const hint =
+    "Thumbnails and recently opened files are kept on this computer, so folders and documents reopen without downloading again. Clearing is safe; they are fetched again when needed." +
+    (usage ? ` Now: ${formatBytes(usage.thumbnails)} of thumbnails, ${formatBytes(usage.files)} of files.` : "");
+  return (
+    <Row label="Cache" hint={hint}>
+      <button className="btn btn-sm" onClick={clear} disabled={busy}>
+        Clear cache
+      </button>
+    </Row>
+  );
+}
+
 function Seg<T extends string | number>({
   value,
   options,
@@ -360,7 +396,6 @@ export function SettingsPage({
   onCompact,
   onEditProfile,
   onNewProfile,
-  onClearThumbnails,
   onClose,
   initialPage,
   activeProfileId,
@@ -373,7 +408,6 @@ export function SettingsPage({
   onCompact: (c: boolean) => void;
   onEditProfile: (p: Profile) => void;
   onNewProfile: () => void;
-  onClearThumbnails: () => void;
   onClose: () => void;
   initialPage?: SettingsPageId;
   activeProfileId: string | null;
@@ -696,11 +730,7 @@ export function SettingsPage({
               <>
                 <h3 className="set-title">Cache</h3>
                 <div className="set-card">
-                  <Row label="Thumbnail cache" hint="Thumbnails are kept on disk so folders reopen instantly. Clearing is safe; they are rebuilt on demand.">
-                    <button className="btn btn-sm" onClick={onClearThumbnails}>
-                      Clear cache
-                    </button>
-                  </Row>
+                  <CacheRow onToast={onToast} />
                 </div>
 
                 <h3 className="set-title">Reset</h3>

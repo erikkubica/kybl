@@ -1,7 +1,9 @@
 //! Opening and saving documents for the in-app viewers and editor (src/viewers).
 //!
 //! `doc_open` answers with one framed body, `[u32 BE json_len][json DocMeta][bytes]`, so the
-//! metadata and the bytes come from the same GET and can't disagree.
+//! metadata and the bytes come from the same GET and can't disagree. A file opened, downloaded or
+//! saved before may come from the file cache (`filecache`) instead: then the metadata is a fresh
+//! HEAD and the bytes are the cached copy of exactly that ETag.
 //!
 //! `doc_save` takes the new bytes as a raw IPC body (no JSON, no base64) and refuses to overwrite
 //! a file that changed since it was opened: the error then starts with `CONFLICT\n\n`, followed by
@@ -246,6 +248,22 @@ async fn s3_read(client: &Client, bucket: &str, key: &str, max_bytes: u64) -> Re
     Ok((meta, buf))
 }
 
+/// HEAD alone: the version of what is there now, without tags (for the cache check in `doc_open`).
+async fn s3_head(client: &Client, bucket: &str, key: &str) -> Result<Option<DocMeta>, String> {
+    match client.head_object().bucket(bucket).key(key).send().await {
+        Ok(h) => Ok(Some(DocMeta {
+            etag: h.e_tag().map(|e| norm_etag(e).to_string()),
+            size: h.content_length().unwrap_or(0).max(0) as u64,
+            modified: millis(h.last_modified()),
+            content_type: h.content_type().map(str::to_string),
+            version: h.version_id().map(str::to_string),
+            warning: None,
+        })),
+        Err(e) if e.as_service_error().is_some_and(|s| s.is_not_found()) || http_status(&e) == Some(404) => Ok(None),
+        Err(e) => Err(sdk_err(e)),
+    }
+}
+
 /// HEAD (and tags) of what is there now; `None` when nothing is.
 async fn s3_stat(client: &Client, bucket: &str, key: &str, keep_kms: bool) -> Result<Option<(DocMeta, Headers)>, String> {
     let head = client.head_object().bucket(bucket).key(key).send();
@@ -356,8 +374,31 @@ pub async fn doc_open(
     max_bytes: u64,
 ) -> Result<tauri::ipc::Response, String> {
     let client = client_for(&app, &state, &profile_id).await?;
+    let cache = crate::filecache::get(&app);
+    // Seen before (a preview, a download, "Open"): a HEAD tells whether the copy on disk is still
+    // the current version. Never cached: straight to the GET, no HEAD spent.
+    if let Some(c) = cache
+        && c.has_any(&profile_id, &root, &path)
+        && let Ok(Some(meta)) = s3_head(&client, &root, &path).await
+        && meta.size <= max_bytes
+    {
+        let id = ident(&meta);
+        let (p, r, k) = (profile_id.clone(), root.clone(), path.clone());
+        if let Ok(Some(bytes)) = tokio::task::spawn_blocking(move || c.read(&p, &r, &k, &id)).await {
+            return Ok(tauri::ipc::Response::new(frame(&meta, &bytes)));
+        }
+    }
     let (meta, bytes) = s3_read(&client, &root, &path, max_bytes).await?;
-    Ok(tauri::ipc::Response::new(frame(&meta, &bytes)))
+    let body = frame(&meta, &bytes);
+    if let Some(c) = cache {
+        let id = ident(&meta);
+        tokio::task::spawn_blocking(move || c.store_bytes(&profile_id, &root, &path, &id, &bytes));
+    }
+    Ok(tauri::ipc::Response::new(body))
+}
+
+fn ident(m: &DocMeta) -> crate::filecache::Ident {
+    crate::filecache::Ident::new(m.etag.as_deref(), m.size, m.modified)
 }
 
 /// Raw body = the new contents. Headers: `x-kybl-profile`, `x-kybl-root`, `x-kybl-path` and
@@ -382,7 +423,24 @@ pub async fn doc_save(app: AppHandle, state: State<'_, AppState>, request: tauri
     let guard = guard_for(&provider);
     let keep_kms = provider == "aws";
     let client = client_for(&app, &state, &profile_id).await?;
-    save(&client, &bucket, &key, bytes, &expect, guard, keep_kms).await
+    let cache = crate::filecache::get(&app);
+    // editor saves are small (EDIT_MAX), so keeping a copy for the cache costs little
+    let kept = cache.map(|_| bytes.clone());
+    let result = save(&client, &bucket, &key, bytes, &expect, guard, keep_kms).await;
+    if let (Some(c), Some(kept)) = (cache, kept) {
+        match &result {
+            // the next open finds the saved version; the old one goes with it
+            Ok(meta) => {
+                let id = ident(meta);
+                let _ = tokio::task::spawn_blocking(move || c.store_bytes(&profile_id, &bucket, &key, &id, &kept)).await;
+            }
+            // a conflict or a failed write: what is there now is unknown, keep nothing stale
+            Err(_) => {
+                let _ = tokio::task::spawn_blocking(move || c.forget(&profile_id, &bucket, &key)).await;
+            }
+        }
+    }
+    result
 }
 
 async fn save(client: &Client, bucket: &str, key: &str, bytes: Vec<u8>, expect: &Precondition, guard: WriteGuard, keep_kms: bool) -> Result<DocMeta, String> {

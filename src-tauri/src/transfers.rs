@@ -424,6 +424,7 @@ async fn spawn_transfer(
     local: String,
     requested: String,
     resume_etag: Option<String>,
+    listed: Option<crate::filecache::Ident>,
 ) -> Result<(), String> {
     // S3 goes the way it always did; other kinds of connection read and write through their backend
     let conn = storage::connect(&app, state, &profile_id).await?;
@@ -522,12 +523,25 @@ async fn spawn_transfer(
                 Kind::Download { resume } => {
                     let chosen = PathBuf::from(&local);
                     let tag = if resume { resume_etag.as_deref() } else { None };
-                    let r = match &conn {
-                        Conn::S3(client) => download_to(client, &bucket, &key, &chosen, tag, true, &cancel, &report, Some(&paused), &mut etag).await,
-                        Conn::Other(s) => generic_cmds::download(&**s, &bucket, &key, &chosen, &cancel, &report, Some(&paused)).await,
+                    // the same version opened or downloaded before is copied from the file
+                    // cache instead of fetched again (a retry carrying on its partial file isn't)
+                    let served = match resume {
+                        false => crate::filecache::serve_download(&app, &conn, &profile_id, &bucket, &key, listed.as_ref(), &chosen, &cancel, &report).await,
+                        true => None,
+                    };
+                    let fetched = served.is_none();
+                    let r = match served {
+                        Some(r) => r,
+                        None => match &conn {
+                            Conn::S3(client) => download_to(client, &bucket, &key, &chosen, tag, true, &cancel, &report, Some(&paused), &mut etag).await,
+                            Conn::Other(s) => generic_cmds::download(&**s, &bucket, &key, &chosen, &cancel, &report, Some(&paused)).await,
+                        },
                     };
                     if let Ok(Outcome::Done) = r {
                         done_bytes = tokio::fs::metadata(&chosen).await.map(|m| m.len()).unwrap_or(0);
+                        if fetched {
+                            crate::filecache::remember_download(&app, conn.clone(), profile_id.clone(), bucket.clone(), key.clone(), etag.clone(), chosen.clone());
+                        }
                     }
                     r
                 }
@@ -593,12 +607,14 @@ pub async fn start_upload(
     local_path: String,
 ) -> Result<(), String> {
     let requested = local_path.clone();
-    spawn_transfer(app, &state, Kind::Upload, id, profile_id, bucket, key, local_path, requested, None).await
+    spawn_transfer(app, &state, Kind::Upload, id, profile_id, bucket, key, local_path, requested, None, None).await
 }
 
 /// Starts a download and answers with the local path it writes to: `dest_path` itself when
 /// `overwrite`, else the first free name ("photo (1).jpg") if a file is already there. Starting
-/// the same id again after it failed continues its partial file under the same name.
+/// the same id again after it failed continues its partial file under the same name. `etag` and
+/// `size` are the version the listing showed, if the page knows it: when the file cache holds
+/// that version it is copied without asking the server (see `filecache::serve_download`).
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn start_download(
@@ -610,8 +626,14 @@ pub async fn start_download(
     key: String,
     dest_path: String,
     overwrite: Option<bool>,
+    etag: Option<String>,
+    size: Option<u64>,
 ) -> Result<String, String> {
     let wanted = dest::validate(&dest_path)?;
+    let listed = match (etag, size) {
+        (Some(e), Some(n)) => Some(crate::filecache::Ident::new(Some(&e), n, None)).filter(|l| l.etag.is_some()),
+        _ => None,
+    };
     if state.cancels.lock().await.contains_key(&id) {
         return Err("This download is already running.".into());
     }
@@ -633,7 +655,7 @@ pub async fn start_download(
     };
     let local = chosen.to_string_lossy().into_owned();
     let kind = Kind::Download { resume: resume_etag.is_some() };
-    if let Err(e) = spawn_transfer(app, &state, kind, id, profile_id, bucket, key, local.clone(), dest_path, resume_etag).await {
+    if let Err(e) = spawn_transfer(app, &state, kind, id, profile_id, bucket, key, local.clone(), dest_path, resume_etag, listed).await {
         dest::release(&chosen);
         let _ = std::fs::remove_file(dest::part_path(&chosen));
         return Err(e);

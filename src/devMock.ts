@@ -802,6 +802,10 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       return prefs;
     case "clear_thumbnail_cache":
       return 0;
+    case "cache_usage":
+      return { thumbnails: 48_200_000, files: 312_500_000 };
+    case "clear_caches":
+      return 360_700_000;
     case "picked_files":
       return (a.uris as string[]).map((p, i) => ({ path: p, name: p.split("/").pop(), size: 3_000_000 * (i + 1) }));
     case "download_folder":

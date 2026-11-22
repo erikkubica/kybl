@@ -288,6 +288,8 @@ async fn finish(app: &AppHandle, state: &AppState, tok: TokenResponse, replace_i
     save_profiles(app, &profiles)?;
     state.clients.lock().await.remove(&profile.id);
     crate::storage::registry::forget(&profile.id);
+    // a reconnect may be another account: its files are not this one's
+    crate::filecache::forget_profile(app, &profile.id).await;
     Ok(profile)
 }
 

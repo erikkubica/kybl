@@ -195,15 +195,16 @@ export function SettingsScreen({
               className="m-setting-row"
               onClick={async () => {
                 try {
-                  const freed = await api.clearThumbnailCache();
-                  toast("success", freed ? "Thumbnail cache cleared" : "The thumbnail cache was already empty");
+                  // thumbnails and the copies of recently opened files
+                  const freed = await api.clearCaches();
+                  toast("success", freed ? "Cache cleared" : "The cache was already empty");
                 } catch (e) {
                   toast("error", errMessage(e));
                 }
               }}
             >
               <Icon name="trash" size={16} />
-              <span className="m-grow">Clear thumbnail cache</span>
+              <span className="m-grow">Clear cache</span>
             </button>
           </li>
         </ul>

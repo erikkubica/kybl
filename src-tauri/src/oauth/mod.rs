@@ -462,6 +462,8 @@ pub async fn oauth_start(
     }
     save_profiles(&app, &profiles)?;
     crate::storage::registry::forget(&id);
+    // a reconnect may be another account: its files are not this one's
+    crate::filecache::forget_profile(&app, &id).await;
     Ok(profile)
 }
 
