@@ -6,7 +6,7 @@
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import type { ObjInfo, Profile } from "./types";
-import type { Capabilities, RootInfo } from "./api";
+import type { Capabilities, JobSpec, RootInfo } from "./api";
 import { S3_CAPS } from "./useCaps";
 
 const HOUR = 3600_000;
@@ -92,6 +92,21 @@ function remoteTree(profileId: string, bucket: string) {
 function remoteDir(profileId: string, bucket: string, prefix: string) {
   return remoteTree(profileId, bucket)[prefix];
 }
+// a finished mock copy job (src/jobs/devJobs.ts, files only): the files show up where they went
+(window as unknown as { __kyblMockJobDone?: (s: JobSpec) => void }).__kyblMockJobDone = (spec) => {
+  const src = remoteTree(spec.src.profileId, spec.src.root);
+  const dst = remoteTree(spec.dst.profileId, spec.dst.root);
+  const into = (dst[spec.dst.dir] ??= { folders: [], objects: [] });
+  for (const it of spec.src.items) {
+    const parent = it.path.replace(/[^/]+$/, "");
+    const from = src[parent];
+    const o = from?.objects.find((x) => x.key === it.path);
+    if (!o) continue;
+    const key = spec.dst.dir + it.path.slice(parent.length);
+    into.objects = into.objects.filter((x) => x.key !== key).concat({ ...o, key, modified: Date.now() });
+    if (spec.mode === "move" && from && from !== into) from.objects = from.objects.filter((x) => x !== o);
+  }
+};
 
 const HUES = [212, 262, 162, 28, 340, 190, 48, 290];
 function thumbFor(key: string): string {

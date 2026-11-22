@@ -576,3 +576,41 @@
 .m-jobs-section .jobs-panel {
   margin: 0 12px;
 }
+
+/* ---------------------------------------------------------------- Activity › Log */
+.tp-list.tp-log {
+  padding: 4px 0;
+  font-size: 12px;
+}
+.tp-log-row {
+  display: grid;
+  grid-template-columns: auto 14px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 3px 14px;
+  user-select: text;
+}
+.tp-log-row time {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.tp-log-row svg {
+  margin-top: 2px;
+  color: var(--dim);
+}
+.tp-log-row.k-error svg,
+.tp-log-row.k-error .tp-log-text {
+  color: var(--danger);
+}
+.tp-log-row.k-success svg {
+  color: var(--ok);
+}
+.tp-log-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tp-log-tools {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 10px 0;
+}

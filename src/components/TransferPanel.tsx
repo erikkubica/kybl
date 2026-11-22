@@ -6,7 +6,8 @@ import type { Transfer, TransferState } from "../types";
 import { useJobList, type Job, type JobKind } from "../useJobs";
 import { useTransferList } from "../useTransfers";
 import { useSync } from "../sync";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import { clearLog, useActivityLog } from "../activityLog";
 import type { JobSummary } from "../api";
 import { JobsPanel, isActive as migrationActive, useMigrations } from "../jobs";
 
@@ -57,7 +58,8 @@ export function TransferPanel(props: Omit<PanelProps, "transfers" | "jobs" | "sy
   return <TransferPanelView {...props} transfers={transfers} jobs={jobs} syncs={syncs} migrations={migs.length} migrationsActive={migsActive} />;
 }
 
-export type ActivityTab = "activity" | "jobs";
+/** In progress (running and waiting), Failed, Done (finished and cancelled), Log (messages), Jobs. */
+export type ActivityTab = "activity" | "failed" | "done" | "log" | "jobs";
 
 type PanelProps = {
   transfers: Transfer[];
@@ -66,7 +68,7 @@ type PanelProps = {
   /** copies between connections (src/jobs): how many are listed, and the ones still going */
   migrations: number;
   migrationsActive: JobSummary[];
-  /** which tab shows: Activity (transfers, moves, syncs) or Jobs (copies between connections) */
+  /** which tab shows: in progress, failed, done, the message log, or Jobs (copies between connections) */
   tab?: ActivityTab;
   onTab?(tab: ActivityTab): void;
   /** a finished copy's "Show where it went" */
@@ -125,6 +127,8 @@ function TransferPanelView({
     onTab?.(t);
     if (!open) onToggle();
   };
+  // without tabs (phones) every row shows in one list, as before
+  const show = (what: "progress" | "failed" | "done") => !onTab || (what === "progress" ? tab === "activity" : tab === what);
 
   const jobsRunning = jobs.filter((j) => j.state === "running");
   const jobsFailed = jobs.filter((j) => j.state === "error");
@@ -145,13 +149,28 @@ function TransferPanelView({
   const pct = totalBytes > 0 ? Math.min(100, (doneBytes / totalBytes) * 100) : 0;
   const eta = speed > 0 ? (totalBytes - doneBytes) / speed : 0;
 
+  const cancelled = transfers.filter((t) => t.state === "cancelled");
   const list = [
-    ...running,
-    ...failed,
-    ...queued.slice(0, 40),
-    ...done.slice(-40).reverse(),
-    ...transfers.filter((t) => t.state === "cancelled").slice(-20),
+    ...(show("progress") ? running : []),
+    ...(show("failed") ? failed : []),
+    ...(show("progress") ? queued.slice(0, 40) : []),
+    ...(show("done") ? done.slice(-40).reverse() : []),
+    ...(show("done") ? cancelled.slice(-20) : []),
   ];
+  const shownJobs = jobList.filter((j) => (j.state === "running" ? show("progress") : j.state === "error" ? show("failed") : show("done")));
+  const shownSyncs = show("progress") ? syncs : [];
+  const counts = {
+    progress: active + jobsRunning.length + syncs.length,
+    failed: failed.length + jobsFailed.length,
+    done: done.length + cancelled.length + jobsDone.length + jobsCancelled.length,
+  };
+  const onLog = !!onTab && tab === "log";
+  const tabEmpty = shownJobs.length + shownSyncs.length + list.length === 0;
+  const EMPTY_NOTE: Record<string, string> = {
+    activity: "Nothing is uploading or downloading right now.",
+    failed: "Nothing has failed.",
+    done: "Nothing has finished yet.",
+  };
 
   const cancelledCount = transfers.length - active - done.length - failed.length + jobsCancelled.length;
   const activeAll = active + jobsRunning.length + syncs.length + migrationsActive.length;
@@ -184,9 +203,19 @@ function TransferPanelView({
         </button>
         {onTab && (
           <div className="tp-tabs" role="tablist" aria-label="Activity" onClick={(e) => e.stopPropagation()}>
-            <button role="tab" aria-selected={open && !onJobs} className={open && !onJobs ? "on" : ""} onClick={() => pickTab("activity")}>
-              Activity
-            </button>
+            {(
+              [
+                ["activity", "In progress", counts.progress, "accent"],
+                ["failed", "Failed", counts.failed, "bad"],
+                ["done", "Done", counts.done, ""],
+                ["log", "Log", 0, ""],
+              ] as const
+            ).map(([id, label, n, tone]) => (
+              <button key={id} role="tab" aria-selected={open && tab === id} className={open && tab === id ? "on" : ""} onClick={() => pickTab(id)}>
+                {label}
+                {n > 0 && <span className={`pill ${tone}`}>{n.toLocaleString()}</span>}
+              </button>
+            ))}
             <button
               role="tab"
               aria-selected={open && onJobs}
@@ -199,12 +228,15 @@ function TransferPanelView({
             </button>
           </div>
         )}
-        <span className="tp-counts">
-          {activeAll > 0 && <span className="pill accent">{activeAll} active</span>}
-          {doneAll > 0 && <span className="pill ok">{doneAll} done</span>}
-          {failedAll > 0 && <span className="pill bad">{failedAll} failed</span>}
-          {cancelledCount > 0 && <span className="pill">{cancelledCount} cancelled</span>}
-        </span>
+        {/* with tabs the counts sit on the tabs */}
+        {!onTab && (
+          <span className="tp-counts">
+            {activeAll > 0 && <span className="pill accent">{activeAll} active</span>}
+            {doneAll > 0 && <span className="pill ok">{doneAll} done</span>}
+            {failedAll > 0 && <span className="pill bad">{failedAll} failed</span>}
+            {cancelledCount > 0 && <span className="pill">{cancelledCount} cancelled</span>}
+          </span>
+        )}
         <div className="tp-summary">
           {active > 0 && (
             <>
@@ -237,7 +269,7 @@ function TransferPanelView({
             </>
           )}
         </div>
-        <div className="tp-actions" onClick={(e) => e.stopPropagation()} hidden={open && onJobs}>
+        <div className="tp-actions" onClick={(e) => e.stopPropagation()} hidden={open && (onJobs || onLog)}>
           {failed.length > 0 && (
             <button className="btn btn-ghost btn-sm" onClick={retryAll} title="Try every failed transfer again">
               <Icon name="retry" size={13} /> Retry {failed.length === 1 ? "failed" : `all ${failed.length} failed`}
@@ -260,15 +292,22 @@ function TransferPanelView({
           <JobsPanel onOpenDest={onOpenMigrationDest} />
         </div>
       )}
-      {open && !onJobs && nothing && (
+      {open && onLog && <MessageLog />}
+      {open && !onJobs && !onLog && nothing && (
         <div className="tp-empty" id="tp-list">
           <Icon name="transfers" size={18} />
           <span>Nothing is uploading or downloading. Transfers, moves and deletes you start show up here.</span>
         </div>
       )}
-      {open && !onJobs && !nothing && (
+      {open && !onJobs && !onLog && !nothing && onTab && tabEmpty && (
+        <div className="tp-empty" id="tp-list">
+          <Icon name={tab === "failed" ? "check-circle" : "transfers"} size={18} />
+          <span>{EMPTY_NOTE[tab]}</span>
+        </div>
+      )}
+      {open && !onJobs && !onLog && !nothing && !(onTab && tabEmpty) && (
         <div className="tp-list" id="tp-list">
-          {jobList.map((j) => (
+          {shownJobs.map((j) => (
             <div key={j.id} className={`tp-row job st-${j.state}`}>
               <span className="tp-icon" title={JOB_DONE[j.kind]}>
                 <Icon name={j.state === "error" ? "alert" : j.state === "cancelled" ? "x" : j.state === "done" ? "check-circle" : JOB_ICON[j.kind]} size={15} />
@@ -312,7 +351,7 @@ function TransferPanelView({
               </div>
             </div>
           ))}
-          {syncs.map((sy) => (
+          {shownSyncs.map((sy) => (
             <div key={sy.id} className="tp-row job st-running sync-act" onClick={onOpenSync} title="Open sync settings">
               <span className="tp-icon">
                 <Icon name="sync" size={15} />
@@ -390,9 +429,43 @@ function TransferPanelView({
               </div>
             </div>
           ))}
-          {queued.length > 40 && <div className="tp-more">+ {(queued.length - 40).toLocaleString()} more waiting</div>}
+          {show("progress") && queued.length > 40 && <div className="tp-more">+ {(queued.length - 40).toLocaleString()} more waiting</div>}
         </div>
       )}
     </section>
+  );
+}
+
+/** The Log tab: every message the app showed this session, newest at the bottom. */
+function MessageLog() {
+  const log = useActivityLog();
+  const end = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // braces: newer engines return a Promise from scrollIntoView, which React would take for a clean-up
+    end.current?.scrollIntoView({ block: "end" });
+  }, [log.length]);
+  if (!log.length)
+    return (
+      <div className="tp-empty" id="tp-list">
+        <Icon name="info" size={18} />
+        <span>Messages Kybl shows you (finished copies, errors, notes) collect here for this session.</span>
+      </div>
+    );
+  return (
+    <div className="tp-list tp-log" id="tp-list" role="log" aria-live="off">
+      {log.map((m) => (
+        <div key={m.id} className={`tp-log-row k-${m.kind}`}>
+          <time dateTime={new Date(m.at).toISOString()}>{new Date(m.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
+          <Icon name={m.kind === "error" ? "alert" : m.kind === "success" ? "check-circle" : "info"} size={13} />
+          <span className="tp-log-text">{m.text}</span>
+        </div>
+      ))}
+      <div className="tp-log-tools">
+        <button className="btn btn-ghost btn-sm" onClick={clearLog}>
+          Clear log
+        </button>
+      </div>
+      <div ref={end} />
+    </div>
   );
 }

@@ -4,6 +4,7 @@
  * name-clash prompt and any modal of its own (`show`). Only one of each is up at a time, and
  * `isOpen` tells the keyboard handling that something owns the keyboard.
  */
+import { logMessage } from "../activityLog";
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConfirmDialog, ContextMenu, PromptDialog, Toasts, type MenuItem, type Toast } from "../components/Dialogs";
 import { useConflictPrompt } from "../components/ConflictDialog";
@@ -51,6 +52,7 @@ export function DialogsProvider({ children }: { children: ReactNode }) {
   // each toast leaves by itself (see Toasts: longer for errors, held while hovered or focused)
   const toast = useCallback((kind: Toast["kind"], text: string, action?: ToastAction) => {
     const id = Date.now() + Math.random();
+    logMessage(kind, text);
     setToasts((t) => [...t.slice(-3), { id, kind, text, action }]);
   }, []);
   const confirmAsync = useCallback((o: ConfirmOptions) => new Promise<boolean>((resolve) => setConfirm({ ...o, resolve })), []);

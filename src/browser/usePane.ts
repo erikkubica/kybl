@@ -40,6 +40,8 @@ export type PaneEnv = {
   /** opens the Activity panel if Settings say so (a transfer or job just started) */
   autoShowActivity: () => void;
   showActivity: () => void;
+  /** the Activity panel on its Failed tab (a failure toast's "Show") */
+  showFailed?: () => void;
   /** opens the Activity panel on purpose (it stays up with a note even when idle) */
   showActivityPanel: () => void;
   /** reloads every pane showing this bucket; true when one did */
@@ -194,6 +196,7 @@ function usePaneCore(env: PaneEnv) {
     toast,
     autoShowActivity: env.autoShowActivity,
     showActivity: env.showActivity,
+    showFailed: env.showFailed,
     setBusy,
     confirm: dialogs.confirm,
     prompt: dialogs.prompt,

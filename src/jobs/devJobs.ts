@@ -14,7 +14,12 @@ type MockJob = JobSummary & {
   planLeft: number;
   /** where a retry starts counting again */
   retrying?: boolean;
+  /** only files were picked: exactly those, no made-up skips or failures, and they land in the mock tree */
+  exact?: boolean;
 };
+
+/** devMock puts finished copies into its tree (set on window to keep the two modules apart) */
+const landed = (spec: JobSpec) => (window as unknown as { __kyblMockJobDone?: (s: JobSpec) => void }).__kyblMockJobDone?.(spec);
 
 const HOUR = 3600_000;
 const now = Date.now();
@@ -112,7 +117,7 @@ function tick() {
   for (const j of jobs) {
     const p = j.progress;
     if (p.state === "planning") {
-      p.filesTotal += 180 + Math.round(Math.random() * 120);
+      if (!j.exact) p.filesTotal += 180 + Math.round(Math.random() * 120);
       p.bytesTotal = p.filesTotal * j.avg;
       if (--j.planLeft <= 0) {
         p.state = "running";
@@ -129,7 +134,7 @@ function tick() {
       if (j.failAt.has(at)) {
         p.filesFailed++;
         j.failures.push({ path: `photos/IMG_${at}.jpg`, error: "The server didn't answer in time. Check your internet connection.\n\ntimeout after 30s" });
-      } else if (!j.retrying && at % 11 === 0) p.filesSkipped++;
+      } else if (!j.exact && !j.retrying && at > 0 && at % 11 === 0) p.filesSkipped++;
       else p.filesDone++;
     }
     const at = p.filesDone + p.filesSkipped + p.filesFailed;
@@ -144,6 +149,7 @@ function tick() {
       p.etaSecs = null;
       p.current = [];
       j.retrying = false;
+      if (j.exact) landed(j.spec);
     }
     send(j);
   }
@@ -176,6 +182,11 @@ export async function handleJob(cmd: string, a: any): Promise<unknown> {
         failures: [],
         planLeft: 8,
       };
+      if (spec.src.items.length > 0 && spec.src.items.every((i) => !i.isDir)) {
+        Object.assign(j, { exact: true, failAt: new Set(), planLeft: 1 });
+        j.progress.filesTotal = spec.src.items.length;
+        j.progress.bytesTotal = spec.src.items.length * j.avg;
+      }
       jobs.push(j);
       send(j);
       return id;

@@ -37,6 +37,7 @@ export type OpsContext = {
   autoShowActivity: () => void;
   /** opens the Activity panel */
   showActivity: () => void;
+  showFailed?: () => void;
   setBusy: (text: string | null) => void;
   confirm: (o: { title: string; message: ReactNode; label: string; danger?: boolean }) => Promise<boolean>;
   prompt: (o: { title: string; label: string; initial: string; confirmLabel: string; note?: string; run: (v: string) => void }) => void;
@@ -62,7 +63,8 @@ const whatOf = (list: { name: string }[]) => (list.length === 1 ? `“${list[0].
 
 export function makeFileOps(c: OpsContext) {
   const { transfers, jobs, toast } = c;
-  const showAction: ToastAction = { label: "Show", run: c.showActivity };
+  // only failures carry it: the panel opens on its Failed tab
+  const showAction: ToastAction = { label: "Show", run: c.showFailed ?? c.showActivity };
 
   /**
    * Which targets already exist. If the check itself fails (keys that may write but not list),

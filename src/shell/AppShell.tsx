@@ -132,6 +132,11 @@ export function AppShell() {
 
   const onError = useCallback((m: string) => toast("error", m), [toast]);
   const showActivity = useCallback(() => setTransfersOpen(true), []);
+  /** a failure toast's "Show": the Activity panel on its Failed tab */
+  const showFailed = useCallback(() => {
+    setActivityTab("failed");
+    setTransfersOpen(true);
+  }, []);
   const showActivityPanel = useCallback(() => {
     setTransfersOpen(true);
     setActivityAsked(true);
@@ -231,6 +236,7 @@ export function AppShell() {
     dialogs,
     autoShowActivity: () => void (settings.autoOpenTransfers && setTransfersOpen(true)),
     showActivity,
+    showFailed,
     showActivityPanel,
     reloadIfShowing,
     clearAllSizes,
@@ -352,12 +358,12 @@ export function AppShell() {
   useEffect(
     () =>
       transfers.onUploadsSettled((ok, bad, where) => {
-        if (bad) toast("error", `${bad} ${bad === 1 ? "upload" : "uploads"} failed`, { label: "Show", run: showActivity });
+        if (bad) toast("error", `${bad} ${bad === 1 ? "upload" : "uploads"} failed`, { label: "Show", run: showFailed });
         else if (ok) toast("success", `Uploaded ${ok} ${ok === 1 ? "file" : "files"}`);
         if (ok) clearAllSizes();
         for (const w of where) if (reloadIfShowing(w.profileId, w.bucket)) break;
       }),
-    [transfers, toast, reloadIfShowing, showActivity, clearAllSizes],
+    [transfers, toast, reloadIfShowing, showFailed, clearAllSizes],
   );
 
   // ------------------------------------------------------------ sidebar
