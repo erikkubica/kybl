@@ -131,9 +131,16 @@ function usePaneCore(env: PaneEnv) {
     [loc, sr, ent, lst, setSelected, setCursor],
   );
 
+  /**
+   * Opens folder `p` of the bucket on screen. Going up (Up, "..", Backspace, ⌘↑, a breadcrumb)
+   * selects the folder you came from, like Finder, unless `selectKey` says otherwise.
+   */
   const navigate = useCallback(
     (p: string, selectKey?: string) => {
-      if (profile && bucket != null) go(profile, bucket, p, { selectKey });
+      if (!profile || bucket == null) return;
+      const cur = hereRef.current?.prefix ?? "";
+      if (selectKey === undefined && p !== cur && cur.startsWith(p)) selectKey = p + cur.slice(p.length).split("/")[0] + "/";
+      go(profile, bucket, p, { selectKey });
     },
     [profile, bucket, go],
   );
