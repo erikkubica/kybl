@@ -160,11 +160,8 @@ body.resizing-row * {
 }
 
 /* ---------------------------------------------------------------- path bar: type a path, favorite */
-.crumbs.can-edit {
+.crumbs.can-edit .crumb.current {
   cursor: text;
-}
-.crumbs.can-edit .crumb {
-  cursor: pointer;
 }
 .crumbs.editing {
   display: flex;

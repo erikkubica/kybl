@@ -29,8 +29,9 @@ export function Breadcrumbs({
   /** narrow bars (phones): inside a folder the bucket shows as its icon only */
   compact?: boolean;
   /**
-   * Click the empty part of the bar (or press ⇧⌘G) to type a path, like Finder's and Explorer's
-   * address bars; Return goes there (same rules as Go to folder), Escape or clicking away cancels.
+   * Click the current folder's name (or press ⇧⌘G) to type a path; Return goes there (same rules
+   * as Go to folder), Escape or clicking away cancels. The empty part of the bar stays the
+   * window's drag area.
    */
   onGoTo?: (path: string) => void;
 }) {
@@ -79,6 +80,10 @@ export function Breadcrumbs({
   }
 
   const prefixOf = (i: number) => parts.slice(0, i + 1).join("/") + "/";
+  const startEdit = () => setEditing("/" + parts.map((p) => p + "/").join(""));
+  // the folder you're in: a click types a path (going to it again would do nothing)
+  const here = (go: () => void) => (onGoTo ? startEdit : go);
+  const hereTitle = (name: string) => (onGoTo ? `${name} · click to type a path (⇧⌘G)` : name);
   const sep = <Icon name="chevron" size={12} className="crumb-sep" />;
 
   if (editing != null && onGoTo)
@@ -113,19 +118,7 @@ export function Breadcrumbs({
     );
 
   return (
-    <nav
-      className={`crumbs ${onGoTo ? "can-edit" : ""}`}
-      aria-label="Path"
-      data-tauri-drag-region={onGoTo ? undefined : true}
-      ref={nav}
-      title={onGoTo ? "Click to type a path (⇧⌘G)" : undefined}
-      onMouseDown={(e) => {
-        // the empty part of the bar, not a crumb
-        if (!onGoTo || e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
-        e.preventDefault();
-        setEditing("/" + parts.map((p) => p + "/").join(""));
-      }}
-    >
+    <nav className={`crumbs ${onGoTo ? "can-edit" : ""}`} aria-label="Path" data-tauri-drag-region ref={nav}>
       <div className="crumbs-ruler" ref={ruler} aria-hidden="true">
         <span className="crumb-wrap">
           <span className="crumb current">
@@ -148,7 +141,13 @@ export function Breadcrumbs({
       </div>
 
       <span className={`crumb-wrap crumb-root ${iconOnly ? "icon-only" : ""}`}>
-        <button className={`crumb ${n === 0 ? "current" : ""}`} data-drop="" title={label} aria-label={label} onClick={() => onNavigate("")}>
+        <button
+          className={`crumb ${n === 0 ? "current" : ""}`}
+          data-drop=""
+          title={n === 0 ? hereTitle(label) : label}
+          aria-label={label}
+          onClick={n === 0 ? here(() => onNavigate("")) : () => onNavigate("")}
+        >
           <Icon name={icon} size={15} />
           {!iconOnly && <span className="crumb-label">{label}</span>}
         </button>
@@ -165,7 +164,12 @@ export function Breadcrumbs({
         i < fold ? null : (
           <span key={i} className={`crumb-wrap ${i === n - 1 ? "crumb-here" : ""}`}>
             {sep}
-            <button className={`crumb ${i === n - 1 ? "current" : ""}`} data-drop={prefixOf(i)} title={p} onClick={() => onNavigate(prefixOf(i))}>
+            <button
+              className={`crumb ${i === n - 1 ? "current" : ""}`}
+              data-drop={prefixOf(i)}
+              title={i === n - 1 ? hereTitle(p) : p}
+              onClick={i === n - 1 ? here(() => onNavigate(prefixOf(i))) : () => onNavigate(prefixOf(i))}
+            >
               <span className="crumb-label">{p}</span>
             </button>
           </span>
