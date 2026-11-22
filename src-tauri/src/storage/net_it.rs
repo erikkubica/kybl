@@ -360,3 +360,24 @@ fn sftp_against_rclone() {
     });
     let _ = std::fs::remove_dir_all(&keys);
 }
+
+/// The shared HTTP client's TLS (rustls on ring, system roots) against public sites. Needs the
+/// internet: `KYBL_TEST_NET=1`.
+#[test]
+fn https_works_with_the_shared_client() {
+    if std::env::var("KYBL_TEST_NET").is_err() {
+        return eprintln!("skipped: KYBL_TEST_NET not set");
+    }
+    rt().block_on(async {
+        let r = http().get("https://www.example.com/").send().await.unwrap();
+        assert!(r.status().is_success());
+        // an HTTPS server that isn't WebDAV says so plainly
+        let cfg = NetConfig { url: Some("https://www.example.com/".into()), user: "x".into(), ..Default::default() };
+        let e = WebdavBackend::new(&cfg, Some("y".into())).unwrap().roots().await.err().unwrap();
+        assert!(!matches!(e.kind, ErrKind::Network), "{e}");
+        // a bad certificate is refused, in plain words
+        let e = http().get("https://expired.badssl.com/").send().await.err().unwrap();
+        let e = crate::storage::webdav::http_error(e);
+        assert!(e.message.contains("certificate"), "{e}");
+    });
+}

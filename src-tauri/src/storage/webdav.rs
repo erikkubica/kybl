@@ -890,7 +890,7 @@ pub(crate) fn days_from_civil(y: i64, m: i64, d: i64) -> Option<i64> {
 
 // ---------------------------------------------------------------- errors
 
-fn http_error(e: reqwest::Error) -> StorageError {
+pub(crate) fn http_error(e: reqwest::Error) -> StorageError {
     use std::error::Error as _;
     let mut src: Option<&dyn std::error::Error> = e.source();
     let mut io: Option<&std::io::Error> = None;
