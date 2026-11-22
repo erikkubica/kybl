@@ -83,6 +83,33 @@ fn big() -> Vec<u8> {
     (0..(9 * 1024 * 1024u32)).map(|i| (i % 251) as u8).collect()
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn whole_connection_drives_show_roots_as_folders() {
+    let base = std::env::temp_dir().join(format!("kybl-mount-{}", uuid::Uuid::new_v4()));
+    let _t = Tmp(base.clone());
+    for (dir, file) in [("one", "x.txt"), ("two", "y.txt")] {
+        std::fs::create_dir_all(base.join(dir)).unwrap();
+        std::fs::write(base.join(dir).join(file), dir).unwrap();
+    }
+    let serve = |roots: Vec<(String, RootKind, PathBuf)>, sub: &str| {
+        let s: Arc<dyn Storage> = Arc::new(LocalBackend::with_roots(roots, false));
+        let blocks = Arc::new(BlockCache::open(base.join(sub).join("cache"), 64 * 1024 * 1024));
+        let uploads = Arc::new(WriteBack::open(base.join(sub).join("uploads")));
+        KyblFs::new(opener(s), Spec { bucket: String::new(), prefix: String::new(), read_only: false }, blocks, uploads)
+    };
+    let http = crate::storage::net::http();
+    // several roots: each is a top-level folder
+    let fs = serve(vec![("One".into(), RootKind::Folder, base.join("one")), ("Two".into(), RootKind::Folder, base.join("two"))], "a");
+    let srv = server::start(fs, 0, server::random_token(), false).await.unwrap();
+    let top = http.request(Method::from_bytes(b"PROPFIND").unwrap(), srv.url()).header("Depth", "1").send().await.unwrap().text().await.unwrap();
+    assert!(top.contains("One/") && top.contains("Two/"), "{top}");
+    assert_eq!(http.get(format!("{}Two/y.txt", srv.url())).send().await.unwrap().text().await.unwrap(), "two");
+    // one root: its contents are the top
+    let fs = serve(vec![("One".into(), RootKind::Folder, base.join("one"))], "b");
+    let srv = server::start(fs, 0, server::random_token(), false).await.unwrap();
+    assert_eq!(http.get(format!("{}x.txt", srv.url())).send().await.unwrap().text().await.unwrap(), "one");
+}
+
 fn on_disk(d: &Path, rel: &str) -> Option<Vec<u8>> {
     std::fs::read(d.join(rel)).ok()
 }

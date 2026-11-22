@@ -2,7 +2,8 @@
 //! connection behind [`Storage`].
 //!
 //! - **Paths**: a drive shows one place of a connection: a folder in a root (bucket, drive) or,
-//!   with no root given, every root as a top-level folder. Keys inside are `prefix + path`.
+//!   with no root given, every root as a top-level folder (a connection with one root shows
+//!   that root's contents). Keys inside are `prefix + path`.
 //! - **Listings** are cached for [`TTL`] (Finder asks for the same folder many times a second),
 //!   and dropped as soon as Kybl itself changes something in that folder. A lookup of one file
 //!   lists its folder once instead of asking the server about each name.
@@ -281,11 +282,15 @@ impl Inner {
             let key = format!("{}{rel}", self.spec.prefix);
             return Ok(Node::In { root: self.spec.bucket.clone(), key: key.trim_end_matches('/').to_string() });
         }
+        let roots = self.roots().await?;
+        // one root (SFTP, FTP, WebDAV, Dropbox): its contents are the drive's top
+        if roots.len() == 1 {
+            return Ok(Node::In { root: roots[0].1.clone(), key: rel.to_string() });
+        }
         if rel.is_empty() {
             return Ok(Node::Top);
         }
         let (first, rest) = rel.split_once('/').unwrap_or((rel, ""));
-        let roots = self.roots().await?;
         let first_nfc = nfc(first);
         let id = roots
             .iter()

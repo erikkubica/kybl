@@ -521,3 +521,53 @@ export const oauthCancel = (flowId: string) => invoke<void>("oauth_cancel", { fl
 
 /** Which kinds this build can sign in to on its own; false: show "Needs your own client ID". */
 export const oauthBuiltinClients = () => invoke<Record<CloudKind, boolean>>("oauth_builtin_clients");
+
+// ---------------------------------------------------------------- WP-E4: drives ("Mount as drive")
+
+/** Where a drive is at (desktop only; see src-tauri/src/mount). */
+export type MountState = "mounting" | "mounted" | "unmounted" | "error" | "unsupported" | "removed";
+
+/** A connection, root or folder shown as a drive in Finder / the file manager. */
+export type MountInfo = {
+  id: string;
+  profileId: string;
+  /** "" = every root of the connection, as top-level folders */
+  bucket: string;
+  /** "" or a folder ending with "/" */
+  prefix: string;
+  name: string;
+  readOnly: boolean;
+  state: MountState;
+  /** why it isn't mounted ("message\n\ndetail", see ErrorText) */
+  error: string | null;
+  /** the folder (or drive letter) the system mounted it at */
+  mountPoint: string | null;
+  /** saves waiting to upload or uploading, their bytes, and bytes sent so far */
+  uploading: number;
+  uploadBytes: number;
+  uploadSent: number;
+  /** why a waiting upload failed last; Kybl keeps trying */
+  uploadError: string | null;
+  /** something to tell the user once (a save kept as a conflict copy); clear with mountDismiss */
+  notice: string | null;
+  cacheBytes: number;
+};
+
+/** Emitted with a `MountInfo` whenever a drive changes (state "removed" when it's gone). */
+export const MOUNT_STATUS_EVENT = "mount-status";
+
+export const mountApi = {
+  mountList: () => invoke<MountInfo[]>("mount_list"),
+  /** Saves the drive and mounts it; resolves with its state (which may be "error"). */
+  mountAdd: (profileId: string, bucket: string, prefix: string, name?: string | null) =>
+    invoke<MountInfo>("mount_add", { profileId, bucket, prefix, name: name ?? null }),
+  /** Unmounts and forgets the drive. Rejects while saves from it still wait to upload. */
+  mountRemove: (id: string) => invoke<void>("mount_remove", { id }),
+  /** Opens the mounted drive in Finder / the file manager. */
+  mountReveal: (id: string) => invoke<void>("mount_reveal", { id }),
+  /** Mounts again after an error or an unmount. */
+  mountRetry: (id: string) => invoke<MountInfo>("mount_retry", { id }),
+  /** Unmounts but keeps the drive in the list. */
+  mountEject: (id: string) => invoke<MountInfo>("mount_eject", { id }),
+  mountDismiss: (id: string) => invoke<void>("mount_dismiss", { id }),
+};
