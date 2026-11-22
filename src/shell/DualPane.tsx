@@ -123,7 +123,7 @@ export function DualTools({
     <>
       {side === "left" ? b("arrow-right", "Open this folder in the right pane too", onToOther) : b("arrow-left", "Open this folder in the left pane too", onToOther)}
       {b("swap", "Swap panes (⇧⌘S)", onSwap)}
-      {b("columns", "Compare the two folders", onCompare)}
+      {b("compare", "Compare the two folders", onCompare)}
       {b("link", syncBrowsing ? "Synchronized browsing: on (both panes follow each other)" : "Synchronized browsing: off", onSyncBrowsing, syncBrowsing)}
     </>
   );

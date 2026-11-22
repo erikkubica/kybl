@@ -922,7 +922,8 @@ kbd {
 .table-body {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 8px 10px;
+  /* room under the last row of a long list: a place to right-click the folder itself */
+  padding: 4px 8px 72px;
 }
 .row {
   height: 32px;
@@ -1357,7 +1358,8 @@ body.resizing-col .preview-inner {
   line-height: 1.45;
 }
 .preview-inner {
-  padding: 14px 14px 18px;
+  /* room under the last tiles, as in the list */
+  padding: 14px 14px 72px;
   animation: fade-in 0.2s;
 }
 .preview-media {
