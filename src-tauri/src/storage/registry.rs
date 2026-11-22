@@ -10,8 +10,8 @@ use std::{
 
 use tauri::{AppHandle, Runtime};
 
-use super::{local::LocalBackend, s3::S3Backend, ConnKind, Storage};
-use crate::state::{build_client, client_for, load_profiles, AppState, Profile};
+use super::{dal, ftp::FtpBackend, local::LocalBackend, net, s3::S3Backend, sftp::SftpBackend, webdav::WebdavBackend, ConnKind, Storage};
+use crate::state::{build_client, client_for, get_secret, load_profiles, secret_key, AppState, NetAuth, NetConfig, Profile};
 
 /// The reserved connection id of this computer or phone. It is never in `profiles.json`.
 pub const LOCAL_ID: &str = "local";
@@ -55,10 +55,53 @@ pub async fn build<R: Runtime>(
             Ok(Arc::new(S3Backend::new(client, profile)))
         }
         ConnKind::Local => Ok(Arc::new(LocalBackend::system(app).await?)),
+        ConnKind::Webdav | ConnKind::Ftp | ConnKind::Sftp => {
+            let cfg = net::net_config(profile.net.as_ref())?;
+            let secrets = net_secrets(state, profile, &cfg, secret).await?;
+            Ok(match profile.kind {
+                ConnKind::Webdav => Arc::new(WebdavBackend::new(&cfg, secrets.password)?) as Arc<dyn Storage>,
+                ConnKind::Ftp => Arc::new(FtpBackend::new(&cfg, secrets.password)?),
+                _ => Arc::new(SftpBackend::new(&cfg, secrets)?),
+            })
+        }
+        ConnKind::Azblob | ConnKind::Gcs => {
+            let blob = profile.blob.clone().unwrap_or_default();
+            let secret = match secret.filter(|s| !s.is_empty()) {
+                Some(s) => Some(s),
+                None => get_secret(state, &profile.id).await?,
+            };
+            Ok(if profile.kind == ConnKind::Azblob { Arc::new(dal::azblob(&blob, secret)?) } else { Arc::new(dal::gcs(&blob, secret)?) })
+        }
         ConnKind::Unknown => Err("This connection was made by a newer version of Kybl. Update Kybl to open it.".into()),
         // WP-A1 / WP-A2: one arm per kind above this line
         other => Err(format!("{} connections aren't supported by this version of Kybl yet.", other.label())),
     }
+}
+
+/// What a server connection signs in with. `secret`, when given (testing unsaved settings), is
+/// the password, or for SFTP key sign-in the key (as stored under `{id}#ssh`, see BACKENDS.md).
+/// Saved connections read `{id}` (password) and `{id}#ssh` (key); a key saved as the main
+/// secret works too.
+async fn net_secrets(state: &AppState, profile: &Profile, cfg: &NetConfig, secret: Option<String>) -> Result<net::Secrets, String> {
+    let given = secret.filter(|s| !s.is_empty());
+    if profile.kind == ConnKind::Sftp && cfg.auth == NetAuth::Key {
+        let raw = match given {
+            Some(s) => Some(s),
+            None => match get_secret(state, &secret_key(&profile.id, "ssh")).await? {
+                Some(s) => Some(s),
+                None => get_secret(state, &profile.id).await?,
+            },
+        };
+        return Ok(net::Secrets { password: None, ssh: raw.as_deref().and_then(net::SshKey::parse) });
+    }
+    if profile.kind == ConnKind::Sftp && cfg.auth == NetAuth::Agent {
+        return Ok(net::Secrets::default());
+    }
+    let password = match given {
+        Some(s) => Some(s),
+        None => get_secret(state, &profile.id).await?,
+    };
+    Ok(net::Secrets { password, ssh: None })
 }
 
 /// Drops the open backend of a connection (saved with new settings, or deleted).

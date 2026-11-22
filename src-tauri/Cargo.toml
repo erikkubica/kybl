@@ -52,6 +52,22 @@ tauri-plugin-fs = "2"
 async-trait = "0.1"
 futures-util = "0.3"
 
+# WP-A1 network backends, on one HTTP/TLS stack on ring (`cargo tree -i aws-lc-rs` stays empty).
+# WebDAV is hand-written on reqwest: OpenDAL's WebDAV writer holds a whole file in memory before
+# sending it. OpenDAL serves Azure Blob and GCS (and the sign-in providers later). FTP uses
+# suppaftp directly for implicit FTPS, which OpenDAL's FTP lacks. SFTP is russh, which runs on
+# every OS (OpenDAL's SFTP spawns the system `ssh`).
+opendal = { version = "=0.59.5", default-features = false, features = ["services-azblob", "services-gcs", "executors-tokio"] }
+opendal-http-transport-reqwest = { version = "=0.59.5", default-features = false, features = ["rustls-no-provider"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+quick-xml = "0.42"
+suppaftp = { version = "13", default-features = false, features = ["tokio-rustls-ring", "deprecated"] }
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa"] }
+russh-sftp = "4.0"
+# GCS takes its service account key base64-encoded
+base64 = "0.22"
+
 # Desktop only: the menu-bar icon, launch at login and two-way folder sync (a phone has no folders
 # to keep in sync and no menu bar).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
@@ -61,6 +77,8 @@ notify-debouncer-full = "0.7"
 ignore = "0.4"
 tauri-plugin-autostart = "2"
 trash = "5"
+# WP-A1: the system's trusted roots for WebDAV and FTPS (phones bundle webpki-root-certs below)
+rustls-native-certs = "0.8"
 
 # Phones have no root certificate files for rustls to load: trust Mozilla's root set instead
 # (see `state::http_client`).
