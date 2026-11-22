@@ -577,6 +577,7 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     case "save_to_photos":
     case "haptic":
     case "set_privacy_screen":
+    case "set_unsaved_documents":
       console.info("[mock]", cmd, a);
       return null;
     case "biometric_unlock":

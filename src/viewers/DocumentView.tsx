@@ -8,7 +8,7 @@
  * See INTEGRATION.md for how the app mounts it.
  */
 import { Suspense, lazy, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
-import { DocConflict, docSave, errMessage, errSummary, expectMeta, type DocMeta, type DocPrecondition } from "../api";
+import { api, DocConflict, docSave, errMessage, errSummary, expectMeta, type DocMeta, type DocPrecondition } from "../api";
 import { Icon } from "../Icons";
 import { formatBytes } from "../format";
 import type { Entry } from "../types";
@@ -56,6 +56,18 @@ export function copyKey(key: string, n: number): string {
   const stem = dot > 0 ? name.slice(0, dot) : name;
   const ext = dot > 0 ? name.slice(dot) : "";
   return `${key.slice(0, slash)}${stem} (copy${n > 1 ? ` ${n}` : ""})${ext}`;
+}
+
+/**
+ * Every open document with unsaved changes, so quitting the app can ask first (quit.rs). Each
+ * view adds a token while dirty; the count goes to the backend whenever it changes.
+ */
+const unsavedDocs = new Set<object>();
+function markUnsaved(token: object, dirty: boolean) {
+  const before = unsavedDocs.size;
+  if (dirty) unsavedDocs.add(token);
+  else unsavedDocs.delete(token);
+  if (unsavedDocs.size !== before) void api.setUnsavedDocuments(unsavedDocs.size);
 }
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -111,6 +123,14 @@ export default function DocumentView({ profileId, bucket, entry, mode, onClose, 
   }, [ready?.bytes]);
 
   useEffect(() => () => clearTimeout(cleanTimer.current), []);
+
+  // quitting the app asks while this view holds unsaved changes
+  const unsavedToken = useRef({});
+  useEffect(() => {
+    const token = unsavedToken.current;
+    markUnsaved(token, dirty);
+    return () => markUnsaved(token, false);
+  }, [dirty]);
 
   const onEdit = useCallback((current: () => string) => {
     getText.current = current;
@@ -189,6 +209,15 @@ export default function DocumentView({ profileId, bucket, entry, mode, onClose, 
   );
 
   const requestClose = useCallback((): Promise<boolean> => {
+    // a second close request (the phone's back gesture) while a question is open dismisses it
+    if (asking) {
+      finishClose(false);
+      return Promise.resolve(false);
+    }
+    if (conflict) {
+      setConflict(null);
+      return Promise.resolve(false);
+    }
     if (!dirty) {
       onClose?.();
       return Promise.resolve(true);
@@ -198,7 +227,7 @@ export default function DocumentView({ profileId, bucket, entry, mode, onClose, 
       closeAnswer.current?.(false);
       closeAnswer.current = resolve;
     });
-  }, [dirty, onClose]);
+  }, [dirty, onClose, asking, conflict, finishClose]);
 
   useImperativeHandle(ref, () => ({ requestClose, isDirty: () => dirty, save }), [requestClose, dirty, save]);
 
@@ -213,6 +242,10 @@ export default function DocumentView({ profileId, bucket, entry, mode, onClose, 
         if (e.shiftKey) {
           if (editable) void saveCopy();
         } else void save();
+      } else if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "w") {
+        // ⌘W closes the document (asking about unsaved changes), not the app's window
+        e.preventDefault();
+        if (!conflict && !asking) void requestClose();
       } else if (e.key === "Escape" && !e.defaultPrevented && !conflict && !asking) {
         e.preventDefault();
         void requestClose();

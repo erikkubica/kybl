@@ -94,8 +94,9 @@ pub fn run() {
                 if app.state::<prefs::Prefs>().close_to_tray.load(Ordering::Relaxed) {
                     api.prevent_close();
                     tray::hide_main(app);
-                } else if !quit::quitting() && quit::busy() > 0 {
-                    // closing the window quits the app: ask first, like Quit does
+                } else if !quit::quitting() && (quit::busy() > 0 || quit::unsaved() > 0) {
+                    // closing the window quits the app: ask first (unsaved edits, then what still
+                    // runs), like Quit does
                     api.prevent_close();
                     quit::request(app);
                 }
@@ -255,6 +256,9 @@ pub fn run() {
             oauth::oauth_start,
             oauth::oauth_cancel,
             oauth::oauth_builtin_clients,
+            // unsaved edits in the editor: asked about before quitting
+            #[cfg(desktop)]
+            quit::set_unsaved_documents,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

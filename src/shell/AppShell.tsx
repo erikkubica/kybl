@@ -680,10 +680,10 @@ export function AppShell() {
               setDoc(null);
               requestAnimationFrame(() => focusPaneList(doc.pane));
             }}
-            onSaved={({ key, asCopy }) => {
-              // size, date and ETag changed (or a copy appeared)
+            onSaved={() => {
+              // size, date and ETag changed (or a copy appeared); the editor's header says
+              // "Saved" / "Saved as …" itself, so no toast on top
               reloadIfShowing(doc.profileId, doc.bucket);
-              if (asCopy) toast("success", `Saved a copy as “${baseName(key)}”`);
             }}
             onOpenExternal={(e) => void paneById(doc.pane).ops.openInApp(e)}
           />

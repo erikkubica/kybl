@@ -4,9 +4,12 @@
 //! closing the window when it doesn't hide to the tray. With nothing running it quits straight
 //! away. Otherwise a native prompt asks; on Quit the transfers are stopped, open multipart
 //! uploads are aborted (so their parts stop costing storage) and partial downloads removed.
+//!
+//! Unsaved edits in the in-app editor are asked about first (the page reports how many documents
+//! have them through [`set_unsaved_documents`]); Cancel brings the window, and so the editor, back.
 
 use std::{
-    sync::atomic::{AtomicBool, AtomicU8, Ordering},
+    sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     time::Duration,
 };
 
@@ -23,6 +26,21 @@ const CLEANING: u8 = 1;
 const LEAVING: u8 = 2;
 /// A prompt is already on screen; a second ⌘Q doesn't stack another.
 static ASKING: AtomicBool = AtomicBool::new(false);
+
+/// Documents open in the editor with changes not saved yet, as the page last reported.
+static UNSAVED: AtomicUsize = AtomicUsize::new(0);
+
+/// The page reports how many open documents have unsaved changes (0 when all are saved or closed).
+#[tauri::command]
+pub fn set_unsaved_documents(count: usize) {
+    UNSAVED.store(count, Ordering::SeqCst);
+}
+
+/// Open documents with unsaved changes. While there are any, the hidden window is kept (not
+/// destroyed to free memory) and closing or quitting asks first.
+pub fn unsaved() -> usize {
+    UNSAVED.load(Ordering::SeqCst)
+}
 
 /// How long aborting open uploads may hold up quitting.
 const CLEANUP_LIMIT: Duration = Duration::from_secs(3);
@@ -57,12 +75,52 @@ fn question(transfers: usize, jobs: usize) -> String {
     }
 }
 
-/// Quits, asking first when something is running.
+/// The unsaved-changes question for `n` documents.
+fn unsaved_question(n: usize) -> String {
+    if n == 1 {
+        "You have unsaved changes in 1 document. Quit anyway?".to_string()
+    } else {
+        format!("You have unsaved changes in {n} documents. Quit anyway?")
+    }
+}
+
+/// Quits, asking first about unsaved edits and then when something is running.
 pub fn request(app: &AppHandle) {
     // already on the way out: a second ⌘Q changes nothing, the cleanup ends the app shortly
     if quitting() {
         return;
     }
+    let n = unsaved();
+    if n == 0 {
+        request_busy(app);
+        return;
+    }
+    if ASKING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let mut dialog = app
+        .dialog()
+        .message(unsaved_question(n))
+        .title("Quit Kybl?")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom("Quit".into(), "Cancel".into()));
+    if let Some(w) = app.get_webview_window("main").filter(|w| w.is_visible().unwrap_or(false)) {
+        dialog = dialog.parent(&w);
+    }
+    let app = app.clone();
+    dialog.show(move |quit| {
+        ASKING.store(false, Ordering::SeqCst);
+        if quit {
+            request_busy(&app);
+        } else {
+            // the editor sits in the window: bring it forward to save or look at the changes
+            crate::tray::show_main(&app);
+        }
+    });
+}
+
+/// Quits, asking first when transfers or bucket operations are running.
+fn request_busy(app: &AppHandle) {
     // WP-B1: copy/move jobs between connections count as copies (they resume on the next start)
     let (transfers, jobs) = (crate::transfers::active_count(), crate::commands::running_jobs() + crate::jobs::running_count());
     if transfers + jobs == 0 {
@@ -127,5 +185,7 @@ mod tests {
         assert_eq!(question(3, 0), "3 transfers are still running. Quit anyway?");
         assert_eq!(question(0, 1), "1 move, copy or delete is still running. Quit anyway?");
         assert_eq!(question(2, 1), "2 transfers and 1 move, copy or delete are still running. Quit anyway?");
+        assert_eq!(unsaved_question(1), "You have unsaved changes in 1 document. Quit anyway?");
+        assert_eq!(unsaved_question(3), "You have unsaved changes in 3 documents. Quit anyway?");
     }
 }

@@ -1449,10 +1449,10 @@ export default function MobileApp() {
             bucket={doc.bucket}
             entry={doc.entry}
             onClose={() => setDoc(null)}
-            onSaved={({ key, asCopy }) => {
+            onSaved={() => {
+              // the editor's header says "Saved" / "Saved as …" itself: no toast on top
               changed(doc.profileId, doc.bucket);
               void api.haptic("success");
-              if (asCopy) toast("success", `Saved a copy as “${baseName(key)}”`);
             }}
             onOpenExternal={(e) => void ops.openIn(e)}
           />

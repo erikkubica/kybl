@@ -271,6 +271,10 @@ pub fn hide_main(app: &AppHandle) {
             if !app.state::<AppState>().cancels.lock().await.is_empty() {
                 continue;
             }
+            // unsaved edits in the editor live in the page: never throw them away
+            if crate::quit::unsaved() > 0 {
+                continue;
+            }
             REAPING.store(true, Ordering::SeqCst);
             let _ = w.destroy();
             break;
