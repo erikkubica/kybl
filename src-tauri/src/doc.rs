@@ -39,6 +39,9 @@ pub struct DocMeta {
     pub content_type: Option<String>,
     /// object version in versioned buckets
     pub version: Option<String>,
+    /// something the save couldn't keep (the file's tags, when they couldn't be read)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 /// What the editor expects to find when it saves (`x-kybl-expect`).
@@ -96,11 +99,34 @@ struct Headers {
     content_language: Option<String>,
     metadata: HashMap<String, String>,
     storage_class: Option<String>,
-    /// SSE-S3 / SSE-KMS, carried over on AWS only (see `s3_stat`)
+    /// SSE-S3 wherever the store reported it; SSE-KMS on AWS only (see [`carried_sse`])
     sse: Option<String>,
     sse_kms_key: Option<String>,
     tags: Vec<(String, String)>,
+    /// the tags couldn't be read (an error, not "this store has no tagging"): the save says it
+    /// may not have kept them
+    tags_unknown: bool,
 }
+
+/// The encryption a save carries over: SSE-S3 (`AES256`) from any store that reported it, so a
+/// save never quietly stores a file unencrypted; SSE-KMS (with its key) only on AWS, where the
+/// key is known to exist.
+fn carried_sse(reported: Option<&str>, kms_key: Option<&str>, keep_kms: bool) -> (Option<String>, Option<String>) {
+    match reported {
+        Some("AES256") => (Some("AES256".into()), None),
+        Some(other) if keep_kms => (Some(other.to_string()), kms_key.map(str::to_string)),
+        _ => (None, None),
+    }
+}
+
+/// A failed tags read that means "unknown" rather than "none": not a store without tagging
+/// (NotImplemented, 501) nor a file without tags (NoSuchTagSet, 404).
+fn tags_unreadable(code: &str, status: Option<u16>) -> bool {
+    !(matches!(code, "NotImplemented" | "NoSuchTagSet" | "MethodNotAllowed") || matches!(status, Some(404 | 405 | 501)))
+}
+
+/// What a save says when it couldn't read the file's tags first.
+const TAGS_WARNING: &str = "Saved, but Kybl couldn't read this file's tags first, so they may not have been kept.";
 
 // ---------------------------------------------------------------- pure helpers (tested)
 
@@ -113,10 +139,10 @@ fn norm_etag(e: &str) -> &str {
 /// (plus the size, as a cheap second check); without, size and modification time must both
 /// match. Versions, when both sides have one, must match too.
 fn unchanged(etag: Option<&str>, size: u64, modified: Option<i64>, version: Option<&str>, now: &DocMeta) -> bool {
-    if let (Some(a), Some(b)) = (version, now.version.as_deref()) {
-        if a != b {
-            return false;
-        }
+    if let (Some(a), Some(b)) = (version, now.version.as_deref())
+        && a != b
+    {
+        return false;
     }
     if size != now.size {
         return false;
@@ -207,6 +233,7 @@ async fn s3_read(client: &Client, bucket: &str, key: &str, max_bytes: u64) -> Re
         modified: millis(out.last_modified()),
         content_type: out.content_type().map(str::to_string),
         version: out.version_id().map(str::to_string),
+        warning: None,
     };
     let mut buf: Vec<u8> = Vec::with_capacity(len as usize);
     while let Some(chunk) = out.body.try_next().await.map_err(err)? {
@@ -220,7 +247,7 @@ async fn s3_read(client: &Client, bucket: &str, key: &str, max_bytes: u64) -> Re
 }
 
 /// HEAD (and tags) of what is there now; `None` when nothing is.
-async fn s3_stat(client: &Client, bucket: &str, key: &str, keep_sse: bool) -> Result<Option<(DocMeta, Headers)>, String> {
+async fn s3_stat(client: &Client, bucket: &str, key: &str, keep_kms: bool) -> Result<Option<(DocMeta, Headers)>, String> {
     let head = client.head_object().bucket(bucket).key(key).send();
     // tags are best effort: some S3-compatible services don't do tagging at all
     let tags = client.get_object_tagging().bucket(bucket).key(key).send();
@@ -236,11 +263,15 @@ async fn s3_stat(client: &Client, bucket: &str, key: &str, keep_sse: bool) -> Re
         modified: millis(h.last_modified()),
         content_type: h.content_type().map(str::to_string),
         version: h.version_id().map(str::to_string),
+        warning: None,
     };
-    let (sse, sse_kms_key) = if keep_sse {
-        (h.server_side_encryption().map(|s| s.as_str().to_string()), h.ssekms_key_id().map(str::to_string))
-    } else {
-        (None, None)
+    let (sse, sse_kms_key) = carried_sse(h.server_side_encryption().map(|s| s.as_str()), h.ssekms_key_id(), keep_kms);
+    let (tags, tags_unknown) = match tags {
+        Ok(t) => (t.tag_set().iter().map(|t| (t.key().to_string(), t.value().to_string())).collect(), false),
+        Err(e) => {
+            let code = e.as_service_error().and_then(|s| aws_sdk_s3::error::ProvideErrorMetadata::code(s)).unwrap_or_default().to_string();
+            (Vec::new(), tags_unreadable(&code, http_status(&e)))
+        }
     };
     let headers = Headers {
         content_type: meta.content_type.clone(),
@@ -252,9 +283,8 @@ async fn s3_stat(client: &Client, bucket: &str, key: &str, keep_sse: bool) -> Re
         storage_class: h.storage_class().map(|s| s.as_str().to_string()),
         sse,
         sse_kms_key,
-        tags: tags
-            .map(|t| t.tag_set().iter().map(|t| (t.key().to_string(), t.value().to_string())).collect())
-            .unwrap_or_default(),
+        tags,
+        tags_unknown,
     };
     Ok(Some((meta, headers)))
 }
@@ -350,18 +380,18 @@ pub async fn doc_save(app: AppHandle, state: State<'_, AppState>, request: tauri
         .map(|p| p.provider)
         .unwrap_or_default();
     let guard = guard_for(&provider);
-    let keep_sse = provider == "aws";
+    let keep_kms = provider == "aws";
     let client = client_for(&app, &state, &profile_id).await?;
-    save(&client, &bucket, &key, bytes, &expect, guard, keep_sse).await
+    save(&client, &bucket, &key, bytes, &expect, guard, keep_kms).await
 }
 
-async fn save(client: &Client, bucket: &str, key: &str, bytes: Vec<u8>, expect: &Precondition, guard: WriteGuard, keep_sse: bool) -> Result<DocMeta, String> {
-    let now = s3_stat(client, bucket, key, keep_sse).await?;
+async fn save(client: &Client, bucket: &str, key: &str, bytes: Vec<u8>, expect: &Precondition, guard: WriteGuard, keep_kms: bool) -> Result<DocMeta, String> {
+    let now = s3_stat(client, bucket, key, keep_kms).await?;
     check(expect, now.as_ref().map(|n| &n.0))?;
 
     let headers = match (&now, expect) {
         (Some((_, h)), _) => h.clone(),
-        (None, Precondition::Absent { headers_from: Some(from) }) => match s3_stat(client, bucket, from, keep_sse).await {
+        (None, Precondition::Absent { headers_from: Some(from) }) => match s3_stat(client, bucket, from, keep_kms).await {
             Ok(Some((_, h))) => h,
             _ => Headers::default(),
         },
@@ -398,7 +428,8 @@ async fn save(client: &Client, bucket: &str, key: &str, bytes: Vec<u8>, expect: 
     // The PUT answer has the ETag but no modification time: read it back. If someone else wrote
     // in between, keep our own ETag so the next save still notices their change.
     let after = s3_stat(client, bucket, key, false).await.ok().flatten().map(|n| n.0);
-    Ok(saved_meta(written, size, headers.content_type, after))
+    let warning = headers.tags_unknown.then(|| TAGS_WARNING.to_string());
+    Ok(DocMeta { warning, ..saved_meta(written, size, headers.content_type, after) })
 }
 
 fn saved_meta(written: (Option<String>, Option<String>), size: u64, content_type: Option<String>, after: Option<DocMeta>) -> DocMeta {
@@ -409,7 +440,7 @@ fn saved_meta(written: (Option<String>, Option<String>), size: u64, content_type
             version: a.version.or(version),
             ..a
         },
-        _ => DocMeta { etag, size, modified: None, content_type, version },
+        _ => DocMeta { etag, size, modified: None, content_type, version, warning: None },
     }
 }
 
@@ -418,12 +449,30 @@ mod tests {
     use super::*;
 
     fn meta(etag: Option<&str>, size: u64, modified: Option<i64>) -> DocMeta {
-        DocMeta { etag: etag.map(str::to_string), size, modified, content_type: Some("text/plain".into()), version: None }
+        DocMeta { etag: etag.map(str::to_string), size, modified, content_type: Some("text/plain".into()), version: None, warning: None }
+    }
+
+    #[test]
+    fn encryption_is_carried_over_wherever_it_was_reported() {
+        assert_eq!(carried_sse(Some("AES256"), None, false), (Some("AES256".into()), None));
+        assert_eq!(carried_sse(Some("aws:kms"), Some("k1"), true), (Some("aws:kms".into()), Some("k1".into())));
+        assert_eq!(carried_sse(Some("aws:kms"), Some("k1"), false), (None, None), "KMS keys only on AWS");
+        assert_eq!(carried_sse(None, None, true), (None, None));
+    }
+
+    #[test]
+    fn only_a_real_tags_error_warns() {
+        assert!(!tags_unreadable("NotImplemented", Some(501)));
+        assert!(!tags_unreadable("NoSuchTagSet", Some(404)));
+        assert!(!tags_unreadable("", Some(405)));
+        assert!(tags_unreadable("AccessDenied", Some(403)));
+        assert!(tags_unreadable("", None), "a dropped connection");
+        assert!(tags_unreadable("InternalError", Some(500)));
     }
 
     #[test]
     fn frame_round_trips_meta_and_bytes() {
-        let m = DocMeta { etag: Some("abc".into()), size: 5, modified: Some(1_700_000_000_123), content_type: Some("text/markdown".into()), version: Some("v1".into()) };
+        let m = DocMeta { etag: Some("abc".into()), size: 5, modified: Some(1_700_000_000_123), content_type: Some("text/markdown".into()), version: Some("v1".into()), warning: None };
         let body = frame(&m, b"hello");
         assert_eq!(&body[..4], &(body.len() as u32 - 4 - 5).to_be_bytes());
         let (back, bytes) = unframe(&body).unwrap();
@@ -541,7 +590,7 @@ mod tests {
         assert_eq!(m.etag.as_deref().map(norm_etag), Some("abc"));
         let theirs = meta(Some("zzz"), 50, Some(10));
         let m = saved_meta((Some("abc".into()), Some("v3".into())), 3, Some("text/plain".into()), Some(theirs));
-        assert_eq!(m, DocMeta { etag: Some("abc".into()), size: 3, modified: None, content_type: Some("text/plain".into()), version: Some("v3".into()) });
+        assert_eq!(m, DocMeta { etag: Some("abc".into()), size: 3, modified: None, content_type: Some("text/plain".into()), version: Some("v3".into()), warning: None });
     }
 
     /// End to end against a throwaway S3 server (see sync.rs tests): open, save, conflict,

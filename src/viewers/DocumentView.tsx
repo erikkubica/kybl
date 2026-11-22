@@ -166,7 +166,7 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
         if (rev.current === startRev) setDirty(false);
         setTarget(key);
         setConflict(null);
-        setFlash(asCopy ? `Saved as ${baseName(key)}` : "Saved");
+        setFlash(meta.warning ?? (asCopy ? `Saved as ${baseName(key)}` : "Saved"));
         onSaved?.({ key, meta, asCopy });
         return true;
       } catch (e) {
