@@ -4,7 +4,7 @@
  * Finder uploads) swallows HTML5 drags on some platforms, and this gives full control over the
  * ghost and hit-testing. Drop targets are any element with a `data-drop="<prefix>"` attribute, and
  * sidebar buckets marked `data-drop-bucket="<bucket>" data-drop-profile="<connection id>"` (the
- * items land at that bucket's top level). A drop moves; hold ⌥ to copy (at the press or any time
+ * items land at that bucket's top level, also in another connection). A drop moves; hold ⌥ to copy (at the press or any time
  * during the drag). Places that only take copies (`copyOnly`) always copy.
  *
  * Dual pane: every pane's root carries `data-pane="<id>"` and `data-drop-pane`. A drop on a folder,
@@ -23,6 +23,8 @@ export type DragState = {
   dest: string | null;
   /** destination bucket when it is another bucket of the connection (a sidebar bucket) */
   bucket: string | null;
+  /** destination connection when the sidebar bucket belongs to another connection */
+  profile?: string | null;
   /** the other pane the items would land in, and how to name that place */
   pane: string | null;
   label: string | null;
@@ -43,14 +45,15 @@ export function useItemDrag<P extends string = string>({
 }: {
   /** the pane the drag starts in (dual pane) */
   paneId?: P;
-  onDrop: (items: Entry[], dest: string, copy: boolean, destBucket: string | null, pane: P | null) => void;
+  onDrop: (items: Entry[], dest: string, copy: boolean, destBucket: string | null, pane: P | null, destProfile: string | null) => void;
   /** hovering a folder for a moment opens it (Finder's spring-loaded folders) */
   onSpring: (dest: string) => void;
   /**
    * Whether a sidebar bucket accepts the items: null = no, "same" = the bucket they are in (a
-   * move to its top level), "other" = another bucket of the same connection.
+   * move to its top level), "other" = another bucket of the same connection, or for a bucket of
+   * another connection how to name it and whether it only takes copies (this computer and a cloud).
    */
-  bucketTarget?: (profileId: string, bucket: string) => "same" | "other" | null;
+  bucketTarget?: (profileId: string, bucket: string) => "same" | "other" | { label: string; copyOnly?: boolean } | null;
   /**
    * Whether another pane accepts the items at `dest` (a folder there; null = the folder it
    * shows), and the label of that place; null = no.
@@ -73,6 +76,7 @@ export function useItemDrag<P extends string = string>({
     let lit: HTMLElement | null = null;
     let dest: string | null = null;
     let destBucket: string | null = null;
+    let destProfile: string | null = null;
     let destPane: P | null = null;
     let label: string | null = null;
     let copyOnly = false;
@@ -93,6 +97,7 @@ export function useItemDrag<P extends string = string>({
       const el = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-drop], [data-drop-bucket], [data-drop-pane]") ?? null;
       let d = el?.getAttribute("data-drop") ?? null;
       destBucket = null;
+      destProfile = null;
       destPane = null;
       label = null;
       copyOnly = false;
@@ -113,6 +118,13 @@ export function useItemDrag<P extends string = string>({
           const kind = cbs.current.bucketTarget?.(el.getAttribute("data-drop-profile") ?? "", el.getAttribute("data-drop-bucket") ?? "") ?? null;
           if (kind) d = "";
           if (kind === "other") destBucket = el.getAttribute("data-drop-bucket");
+          else if (kind && typeof kind === "object") {
+            // a bucket of another connection
+            destBucket = el.getAttribute("data-drop-bucket");
+            destProfile = el.getAttribute("data-drop-profile");
+            label = kind.label;
+            copyOnly = !!kind.copyOnly;
+          }
         }
         ok = d != null && (destBucket != null || isValidDest(items, d));
       }
@@ -120,6 +132,7 @@ export function useItemDrag<P extends string = string>({
       dest = ok ? d : null;
       if (!ok) {
         destBucket = null;
+        destProfile = null;
         destPane = null;
         label = null;
         copyOnly = false;
@@ -134,6 +147,7 @@ export function useItemDrag<P extends string = string>({
             light(null);
             dest = null;
             destBucket = null;
+            destProfile = null;
             setDrag((st) => (st ? { ...st, dest: null, bucket: null, pane: null, label: null } : st));
             cbs.current.onSpring(springable);
           }, SPRING_MS);
@@ -148,18 +162,19 @@ export function useItemDrag<P extends string = string>({
       }
       alt = e.altKey;
       hit(e.clientX, e.clientY);
-      setDrag({ items, x: e.clientX, y: e.clientY, dest, bucket: destBucket, pane: destPane, label, copy: isCopy(), copyOnly });
+      setDrag({ items, x: e.clientX, y: e.clientY, dest, bucket: destBucket, profile: destProfile, pane: destPane, label, copy: isCopy(), copyOnly });
     };
     const up = (e: MouseEvent) => {
       const wasActive = active;
       const d = dest;
       const b = destBucket;
       const p = destPane;
+      const prof = destProfile;
       alt = e.altKey;
       const c = isCopy();
       end();
       if (!wasActive) onClick?.();
-      else if (d != null) cbs.current.onDrop(items, d, c, b, p);
+      else if (d != null) cbs.current.onDrop(items, d, c, b, p, prof);
     };
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape" && active) {

@@ -10,7 +10,7 @@ import type { Loc as JobLoc, PickedLocation } from "../jobs/LocationPicker";
 import type { Dialogs } from "./useDialogs";
 
 export type OpenMigration = (source: MigrationSource, mode: "copy" | "move", initialDest?: JobLoc | null) => void;
-export type ConfirmMigration = (source: MigrationSource, mode: "copy" | "move", dest: PickedLocation, singleRoot?: boolean) => void;
+export type ConfirmMigration = (source: MigrationSource, mode: "copy" | "move", dest: PickedLocation, singleRoot?: boolean, onStarted?: () => void) => void;
 
 export function useMigrationHost({
   dialogs,
@@ -48,7 +48,7 @@ export function useMigrationHost({
   const open: OpenMigration = useCallback((source, mode, initialDest) => setMigrate({ source, mode, initialDest, key: Date.now() }), []);
 
   const confirm: ConfirmMigration = useCallback(
-    (source, mode, dest, singleRoot) =>
+    (source, mode, dest, singleRoot, onStarted) =>
       live.current.dialogs.show((close) =>
         createElement(JobConfirm, {
           source,
@@ -56,7 +56,10 @@ export function useMigrationHost({
           dest,
           singleRoot,
           onClose: close,
-          onStarted: () => live.current.showJobs(),
+          onStarted: () => {
+            onStarted?.();
+            live.current.showJobs();
+          },
           onMoreOptions: (dir: string) => open(source, mode, { profileId: dest.profileId, root: dest.root, dir }),
         }),
       ),

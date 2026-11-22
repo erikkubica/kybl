@@ -20,6 +20,7 @@ import { applyChoices, findExisting, type Choice, type Clash } from "./conflicts
 import { joinPath, numberedName, safeRelPath, shortHash } from "./paths";
 import { undoStack, type UndoEntry } from "./undo";
 import { itemClipboard } from "./clipboard";
+import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
 
 export type ToastAction = NonNullable<Toast["action"]>;
 
@@ -53,6 +54,12 @@ export type OpsContext = {
   foldersChanged?: (profileId: string, fromBucket: string, toBucket: string, moves: { from: string; to: string | null }[]) => void;
   /** the connection's files are this computer's own (open them in place, no temp download) */
   localPaths?: boolean;
+  /**
+   * Copies or moves items from another place into folder `dest` of `dst` by whichever route the
+   * two need (shell/crossPane.ts: a job between connections, an upload, a download…). `onStarted`
+   * runs once the work started.
+   */
+  sendItems?: (src: Place, items: Entry[], mode: "copy" | "move", dst: Place, dest: string, onStarted?: () => void) => void;
 };
 
 /** Undo of a copy deletes the copied objects; past this many it asks first. */
@@ -118,10 +125,11 @@ export function makeFileOps(c: OpsContext) {
   };
 
   // ---------------------------------------------------------------- upload
-  const uploadPaths = async (paths: string[], dest = c.prefix) => {
-    const { profile, bucket } = c;
-    if (!profile || bucket == null || paths.length === 0) return;
-    const pid = profile.id;
+  /** Uploads files and folders into `dest` (of `at`, or the place on screen). True when uploads started. */
+  const uploadPaths = async (paths: string[], dest = c.prefix, at?: { profileId: string; bucket: string }): Promise<boolean> => {
+    const pid = at?.profileId ?? c.profile?.id;
+    const bucket = at ? at.bucket : c.bucket;
+    if (!pid || bucket == null || paths.length === 0) return false;
     try {
       c.setBusy("Reading the files…");
       let files: LocalFile[];
@@ -132,7 +140,7 @@ export function makeFileOps(c: OpsContext) {
       }
       if (files.length === 0) {
         toast("info", "Nothing to upload");
-        return;
+        return false;
       }
       // what lands directly in `dest`: single files, or the top folder of a dropped folder
       const groups = new Map<string, { folder: boolean; files: { f: LocalFile; rest: string }[] }>();
@@ -157,11 +165,11 @@ export function makeFileOps(c: OpsContext) {
       }
       const targets = [...groups].map(([top, g]) => ({ key: dest + top, folder: g.folder }));
       const found = await existing(pid, bucket, targets);
-      if (!found) return;
+      if (!found) return false;
       const clashes = targets.filter((t) => found.has(t.key)).map((t) => ({ key: t.key, folder: t.folder, name: t.key.slice(dest.length).replace(/\/$/, "") }));
       const reserved = new Set(targets.filter((t) => !found.has(t.key)).map((t) => t.key));
       const d = await decide(pid, bucket, clashes, "Uploading", placeLabel(pid, bucket, dest), new Map(), reserved);
-      if (!d) return;
+      if (!d) return false;
       const items: Parameters<TransferActions["add"]>[0] = [];
       for (const [top, g] of groups) {
         const key = dest + top;
@@ -174,12 +182,14 @@ export function makeFileOps(c: OpsContext) {
       }
       if (!items.length) {
         toast("info", "Nothing to upload: everything was skipped");
-        return;
+        return false;
       }
       transfers.add(items);
       c.autoShowActivity();
+      return true;
     } catch (e) {
       toast("error", errMessage(e));
+      return false;
     }
   };
 
@@ -597,14 +607,21 @@ export function makeFileOps(c: OpsContext) {
     const cl = itemClipboard.get();
     const { profile, bucket } = c;
     if (!cl || !profile || bucket == null) return;
-    if (cl.profileId !== profile.id) {
-      toast("error", "Items can only be pasted within the same connection.");
+    const mode = cl.mode === "cut" ? "move" : "copy";
+    const usedUp = () => {
+      if (cl.mode === "cut" && itemClipboard.get() === cl) itemClipboard.clear();
+    };
+    // another connection (or a root this one can't copy into): the same route as F5 / F6 between panes
+    if (cl.profileId !== profile.id || viaJobAt({ profileId: cl.profileId, bucket: cl.bucket }, { profileId: profile.id, bucket })) {
+      if (!c.sendItems) return void toast("error", "Items can only be pasted within the same connection.");
+      const src = { profileId: cl.profileId, bucket: cl.bucket };
+      const dst = { profileId: profile.id, bucket };
+      // between this computer and the cloud the originals stay (a copy): the cut stays on the clipboard
+      c.sendItems(src, cl.items, mode, dst, dest, crossesDiskAt(src, dst) ? undefined : usedUp);
       return;
     }
     // a cut is used up only once the move went through (not when cancelled, or into the same folder)
-    void relocate(cl.items, dest, cl.mode === "cut" ? "move" : "copy", { srcBucket: cl.bucket, destBucket: bucket }).then((ok) => {
-      if (ok && cl.mode === "cut" && itemClipboard.get() === cl) itemClipboard.clear();
-    });
+    void relocate(cl.items, dest, mode, { srcBucket: cl.bucket, destBucket: bucket }).then((ok) => ok && usedUp());
   };
 
   return { uploadPaths, pickAndUpload, downloadEntries, openInApp, askDelete, askRename, askNewFolder, relocate, clip, paste };

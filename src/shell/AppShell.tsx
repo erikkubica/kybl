@@ -27,6 +27,7 @@ import { BrowserPane } from "../browser/BrowserPane";
 import type { EmptyActions } from "../browser/PaneEmpty";
 import { LS, THIS_MAC, type PaneId } from "../browser/types";
 import { forgetCaps, peekCaps } from "../useCaps";
+import { sendItems } from "./crossPane";
 import { clearAuthNeeded, useAuthNeeded } from "../connections/authNeeded";
 import { rootsMode } from "../connections/roots";
 import { canView, LazyDocumentView, viewerFor } from "../viewers/registry";
@@ -245,6 +246,11 @@ export function AppShell() {
     openDocument: (e) => openDocument(id, e),
     canOpenDocument: (e) => canOpenDocument(id, e),
     openMigration: migrations.open,
+    sendItems: (ops, src, items, mode, dst, dest, onStarted) => {
+      const to = profiles.find((x) => x.id === dst.profileId);
+      const names = { connectionName: to?.name ?? "", rootName: conns.rootLabel(dst.profileId, dst.bucket), singleRoot: peekCaps(dst.profileId)?.roots === "single" };
+      void sendItems(ops, src, items, mode, { ...dst, ...names }, dest, dualCtx.current!, onStarted);
+    },
     ...dualPane.envFor(id),
   });
   const left = usePane(envFor("left"));

@@ -9,7 +9,8 @@ import { baseName, parentPrefix } from "../format";
 import { useFolderSizes } from "../useFolderSizes";
 import { useItemDrag } from "../useItemDrag";
 import { useCaps } from "../useCaps";
-import { makeFileOps } from "../desktop/fileOps";
+import { makeFileOps, type FileOps } from "../desktop/fileOps";
+import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
 import type { Sort } from "../components/FileTable";
 import type { MenuItem } from "../components/Dialogs";
 import type { Settings } from "../settings";
@@ -68,6 +69,8 @@ export type PaneEnv = {
   foldersChanged?: (profileId: string, fromBucket: string, toBucket: string, moves: { from: string; to: string | null }[]) => void;
   /** "Copy to another connection…": opens the job dialog for these items (src/jobs) */
   openMigration?: OpenMigration;
+  /** copies or moves items into another place by the route the two need (shell/crossPane.ts) */
+  sendItems?: (ops: FileOps, src: Place, items: Entry[], mode: "copy" | "move", dst: Place, dest: string, onStarted?: () => void) => void;
 };
 
 function usePaneCore(env: PaneEnv) {
@@ -210,6 +213,7 @@ function usePaneCore(env: PaneEnv) {
     leaveSearch: ent.leaveSearch,
     foldersChanged: (...a) => envRef.current.foldersChanged?.(...a),
     localPaths: !!caps?.localPaths,
+    sendItems: (...a) => envRef.current.sendItems?.(opsRef.current, ...a),
   });
   const opsRef = useRef(ops);
   opsRef.current = ops;
@@ -253,12 +257,23 @@ function usePaneCore(env: PaneEnv) {
   navigateRef.current = navigate;
   const { drag, begin: beginDrag } = useItemDrag({
     paneId: env.id,
-    onDrop: (items, dest, copy, destBucket, pane) => {
-      if (pane) envRef.current.dropOnOtherPane?.(items, pane, dest, copy);
+    onDrop: (items, dest, copy, destBucket, pane, destProfile) => {
+      const e = envRef.current;
+      if (pane) e.dropOnOtherPane?.(items, pane, dest, copy);
+      // another connection, or a root of this one the server can't copy into: by the route those take
+      else if (profile && bucket != null && destBucket != null && e.sendItems && (destProfile ? destProfile !== profile.id : viaJobAt({ profileId: profile.id, bucket }, { profileId: profile.id, bucket: destBucket })))
+        e.sendItems(opsRef.current, { profileId: profile.id, bucket }, items, copy ? "copy" : "move", { profileId: destProfile ?? profile.id, bucket: destBucket }, dest);
       else void opsRef.current.relocate(items, dest, copy ? "copy" : "move", destBucket ? { destBucket } : {});
     },
     onSpring: (dest) => navigateRef.current(dest),
-    bucketTarget: (pid, b) => (pid === profile?.id && !search ? (b === bucket ? "same" : "other") : null),
+    bucketTarget: (pid, b) => {
+      if (!profile || search) return null;
+      if (pid === profile.id) return b === bucket ? "same" : "other";
+      const to = envRef.current.profiles.find((x) => x.id === pid);
+      if (!to || !envRef.current.sendItems) return null;
+      const root = envRef.current.rootLabel?.(pid, b) ?? b;
+      return { label: b ? `“${root}” on ${to.name}` : to.name, copyOnly: crossesDiskAt({ profileId: profile.id, bucket: "" }, { profileId: pid, bucket: b }) };
+    },
     paneTarget: (pane, dest, items) => envRef.current.otherPaneTarget?.(pane, dest, items) ?? null,
   });
 
