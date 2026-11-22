@@ -102,6 +102,15 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
   const [saveError, setSaveError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<{ current: DocMeta | null } | null>(null);
   const [asking, setAsking] = useState(false);
+  // where the keyboard was before "Save changes?" or the conflict question opened: focus goes back
+  // there when it closes (Cancel), so typing carries on in the editor
+  const lastFocus = useRef<HTMLElement | null>(null);
+  const questionUp = asking || !!conflict;
+  useEffect(() => {
+    if (questionUp) return;
+    const el = lastFocus.current;
+    if (el?.isConnected) requestAnimationFrame(() => el.focus({ preventScroll: true }));
+  }, [questionUp]);
 
   const getText = useRef<(() => string) | null>(null);
   const original = useRef<string>("");
@@ -336,7 +345,13 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
   const saveKey = isMac ? "⌘S" : "Ctrl+S";
 
   return (
-    <div className={`dv ${full ? "dv-full" : "dv-preview"} ${inline ? "inline" : ""} ${full && macWindow && !inline ? "mac" : ""}`}>
+    <div
+      className={`dv ${full ? "dv-full" : "dv-preview"} ${inline ? "inline" : ""} ${full && macWindow && !inline ? "mac" : ""}`}
+      onFocusCapture={(e) => {
+        const t = e.target as HTMLElement;
+        if (!t.closest(".dv-dialog-backdrop, .modal-backdrop")) lastFocus.current = t;
+      }}
+    >
       {full && (
         <header className="dv-bar" data-tauri-drag-region>
           <button className="dv-icon" onClick={() => void requestClose()} aria-label="Close" title="Close (Esc)">
