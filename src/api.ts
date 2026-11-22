@@ -390,3 +390,28 @@ export type Capabilities = {
   /** Files are real files on this device: `localPath`, open and reveal work on them. */
   localPaths: boolean;
 };
+
+// ---------------------------------------------------------------- A3 (pending A2): sign-in connections
+// The OAuth commands A2 delivers (`oauth/*` in Rust). Kept as plain invoke wrappers so the
+// connection forms compile and run against the browser mock until A2's own section lands; the
+// manager folds the two together at merge.
+
+/** The connection kinds that sign in through the browser instead of keys. */
+export type OAuthKind = "gdrive" | "onedrive" | "dropbox";
+
+/** "Use your own app": a client id (and, for a Google desktop client, its secret). */
+export type OAuthClient = { clientId: string; clientSecret?: string | null };
+
+/**
+ * Opens the provider's sign-in in the browser and resolves to the saved connection once the user
+ * approved it. `replaceId` signs an existing connection in again and keeps its id (sync folders,
+ * favorites and jobs stay attached). Rejects with "Cancelled" after `oauthCancel(flowId)`.
+ */
+export const oauthStart = (kind: OAuthKind, flowId: string, client?: OAuthClient | null, replaceId?: string | null) =>
+  invoke<Profile>("oauth_start", { kind, flowId, client: client ?? null, replaceId: replaceId ?? null });
+/** Stops a sign-in started with `oauthStart` (its promise rejects with "Cancelled"). */
+export const oauthCancel = (flowId: string) => invoke<void>("oauth_cancel", { flowId });
+/** Which kinds this build has its own app (client id) for; the others need "Use your own app". */
+export const oauthBuiltinClients = () => invoke<Partial<Record<OAuthKind, boolean>>>("oauth_builtin_clients");
+/** Event: a sign-in connection's access was revoked or expired (`{ profileId }`); offer "Sign in again". */
+export const CONNECTION_AUTH_EVENT = "connection-auth";

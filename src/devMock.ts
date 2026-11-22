@@ -16,6 +16,9 @@ const profiles: Profile[] = [
   { id: "p1", name: "Hetzner · media", provider: "hetzner", endpoint: "https://nbg1.your-objectstorage.com", region: "nbg1", accessKeyId: "DEMOKEY", bucket: "media-prod", pathStyle: false },
   { id: "p2", name: "AWS production", provider: "aws", endpoint: "https://s3.eu-central-1.amazonaws.com", region: "eu-central-1", accessKeyId: "DEMOKEY", bucket: null, pathStyle: false },
   { id: "p3", name: "Local MinIO", provider: "custom", endpoint: "http://localhost:9000", region: "us-east-1", accessKeyId: "minio", bucket: null, pathStyle: true },
+  // A3: a server (one root, no bucket level) and a cloud drive (a few named roots)
+  { id: "n1", name: "Web server", kind: "sftp", provider: "sftp", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, net: { host: "files.example.com", port: 0, user: "deploy", basePath: "/var/www", tls: "none", auth: "password", hostKey: "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8", url: null } },
+  { id: "g1", name: "Google Drive (demo@gmail.com)", kind: "gdrive", provider: "gdrive", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, cloud: { accountEmail: "demo@gmail.com", accountId: "1001", clientId: null, tenant: null, scopes: ["drive"] } },
 ];
 
 const mockTags: Record<string, Record<string, string>> = {};
@@ -220,6 +223,70 @@ function s3Caps(p: Profile | undefined): Capabilities {
   };
 }
 
+// ---- A3: connection kinds beyond S3 (servers, blob storage, cloud drives)
+const kindOf = (id: string) => profiles.find((x) => x.id === id)?.kind ?? "s3";
+const isOther = (id: string) => id !== LOCAL && kindOf(id) !== "s3";
+/** One server folder per connection, named after the host (or container), like the backends do. */
+function otherRoots(p: Profile): RootInfo[] {
+  const r = (id: string, name: string, kind: RootInfo["kind"], readOnly = false): RootInfo => ({ id, name, kind, created: null, readOnly });
+  switch (p.kind) {
+    case "gdrive":
+      return [r("root", "My Drive", "drive"), r("0AFdemoTeam", "Design team", "drive"), r("shared", "Shared with me", "shared", true)];
+    case "onedrive":
+      return [r("me", "OneDrive", "drive"), r("shared", "Shared", "shared", true)];
+    case "azblob":
+    case "gcs":
+      return [r("", p.blob?.container || "container", "bucket")];
+    default:
+      return [r("", `${p.net?.host || p.name}${p.net?.basePath ? ` ${p.net.basePath}` : ""}`, "folder")];
+  }
+}
+function otherCaps(p: Profile): Capabilities {
+  const k = p.kind;
+  const server = k === "sftp" || k === "ftp" || k === "webdav";
+  const drive = k === "gdrive" || k === "onedrive" || k === "dropbox";
+  return {
+    ...S3_CAPS,
+    roots: k === "gdrive" || k === "onedrive" ? "drives" : "single",
+    createRoot: false,
+    folders: server || drive ? "real" : "prefix",
+    rename: server || drive ? "native" : "copy-delete",
+    serverCopy: k === "webdav" || drive || k === "azblob" || k === "gcs" ? "same-root" : "none",
+    share: drive ? "link" : "none",
+    shareExpiry: false,
+    streaming: "proxy",
+    conditionalWrite: k === "azblob" ? "if-match" : "compare",
+    hashes: k === "dropbox" ? ["dropbox"] : k === "onedrive" ? ["quickxor"] : k === "azblob" || k === "gcs" || k === "gdrive" ? ["md5"] : [],
+    thumbnails: drive ? "local+remote" : "local",
+    metadata: "none",
+    tags: false,
+    storageClass: false,
+    trash: drive,
+    multipart: false,
+    maxObjectSize: null,
+    backgroundUpload: false,
+  };
+}
+const HOST_KEY_UNKNOWN = "Kybl hasn't connected to this server before. Check that the server's fingerprint matches, then trust it to connect.\n\nhost-key-unknown SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8";
+/** What connecting to a non-S3 connection says: host keys, unknown hosts, wrong passwords. */
+function otherConnect(p: Profile, secret: string | null) {
+  if (authExpired.has(p.id)) throw "Kybl's access to this account ended. Sign in again to keep using it.\n\ninvalid_grant: Token has been expired or revoked.";
+  const n = p.net;
+  if (p.kind === "sftp" && n) {
+    // a host with "changed" in its name pretends to have been reinstalled since it was trusted
+    if (/changed/.test(n.host) && n.hostKey && n.hostKey !== "SHA256:Zm9yZ2VkLWtleS1mb3ItdGhlLWNoYW5nZWQtc2VydmVy")
+      throw `The server's identity changed. Someone may be intercepting the connection, so Kybl didn't connect. If the server was reinstalled or its key replaced, remove the saved fingerprint in the connection's settings and connect again.\n\nhost-key-changed SHA256:Zm9yZ2VkLWtleS1mb3ItdGhlLWNoYW5nZWQtc2VydmVy expected ${n.hostKey}`;
+    // (so trusting it there leads straight to the "identity changed" warning)
+    if (!n.hostKey) throw HOST_KEY_UNKNOWN;
+  }
+  const host = n?.host || n?.url || "";
+  if (/(^|\/\/)bad\b/.test(host)) throw `Couldn't find ${host.replace(/^\w+:\/\//, "")}. Check the address.\n\ndns error: failed to lookup address information: nodename nor servname provided`;
+  if (secret === "wrong") throw "Wrong user name or password.\n\n530 Login incorrect.";
+}
+const oauthFlows = new Set<string>();
+/** sign-in connections whose access "ended" (see `__kyblAuthExpired` at the end) */
+const authExpired = new Set<string>();
+
 /** The local connection's commands; undefined for anything it doesn't answer specially. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function handleLocal(cmd: string, a: any): Promise<unknown> {
@@ -267,6 +334,10 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       if (a.profileId === LOCAL) return localRoots;
       const p = profiles.find((x) => x.id === a.profileId);
       if (!p) throw "Connection not found";
+      if (p.kind && p.kind !== "s3") {
+        otherConnect(p, null);
+        return otherRoots(p);
+      }
       if (a.profileId === "p3" && !p.bucket) throw "Access denied. This key isn't allowed to do that.";
       const names = p.bucket && !buckets.includes(p.bucket) ? [p.bucket, ...buckets] : buckets;
       return names.map((name) => ({ id: name, name, kind: "bucket", created: now - 400 * HOUR, readOnly: false }) satisfies RootInfo);
@@ -275,6 +346,7 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       await sleep(40);
       if (a.profileId === LOCAL) return localCaps;
       if (!profiles.some((x) => x.id === a.profileId)) throw "Connection not found";
+      if (isOther(a.profileId)) return otherCaps(profiles.find((x) => x.id === a.profileId)!);
       return s3Caps(profiles.find((x) => x.id === a.profileId));
     case "local_path":
       return a.profileId === LOCAL ? `${a.bucket.replace(/\/$/, "")}/${a.key}` : null;
@@ -293,6 +365,35 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     case "delete_profile":
       profiles.splice(profiles.findIndex((x) => x.id === a.id), 1);
       return null;
+    // A3 (pending A2): browser sign-in. Dropbox has no app of its own here, to show that path.
+    case "oauth_builtin_clients":
+      return { gdrive: true, onedrive: true, dropbox: false };
+    case "oauth_cancel":
+      oauthFlows.delete(a.flowId);
+      return null;
+    case "oauth_start": {
+      oauthFlows.add(a.flowId);
+      for (let i = 0; i < 14; i++) {
+        await sleep(200);
+        if (!oauthFlows.has(a.flowId)) throw "Cancelled";
+      }
+      oauthFlows.delete(a.flowId);
+      if (a.replaceId) authExpired.delete(a.replaceId);
+      const label = { gdrive: "Google Drive", onedrive: "OneDrive", dropbox: "Dropbox" }[a.kind as "gdrive"] ?? a.kind;
+      const old = a.replaceId ? profiles.find((x) => x.id === a.replaceId) : undefined;
+      const p: Profile = {
+        ...(old ?? { endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false }),
+        id: old?.id ?? `o${Date.now()}`,
+        name: old?.name ?? `${label} (demo@example.com)`,
+        kind: a.kind,
+        provider: a.kind,
+        cloud: { accountEmail: "demo@example.com", accountId: "2002", clientId: a.client?.clientId ?? null, tenant: null, scopes: [] },
+      };
+      const i = profiles.findIndex((x) => x.id === p.id);
+      if (i >= 0) profiles[i] = p;
+      else profiles.push(p);
+      return p;
+    }
     case "kybl_default_app_url":
       return "http://127.0.0.1:8080";
     case "kybl_connect_cancel":
@@ -323,6 +424,10 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     }
     case "test_connection":
       await sleep(700);
+      if (a.profile.kind && a.profile.kind !== "s3") {
+        otherConnect(a.profile, a.secret);
+        return "Connected.";
+      }
       if (!a.profile.endpoint) throw "Endpoint is required";
       return "Connected. 4 buckets visible.";
     case "create_bucket":
@@ -344,7 +449,9 @@ async function handle(cmd: string, a: any): Promise<unknown> {
         throw "Access denied. This key isn't allowed to do that. If the key is brand new, give it a few minutes: some providers take a while to activate new keys.\n\nservice error: unhandled error (AccessDenied): (ServiceError { source: Unhandled(Unhandled { code: Some(\"AccessDenied\") }), raw: Response { status: StatusCode(403) } })";
       }
       if (a.bucket === "logs-archive") throw "Can't reach the storage server. Nothing is answering at that address: check the connection's endpoint, or that the server is running.\n\ndispatch failure: io error: client error (Connect): tcp connect error: Connection refused (os error 61) (DispatchFailure(DispatchFailure { source: ConnectorError { kind: Io, source: hyper_util::client::legacy::Error(Connect, ConnectError(\"tcp connect error\", 127.0.0.1:9099, Os { code: 61, kind: ConnectionRefused }))) } }))";
-      const dir = a.bucket === "media-prod" ? tree[a.prefix] : undefined;
+      if (isOther(a.profileId)) otherConnect(profiles.find((x) => x.id === a.profileId)!, null);
+      // every root of the other kinds shows the demo tree (Shared with me: just the photos)
+      const dir = a.bucket === "media-prod" || (isOther(a.profileId) && a.bucket !== "shared") ? tree[a.prefix] : a.bucket === "shared" && !a.prefix ? { folders: ["photos/"], objects: [] } : a.bucket === "shared" ? tree[a.prefix] : undefined;
       const start = Number(a.token ?? 0);
       const all = dir?.objects ?? [];
       return {
@@ -590,6 +697,16 @@ async function handle(cmd: string, a: any): Promise<unknown> {
 
 mockWindows("main");
 mockIPC((cmd, args) => handle(cmd, args), { shouldMockEvents: true });
+
+// A3: `__kyblAuthExpired()` in the console pretends a sign-in connection's access ended (the
+// first Google Drive / OneDrive / Dropbox one, or the id given): its listings fail until it signs
+// in again, and the app hears `connection-auth` as it would from the backend.
+(window as unknown as { __kyblAuthExpired: (id?: string) => void }).__kyblAuthExpired = (id) => {
+  const pid = id ?? profiles.find((x) => x.kind === "gdrive" || x.kind === "onedrive" || x.kind === "dropbox")?.id;
+  if (!pid) return;
+  authExpired.add(pid);
+  void emit("connection-auth", { profileId: pid });
+};
 
 /** A second of a soft tone as a WAV data URL, so audio on the media: scheme plays in the mock. */
 let toneUrl: string | null = null;

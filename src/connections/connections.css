@@ -1,0 +1,346 @@
+/* Connection dialog: kind picker, per-kind forms, browser sign-in, host key prompts.
+   Colours come from the theme tokens only, so light, dark and accent themes all apply. */
+
+.field > .field-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--dim);
+}
+.field > .field-label em {
+  color: var(--faint);
+  font-style: normal;
+  font-weight: 400;
+}
+
+/* ---------------------------------------------------------------- kind picker */
+.kind-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.kind-group h3 {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--dim);
+}
+.kind-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.kind-tile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.kind-tile:hover {
+  background: var(--hover);
+  border-color: var(--border-strong);
+}
+.kind-tile:focus-visible,
+.kybl-offer:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 1px;
+}
+.kind-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.kind-text strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.kind-text em {
+  overflow: hidden;
+  font-size: 11.5px;
+  font-style: normal;
+  color: var(--dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- forms */
+.conn-seg {
+  display: flex;
+  width: 100%;
+}
+.conn-seg button {
+  flex: 1 1 0;
+  width: auto;
+  height: 26px;
+  font-size: 12px;
+}
+.conn-warn {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--warn) 13%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.conn-warn svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--warn);
+}
+.conn-warn.info {
+  background: var(--accent-soft);
+}
+.conn-warn.info svg {
+  color: var(--accent);
+}
+.conn-key {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.conn-key-text {
+  width: 100%;
+  min-height: 64px;
+  padding: 7px 10px;
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--field);
+  color: var(--text);
+  font: 11.5px/1.45 var(--mono);
+  outline: none;
+}
+.conn-key-text:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.conn-key-text[aria-invalid="true"],
+.form-grid input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+.conn-key .btn svg {
+  margin-right: 2px;
+}
+.conn-fp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r);
+  background: var(--ok-soft);
+  color: var(--text);
+  font-size: 12px;
+}
+.conn-fp > svg {
+  flex: none;
+  color: var(--ok);
+}
+.conn-fp > span {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.conn-fp code {
+  overflow: hidden;
+  font: 11px var(--mono);
+  color: var(--dim);
+  text-overflow: ellipsis;
+}
+
+/* ---------------------------------------------------------------- browser sign-in */
+.conn-cloud {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.conn-cloud strong {
+  font-size: 13.5px;
+}
+.conn-cloud p {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--dim);
+}
+.conn-signin {
+  justify-content: center;
+  height: 36px;
+  gap: 7px;
+}
+.conn-waiting {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.conn-waiting > div {
+  flex: 1;
+  min-width: 0;
+}
+.conn-waiting strong {
+  font-size: 13px;
+}
+.conn-waiting p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--dim);
+}
+.conn-disclose {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.conn-disclose:hover {
+  color: var(--text);
+}
+.conn-disclose svg {
+  transition: transform 0.15s var(--ease);
+}
+.conn-disclose svg.open {
+  transform: rotate(90deg);
+}
+.conn-own-fields {
+  margin-top: 10px;
+}
+
+/* ---------------------------------------------------------------- host key (SFTP) */
+.hostkey {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hostkey p {
+  margin: 0;
+  line-height: 1.5;
+}
+.hostkey-fp {
+  display: block;
+  padding: 10px 12px;
+  border-radius: var(--r);
+  background: var(--panel);
+  font: 12px/1.4 var(--mono);
+  word-break: break-all;
+}
+.hostkey-cmp {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--r);
+  background: var(--danger-soft);
+  font-size: 12px;
+}
+.hostkey-cmp dt {
+  color: var(--dim);
+  font-weight: 600;
+}
+.hostkey-cmp dd {
+  margin: 0;
+}
+.hostkey-cmp code {
+  font: 11.5px/1.4 var(--mono);
+  word-break: break-all;
+}
+.hostkey .hint code {
+  font-family: var(--mono);
+}
+
+/* ---------------------------------------------------------------- sidebar: one-root connections */
+/* a server's one root has no row of its own: the connection row is the place, highlighted like a
+   bucket row while it's on screen */
+.side-item.conn.selected {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.side-item.conn.single {
+  margin-bottom: 2px;
+}
+
+/* ---------------------------------------------------------------- "Sign in again" (sidebar, home) */
+.auth-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: 18px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.auth-badge:hover {
+  background: color-mix(in srgb, var(--warn) 28%, transparent);
+}
+
+/* ---------------------------------------------------------------- phones (bottom sheet) */
+.m-app .kind-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.m-app.wide .kind-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.m-app .kind-tile {
+  min-height: 60px;
+  padding: 10px 12px;
+  border-radius: 14px;
+}
+.m-app .kind-text strong {
+  font-size: calc(15 * var(--m-u));
+}
+.m-app .kind-text em,
+.m-app .kind-group h3 {
+  font-size: calc(13 * var(--m-u));
+}
+.m-app .field > .field-label {
+  font-size: calc(13 * var(--m-u));
+}
+.m-app .conn-seg button {
+  height: 38px;
+  font-size: calc(14 * var(--m-u));
+}
+.m-app .conn-key-text {
+  font-size: calc(13 * var(--m-u));
+  border-radius: 12px;
+}
+.m-app .conn-signin {
+  height: 50px;
+}
+.m-app .conn-warn,
+.m-app .conn-cloud p,
+.m-app .conn-waiting p {
+  font-size: calc(13.5 * var(--m-u));
+}
+.m-app .auth-badge {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 12px;
+  font-size: calc(12.5 * var(--m-u));
+}
