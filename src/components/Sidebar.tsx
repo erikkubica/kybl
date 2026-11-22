@@ -5,6 +5,7 @@ import { KyblLockup, KyblMark } from "./KyblMark";
 import { providerMeta } from "../providers";
 import type { Profile } from "../types";
 import type { SyncState } from "../sync";
+import type { Favorite } from "../settings";
 
 const SYNC_LABEL: Record<SyncState, string> = {
   idle: "Synced folders are up to date",
@@ -58,6 +59,10 @@ export function Sidebar({
   hiddenBuckets,
   onHideBucket,
   onReconnect,
+  favorites,
+  onOpenFavorite,
+  onRemoveFavorite,
+  onDropOnBucket,
 }: {
   profiles: Profile[];
   /** connection of the bucket on screen */
@@ -80,15 +85,66 @@ export function Sidebar({
   hiddenBuckets: Record<string, string[]>;
   onHideBucket: (p: Profile, bucket: string, hide: boolean) => void;
   onReconnect: (p: Profile) => void;
+  /** pinned places, listed above the connections */
+  favorites?: Favorite[];
+  onOpenFavorite?(f: Favorite): void;
+  onRemoveFavorite?(f: Favorite): void;
+  /**
+   * Files dragged from the list (useItemDrag) were let go over a bucket. The app knows what was
+   * being dragged; `e.altKey` means copy, as for drops on folders.
+   */
+  onDropOnBucket?(profile: Profile, bucket: string, e: React.MouseEvent): void;
 }) {
   // connections whose hidden buckets are on show (to pick which to bring back)
   const [showHidden, setShowHidden] = useState<Set<string>>(new Set());
   return (
-    <aside className="sidebar">
+    // the web view's own menu (Reload, Inspect) means nothing here
+    <aside className="sidebar" onContextMenu={(e) => e.preventDefault()}>
       <div className="sidebar-drag" data-tauri-drag-region>
         <KyblLockup size={20} />
       </div>
       <div className="sidebar-scroll">
+        {favorites && favorites.length > 0 && (
+          <div className="fav-list">
+            <div className="side-head">
+              <span>Favorites</span>
+            </div>
+            {favorites.map((f) => {
+              const p = profiles.find((x) => x.id === f.profileId);
+              const where = [p?.name ?? "Removed connection", f.bucket, ...f.prefix.split("/").filter(Boolean)].join(" › ");
+              const open = () => p && onOpenFavorite?.(f);
+              return (
+                <div
+                  key={`${f.profileId}|${f.bucket}|${f.prefix}`}
+                  className={`side-item fav-row ${p ? "" : "is-hidden"}`}
+                  onClick={open}
+                  onKeyDown={onActivate(open)}
+                  role="button"
+                  tabIndex={0}
+                  aria-disabled={!p || undefined}
+                  title={p ? where : `${where}. The connection for this favorite was removed.`}
+                >
+                  <Icon name={f.prefix ? "folder" : "bucket"} size={14} />
+                  <span className="side-label">{f.name}</span>
+                  {onRemoveFavorite && (
+                    <button
+                      className="icon-btn side-hide"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRemoveFavorite(f);
+                      }}
+                      onKeyDown={(e) => e.stopPropagation()}
+                      title="Remove from favorites"
+                      aria-label={`Remove ${f.name} from favorites`}
+                    >
+                      <Icon name="x" size={12} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
         {profiles.length > 0 && (
           <div className="side-head">
             <span>Connections</span>
@@ -138,7 +194,12 @@ export function Sidebar({
                     return (
                       <div
                         key={b}
-                        className={`side-item sub bucket-row ${here ? "selected" : ""} ${isHidden ? "is-hidden" : ""}`}
+                        className={`side-item sub bucket-row ${here ? "selected" : ""} ${isHidden ? "is-hidden" : ""} ${onDropOnBucket ? "droppable" : ""}`}
+                        onMouseUp={(e) => {
+                          // the list's own drag (useItemDrag) is pointer-driven: a release over a
+                          // bucket while it runs is a drop
+                          if (onDropOnBucket && e.button === 0 && document.body.classList.contains("dragging-items")) onDropOnBucket(p, b, e);
+                        }}
                         onClick={() => onSelectBucket(p, b)}
                         onKeyDown={onActivate(() => onSelectBucket(p, b))}
                         role="button"
