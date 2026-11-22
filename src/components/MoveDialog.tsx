@@ -85,8 +85,9 @@ export function MoveDialog({
   // without a separate confirm step (touch keyboards can be dismissed without pressing Return)
   const pending = creating ? newName.trim().replace(/\/+$/, "") : "";
   const dest = pending && !pending.includes("/") ? `${path}${pending}/` : path;
-  const valid = other || isValidDest(items, dest);
   const allHere = !other && items.every((e) => entryParent(e) === dest);
+  // copying into the folder the items are in makes copies next to them ("photo (1).jpg")
+  const valid = other || isValidDest(items, dest) || (mode === "copy" && allHere && !items.some((e) => e.kind === "folder" && dest.startsWith(e.key)));
   const what = items.length === 1 ? `“${items[0].name}”` : `${items.length} items`;
   const verb = mode === "move" ? "Move" : "Copy";
 
@@ -229,7 +230,9 @@ export function MoveDialog({
           )}
         </div>
         <p className="hint move-hint">
-          {allHere
+          {allHere && mode === "copy"
+            ? `${items.length === 1 ? "It’s" : "They’re"} already in this folder: the ${items.length === 1 ? "copy gets" : "copies get"} a new name next to the ${items.length === 1 ? "original" : "originals"}.`
+            : allHere
             ? `${items.length === 1 ? "It’s" : "They’re"} already in this folder. Pick another one.`
             : !valid
               ? "A folder can’t be moved into itself."

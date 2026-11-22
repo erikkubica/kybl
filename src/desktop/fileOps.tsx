@@ -16,8 +16,8 @@ import type { Entry, LocalFile, Profile } from "../types";
 import type { Toast } from "../components/Dialogs";
 import type { TransferActions } from "../useTransfers";
 import type { useJobs } from "../useJobs";
-import { applyChoices, findExisting, type Choice, type Clash } from "./conflicts";
-import { joinPath, numberedName, safeRelPath, shortHash } from "./paths";
+import { applyChoices, findExisting, freeKeys, type Choice, type Clash } from "./conflicts";
+import { copyName, joinPath, numberedName, safeRelPath, shortHash } from "./paths";
 import { undoStack, type UndoEntry } from "./undo";
 import { itemClipboard } from "./clipboard";
 import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
@@ -590,17 +590,7 @@ export function makeFileOps(c: OpsContext) {
       const label = `${mode === "move" ? "move" : "copy"} of ${what}`;
       const done = `${mode === "move" ? "Moved" : "Copied"} ${what} to ${where}`;
       if (mode === "move") offerUndo({ label, run: moveBack(pid, srcB, dstB, items, label) }, done);
-      else {
-        // the exact objects the copy made, so undoing it never takes anything added there later
-        let made: string[] | null = items.filter((i) => !i.isPrefix).map((i) => i.to);
-        try {
-          for (const i of items.filter((x) => x.isPrefix)) made.push(...(await api.listAllUnder(pid, dstB, i.to)).map((o) => o.key));
-        } catch {
-          made = null;
-        }
-        if (made) offerUndo({ label, run: deleteCopies(pid, dstB, made, label) }, done);
-        else toast("success", done);
-      }
+      else await offerCopyUndo(pid, dstB, items, label, done);
     }
     if (ok && mode === "move") {
       const folders = items.filter((i) => i.isPrefix);
@@ -610,6 +600,63 @@ export function makeFileOps(c: OpsContext) {
     c.reloadIfShowing(pid, srcB);
     if (cross) c.reloadIfShowing(pid, dstB);
     return ok;
+  };
+
+  /** Says a copy is done, with an Undo that deletes exactly the objects it made (never anything added there later). */
+  const offerCopyUndo = async (pid: string, b: string, items: MoveItem[], label: string, done: string) => {
+    let made: string[] | null = items.filter((i) => !i.isPrefix).map((i) => i.to);
+    try {
+      for (const i of items.filter((x) => x.isPrefix)) made.push(...(await api.listAllUnder(pid, b, i.to)).map((o) => o.key));
+    } catch {
+      made = null;
+    }
+    if (made) offerUndo({ label, run: deleteCopies(pid, b, made, label) }, done);
+    else toast("success", done);
+  };
+
+  // ---------------------------------------------------------------- duplicate
+  /** ⌘D: copies each item next to itself as "name copy.ext" ("name copy 2.ext" when that is taken). */
+  const duplicate = async (list: Entry[]) => {
+    const { profile, bucket } = c;
+    if (!profile || bucket == null || !list.length) return;
+    const pid = profile.id;
+    const b = bucket;
+    let free: Map<string, string>;
+    c.setBusy("Finding free names…");
+    try {
+      free = await freeKeys(pid, b, list.map((e) => e.key), new Set(), copyName);
+    } catch (e) {
+      toast("error", `Couldn’t duplicate. ${errMessage(e).split("\n\n")[0]}`);
+      return;
+    } finally {
+      c.setBusy(null);
+    }
+    const items: MoveItem[] = list.flatMap((e) => (free.has(e.key) ? [{ from: e.key, to: free.get(e.key)!, isPrefix: e.kind === "folder" }] : []));
+    if (!items.length) return void toast("error", "Couldn’t find a free name for the copy.");
+    const what = whatOf(list);
+    const title = `Duplicating ${what}`;
+    const dest = entryParent(list[0]);
+    const id = jobs.start({ kind: "copy", title, dest, profileId: pid, bucket: b });
+    if (list.some((e) => e.kind === "folder")) c.autoShowActivity();
+    const retry = runRest("copy", pid, b, b, items, title, dest);
+    let ok = false;
+    try {
+      const r = await api.moveMany(pid, b, items, false, id);
+      jobs.finish(id, r, retry);
+      if (r.error && r.error !== "Cancelled") toast("error", `Stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`, showAction);
+      ok = !r.error;
+    } catch (err) {
+      jobs.finish(id, { error: errMessage(err) }, retry);
+      toast("error", errMessage(err), showAction);
+    }
+    if (ok) {
+      // the copy shows selected, as in Finder
+      if (items.length === 1) c.selectAfterReload(pid, b, items[0].to);
+      const name = items.length === 1 ? `“${items[0].to.replace(/\/$/, "").split("/").pop()}”` : plural(items.length, "copy", "copies");
+      await offerCopyUndo(pid, b, items, `duplicate of ${what}`, `Made ${name}`);
+    }
+    c.clearSizes();
+    c.reloadIfShowing(pid, b);
   };
 
   /** Undo of a copy: deletes exactly the objects it made (asks first when that's a lot). */
@@ -669,7 +716,7 @@ export function makeFileOps(c: OpsContext) {
     void relocate(cl.items, dest, mode, { srcBucket: cl.bucket, destBucket: bucket }).then((ok) => ok && usedUp());
   };
 
-  return { uploadPaths, pickAndUpload, downloadEntries, openInApp, askDelete, askRename, askNewFolder, relocate, clip, paste };
+  return { uploadPaths, pickAndUpload, downloadEntries, openInApp, askDelete, askRename, askNewFolder, relocate, duplicate, clip, paste };
 }
 
 export type FileOps = ReturnType<typeof makeFileOps>;

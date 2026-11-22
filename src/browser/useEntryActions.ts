@@ -288,6 +288,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       { type: "sep" },
       { type: "item", label: "Copy", icon: "copy", hint: "⌘C", onClick: () => ops.clip(list, "copy") },
       { type: "item", label: "Cut", icon: "move", hint: "⌘X", onClick: () => ops.clip(list, "cut") },
+      { type: "item", label: "Duplicate", icon: "copy", hint: "⌘D", onClick: () => void ops.duplicate(list) },
       folder && clip && { type: "item", label: `Paste into “${e.name}”`, icon: "copy", onClick: () => ops.paste(e.key) },
       // dual pane: to the other pane's folder (F5 / F6)
       ...(env.extraItemItems?.(list) ?? []),
@@ -350,6 +351,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     "quick-look": pane.quickLook,
     copy: () => ops.clip(selectedEntries, "copy"),
     cut: () => ops.clip(selectedEntries, "cut"),
+    duplicate: () => selectedEntries.length > 0 && void ops.duplicate(selectedEntries),
     paste: () => ops.paste(),
     deselect: () => sel.setSelected(new Set()),
     "toggle-hidden": toggleHidden,
