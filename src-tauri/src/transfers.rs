@@ -83,6 +83,10 @@ pub(crate) enum Outcome {
 /// Progress callback: (bytes done, total bytes).
 pub(crate) type Progress<'a> = &'a (dyn Fn(u64, u64) + Send + Sync);
 
+/// Told (bytes done, total) when a transfer pauses for "Wi-Fi only" on mobile data; progress
+/// after that means it runs again. None: never pauses (sync on a computer).
+pub(crate) type Hold<'a> = Option<&'a (dyn Fn(u64, u64) + Send + Sync)>;
+
 /// How many times in a row a download picks up again after the connection drops, waiting a
 /// little longer each time (1 s, 2 s, 4 s … up to 30 s) before it gives up.
 const RESUME_ATTEMPTS: u32 = 8;
@@ -103,7 +107,7 @@ pub(crate) async fn download_file(
     progress: Progress<'_>,
 ) -> Result<Outcome, String> {
     let mut etag = None;
-    download_to(client, bucket, key, Path::new(dest), None, false, cancel, progress, &mut etag).await
+    download_to(client, bucket, key, Path::new(dest), None, false, cancel, progress, None, &mut etag).await
 }
 
 /// Opens the partial file of an earlier attempt to carry on from its end, asking the server for
@@ -148,6 +152,7 @@ async fn download_to(
     keep_partial: bool,
     cancel: &AtomicBool,
     progress: Progress<'_>,
+    hold: Hold<'_>,
     etag_out: &mut Option<String>,
 ) -> Result<Outcome, String> {
     if let Some(parent) = dest.parent() {
@@ -178,6 +183,7 @@ async fn download_to(
     progress(got, total);
 
     let mut last_emit = Instant::now();
+    let mut checked_at = got;
     let result: Result<bool, String> = async {
         let mut failures = 0u32;
         loop {
@@ -194,6 +200,32 @@ async fn download_to(
                         last_emit = Instant::now();
                     }
                     LIMITER.throttle(chunk.len()).await;
+                    // "Wi-Fi only" and the phone moved to mobile data: let go of the connection,
+                    // keep what arrived, and ask for the rest once it is back on Wi-Fi
+                    if let Some(paused) = hold
+                        && got - checked_at >= crate::tuning::WIFI_CHECK_BYTES
+                        && got < total
+                    {
+                        checked_at = got;
+                        if crate::tuning::hold_for_wifi() {
+                            out.body = Default::default();
+                            file.flush().await.map_err(err)?;
+                            paused(got, total);
+                            if !crate::tuning::wait_for_wifi(cancel).await {
+                                return Ok(false);
+                            }
+                            let mut req = client.get_object().bucket(bucket).key(key).range(format!("bytes={got}-"));
+                            if let Some(tag) = &etag {
+                                req = req.if_match(tag);
+                            }
+                            match req.send().await {
+                                Ok(rest) if rest.content_range().is_some() => out = rest,
+                                Ok(_) => return Err("The server can't carry on this download where it paused. Try again.".into()),
+                                Err(e) => return Err(sdk_err(e)),
+                            }
+                            progress(got, total);
+                        }
+                    }
                 }
                 Ok(None) => break,
                 // The connection dropped mid-file: the phone went to the background, the network
@@ -417,10 +449,19 @@ async fn spawn_transfer(
                     t.total = total;
                 });
             };
+            // paused for "Wi-Fi only": shown as waiting again, with what's done so far
+            let paused = |done: u64, total: u64| {
+                emit(&app, &id, "queued", done, total, None);
+                track(&id, |t| {
+                    t.state = "queued";
+                    t.bytes = done;
+                    t.total = total;
+                });
+            };
             match kind {
                 Kind::Upload => match local_source(source.expect("an upload has a source"), &key).await {
                     Ok((path, temp)) => {
-                        let r = multipart::upload_resumable(&client, &id, &profile_id, &bucket, &key, &path, &cancel, &report).await;
+                        let r = multipart::upload_resumable(&client, &id, &profile_id, &bucket, &key, &path, &cancel, &report, Some(&paused)).await;
                         if let Ok(Outcome::Done) = r {
                             done_bytes = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
                         }
@@ -434,7 +475,7 @@ async fn spawn_transfer(
                 Kind::Download { resume } => {
                     let chosen = PathBuf::from(&local);
                     let tag = if resume { resume_etag.as_deref() } else { None };
-                    let r = download_to(&client, &bucket, &key, &chosen, tag, true, &cancel, &report, &mut etag).await;
+                    let r = download_to(&client, &bucket, &key, &chosen, tag, true, &cancel, &report, Some(&paused), &mut etag).await;
                     if let Ok(Outcome::Done) = r {
                         done_bytes = tokio::fs::metadata(&chosen).await.map(|m| m.len()).unwrap_or(0);
                     }
@@ -705,7 +746,7 @@ mod tests {
             // what the failed first attempt left behind
             std::fs::write(dest::part_path(&dest), &data[..70_000]).unwrap();
             let mut etag = None;
-            let r = download_to(&client, "b", "file.bin", &dest, Some("\"v1\""), true, &AtomicBool::new(false), &|_, _| {}, &mut etag).await;
+            let r = download_to(&client, "b", "file.bin", &dest, Some("\"v1\""), true, &AtomicBool::new(false), &|_, _| {}, None, &mut etag).await;
             assert!(matches!(r, Ok(Outcome::Done)), "download failed: {:?}", r.err());
             assert_eq!(std::fs::read(&dest).unwrap(), data, "the continued file is whole and in order");
             assert!(!dest::part_path(&dest).exists());

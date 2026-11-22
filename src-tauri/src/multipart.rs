@@ -28,7 +28,7 @@ use http_body::{Body, Frame, SizeHint};
 
 use crate::{
     state::{err, sdk_err},
-    transfers::{Outcome, Progress},
+    transfers::{Hold, Outcome, Progress},
     tuning::LIMITER,
 };
 
@@ -255,7 +255,7 @@ pub(crate) async fn upload_file(
     progress: Progress<'_>,
 ) -> Result<Outcome, String> {
     let mut mp = None;
-    let r = upload(client, profile_id, bucket, key, path, cancel, progress, &mut mp).await;
+    let r = upload(client, profile_id, bucket, key, path, cancel, progress, None, &mut mp).await;
     if r.is_err()
         && let Some(m) = mp
     {
@@ -276,6 +276,7 @@ pub(crate) async fn upload_resumable(
     path: &str,
     cancel: &Arc<AtomicBool>,
     progress: Progress<'_>,
+    hold: Hold<'_>,
 ) -> Result<Outcome, String> {
     let now = stamp(path).await?;
     let kept = PENDING.lock().unwrap().remove(id);
@@ -289,13 +290,13 @@ pub(crate) async fn upload_resumable(
         None => None,
     };
     let resumed = mp.is_some();
-    let mut r = upload(client, profile_id, bucket, key, path, cancel, progress, &mut mp).await;
+    let mut r = upload(client, profile_id, bucket, key, path, cancel, progress, hold, &mut mp).await;
     if resumed && matches!(&r, Err(e) if upload_gone(e)) {
         // the server dropped the old upload (it expires them after a while): start over
         if let Some(m) = mp.take() {
             crate::leftovers::upload_ended(&m.upload_id);
         }
-        r = upload(client, profile_id, bucket, key, path, cancel, progress, &mut mp).await;
+        r = upload(client, profile_id, bucket, key, path, cancel, progress, hold, &mut mp).await;
     }
     if r.is_err()
         && let Some(m) = mp
@@ -326,6 +327,7 @@ async fn upload(
     path: &str,
     cancel: &Arc<AtomicBool>,
     progress: Progress<'_>,
+    hold: Hold<'_>,
     mp: &mut Option<Multipart>,
 ) -> Result<Outcome, String> {
     let total = tokio::fs::metadata(path).await.map_err(err)?.len();
@@ -369,7 +371,7 @@ async fn upload(
     let m = mp.as_mut().expect("set above");
     let _open = OpenGuard::new(client, bucket, key, &m.upload_id);
 
-    match send_parts(client, bucket, key, path, total, m, cancel, progress).await {
+    match send_parts(client, bucket, key, path, total, m, cancel, progress, hold).await {
         Ok(true) => {}
         Ok(false) => {
             abort(client, bucket, key, &m.upload_id).await;
@@ -434,6 +436,7 @@ async fn send_parts(
     m: &mut Multipart,
     cancel: &Arc<AtomicBool>,
     progress: Progress<'_>,
+    hold: Hold<'_>,
 ) -> Result<bool, String> {
     let plan = part_plan(total, m.part_size);
     let mut done_bytes: u64 = plan.iter().filter(|p| m.parts.contains_key(&p.0)).map(|p| p.2).sum();
@@ -446,6 +449,24 @@ async fn send_parts(
         if cancel.load(Ordering::Relaxed) {
             set.abort_all();
             return Ok(false);
+        }
+        // "Wi-Fi only" and the phone moved to mobile data: stop sending (the parts in flight go
+        // back in the queue), keep the parts that made it, and carry on once it is back on Wi-Fi
+        if let Some(paused) = hold
+            && crate::tuning::hold_for_wifi()
+        {
+            set.abort_all();
+            while set.join_next().await.is_some() {}
+            let again: Vec<_> = part_plan(total, m.part_size).into_iter().filter(|p| running.contains_key(&p.0)).collect();
+            running.clear();
+            for p in again.into_iter().rev() {
+                queue.push_front(p);
+            }
+            paused(done_bytes, total);
+            if !crate::tuning::wait_for_wifi(cancel).await {
+                return Ok(false);
+            }
+            progress(done_bytes, total);
         }
         // the setting is read as parts start, so a change applies to an upload already running
         while set.len() < crate::tuning::part_concurrency() {
@@ -636,7 +657,7 @@ mod tests {
                 if done >= MIN_PART_SIZE && !locked.swap(true, Ordering::SeqCst) {
                     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
                 }
-            })
+            }, None)
             .await;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
             crate::tuning::apply(crate::tuning::TransferPrefs::default());
@@ -646,7 +667,7 @@ mod tests {
 
             // Retry: the first progress after the start already counts the kept parts
             let seen = Mutex::new(Vec::<u64>::new());
-            let r = upload_resumable(&client, &id, "t", "testbucket", &key, &p, &cancel, &|done, _| seen.lock().unwrap().push(done))
+            let r = upload_resumable(&client, &id, "t", "testbucket", &key, &p, &cancel, &|done, _| seen.lock().unwrap().push(done), None)
                 .await
                 .unwrap();
             assert!(matches!(r, Outcome::Done));

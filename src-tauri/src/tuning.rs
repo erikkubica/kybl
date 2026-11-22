@@ -100,10 +100,25 @@ pub fn part_concurrency() -> usize {
     PART_CONCURRENCY.load(Ordering::Relaxed)
 }
 
-/// Whether transfers should wait for Wi-Fi (for the phone side to enforce).
-#[allow(dead_code)]
+/// Whether transfers should wait for Wi-Fi (only phones ever see a metered network).
 pub fn wifi_only() -> bool {
     WIFI_ONLY.load(Ordering::Relaxed)
+}
+
+/// How often (in bytes) a download checks that "Wi-Fi only" doesn't want it to pause.
+pub const WIFI_CHECK_BYTES: u64 = 8 * 1024 * 1024;
+
+/// "Wi-Fi only" is on and the phone is on mobile data (or a metered Wi-Fi) right now.
+pub fn hold_for_wifi() -> bool {
+    wifi_only() && crate::platform::on_metered_network()
+}
+
+/// Waits while [`hold_for_wifi`] (or until `cancel`). False when cancelled.
+pub async fn wait_for_wifi(cancel: &AtomicBool) -> bool {
+    while hold_for_wifi() && !cancel.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+    !cancel.load(Ordering::Relaxed)
 }
 
 pub fn current() -> TransferPrefs {
