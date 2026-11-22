@@ -93,6 +93,9 @@ export function PreviewAside({
           if (e.key === "ArrowRight") resizeBy(-24);
         }}
       />
+      {/* Stopgap until PreviewPane takes the connection's capabilities: what it can't do is hidden
+          here (share links, the S3 properties editor). */}
+      <div className="preview-caps" data-no-share={pane.caps?.share === "none" || undefined} data-no-props={pane.caps?.metadata === "none" || undefined}>
       <PreviewPane
         defaultExpiry={settings.linkExpiry}
         profileId={profile.id}
@@ -109,6 +112,7 @@ export function PreviewAside({
         folderSize={pane.folderSizes.view}
         onCalcSize={(k) => actions.calcSizes([k])}
       />
+      </div>
     </>
   );
 }

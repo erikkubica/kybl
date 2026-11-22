@@ -31,6 +31,7 @@ export const MENU_OWNS_SHORTCUTS = isTauri() && /Mac/i.test(navigator.userAgent)
  * Dual pane ids for a future View menu item in menu.rs (all handled by the frontend today):
  * "toggle-dual" (⌘\), "swap-panes" (⇧⌘S), "same-folder", "compare-folders", "pane-copy" (F5),
  * "pane-move" (F6), "switch-pane" (Tab). Give "toggle-dual" an accelerator here once menu.rs has it.
+ * "toggle-hidden" (⇧⌘.) shows or hides dotfiles in This Mac's panes (a View menu item later).
  */
 export const MENU_ACCELERATORS: Record<string, string> = {
   "new-folder": "⇧⌘N",

@@ -83,6 +83,7 @@ const SHORTCUTS: { label: string; keys: string[] }[] = [
   { label: "Delete selection", keys: ["⌘", "⌫"] },
   { label: "Clear selection / close dialog", keys: ["Esc"] },
   { label: "Settings", keys: ["⌘", ","] },
+  { label: "This Mac: show or hide hidden files", keys: ["⇧", "⌘", "."] },
   { label: "Two panes side by side", keys: ["⌘", "\\"] },
   { label: "Two panes: switch pane", keys: ["Tab"] },
   { label: "Two panes: copy / move to the other pane", keys: ["F5", "F6"] },

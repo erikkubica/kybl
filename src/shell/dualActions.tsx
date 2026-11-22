@@ -15,7 +15,7 @@ import type { Pane, PaneEnv } from "../browser/usePane";
 import type { Loc, PaneId } from "../browser/types";
 import { compareFolders, diffSelection } from "../compare/compareFolders";
 import { CompareSummary } from "../compare/CompareSummary";
-import { sendToPane } from "./crossPane";
+import { crossesDisk, sendToPane } from "./crossPane";
 import type { Dialogs } from "./useDialogs";
 
 export type DualContext = {
@@ -31,10 +31,11 @@ export type DualContext = {
   transfers: TransferActions;
   autoShowActivity: () => void;
   focusPane: (id: PaneId) => void;
+  reloadIfShowing: (profileId: string, bucket: string) => boolean;
 };
 
 const otherId = (id: PaneId): PaneId => (id === "left" ? "right" : "left");
-const placeName = (p: Pane) => (p.prefix ? destLabel(p.prefix, p.bucket ?? "") : (p.bucket ?? ""));
+const placeName = (p: Pane) => (p.prefix ? destLabel(p.prefix, p.bucket ?? "") : (p.bucketLabel ?? ""));
 
 export function makeDualActions(get: () => DualContext) {
   const pane = (id: PaneId) => (id === "left" ? get().left : get().right);
@@ -88,12 +89,21 @@ export function makeDualActions(get: () => DualContext) {
       return;
     }
     const what = items.length === 1 ? `“${items[0].name}”` : `${items.length.toLocaleString()} items`;
-    const where = `${dst.bucket}/${dst.prefix}`.replace(/\/$/, "");
+    const where = `${dst.bucketLabel}/${dst.prefix}`.replace(/\/$/, "");
+    // between this computer and the cloud the originals always stay: a move there is a copy
+    const asCopy = mode === "move" && crossesDisk(src, dst);
+    if (asCopy) mode = "copy";
     const verb = mode === "copy" ? "Copy" : "Move";
     const ok = await c.dialogs.confirm({
       title: `${verb} ${what}?`,
       label: verb,
-      message: createElement("p", null, `${verb} to `, createElement("strong", null, where), "."),
+      message: createElement(
+        "p",
+        null,
+        `${verb} to `,
+        createElement("strong", null, where),
+        asCopy ? ". Between this Mac and the cloud files are copied: the originals stay where they are." : ".",
+      ),
     });
     if (ok) await sendToPane(src, dst, items, mode, dst.prefix, c);
   };
@@ -154,7 +164,7 @@ export function makeDualActions(get: () => DualContext) {
       if (!get().dual || !dst.here || !src.here) return null;
       const d = dest ?? dst.prefix;
       if (dst.here.profileId === src.here.profileId && dst.bucket === src.bucket && !isValidDest(items, d)) return null;
-      return { dest: d, label: d ? destLabel(d, dst.bucket ?? "") : (dst.bucket ?? "") };
+      return { dest: d, label: d ? destLabel(d, dst.bucket ?? "") : (dst.bucketLabel ?? ""), copyOnly: crossesDisk(src, dst) };
     },
     extraPlaceItems: (): MenuItem[] => {
       const c = get();
@@ -167,7 +177,7 @@ export function makeDualActions(get: () => DualContext) {
         { type: "item", label: "Synchronized browsing", icon: "sync", checked: c.settings.syncBrowsing, onClick: () => c.updateSettings({ syncBrowsing: !c.settings.syncBrowsing }) },
       ];
     },
-    extraItemItems: (list: Entry[]): MenuItem[] => {
+    extraItemItems: (list: Entry[]): (MenuItem | false)[] => {
       const c = get();
       const dst = pane(otherId(id));
       if (!c.dual || !dst.here) return [];
@@ -175,7 +185,8 @@ export function makeDualActions(get: () => DualContext) {
       const run = (mode: "copy" | "move") => void sendToPane(pane(id), dst, list, mode, dst.prefix, get());
       return [
         { type: "item", label: `Copy to “${where}”`, icon: "copy", hint: "F5", onClick: () => run("copy") },
-        { type: "item", label: `Move to “${where}”`, icon: "move", hint: "F6", onClick: () => run("move") },
+        // this computer and the cloud only copy to each other
+        !crossesDisk(pane(id), dst) && { type: "item", label: `Move to “${where}”`, icon: "move", hint: "F6", onClick: () => run("move") },
       ];
     },
   });

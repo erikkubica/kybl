@@ -71,9 +71,10 @@ export function ListError({ profile, error, onRetry, onReconnect }: { profile: P
         <Icon name="alert" size={26} />
       </div>
       <h3>Couldn’t load this folder</h3>
-      <p>
+      {/* a div: the error's folded details (<details>, <pre>) can't sit inside a <p> */}
+      <div className="error-msg">
         <ErrorText message={revoked ? kyblError(error) : error} />
-      </p>
+      </div>
       {revoked ? (
         <button className="btn btn-primary btn-sm kybl-reconnect" onClick={() => onReconnect(profile)}>
           <Icon name="refresh" size={13} /> Connect again

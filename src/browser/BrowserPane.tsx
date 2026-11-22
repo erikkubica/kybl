@@ -73,6 +73,8 @@ export function BrowserPane(p: BrowserPaneProps) {
     >
       <Toolbar
         bucket={bucket}
+        bucketLabel={pane.bucketLabel}
+        canShare={actions.canShare}
         prefix={prefix}
         canUp={pane.canUp}
         canBack={pane.history.canBack}

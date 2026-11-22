@@ -131,7 +131,7 @@ export function DragGhost({ drag, bucket }: { drag: DragState; bucket: string | 
           {drag.dest != null
             ? drag.label != null
               ? // into the other pane: copies, like a drop into another bucket (⌘ moves)
-                `${drag.copy ? "Copy" : "Move"} to ${drag.label}${drag.copy ? " · ⌘ to move" : ""}`
+                `${drag.copy ? "Copy" : "Move"} to ${drag.label}${drag.copy && !drag.copyOnly ? " · ⌘ to move" : ""}`
               : // Finder's rule: within a bucket a drop moves (⌥ copies), into another bucket it copies (⌘ moves)
                 `${drag.copy ? "Copy" : "Move"} to ${drag.bucket ?? destLabel(drag.dest, bucket ?? "")}${drag.bucket ? (drag.copy ? " · ⌘ to move" : "") : drag.copy ? "" : " · ⌥ to copy"}`
             : "Drop on a folder or a bucket"}

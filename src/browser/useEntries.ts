@@ -23,7 +23,17 @@ const NO_ENTRIES: Entry[] = [];
 
 const folderEntry = (f: string): Entry => ({ kind: "folder", key: f, name: baseName(f), size: 0, modified: null });
 
-export function useEntries(here: Loc | null, sort: Sort, foldersFirst: boolean, onError: (msg: string) => void) {
+/** A name (or any folder on the way to it) that starts with ".": hidden, like Finder does. */
+const dotted = (rel: string) => rel.startsWith(".") || rel.includes("/.");
+
+export function useEntries(
+  here: Loc | null,
+  sort: Sort,
+  foldersFirst: boolean,
+  onError: (msg: string) => void,
+  /** leave out dotfiles (this computer's disk, unless "Show hidden files" is on) */
+  hideDotfiles = false,
+) {
   const [query, setQuery] = useState("");
   const sr = useSearch(onError);
   const search = sr.search && sameLoc(sr.search.loc, here) ? sr.search : null;
@@ -50,17 +60,19 @@ export function useEntries(here: Loc | null, sort: Sort, foldersFirst: boolean, 
           if (parts[i].toLowerCase().includes(needle)) folders.add(acc);
         }
       }
-      return [
+      const found = [
         ...[...folders].map(folderEntry),
         ...search.results.map<Entry>((o) => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass })),
       ];
+      return hideDotfiles ? found.filter((e) => !dotted(e.key.slice(base.length))) : found;
     }
     if (!fresh && !stale) return [];
-    return [
+    const all = [
       ...listing.folders.map(folderEntry),
       ...listing.objects.map<Entry>((o) => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass })),
     ];
-  }, [listing, search, fresh, stale]);
+    return hideDotfiles ? all.filter((e) => !e.name.startsWith(".")) : all;
+  }, [listing, search, fresh, stale, hideDotfiles]);
 
   /** What the list shows. */
   const listEntries: Entry[] = useMemo(() => {

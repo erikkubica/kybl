@@ -24,6 +24,18 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   const { selected, selectedEntries } = sel;
   const { settings, dialogs, conns } = env;
   const { toast } = dialogs;
+  // what this connection can do: actions it can't take stay out of the menus
+  const { caps } = pane;
+  const canShare = caps?.share !== "none";
+  const isS3 = !profile?.kind || profile.kind === "s3";
+  /** this computer's own disk: no folder sync (it is the local side), hidden files to toggle */
+  const onDisk = !!caps?.localPaths;
+  const toggleHidden = () => {
+    if (!onDisk) return;
+    const show = !settings.showHiddenFiles;
+    env.updateSettings({ showHiddenFiles: show });
+    toast("info", show ? "Showing hidden files" : "Hiding hidden files");
+  };
 
   /** Enter / ⌘O / ⌘↓: a folder opens in the list; files open in their apps (a few at most). */
   const openSelection = (list: Entry[] = selectedEntries) => {
@@ -157,8 +169,9 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       : [
           { type: "item", label: "Calculate folder size", icon: "info", onClick: () => calcSizes([prefix]) },
           favoriteItem(bucket, prefix),
-          { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(prefix) },
-          { type: "item", label: "Copy S3 URI", icon: "copy", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") },
+          !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(prefix) },
+          isS3 && { type: "item", label: "Copy S3 URI", icon: "copy", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") },
+          onDisk && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: settings.showHiddenFiles, onClick: toggleHidden },
           { type: "sep" },
           { type: "item", label: "Go to folder…", icon: "arrow-up", hint: "⇧⌘G", onClick: askGoTo },
           ...(env.extraPlaceItems?.() ?? []),
@@ -210,8 +223,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       one && e.kind === "file" && { type: "item", label: "Quick Look", icon: "eye", hint: "Space", onClick: () => pane.setQuick(e.key) },
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => pane.navigate(entryParent(e), e.key) },
       { type: "item", label: "Download", icon: "download", hint: "⇧⌘D", onClick: () => ops.downloadEntries(list, relBase) },
-      { type: "item", label: `Copy share link (${expiryLabel(settings.linkExpiry)})`, icon: "link", disabled: !(one && e.kind === "file"), onClick: () => copyLink(e, settings.linkExpiry) },
-      { type: "item", label: "Copy S3 URI", icon: "copy", disabled: !one, onClick: () => copyText(`s3://${bucket}/${e.key}`, "S3 URI") },
+      canShare && { type: "item", label: `Copy share link (${expiryLabel(settings.linkExpiry)})`, icon: "link", disabled: !(one && e.kind === "file"), onClick: () => copyLink(e, settings.linkExpiry) },
+      isS3 && { type: "item", label: "Copy S3 URI", icon: "copy", disabled: !one, onClick: () => copyText(`s3://${bucket}/${e.key}`, "S3 URI") },
       { type: "sep" },
       { type: "item", label: "Copy", icon: "copy", hint: "⌘C", onClick: () => ops.clip(list, "copy") },
       { type: "item", label: "Cut", icon: "move", hint: "⌘X", onClick: () => ops.clip(list, "cut") },
@@ -233,7 +246,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
         onClick: () => calcSizes(folders.map((f) => f.key)),
       },
       folder && favoriteItem(bucket, e.key),
-      folder && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(e.key) },
+      folder && !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(e.key) },
       { type: "sep" },
       { type: "item", label: "Rename…", icon: "edit", disabled: !one, onClick: () => ops.askRename(e) },
       { type: "item", label: list.length > 1 ? `Delete ${list.length} items…` : "Delete…", icon: "trash", hint: "⌘⌫", danger: true, onClick: () => ops.askDelete(list) },
@@ -276,6 +289,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     cut: () => ops.clip(selectedEntries, "cut"),
     paste: () => ops.paste(),
     deselect: () => sel.setSelected(new Set()),
+    "toggle-hidden": toggleHidden,
   };
 
   return {
@@ -285,6 +299,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     clearSearch,
     copyText,
     copyLink,
+    canShare,
     askMove,
     askGoTo,
     calcSizes,

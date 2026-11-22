@@ -181,7 +181,8 @@ const localObj = (key: string, size: number, ageHours: number): ObjInfo => ({ ..
 /** root id -> prefix -> listing */
 const localTree: Record<string, Record<string, { folders: string[]; objects: ObjInfo[] }>> = {
   [HOME]: {
-    "": { folders: ["Desktop/", "Documents/", "Downloads/", "Pictures/"], objects: [localObj("notes.txt", 1_200, 3)] },
+    // dotfiles: panes hide them unless "Show hidden files" is on
+    "": { folders: [".config/", "Desktop/", "Documents/", "Downloads/", "Pictures/"], objects: [localObj(".DS_Store", 6_148, 2), localObj(".zshrc", 900, 400), localObj("notes.txt", 1_200, 3)] },
     "Pictures/": { folders: [], objects: [localObj("Pictures/beach.jpg", 3_400_000, 30), localObj("Pictures/hanoi.jpg", 2_800_000, 50)] },
   },
   [`${HOME}/Desktop`]: { "": { folders: ["Screenshots/"], objects: [localObj("todo.md", 640, 1), localObj("invoice-0042.pdf", 184_000, 26)] }, "Screenshots/": { folders: [], objects: [localObj("Screenshots/shot-1.png", 900_000, 2)] } },

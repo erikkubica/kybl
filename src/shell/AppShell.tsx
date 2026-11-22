@@ -24,7 +24,8 @@ import { undoStack } from "../desktop/undo";
 import { usePane, type Pane, type PaneEnv } from "../browser/usePane";
 import { BrowserPane } from "../browser/BrowserPane";
 import type { EmptyActions } from "../browser/PaneEmpty";
-import { LS, type PaneId } from "../browser/types";
+import { LS, THIS_MAC, type PaneId } from "../browser/types";
+import { forgetCaps } from "../useCaps";
 import type { Profile } from "../types";
 import { useDialogs } from "./useDialogs";
 import { loadExpanded, useConnections } from "./useConnections";
@@ -44,7 +45,9 @@ export function AppShell() {
   const dialogs = useDialogs();
   const { toast } = dialogs;
   const conns = useConnections();
-  const { profiles } = conns;
+  // the saved connections, then this computer's own folders
+  const saved = conns.profiles;
+  const profiles = useMemo(() => [...saved, THIS_MAC], [saved]);
   const [transfersOpen, setTransfersOpen] = useState(true);
   // the activity panel was opened on purpose: it stays up with a note even with nothing going on
   const [activityAsked, setActivityAsked] = useState(false);
@@ -110,6 +113,7 @@ export function AppShell() {
   const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
   /** Opens the editor for a connection: Kybl Storage connections have their own (no keys to edit). */
   const setConnDialog = useCallback((d: { profile: Profile | null } | null) => {
+    if (d?.profile?.id === THIS_MAC.id) return; // built in: nothing to edit
     if (d?.profile?.provider === KYBL) setKyblDialog({ existing: d.profile });
     else setConnDialogState(d);
   }, []);
@@ -185,6 +189,7 @@ export function AppShell() {
     reloadIfShowing,
     clearAllSizes,
     foldersChanged,
+    rootLabel: conns.rootLabel,
     ...dualPane.envFor(id),
   });
   const left = usePane(envFor("left"));
@@ -206,6 +211,7 @@ export function AppShell() {
     transfers,
     autoShowActivity: () => void (settings.autoOpenTransfers && setTransfersOpen(true)),
     focusPane: (id: PaneId) => requestAnimationFrame(() => focusPaneList(id)),
+    reloadIfShowing,
   };
 
   /** Sidebar clicks, favorites and new connections open here. */
@@ -248,6 +254,7 @@ export function AppShell() {
 
   /** A connection was deleted: drop it from the sidebar, the history and the screen. */
   const forgetProfile = (id: string) => {
+    forgetCaps(id);
     conns.dropProfile(id);
     for (const p of allPanes.current) p.forgetProfile(id);
   };
@@ -259,10 +266,12 @@ export function AppShell() {
       .then((list) => {
         conns.setProfiles(list);
         const last = settings.restoreLast ? left.savedLocation() : null;
-        const start = list.find((p) => p.id === last?.profileId) ?? list[0];
+        const all = [...list, THIS_MAC];
+        // where it was last time (This Mac too); else the first saved connection
+        const start = all.find((p) => p.id === last?.profileId) ?? list[0];
         if (start) void connectIn("left", start, last?.profileId === start.id ? last.bucket : undefined, last?.prefix ?? "");
         // the other connections left open last time list their buckets too
-        for (const p of list) if (p !== start && loadExpanded().has(p.id)) void conns.loadBuckets(p);
+        for (const p of all) if (p !== start && loadExpanded().has(p.id)) void conns.loadBuckets(p);
       })
       .catch((e) => toast("error", errMessage(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -465,6 +474,8 @@ export function AppShell() {
         favorites={settings.favorites}
         onOpenFavorite={openFavorite}
         onRemoveFavorite={active.actions.removeFavorite}
+        rootLabel={conns.rootLabel}
+        builtIn={(p) => p.id === THIS_MAC.id}
       />
 
       <main className="main">
@@ -511,7 +522,7 @@ export function AppShell() {
         <SettingsPage
           settings={settings}
           compact={compact}
-          profiles={profiles}
+          profiles={saved}
           onChange={updateSettings}
           onCompact={setCompact}
           onEditProfile={(p) => setConnDialog({ profile: p })}
@@ -534,6 +545,7 @@ export function AppShell() {
           reconnect={kyblDialog.reconnect}
           onClose={() => setKyblDialog(null)}
           onConnected={(p) => {
+            forgetCaps(p.id);
             conns.upsertProfile(p);
             void connectIn(activeRef.current.id, p);
           }}
@@ -548,8 +560,9 @@ export function AppShell() {
             setConnDialog(null);
             setKyblDialog({ existing: null });
           }}
-          kyblFirst={!profiles.some((p) => p.provider === KYBL)}
+          kyblFirst={!saved.some((p) => p.provider === KYBL)}
           onSaved={(p) => {
+            forgetCaps(p.id);
             conns.upsertProfile(p);
             void connectIn(activeRef.current.id, p);
           }}

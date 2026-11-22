@@ -52,6 +52,8 @@ export type Settings = {
   layout: "single" | "dual";
   /** dual pane: opening a subfolder (or going up) in one pane does the same in the other when it can */
   syncBrowsing: boolean;
+  /** files and folders whose name starts with "." show in panes of this computer's disk */
+  showHiddenFiles: boolean;
 };
 
 export type Favorite = { profileId: string; bucket: string; prefix: string; name: string };
@@ -78,6 +80,7 @@ export const DEFAULTS: Settings = {
   tileSize: 160,
   layout: "single",
   syncBrowsing: false,
+  showHiddenFiles: false,
 };
 
 export const ACCENTS: { id: Exclude<Accent, "scheme">; label: string; color: string }[] = [

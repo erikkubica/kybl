@@ -37,6 +37,10 @@ export function useConnections() {
   const [bucketsBy, setBucketsBy] = useState<Record<string, BucketList>>({});
   const [expanded, setExpanded] = useState<Set<string>>(loadExpanded);
   const [hiddenBuckets, setHiddenBuckets] = useState<Record<string, string[]>>(loadHidden);
+  // display names of roots whose id isn't one (this computer's folders: id = absolute path)
+  const [rootNames, setRootNames] = useState<Record<string, Record<string, string>>>({});
+  /** What to call a root (bucket) on screen. */
+  const rootLabel = useCallback((profileId: string, root: string) => rootNames[profileId]?.[root] ?? root, [rootNames]);
 
   const setBucketHidden = useCallback((p: Profile, name: string, hide: boolean) => {
     setHiddenBuckets((cur) => {
@@ -69,7 +73,12 @@ export function useConnections() {
     let note: string | null = null;
     let reconnect = false;
     try {
-      names = (await api.listBuckets(p.id)).map((b) => b.name);
+      if (p.kind && p.kind !== "s3") {
+        // other kinds name their roots ("Home" for /Users/me): the id stays what commands take
+        const roots = await api.listRoots(p.id);
+        names = roots.map((r) => r.id);
+        setRootNames((m) => ({ ...m, [p.id]: Object.fromEntries(roots.map((r) => [r.id, r.name])) }));
+      } else names = (await api.listBuckets(p.id)).map((b) => b.name);
     } catch (e) {
       const msg = errMessage(e);
       reconnect = p.provider === KYBL && isRevokedKey(msg);
@@ -116,6 +125,7 @@ export function useConnections() {
     bucketsBy,
     expanded,
     hiddenBuckets,
+    rootLabel,
     setBucketHidden,
     setExpandedSaved,
     expand,

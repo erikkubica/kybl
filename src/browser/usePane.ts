@@ -54,7 +54,9 @@ export type PaneEnv = {
   /** extra items for the "…" and empty-space menus (dual pane adds its own) */
   extraPlaceItems?: () => MenuItem[];
   /** extra items for the menu of selected items */
-  extraItemItems?: (list: Entry[]) => MenuItem[];
+  extraItemItems?: (list: Entry[]) => (MenuItem | false)[];
+  /** what to call a root on screen ("Desktop" for this computer's /Users/me/Desktop) */
+  rootLabel?: (profileId: string, root: string) => string;
   /** folders were renamed, moved or deleted (favorites follow) */
   foldersChanged?: (profileId: string, fromBucket: string, toBucket: string, moves: { from: string; to: string | null }[]) => void;
 };
@@ -75,7 +77,9 @@ function usePaneCore(env: PaneEnv) {
 
   const sort: Sort = useMemo(() => ({ key: settings.sort.by, dir: settings.sort.desc ? "desc" : "asc" }), [settings.sort]);
   const caps = useCaps(profile?.id);
-  const ent = useEntries(here, sort, settings.foldersFirst, onError);
+  // this computer's disk hides dotfiles (.DS_Store and the like) unless "Show hidden files" is on
+  const hideDotfiles = !!caps?.localPaths && !settings.showHiddenFiles;
+  const ent = useEntries(here, sort, settings.foldersFirst, onError, hideDotfiles);
   const { lst, sr, search, entries } = ent;
   const sel = useSelection(entries, ent.stale);
   const { setSelected, setCursor } = sel;
@@ -271,6 +275,8 @@ function usePaneCore(env: PaneEnv) {
     id: env.id,
     profile,
     bucket,
+    /** what the root is called on screen (the bucket's name; "Desktop" for a folder of this computer) */
+    bucketLabel: profile && bucket ? (env.rootLabel?.(profile.id, bucket) ?? bucket) : bucket,
     prefix,
     here,
     history: loc.history,

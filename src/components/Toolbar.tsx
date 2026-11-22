@@ -8,6 +8,8 @@ export const TILE_MAX = 320;
 
 export function Toolbar({
   bucket,
+  bucketLabel,
+  canShare = true,
   prefix,
   canUp,
   canBack,
@@ -52,6 +54,10 @@ export function Toolbar({
   onToggleDual,
 }: {
   bucket: string | null;
+  /** what the root is called on screen (defaults to `bucket`) */
+  bucketLabel?: string | null;
+  /** the connection can make share links (false hides "Copy link") */
+  canShare?: boolean;
   prefix: string;
   canUp: boolean;
   canBack: boolean;
@@ -128,7 +134,7 @@ export function Toolbar({
           </button>
         </div>
         {bucket ? (
-          <Breadcrumbs bucket={bucket} parts={parts} onNavigate={onNavigate} />
+          <Breadcrumbs bucket={bucket} label={bucketLabel ?? bucket} parts={parts} onNavigate={onNavigate} />
         ) : (
           <nav className="crumbs" aria-label="Path" data-tauri-drag-region>
             <span className="crumb muted">No bucket selected</span>
@@ -206,7 +212,7 @@ export function Toolbar({
                 <Icon name="download" />
                 <span>Download</span>
               </button>
-              {singleFileSelected && (
+              {singleFileSelected && canShare && (
                 <button className="tool" onClick={onCopyLink} title="Copy a share link">
                   <Icon name="link" />
                   <span>Copy link</span>

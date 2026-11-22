@@ -62,6 +62,8 @@ export function Sidebar({
   favorites,
   onOpenFavorite,
   onRemoveFavorite,
+  rootLabel = (_p, r) => r,
+  builtIn = () => false,
 }: {
   profiles: Profile[];
   /** connection of the bucket on screen */
@@ -88,6 +90,10 @@ export function Sidebar({
   favorites?: Favorite[];
   onOpenFavorite?(f: Favorite): void;
   onRemoveFavorite?(f: Favorite): void;
+  /** what to call a root on screen (this computer's folders: "Desktop" for its path) */
+  rootLabel?: (profileId: string, root: string) => string;
+  /** a connection that comes with the app (This Mac): no edit button, no "Open bucket by name" */
+  builtIn?: (p: Profile) => boolean;
 }) {
   // connections whose hidden buckets are on show (to pick which to bring back)
   const [showHidden, setShowHidden] = useState<Set<string>>(new Set());
@@ -105,7 +111,7 @@ export function Sidebar({
             </div>
             {favorites.map((f) => {
               const p = profiles.find((x) => x.id === f.profileId);
-              const where = [p?.name ?? "Removed connection", f.bucket, ...f.prefix.split("/").filter(Boolean)].join(" › ");
+              const where = [p?.name ?? "Removed connection", rootLabel(f.profileId, f.bucket), ...f.prefix.split("/").filter(Boolean)].join(" › ");
               const open = () => p && onOpenFavorite?.(f);
               return (
                 <div
@@ -152,6 +158,7 @@ export function Sidebar({
           const hiddenHere = (list?.names ?? []).filter((b) => hidden.has(b));
           const revealing = showHidden.has(p.id) && hiddenHere.length > 0;
           const kybl = p.provider === KYBL;
+          const own = builtIn(p);
           return (
             <div key={p.id}>
               <div
@@ -161,21 +168,29 @@ export function Sidebar({
                 role="button"
                 tabIndex={0}
                 aria-expanded={open}
-                title={p.endpoint}
+                title={own ? undefined : p.endpoint}
               >
-                <ProviderBadge provider={p.provider} />
+                {own ? (
+                  <span className="pbadge local" aria-hidden="true">
+                    <Icon name="server" size={12} />
+                  </span>
+                ) : (
+                  <ProviderBadge provider={p.provider} />
+                )}
                 <span className="side-label">{p.name}</span>
-                <button
-                  className="icon-btn side-edit"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onEditProfile(p);
-                  }}
-                  title="Edit connection"
-                  aria-label={`Edit connection ${p.name}`}
-                >
-                  <Icon name="edit" size={14} />
-                </button>
+                {!own && (
+                  <button
+                    className="icon-btn side-edit"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEditProfile(p);
+                    }}
+                    title="Edit connection"
+                    aria-label={`Edit connection ${p.name}`}
+                  >
+                    <Icon name="edit" size={14} />
+                  </button>
+                )}
                 <Icon name="chevron" size={13} className="side-caret" />
               </div>
               {open && (
@@ -198,8 +213,10 @@ export function Sidebar({
                         data-drop-bucket={b}
                         data-drop-profile={p.id}
                       >
-                        <Icon name="bucket" size={14} />
-                        <span className="side-label">{b}</span>
+                        <Icon name={own ? "folder" : "bucket"} size={14} />
+                        <span className="side-label" title={own ? b : undefined}>
+                          {rootLabel(p.id, b)}
+                        </span>
                         <button
                           className="icon-btn side-hide"
                           onClick={(e) => {
@@ -208,7 +225,7 @@ export function Sidebar({
                           }}
                           onKeyDown={(e) => e.stopPropagation()}
                           title={isHidden ? "Show in the sidebar" : "Hide from the sidebar"}
-                          aria-label={isHidden ? `Show ${b} in the sidebar` : `Hide ${b} from the sidebar`}
+                          aria-label={isHidden ? `Show ${rootLabel(p.id, b)} in the sidebar` : `Hide ${rootLabel(p.id, b)} from the sidebar`}
                         >
                           <Icon name={isHidden ? "eye" : "eye-off"} size={13} />
                         </button>
@@ -231,7 +248,7 @@ export function Sidebar({
                       <span className="side-label">{revealing ? "Done choosing" : `${hiddenHere.length} hidden`}</span>
                     </button>
                   )}
-                  {list?.loading && !list.names.length && <p className="side-note">Loading buckets…</p>}
+                  {list?.loading && !list.names.length && <p className="side-note">{own ? "Loading…" : "Loading buckets…"}</p>}
                   {list?.note && (
                     <p className="side-note">
                       {list.note}
@@ -245,7 +262,7 @@ export function Sidebar({
                       )}
                     </p>
                   )}
-                  {kybl ? (
+                  {own ? null : kybl ? (
                     <button className="side-item sub link" onClick={() => onNewBucket(p)}>
                       <Icon name="plus" size={14} />
                       <span className="side-label">New bucket</span>

@@ -27,6 +27,8 @@ export type DragState = {
   pane: string | null;
   label: string | null;
   copy: boolean;
+  /** the place only takes copies (this computer and the cloud): ⌘ doesn't move */
+  copyOnly?: boolean;
 };
 
 const THRESHOLD = 5;
@@ -53,7 +55,7 @@ export function useItemDrag<P extends string = string>({
    * Whether another pane accepts the items at `dest` (a folder there; null = the folder it
    * shows), and the label of that place; null = no.
    */
-  paneTarget?: (pane: P, dest: string | null, items: Entry[]) => { dest: string; label: string } | null;
+  paneTarget?: (pane: P, dest: string | null, items: Entry[]) => { dest: string; label: string; copyOnly?: boolean } | null;
 }) {
   const [drag, setDrag] = useState<DragState | null>(null);
   const cbs = useRef({ paneId, onDrop, onSpring, bucketTarget, paneTarget });
@@ -73,11 +75,12 @@ export function useItemDrag<P extends string = string>({
     let destBucket: string | null = null;
     let destPane: P | null = null;
     let label: string | null = null;
+    let copyOnly = false;
     let alt = false;
     let meta = false;
     let springTimer = 0;
     let springFor: string | null = null;
-    const isCopy = () => (destBucket != null || destPane != null ? !meta : alt);
+    const isCopy = () => copyOnly || (destBucket != null || destPane != null ? !meta : alt);
 
     const light = (el: HTMLElement | null) => {
       if (lit === el) return;
@@ -92,6 +95,7 @@ export function useItemDrag<P extends string = string>({
       destBucket = null;
       destPane = null;
       label = null;
+      copyOnly = false;
       const pane = (el?.closest("[data-pane]")?.getAttribute("data-pane") ?? null) as P | null;
       let ok = false;
       if (el && pane && cbs.current.paneId && pane !== cbs.current.paneId) {
@@ -101,6 +105,7 @@ export function useItemDrag<P extends string = string>({
           d = t.dest;
           destPane = pane;
           label = t.label;
+          copyOnly = !!t.copyOnly;
           ok = true;
         }
       } else if (el && (d != null || !el.hasAttribute("data-drop-pane"))) {
@@ -117,6 +122,7 @@ export function useItemDrag<P extends string = string>({
         destBucket = null;
         destPane = null;
         label = null;
+        copyOnly = false;
       }
       // spring-load folder rows/tiles (not breadcrumbs: those are one click away anyway)
       const springable = ok && !destPane && el!.hasAttribute("data-spring") ? d : null;
@@ -143,7 +149,7 @@ export function useItemDrag<P extends string = string>({
       alt = e.altKey;
       meta = e.metaKey;
       hit(e.clientX, e.clientY);
-      setDrag({ items, x: e.clientX, y: e.clientY, dest, bucket: destBucket, pane: destPane, label, copy: isCopy() });
+      setDrag({ items, x: e.clientX, y: e.clientY, dest, bucket: destBucket, pane: destPane, label, copy: isCopy(), copyOnly });
     };
     const up = (e: MouseEvent) => {
       const wasActive = active;
