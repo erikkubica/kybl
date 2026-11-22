@@ -2,6 +2,8 @@ mod commands;
 // "Connect Kybl Storage": browser sign-in on computers and phones
 mod kybl_connect;
 mod mobile;
+// open / share / save to Photos / haptics / shared-in files / app lock (phones and desktop)
+mod platform;
 #[cfg(desktop)]
 mod prefs;
 mod state;
@@ -35,6 +37,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(mobile::plugin())
         .plugin(transfer_notice::plugin())
+        .plugin(platform::plugin())
         .manage(state::AppState::default())
         .register_asynchronous_uri_scheme_protocol("thumb", thumbs::protocol);
 
@@ -107,6 +110,15 @@ pub fn run() {
             mobile::download_folder,
             mobile::native_theme,
             mobile::picked_files,
+            platform::open_local,
+            platform::reveal_local,
+            platform::share_files,
+            platform::share_text,
+            platform::save_to_photos,
+            platform::haptic,
+            platform::take_shared_files,
+            platform::biometric_unlock,
+            platform::set_privacy_screen,
             thumbs::clear_thumbnail_cache,
             transfers::start_upload,
             transfers::start_download,

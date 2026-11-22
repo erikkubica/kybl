@@ -377,8 +377,12 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     case "share_text":
     case "save_to_photos":
     case "haptic":
+    case "set_privacy_screen":
       console.info("[mock]", cmd, a);
       return null;
+    case "biometric_unlock":
+      console.info("[mock]", cmd, a);
+      return true;
     case "take_shared_files":
       return [];
     case "get_transfer_prefs":

@@ -1,9 +1,11 @@
 package app.kybl.mobile
 
+import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
@@ -28,6 +30,27 @@ class MainActivity : TauriActivity() {
     screens++
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    if (privacy) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    // a screen recreated by Android still holds the intent it was started with: handled already
+    if (savedInstanceState == null) handleIntent(intent)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    handleIntent(intent)
+  }
+
+  /** A transfer notification tapped, or files shared into Kybl from another app. */
+  private fun handleIntent(intent: Intent?) {
+    if (intent?.action == OPEN_TRANSFERS) {
+      try {
+        KyblNative.openTransfers()
+      } catch (e: Throwable) {
+        // the Rust library isn't there (it always is in the app): just open
+      }
+      return
+    }
+    ShareIntake.handle(this, intent)
   }
 
   override fun onDestroy() {
@@ -37,6 +60,12 @@ class MainActivity : TauriActivity() {
 
   companion object {
     @Volatile private var screens = 0
+
+    /** The action of the transfer notifications' tap (TransferService.kt). */
+    const val OPEN_TRANSFERS = "app.kybl.mobile.OPEN_TRANSFERS"
+
+    /** App lock is on: the screen is kept out of the app switcher and screenshots (FLAG_SECURE). */
+    @Volatile var privacy = false
 
     /**
      * How many Kybl screens exist. Read from Rust over JNI (src/transfer_notice.rs): after the

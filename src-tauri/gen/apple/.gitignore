@@ -10,3 +10,5 @@ KyblConnect/Package.resolved
 *.p8
 *.cer
 *.mobileprovision
+KyblPlatform/.build/
+KyblPlatform/Package.resolved

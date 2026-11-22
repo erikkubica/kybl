@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -91,6 +92,7 @@ class TransferService : Service() {
         ok = o.optInt("ok")
         failed = o.optInt("failed")
         kind = o.optString("kind", "download")
+        savedTo = o.optString("savedTo")
       }
       val app = ctx.applicationContext
       Handler(Looper.getMainLooper()).post {
@@ -145,11 +147,19 @@ class TransferService : Service() {
       }
     }
 
-    private fun openApp(ctx: Context): PendingIntent? {
-      val launch = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName) ?: return null
-      launch.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-      return PendingIntent.getActivity(ctx, 0, launch, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+    /** Opens Kybl on Transfers (MainActivity hands the tap to the page as `open-transfers`). */
+    private fun openTransfers(ctx: Context): PendingIntent {
+      val open = Intent(ctx, MainActivity::class.java)
+        .setAction(MainActivity.OPEN_TRANSFERS)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+      return PendingIntent.getActivity(ctx, 0, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
+
+    private fun cancelAll(ctx: Context): PendingIntent =
+      PendingIntent.getBroadcast(
+        ctx, 1, Intent(ctx, TransferCancelReceiver::class.java),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+      )
 
     private fun progressNotification(ctx: Context, s: TransferSnapshot): Notification {
       val upload = s.kind == "upload"
@@ -162,7 +172,8 @@ class TransferService : Service() {
         .setSilent(true)
         .setCategory(NotificationCompat.CATEGORY_PROGRESS)
         .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-        .setContentIntent(openApp(ctx))
+        .setContentIntent(openTransfers(ctx))
+        .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelAll(ctx))
       if (s.total > 0) {
         val pct = ((s.done.toDouble() / s.total) * 1000).toInt().coerceIn(0, 1000)
         b.setProgress(1000, pct, false)
@@ -184,7 +195,11 @@ class TransferService : Service() {
           "upload" -> "Uploaded ${files(s.ok)}"
           "both" -> "Transferred ${files(s.ok)}"
           else -> "Downloaded ${files(s.ok)}"
-        } to if (s.kind == "upload") "Your storage is up to date." else "Saved to Download/Kybl."
+        } to when {
+          s.kind == "upload" -> "Your storage is up to date."
+          s.savedTo.isNotEmpty() -> "Saved to ${s.savedTo}."
+          else -> "Saved to your downloads."
+        }
         s.ok == 0 -> (if (s.failed == 1) "A $noun failed" else "${s.failed} ${noun}s failed") to "Open Kybl to see what went wrong."
         else -> "${files(s.ok)} done, ${s.failed} failed" to "Open Kybl to see what went wrong."
       }
@@ -193,8 +208,19 @@ class TransferService : Service() {
         .setContentTitle(title)
         .setContentText(text)
         .setAutoCancel(true)
-        .setContentIntent(openApp(ctx))
+        .setContentIntent(openTransfers(ctx))
         .build()
+    }
+  }
+}
+
+/** "Cancel" on the progress notification: every transfer stops, as with Cancel in the app. */
+class TransferCancelReceiver : BroadcastReceiver() {
+  override fun onReceive(context: Context, intent: Intent) {
+    try {
+      KyblNative.cancelAllTransfers()
+    } catch (e: Throwable) {
+      // no Rust side in this process (it was ended): nothing is running to cancel
     }
   }
 }

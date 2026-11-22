@@ -4,7 +4,7 @@ fn main() {
     tauri_build::build()
 }
 
-/// Builds the Swift package of "Connect Kybl Storage" (`gen/apple/KyblConnect`) into the iOS
+/// Builds the Swift packages (`gen/apple/KyblConnect`, `gen/apple/KyblPlatform`) into the iOS
 /// library, the way a Tauri plugin crate links its `ios` folder: Tauri's Swift API is copied next
 /// to it (`gen/apple/.tauri/tauri-api`, ignored by git) and the package is linked statically.
 #[cfg(target_os = "macos")]
@@ -34,6 +34,10 @@ fn ios_plugins() {
     let _ = std::fs::remove_dir_all(&target);
     copy(Path::new(&api), &target);
     println!("cargo:rerun-if-changed=gen/apple/KyblConnect/Package.swift");
+    println!("cargo:rerun-if-changed=gen/apple/KyblPlatform/Package.swift");
+    println!("cargo:rerun-if-changed=gen/apple/KyblPlatform/Sources");
     println!("cargo:rerun-if-changed=gen/apple/KyblConnect/Sources");
     tauri_utils::build::link_apple_library("kybl-connect", apple.join("KyblConnect"));
+    // open / share / Photos / haptics / app lock / background time (src/platform.rs)
+    tauri_utils::build::link_apple_library("kybl-platform", apple.join("KyblPlatform"));
 }

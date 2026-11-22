@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Folders whose files "Open with" and the share sheet hand to other apps (PlatformPlugin.kt);
+     a file anywhere else is copied into the cache first. -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-  <external-path name="my_images" path="." />
-  <cache-path name="my_cache_images" path="." />
+  <!-- shared storage: Download/Kybl -->
+  <external-path name="shared" path="." />
+  <!-- the app's own folder in shared storage (downloads on Android 7-10 without the permission) -->
+  <external-files-path name="app_shared" path="." />
+  <external-cache-path name="app_shared_cache" path="." />
+  <!-- the app's private folders: previews, temporary copies -->
+  <files-path name="files" path="." />
+  <cache-path name="cache" path="." />
 </paths>

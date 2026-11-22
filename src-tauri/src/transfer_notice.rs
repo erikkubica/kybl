@@ -13,8 +13,13 @@
 //! exits once the last transfer ends, and opening Kybl meanwhile makes the window again
 //! (`screen_back_without_window`).
 //!
-//! Elsewhere this is a no-op; `download_file` resuming after a dropped connection covers iOS,
-//! which suspends the app and lets the download carry on when it comes back.
+//! The notification's Cancel stops every transfer (`cancel_all`), and tapping it opens the app
+//! on Transfers (`platform::open_transfers`).
+//!
+//! iOS: while transfers run, the app holds a background task (`platform::ios`), which gives
+//! them about half a minute to finish when the app is left instead of being frozen mid-file.
+//! What doesn't finish in time resumes when the app comes back (`download_file` picks up a
+//! dropped download). Desktop: a no-op.
 
 use tauri::{plugin::TauriPlugin, AppHandle, Wry};
 
@@ -43,6 +48,8 @@ pub fn plugin() -> TauriPlugin<Wry> {
 pub fn queued(_app: &AppHandle, _id: &str, _dir: Dir, _name: &str) {
     #[cfg(target_os = "android")]
     android::with(_app, |n| n.queued(_id, _dir, _name));
+    #[cfg(target_os = "ios")]
+    ios::queued(_id);
 }
 
 pub fn progress(_app: &AppHandle, _id: &str, _done: u64, _total: u64) {
@@ -54,6 +61,63 @@ pub fn progress(_app: &AppHandle, _id: &str, _done: u64, _total: u64) {
 pub fn finished(_app: &AppHandle, _id: &str, _ok: Option<bool>) {
     #[cfg(target_os = "android")]
     android::with(_app, |n| n.finished(_id, _ok));
+    #[cfg(target_os = "ios")]
+    ios::finished(_id);
+}
+
+/// Where downloads are being saved, for the "done" notification ("Saved to Download/Kybl.").
+/// Set by `download_folder`, which knows the folder actually used.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub fn saved_to(_label: &str) {
+    #[cfg(target_os = "android")]
+    android::set_saved_to(_label);
+}
+
+/// "Cancel" on the notification: every running and queued transfer stops, the same way the
+/// page's cancel button stops one (`transfers::cancel_transfer`).
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub fn cancel_all(app: &AppHandle) {
+    #[cfg(target_os = "android")]
+    {
+        let mut ids = Vec::new();
+        android::with(app, |n| ids = n.active_ids());
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            use tauri::Manager;
+            let state = app.state::<crate::state::AppState>();
+            let cancels = state.cancels.lock().await;
+            for id in ids {
+                if let Some(flag) = cancels.get(&id) {
+                    flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        });
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
+}
+
+#[cfg(target_os = "ios")]
+mod ios {
+    use std::{collections::HashSet, sync::Mutex};
+
+    static RUNNING: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+    pub fn queued(id: &str) {
+        let mut r = RUNNING.lock().unwrap();
+        let set = r.get_or_insert_with(HashSet::new);
+        if set.insert(id.to_string()) && set.len() == 1 {
+            crate::platform::ios::background_begin();
+        }
+    }
+
+    pub fn finished(id: &str) {
+        let mut r = RUNNING.lock().unwrap();
+        let Some(set) = r.as_mut() else { return };
+        if set.remove(id) && set.is_empty() {
+            crate::platform::ios::background_end();
+        }
+    }
 }
 
 /// The app's screen went away (swiped off in the app switcher, or left with Back). Tauri ends
@@ -145,6 +209,14 @@ mod android {
         failed: u32,
         /// "upload" | "download" | "both", for the summary wording
         kind: &'static str,
+        /// where downloads went, as the person would look for it ("Download/Kybl")
+        saved_to: String,
+    }
+
+    static SAVED_TO: Mutex<String> = Mutex::new(String::new());
+
+    pub fn set_saved_to(label: &str) {
+        *SAVED_TO.lock().unwrap() = label.to_string();
     }
 
     pub struct Notice {
@@ -231,6 +303,10 @@ mod android {
             open && self.windowless.swap(false, Ordering::SeqCst)
         }
 
+        pub fn active_ids(&self) -> Vec<String> {
+            self.batch.0.lock().unwrap().active.keys().cloned().collect()
+        }
+
         pub fn window_not_back(&self) {
             self.windowless.store(true, Ordering::SeqCst);
         }
@@ -296,36 +372,7 @@ mod android {
         })
     }
 
-    /// Runs `f` with one of the app's classes over JNI, loaded through the application context
-    /// (registered by tao at start-up), which lives as long as the process: it works with or
-    /// without the app's screen.
-    fn with_class<T>(
-        name: &str,
-        f: impl FnOnce(&mut jni::JNIEnv, &jni::objects::JObject, &jni::objects::JClass) -> jni::errors::Result<T>,
-    ) -> Result<T, String> {
-        use jni::{
-            objects::{JClass, JObject},
-            JavaVM,
-        };
-        let ctx = ndk_context::android_context();
-        let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }.map_err(|e| e.to_string())?;
-        let mut env = vm.attach_current_thread_permanently().map_err(|e| e.to_string())?;
-        let result = (|| {
-            let context = unsafe { JObject::from_raw(ctx.context().cast()) };
-            let loader = env.call_method(&context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?.l()?;
-            let name = env.new_string(name)?;
-            let class: JClass = env
-                .call_method(&loader, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;", &[(&name).into()])?
-                .l()?
-                .into();
-            f(&mut env, &context, &class)
-        })();
-        if result.is_err() && env.exception_check().unwrap_or(false) {
-            let _ = env.exception_describe();
-            let _ = env.exception_clear();
-        }
-        result.map_err(|e| e.to_string())
-    }
+    use crate::platform::android::with_class;
 
     fn snapshot(b: &Batch) -> Snapshot {
         let n = b.active.len();
@@ -360,6 +407,7 @@ mod android {
                 (true, false) => "upload",
                 _ => "download",
             },
+            saved_to: SAVED_TO.lock().unwrap().clone(),
         }
     }
 

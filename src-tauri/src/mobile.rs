@@ -85,26 +85,39 @@ pub async fn picked_files<R: Runtime>(_app: AppHandle<R>, uris: Vec<String>) -> 
     Ok(out)
 }
 
-/// Where downloads are saved. iOS: the app's Documents folder, which the Files app shows under
-/// "On My iPhone › Kybl". Android: `Download/Kybl` in shared storage (apps may create files there
-/// without a permission since Android 11), else the app's own downloads folder. Desktop: Downloads.
+/// Where downloads are saved: the folder actually used, so what the app says matches where the
+/// files are. iOS: the app's Documents folder, which the Files app shows under
+/// "On My iPhone › Kybl". Android: `Download/Kybl` in shared storage when the app may write
+/// there, else the app's own folder (see `platform::android::download_dir`). Desktop: Downloads.
 #[tauri::command]
-pub fn download_folder<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
+pub async fn download_folder<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
     let paths = app.path();
     #[cfg(target_os = "ios")]
     let dir = paths.document_dir().map_err(err)?;
     #[cfg(target_os = "android")]
     let dir = {
-        let shared = std::path::PathBuf::from("/storage/emulated/0/Download/Kybl");
-        let probe = shared.join(".kybl-write-test");
-        let ok = std::fs::create_dir_all(&shared).is_ok() && std::fs::write(&probe, b"").is_ok();
-        let _ = std::fs::remove_file(&probe);
-        if ok { shared } else { paths.download_dir().map_err(err)? }
+        let _ = paths;
+        let app = crate::platform::app().ok_or("Kybl isn't ready yet. Try again in a moment.")?;
+        let dir = crate::platform::android::download_dir(app).await?;
+        crate::transfer_notice::saved_to(&storage_label(&dir.to_string_lossy()));
+        dir
     };
     #[cfg(desktop)]
     let dir = paths.download_dir().map_err(err)?;
     std::fs::create_dir_all(&dir).map_err(err)?;
     Ok(dir.to_string_lossy().into_owned())
+}
+
+/// A folder in shared storage as a file manager shows it: `/storage/emulated/10/Download/Kybl`
+/// (a work profile) reads "Download/Kybl".
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn storage_label(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("/storage/emulated/") {
+        if let Some((_user, inside)) = rest.split_once('/') {
+            return inside.to_string();
+        }
+    }
+    path.strip_prefix("/sdcard/").unwrap_or(path).to_string()
 }
 
 /// WKWebView shrinks its scroll view by the safe areas on its own, which leaves the page short of
@@ -162,4 +175,14 @@ pub fn native_theme<R: Runtime>(window: tauri::WebviewWindow<R>, dark: Option<bo
     });
     #[cfg(not(target_os = "ios"))]
     let _ = (window, dark);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn shared_storage_reads_like_a_file_manager() {
+        assert_eq!(super::storage_label("/storage/emulated/0/Download/Kybl"), "Download/Kybl");
+        assert_eq!(super::storage_label("/storage/emulated/10/Android/data/app.kybl.mobile/files/Download"), "Android/data/app.kybl.mobile/files/Download");
+        assert_eq!(super::storage_label("/data/user/0/app"), "/data/user/0/app");
+    }
 }
