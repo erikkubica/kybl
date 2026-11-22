@@ -213,7 +213,7 @@ pub fn run() {
             placeholders::placeholder_head,
             placeholders::placeholders_folder,
             placeholders::placeholders_folder_save,
-            placeholders::placeholder_remember,
+            placeholders::placeholder_from_thumbnail,
             filecache::cache_usage,
             filecache::clear_caches,
             // WP0: storage core

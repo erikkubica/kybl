@@ -26,6 +26,9 @@ import type {
   Transfer,
 } from "./types";
 
+/** One listed file version, as the photo placeholder commands take it. */
+export type PlaceholderItem = { key: string; etag: string | null; size: number };
+
 /** Outcome of a long bucket operation; `error` is "Cancelled" when the user stopped it. */
 export type OpResult = { done: number; total: number; error: string | null };
 
@@ -141,6 +144,19 @@ export const api = {
   cacheUsage: () => invoke<{ thumbnails: number; files: number }>("cache_usage"),
   /** Clears both caches; resolves to the bytes freed. */
   clearCaches: () => invoke<number>("clear_caches"),
+
+  // photo placeholders (ThumbHash, see placeholders.rs and thumbhash.ts); null = none known
+  placeholdersLookup: (profileId: string, root: string, items: PlaceholderItem[]) =>
+    invoke<(string | null)[]>("placeholders_lookup", { profileId, root, items }),
+  placeholderHead: (profileId: string, root: string, item: PlaceholderItem) =>
+    invoke<string | null>("placeholder_head", { profileId, root, key: item.key, etag: item.etag, size: item.size }),
+  /** the folder's shared index: `[etag, size, hash]` by name (empty when it has none) */
+  placeholdersFolder: (profileId: string, root: string, prefix: string) =>
+    invoke<Record<string, [string, number, string]>>("placeholders_folder", { profileId, root, prefix }),
+  placeholdersFolderSave: (profileId: string, root: string, prefix: string, known: (PlaceholderItem & { hash: string })[], present: string[] | null) =>
+    invoke<void>("placeholders_folder_save", { profileId, root, prefix, known, present }),
+  placeholderFromThumbnail: (profileId: string, root: string, item: PlaceholderItem, jpeg: Uint8Array) =>
+    invoke<string | null>("placeholder_from_thumbnail", { profileId, root, key: item.key, etag: item.etag, size: item.size, jpeg: Array.from(jpeg) }),
 
   /** Names and sizes of files from the system picker (paths, or URIs on phones). */
   pickedFiles: (uris: string[]) =>

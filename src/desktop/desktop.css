@@ -132,6 +132,10 @@
 .ql-image.thumb {
   object-fit: scale-down;
 }
+/* a photo's blurry placeholder fills the window while the image loads */
+.ql-image.ph {
+  object-fit: contain;
+}
 .ql-video {
   max-width: 100%;
   max-height: 100%;

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { IMAGE_MODES } from "../imageMode";
 import { api, errMessage, errSummary, type TransferPrefs } from "../api";
 import { Icon } from "../Icons";
 import { ProviderBadge } from "../components/Sidebar";
@@ -91,12 +92,6 @@ export function SettingsScreen({
 
         <h2 className="m-section">Browsing</h2>
         <ul className="m-group">
-          <Toggle
-            label="Photo previews"
-            sub="Small pictures instead of icons in lists and grids"
-            on={settings.listThumbs}
-            set={(v) => set("listThumbs", v)}
-          />
           <Toggle label="Reopen the last folder" on={settings.restoreLast} set={(v) => set("restoreLast", v)} />
           <Toggle label="Ask before deleting" on={settings.confirmDelete} set={(v) => set("confirmDelete", v)} />
           <Toggle label="Binary sizes (1 KiB = 1024 B)" on={settings.binaryUnits} set={(v) => set("binaryUnits", v)} />
@@ -157,6 +152,21 @@ export function SettingsScreen({
             </ul>
           </>
         )}
+
+        <h2 className="m-section">Photos in lists</h2>
+        <div className="m-group m-pad">
+          <div className="m-seg" role="group" aria-label="Photos in lists">
+            {IMAGE_MODES.map((m) => (
+              <button key={m.id} className={settings.imageMode === m.id ? "on" : ""} aria-pressed={settings.imageMode === m.id} onClick={() => set("imageMode", m.id)}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <p className="m-hint">
+            {IMAGE_MODES.find((m) => m.id === settings.imageMode)?.hint} A connection can have its own setting, and can share placeholders through a small hidden file in each
+            photo folder, so your other devices show them straight away: tap ⋯ next to it.
+          </p>
+        </div>
 
         <h2 className="m-section">Share links expire after</h2>
         <div className="m-group m-pad">

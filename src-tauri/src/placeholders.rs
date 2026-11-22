@@ -239,7 +239,7 @@ pub async fn uploaded(profile: &str, root: &str, key: &str, etag: Option<&str>, 
 
 /// The etag and size a hash belongs to, then the hash: `["etag", 1234, "hash"]` in the file.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct Stamp(String, i64, String);
+pub struct Stamp(String, i64, String);
 
 /// `<folder>/.kybl/thumbhash.json`: `{"v":1,"files":{"IMG_0001.jpg":["etag",1234,"hash"],…}}`,
 /// names relative to the folder.
@@ -272,7 +272,9 @@ impl FolderIndex {
         serde_json::to_vec(&FolderIndex { v: INDEX_VERSION, files: self.files.clone() }).unwrap_or_default()
     }
 
-    /// The hash of `name` if it was made for this version of it.
+    /// The hash of `name` if it was made for this version of it (the app matches the same way,
+    /// in thumbhash.ts).
+    #[cfg(test)]
     fn hash_of(&self, name: &str, etag: &str, size: i64) -> Option<&str> {
         self.files.get(name).filter(|s| s.0 == bare(etag) && s.1 == size).map(|s| s.2.as_str())
     }
@@ -384,8 +386,9 @@ pub async fn placeholder_head(
     Ok(Some(hash))
 }
 
-/// The placeholders the folder's shared index has for these files (one request; a missing index
-/// is normal). Matches are also kept here. Never for this device's own files.
+/// The folder's shared index, by name: `[etag, size, hash]` each (one request; a missing index
+/// is normal and answers an empty one). The app uses the entries whose etag and size still match.
+/// Never for this device's own files.
 #[tauri::command]
 pub async fn placeholders_folder(
     app: AppHandle,
@@ -393,28 +396,12 @@ pub async fn placeholders_folder(
     profile_id: String,
     root: String,
     prefix: String,
-    items: Vec<Item>,
-) -> Result<Vec<Option<String>>, String> {
+) -> Result<BTreeMap<String, Stamp>, String> {
     let s = registry::open(&app, &state, &profile_id).await?;
     if s.caps().local_paths {
-        return Ok(vec![None; items.len()]);
+        return Ok(BTreeMap::new());
     }
-    let Ok(ix) = read_index(&*s, &root, &prefix).await else { return Ok(vec![None; items.len()]) };
-    let found: Vec<Option<String>> = items
-        .iter()
-        .map(|it| {
-            let name = it.key.strip_prefix(&prefix)?;
-            ix.hash_of(name, it.etag.as_deref().unwrap_or(""), it.size).map(str::to_string)
-        })
-        .collect();
-    if let Some(st) = store() {
-        for (it, h) in items.iter().zip(&found) {
-            if let Some(h) = h {
-                st.put(&profile_id, &root, &it.key, it.etag.as_deref().unwrap_or(""), it.size, h);
-            }
-        }
-    }
-    Ok(found)
+    Ok(read_index(&*s, &root, &prefix).await.map(|ix| ix.files).unwrap_or_default())
 }
 
 /// Adds these placeholders to the folder's shared index: read what is there now, merge, write it
@@ -458,12 +445,15 @@ pub async fn placeholders_folder_save(
         .map_err(|e| e.to_string())
 }
 
-/// A placeholder made in the web view (HEIC photos, which only WebKit decodes).
+/// The placeholder of a thumbnail made in the web view (HEIC photos, which only WebKit decodes):
+/// worked out from that small JPEG and kept like any other.
 #[tauri::command]
-pub fn placeholder_remember(profile_id: String, root: String, key: String, etag: Option<String>, size: i64, hash: String) {
-    if let (Some(s), true) = (store(), valid(&hash)) {
+pub async fn placeholder_from_thumbnail(profile_id: String, root: String, key: String, etag: Option<String>, size: i64, jpeg: Vec<u8>) -> Option<String> {
+    let hash = tokio::task::spawn_blocking(move || hash_jpeg(&jpeg)).await.ok().flatten()?;
+    if let Some(s) = store() {
         s.put(&profile_id, &root, &key, etag.as_deref().unwrap_or(""), size, &hash);
     }
+    Some(hash)
 }
 
 #[cfg(test)]

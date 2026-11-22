@@ -9,6 +9,8 @@ import type { Sort } from "../components/FileTable";
 import type { Entry } from "../types";
 import { sameLoc, useListing, type Loc } from "./useListing";
 import { useSearch } from "./useSearch";
+import { isPlaceholderIndex, useFolderPlaceholders } from "../thumbhash";
+import { useImageModes } from "../imageMode";
 
 /**
  * Folders up to this many items are loaded whole in the background, so the list is in its final
@@ -56,7 +58,8 @@ export function useEntries(
       const needle = search.query.toLowerCase();
       const base = search.loc.prefix;
       const folders = new Set<string>();
-      for (const o of search.results) {
+      const results = search.results.filter((o) => !isPlaceholderIndex(o.key));
+      for (const o of results) {
         const parts = o.key.slice(base.length).split("/");
         let acc = base;
         for (let i = 0; i < parts.length - 1; i++) {
@@ -66,17 +69,22 @@ export function useEntries(
       }
       const found = [
         ...[...folders].map(folderEntry),
-        ...search.results.map<Entry>((o) => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native, mime: o.mime, id: o.id })),
+        ...results.map<Entry>((o) => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native, mime: o.mime, id: o.id })),
       ];
       return hideDotfilesOf(search.loc.profileId) ? found.filter((e) => !dotted(e.key.slice(base.length))) : found;
     }
     if (!fresh && !stale) return [];
     const all = [
-      ...listing.folders.map(folderEntry),
+      // a folder's shared photo placeholders (.kybl/) are Kybl's, never shown
+      ...listing.folders.filter((f) => !isPlaceholderIndex(f)).map(folderEntry),
       ...listing.objects.map<Entry>((o) => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native, mime: o.mime, id: o.id })),
     ];
     return listing.loc && hideDotfilesOf(listing.loc.profileId) ? all.filter((e) => !e.name.startsWith(".")) : all;
   }, [listing, search, fresh, stale, hideDotfilesOf]);
+
+  // the folder's shared photo placeholders follow its whole listing (never the filtered one)
+  const imageModes = useImageModes();
+  useFolderPlaceholders(!search && fresh ? here : null, allEntries, !listing.next, imageModes);
 
   /** What the list shows. */
   const listEntries: Entry[] = useMemo(() => {

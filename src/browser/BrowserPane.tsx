@@ -14,6 +14,7 @@ import type { Settings } from "../settings";
 import { ChooseBucket, ListError, Welcome, type EmptyActions } from "./PaneEmpty";
 import { DragGhost, PaneBanners, PaneStatusBar } from "./PaneParts";
 import type { Pane } from "./usePane";
+import { useImageModes } from "../imageMode";
 
 /** the clipboard takes files on macOS only for now (see platform.rs) */
 const IS_MAC = /Mac/.test(navigator.platform || navigator.userAgent);
@@ -57,6 +58,8 @@ export function BrowserPane(p: BrowserPaneProps) {
   const onSort = (key: SortKey) => setSort(sort.key === key ? { key, dir: sort.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
   const listLoading = search ? search.running && !search.stopped && entries.length === 0 : lst.loading || !fresh;
   const listError = ent.listError;
+  // tiles read the image mode when they mount: the grid starts over when a mode changes
+  const imageModes = useImageModes();
   /** what this connection can't show: storage classes */
   const noClass = !!pane.caps && !pane.caps.storageClass;
   // a click on the empty background: nothing selected and no keyboard cursor left on a tile
@@ -130,7 +133,7 @@ export function BrowserPane(p: BrowserPaneProps) {
                 <ListError profile={profile} error={listError} onRetry={ent.refresh} onReconnect={p.empty.onReconnect} />
               ) : pane.view === "grid" ? (
                 <GridView
-                  key={`${settings.binaryUnits}${settings.absoluteDates}${settings.listThumbs}`}
+                  key={`${settings.binaryUnits}${settings.absoluteDates}${imageModes}`}
                   entries={listEntries}
                   selected={selected}
                   loading={listLoading}

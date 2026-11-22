@@ -3,6 +3,8 @@ import { useMeasured, useWindowed } from "../useWindowed";
 import { formatBytes, entrySize } from "../format";
 import { EmptyState, FileIcon } from "./FileIcon";
 import { cachedThumb, canListThumb, loadThumb } from "../thumbs";
+import { cachedPlaceholder, canPlaceholder, learnPlaceholder, loadPlaceholder } from "../thumbhash";
+import { imageModeFor } from "../imageMode";
 import { useListNav, useMarquee, type Box, type FolderSizeInfo, type SelectKeys } from "./listNav";
 import type { Entry } from "../types";
 
@@ -43,21 +45,33 @@ const Card = memo(function Card({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const visible = useRef(false);
-  const eligible = canListThumb(entry);
+  // the image mode is read at mount: the pane remounts the grid when it changes
+  const eligible = canListThumb(entry, profileId);
+  const phEligible = imageModeFor(profileId) !== "off" && canPlaceholder(entry);
   const [thumb, setThumb] = useState<string | null | undefined>(() =>
     eligible ? cachedThumb(profileId, bucket, entry) : null,
   );
+  // the blurry ThumbHash stand-in, shown under the thumbnail until that fades in over it
+  const [ph, setPh] = useState<string | null | undefined>(() =>
+    phEligible && !thumb ? cachedPlaceholder(profileId, bucket, entry) : null,
+  );
 
   useEffect(() => {
-    if (!eligible) return;
+    if (!eligible && !phEligible) return;
     const el = ref.current;
     if (!el) return;
     let alive = true;
     const request = () => {
-      if (thumb !== undefined) return;
-      loadThumb(profileId, bucket, entry, () => visible.current).then((u) => {
-        if (alive && u !== undefined) setThumb(u);
-      });
+      if (eligible && thumb === undefined)
+        loadThumb(profileId, bucket, entry, () => visible.current).then((u) => {
+          if (!alive || u === undefined) return;
+          setThumb(u);
+          if (u) learnPlaceholder(profileId, bucket, entry);
+        });
+      if (phEligible && ph === undefined)
+        loadPlaceholder(profileId, bucket, entry, () => visible.current).then((u) => {
+          if (alive && u !== undefined) setPh(u);
+        });
     };
     const io = new IntersectionObserver(
       (items) => {
@@ -74,7 +88,7 @@ const Card = memo(function Card({
       io.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eligible, profileId, bucket, entry.key, entry.etag, entry.size]);
+  }, [eligible, phEligible, profileId, bucket, entry.key, entry.etag, entry.size]);
 
   const folder = entry.kind === "folder";
   const meta = folder ? (size && !size.running ? formatBytes(size.bytes) : "") : entrySize(entry);
@@ -100,12 +114,12 @@ const Card = memo(function Card({
       }}
       title={entry.key}
     >
-      <div className={`card-thumb ${thumb ? "has-img" : ""} ${folder ? "is-folder" : ""}`}>
-        {thumb ? (
-          <img src={thumb} alt="" draggable={false} />
-        ) : (
+      <div className={`card-thumb ${thumb || ph ? "has-img" : ""} ${folder ? "is-folder" : ""}`}>
+        {ph && <img className="ph" src={ph} alt="" draggable={false} />}
+        {thumb && <img src={thumb} alt="" draggable={false} />}
+        {!thumb && !ph && (
           <FileIcon entry={entry} size={34} big>
-            {eligible && thumb === undefined && <span className="shimmer" />}
+            {((eligible && thumb === undefined) || (phEligible && ph === undefined)) && <span className="shimmer" />}
           </FileIcon>
         )}
       </div>

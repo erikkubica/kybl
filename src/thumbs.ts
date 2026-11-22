@@ -1,6 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { api } from "./api";
 import { HEIC_IN_WEBVIEW, extOf, isHeic } from "./format";
+import { imageModeFor } from "./imageMode";
 import type { Entry } from "./types";
 
 /** Formats the thumbnail engine can decode (EXIF thumbnails for jpg/tif, full decode for the rest). */
@@ -16,11 +17,6 @@ const MAX_BYTES = 40 * 1000 * 1000;
 const MAX_HEIC_BYTES = 25 * 1000 * 1000;
 const THUMB_PX = 360;
 
-/** Off by default: lists show file-type icons and download nothing until this is turned on. */
-let listThumbs = false;
-export function setListThumbs(on: boolean) {
-  listThumbs = on;
-}
 /**
  * Phones on mobile data with "Wi-Fi only" on: lists don't fetch new thumbnails (ones already
  * loaded still show). A single opened photo still gets one.
@@ -32,9 +28,12 @@ export function setThumbsPaused(on: boolean) {
 export function thumbsPaused(): boolean {
   return paused;
 }
-/** Thumbnails in folder lists and grids. A single opened image still uses its thumbnail. */
-export function canListThumb(e: Entry): boolean {
-  return listThumbs && !paused && canThumb(e);
+/**
+ * Thumbnails in folder lists and grids: only in the "full" image mode of the connection
+ * (imageMode.ts). A single opened image still uses its thumbnail.
+ */
+export function canListThumb(e: Entry, profileId: string): boolean {
+  return imageModeFor(profileId) === "full" && !paused && canThumb(e);
 }
 
 export function canThumb(e: Entry): boolean {
@@ -128,6 +127,11 @@ function heicThumb(profileId: string, bucket: string, e: Entry, k: string): Prom
       canvas.getContext("2d")?.drawImage(img, 0, 0, canvas.width, canvas.height);
       const small = await new Promise<Blob | null>((ok) => canvas.toBlob(ok, "image/jpeg", 0.8));
       if (!small) throw new Error("no thumbnail");
+      // the backend can't decode HEIC: it makes this photo's placeholder from the small JPEG
+      await small
+        .arrayBuffer()
+        .then((b) => api.placeholderFromThumbnail(profileId, bucket, { key: e.key, etag: e.etag ?? null, size: e.size }, new Uint8Array(b)))
+        .catch(() => {});
       const url = URL.createObjectURL(small);
       blobs.push({ k, url });
       if (blobs.length > MAX_BLOBS) {

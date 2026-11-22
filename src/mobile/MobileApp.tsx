@@ -28,6 +28,8 @@ import { useUpdates } from "../updates";
 import { UpdateBanner } from "../components/UpdateBanner";
 import { Breadcrumbs } from "../components/Breadcrumbs";
 import { canThumb, thumbsPaused } from "../thumbs";
+import { isPlaceholderIndex, useFolderPlaceholders } from "../thumbhash";
+import { IMAGE_MODES, SHARE_PLACEHOLDERS_TEXT, connImageMode, imageModeFor, imageModeLabel, setConnImageMode, setSharedPlaceholders, sharedPlaceholdersOn, useImageModes } from "../imageMode";
 import type { Entry, ObjInfo, Profile } from "../types";
 import { SkeletonList, type PressPoint, type RowHandlers } from "./rows";
 import { ActionSheet, type SheetItem } from "./ActionSheet";
@@ -478,13 +480,16 @@ export default function MobileApp() {
   const net = useNetwork(() => refreshAll());
   const offline = !net.online || (!!lst.error && isNetworkError(lst.error));
   useEffect(() => syncThumbPause(prefs, net), [prefs, net]);
-  const thumbsKey = `${settings.listThumbs}-${!!prefs?.wifiOnly && net.metered}`;
+  // rows read the image mode when they mount: bumped when it (or the Wi-Fi pause) changes
+  const imageModes = useImageModes();
+  const thumbsKey = `${imageModes}-${!!prefs?.wifiOnly && net.metered}`;
 
   // ------------------------------------------------------------ entries
   const filter = searchOpen && !search ? query.trim().toLowerCase() : "";
   const entries: Entry[] = useMemo(() => {
-    if (search) return search.results.map(toEntry);
-    const folders: Entry[] = listing.folders.map((f) => ({ kind: "folder", key: f, name: baseName(f), size: 0, modified: null }));
+    if (search) return search.results.filter((o) => !isPlaceholderIndex(o.key)).map(toEntry);
+    // a folder's shared photo placeholders (.kybl/) are Kybl's, never shown
+    const folders: Entry[] = listing.folders.filter((f) => !isPlaceholderIndex(f)).map((f) => ({ kind: "folder", key: f, name: baseName(f), size: 0, modified: null }));
     const files: Entry[] = listing.objects.filter((o) => o.key !== loc?.prefix).map(toEntry);
     const byName = (a: Entry, b: Entry) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
     const cmp =
@@ -498,6 +503,10 @@ export default function MobileApp() {
     const all = [...folders, ...files];
     return filter ? all.filter((e) => e.name.toLowerCase().includes(filter)) : all;
   }, [listing, search, sort, loc?.prefix, filter]);
+  // the folder's shared photo placeholders follow its whole listing (not what the filter shows),
+  // and only once the listing on screen is this folder's
+  const listedFiles = useMemo(() => listing.objects.map(toEntry), [listing]);
+  useFolderPlaceholders(!search && !lst.loading ? loc : null, listedFiles, !listing.next, imageModes);
 
   const media = useMemo(() => entries.filter(isMedia), [entries]);
   const fileCount = useMemo(() => entries.filter((e) => e.kind === "file").length, [entries]);
@@ -849,9 +858,13 @@ export default function MobileApp() {
   const answerThumbs = (on: boolean) => {
     LS.set("m.askedThumbs", "1");
     setAskedThumbs(true);
-    if (on) updateSettings({ ...settings, listThumbs: true });
+    if (on && loc) {
+      // a connection with its own mode gets the thumbnails there; otherwise the app does
+      if (connImageMode(loc.profileId)) setConnImageMode(loc.profileId, "full");
+      else updateSettings({ ...settings, imageMode: "full" });
+    }
   };
-  const offerThumbs = !askedThumbs && !settings.listThumbs && photoFolder && !search && media.some((m) => canThumb(m));
+  const offerThumbs = !askedThumbs && !!loc && imageModeFor(loc.profileId) !== "full" && photoFolder && !search && media.some((m) => canThumb(m));
 
   // ------------------------------------------------------------ render
   const title = loc ? (loc.prefix ? baseName(loc.prefix) : rootLabel(loc.profileId, loc.bucket)) : "Kybl";
@@ -1208,6 +1221,31 @@ export default function MobileApp() {
     </>
   );
 
+  /** A connection's own photo settings: its image mode (or the app's), and sharing placeholders. */
+  const photoSheet = (p: Profile) => {
+    const own = connImageMode(p.id);
+    const shared = sharedPlaceholdersOn(p.id);
+    const items: SheetItem[] = [
+      { icon: own === null ? "check" : "photos", label: `As in Settings (${imageModeLabel(settings.imageMode)})`, run: () => setConnImageMode(p.id, null) },
+      ...IMAGE_MODES.map((m): SheetItem => ({ icon: own === m.id ? "check" : "photos", label: m.label, run: () => setConnImageMode(p.id, m.id) })),
+    ];
+    // this phone's own files are never shared
+    if (!isLocal(p))
+      items.push({
+        icon: shared ? "check" : "share",
+        label: shared ? "Stop sharing placeholders" : "Share placeholders with other devices…",
+        run: () =>
+          shared
+            ? setSharedPlaceholders(p.id, false)
+            : setSheet({
+                title: "Share photo placeholders?",
+                message: SHARE_PLACEHOLDERS_TEXT,
+                items: [{ icon: "share", label: "Share placeholders", run: () => setSharedPlaceholders(p.id, true) }],
+              }),
+      });
+    setSheet({ title: `Photos on ${connName(p)}`, message: IMAGE_MODES.find((m) => m.id === imageModeFor(p.id))?.hint, items });
+  };
+
   const connections = (
     <Connections
       profiles={listed}
@@ -1233,6 +1271,7 @@ export default function MobileApp() {
         if (add === "new") items.push({ icon: "plus", label: "New bucket", run: () => askNewBucket(p) });
         else if (add === "open") items.push({ icon: "bucket", label: "Open bucket by name", run: () => askBucketName(p) });
         if (!single) items.push({ icon: "refresh", label: `Refresh ${words}`, run: () => void loadBuckets(p) });
+        items.push({ icon: "photos", label: `Photos: ${imageModeLabel(imageModeFor(p.id))}${connImageMode(p.id) ? "" : " (as in Settings)"}`, run: () => photoSheet(p) });
         // everything this connection shows, each bucket into a folder of its own name
         const shown = (buckets[p.id]?.names ?? []).filter((b) => !(hiddenBuckets[p.id] ?? []).includes(b));
         if (!isLocal(p) && shown.length > 0) {

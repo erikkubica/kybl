@@ -2318,6 +2318,11 @@ input[type="checkbox"] {
   position: absolute;
   inset: 0;
 }
+/* the ThumbHash placeholder: static, and drawn smoothly when scaled up; the thumbnail fades in
+   over it once (the img rule's fade-in) */
+.card-thumb img.ph {
+  animation: none;
+}
 .ico-folder.big svg {
   position: absolute;
   top: 50%;

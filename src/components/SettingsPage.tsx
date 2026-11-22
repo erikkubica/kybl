@@ -4,6 +4,7 @@ import { Icon, type IconName } from "../Icons";
 import { SCHEMES, type Palette } from "../schemes";
 import { ACCENTS, DEFAULTS, EXPIRIES, SCALES, isDark, type ColumnId, type FontChoice, type Settings, type Theme } from "../settings";
 import { api, errMessage, type TransferPrefs } from "../api";
+import { IMAGE_MODES } from "../imageMode";
 import type { Profile } from "../types";
 import { ProviderBadge } from "./Sidebar";
 import { KyblLockup } from "./KyblMark";
@@ -160,6 +161,10 @@ function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info"
   );
 }
 
+const PHOTOS_HINT =
+  "Off: file icons only, nothing is downloaded. Placeholders: a blurry preview of each photo where one is known, no thumbnail downloads (good on a slow line). Thumbnails: the blurry preview at once, then the thumbnail, downloaded once and kept on disk. " +
+  "Right-click a connection to give it its own setting, or to share placeholders: that writes a small hidden file into each photo folder you open, so your other devices show placeholders straight away.";
+
 function Row({ label, hint, stack, children }: { label: ReactNode; hint?: string; stack?: boolean; children?: ReactNode }) {
   return (
     <div className={`set-row ${stack ? "stack" : ""}`}>
@@ -197,7 +202,7 @@ function CacheRow({ onToast }: { onToast: (kind: "success" | "error" | "info", t
     }
   };
   const hint =
-    "Thumbnails and recently opened files are kept on this computer, so folders and documents reopen without downloading again. Clearing is safe; they are fetched again when needed." +
+    "Thumbnails, photo placeholders and recently opened files are kept on this computer, so folders and documents reopen without downloading again. Clearing is safe; they are fetched again when needed." +
     (usage ? ` Now: ${formatBytes(usage.thumbnails)} of thumbnails, ${formatBytes(usage.files)} of files.` : "");
   return (
     <Row label="Cache" hint={hint}>
@@ -601,8 +606,8 @@ export function SettingsPage({
               <>
                 <h3 className="set-title">Lists</h3>
                 <div className="set-card">
-                  <Row label="Thumbnails" hint="Show photo previews in the grid. Each one is downloaded once and kept on disk; off, the grid shows file icons and downloads nothing.">
-                    <Switch label="Thumbnails" on={settings.listThumbs} onChange={(listThumbs) => onChange({ listThumbs })} />
+                  <Row label="Photos" hint={PHOTOS_HINT}>
+                    <Seg label="Photos" value={settings.imageMode} options={IMAGE_MODES.map((m) => ({ value: m.id, label: m.label }))} onChange={(imageMode) => onChange({ imageMode })} />
                   </Row>
                   <Row label="Folders first" hint="Keep folders above files, whatever the sort order.">
                     <Switch label="Folders first" on={settings.foldersFirst} onChange={(foldersFirst) => onChange({ foldersFirst })} />

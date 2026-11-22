@@ -4,6 +4,8 @@ import { Icon } from "../Icons";
 import { FileIcon } from "../components/FileIcon";
 import { formatBytes, formatDate, parentPrefix, entrySize, entryKind } from "../format";
 import { cachedThumb, canListThumb, loadThumb } from "../thumbs";
+import { cachedPlaceholder, canPlaceholder, learnPlaceholder, loadPlaceholder } from "../thumbhash";
+import { imageModeFor } from "../imageMode";
 import type { Entry } from "../types";
 import { whenNear } from "./thumbObserver";
 
@@ -56,9 +58,31 @@ export function usePress(onTap: () => void, onLongPress: (p: PressPoint) => void
   };
 }
 
-/** The thumbnail once the item is near the screen (undefined while unknown, null when there is none). */
+/**
+ * The thumbnail once the item is near the screen (undefined while unknown, null when there is
+ * none), and the photo's blurry placeholder (thumbhash.ts) to show until then, or instead of it
+ * in the "placeholders" image mode.
+ */
 function useThumb(entry: Entry, profileId: string, bucket: string) {
-  const ok = canListThumb(entry);
+  const ok = canListThumb(entry, profileId);
+  const phOk = imageModeFor(profileId) !== "off" && canPlaceholder(entry);
+  const [ph, setPh] = useState<string | null | undefined>(() => (phOk ? cachedPlaceholder(profileId, bucket, entry) : null));
+  const phRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!phOk) return setPh(null);
+    const known = cachedPlaceholder(profileId, bucket, entry);
+    if (known !== undefined) return setPh(known);
+    if (!phRef.current) return;
+    let live = true;
+    const stop = whenNear(phRef.current, () => {
+      loadPlaceholder(profileId, bucket, entry, () => live).then((u) => live && u !== undefined && setPh(u));
+    });
+    return () => {
+      live = false;
+      stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phOk, profileId, bucket, entry.key, entry.etag, entry.size]);
   const [url, setUrl] = useState<string | null | undefined>(() => (ok ? cachedThumb(profileId, bucket, entry) : null));
   const ref = useRef<HTMLSpanElement>(null);
   useEffect(() => {
@@ -76,7 +100,11 @@ function useThumb(entry: Entry, profileId: string, bucket: string) {
     if (!ref.current) return;
     let live = true;
     const stop = whenNear(ref.current, () => {
-      loadThumb(profileId, bucket, entry, () => live).then((u) => live && u !== undefined && setUrl(u));
+      loadThumb(profileId, bucket, entry, () => live).then((u) => {
+        if (!live || u === undefined) return;
+        setUrl(u);
+        if (u) learnPlaceholder(profileId, bucket, entry);
+      });
     });
     return () => {
       live = false;
@@ -84,15 +112,18 @@ function useThumb(entry: Entry, profileId: string, bucket: string) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ok, profileId, bucket, entry.key, entry.etag]);
-  return { ref, url, loading: ok && url === undefined };
+  return { ref, phRef, url, ph, loading: ok && url === undefined && !ph };
 }
 
 /** Folder / page art like the desktop grid, or the photo itself on a small print. */
 export function Art({ entry, profileId, bucket, className = "" }: { entry: Entry; profileId: string; bucket: string; className?: string }) {
-  const { ref, url, loading } = useThumb(entry, profileId, bucket);
+  const { ref, phRef, url, ph, loading } = useThumb(entry, profileId, bucket);
   return (
-    <span ref={ref} className={`m-art ${className} ${url ? "has-img" : ""}`}>
-      {url ? <img src={url} alt="" draggable={false} /> : <FileIcon entry={entry} big />}
+    <span ref={ref} className={`m-art ${className} ${url || ph ? "has-img" : ""}`}>
+      <span ref={phRef} className="m-art-ph" aria-hidden="true" />
+      {ph && <img className="ph" src={ph} alt="" draggable={false} />}
+      {url && <img src={url} alt="" draggable={false} />}
+      {!url && !ph && <FileIcon entry={entry} big />}
       {loading && <span className="shimmer" />}
     </span>
   );
