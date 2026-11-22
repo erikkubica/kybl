@@ -278,6 +278,54 @@ pub struct ChildSize {
     objects: u64,
 }
 
+/// Runs `fut` unless `cancel` is set first (checked every 100 ms): a slow listing request on a
+/// big scan shouldn't hold up Stop. None when cancelled.
+async fn unless_cancelled<T>(fut: impl std::future::Future<Output = T>, cancel: Option<&AtomicBool>) -> Option<T> {
+    let Some(flag) = cancel else { return Some(fut.await) };
+    tokio::pin!(fut);
+    let mut tick = tokio::time::interval(Duration::from_millis(100));
+    loop {
+        tokio::select! {
+            out = &mut fut => return Some(out),
+            _ = tick.tick() => if flag.load(Ordering::Relaxed) { return None },
+        }
+    }
+}
+
+/// Tries a listing page that failed once or twice more before giving up: a scan of a few million
+/// keys takes thousands of requests, and one dropped connection shouldn't throw all of it away.
+/// Listing the same page again (same continuation token) is safe.
+const PAGE_TRIES: u32 = 3;
+
+async fn list_page(
+    client: &Client,
+    bucket: &str,
+    prefix: &str,
+    token: Option<&str>,
+    cancel: Option<&AtomicBool>,
+) -> Result<aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Output, String> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let req = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(prefix)
+            .set_continuation_token(token.map(str::to_string))
+            .send();
+        match unless_cancelled(req, cancel).await {
+            None => return Err(CANCELLED.into()),
+            Some(Ok(out)) => return Ok(out),
+            Some(Err(e)) if attempt >= PAGE_TRIES => return Err(sdk_err(e)),
+            Some(Err(_)) => {
+                if unless_cancelled(tokio::time::sleep(Duration::from_secs(attempt as u64)), cancel).await.is_none() {
+                    return Err(CANCELLED.into());
+                }
+            }
+        }
+    }
+}
+
 /// Total size of everything under `prefix`, however deep. S3 stores no folder sizes, so this reads
 /// the whole flat listing (1,000 keys per request) and adds it up. The same pass also totals each
 /// direct subfolder, so one run answers for the folder and for every folder directly inside it.
@@ -296,14 +344,7 @@ pub(crate) async fn prefix_size(
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             return Err(CANCELLED.into());
         }
-        let out = client
-            .list_objects_v2()
-            .bucket(bucket)
-            .prefix(prefix)
-            .set_continuation_token(token.take())
-            .send()
-            .await
-            .map_err(sdk_err)?;
+        let out = list_page(client, bucket, prefix, token.as_deref(), cancel).await?;
         for o in out.contents() {
             // folder markers ("name/" with no content) are not files
             if o.key().is_some_and(|k| k.ends_with('/')) && o.size().unwrap_or(0) == 0 {
@@ -362,10 +403,18 @@ pub async fn folder_size(
     let client = client_for(&app, &state, &profile_id).await?;
     let flag = Arc::new(AtomicBool::new(false));
     state.cancels.lock().await.insert(op_id.clone(), flag.clone());
+    // a few events a second is plenty, even when a fast server lists many pages a second
+    let mut last = std::time::Instant::now() - Duration::from_secs(1);
     let result = prefix_size(&client, &bucket, &prefix, Some(&flag), |bytes, objects| {
-        let _ = app.emit("size-progress", SizeProgress { op_id: op_id.clone(), bytes, objects });
+        if last.elapsed() >= Duration::from_millis(200) {
+            last = std::time::Instant::now();
+            let _ = app.emit("size-progress", SizeProgress { op_id: op_id.clone(), bytes, objects });
+        }
     })
     .await;
+    if let Ok((bytes, objects, _)) = &result {
+        let _ = app.emit("size-progress", SizeProgress { op_id: op_id.clone(), bytes: *bytes, objects: *objects });
+    }
     state.cancels.lock().await.remove(&op_id);
     result.map(|(bytes, objects, children)| FolderSize { bytes, objects, children })
 }
@@ -375,7 +424,8 @@ pub async fn folder_size(
 pub struct SearchResult {
     objects: Vec<ObjInfo>,
     scanned: u64,
-    /// true when the scan stopped early (limit reached) so results may be incomplete
+    /// true when the scan stopped early (a limit reached, or stopped by the user), so results
+    /// may be incomplete
     truncated: bool,
 }
 
@@ -438,14 +488,15 @@ async fn search_scan(
     let mut token: Option<String> = None;
     let mut truncated = false;
     'pages: loop {
-        let out = client
-            .list_objects_v2()
-            .bucket(&bucket)
-            .prefix(&prefix)
-            .set_continuation_token(token.take())
-            .send()
-            .await
-            .map_err(sdk_err)?;
+        let out = match list_page(client, &bucket, &prefix, token.as_deref(), Some(cancel)).await {
+            Ok(out) => out,
+            // stopped: what was found so far is the answer, marked as incomplete
+            Err(e) if e == CANCELLED => {
+                truncated = true;
+                break;
+            }
+            Err(e) => return Err(e),
+        };
         let before = found.len();
         let mut full = false;
         for o in out.contents() {
@@ -468,6 +519,7 @@ async fn search_scan(
             break 'pages;
         }
         if cancel.load(Ordering::Relaxed) {
+            truncated = true;
             break;
         }
         if scanned >= max_scan {
@@ -1165,6 +1217,48 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
     use tauri::{test::{mock_builder, mock_context, noop_assets}, Listener};
+
+    #[test]
+    fn search_streams_matches_and_stops_when_asked() {
+        let Ok(endpoint) = std::env::var("KYBL_TEST_ENDPOINT") else { return };
+        let p = Profile {
+            id: "t".into(),
+            name: "t".into(),
+            provider: "custom".into(),
+            endpoint,
+            region: "us-east-1".into(),
+            access_key_id: "testkey".into(),
+            bucket: None,
+            path_style: true,
+        };
+        let client = build_client(&p, "testsecret");
+        tauri::async_runtime::block_on(async move {
+            let base = format!("se-{}/", uuid::Uuid::new_v4());
+            for k in ["Report.pdf", "sub/report-2.pdf", "photo.jpg"] {
+                client
+                    .put_object()
+                    .bucket("testbucket")
+                    .key(format!("{base}{k}"))
+                    .body(aws_sdk_s3::primitives::ByteStream::from_static(b"x"))
+                    .send()
+                    .await
+                    .unwrap();
+            }
+            let streamed = Mutex::new(Vec::<String>::new());
+            let go = AtomicBool::new(false);
+            let r = search_scan(&client, "testbucket", &base, "REPORT", 1000, 100, &go, |_, found| {
+                streamed.lock().unwrap().extend(found.iter().map(|o| o.key.clone()));
+            })
+            .await
+            .unwrap();
+            assert_eq!(r.objects.len(), 2, "case-insensitive, in subfolders too");
+            assert!(!r.truncated);
+            assert_eq!(streamed.into_inner().unwrap().len(), 2, "every match also arrives as progress");
+            let stop = AtomicBool::new(true);
+            let r = search_scan(&client, "testbucket", &base, "report", 1000, 100, &stop, |_, _| {}).await.unwrap();
+            assert!(r.truncated, "a stopped search says its results may be incomplete");
+        });
+    }
 
     #[test]
     fn folder_size_adds_up_everything_below() {

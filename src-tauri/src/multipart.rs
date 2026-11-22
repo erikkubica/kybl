@@ -236,6 +236,7 @@ fn upload_gone(e: &str) -> bool {
 }
 
 /// Uploads a file, fresh, as sync does: a failed multipart upload is aborted, never kept.
+#[cfg_attr(mobile, allow(dead_code))]
 pub(crate) async fn upload_file(
     client: &Client,
     bucket: &str,

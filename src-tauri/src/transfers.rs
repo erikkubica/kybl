@@ -59,6 +59,7 @@ pub struct ActiveTransfer {
 static ACTIVE: LazyLock<Mutex<HashMap<String, ActiveTransfer>>> = LazyLock::new(Default::default);
 
 /// How many transfers have not ended (for the quit prompt).
+#[cfg_attr(mobile, allow(dead_code))]
 pub fn active_count() -> usize {
     ACTIVE.lock().unwrap().len()
 }
@@ -92,6 +93,7 @@ fn resume_delay(n: u32) -> Duration {
 }
 
 /// Downloads to `dest`, replacing a file already there, as sync does. Nothing is kept if it fails.
+#[cfg_attr(mobile, allow(dead_code))]
 pub(crate) async fn download_file(
     client: &Client,
     bucket: &str,
