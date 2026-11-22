@@ -777,6 +777,10 @@ kbd {
   display: inline-block;
   width: 13px;
   height: 13px;
+  /* never stretched by a flex row that wraps to several lines (it spun as a long ellipse) */
+  align-self: center;
+  aspect-ratio: 1;
+  box-sizing: border-box;
   flex: none;
   border: 2px solid var(--border-strong);
   border-top-color: var(--accent);
@@ -806,7 +810,8 @@ kbd {
 .banner svg {
   flex: none;
 }
-.banner > span {
+/* the banner's text takes the room (not its spinner, also a span) */
+.banner > span:not(.spinner) {
   flex: 1;
   min-width: 0;
 }
