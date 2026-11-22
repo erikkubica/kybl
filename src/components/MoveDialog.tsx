@@ -22,6 +22,7 @@ export function MoveDialog({
   startPrefix,
   initialMode,
   onSubmit,
+  onOtherConnection,
   onClose,
 }: {
   profileId: string;
@@ -32,6 +33,8 @@ export function MoveDialog({
   startPrefix: string;
   initialMode: "move" | "copy";
   onSubmit: (dest: string, mode: "move" | "copy", destBucket: string) => void;
+  /** "Another connection…": the same items to any other connection (or this computer), as a job */
+  onOtherConnection?: (mode: "move" | "copy") => void;
   onClose: () => void;
 }) {
   const [mode, setMode] = useState(initialMode);
@@ -231,9 +234,16 @@ export function MoveDialog({
         </p>
       </div>
       <div className="modal-foot split">
-        <button className="btn" onClick={() => setCreating(true)} disabled={creating}>
-          <Icon name="folder-plus" size={14} /> New folder
-        </button>
+        <div className="btn-row">
+          <button className="btn" onClick={() => setCreating(true)} disabled={creating}>
+            <Icon name="folder-plus" size={14} /> New folder
+          </button>
+          {onOtherConnection && (
+            <button className="btn" onClick={() => onOtherConnection(mode)} title="Copy or move to another connection, or to this computer">
+              Another connection…
+            </button>
+          )}
+        </div>
         <div className="btn-row">
           <button className="btn" onClick={onClose}>
             Cancel

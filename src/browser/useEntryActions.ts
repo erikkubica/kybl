@@ -92,6 +92,12 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
         initialMode: mode,
         startPrefix,
         onSubmit: (dest, m, destBucket) => ops.relocate(list, dest, m, { destBucket }),
+        onOtherConnection: env.openMigration
+          ? (m: "move" | "copy") => {
+              close();
+              migrate(list, m);
+            }
+          : undefined,
         onClose: close,
       }),
     );
@@ -270,11 +276,10 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       { type: "item", label: "Copy", icon: "copy", hint: "⌘C", onClick: () => ops.clip(list, "copy") },
       { type: "item", label: "Cut", icon: "move", hint: "⌘X", onClick: () => ops.clip(list, "cut") },
       folder && clip && { type: "item", label: `Paste into “${e.name}”`, icon: "copy", onClick: () => ops.paste(e.key) },
-      { type: "item", label: "Move to…", icon: "move", onClick: () => askMove(list, "move") },
-      { type: "item", label: "Copy to…", icon: "copy", onClick: () => askMove(list, "copy") },
-      !!env.openMigration && { type: "item", label: "Copy to another connection…", icon: "copy", onClick: () => migrate(list, "copy") },
-      !!env.openMigration && { type: "item", label: "Move to another connection…", icon: "move", onClick: () => migrate(list, "move") },
+      // dual pane: to the other pane's folder (F5 / F6)
       ...(env.extraItemItems?.(list) ?? []),
+      // one picker for any folder: this connection's (any bucket or drive), or another connection
+      { type: "item", label: "Copy or move to…", icon: "move", onClick: () => askMove(list, "copy") },
       !!prefix && !search && {
         type: "item",
         label: `Move to “${destLabel(parentPrefix(prefix), bucket, profile.id)}”`,
