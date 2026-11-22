@@ -2,7 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { Icon, type IconName } from "../Icons";
 import { SCHEMES, type Palette } from "../schemes";
-import { ACCENTS, DEFAULTS, EXPIRIES, SCALES, isDark, type FontChoice, type Settings, type Theme } from "../settings";
+import { ACCENTS, DEFAULTS, EXPIRIES, SCALES, isDark, type ColumnId, type FontChoice, type Settings, type Theme } from "../settings";
+import { api, errMessage, type TransferPrefs } from "../api";
 import type { Profile } from "../types";
 import { ProviderBadge } from "./Sidebar";
 import { KyblLockup } from "./KyblMark";
@@ -57,8 +58,13 @@ const SHORTCUTS: { label: string; keys: string[] }[] = [
   { label: "Refresh", keys: ["⌘", "R"] },
   { label: "Select all", keys: ["⌘", "A"] },
   { label: "Move selection", keys: ["↑", "↓", "←", "→"] },
+  { label: "First / last item", keys: ["Home", "End"] },
+  { label: "One screen up / down", keys: ["PgUp", "PgDn"] },
+  { label: "Jump to a name", keys: ["type its first letters"] },
   { label: "Extend selection", keys: ["⇧", "click"] },
   { label: "Add to selection", keys: ["⌘", "click"] },
+  { label: "Select an area", keys: ["drag on empty space"] },
+  { label: "Actions menu for the selection", keys: ["⇧", "F10"] },
   { label: "Open folder / show details", keys: ["↵"] },
   { label: "Up one level", keys: ["⌫"] },
   { label: "Delete selection", keys: ["⌘", "⌫"] },
@@ -167,6 +173,141 @@ function Seg<T extends string | number>({
 
 function Switch({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
   return <button className={`switch ${on ? "on" : ""}`} role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)} />;
+}
+
+const COLUMN_CHOICES: { id: ColumnId; label: string }[] = [
+  { id: "size", label: "Size" },
+  { id: "modified", label: "Modified" },
+  { id: "kind", label: "Kind" },
+  { id: "storageClass", label: "Storage class" },
+  { id: "etag", label: "ETag" },
+];
+
+/** 1 MB/s in the KiB/s the backend counts in. */
+const MBPS = 1_000_000 / 1024;
+const LIMITS = [0, 1, 5, 10, 25, 50];
+const COUNTS = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({ value: n, label: String(n) }));
+
+/** Transfer tuning (backend prefs) plus where downloads go (a desktop setting). */
+function TransferRows({ settings, onChange, onToast }: { settings: Settings; onChange: (patch: Partial<Settings>) => void; onToast: (kind: "success" | "error" | "info", text: string) => void }) {
+  const [prefs, setPrefs] = useState<TransferPrefs | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [folder, setFolder] = useState<string | null>(null);
+  const [custom, setCustom] = useState(false);
+  const [customText, setCustomText] = useState("");
+
+  useEffect(() => {
+    api
+      .transferPrefs()
+      .then((p) => {
+        setPrefs(p);
+        const mb = p.bandwidthLimitKbps / MBPS;
+        if (p.bandwidthLimitKbps > 0 && !LIMITS.includes(Math.round(mb))) {
+          setCustom(true);
+          setCustomText(String(Math.round(mb * 10) / 10));
+        }
+      })
+      .catch((e) => setFailed(errMessage(e)));
+    api
+      .downloadFolder()
+      .then(setFolder)
+      .catch(() => {});
+  }, []);
+
+  const change = (p: Partial<TransferPrefs>) => {
+    if (prefs) setPrefs({ ...prefs, ...p });
+    api
+      .setTransferPrefs(p)
+      .then(setPrefs)
+      .catch((e) => {
+        onToast("error", errMessage(e));
+        api.transferPrefs().then(setPrefs).catch(() => {});
+      });
+  };
+
+  const limitMb = prefs ? prefs.bandwidthLimitKbps / MBPS : 0;
+  const preset = custom ? "custom" : LIMITS.find((l) => Math.abs(l - limitMb) < 0.05) ?? "custom";
+  const customValue = Number(customText.replace(",", "."));
+  const customBad = custom && customText.trim() !== "" && !(customValue > 0 && customValue <= 10_000);
+  const applyCustom = () => {
+    if (customBad || !customText.trim()) return;
+    change({ bandwidthLimitKbps: Math.round(customValue * MBPS) });
+  };
+
+  return (
+    <>
+      <h3 className="set-title">Downloads</h3>
+      <div className="set-card">
+        <Row label="Ask where to save downloads" hint={settings.downloadAsk ? "Each download asks for a folder first." : `Downloads go straight to ${folder ?? "your Downloads folder"}. A file with the same name is kept and the new one gets a number.`}>
+          <Switch label="Ask where to save downloads" on={settings.downloadAsk} onChange={(downloadAsk) => onChange({ downloadAsk })} />
+        </Row>
+        <Row label="Download folder" hint="Used when Kybl doesn’t ask, and as the starting folder when it does.">
+          <span className="set-value selectable set-path" title={folder ?? undefined}>
+            {folder ?? "Downloads"}
+          </span>
+        </Row>
+      </div>
+
+      <h3 className="set-title">Speed</h3>
+      <div className="set-card">
+        {failed && !prefs && (
+          <Row label="Transfer settings" hint="These couldn’t be loaded.">
+            <span className="set-value">{failed.split("\n")[0]}</span>
+          </Row>
+        )}
+        {prefs && (
+          <>
+            <Row label="Files at the same time" hint="How many files each connection uploads or downloads at once. More is faster on a good line; fewer is kinder to slow connections.">
+              <Seg label="Files at the same time" value={prefs.concurrency} options={COUNTS} onChange={(concurrency) => change({ concurrency })} />
+            </Row>
+            <Row label="Parts per file" hint="Big files move in parts. Sending several parts at once speeds up single large files.">
+              <Seg label="Parts per file" value={prefs.partConcurrency} options={COUNTS} onChange={(partConcurrency) => change({ partConcurrency })} />
+            </Row>
+            <Row label="Speed limit" hint="Caps uploads and downloads together, so Kybl leaves room for everything else on your network." stack>
+              <div className="set-limit">
+                <Seg
+                  label="Speed limit"
+                  value={preset}
+                  options={[...LIMITS.map((l) => ({ value: l as number | "custom", label: l === 0 ? "Unlimited" : `${l} MB/s` })), { value: "custom" as const, label: "Custom" }]}
+                  onChange={(v) => {
+                    if (v === "custom") {
+                      setCustom(true);
+                      setCustomText(limitMb > 0 ? String(Math.round(limitMb * 10) / 10) : "");
+                    } else {
+                      setCustom(false);
+                      change({ bandwidthLimitKbps: Math.round((v as number) * MBPS) });
+                    }
+                  }}
+                />
+                {custom && (
+                  <form
+                    className="set-inline"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      applyCustom();
+                    }}
+                  >
+                    <input
+                      inputMode="decimal"
+                      aria-label="Custom speed limit in MB/s"
+                      aria-invalid={customBad}
+                      value={customText}
+                      onChange={(e) => setCustomText(e.target.value)}
+                      onBlur={applyCustom}
+                      placeholder="e.g. 2.5"
+                      autoFocus
+                    />
+                    <span>MB/s</span>
+                    {customBad && <em className="pe-err">Enter a number above 0.</em>}
+                  </form>
+                )}
+              </div>
+            </Row>
+          </>
+        )}
+      </div>
+    </>
+  );
 }
 
 /** Miniature of the app drawn with a scheme's own colours. */
@@ -420,6 +561,43 @@ export function SettingsPage({
                       onChange={(v) => onChange({ absoluteDates: v === "full" })}
                     />
                   </Row>
+                  <Row label="List columns" hint="Shown after the name in the list. You can also right-click the column headers." stack>
+                    <div className="set-checks" role="group" aria-label="List columns">
+                      {COLUMN_CHOICES.map((c) => {
+                        const on = settings.columns.includes(c.id);
+                        return (
+                          <button
+                            key={c.id}
+                            className={`chip-toggle ${on ? "on" : ""}`}
+                            aria-pressed={on}
+                            onClick={() =>
+                              onChange({
+                                columns: on ? settings.columns.filter((x) => x !== c.id) : COLUMN_CHOICES.map((x) => x.id).filter((x) => x === c.id || settings.columns.includes(x)),
+                              })
+                            }
+                          >
+                            {on && <Icon name="check" size={12} />}
+                            {c.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </Row>
+                  <Row label="Grid tile size" hint="How big tiles and thumbnails are in the grid view.">
+                    <div className="set-range">
+                      <input
+                        type="range"
+                        min={96}
+                        max={320}
+                        step={8}
+                        value={settings.tileSize}
+                        aria-label="Grid tile size"
+                        aria-valuetext={`${settings.tileSize} pixels`}
+                        onChange={(e) => onChange({ tileSize: Number(e.target.value) })}
+                      />
+                      <span className="set-value">{settings.tileSize} px</span>
+                    </div>
+                  </Row>
                   <Row label="File sizes" hint="Decimal: 1 MB = 1,000,000 bytes. Binary: 1 MiB = 1,048,576 bytes.">
                     <Seg
                       label="File sizes"
@@ -437,7 +615,8 @@ export function SettingsPage({
 
             {page === "transfers" && (
               <>
-                <h3 className="set-title">Transfers</h3>
+                <TransferRows settings={settings} onChange={onChange} onToast={onToast} />
+                <h3 className="set-title">Activity</h3>
                 <div className="set-card">
                   <Row label="Show activity automatically" hint="Open the activity panel when an upload, download, move or delete starts.">
                     <Switch label="Show activity automatically" on={settings.autoOpenTransfers} onChange={(autoOpenTransfers) => onChange({ autoOpenTransfers })} />
@@ -502,8 +681,8 @@ export function SettingsPage({
 
                 <h3 className="set-title">Reset</h3>
                 <div className="set-card">
-                  <Row label="Reset all settings" hint="Back to the defaults. Connections and their keys are not touched.">
-                    <button className="btn btn-sm btn-danger-ghost" onClick={() => onChange({ ...DEFAULTS })}>
+                  <Row label="Reset all settings" hint="Back to the defaults. Connections, their keys and your favorites are not touched.">
+                    <button className="btn btn-sm btn-danger-ghost" onClick={() => onChange({ ...DEFAULTS, favorites: settings.favorites })}>
                       Reset
                     </button>
                   </Row>

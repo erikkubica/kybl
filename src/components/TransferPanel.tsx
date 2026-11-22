@@ -72,6 +72,11 @@ type PanelProps = {
   onReveal: (t: Transfer) => void;
   /** open a finished download in its default app; defaults to api.openLocal */
   onOpenLocal?(t: Transfer): void;
+  /**
+   * Show the panel with a short "nothing here" note while there is no activity, for when the
+   * user opened it on purpose (an Activity button or menu item). Off: no activity, no panel.
+   */
+  showEmpty?: boolean;
 };
 
 function TransferPanelView({
@@ -87,14 +92,15 @@ function TransferPanelView({
   onClear,
   onReveal,
   onOpenLocal,
+  showEmpty,
   onCancelJob,
   onDismissJob,
   onOpenJob,
   onOpenSync,
 }: PanelProps) {
   const nothing = transfers.length === 0 && jobs.length === 0 && syncs.length === 0;
-  // closed and empty: no panel at all; opened on purpose (Activity button, menu): say so
-  if (nothing && !open) return null;
+  // no activity: no panel, unless it was opened on purpose
+  if (nothing && !(showEmpty && open)) return null;
 
   const jobsRunning = jobs.filter((j) => j.state === "running");
   const jobsFailed = jobs.filter((j) => j.state === "error");
