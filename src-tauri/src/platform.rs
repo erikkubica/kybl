@@ -277,13 +277,7 @@ pub async fn write_temp_file(app: tauri::AppHandle, request: tauri::ipc::Request
         .get("x-file-name")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("photo.jpg");
-    let decoded = percent_decode(raw);
-    // only the last path part, never "..": the name comes from the page
-    let name = decoded
-        .rsplit(['/', '\\'])
-        .find(|n| !n.is_empty() && *n != "." && *n != "..")
-        .unwrap_or("photo.jpg")
-        .to_string();
+    let name = temp_file_name(&percent_decode(raw), cfg!(windows));
     let dir = std::path::PathBuf::from(temp_folder(app).await?).join(format!(
         "{:x}",
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
@@ -292,6 +286,34 @@ pub async fn write_temp_file(app: tauri::AppHandle, request: tauri::ipc::Request
     let path = dir.join(name);
     tokio::fs::write(&path, bytes).await.map_err(|e| format!("Couldn't save the file: {e}"))?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// A safe file name for [`write_temp_file`] from the name the page sent: only its last path part,
+/// never "." or "..". On Windows also nothing it can't hold or that means something else there:
+/// `:` (an alternate data stream), `<>"|?*`, control characters, a trailing dot or space, or a
+/// device name such as CON or NUL (with any extension). Anything like that gets a plain name.
+fn temp_file_name(sent: &str, windows: bool) -> String {
+    const FALLBACK: &str = "photo.jpg";
+    let Some(name) = sent.rsplit(['/', '\\']).find(|n| !n.is_empty() && *n != "." && *n != "..") else {
+        return FALLBACK.into();
+    };
+    if name.contains('\0') {
+        return FALLBACK.into();
+    }
+    if windows {
+        let bad_char = name.chars().any(|c| c.is_control() || matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*'));
+        let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+        let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+            || ((stem.starts_with("COM") || stem.starts_with("LPT")) && stem.len() == 4 && stem.as_bytes()[3].is_ascii_digit());
+        if bad_char || device || name.ends_with(['.', ' ']) {
+            // keep the type, which the upload's content type comes from
+            return match name.rsplit_once('.').map(|(_, ext)| ext) {
+                Some(ext) if !ext.is_empty() && ext.len() <= 8 && ext.chars().all(|c| c.is_ascii_alphanumeric()) => format!("photo.{ext}"),
+                _ => FALLBACK.into(),
+            };
+        }
+    }
+    name.to_string()
 }
 
 fn percent_decode(s: &str) -> String {
@@ -460,6 +482,28 @@ pub(crate) async fn ask_storage(app: &AppHandle) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn temporary_files_get_names_the_system_can_hold() {
+        for w in [false, true] {
+            assert_eq!(temp_file_name("IMG_0001.HEIC", w), "IMG_0001.HEIC");
+            assert_eq!(temp_file_name("../../x/clip.mov", w), "clip.mov");
+            assert_eq!(temp_file_name("..", w), "photo.jpg");
+            assert_eq!(temp_file_name("", w), "photo.jpg");
+        }
+        // only Windows minds these
+        assert_eq!(temp_file_name("a:b.jpg", false), "a:b.jpg");
+        assert_eq!(temp_file_name("a:b.jpg", true), "photo.jpg");
+        assert_eq!(temp_file_name("shot:stream.png", true), "photo.png");
+        assert_eq!(temp_file_name("what?.mp4", true), "photo.mp4");
+        assert_eq!(temp_file_name("CON.jpg", true), "photo.jpg");
+        assert_eq!(temp_file_name("nul", true), "photo.jpg");
+        assert_eq!(temp_file_name("com1.txt", true), "photo.txt");
+        assert_eq!(temp_file_name("lpt9", true), "photo.jpg");
+        assert_eq!(temp_file_name("dot.", true), "photo.jpg");
+        assert_eq!(temp_file_name("COMé.jpg", true), "COMé.jpg");
+        assert_eq!(temp_file_name("console.jpg", true), "console.jpg");
+    }
 
     #[test]
     fn shared_files_are_handed_over_once() {
