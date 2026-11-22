@@ -361,8 +361,19 @@ pub async fn placeholders_lookup(app: AppHandle, profile_id: String, root: Strin
     .map_err(err)
 }
 
-/// The placeholder an upload from Kybl stored on the object (`x-amz-meta-thumbhash`), with one
-/// HEAD. S3 only; None when there is none or the object is no longer the listed version.
+/// The start of a JPEG to read for its camera thumbnail: the EXIF block (APP1) can't be larger
+/// than 64 KB, plus a little for a JFIF block before it. A few dozen KB per photo instead of the
+/// photo, so slow lines get placeholders for whole folders.
+const EXIF_RANGE: usize = 72 * 1024;
+
+/// The placeholder of a photo nobody here has one for yet, with one small request:
+///  - S3: a ranged GET. Its headers carry what an upload from Kybl stored on the object
+///    (`x-amz-meta-thumbhash`); otherwise a JPEG's first bytes hold the camera's thumbnail, which
+///    makes the placeholder (and, when sharp enough, the grid thumbnail too: switching to
+///    thumbnails later downloads nothing). Other formats ask for one byte: just the headers.
+///  - Other connections: a JPEG's first bytes, the same way. Never this device's own files.
+///
+/// None when there is none or the file is no longer the listed version.
 #[tauri::command]
 pub async fn placeholder_head(
     app: AppHandle,
@@ -373,15 +384,65 @@ pub async fn placeholder_head(
     etag: Option<String>,
     size: i64,
 ) -> Result<Option<String>, String> {
-    let Conn::S3(client) = storage::connect(&app, &state, &profile_id).await? else { return Ok(None) };
-    let h = client.head_object().bucket(&root).key(&key).send().await.map_err(crate::state::sdk_err)?;
-    let now = h.e_tag().map(bare).unwrap_or("");
-    if etag.as_deref().is_some_and(|e| bare(e) != now) || h.content_length().is_some_and(|n| n != size) {
-        return Ok(None);
-    }
-    let Some(hash) = h.metadata().and_then(|m| m.get("thumbhash")).filter(|v| valid(v)).cloned() else { return Ok(None) };
-    if let Some(s) = store() {
-        s.put(&profile_id, &root, &key, now, size, &hash);
+    let exif = thumbs::may_have_exif(&key);
+    let conn = storage::connect(&app, &state, &profile_id).await?;
+    let (head, now) = match &conn {
+        Conn::S3(client) => {
+            let range = if exif { format!("bytes=0-{}", EXIF_RANGE - 1) } else { "bytes=0-0".to_string() };
+            let mut out = client.get_object().bucket(&root).key(&key).range(range).send().await.map_err(crate::state::sdk_err)?;
+            let now = out.e_tag().map(bare).unwrap_or("").to_string();
+            // "bytes 0-65535/1234567": the part after the slash is the whole file
+            let total = out.content_range().and_then(|r| r.rsplit('/').next()).and_then(|t| t.parse::<i64>().ok());
+            if etag.as_deref().is_some_and(|e| bare(e) != now) || total.is_some_and(|n| n != size) {
+                return Ok(None);
+            }
+            if let Some(hash) = out.metadata().and_then(|m| m.get("thumbhash")).filter(|v| valid(v)).cloned() {
+                if let Some(s) = store() {
+                    s.put(&profile_id, &root, &key, &now, size, &hash);
+                }
+                return Ok(Some(hash));
+            }
+            if !exif {
+                return Ok(None);
+            }
+            let mut head: Vec<u8> = Vec::with_capacity(EXIF_RANGE);
+            while let Some(chunk) = out.body.try_next().await.map_err(err)? {
+                head.extend_from_slice(&chunk);
+                if head.len() >= EXIF_RANGE {
+                    break;
+                }
+            }
+            (head, now)
+        }
+        Conn::Other(s) => {
+            if !exif || s.caps().local_paths {
+                return Ok(None);
+            }
+            let (head, tag) = thumbs::read_first(&**s, &root, &key, EXIF_RANGE).await?;
+            let now = tag.as_deref().map(bare).unwrap_or("").to_string();
+            if etag.as_deref().is_some_and(|e| !now.is_empty() && bare(e) != now) {
+                return Ok(None);
+            }
+            (head, etag.as_deref().map(bare).unwrap_or(&now).to_string())
+        }
+    };
+    let s3 = matches!(conn, Conn::S3(_));
+    let made = tokio::task::spawn_blocking(move || {
+        let img = thumbs::exif_image(&head)?;
+        let hash = hash_image(&img);
+        let jpeg = (s3 && thumbs::sharp_enough(&img)).then(|| thumbs::encode_thumb(img)).flatten();
+        Some((hash, jpeg))
+    })
+    .await
+    .map_err(err)?;
+    let Some((hash, jpeg)) = made else { return Ok(None) };
+    if !now.is_empty() {
+        if let Some(s) = store() {
+            s.put(&profile_id, &root, &key, &now, size, &hash);
+        }
+        if let Some(jpeg) = jpeg {
+            thumbs::seed(&profile_id, &root, &key, &now, size, &jpeg).await;
+        }
     }
     Ok(Some(hash))
 }

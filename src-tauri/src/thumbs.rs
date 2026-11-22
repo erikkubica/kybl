@@ -218,6 +218,11 @@ pub(crate) fn cached_path<R: Runtime>(app: &AppHandle<R>, profile_id: &str, buck
 
 /// Puts a thumbnail made elsewhere (from a photo just uploaded, see placeholders.rs) into the
 /// cache, so the grid shows it without downloading anything. S3 only, like uploads with one.
+/// The thumbnail-sized JPEG of an upright camera thumbnail (for `seed`).
+pub(crate) fn encode_thumb(img: DynamicImage) -> Option<Vec<u8>> {
+    encode(img).ok()
+}
+
 pub(crate) async fn seed(profile_id: &str, bucket: &str, key: &str, etag: &str, size: i64, jpeg: &[u8]) {
     // the folder is known once the app has started (start-up pruning opens it)
     if let Some(dir) = DIR.get() {
@@ -335,17 +340,23 @@ pub(crate) fn may_have_exif(key: &str) -> bool {
 /// The first `HEAD_RANGE` bytes. Stores that can't read a range send the whole file; the rest of
 /// it is dropped (which stops the read) once the head is in.
 async fn read_head(s: &dyn Storage, root: &str, key: &str) -> Result<Vec<u8>, String> {
+    read_first(s, root, key, HEAD_RANGE).await.map(|(head, _)| head)
+}
+
+/// The first `n` bytes and the version (ETag) they came from; the same rules as `read_head`.
+pub(crate) async fn read_first(s: &dyn Storage, root: &str, key: &str, n: usize) -> Result<(Vec<u8>, Option<String>), String> {
     use futures_util::StreamExt;
-    let mut r = s.read(root, key, Some(0..HEAD_RANGE as u64), None).await?;
-    let mut head: Vec<u8> = Vec::with_capacity(HEAD_RANGE);
+    let mut r = s.read(root, key, Some(0..n as u64), None).await?;
+    let etag = r.etag.clone();
+    let mut head: Vec<u8> = Vec::with_capacity(n);
     while let Some(chunk) = r.body.next().await {
         head.extend_from_slice(&chunk.map_err(err)?);
-        if head.len() >= HEAD_RANGE {
-            head.truncate(HEAD_RANGE);
+        if head.len() >= n {
+            head.truncate(n);
             break;
         }
     }
-    Ok(head)
+    Ok((head, etag))
 }
 
 async fn read_all(s: &dyn Storage, root: &str, key: &str) -> Result<Vec<u8>, String> {

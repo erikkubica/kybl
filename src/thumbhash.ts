@@ -235,10 +235,18 @@ function headDone() {
 }
 
 /** Only S3 objects carry one (uploads from Kybl), and never on mobile data with "Wi-Fi only". */
-async function mayHead(profileId: string): Promise<boolean> {
-  if (thumbsPaused() || imageModeFor(profileId) === "off") return false;
+/**
+ * Whether to ask the connection for this photo's placeholder (one small request, see
+ * `placeholder_head` in placeholders.rs): only in Placeholders mode (Thumbnails fetches the
+ * thumbnail anyway, which leaves its placeholder behind), never for this device's own files.
+ * S3 answers for any photo (an upload's stored placeholder, or a JPEG's camera thumbnail);
+ * other connections only for JPEGs.
+ */
+async function mayHead(profileId: string, e: Entry): Promise<boolean> {
+  if (thumbsPaused() || imageModeFor(profileId) !== "placeholders") return false;
   const caps = await capsFor(profileId).catch(() => null);
-  return !!caps && caps.metadata === "s3" && !caps.localPaths;
+  if (!caps || caps.localPaths) return false;
+  return caps.metadata === "s3" || /\.(jpe?g|tiff?)$/i.test(e.name);
 }
 
 // ---------------------------------------------------------------- loading one
@@ -270,7 +278,7 @@ export function loadPlaceholder(profileId: string, bucket: string, e: Entry, sti
       if (loading) await loading;
       const fromFolder = known.get(k);
       if (fromFolder) return placeholderUrl(fromFolder);
-      if (!(await mayHead(profileId))) return null;
+      if (!(await mayHead(profileId, e))) return null;
       await headSlot();
       try {
         if (!stillWanted()) return undefined;
