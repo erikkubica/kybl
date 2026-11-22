@@ -4,10 +4,15 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
  * Keeps its children on screen for a moment after `show` turns false, marked `m-leaving`, so
  * screens and sheets can animate out instead of vanishing.
  */
-export function Presence({ show, children, ms = 220 }: { show: boolean; children: ReactNode; ms?: number }) {
+export function Presence({ show, children, ms = 220, layer, z }: { show: boolean; children: ReactNode; ms?: number; layer?: string; z?: number }) {
   const [mounted, setMounted] = useState(show);
   const last = useRef<ReactNode>(children);
-  if (show) last.current = children;
+  // a closing layer keeps its place in the stack while it animates out
+  const lastZ = useRef(z);
+  if (show) {
+    last.current = children;
+    lastZ.current = z;
+  }
   useEffect(() => {
     if (show) {
       setMounted(true);
@@ -17,7 +22,20 @@ export function Presence({ show, children, ms = 220 }: { show: boolean; children
     return () => window.clearTimeout(t);
   }, [show, ms]);
   if (!show && !mounted) return null;
-  return <div className={`m-presence ${show ? "" : "m-leaving"}`}>{show ? children : last.current}</div>;
+  return (
+    <div className={`m-presence ${show ? "" : "m-leaving"}`} data-layer={layer} style={lastZ.current == null ? undefined : ({ "--m-z": lastZ.current } as React.CSSProperties)}>
+      {show ? children : last.current}
+    </div>
+  );
+}
+
+/** A layer without an exit animation (dialogs): its place in the stack, as `--m-z`. */
+export function Layer({ id, z, children }: { id: string; z: number; children: ReactNode }) {
+  return (
+    <div className="m-presence" data-layer={id} style={{ "--m-z": z } as React.CSSProperties}>
+      {children}
+    </div>
+  );
 }
 
 /**

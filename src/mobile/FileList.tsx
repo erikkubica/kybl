@@ -111,12 +111,15 @@ export function FileList({
   onDragRef.current = onDragRange;
   const handlers = useRef<RowHandlers>(h);
   handlers.current = h;
+  /** set up by the effect below: listens to the finger while a drag-select lasts */
+  const startDrag = useRef<() => void>(() => {});
   const [stable] = useState<RowHandlers>(() => ({
     tap: (e: Entry, i: number) => handlers.current.tap(e, i),
     more: (e: Entry) => handlers.current.more(e),
     longPress: (e: Entry, i: number, p: PressPoint) => {
       handlers.current.longPress(e, i, p);
       drag.current = { anchor: i, last: i, x: p.x, y: p.y };
+      startDrag.current();
     },
   }));
 
@@ -159,8 +162,6 @@ export function FileList({
       pick();
       if (!frame) frame = requestAnimationFrame(tick);
     };
-    // non-passive and always attached: the web view decides at touch start whether a listener may
-    // stop scrolling, and the drag only starts half a second later
     const tm = (e: TouchEvent) => {
       if (!drag.current) return;
       if (e.cancelable) e.preventDefault();
@@ -169,23 +170,37 @@ export function FileList({
     const pm = (e: PointerEvent) => {
       if (drag.current && e.pointerType === "mouse" && e.buttons & 1) move(e.clientX, e.clientY);
     };
+    // Listeners only while a drag lasts: a move listener that may stop scrolling makes every
+    // scroll of the list wait for it. Since a web view may already have decided that this touch
+    // scrolls, the list also stops scrolling by itself while dragging (it scrolls at the edges
+    // from code instead).
+    let on = false;
     const end = () => {
       drag.current = null;
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
-    };
-    w.addEventListener("touchmove", tm, { passive: false });
-    window.addEventListener("pointermove", pm);
-    window.addEventListener("touchend", end);
-    window.addEventListener("touchcancel", end);
-    window.addEventListener("pointerup", end);
-    return () => {
+      if (!on) return;
+      on = false;
+      sc.classList.remove("m-drag-lock");
       w.removeEventListener("touchmove", tm);
       window.removeEventListener("pointermove", pm);
       window.removeEventListener("touchend", end);
       window.removeEventListener("touchcancel", end);
       window.removeEventListener("pointerup", end);
-      if (frame) cancelAnimationFrame(frame);
+    };
+    startDrag.current = () => {
+      if (on) return;
+      on = true;
+      sc.classList.add("m-drag-lock");
+      w.addEventListener("touchmove", tm, { passive: false });
+      window.addEventListener("pointermove", pm);
+      window.addEventListener("touchend", end);
+      window.addEventListener("touchcancel", end);
+      window.addEventListener("pointerup", end);
+    };
+    return () => {
+      end();
+      startDrag.current = () => {};
     };
   }, []);
 

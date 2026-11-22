@@ -32,9 +32,19 @@ export function usePullToRefresh(el: HTMLElement | null, onRefresh: () => Promis
     let active = false;
     let armed = false;
     let dist = 0;
+    // the move listener can stop scrolling, which makes the web view wait for it on every move:
+    // it is only attached while a touch that started at the very top (where a pull can begin) lasts
+    let tracking = false;
+    const track = (on: boolean) => {
+      if (on === tracking) return;
+      tracking = on;
+      if (on) el.addEventListener("touchmove", tm, { passive: false });
+      else el.removeEventListener("touchmove", tm);
+    };
     const ts = (e: TouchEvent) => {
       active = false;
       start = e.touches.length === 1 && el.scrollTop <= 0 && !busyRef.current ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+      track(!!start);
     };
     const tm = (e: TouchEvent) => {
       if (!start) return;
@@ -56,6 +66,7 @@ export function usePullToRefresh(el: HTMLElement | null, onRefresh: () => Promis
       setPull(dist);
     };
     const te = () => {
+      track(false);
       if (!start || !active) {
         start = null;
         return;
@@ -79,12 +90,11 @@ export function usePullToRefresh(el: HTMLElement | null, onRefresh: () => Promis
       dist = 0;
     };
     el.addEventListener("touchstart", ts, { passive: true });
-    el.addEventListener("touchmove", tm, { passive: false });
     el.addEventListener("touchend", te);
     el.addEventListener("touchcancel", te);
     return () => {
       el.removeEventListener("touchstart", ts);
-      el.removeEventListener("touchmove", tm);
+      track(false);
       el.removeEventListener("touchend", te);
       el.removeEventListener("touchcancel", te);
     };
@@ -111,28 +121,34 @@ export function PullIndicator({ pull, busy }: { pull: number; busy: boolean }) {
   );
 }
 
+export type SwipeTarget = { el: HTMLElement; overlay: boolean };
+
 /**
  * Swipe right from the left edge to go back, like the iPhone's own apps. The screen on top
  * follows the finger; letting go past a third of the width (or with a quick flick) goes back.
- * `target` finds the element to move: the topmost full-screen overlay, else the folder page.
+ * `target` finds the element to move (the caller's layer stack knows what is on top).
  */
-export function useEdgeSwipe(supported: boolean, enabled: boolean, onBack: () => void) {
+export function useEdgeSwipe(supported: boolean, enabled: boolean, onBack: () => void, target: () => SwipeTarget | null) {
   const back = useRef(onBack);
   back.current = onBack;
   const on = useRef(enabled);
   on.current = enabled;
+  const find = useRef(target);
+  find.current = target;
 
   useEffect(() => {
     // Android has its own back gesture; without this a non-passive listener would slow its scrolling
     if (!supported) return;
     const EDGE = 22;
     let s: { x: number; y: number; t: number; el: HTMLElement; overlay: boolean; going: boolean } | null = null;
-    const findTarget = (): { el: HTMLElement; overlay: boolean } | null => {
-      const overlays = [...document.querySelectorAll<HTMLElement>(".m-app .m-overlay")].filter((x) => !x.closest(".m-leaving"));
-      const top = overlays[overlays.length - 1];
-      if (top) return { el: top, overlay: true };
-      const page = document.querySelector<HTMLElement>(".m-app .m-browse .m-page");
-      return page ? { el: page, overlay: false } : null;
+    // a move listener that can stop scrolling slows every scroll down: it is only attached while
+    // a touch that started at the edge lasts
+    let tracking = false;
+    const track = (on: boolean) => {
+      if (on === tracking) return;
+      tracking = on;
+      if (on) document.addEventListener("touchmove", tm, { passive: false });
+      else document.removeEventListener("touchmove", tm);
     };
     const reset = (el: HTMLElement) => {
       el.style.removeProperty("transition");
@@ -144,9 +160,10 @@ export function useEdgeSwipe(supported: boolean, enabled: boolean, onBack: () =>
       if (!on.current || e.touches.length !== 1) return;
       const t = e.touches[0];
       if (t.clientX > EDGE) return;
-      const target = findTarget();
+      const target = find.current();
       if (!target) return;
       s = { x: t.clientX, y: t.clientY, t: performance.now(), ...target, going: false };
+      track(true);
     };
     const tm = (e: TouchEvent) => {
       if (!s) return;
@@ -169,6 +186,7 @@ export function useEdgeSwipe(supported: boolean, enabled: boolean, onBack: () =>
       else s.el.style.opacity = String(1 - Math.min(0.6, x / window.innerWidth));
     };
     const te = (e: TouchEvent) => {
+      track(false);
       const g = s;
       s = null;
       if (!g || !g.going) return;
@@ -203,12 +221,11 @@ export function useEdgeSwipe(supported: boolean, enabled: boolean, onBack: () =>
       }
     };
     document.addEventListener("touchstart", ts, { passive: true });
-    document.addEventListener("touchmove", tm, { passive: false });
     document.addEventListener("touchend", te);
     document.addEventListener("touchcancel", te);
     return () => {
       document.removeEventListener("touchstart", ts);
-      document.removeEventListener("touchmove", tm);
+      track(false);
       document.removeEventListener("touchend", te);
       document.removeEventListener("touchcancel", te);
     };

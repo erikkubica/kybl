@@ -20,7 +20,7 @@ type Props = {
   index: number;
   profileId: string;
   bucket: string;
-  /** mobile data: don't preload the neighbours' originals */
+  /** not known to be on Wi-Fi: preload only the neighbours' thumbnails, not their originals */
   lowData: boolean;
   /** Save to Photos is offered (phones) */
   photos: boolean;
@@ -54,6 +54,22 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onInd
   const [anim, setAnim] = useState(false);
   const stage = useRef<HTMLDivElement>(null);
   const cur = items[index];
+  // the slide animation ends in a timer: closed meanwhile (dragged down, back), it must not move
+  // the viewer to another photo, which would open it again
+  const pageTimer = useRef<number | undefined>(undefined);
+  const closed = useRef(false);
+  useEffect(
+    () => () => {
+      closed.current = true;
+      window.clearTimeout(pageTimer.current);
+    },
+    [],
+  );
+  const close = () => {
+    closed.current = true;
+    window.clearTimeout(pageTimer.current);
+    onClose();
+  };
 
   // thumbnails first (small and often cached), for the current item and both neighbours
   useEffect(() => {
@@ -107,7 +123,9 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onInd
       }
       setAnim(true);
       setDx(-dir * w);
-      window.setTimeout(() => {
+      window.clearTimeout(pageTimer.current);
+      pageTimer.current = window.setTimeout(() => {
+        if (closed.current) return;
         setAnim(false);
         setDx(0);
         resetZoom();
@@ -261,7 +279,7 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onInd
         setDx(0);
       }
     } else if (s.mode === "dismiss") {
-      if (my > 130 || (my > 40 && my / dt > 0.5)) onClose();
+      if (my > 130 || (my > 40 && my / dt > 0.5)) close();
       else {
         setAnim(true);
         setDy(0);
@@ -335,8 +353,20 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onInd
         {slide(items[index + 1], 1)}
       </div>
 
+      {/* swiping isn't there for VoiceOver and TalkBack: buttons, seen only once focused */}
+      {index > 0 && (
+        <button className="m-vstep prev" onClick={() => page(-1)} aria-label={`Previous: ${items[index - 1].name}`}>
+          <Icon name="chevron" size={20} />
+        </button>
+      )}
+      {index < items.length - 1 && (
+        <button className="m-vstep next" onClick={() => page(1)} aria-label={`Next: ${items[index + 1].name}`}>
+          <Icon name="chevron" size={20} />
+        </button>
+      )}
+
       <header className="m-vbar" style={{ opacity: chrome ? fade : 0 }}>
-        <button className="m-icon" onClick={onClose} aria-label="Close">
+        <button className="m-icon" onClick={close} aria-label="Close">
           <Icon name="arrow-left" size={22} />
         </button>
         <div className="m-title">
