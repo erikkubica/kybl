@@ -94,6 +94,7 @@ pub async fn delete_profile(
     registry::forget(&id);
     // files of a deleted connection don't stay on this computer
     crate::filecache::forget_profile(&app, &id).await;
+    crate::placeholders::forget_profile(&id);
     Ok(())
 }
 

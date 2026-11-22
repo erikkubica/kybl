@@ -564,7 +564,8 @@ pub struct CacheUsage {
 
 #[tauri::command]
 pub async fn cache_usage(app: AppHandle) -> Result<CacheUsage, String> {
-    let thumbnails = crate::thumbs::usage(&app).await;
+    // photo placeholders count with the thumbnails (Clear cache empties both)
+    let thumbnails = crate::thumbs::usage(&app).await + crate::placeholders::usage();
     let files = match get(&app) {
         Some(c) => tokio::task::spawn_blocking(|| c.usage()).await.unwrap_or(0),
         None => 0,
@@ -572,10 +573,10 @@ pub async fn cache_usage(app: AppHandle) -> Result<CacheUsage, String> {
     Ok(CacheUsage { thumbnails, files })
 }
 
-/// Clears the thumbnail cache and the file cache; answers the bytes freed.
+/// Clears the thumbnail cache (with the photo placeholders) and the file cache; answers the bytes freed.
 #[tauri::command]
 pub async fn clear_caches(app: AppHandle) -> Result<u64, String> {
-    let thumbs = crate::thumbs::clear(&app).await?;
+    let thumbs = crate::thumbs::clear(&app).await? + crate::placeholders::clear().await;
     let files = match get(&app) {
         Some(c) => tokio::task::spawn_blocking(|| c.clear()).await.unwrap_or(0),
         None => 0,

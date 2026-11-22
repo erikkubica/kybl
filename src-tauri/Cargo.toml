@@ -46,6 +46,8 @@ walkdir = "2"
 uuid = { version = "1", features = ["v4"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 kamadak-exif = "0.6"
+# ThumbHash: a ~25-byte blurry placeholder per photo (thumbhash.rs); no dependencies of its own
+thumbhash = "0.1"
 tauri-plugin-fs = "2"
 
 # WP0 storage core: one `dyn Storage` trait for S3, local disk and (later) other providers.

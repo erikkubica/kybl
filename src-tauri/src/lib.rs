@@ -41,6 +41,7 @@ mod sync;
 // WP-E4: "Mount as drive" (a local WebDAV server the system mounts)
 #[cfg(desktop)]
 mod mount;
+mod placeholders;
 mod thumbs;
 mod transfer_notice;
 mod transfers;
@@ -137,6 +138,8 @@ pub fn run() {
             jobs::setup(&handle);
             // WP-C: backup.db (background workers may have opened it first)
             backup::setup(&handle);
+            // photo placeholders kept on this device
+            placeholders::setup(&handle);
             #[cfg(desktop)]
             {
                 app.manage(prefs::load(&handle));
@@ -206,6 +209,11 @@ pub fn run() {
             platform::biometric_unlock,
             platform::set_privacy_screen,
             thumbs::clear_thumbnail_cache,
+            placeholders::placeholders_lookup,
+            placeholders::placeholder_head,
+            placeholders::placeholders_folder,
+            placeholders::placeholders_folder_save,
+            placeholders::placeholder_remember,
             filecache::cache_usage,
             filecache::clear_caches,
             // WP0: storage core

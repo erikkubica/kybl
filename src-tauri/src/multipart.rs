@@ -333,6 +333,10 @@ async fn upload(
     let total = tokio::fs::metadata(path).await.map_err(err)?.len();
     let content_type = mime_guess::from_path(path).first_or_octet_stream().to_string();
     progress(0, total);
+    // photos carry their placeholder as metadata, so other devices can show it with one HEAD
+    // (a resumed multipart upload already has its metadata: nothing to work out)
+    let placeholder = if mp.is_none() { crate::placeholders::prepare_upload(path, total).await } else { None };
+    let thumbhash = placeholder.as_ref().map(|p| p.hash.clone());
 
     if total <= SINGLE_PUT_LIMIT && mp.is_none() {
         if cancel.load(Ordering::Relaxed) {
@@ -345,12 +349,19 @@ async fn upload(
             .bucket(bucket)
             .key(key)
             .content_type(&content_type)
+            .set_metadata(thumbhash.map(|h| [("thumbhash".to_string(), h)].into()))
             .content_length(total as i64)
             .body(body)
             .send();
         return match drive(request, &sent, 0, total, cancel, progress).await {
             None => Ok(Outcome::Cancelled),
-            Some(r) => r.map(|_| Outcome::Done).map_err(sdk_err),
+            Some(r) => {
+                let out = r.map_err(sdk_err)?;
+                if let Some(p) = &placeholder {
+                    crate::placeholders::uploaded(profile_id, bucket, key, out.e_tag(), total, p).await;
+                }
+                Ok(Outcome::Done)
+            }
         };
     }
 
@@ -360,6 +371,7 @@ async fn upload(
             .bucket(bucket)
             .key(key)
             .content_type(&content_type)
+            .set_metadata(thumbhash.map(|h| [("thumbhash".to_string(), h)].into()))
             .send()
             .await
             .map_err(sdk_err)?;
@@ -394,12 +406,19 @@ async fn upload(
         .multipart_upload(CompletedMultipartUpload::builder().set_parts(Some(parts)).build())
         .send()
         .await;
-    if let Err(e) = completed {
-        let e = sdk_err(e);
-        // The answer can be lost (a timeout, a dropped connection) after the server put the file
-        // together. Aborting or retrying then would throw away a finished upload: look first.
-        if !completed_anyway(client, bucket, key, total, m.parts.len(), asked).await {
-            return Err(e);
+    match completed {
+        Ok(out) => {
+            if let Some(p) = &placeholder {
+                crate::placeholders::uploaded(profile_id, bucket, key, out.e_tag(), total, p).await;
+            }
+        }
+        Err(e) => {
+            let e = sdk_err(e);
+            // The answer can be lost (a timeout, a dropped connection) after the server put the file
+            // together. Aborting or retrying then would throw away a finished upload: look first.
+            if !completed_anyway(client, bucket, key, total, m.parts.len(), asked).await {
+                return Err(e);
+            }
         }
     }
     crate::leftovers::upload_ended(&m.upload_id);
