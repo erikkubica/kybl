@@ -88,7 +88,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     const loc = parseLocation(input, names);
     const b = loc?.bucket ?? bucket;
     if (!loc || !b) return;
-    if (loc.bucket) conns.rememberBucket(profile, loc.bucket);
+    if (loc.bucket && loc.bucket !== bucket) pane.rememberAfterListing.current = { profileId: profile.id, bucket: loc.bucket };
     let pre = loc.prefix;
     if (pre && !pre.endsWith("/")) {
       // the path of a file opens its folder with the file selected

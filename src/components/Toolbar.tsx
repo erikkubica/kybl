@@ -143,7 +143,8 @@ export function Toolbar({
             disabled={disabled}
             onChange={(e) => onQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && query.trim()) onSearch(query.trim());
+              // Enter that confirms an input method's composition isn't a search
+              if (e.key === "Enter" && !e.nativeEvent.isComposing && query.trim()) onSearch(query.trim());
               if (e.key === "Escape") {
                 e.stopPropagation();
                 onClearSearch();

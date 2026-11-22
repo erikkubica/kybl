@@ -10,14 +10,17 @@ import type { PaneId } from "../browser/types";
 export function useFinderDrop({
   target,
   onDrop,
+  onRefused,
 }: {
   /** the pane at this point (CSS pixels) that accepts uploads, or null */
   target: (x: number | null, y: number | null) => PaneId | null;
   onDrop: (pane: PaneId, paths: string[]) => void;
+  /** files were dropped where nothing takes them (no bucket open, or a dialog is up) */
+  onRefused?: () => void;
 }) {
   const [over, setOver] = useState<PaneId | null>(null);
-  const cbs = useRef({ target, onDrop });
-  cbs.current = { target, onDrop };
+  const cbs = useRef({ target, onDrop, onRefused });
+  cbs.current = { target, onDrop, onRefused };
 
   useEffect(() => {
     let un: (() => void) | undefined;
@@ -32,6 +35,7 @@ export function useFinderDrop({
           setOver(null);
           const pane = cbs.current.target(at[0], at[1]);
           if (pane) cbs.current.onDrop(pane, p.paths);
+          else if (p.paths.length) cbs.current.onRefused?.();
         }
       })
       .then((u) => {

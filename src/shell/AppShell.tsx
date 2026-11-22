@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage, errSummary } from "../api";
+import { baseName } from "../format";
 import { useTransfers } from "../useTransfers";
 import { useJobs } from "../useJobs";
 import { Sidebar } from "../components/Sidebar";
@@ -81,12 +82,17 @@ export function AppShell() {
     [],
   );
   // the slider moves the tiles at once; the setting is saved once it settles
-  const [tile, setTile] = useState(settings.tileSize);
+  // (the setting stays the source of truth, so a change in Settings shows at once too)
+  const [tileDraft, setTileDraft] = useState<number | null>(null);
+  const tile = tileDraft ?? settings.tileSize;
   const tileTimer = useRef(0);
   const changeTile = (px: number) => {
-    setTile(px);
+    setTileDraft(px);
     window.clearTimeout(tileTimer.current);
-    tileTimer.current = window.setTimeout(() => updateSettings({ tileSize: px }), 300);
+    tileTimer.current = window.setTimeout(() => {
+      updateSettings({ tileSize: px });
+      setTileDraft(null);
+    }, 300);
   };
   const [compact, setCompactState] = useState(LS.get("s3b.compact") === "1");
   const setCompact = (c: boolean) => {
@@ -140,6 +146,29 @@ export function AppShell() {
     for (const p of allPanes.current) p.folderSizes.clear();
   }, []);
 
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  /** Favorites follow a folder that was renamed or moved, and go when it is deleted. */
+  const foldersChanged = useCallback(
+    (pid: string, fromBucket: string, toBucket: string, moves: { from: string; to: string | null }[]) => {
+      const favs = settingsRef.current.favorites;
+      let changed = false;
+      const next = favs.flatMap((f) => {
+        if (f.profileId !== pid || f.bucket !== fromBucket) return [f];
+        const m = moves.find((x) => f.prefix.startsWith(x.from));
+        if (!m) return [f];
+        changed = true;
+        if (m.to === null) return [];
+        const prefix = m.to + f.prefix.slice(m.from.length);
+        // a favorite still called by the folder's own name takes the new name
+        const name = f.prefix === m.from && f.name === baseName(m.from) ? baseName(m.to) : f.name;
+        return [{ ...f, bucket: toBucket, prefix, name }];
+      });
+      if (changed) updateSettings({ favorites: next });
+    },
+    [updateSettings],
+  );
+
   const envFor = (id: PaneId): PaneEnv => ({
     id,
     storageKey: id === "left" ? "s3b.last" : `s3b.last.${id}`,
@@ -155,6 +184,7 @@ export function AppShell() {
     showActivityPanel,
     reloadIfShowing,
     clearAllSizes,
+    foldersChanged,
     ...dualPane.envFor(id),
   });
   const left = usePane(envFor("left"));
@@ -317,6 +347,14 @@ export function AppShell() {
     void conns.loadBuckets(p);
     active.go(p, f.bucket, f.prefix);
     focusListSoon();
+    // S3 lists a folder that is gone as an empty one: say so, and offer to drop the favorite
+    if (f.prefix)
+      api
+        .existing(p.id, f.bucket, [], [f.prefix])
+        .then((r) => {
+          if (!r.prefixes.length) toast("error", `“${f.name}” isn’t there any more. It may have been moved or deleted.`, { label: "Remove", run: () => active.actions.removeFavorite(f) });
+        })
+        .catch(() => {});
   };
 
   const emptyFor = (id: PaneId): EmptyActions => ({
@@ -335,7 +373,7 @@ export function AppShell() {
       return;
     }
     toast("info", `Undoing the ${u.label}…`);
-    void u.run();
+    void undoStack.runQueued(u);
   };
 
   /** A dialog, menu or preview is up: it owns the keyboard, and actions must not run behind it. */
@@ -365,12 +403,15 @@ export function AppShell() {
   // ------------------------------------------------------------ drag & drop from Finder
   const dropOver = useFinderDrop({
     target: (x, y) => {
+      // a dialog owns the screen: nothing lands behind it
+      if (overlayUp()) return null;
       // with two panes, the one under the pointer; else (or without a position) the active one
       const under = x != null && y != null ? document.elementFromPoint(x, y)?.closest("[data-pane]")?.getAttribute("data-pane") : null;
       const p = dualCtx.current?.dual && under ? paneById(under as PaneId) : activeRef.current;
       return p.profile && p.bucket ? p.id : null;
     },
     onDrop: (id, paths) => void paneById(id).ops.uploadPaths(paths),
+    onRefused: () => overlayUp() && toast("info", "Finish what’s open first, then drop the files again."),
   });
 
   // ------------------------------------------------------------ render

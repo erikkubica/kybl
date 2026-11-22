@@ -102,12 +102,22 @@ export function useEntries(here: Loc | null, sort: Sort, foldersFirst: boolean, 
 
   const folderKeys = useMemo(() => new Set(fresh ? listing.folders : []), [fresh, listing.folders]);
 
+  // read by refresh, so leaving search takes effect before the next render
+  const searchRef = useRef(search);
+  searchRef.current = search;
   /** Reloads what is on screen: the search when searching, else the folder (keeping rows meanwhile). */
   const refresh = useCallback(() => {
     if (!here) return;
-    if (search) void sr.run(search.loc, search.query);
+    const s = searchRef.current;
+    if (s) void sr.run(s.loc, s.query);
     else void lst.refresh(here);
-  }, [here, search, sr, lst]);
+  }, [here, sr, lst]);
+  /** Back from search results (or a filter) to the plain folder. */
+  const leaveSearch = useCallback(() => {
+    searchRef.current = null;
+    sr.clear();
+    setQuery("");
+  }, [sr]);
 
   return {
     lst,
@@ -129,6 +139,7 @@ export function useEntries(here: Loc | null, sort: Sort, foldersFirst: boolean, 
     loadMore,
     folderKeys,
     refresh,
+    leaveSearch,
     moreOnServer: !search && fresh && !!listing.next,
     listError: fresh ? lst.error : null,
   };

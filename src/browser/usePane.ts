@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { baseName, parentPrefix } from "../format";
 import { useFolderSizes } from "../useFolderSizes";
 import { useItemDrag } from "../useItemDrag";
+import { useCaps } from "../useCaps";
 import { makeFileOps } from "../desktop/fileOps";
 import type { Sort } from "../components/FileTable";
 import type { MenuItem } from "../components/Dialogs";
@@ -54,6 +55,8 @@ export type PaneEnv = {
   extraPlaceItems?: () => MenuItem[];
   /** extra items for the menu of selected items */
   extraItemItems?: (list: Entry[]) => MenuItem[];
+  /** folders were renamed, moved or deleted (favorites follow) */
+  foldersChanged?: (profileId: string, fromBucket: string, toBucket: string, moves: { from: string; to: string | null }[]) => void;
 };
 
 function usePaneCore(env: PaneEnv) {
@@ -71,6 +74,7 @@ function usePaneCore(env: PaneEnv) {
   hereRef.current = here;
 
   const sort: Sort = useMemo(() => ({ key: settings.sort.by, dir: settings.sort.desc ? "desc" : "asc" }), [settings.sort]);
+  const caps = useCaps(profile?.id);
   const ent = useEntries(here, sort, settings.foldersFirst, onError);
   const { lst, sr, search, entries } = ent;
   const sel = useSelection(entries, ent.stale);
@@ -156,6 +160,17 @@ function usePaneCore(env: PaneEnv) {
     }
   }, [listing, fresh, here, setSelected, setCursor]);
 
+  // a bucket typed into Go to joins the sidebar only once it lists
+  const rememberAfterListing = useRef<{ profileId: string; bucket: string } | null>(null);
+  const { listError } = ent;
+  useEffect(() => {
+    const r = rememberAfterListing.current;
+    if (!r || !here || r.profileId !== here.profileId || r.bucket !== here.bucket || !fresh || lst.loading) return;
+    rememberAfterListing.current = null;
+    const p = envRef.current.profiles.find((x) => x.id === r.profileId);
+    if (!listError && p) envRef.current.conns.rememberBucket(p, r.bucket);
+  }, [here, fresh, lst.loading, listError]);
+
   // ------------------------------------------------------------ file actions
   const ops = makeFileOps({
     profile,
@@ -178,6 +193,9 @@ function usePaneCore(env: PaneEnv) {
     },
     deselect: sel.deselect,
     clearSizes: env.clearAllSizes,
+    leaveSearch: ent.leaveSearch,
+    foldersChanged: (...a) => envRef.current.foldersChanged?.(...a),
+    localPaths: !!caps?.localPaths,
   });
   const opsRef = useRef(ops);
   opsRef.current = ops;
@@ -271,6 +289,8 @@ function usePaneCore(env: PaneEnv) {
     downloadOne,
     quickLook,
     folderSizes,
+    caps,
+    rememberAfterListing,
     searchInput,
     view,
     setView,

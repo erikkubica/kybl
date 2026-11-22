@@ -38,11 +38,12 @@ export function useShellCommands({
   const commands: Record<string, () => void> = { ...active.actions.commands, ...shell };
 
   const route = (id: string): boolean => {
+    // nothing opens behind a dialog, Settings included
+    if (overlayUp()) return false;
     if (id === "settings") {
       openSettings();
       return true;
     }
-    if (overlayUp()) return false;
     if (settingsOpen) {
       if (id === "new-connection") free[id]?.();
       return id === "new-connection";

@@ -23,7 +23,7 @@ export function GoToDialog({ bucket, prefix, onGo, onClose }: { bucket: string; 
             ref={input}
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submit()}
+            onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && submit()}
             placeholder="/photos/2026 or s3://bucket/photos"
             spellCheck={false}
             autoCorrect="off"
