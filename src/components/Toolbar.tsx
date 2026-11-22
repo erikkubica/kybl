@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Icon, type IconName } from "../Icons";
 import { Breadcrumbs } from "./Breadcrumbs";
 import type { Sort, SortKey } from "./FileTable";
@@ -93,6 +93,8 @@ export function Toolbar({
 }) {
   const parts = prefix.split("/").filter(Boolean);
   const dialogs = useDialogs();
+  const bar = useRef<HTMLDivElement>(null);
+  const labelsFit = useLabelsFit(bar, `${view}|${dualTools ? 1 : 0}|${dual ? 1 : 0}`);
   /** grid view: one icon for the sort, its choices in a menu (as Finder's Sort By) */
   const sortMenu = (e: React.MouseEvent) => {
     const [x, y] = anchorOf(e);
@@ -188,14 +190,15 @@ export function Toolbar({
         </div>
       </div>
 
-      <div className={`actionbar ${view === "grid" ? "is-grid" : ""}`}>
-        <button className="btn btn-primary btn-sm btn-square" disabled={disabled} onClick={(e) => onUploadMenu(...anchorOf(e))} title="Upload files or a folder (⌘U)" aria-label="Upload">
+      <div className={`actionbar ${view === "grid" ? "is-grid" : ""} ${labelsFit ? "" : "tight"}`} ref={bar}>
+        <button className="btn btn-primary btn-sm btn-upload" disabled={disabled} onClick={(e) => onUploadMenu(...anchorOf(e))} title="Upload files or a folder (⌘U)" aria-label="Upload">
           <Icon name="upload" size={15} />
+          <span className="btn-label">Upload</span>
         </button>
         <div className="tb-group">
           <button className="tool" disabled={disabled} onClick={onNewFolder} title="New folder (⇧⌘N)">
             <Icon name="folder-plus" />
-            <span>New folder</span>
+            <span className="btn-label">New folder</span>
           </button>
           <button className="icon-btn" disabled={disabled} onClick={onRefresh} title="Refresh (⌘R)" aria-label="Refresh">
             <Icon name="refresh" />
@@ -255,4 +258,47 @@ export function Toolbar({
       {working && <div className="progress-line" />}
     </header>
   );
+}
+
+/**
+ * Whether the action bar has room for its button labels (Upload, New folder). They go when its
+ * contents overflow and come back once the bar is as wide as it was with them showing, so the
+ * labels stay as long as they fit instead of at a guessed breakpoint.
+ */
+function useLabelsFit(bar: RefObject<HTMLDivElement | null>, contents: string): boolean {
+  const [fit, setFit] = useState(true);
+  // other buttons on the bar (grid's Sort, dual pane's): measure afresh with the labels showing
+  const [lastContents, setLastContents] = useState(contents);
+  if (contents !== lastContents) {
+    setLastContents(contents);
+    setFit(true);
+  }
+  const needed = useRef(0);
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
+  useLayoutEffect(() => {
+    const el = bar.current;
+    if (!el) return;
+    const check = () => {
+      if (fitRef.current) {
+        if (el.scrollWidth > el.clientWidth + 1) {
+          needed.current = el.scrollWidth;
+          setFit(false);
+        }
+      } else if (el.clientWidth >= needed.current) setFit(true);
+    };
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [bar]);
+  // the contents can change too (grid adds Sort, dual pane its buttons): look again after each render
+  useLayoutEffect(() => {
+    const el = bar.current;
+    if (el && fit && el.scrollWidth > el.clientWidth + 1) {
+      needed.current = el.scrollWidth;
+      setFit(false);
+    }
+  });
+  return fit;
 }

@@ -122,14 +122,6 @@ body.resizing-row * {
   }
 }
 /* a narrow pane: tool labels go, so the view and pane switches stay in reach */
-@container (max-width: 700px) {
-  .actionbar .tb-group .tool span {
-    display: none;
-  }
-  .actionbar .tb-group .tool {
-    padding: 0 6px;
-  }
-}
 
 /* This Mac in the sidebar: a plain badge instead of a provider monogram */
 .pbadge.local {

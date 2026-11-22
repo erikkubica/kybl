@@ -361,19 +361,22 @@ code {
   flex: none;
   border-bottom: 1px solid var(--border);  container-type: inline-size;
 }
-/* tight window: selection actions collapse to icons */
-@container (max-width: 860px) {
-
-
+/* labels (Upload, New folder) go only when the bar's contents no longer fit: Toolbar measures
+   it and sets .tight (see useLabelsFit) */
+.actionbar.tight .btn-label {
+  display: none;
 }
-@container (max-width: 1080px) {
-
-
+.actionbar.tight .tool {
+  padding: 0 6px;
 }
-@container (max-width: 760px) {
-  .actionbar.is-grid .tb-group .tool span {
-    display: none;
-  }
+.actionbar .btn-upload:not(.tight .btn-upload) {
+  gap: 6px;
+  padding: 0 11px 0 9px;
+}
+.actionbar.tight .btn-upload {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
 }
 /* a narrow pane: the dual pane buttons step aside (they're in the View menu too) */
 @container (max-width: 470px) {
@@ -568,6 +571,11 @@ kbd {
 }
 .actionbar .spacer {
   flex: 1;
+}
+/* nothing squeezes: the bar overflows instead, which is how Toolbar notices labels must go */
+.actionbar > :not(.spacer),
+.actionbar .tb-group > * {
+  flex-shrink: 0;
 }
 .tb-group {
   display: flex;
@@ -2218,6 +2226,9 @@ input[type="checkbox"] {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* the scrollbar's room is always kept: a list that grows or shrinks while it reloads would
+     otherwise change the width and the column count with it */
+  scrollbar-gutter: stable;
 }
 .grid {
   display: grid;
