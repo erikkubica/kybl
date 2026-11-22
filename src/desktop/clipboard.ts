@@ -1,6 +1,6 @@
 /**
- * Items copied or cut with ⌘C / ⌘X, waiting to be pasted with ⌘V into another folder or bucket
- * of the same connection. Kept in memory: S3 objects can't go on the system clipboard as files.
+ * Items copied or cut with ⌘C / ⌘X, waiting to be pasted with ⌘V into another folder, bucket or
+ * connection. Kept in memory: S3 objects can't go on the system clipboard as files.
  */
 import type { Entry } from "../types";
 

@@ -187,6 +187,22 @@ async function start(t: Transfer) {
   }
 }
 
+/** Takes finished transfers off the list. */
+function clearWhere(pick: (t: Transfer) => boolean) {
+  for (const [id, t] of byId) {
+    if (t.state !== "done" && t.state !== "cancelled" && t.state !== "error") continue;
+    if (!pick(t)) continue;
+    // a failed or stopped one can't be retried once it is off the list: let the backend drop
+    // what it kept to resume it (a partial download, an open multipart upload)
+    if (t.state !== "done") api.cancelTransfer(id).catch(() => {});
+    byId.delete(id);
+    overwriteIds.delete(id);
+    requested.delete(id);
+  }
+  dirty = true;
+  flush();
+}
+
 /** Puts a finished transfer back in the queue under the same id, so the backend can resume it. */
 function requeue(id: string): Transfer | null {
   const t = byId.get(id);
@@ -238,11 +254,11 @@ const actions = {
     markDirty();
     start(fresh);
   },
-  /** Retries every failed or cancelled transfer; returns how many were started again. */
-  retryAll(): number {
+  /** Retries every failed (and unless `onlyFailed`, cancelled) transfer; returns how many were started again. */
+  retryAll(onlyFailed = false): number {
     const again: Transfer[] = [];
     for (const t of [...byId.values()]) {
-      if (t.state !== "error" && t.state !== "cancelled") continue;
+      if (t.state !== "error" && (onlyFailed || t.state !== "cancelled")) continue;
       const fresh = requeue(t.id);
       if (fresh) again.push(fresh);
     }
@@ -261,19 +277,24 @@ const actions = {
     if (t && (t.state === "done" || t.state === "error" || t.state === "cancelled")) return Promise.resolve(t);
     return new Promise((ok) => waiters.set(id, [...(waiters.get(id) ?? []), ok]));
   },
+  /** Clears done and cancelled transfers; failed ones stay (Retry, or `clearFailed`). */
   clearFinished() {
-    for (const [id, t] of byId) {
-      if (t.state === "done" || t.state === "cancelled" || t.state === "error") {
-        // a failed or stopped one can't be retried once it is off the list: let the backend drop
-        // what it kept to resume it (a partial download, an open multipart upload)
-        if (t.state !== "done") api.cancelTransfer(id).catch(() => {});
-        byId.delete(id);
-        overwriteIds.delete(id);
-        requested.delete(id);
-      }
+    clearWhere((t) => t.state === "done" || t.state === "cancelled");
+  },
+  /** Clears failed transfers, and what the backend kept to resume them. */
+  clearFailed() {
+    clearWhere((t) => t.state === "error");
+  },
+  /** How many transfers failed, and how many of those are uploads that sent part of the file (kept to resume). */
+  failedCounts(): { failed: number; partial: number } {
+    let failed = 0;
+    let partial = 0;
+    for (const t of byId.values()) {
+      if (t.state !== "error") continue;
+      failed++;
+      if (t.kind === "upload" && t.bytes > 0) partial++;
     }
-    dirty = true;
-    flush();
+    return { failed, partial };
   },
   /** Called with the counts once every upload of the current batch has finished. */
   onUploadsSettled(cb: Settled): () => void {

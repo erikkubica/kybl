@@ -38,6 +38,7 @@ export const MENU_ACCELERATORS: Record<string, string> = {
   "upload-folder": "⇧⌘U",
   download: "⇧⌘D",
   "get-info": "⌘I",
+  duplicate: "⌘D",
   back: "⌘[",
   forward: "⌘]",
   "go-to": "⇧⌘G",

@@ -63,6 +63,8 @@ export function SetupFlow({
   const [source, setSource] = useState<BackupSource | null>(null);
   const [dest, setDest] = useState<PickedLocation | null>(null);
   const [asking, setAsking] = useState(false);
+  // "New folder" in the destination picker
+  const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [opts, setOpts] = useState({
     template: TEMPLATES[0].id,
@@ -188,16 +190,23 @@ export function SetupFlow({
     return (
       <>
         <div className="bk-body bk-dest">
-          <p className="bk-lead">Where should it go?</p>
+          <div className="bk-dest-head">
+            <p className="bk-lead">Where should it go?</p>
+            <button className="m-text-btn" onClick={() => setCreating(true)} disabled={creating || !dest || dest.profileId === LOCAL_ID}>
+              <Icon name="folder-plus" size={16} /> New folder
+            </button>
+          </div>
           <LocationPicker
             value={dest}
             onChange={setDest}
+            creating={creating}
+            onCreatingDone={() => setCreating(false)}
             blocked={(l: Loc) => (l.profileId === LOCAL_ID ? "Backups go to one of your connections, not to this phone." : null)}
           />
         </div>
         <nav className="m-actionbar bk-bar-bottom">
           <button className="btn btn-primary m-big-btn" disabled={!dest || dest.profileId === LOCAL_ID} onClick={() => setStep("options")}>
-            {dest && dest.profileId !== LOCAL_ID ? `Back up to ${dest.dir ? dest.dir.replace(/\/$/, "").split("/").pop() : dest.rootName}` : "Choose a folder"}
+            <span className="bk-btn-label">{dest && dest.profileId !== LOCAL_ID ? `Back up to ${dest.dir ? dest.dir.replace(/\/$/, "").split("/").pop() : dest.rootName} on ${dest.connectionName}` : "Choose a folder"}</span>
           </button>
         </nav>
       </>

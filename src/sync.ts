@@ -135,6 +135,15 @@ function startOnce() {
   });
 }
 
+/** The mappings right now, without subscribing (menus); starts loading them on first use. */
+export function peekSyncMappings(): SyncMapping[] {
+  startOnce();
+  return syncStore.get().mappings;
+}
+
+/** Loads the mappings again (after adding or removing one). */
+export const reloadSync = () => reload();
+
 /** Mappings plus live status. Re-renders on every status update: use [`useSyncOverall`] where only the summary matters. */
 export function useSync(): SyncModel {
   startOnce();

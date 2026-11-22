@@ -282,6 +282,47 @@ export function FileTable({
     onBackgroundContextMenu,
   });
 
+  // the ".." row can have the keyboard cursor (ArrowUp from the first row, or Home): Enter goes up,
+  // ArrowDown comes back. It is never selected, so nothing acts on it but Enter.
+  const [upActive, setUpActive] = useState(false);
+  const hasUp = !!onGoUp;
+  useEffect(() => setUpActive(false), [prefix, searchMode, hasUp]);
+  useEffect(() => {
+    if (selected.size) setUpActive(false);
+  }, [selected]);
+  const onKeyDown = (ev: React.KeyboardEvent) => {
+    if (ev.target === ev.currentTarget && onGoUp) {
+      const plain = !ev.metaKey && !ev.ctrlKey && !ev.altKey && !ev.shiftKey;
+      if (upActive) {
+        if (ev.key === "Enter" && plain) {
+          ev.preventDefault();
+          setUpActive(false);
+          onGoUp();
+          return;
+        }
+        if ((ev.key === "ArrowUp" || ev.key === "Home" || ev.key === "PageUp") && plain) {
+          ev.preventDefault();
+          return;
+        }
+        if (ev.key === "ArrowDown" && plain) {
+          ev.preventDefault();
+          setUpActive(false);
+          if (entries.length) nav.goTo(0);
+          return;
+        }
+        if (ev.key === "Escape") setUpActive(false);
+      } else if (plain && ((ev.key === "ArrowUp" && (nav.activeIndex === 0 || !entries.length)) || ev.key === "Home")) {
+        ev.preventDefault();
+        nav.setKbd(true);
+        setUpActive(true);
+        onClearSelection();
+        body.current?.scrollTo({ top: 0 });
+        return;
+      }
+    }
+    nav.onKeyDown(ev);
+  };
+
   const hitTest = useCallback(
     (b: Box) => {
       const first = Math.max(0, Math.floor((b.y0 - 4 - upH) / rowH));
@@ -381,7 +422,7 @@ export function FileTable({
     },
   ];
 
-  const activeId = nav.activeIndex >= 0 ? `${listId}-r${nav.activeIndex}` : undefined;
+  const activeId = upActive ? `${listId}-up` : nav.activeIndex >= 0 ? `${listId}-r${nav.activeIndex}` : undefined;
   const empty = entries.length === 0;
 
   return (
@@ -398,7 +439,7 @@ export function FileTable({
       aria-colcount={shown.length + 1}
       aria-activedescendant={activeId}
       aria-busy={loading || stale || undefined}
-      onKeyDown={nav.onKeyDown}
+      onKeyDown={onKeyDown}
       onContextMenu={(ev) => nav.onContextMenu(ev, ".row, .thead")}
       onMouseDown={(ev) => {
         const t = ev.target as HTMLElement;
@@ -430,7 +471,8 @@ export function FileTable({
         {onGoUp && (
           // not an entry: no selection or menu; files dropped on it move to the enclosing folder
           <div
-            className="row is-folder row-up"
+            id={`${listId}-up`}
+            className={`row is-folder row-up ${upActive ? "active" : ""}`}
             role="row"
             data-drop={parentPrefix(prefix)}
             title="Enclosing folder (⌘↑)"
@@ -464,7 +506,7 @@ export function FileTable({
               data-index={i}
               data-drop={folder ? e.key : undefined}
               data-spring={folder ? "" : undefined}
-              className={`row ${sel ? "selected" : ""} ${folder ? "is-folder" : ""} ${i === nav.activeIndex ? "active" : ""}`}
+              className={`row ${sel ? "selected" : ""} ${folder ? "is-folder" : ""} ${i === nav.activeIndex && !upActive ? "active" : ""}`}
               role="row"
               aria-rowindex={i + 2}
               aria-selected={sel}

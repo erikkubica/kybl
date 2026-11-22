@@ -11,6 +11,7 @@ import { api, errMessage, errSummary } from "../api";
 import { baseName } from "../format";
 import { useTransfers } from "../useTransfers";
 import { useJobs } from "../useJobs";
+import { getJobs, migrations as migrationStore } from "../jobs";
 import { Sidebar, SidebarRail } from "../components/Sidebar";
 import { TransferPanel, type ActivityTab } from "../components/TransferPanel";
 import { ConnectionDialog } from "../components/ConnectionDialog";
@@ -27,6 +28,7 @@ import { BrowserPane } from "../browser/BrowserPane";
 import type { EmptyActions } from "../browser/PaneEmpty";
 import { LS, THIS_MAC, type PaneId } from "../browser/types";
 import { forgetCaps, peekCaps } from "../useCaps";
+import { sendItems } from "./crossPane";
 import { clearAuthNeeded, useAuthNeeded } from "../connections/authNeeded";
 import { rootsMode } from "../connections/roots";
 import { canView, LazyDocumentView, viewerFor } from "../viewers/registry";
@@ -154,6 +156,39 @@ export function AppShell() {
   }, []);
   const transfers = useTransfers(onError);
   const jobs = useJobs();
+  /**
+   * A transfer or job just started: the panel shows In progress (not the Failed, Done, Log or
+   * Jobs tab it was left on), and opens if Settings say so.
+   */
+  const autoShowActivity = useCallback(() => {
+    setActivityTab((t) => (t === "activity" ? t : "activity"));
+    if (settingsRef.current.autoOpenTransfers) setTransfersOpen(true);
+  }, []);
+  /** The Failed tab's "Clear failed": asks first when that throws away what a retry would resume from. */
+  const clearFailed = async () => {
+    const { partial } = transfers.failedCounts();
+    const migs = getJobs().filter((j) => j.progress.state === "failed" || j.progress.state === "needsAuth" || (j.progress.state === "done" && j.progress.filesFailed > 0));
+    if (partial > 0 || migs.length > 0) {
+      const ok = await dialogs.confirm({
+        title: "Clear failed items?",
+        label: "Clear failed",
+        message: (
+          <>
+            {partial > 0 && (
+              <p>
+                {partial === 1 ? "One upload" : `${partial.toLocaleString()} uploads`} got partway. Kybl lets go of what was sent, so trying again later starts from the beginning.
+              </p>
+            )}
+            {migs.length > 0 && <p>Copies between connections that failed leave Jobs too. Files they already copied stay where they are.</p>}
+          </>
+        ),
+      });
+      if (!ok) return;
+    }
+    transfers.clearFailed();
+    jobs.clearFailed();
+    for (const j of migs) void migrationStore.remove(j.id).catch(() => {});
+  };
 
   // ------------------------------------------------------------ panes
   /** the panes on screen (work that finishes reloads these) */
@@ -245,7 +280,7 @@ export function AppShell() {
     transfers,
     jobs,
     dialogs,
-    autoShowActivity: () => void (settings.autoOpenTransfers && setTransfersOpen(true)),
+    autoShowActivity,
     showActivity,
     showFailed,
     showActivityPanel,
@@ -256,6 +291,12 @@ export function AppShell() {
     openDocument: (e) => openDocument(id, e),
     canOpenDocument: (e) => canOpenDocument(id, e),
     openMigration: migrations.open,
+    openDriveSettings: () => openSettings("drives"),
+    sendItems: (ops, src, items, mode, dst, dest, onStarted) => {
+      const to = profiles.find((x) => x.id === dst.profileId);
+      const names = { connectionName: to?.name ?? "", rootName: conns.rootLabel(dst.profileId, dst.bucket), singleRoot: peekCaps(dst.profileId)?.roots === "single" };
+      void sendItems(ops, src, items, mode, { ...dst, ...names }, dest, dualCtx.current!, onStarted);
+    },
     ...dualPane.envFor(id),
   });
   const left = usePane(envFor("left"));
@@ -275,7 +316,7 @@ export function AppShell() {
     updateSettings,
     dialogs,
     transfers,
-    autoShowActivity: () => void (settings.autoOpenTransfers && setTransfersOpen(true)),
+    autoShowActivity,
     focusPane: (id: PaneId) => requestAnimationFrame(() => focusPaneList(id)),
     reloadIfShowing,
     confirmMigration: migrations.confirm,
@@ -705,12 +746,13 @@ export function AppShell() {
           onCancel={transfers.cancel}
           onCancelAll={transfers.cancelAll}
           onRetry={transfers.retry}
-          onRetryAll={() => void transfers.retryAll()}
+          onRetryAll={() => void transfers.retryAll(true)}
           onOpenLocal={(t) => api.openLocal(t.local).catch((e) => toast("error", `Couldn’t open “${t.name}”. ${errMessage(e)}`))}
           onClear={() => {
             transfers.clearFinished();
             jobs.clearFinished();
           }}
+          onClearFailed={() => void clearFailed()}
           onReveal={(t) => revealItemInDir(t.local).catch(() => {})}
         />
       </main>

@@ -9,7 +9,8 @@ import { useSync } from "../sync";
 import { useEffect, useMemo, useRef } from "react";
 import { clearLog, useActivityLog } from "../activityLog";
 import type { JobSummary } from "../api";
-import { JobsPanel, isActive as migrationActive, useMigrations } from "../jobs";
+import { JobsPanel, isActive as migrationActive, migrations as migrationStore, useMigrations } from "../jobs";
+import { useJobs } from "../useJobs";
 
 /** A synced folder that is busy right now (shown read-only). */
 export type SyncActivity = { id: string; name: string; direction: "upload" | "download" | "twoway"; state: "scanning" | "syncing"; done: number; total: number; current: string | null; bytes: number; totalBytes: number };
@@ -38,8 +39,38 @@ const STATE_ICON: Record<TransferState, "upload" | "download" | "check-circle" |
   cancelled: "x",
 };
 
+/** A copy between connections that stopped with an error, needs a new sign-in, or finished with files that failed. */
+const migrationFailed = (m: JobSummary) =>
+  m.progress.state === "failed" || m.progress.state === "needsAuth" || (m.progress.state === "done" && m.progress.filesFailed > 0);
+/** What "Retry" does for a copy between connections: the files that failed, or the rest of a failed one; null = nothing (a sign-in is needed first). */
+function migrationRetry(m: JobSummary): (() => Promise<void>) | null {
+  const p = m.progress;
+  if ((p.state === "done" || p.state === "failed") && p.filesFailed > 0) return () => migrationStore.retryFailed(m.id);
+  if (p.state === "failed") return () => migrationStore.resume(m.id);
+  return null;
+}
+
+/**
+ * Keeps toasts above the Activity panel while it shows (they would cover its rows): sets
+ * `--toasts-bottom` on the page to the panel's top edge plus a gap, following its height.
+ */
+function liftToasts(el: HTMLElement | null) {
+  if (!el) return;
+  const root = document.documentElement;
+  const place = () => root.style.setProperty("--toasts-bottom", `${Math.max(22, Math.round(window.innerHeight - el.getBoundingClientRect().top + 12))}px`);
+  place();
+  const ro = new ResizeObserver(place);
+  ro.observe(el);
+  window.addEventListener("resize", place);
+  return () => {
+    ro.disconnect();
+    window.removeEventListener("resize", place);
+    root.style.removeProperty("--toasts-bottom");
+  };
+}
+
 /** The Activity panel, subscribed to the live transfer, job and sync lists itself. */
-export function TransferPanel(props: Omit<PanelProps, "transfers" | "jobs" | "syncs" | "migrations" | "migrationsActive" | "migrationsFailed">) {
+export function TransferPanel(props: Omit<PanelProps, "transfers" | "jobs" | "syncs" | "migrations" | "migrationsActive" | "migrationsFailed" | "migrationsDone">) {
   const transfers = useTransferList();
   const jobs = useJobList();
   const sync = useSync();
@@ -55,8 +86,20 @@ export function TransferPanel(props: Omit<PanelProps, "transfers" | "jobs" | "sy
   );
   const migs = useMigrations();
   const migsActive = useMemo(() => migs.filter(migrationActive), [migs]);
-  const migsFailed = useMemo(() => migs.filter((m) => m.progress.state === "failed" || m.progress.state === "needsAuth"), [migs]);
-  return <TransferPanelView {...props} transfers={transfers} jobs={jobs} syncs={syncs} migrations={migs.length} migrationsActive={migsActive} migrationsFailed={migsFailed} />;
+  const migsFailed = useMemo(() => migs.filter(migrationFailed), [migs]);
+  const migsDone = useMemo(() => migs.filter((m) => (m.progress.state === "done" && !migrationFailed(m)) || m.progress.state === "cancelled"), [migs]);
+  return (
+    <TransferPanelView
+      {...props}
+      transfers={transfers}
+      jobs={jobs}
+      syncs={syncs}
+      migrations={migs.length}
+      migrationsActive={migsActive}
+      migrationsFailed={migsFailed}
+      migrationsDone={migsDone}
+    />
+  );
 }
 
 /** In progress (running and waiting), Failed, Done (finished and cancelled), Log (messages), Jobs. */
@@ -69,8 +112,10 @@ type PanelProps = {
   /** copies between connections (src/jobs): how many are listed, and the ones still going */
   migrations: number;
   migrationsActive: JobSummary[];
-  /** copies between connections that stopped with an error or need a new sign-in */
+  /** copies between connections that stopped with an error, need a new sign-in, or finished with files that failed */
   migrationsFailed: JobSummary[];
+  /** copies between connections that finished cleanly or were cancelled */
+  migrationsDone: JobSummary[];
   /** which tab shows: in progress, failed, done, the message log, or Jobs (copies between connections) */
   tab?: ActivityTab;
   onTab?(tab: ActivityTab): void;
@@ -87,7 +132,10 @@ type PanelProps = {
   onRetry: (id: string) => void;
   /** retry every failed transfer at once; without it each failed one is retried in turn */
   onRetryAll?(): void;
+  /** clears what finished or was cancelled (failed items stay) */
   onClear: () => void;
+  /** clears the failed items (the Failed tab) */
+  onClearFailed?(): void;
   onReveal: (t: Transfer) => void;
   /** open a finished download in its default app; defaults to api.openLocal */
   onOpenLocal?(t: Transfer): void;
@@ -109,6 +157,7 @@ function TransferPanelView({
   onRetry,
   onRetryAll,
   onClear,
+  onClearFailed,
   onReveal,
   onOpenLocal,
   showEmpty,
@@ -119,10 +168,12 @@ function TransferPanelView({
   migrations,
   migrationsActive,
   migrationsFailed,
+  migrationsDone,
   tab = "activity",
   onTab,
   onOpenMigrationDest,
 }: PanelProps) {
+  const jobActions = useJobs();
   const nothing = transfers.length === 0 && jobs.length === 0 && syncs.length === 0;
   // no activity and no copies between connections: no panel, unless it was opened on purpose
   if (nothing && migrations === 0 && !(showEmpty && open)) return null;
@@ -164,16 +215,18 @@ function TransferPanelView({
   const shownJobs = jobList.filter((j) => (j.state === "running" ? show("progress") : j.state === "error" ? show("failed") : show("done")));
   const shownSyncs = show("progress") ? syncs : [];
   // copies between connections show here too (with tabs); their details and controls are in Jobs
-  const shownMigs = onTab ? [...(show("progress") ? migrationsActive : []), ...(show("failed") ? migrationsFailed : [])] : [];
+  const shownMigs = onTab
+    ? [...(show("progress") ? migrationsActive : []), ...(show("failed") ? migrationsFailed : []), ...(show("done") ? migrationsDone.slice(0, 30) : [])]
+    : [];
   const counts = {
     progress: active + jobsRunning.length + syncs.length + migrationsActive.length,
     failed: failed.length + jobsFailed.length + migrationsFailed.length,
-    done: done.length + cancelled.length + jobsDone.length + jobsCancelled.length,
+    done: done.length + cancelled.length + jobsDone.length + jobsCancelled.length + migrationsDone.length,
   };
   const onLog = !!onTab && tab === "log";
   const tabEmpty = shownJobs.length + shownSyncs.length + shownMigs.length + list.length === 0;
   const EMPTY_NOTE: Record<string, string> = {
-    activity: "Nothing is uploading or downloading right now.",
+    activity: "Nothing in progress right now.",
     failed: "Nothing has failed.",
     done: "Nothing has finished yet.",
   };
@@ -182,17 +235,41 @@ function TransferPanelView({
   const activeAll = active + jobsRunning.length + syncs.length + migrationsActive.length;
   const doneAll = done.length + jobsDone.length;
   const failedAll = failed.length + jobsFailed.length;
-  const finishedAll = transfers.length - active + jobs.length - jobsRunning.length;
+  const finishedAll = done.length + cancelled.length + jobsDone.length + jobsCancelled.length + (onTab ? migrationsDone.length : 0);
   // with no transfers running, the header summarises the first running job, then the first copy
   // between connections
   const leadJob = active === 0 ? jobsRunning[0] : undefined;
   const leadMig = active === 0 && !leadJob ? migrationsActive[0] : undefined;
   const leadMigFrac = leadMig && leadMig.progress.state !== "planning" && leadMig.progress.bytesTotal > 0 ? leadMig.progress.bytesDone / leadMig.progress.bytesTotal : null;
-  const retryAll = () => (onRetryAll ? onRetryAll() : failed.forEach((t) => onRetry(t.id)));
+  // "Retry all": failed transfers, failed moves / copies / deletes, and copies between connections
+  const retryJobs = jobsFailed.filter((j) => j.retry);
+  const retryMigs = (onTab ? migrationsFailed : []).flatMap((m) => {
+    const r = migrationRetry(m);
+    return r ? [r] : [];
+  });
+  const retryCount = failed.length + retryJobs.length + retryMigs.length;
+  const retryAll = () => {
+    if (onRetryAll) onRetryAll();
+    else failed.forEach((t) => onRetry(t.id));
+    for (const j of retryJobs) jobActions.retry(j.id);
+    for (const r of retryMigs) void r().catch(() => {});
+  };
+  const clearFinished = () => {
+    onClear();
+    if (onTab) for (const m of migrationsDone) void migrationStore.remove(m.id).catch(() => {});
+  };
   const openLocal = (t: Transfer) => (onOpenLocal ? onOpenLocal(t) : api.openLocal(t.local).catch(() => onReveal(t)));
+  // only what fits the tab on screen (all of it without tabs)
+  const acts = {
+    retry: retryCount > 0 && (!onTab || tab === "activity" || tab === "failed"),
+    cancel: active > 0 && (!onTab || tab === "activity"),
+    clear: finishedAll > 0 && (!onTab || tab === "done"),
+    clearFailed: !!onClearFailed && counts.failed > 0 && !!onTab && tab === "failed",
+  };
+  const showActs = !(open && (onJobs || onLog)) && (acts.retry || acts.cancel || acts.clear || acts.clearFailed);
 
   return (
-    <section className={`transfers ${open ? "open" : ""}`} aria-label="Activity">
+    <section ref={liftToasts} className={`transfers ${open ? "open" : ""}`} aria-label="Activity">
       <header onClick={onToggle}>
         <button
           type="button"
@@ -275,23 +352,36 @@ function TransferPanelView({
             </>
           )}
         </div>
-        <div className="tp-actions" onClick={(e) => e.stopPropagation()} hidden={open && (onJobs || onLog)}>
-          {failed.length > 0 && (
-            <button className="btn btn-ghost btn-sm" onClick={retryAll} title="Try every failed transfer again">
-              <Icon name="retry" size={13} /> Retry {failed.length === 1 ? "failed" : `all ${failed.length} failed`}
-            </button>
-          )}
-          {active > 0 && (
-            <button className="btn btn-ghost btn-sm" onClick={onCancelAll}>
-              Cancel transfers
-            </button>
-          )}
-          {finishedAll > 0 && (
-            <button className="btn btn-ghost btn-sm" onClick={onClear}>
-              Clear finished
-            </button>
-          )}
-        </div>
+        {/* not on Jobs (its own buttons) or Log; each tab gets what fits it. Narrow: icons with their names as tooltips */}
+        {showActs && (
+          <div className="tp-actions" onClick={(e) => e.stopPropagation()}>
+            {acts.retry && (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={retryAll}
+                title="Try everything that failed again"
+                aria-label={retryCount === 1 ? "Retry failed" : `Retry all ${retryCount} failed`}
+              >
+                <Icon name="retry" size={13} /> <span className="tp-lbl">Retry {retryCount === 1 ? "failed" : `all ${retryCount.toLocaleString()} failed`}</span>
+              </button>
+            )}
+            {acts.cancel && (
+              <button className="btn btn-ghost btn-sm" onClick={onCancelAll} title="Cancel every upload and download" aria-label="Cancel transfers">
+                <Icon name="x" size={13} /> <span className="tp-lbl">Cancel transfers</span>
+              </button>
+            )}
+            {acts.clear && (
+              <button className="btn btn-ghost btn-sm" onClick={clearFinished} title="Take finished and cancelled items off the list" aria-label="Clear finished">
+                <Icon name="check" size={13} /> <span className="tp-lbl">Clear finished</span>
+              </button>
+            )}
+            {acts.clearFailed && (
+              <button className="btn btn-ghost btn-sm" onClick={onClearFailed} title="Take failed items off the list" aria-label="Clear failed">
+                <Icon name="trash" size={13} /> <span className="tp-lbl">Clear failed</span>
+              </button>
+            )}
+          </div>
+        )}
       </header>
       {open && onJobs && (
         <div className="tp-list tp-jobs" id="tp-list">
@@ -299,28 +389,40 @@ function TransferPanelView({
         </div>
       )}
       {open && onLog && <MessageLog />}
-      {open && !onJobs && !onLog && nothing && shownMigs.length === 0 && (
+      {/* phones (no tabs) with nothing at all: one general note */}
+      {open && !onTab && nothing && (
         <div className="tp-empty" id="tp-list">
           <Icon name="transfers" size={18} />
           <span>Nothing is uploading or downloading. Transfers, moves and deletes you start show up here.</span>
         </div>
       )}
-      {open && !onJobs && !onLog && (!nothing || shownMigs.length > 0) && onTab && tabEmpty && (
+      {open && onTab && !onJobs && !onLog && tabEmpty && (
         <div className="tp-empty" id="tp-list">
           <Icon name={tab === "failed" ? "check-circle" : "transfers"} size={18} />
-          <span>{EMPTY_NOTE[tab]}</span>
+          <span>
+            {EMPTY_NOTE[tab]}
+            {nothing && tab === "activity" && " Transfers, moves and deletes you start show up here."}
+          </span>
         </div>
       )}
-      {open && !onJobs && !onLog && (!nothing || shownMigs.length > 0) && !(onTab && tabEmpty) && (
+      {open && !onJobs && !onLog && !tabEmpty && (
         <div className="tp-list" id="tp-list">
           {shownMigs.map((m) => {
             const p = m.progress;
-            const bad = p.state === "failed" || p.state === "needsAuth";
+            const bad = migrationFailed(m);
+            const finished = p.state === "done" || p.state === "cancelled";
             const frac = p.state !== "planning" && p.bytesTotal > 0 ? p.bytesDone / p.bytesTotal : null;
+            const retry = bad ? migrationRetry(m) : null;
+            const verb = m.spec.mode === "move" ? "moved" : "copied";
             return (
-              <div key={m.id} className={`tp-row job ${bad ? "st-error" : "st-running"} sync-act`} onClick={() => pickTab("jobs")} title="Open in Jobs">
+              <div
+                key={m.id}
+                className={`tp-row job ${bad ? "st-error" : p.state === "done" ? "st-done" : p.state === "cancelled" ? "st-cancelled" : "st-running"} sync-act`}
+                onClick={() => pickTab("jobs")}
+                title="Open in Jobs"
+              >
                 <span className="tp-icon">
-                  <Icon name={bad ? "alert" : m.spec.mode === "move" ? "move" : "copy"} size={15} />
+                  <Icon name={bad ? "alert" : p.state === "done" ? "check-circle" : p.state === "cancelled" ? "x" : m.spec.mode === "move" ? "move" : "copy"} size={15} />
                 </span>
                 <div className="tp-name">
                   {m.title}
@@ -339,16 +441,37 @@ function TransferPanelView({
                         ? "Waiting for the network"
                         : p.state === "needsAuth"
                           ? "Sign in again to continue"
-                          : `${(p.filesDone + p.filesSkipped).toLocaleString()} of ${p.filesTotal.toLocaleString()} files` + (p.bytesTotal > 0 ? ` · ${formatBytes(p.bytesDone)} of ${formatBytes(p.bytesTotal)}` : "")}
+                          : p.state === "done" && p.filesFailed > 0
+                            ? `${p.filesFailed.toLocaleString()} of ${p.filesTotal.toLocaleString()} files couldn’t be ${verb}`
+                            : p.state === "done"
+                              ? `${p.filesTotal.toLocaleString()} ${p.filesTotal === 1 ? "file" : "files"}` + (p.bytesTotal > 0 ? ` · ${formatBytes(p.bytesTotal)}` : "")
+                              : `${(p.filesDone + p.filesSkipped).toLocaleString()} of ${p.filesTotal.toLocaleString()} files` +
+                                (p.bytesTotal > 0 ? ` · ${formatBytes(p.bytesDone)} of ${formatBytes(p.bytesTotal)}` : "")}
                 </div>
                 {bad ? (
-                  <div className="tp-state">{p.state === "needsAuth" ? "Needs sign-in" : "Failed"}</div>
+                  <div className="tp-state">{p.state === "needsAuth" ? "Needs sign-in" : p.state === "done" ? "Some failed" : "Failed"}</div>
+                ) : finished ? (
+                  <div className="tp-state">{p.state === "cancelled" ? "Cancelled" : m.spec.mode === "move" ? "Moved" : "Copied"}</div>
                 ) : (
                   <div className={`bar ${frac == null ? "indeterminate" : ""}`}>
                     <div style={{ width: `${Math.round((frac ?? 0) * 100)}%` }} />
                   </div>
                 )}
-                <div className="tp-row-actions" />
+                <div className="tp-row-actions">
+                  {retry && (
+                    <button
+                      className="icon-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void retry().catch(() => {});
+                      }}
+                      title={p.filesFailed > 0 ? "Try the files that failed again" : "Try again"}
+                      aria-label="Retry"
+                    >
+                      <Icon name="retry" size={13} />
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -381,6 +504,11 @@ function TransferPanelView({
                 {j.state === "running" && j.kind !== "rename" && (
                   <button className="icon-btn" onClick={() => onCancelJob(j.id)} title="Stop. What’s done stays done; nothing is half-moved." aria-label="Stop">
                     <Icon name="x" size={13} />
+                  </button>
+                )}
+                {j.state === "error" && j.retry && (
+                  <button className="icon-btn" onClick={() => jobActions.retry(j.id)} title="Try what’s left again" aria-label="Retry">
+                    <Icon name="retry" size={13} />
                   </button>
                 )}
                 {j.state !== "running" && j.dest != null && j.kind !== "delete" && (

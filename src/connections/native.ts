@@ -27,4 +27,21 @@ export function exportable(list: Entry[]): { list: Entry[]; skipped: number } {
   return { list: out, skipped };
 }
 
-export const NO_EXPORT = "Google Forms and Sites can't be downloaded. Open them in Google Drive instead.";
+const DOCS_PATH: Record<string, string> = {
+  document: "document",
+  spreadsheet: "spreadsheets",
+  presentation: "presentation",
+  drawing: "drawings",
+  form: "forms",
+};
+
+/** Where a native Google file opens in the browser to be edited; null for other files. */
+export function driveUrl(e: Entry): string | null {
+  const m = /^application\/vnd\.google-apps\.([a-z]+)$/.exec(e.mime ?? "");
+  if (!m || !e.id) return null;
+  const id = encodeURIComponent(e.id);
+  const path = DOCS_PATH[m[1]];
+  return path ? `https://docs.google.com/${path}/d/${id}/edit` : `https://drive.google.com/open?id=${id}`;
+}
+
+export const NO_EXPORT ="Google Forms and Sites can't be downloaded. Open them in Google Drive instead.";

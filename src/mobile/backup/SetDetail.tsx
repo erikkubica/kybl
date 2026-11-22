@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { backupApi, errMessage, errSummary, type BackupFailure, type BackupPermission, type BackupSet, type BackupSetStatus } from "../../api";
 import { Icon } from "../../Icons";
 import type { Toast } from "../../components/Dialogs";
-import { countsLine, HONEST, isRoll, PermissionNote, Progress, Seg, SetIcon, setName, stateLine, Toggle, type Platform } from "./parts";
+import { countsLine, HONEST, isRoll, PermissionNote, Progress, Seg, SetIcon, stateLine, Toggle, type Platform } from "./parts";
 import { example, templatesFor } from "./SetupFlow";
 
 export function SetDetail({
@@ -97,7 +97,11 @@ export function SetDetail({
       <div className="bk-actions">
         {running ? (
           <button className="btn bk-act" onClick={() => backupApi.cancel(s.id).catch(fail("Couldn't stop."))}>
-            <Icon name="x" size={16} /> Stop
+            <Icon name="x" size={16} />
+            <span className="bk-act-text">
+              Stop
+              <small>Just this run</small>
+            </span>
           </button>
         ) : (
           <button className="btn btn-primary bk-act" disabled={paused} onClick={() => backupApi.runNow(s.id).catch(fail("Couldn't start the backup."))}>
@@ -113,7 +117,11 @@ export function SetDetail({
               .catch(fail(paused ? "Couldn't resume." : "Couldn't pause."))
           }
         >
-          <Icon name={paused ? "play" : "pause"} size={16} /> {paused ? "Resume" : "Pause"}
+          <Icon name={paused ? "play" : "pause"} size={16} />
+          <span className="bk-act-text">
+            {paused ? "Resume" : "Pause"}
+            <small>{paused ? "Backups start again" : "Until you resume"}</small>
+          </span>
         </button>
       </div>
 
@@ -209,7 +217,7 @@ export function SetDetail({
       <ul className="m-group bk-danger">
         {confirmRemove ? (
           <li className="bk-confirm">
-            <p>Stop backing up {setName(s).toLowerCase() === "camera roll" ? "the camera roll" : `“${setName(s)}”`}? Files already backed up stay where they are.</p>
+            <p>Remove this backup? Files already backed up stay where they are.</p>
             <div className="bk-actions">
               <button className="btn bk-act" onClick={() => setConfirmRemove(false)}>
                 Cancel

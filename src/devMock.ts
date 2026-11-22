@@ -84,7 +84,11 @@ const tree: Record<string, { folders: string[]; objects: ObjInfo[] }> = {
 const otherTrees: Record<string, Record<string, { folders: string[]; objects: ObjInfo[] }>> = {};
 const SHARED_TREE: Record<string, { folders: string[]; objects: ObjInfo[] }> = { "": { folders: ["photos/"], objects: [] } };
 /** The tree a bucket lists from: the demo tree for media-prod (and every root of the other kinds). */
+/** Google Drive, OneDrive and Dropbox connections: their own made-up trees (set further down) */
+let cloudTree: ((profileId: string, bucket: string) => Record<string, { folders: string[]; objects: ObjInfo[] }> | undefined) | null = null;
 function remoteTree(profileId: string, bucket: string) {
+  const cloud = cloudTree?.(profileId, bucket);
+  if (cloud) return cloud;
   if (bucket === "media-prod" || (isOther(profileId) && bucket !== "shared")) return tree;
   if (bucket === "shared") return new Proxy(SHARED_TREE, { get: (t, k: string) => t[k] ?? tree[k] });
   return (otherTrees[`${profileId}\u0000${bucket}`] ??= { "": { folders: [], objects: [] } });
@@ -108,6 +112,12 @@ function remoteDir(profileId: string, bucket: string, prefix: string) {
   }
 };
 
+// the real size of the files a mock copy job takes (src/jobs/devJobs.ts), so it reports what was picked
+(window as unknown as { __kyblMockBytes?: (s: JobSpec) => number }).__kyblMockBytes = (spec) => {
+  const src = remoteTree(spec.src.profileId, spec.src.root);
+  return spec.src.items.reduce((n, it) => n + (src[it.path.replace(/[^/]+$/, "")]?.objects.find((x) => x.key === it.path)?.size ?? 0), 0);
+};
+
 const HUES = [212, 262, 162, 28, 340, 190, 48, 290];
 function thumbFor(key: string): string {
   const h = Math.abs(hash(key));
@@ -125,25 +135,28 @@ function thumbFor(key: string): string {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const cancelled = new Set<string>();
 
-async function simulateTransfer(id: string, total: number, fail = false) {
+async function simulateTransfer(id: string, total: number, fail = false): Promise<boolean> {
   await sleep(200 + Math.random() * 600);
   const steps = 14 + Math.floor(Math.random() * 30);
   for (let i = 1; i <= steps; i++) {
     if (cancelled.has(id)) {
       await emit("transfer", { id, state: "cancelled", bytes: 0, total, error: null });
-      return;
+      return false;
     }
     if (fail && i > steps / 2) {
       await emit("transfer", { id, state: "error", bytes: 0, total, error: "AccessDenied: the key does not allow s3:PutObject" });
-      return;
+      return false;
     }
     await emit("transfer", { id, state: "running", bytes: Math.round((total * i) / steps), total, error: null });
     await sleep(260);
   }
   await emit("transfer", { id, state: "done", bytes: total, total, error: null });
+  return true;
 }
 
 let uploadCount = 0;
+/** sizes of the files "picked" from disk, so an upload reports its own size */
+const localSizes = new Map<string, number>();
 
 // ---- folder sync
 type MockMapping = { id: string; profileId: string; bucket: string; prefix: string; localPath: string; direction: "upload" | "download" | "twoway"; ignore: string[]; mirrorDeletes: boolean; intervalMins: number; paused: boolean; remoteTrash?: boolean | null; deleteGuard?: boolean };
@@ -513,38 +526,70 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       return null;
     }
     case "delete_objects": {
-      const total = (a.keys.length + a.prefixes.length) * 3000;
-      for (let done = 0; done <= total; done += 1000) {
+      const t = remoteTree(a.profileId, a.bucket);
+      const total = a.keys.length + Object.entries(t).reduce((n, [k, d]) => n + (a.prefixes.some((p: string) => k.startsWith(p)) ? d.objects.length : 0), 0);
+      const step = Math.max(1, Math.ceil(total / 12));
+      for (let done = 0; done <= total; done += step) {
         if (cancelled.has(a.opId)) return { done, total, error: "Cancelled" };
         await emit("move-progress", { opId: a.opId, phase: "deleting", done, total, bytes: 0, totalBytes: 0 });
-        await sleep(400);
+        await sleep(250);
       }
-      for (const d of Object.values(tree)) {
-        d.objects = d.objects.filter((o) => !a.keys.includes(o.key));
-        d.folders = d.folders.filter((f) => !a.prefixes.includes(f));
+      for (const [k, d] of Object.entries(t)) {
+        if (a.prefixes.some((p: string) => k.startsWith(p))) delete t[k];
+        else {
+          d.objects = d.objects.filter((o) => !a.keys.includes(o.key));
+          d.folders = d.folders.filter((f) => !a.prefixes.includes(f));
+        }
       }
       return { done: total, total, error: null };
     }
     case "move_many": {
-      // pretend each item is a big folder so progress/ETA can be seen
-      const total = 600 * a.items.length;
-      const totalBytes = total * 3_400_000;
+      // the real counts and sizes (files as they are, folders by what is in them), so a single
+      // file reports one object and its own size; set window.__failMoves = n in the console to
+      // have the next n moves or copies stop halfway (to try Retry)
+      const src = remoteTree(a.profileId, a.bucket);
+      const w = window as unknown as { __failMoves?: number };
+      const fail = !!w.__failMoves;
+      if (fail) w.__failMoves!--;
+      let total = 0;
+      let totalBytes = 0;
+      for (const it of a.items) {
+        if (it.isPrefix) {
+          for (const [k, d] of Object.entries(src))
+            if (k.startsWith(it.from)) {
+              total += d.objects.length;
+              totalBytes += d.objects.reduce((s, o) => s + o.size, 0);
+            }
+        } else {
+          const o = src[it.from.slice(0, it.from.lastIndexOf("/") + 1)]?.objects.find((x) => x.key === it.from);
+          total += 1;
+          totalBytes += o?.size ?? 0;
+        }
+      }
+      total = Math.max(total, 1);
       await emit("move-progress", { opId: a.opId, phase: "listing", done: 0, total: 0, bytes: 0, totalBytes: 0 });
-      await sleep(700);
-      for (let done = 0; done <= total; done += 12) {
+      await sleep(500);
+      const step = Math.max(1, Math.ceil(total / 30));
+      const stopAt = fail ? Math.floor(total / 2) : total;
+      for (let done = 0; done <= stopAt; done += step) {
         if (cancelled.has(a.opId)) return { done, total, error: "Cancelled" };
-        await emit("move-progress", { opId: a.opId, phase: "copying", done, total, bytes: done * 3_400_000, totalBytes });
+        await emit("move-progress", { opId: a.opId, phase: "copying", done, total, bytes: Math.round((totalBytes * done) / total), totalBytes });
         await sleep(160);
       }
-      for (const it of a.items) await handle("copy_or_move", { ...it, deleteSource: a.deleteSource });
+      const items = fail ? a.items.slice(0, Math.floor(a.items.length / 2)) : a.items;
+      for (const it of items) await handle("copy_or_move", { ...it, profileId: a.profileId, bucket: a.bucket, destBucket: a.destBucket, deleteSource: a.deleteSource });
+      if (fail) return { done: stopAt, total, error: "The connection dropped (a made-up failure from the mock)." };
       return { done: total, total, error: null };
     }
     case "copy_or_move": {
-      await sleep(400);
+      await sleep(150);
+      // within the bucket, or into another bucket of the connection (move_many's destBucket)
+      const tree = remoteTree(a.profileId, a.bucket);
+      const into = remoteTree(a.profileId, a.destBucket ?? a.bucket);
       const dirOf = (k: string) => k.slice(0, k.replace(/\/$/, "").lastIndexOf("/") + 1);
-      const ensure = (d: string) => (tree[d] ??= { folders: [], objects: [] });
+      const ensure = (d: string) => (into[d] ??= { folders: [], objects: [] });
       if (a.isPrefix) {
-        if (a.to.startsWith(a.from)) throw "Cannot copy a folder into itself";
+        if (into === tree && a.to.startsWith(a.from)) throw "Cannot copy a folder into itself";
         let n = 0;
         for (const [k, d] of Object.entries({ ...tree })) {
           if (!k.startsWith(a.from)) continue;
@@ -574,12 +619,34 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       return 1;
     }
     case "expand_paths":
-      return (a.paths as string[]).map((p, i) => ({ path: p, rel: p.split("/").pop(), size: 4_000_000 * (i + 1) * 7 }));
-    case "list_all_under":
-      return (tree[a.prefix]?.objects ?? []).map((o) => ({ key: o.key, size: o.size }));
-    case "start_upload":
-      simulateTransfer(a.id, 28_000_000 + Math.random() * 90_000_000, ++uploadCount % 4 === 0);
+      return (a.paths as string[]).map((p, i) => {
+        const size = 4_000_000 * (i + 1) * 7;
+        localSizes.set(p, size);
+        return { path: p, rel: p.split("/").pop(), size };
+      });
+    case "list_all_under": {
+      const t = remoteTree(a.profileId, a.bucket);
+      return Object.entries(t).flatMap(([k, d]) => (k.startsWith(a.prefix) ? d.objects.map((o) => ({ key: o.key, size: o.size })) : []));
+    }
+    case "start_upload": {
+      // the file's own size, and once it is up it shows in the folder it went to
+      const size = localSizes.get(a.localPath) ?? 28_000_000 + Math.random() * 90_000_000;
+      void simulateTransfer(a.id, size, ++uploadCount % 4 === 0).then((ok) => {
+        if (!ok) return;
+        const t = remoteTree(a.profileId, a.bucket);
+        const dir = a.key.slice(0, a.key.lastIndexOf("/") + 1);
+        const node = (t[dir] ??= { folders: [], objects: [] });
+        node.objects = node.objects.filter((o) => o.key !== a.key).concat({ key: a.key, size: Math.round(size), modified: Date.now(), etag: null, storageClass: "STANDARD" });
+        // the folders on the way there exist too
+        for (let d = dir; d; ) {
+          const up = d.slice(0, d.replace(/\/$/, "").lastIndexOf("/") + 1);
+          const p = (t[up] ??= { folders: [], objects: [] });
+          if (!p.folders.includes(d)) p.folders.push(d);
+          d = up;
+        }
+      });
       return null;
+    }
     case "start_download":
       simulateTransfer(a.id, 18_000_000 + Math.random() * 60_000_000);
       return a.destPath;
@@ -928,6 +995,11 @@ function demoPdf(): ArrayBuffer {
   const kindOf = (profileId: unknown) => {
     const k = profiles.find((p) => p.id === profileId)?.kind;
     return k && cloudKinds.includes(k) ? k : null;
+  };
+  // moves, copies, uploads and finished jobs (the generic handlers) write into these trees too
+  cloudTree = (profileId, bucket) => {
+    const k = kindOf(profileId);
+    return k ? (trees[k][bucket] ??= { "": { folders: [], objects: [] } }) : undefined;
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleCloud = async (cmd: string, a: any): Promise<unknown> => {

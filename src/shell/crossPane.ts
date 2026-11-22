@@ -1,12 +1,13 @@
 /**
- * Copying and moving between the two panes (F5 / F6, or dragging items onto the other pane).
- * The route depends on what the panes show:
+ * Copying and moving between places: the two panes (F5 / F6, or dragging items onto the other
+ * pane), ⌘V of items cut or copied in another connection, and drops on another connection's
+ * bucket in the sidebar. The route depends on the two places:
  *
  * | from → to                     | route                                                     |
  * |-------------------------------|-----------------------------------------------------------|
  * | same connection (any bucket)  | move_many, with destBucket across buckets (clash + undo)   |
  * | this computer → cloud         | an upload of the files on disk (clash check)               |
- * | cloud → this computer         | a download into the pane's folder                          |
+ * | cloud → this computer         | a download into the destination folder                     |
  * | cloud → another cloud         | a background job (src/jobs), after a short confirm         |
  * | same connection, other root   | the same job when the connection can't copy across roots   |
  *
@@ -16,6 +17,7 @@ import { api, errMessage, LOCAL_ID } from "../api";
 import { parentPrefix } from "../format";
 import { joinPath, safeRelPath } from "../desktop/paths";
 import type { Pane } from "../browser/usePane";
+import type { FileOps } from "../desktop/fileOps";
 import type { Entry } from "../types";
 import type { TransferActions } from "../useTransfers";
 import { peekCaps } from "../useCaps";
@@ -29,21 +31,29 @@ async function onDisk(root: string, key: string): Promise<string> {
   return p;
 }
 
+/** Where items are or go: a connection and one of its roots. */
+export type Place = { profileId: string; bucket: string };
+/** A destination with the names to show for it (the confirm of a copy between connections). */
+export type DestPlace = Place & { connectionName: string; rootName: string; singleRoot?: boolean };
+
+/** One side is this computer's disk and the other a cloud: copies only (see above). */
+export const crossesDiskAt = (a: Place, b: Place) => (a.profileId === LOCAL_ID) !== (b.profileId === LOCAL_ID);
 /** One pane shows this computer's disk and the other a cloud: copies only (see above). */
-export const crossesDisk = (a: Pane, b: Pane) => !!a.here && !!b.here && (a.here.profileId === LOCAL_ID) !== (b.here.profileId === LOCAL_ID);
+export const crossesDisk = (a: Pane, b: Pane) => !!a.here && !!b.here && crossesDiskAt(a.here, b.here);
 
 /**
  * Two clouds the server can't copy between: different connections, or roots of one connection
  * that only copies inside a root. These go through a background job (see above).
  */
-export function viaJob(a: Pane, b: Pane): boolean {
-  if (!a.here || !b.here || a.here.profileId === LOCAL_ID || b.here.profileId === LOCAL_ID) return false;
-  if (a.here.profileId !== b.here.profileId) return true;
+export function viaJobAt(a: Place, b: Place): boolean {
+  if (a.profileId === LOCAL_ID || b.profileId === LOCAL_ID) return false;
+  if (a.profileId !== b.profileId) return true;
   // caps load with the pane; S3 (the default while they load) copies across buckets
-  return a.here.bucket !== b.here.bucket && (peekCaps(a.here.profileId)?.serverCopy ?? "cross-root") !== "cross-root";
+  return a.bucket !== b.bucket && (peekCaps(a.profileId)?.serverCopy ?? "cross-root") !== "cross-root";
 }
+export const viaJob = (a: Pane, b: Pane) => !!a.here && !!b.here && viaJobAt(a.here, b.here);
 
-type Ctx = {
+export type CrossCtx = {
   dialogs: Dialogs;
   transfers: TransferActions;
   autoShowActivity: () => void;
@@ -53,14 +63,33 @@ type Ctx = {
   confirmMigration?: ConfirmMigration;
 };
 
-export async function sendToPane(src: Pane, dst: Pane, items: Entry[], mode: "copy" | "move", dest: string, c: Ctx) {
+export async function sendToPane(src: Pane, dst: Pane, items: Entry[], mode: "copy" | "move", dest: string, c: CrossCtx) {
   const a = src.here;
   const b = dst.here;
   if (!a || !b || !items.length) return;
+  await sendItems(src.ops, a, items, mode, { ...b, connectionName: dst.profile?.name ?? "", rootName: dst.bucketLabel ?? b.bucket, singleRoot: peekCaps(b.profileId)?.roots === "single" }, dest, c);
+}
+
+/**
+ * Copies or moves items from `a` into folder `dest` of `b`, by whichever route the two places
+ * need (the table above). `srcOps` are the file actions of a pane showing `a`. `onStarted` runs
+ * once the work was started (not when a confirm was cancelled): a cut is used up then.
+ */
+export async function sendItems(
+  srcOps: FileOps,
+  a: Place,
+  items: Entry[],
+  mode: "copy" | "move",
+  b: DestPlace,
+  dest: string,
+  c: CrossCtx,
+  onStarted?: () => void,
+): Promise<void> {
+  if (!items.length) return;
   const fromLocal = a.profileId === LOCAL_ID;
   const toLocal = b.profileId === LOCAL_ID;
-  if (viaJob(src, dst)) {
-    if (!c.confirmMigration || !dst.profile) {
+  if (viaJobAt(a, b)) {
+    if (!c.confirmMigration || !b.connectionName) {
       c.dialogs.toast("info", "Copying between these connections isn't available here");
       return;
     }
@@ -71,8 +100,9 @@ export async function sendToPane(src: Pane, dst: Pane, items: Entry[], mode: "co
         items: items.map((e) => ({ path: e.key, isDir: e.kind === "folder", size: e.kind === "folder" ? undefined : e.size })),
       },
       mode,
-      { profileId: b.profileId, root: b.bucket, dir: dest, connectionName: dst.profile.name, rootName: dst.bucketLabel ?? b.bucket },
-      peekCaps(b.profileId)?.roots === "single",
+      { profileId: b.profileId, root: b.bucket, dir: dest, connectionName: b.connectionName, rootName: b.rootName },
+      b.singleRoot,
+      onStarted,
     );
     return;
   }
@@ -87,7 +117,7 @@ export async function sendToPane(src: Pane, dst: Pane, items: Entry[], mode: "co
       c.dialogs.toast("error", errMessage(e));
       return;
     }
-    await dst.ops.uploadPaths(paths, dest);
+    if (await srcOps.uploadPaths(paths, dest, b)) onStarted?.();
     return;
   } else if (toLocal) {
     let dir: string;
@@ -97,41 +127,42 @@ export async function sendToPane(src: Pane, dst: Pane, items: Entry[], mode: "co
       c.dialogs.toast("error", errMessage(e));
       return;
     }
-    await downloadInto(src, items, dir, c, () => c.reloadIfShowing(b.profileId, b.bucket));
+    if (await downloadInto(a, items, dir, c, () => c.reloadIfShowing(b.profileId, b.bucket))) onStarted?.();
     return;
   }
-  await src.ops.relocate(items, dest, mode, { destBucket: b.bucket });
+  if (await srcOps.relocate(items, dest, mode, { srcBucket: a.bucket, destBucket: b.bucket })) onStarted?.();
 }
 
 /**
  * Cloud → this computer: every file (folders listed in full) into `dir`, keeping folder structure.
- * A file already there is kept and the copy gets a free name, like Finder. `done` runs once all ended.
+ * A file already there is kept and the copy gets a free name, like Finder. `done` runs once all
+ * ended. True when downloads were started.
  */
-async function downloadInto(src: Pane, items: Entry[], dir: string, c: Ctx, done: () => void) {
-  const { profile, bucket } = src;
-  if (!profile || bucket == null) return;
+async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx, done: () => void): Promise<boolean> {
+  const { profileId, bucket } = src;
   const out: Parameters<TransferActions["add"]>[0] = [];
   const add = (key: string, size: number, rel: string) => {
     const safe = safeRelPath(rel);
-    if (safe) out.push({ kind: "download", name: safe, profileId: profile.id, bucket, key, local: joinPath(dir, safe), total: size });
+    if (safe) out.push({ kind: "download", name: safe, profileId, bucket, key, local: joinPath(dir, safe), total: size });
   };
   try {
     for (const e of items) {
       if (e.kind === "file") add(e.key, e.size, e.name);
       else {
         const base = parentPrefix(e.key);
-        for (const f of await api.listAllUnder(profile.id, bucket, e.key)) add(f.key, f.size, f.key.slice(base.length));
+        for (const f of await api.listAllUnder(profileId, bucket, e.key)) add(f.key, f.size, f.key.slice(base.length));
       }
     }
   } catch (e) {
     c.dialogs.toast("error", errMessage(e));
-    return;
+    return false;
   }
   if (!out.length) {
     c.dialogs.toast("info", "Nothing to copy");
-    return;
+    return false;
   }
   const started = c.transfers.add(out);
   c.autoShowActivity();
   void Promise.all(started.map((t) => c.transfers.whenFinished(t.id))).then(done);
+  return true;
 }

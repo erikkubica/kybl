@@ -77,6 +77,7 @@ export function useShortcuts(opts: ShortcutOptions) {
       else if (mod && k === "x" && !textSelected) id = "cut";
       else if (mod && k === "v") id = "paste";
       else if (mod && k === "z" && !ev.shiftKey) id = "undo";
+      else if (mod && k === "d" && !ev.shiftKey) id = own("duplicate");
       else if (mod && k === "o") id = "open";
       else if (mod && ev.key === "ArrowUp") id = "go-up";
       else if (mod && ev.key === "ArrowDown") id = "open";

@@ -35,17 +35,24 @@ export async function findExisting(profileId: string, bucket: string, targets: {
  * Free "name (1).ext" style keys for each of `keys`, next to the original. `reserved` holds keys
  * already taken by this batch, so two "Keep both" picks never land on the same new name.
  */
-export async function freeKeys(profileId: string, bucket: string, keys: string[], reserved: Set<string> = new Set()): Promise<Map<string, string>> {
+export async function freeKeys(
+  profileId: string,
+  bucket: string,
+  keys: string[],
+  reserved: Set<string> = new Set(),
+  /** how the n-th free name is made: "photo (1).jpg", or Duplicate's "photo copy.jpg" */
+  naming: (name: string, n: number) => string = numberedName,
+): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const n = new Map(keys.map((k) => [k, 1]));
   let pending = [...new Set(keys)];
   for (let round = 0; pending.length && round < 40; round++) {
     const cand = new Map<string, string>(); // candidate -> original
     for (const k of pending) {
-      let c = candidate(k, n.get(k)!);
+      let c = candidate(k, n.get(k)!, naming);
       while (reserved.has(c) || cand.has(c)) {
         n.set(k, n.get(k)! + 1);
-        c = candidate(k, n.get(k)!);
+        c = candidate(k, n.get(k)!, naming);
       }
       cand.set(c, k);
     }
@@ -69,11 +76,11 @@ export async function freeKeys(profileId: string, bucket: string, keys: string[]
   return out;
 }
 
-function candidate(key: string, n: number): string {
+function candidate(key: string, n: number, naming: (name: string, n: number) => string): string {
   const folder = key.endsWith("/");
   const trimmed = folder ? key.slice(0, -1) : key;
   const cut = trimmed.lastIndexOf("/") + 1;
-  return trimmed.slice(0, cut) + numberedName(trimmed.slice(cut) + (folder ? "/" : ""), n);
+  return trimmed.slice(0, cut) + naming(trimmed.slice(cut) + (folder ? "/" : ""), n);
 }
 
 /**

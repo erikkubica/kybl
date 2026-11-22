@@ -119,6 +119,11 @@ export function MountsSection({ profiles, onToast }: { profiles: Profile[]; onTo
                 <p className="sync-error selectable mount-notice">
                   <Icon name="info" size={13} />
                   <span>{m.notice}</span>
+                  {m.state === "mounted" && (
+                    <button className="btn btn-sm btn-ghost" onClick={() => run(m.id, () => mountApi.mountReveal(m.id))} title={`Open the drive in ${fm}`}>
+                      Show
+                    </button>
+                  )}
                   <button className="btn btn-sm btn-ghost" onClick={() => run(m.id, () => mountApi.mountDismiss(m.id))}>
                     OK
                   </button>
@@ -167,6 +172,7 @@ export function MountsSection({ profiles, onToast }: { profiles: Profile[]; onTo
               </div>
             </div>
           ))}
+          <p className="set-hint mount-add-hint">To add a drive, right-click a folder or bucket and choose Mount as drive…</p>
         </div>
       )}
 

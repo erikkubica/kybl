@@ -62,14 +62,14 @@ export function useEntries(
       }
       const found = [
         ...[...folders].map(folderEntry),
-        ...search.results.map<Entry>((o) => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native, mime: o.mime })),
+        ...search.results.map<Entry>((o) => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native, mime: o.mime, id: o.id })),
       ];
       return hideDotfiles ? found.filter((e) => !dotted(e.key.slice(base.length))) : found;
     }
     if (!fresh && !stale) return [];
     const all = [
       ...listing.folders.map(folderEntry),
-      ...listing.objects.map<Entry>((o) => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native, mime: o.mime })),
+      ...listing.objects.map<Entry>((o) => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native, mime: o.mime, id: o.id })),
     ];
     return hideDotfiles ? all.filter((e) => !e.name.startsWith(".")) : all;
   }, [listing, search, fresh, stale, hideDotfiles]);

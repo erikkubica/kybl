@@ -106,7 +106,7 @@ const opensAsDoc = (picked: Entry) => {
   const e = picked.native ? asExport(picked) : picked;
   return !!e && e.kind === "file" && canView(e.name, e.size) && (viewerFor(e.name)?.kind !== "image" || !isMedia(e));
 };
-const toEntry = (o: ObjInfo): Entry => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native, mime: o.mime });
+const toEntry = (o: ObjInfo): Entry => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native, mime: o.mime, id: o.id });
 
 /** Where downloads land, in the words people see in their Files app. */
 function friendlyFolder(path: string): string {

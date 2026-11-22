@@ -13,7 +13,7 @@ import { Icon } from "../Icons";
 import { formatBytes } from "../format";
 import type { Entry } from "../types";
 import { EDIT_MAX, viewerFor } from "./registry";
-import { asExport } from "../connections/native";
+import { asExport, driveUrl } from "../connections/native";
 import { encodeText } from "./text";
 import { useDocument } from "./useDocument";
 import { ConflictDialog, UnsavedDialog } from "./ConflictDialog";
@@ -102,6 +102,15 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
   const [saveError, setSaveError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<{ current: DocMeta | null } | null>(null);
   const [asking, setAsking] = useState(false);
+  // where the keyboard was before "Save changes?" or the conflict question opened: focus goes back
+  // there when it closes (Cancel), so typing carries on in the editor
+  const lastFocus = useRef<HTMLElement | null>(null);
+  const questionUp = asking || !!conflict;
+  useEffect(() => {
+    if (questionUp) return;
+    const el = lastFocus.current;
+    if (el?.isConnected) requestAnimationFrame(() => el.focus({ preventScroll: true }));
+  }, [questionUp]);
 
   const getText = useRef<(() => string) | null>(null);
   const original = useRef<string>("");
@@ -332,11 +341,19 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
   else if (full && ready && textDoc?.lossy) readOnlyWhy = "This file isn't UTF-8 text, so it opens read-only to keep it intact.";
   else if (full && ready && textDoc && info && ready.bytes.length > info.editMaxBytes && info.editMaxBytes > 0) readOnlyWhy = `Files over ${formatBytes(info.editMaxBytes)} open read-only.`;
 
+  // a native Google file opens in Drive in the browser, where it can be edited
+  const gdriveUrl = native ? driveUrl(given) : null;
   const status = saving ? "Saving…" : saveError ? null : flash ? flash : dirty ? "Edited" : editable || !ready ? null : "Read only";
   const saveKey = isMac ? "⌘S" : "Ctrl+S";
 
   return (
-    <div className={`dv ${full ? "dv-full" : "dv-preview"} ${inline ? "inline" : ""} ${full && macWindow && !inline ? "mac" : ""}`}>
+    <div
+      className={`dv ${full ? "dv-full" : "dv-preview"} ${inline ? "inline" : ""} ${full && macWindow && !inline ? "mac" : ""}`}
+      onFocusCapture={(e) => {
+        const t = e.target as HTMLElement;
+        if (!t.closest(".dv-dialog-backdrop, .modal-backdrop")) lastFocus.current = t;
+      }}
+    >
       {full && (
         <header className="dv-bar" data-tauri-drag-region>
           <button className="dv-icon" onClick={() => void requestClose()} aria-label="Close" title="Close (Esc)">
@@ -363,7 +380,16 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
           )}
         </header>
       )}
-      {readOnlyWhy && <div className="dv-banner">{readOnlyWhy}</div>}
+      {readOnlyWhy && (
+        <div className="dv-banner">
+          <span>{readOnlyWhy}</span>
+          {native && gdriveUrl && (
+            <button className="btn btn-sm" onClick={() => void import("@tauri-apps/plugin-opener").then(({ openUrl }) => openUrl(gdriveUrl)).catch(() => window.open(gdriveUrl, "_blank", "noopener"))}>
+              <Icon name="external" size={13} /> Open in Google Drive
+            </button>
+          )}
+        </div>
+      )}
       {saveError && (
         <div className="dv-banner bad" role="alert">
           <span>Couldn't save. {saveError}</span>

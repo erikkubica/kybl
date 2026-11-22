@@ -23,6 +23,15 @@ export function numberedName(name: string, n: number): string {
   return dot > 0 ? `${base.slice(0, dot)} (${n})${base.slice(dot)}` : `${base} (${n})${folder ? "/" : ""}`;
 }
 
+/** Duplicate's names, like Finder: "photo copy.jpg", then "photo copy 2.jpg" (folders "Trip copy/"). */
+export function copyName(name: string, n: number): string {
+  const folder = name.endsWith("/");
+  const base = folder ? name.slice(0, -1) : name;
+  const dot = folder ? -1 : base.lastIndexOf(".");
+  const tag = n === 1 ? " copy" : ` copy ${n}`;
+  return dot > 0 ? `${base.slice(0, dot)}${tag}${base.slice(dot)}` : `${base}${tag}${folder ? "/" : ""}`;
+}
+
 /** Short stable hash, for per-object temp folders. */
 export function shortHash(s: string): string {
   let h = 2166136261;

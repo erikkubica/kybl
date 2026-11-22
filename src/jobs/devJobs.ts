@@ -185,7 +185,9 @@ export async function handleJob(cmd: string, a: any): Promise<unknown> {
       if (spec.src.items.length > 0 && spec.src.items.every((i) => !i.isDir)) {
         Object.assign(j, { exact: true, failAt: new Set(), planLeft: 1 });
         j.progress.filesTotal = spec.src.items.length;
-        j.progress.bytesTotal = spec.src.items.length * j.avg;
+        const bytes = (window as unknown as { __kyblMockBytes?: (s: JobSpec) => number }).__kyblMockBytes?.(spec) ?? 0;
+        j.progress.bytesTotal = bytes > 0 ? bytes : spec.src.items.length * j.avg;
+        j.avg = j.progress.bytesTotal / spec.src.items.length;
       }
       jobs.push(j);
       send(j);

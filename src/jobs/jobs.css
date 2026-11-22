@@ -395,6 +395,14 @@
 .m-app .jobs-mode button {
   height: 34px;
 }
+/* phones: the failure line and its "Try again" are finger-sized */
+.m-app .jobs-problems .jobs-link,
+.m-app .jobs-problems .btn {
+  min-height: 44px;
+}
+.m-app .jobs-problems .btn {
+  padding: 0 14px;
+}
 /* phones: the title gets the full width and may wrap; the buttons go on their own line */
 .jobs-mobile .jobs-row {
   grid-template-columns: 22px minmax(0, 1fr);
