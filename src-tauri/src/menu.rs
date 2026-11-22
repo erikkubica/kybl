@@ -17,7 +17,7 @@ use tauri::{
 };
 
 /// Item ids passed to the page as they are.
-const PAGE_ITEMS: [&str; 23] = [
+const PAGE_ITEMS: [&str; 24] = [
     "new-connection",
     "new-folder",
     "upload-files",
@@ -41,6 +41,7 @@ const PAGE_ITEMS: [&str; 23] = [
     "pane-copy",
     "pane-move",
     "toggle-hidden",
+    "toggle-sidebar",
 ];
 
 /// Handled here, not by the page (named apart from the tray menu's ids, which share the handler).
@@ -119,6 +120,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &item("refresh", "Refresh", None)?,
             &item("search", "Search…", None)?,
             &item("toggle-hidden", "Show Hidden Files", Some("CmdOrCtrl+Shift+Period"))?,
+            &item("toggle-sidebar", "Show or Hide Sidebar", Some("CmdOrCtrl+Alt+S"))?,
             &sep()?,
             // dual pane: F5, F6 and Tab stay with the page (they'd steal keys from text fields)
             &item("toggle-dual", "Dual Pane", Some("CmdOrCtrl+Backslash"))?,

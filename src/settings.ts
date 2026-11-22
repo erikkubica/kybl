@@ -56,6 +56,8 @@ export type Settings = {
   syncBrowsing: boolean;
   /** files and folders whose name starts with "." show in panes of this computer's disk */
   showHiddenFiles: boolean;
+  /** desktop: the connections sidebar folded away (⌥⌘S, or its button by the window controls) */
+  sidebarHidden: boolean;
 };
 
 export type Favorite = { profileId: string; bucket: string; prefix: string; name: string };
@@ -84,6 +86,7 @@ export const DEFAULTS: Settings = {
   layout: "single",
   syncBrowsing: false,
   showHiddenFiles: false,
+  sidebarHidden: false,
 };
 
 export const ACCENTS: { id: Exclude<Accent, "scheme">; label: string; color: string }[] = [

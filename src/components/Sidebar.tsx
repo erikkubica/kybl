@@ -4,7 +4,7 @@ import { KYBL } from "../kybl";
 import { useCaps } from "../useCaps";
 import { deviceIcon, rootIcon, rootsMode } from "../connections/roots";
 import { addressOf } from "../connections/kinds";
-import { KyblLockup, KyblMark } from "./KyblMark";
+import { KyblMark } from "./KyblMark";
 import { providerMeta } from "../providers";
 import type { Profile } from "../types";
 import type { SyncState } from "../sync";
@@ -71,6 +71,7 @@ export function Sidebar({
   onSignInAgain,
   onConnectionMenu,
   onBucketMenu,
+  onHide,
 }: {
   profiles: Profile[];
   /** connection of the bucket on screen */
@@ -108,6 +109,8 @@ export function Sidebar({
   /** right-click on a connection / a bucket (at the pointer) */
   onConnectionMenu?(p: Profile, x: number, y: number): void;
   onBucketMenu?(p: Profile, bucket: string, x: number, y: number): void;
+  /** folds the sidebar away (its button sits by the window controls) */
+  onHide?: () => void;
 }) {
   // connections whose hidden buckets are on show (to pick which to bring back)
   const [showHidden, setShowHidden] = useState<Set<string>>(new Set());
@@ -115,7 +118,7 @@ export function Sidebar({
     // the web view's own menu (Reload, Inspect) means nothing here
     <aside className="sidebar" onContextMenu={(e) => e.preventDefault()}>
       <div className="sidebar-drag" data-tauri-drag-region>
-        <KyblLockup size={20} />
+        {onHide && <SidebarToggle open onToggle={onHide} />}
       </div>
       <div className="sidebar-scroll">
         {favorites && favorites.length > 0 && (
@@ -428,5 +431,21 @@ function SidebarConnection({
         </div>
       )}
     </div>
+  );
+}
+
+/** the sidebar's show/hide button, by the window controls (the same spot whether it's open or not) */
+export function SidebarToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`icon-btn side-toggle ${open ? "" : "floating"}`}
+      onClick={onToggle}
+      title={`${open ? "Hide" : "Show"} sidebar (⌥⌘S)`}
+      aria-label={open ? "Hide sidebar" : "Show sidebar"}
+      aria-expanded={open}
+    >
+      <Icon name="sidebar" size={17} />
+    </button>
   );
 }

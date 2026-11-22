@@ -3814,9 +3814,32 @@ body.dragging-items * {
   padding: 2px 16px 0;
 }
 /* the lockup is decoration: the strip stays a window drag handle */
-.sidebar-drag .kybl-lockup {
-  pointer-events: none;
-  opacity: 0.92;
+/* the sidebar's show/hide button, just right of the window controls; it stays put when the
+   sidebar folds away (then floating over the first pane's toolbar, which makes room for it) */
+.side-toggle {
+  position: absolute;
+  top: 13px;
+  left: 78px;
+  width: 28px;
+  height: 28px;
+  color: var(--dim);
+}
+.side-toggle:hover {
+  color: var(--text);
+}
+.side-toggle.floating {
+  position: fixed;
+  z-index: 20;
+}
+.sidebar {
+  position: relative;
+}
+.app.side-hidden {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* the window controls and the toggle sit over the first (left or top) pane's toolbar */
+.app.side-hidden [data-pane="left"] .toolbar {
+  padding-left: 116px;
 }
 .welcome-mark {
   display: block;

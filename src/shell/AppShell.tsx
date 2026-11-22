@@ -11,7 +11,7 @@ import { api, errMessage, errSummary } from "../api";
 import { baseName } from "../format";
 import { useTransfers } from "../useTransfers";
 import { useJobs } from "../useJobs";
-import { Sidebar } from "../components/Sidebar";
+import { Sidebar, SidebarToggle } from "../components/Sidebar";
 import { TransferPanel, type ActivityTab } from "../components/TransferPanel";
 import { ConnectionDialog } from "../components/ConnectionDialog";
 import { KyblConnectDialog } from "../components/KyblConnectDialog";
@@ -92,6 +92,16 @@ export function AppShell() {
         const next = { ...cur, ...patch };
         saveSettings(next);
         applySettings(next);
+        return next;
+      }),
+    [],
+  );
+  const sideHidden = settings.sidebarHidden;
+  const toggleSidebar = useCallback(
+    () =>
+      setSettings((cur) => {
+        const next = { ...cur, sidebarHidden: !cur.sidebarHidden };
+        saveSettings(next);
         return next;
       }),
     [],
@@ -504,6 +514,7 @@ export function AppShell() {
     },
     free: {
       "new-connection": () => setConnDialog({ profile: null }),
+      "toggle-sidebar": toggleSidebar,
       ...dualPane.commands,
     },
     dual,
@@ -561,7 +572,10 @@ export function AppShell() {
   const aside = (p: Pane) => preview.previewOpen && <PreviewAside pane={p} layout={preview} settings={settings} reloadIfShowing={reloadIfShowing} onOpenFull={(e) => openDocument(p.id, e)} />;
 
   return (
-    <div className="app">
+    <div className={`app ${sideHidden ? "side-hidden" : ""}`}>
+      {sideHidden ? (
+        <SidebarToggle open={false} onToggle={toggleSidebar} />
+      ) : (
       <Sidebar
         profiles={profiles}
         activeId={active.profile?.id ?? null}
@@ -592,7 +606,9 @@ export function AppShell() {
         builtIn={(p) => p.id === THIS_MAC.id}
         onConnectionMenu={connectionMenu}
         onBucketMenu={bucketMenu}
+        onHide={toggleSidebar}
       />
+      )}
 
       <main className="main">
         <PaneContext.Provider value={{ left, right, active, other, dual, setActive: setActiveId }}>

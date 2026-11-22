@@ -45,4 +45,5 @@ export const MENU_ACCELERATORS: Record<string, string> = {
   "toggle-dual": "⌘\\",
   "swap-panes": "⇧⌘S",
   "toggle-hidden": "⇧⌘.",
+  "toggle-sidebar": "⌥⌘S",
 };
