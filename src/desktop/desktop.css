@@ -128,6 +128,10 @@
   height: 100%;
   object-fit: contain;
 }
+/* a thumbnail (HEIC, RAW): shown at most at its own size, not blown up and blurred */
+.ql-image.thumb {
+  object-fit: scale-down;
+}
 .ql-video {
   max-width: 100%;
   max-height: 100%;
@@ -182,4 +186,8 @@
   color: var(--text);
   max-width: 520px;
   overflow-wrap: anywhere;
+}
+/* Quick Look has its own Open in the header: the document viewer's floating one would repeat it */
+.ql-body .dv-open-full {
+  display: none;
 }

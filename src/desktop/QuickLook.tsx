@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
 import { classify, formatDateFull, isWebImage, entrySize, entryKind } from "../format";
@@ -7,6 +7,11 @@ import { ErrorText } from "../components/ErrorText";
 import { MAX_PDF_BYTES, PdfView } from "../components/PdfView";
 import type { Entry } from "../types";
 import { playableUrl } from "../media";
+import { cachedThumb, canThumb, loadThumb } from "../thumbs";
+import { asExport } from "../connections/native";
+// the same previews as the details panel (components/PreviewPane): documents in the document
+// viewer, images the web view can't draw by their thumbnail, Google files by their Office export
+import { LazyDocumentView, viewerFor } from "../viewers/registry";
 
 const MAX_TEXT = 50 * 1000 * 1000;
 
@@ -103,7 +108,14 @@ export function QuickLook({
 function Content({ profileId, bucket, entry, onOpen }: { profileId: string; bucket: string; entry: Entry; onOpen: (e: Entry) => void }) {
   const cls = entry.kind === "folder" ? "folder" : classify(entry.name);
   const media = (cls === "image" && isWebImage(entry.name)) || cls === "video" || cls === "audio";
-  const text = cls === "text" && entry.size <= MAX_TEXT;
+  // Word, Excel, slides, CSV, Markdown, code… and Google Docs / Sheets / Slides (by their export)
+  const docAs = entry.kind === "folder" ? null : entry.native ? asExport(entry) : entry;
+  const viewer = docAs ? viewerFor(docAs.name, null, docAs.size) : null;
+  const doc = !!viewer && viewer.kind !== "image";
+  // HEIC, RAW and the like: the thumbnail the grid makes (the original can't be drawn here)
+  const thumbable = cls === "image" && !isWebImage(entry.name) && canThumb(entry);
+  const [thumb, setThumb] = useState<string | null | undefined>(() => (thumbable ? cachedThumb(profileId, bucket, entry) : null));
+  const text = cls === "text" && !doc && entry.size <= MAX_TEXT;
   const pdf = cls === "pdf" && entry.size <= MAX_PDF_BYTES;
   const [url, setUrl] = useState<string | null>(null);
   const [body, setBody] = useState<{ text: string; truncated: boolean } | null>(null);
@@ -129,6 +141,16 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
     };
   }, [profileId, bucket, entry.key, media, text]);
 
+  useEffect(() => {
+    if (!thumbable || thumb !== undefined) return;
+    let live = true;
+    loadThumb(profileId, bucket, entry, () => live).then((u) => live && setThumb(u ?? null));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId, bucket, entry.key, thumbable]);
+
   if (error)
     return (
       <div className="ql-none">
@@ -138,6 +160,19 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
       </div>
     );
   if (pdf) return <PdfView profileId={profileId} bucket={bucket} objectKey={entry.key} onError={setError} />;
+  if (doc)
+    return (
+      <Suspense fallback={<div className="ql-none"><span className="spinner" /></div>}>
+        <LazyDocumentView key={entry.key} profileId={profileId} bucket={bucket} entry={entry} mode="preview" onOpenFull={onOpen} />
+      </Suspense>
+    );
+  if (thumbable && thumb) return <img className="ql-image thumb" src={thumb} alt={entry.name} />;
+  if (thumbable && thumb === undefined)
+    return (
+      <div className="ql-none">
+        <span className="spinner" />
+      </div>
+    );
   if (media && !url)
     return (
       <div className="ql-none">
