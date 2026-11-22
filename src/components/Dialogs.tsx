@@ -65,7 +65,7 @@ export function Modal({
     // the main button, else the dialog itself so screen readers start at its title.
     if (el && !el.contains(document.activeElement)) {
       const field = coarse() ? null : el.querySelector<HTMLElement>('input:not(:disabled):not([type="hidden"]):not([type="checkbox"]), select:not(:disabled), textarea:not(:disabled)');
-      const primary = el.querySelector<HTMLElement>(".modal-foot .btn-primary:not(:disabled), .modal-foot .btn-danger:not(:disabled)");
+      const primary = el.querySelector<HTMLElement>(".btn-primary:not(:disabled), .btn-danger:not(:disabled)");
       (field && visible(field) ? field : primary && !coarse() ? primary : el).focus({ preventScroll: true });
     }
     const top = () => modalStack[modalStack.length - 1] === id;
@@ -457,15 +457,19 @@ function ToastItem({ toast: t, dismiss }: { toast: Toast; dismiss: (id: number) 
   const detail = errDetail(t.text);
   const ms = t.action ? Math.max(TOAST_MS.action, TOAST_MS[t.kind]) : TOAST_MS[t.kind];
   const left = useRef(ms);
+  // callers pass a fresh dismiss on every render; the timer must not restart because of that
+  const dismissRef = useRef(dismiss);
+  dismissRef.current = dismiss;
   useEffect(() => {
     if (held || open) return;
     const start = Date.now();
-    const timer = setTimeout(() => dismiss(t.id), left.current);
+    const timer = setTimeout(() => dismissRef.current(t.id), left.current);
     return () => {
       clearTimeout(timer);
-      left.current = Math.max(1500, left.current - (Date.now() - start));
+      // after hovering or reading the details, leave a moment before it goes
+      left.current = Math.max(2000, left.current - (Date.now() - start));
     };
-  }, [held, open, dismiss, t.id]);
+  }, [held, open, t.id]);
 
   return (
     <div

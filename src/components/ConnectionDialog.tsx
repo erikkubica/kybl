@@ -134,6 +134,13 @@ export function ConnectionDialog({
   const choosing = !initial && !!onKybl && !!kyblFirst;
   /** the provider grid and key fields are showing (always, unless `choosing`) */
   const [custom, setCustom] = useState(!choosing);
+  const nameRef = useRef<HTMLInputElement>(null);
+  // "Use another provider" unfolds the form and removes the button that had focus: move on to the first field
+  const unfolded = useRef(custom);
+  useEffect(() => {
+    if (custom && !unfolded.current) nameRef.current?.focus();
+    unfolded.current = custom;
+  }, [custom]);
 
   const preset = PRESETS.find((p) => p.id === provider) ?? PRESETS[0];
 
@@ -297,7 +304,7 @@ export function ConnectionDialog({
             <span>
               Name <em>optional</em>
             </span>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder={preset.label} />
+            <input ref={nameRef} value={name} onChange={(e) => setName(e.target.value)} placeholder={preset.label} />
           </label>
 
           {preset.regions ? (
