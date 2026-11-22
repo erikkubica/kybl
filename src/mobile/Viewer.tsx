@@ -15,6 +15,7 @@ import { canThumb, cachedThumb, loadThumb } from "../thumbs";
 import { playableUrl } from "../media";
 import type { Entry } from "../types";
 import { MIcon, type MIconName } from "./icons";
+import { releaseOnUnmount } from "../releaseMedia";
 
 type Props = {
   items: Entry[];
@@ -321,6 +322,7 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onInd
         ) : isVideo(e) ? (
           here && url ? (
             <video
+              ref={releaseOnUnmount}
               src={url}
               controls
               playsInline
@@ -337,7 +339,7 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onInd
         ) : (
           <>
             {thumb && !ready[e.key] && <img className="m-vthumb" src={thumb} alt="" draggable={false} />}
-            {url && <img className="m-vfull" src={url} alt={e.name} draggable={false} onLoad={() => setReady((m) => ({ ...m, [e.key]: true }))} />}
+            {url && <img ref={releaseOnUnmount} className="m-vfull" src={url} alt={e.name} draggable={false} onLoad={() => setReady((m) => ({ ...m, [e.key]: true }))} />}
             {!url && !thumb && <span className="spinner m-vspin" />}
           </>
         )}

@@ -6,6 +6,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ToolButton } from "./ui";
 import type { ViewerProps } from "./types";
+import { releaseOnUnmount } from "../releaseMedia";
 
 const TYPES: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp",
@@ -134,6 +135,7 @@ export default function ImageView({ name, bytes, mode }: ViewerProps) {
         ) : (
           url && (
             <img
+              ref={releaseOnUnmount}
               src={url}
               alt={name}
               draggable={false}

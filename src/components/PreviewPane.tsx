@@ -17,6 +17,7 @@ import { rootName } from "../connections/roots";
 import { asExport } from "../connections/native";
 // data and import() calls only: the viewers themselves load on first use (see viewers/INTEGRATION.md)
 import { LazyDocumentView, viewerFor } from "../viewers/registry";
+import { releaseOnUnmount } from "../releaseMedia";
 
 const BIG_IMAGE = 25 * 1000 * 1000;
 
@@ -422,9 +423,9 @@ function FileDetails({
             </button>
           </div>
         )}
-        {showsImage && <img src={url!} alt={entry.name} onError={() => setError("Could not load image")} />}
-        {!error && url && cls === "video" && <video src={url} controls preload="metadata" />}
-        {!error && url && cls === "audio" && <audio src={url} controls preload="metadata" />}
+        {showsImage && <img ref={releaseOnUnmount} src={url!} alt={entry.name} onError={() => setError("Could not load image")} />}
+        {!error && url && cls === "video" && <video ref={releaseOnUnmount} src={url} controls preload="metadata" />}
+        {!error && url && cls === "audio" && <audio ref={releaseOnUnmount} src={url} controls preload="metadata" />}
         {showsPdf && !error && !gone && <PdfView profileId={profileId} bucket={bucket} objectKey={entry.key} onError={setError} />}
         {showsDoc && !gone && (
           <Suspense

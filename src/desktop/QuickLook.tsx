@@ -12,6 +12,7 @@ import { asExport } from "../connections/native";
 // the same previews as the details panel (components/PreviewPane): documents in the document
 // viewer, images the web view can't draw by their thumbnail, Google files by their Office export
 import { LazyDocumentView, viewerFor } from "../viewers/registry";
+import { releaseOnUnmount } from "../releaseMedia";
 
 const MAX_TEXT = 50 * 1000 * 1000;
 
@@ -179,13 +180,13 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
         <span className="spinner" />
       </div>
     );
-  if (cls === "image" && url) return <img className="ql-image" src={url} alt={entry.name} />;
-  if (cls === "video" && url) return <video className="ql-video" src={url} controls autoPlay />;
+  if (cls === "image" && url) return <img ref={releaseOnUnmount} className="ql-image" src={url} alt={entry.name} />;
+  if (cls === "video" && url) return <video ref={releaseOnUnmount} className="ql-video" src={url} controls autoPlay />;
   if (cls === "audio" && url)
     return (
       <div className="ql-none">
         <FileIcon entry={entry} size={64} big />
-        <audio src={url} controls autoPlay />
+        <audio ref={releaseOnUnmount} src={url} controls autoPlay />
       </div>
     );
   if (text)

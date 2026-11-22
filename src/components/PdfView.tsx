@@ -77,6 +77,17 @@ function PdfPage({ doc, index, width, root }: { doc: PDFDocumentProxy; index: nu
   const [near, setNear] = useState(index <= 2);
   const [ratio, setRatio] = useState(1.414);
 
+  // a closed PDF gives its page bitmaps back at once (WebKit keeps a canvas's pixels until GC)
+  useEffect(() => {
+    const c = canvas.current;
+    return () => {
+      if (c) {
+        c.width = 0;
+        c.height = 0;
+      }
+    };
+  }, []);
+
   // draw only the pages near the viewport and free the others
   useEffect(() => {
     const el = wrap.current;
