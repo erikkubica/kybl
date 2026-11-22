@@ -541,6 +541,30 @@ kbd {
 .search:focus-within kbd {
   display: none;
 }
+/* folded: just the magnifier until it's clicked or focused (⌘F), so the path gets the room */
+.search.folded:not(:focus-within) {
+  flex: none;
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+  justify-content: center;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+.search.folded:not(:focus-within):hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.search.folded:not(:focus-within) input {
+  flex: 0 0 0;
+  width: 0;
+  opacity: 0;
+}
+.search.folded:not(:focus-within) kbd,
+.search.folded:not(:focus-within) .icon-btn {
+  display: none;
+}
 
 .actionbar {
   display: flex;

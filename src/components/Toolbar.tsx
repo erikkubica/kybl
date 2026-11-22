@@ -145,7 +145,16 @@ export function Toolbar({
           </nav>
         )}
 
-        <div className="search">
+        {/* folded to its icon until clicked (or ⌘F), and while a filter or search is on it stays open */}
+        <div
+          className={`search ${!query && !searchActive ? "folded" : ""}`}
+          title={!query && !searchActive ? "Filter, or search subfolders (⌘F)" : undefined}
+          onMouseDown={(e) => {
+            if (disabled || (e.target as HTMLElement).closest("input, button")) return;
+            e.preventDefault();
+            searchInput.current?.focus();
+          }}
+        >
           <Icon name="search" size={14} />
           <input
             ref={searchInput}
