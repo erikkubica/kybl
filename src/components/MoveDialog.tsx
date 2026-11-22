@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
-import { useRootName } from "../connections/roots";
+import { rootIcon, useRootName } from "../connections/roots";
 import { Modal } from "./Dialogs";
 import { ErrorText } from "./ErrorText";
 import { FileIcon } from "./FileIcon";
@@ -125,7 +125,7 @@ export function MoveDialog({
 
         {buckets && buckets.length > 1 && (
           <label className="move-bucket">
-            <Icon name="bucket" size={14} />
+            <Icon name={rootIcon(profileId, target)} size={14} />
             <span>Bucket</span>
             <select
               value={target}
@@ -147,7 +147,7 @@ export function MoveDialog({
         )}
         <nav className="move-crumbs" aria-label="Destination">
           <button className="crumb" onClick={() => setPath("")}>
-            <Icon name="bucket" size={14} />
+            <Icon name={rootIcon(profileId, target)} size={14} />
             {label(profileId, target)}
           </button>
           {parts.map((p, i) => (

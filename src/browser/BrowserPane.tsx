@@ -7,6 +7,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { parentPrefix } from "../format";
 import { Icon } from "../Icons";
 import { Toolbar } from "../components/Toolbar";
+import { rootIcon } from "../connections/roots";
 import { FileTable, type SortKey } from "../components/FileTable";
 import { GridView } from "../components/GridView";
 import { QuickLook } from "../desktop/QuickLook";
@@ -76,6 +77,7 @@ export function BrowserPane(p: BrowserPaneProps) {
       <Toolbar
         bucket={bucket}
         bucketLabel={pane.bucketLabel}
+        bucketIcon={pane.profile ? rootIcon(pane.profile.id, bucket ?? "") : undefined}
         canShare={actions.canShare}
         prefix={prefix}
         canUp={pane.canUp}

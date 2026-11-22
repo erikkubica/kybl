@@ -117,6 +117,19 @@ const PATHS: Record<string, ReactNode> = {
     </>
   ),
   // a pail, after the brand book's one-colour tray mark: handle, rim, body with its band
+  // this device: "This Mac" (a laptop) and "On this phone"
+  laptop: (
+    <>
+      <rect x="4" y="5" width="16" height="11" rx="1.8" />
+      <path d="M2.5 19.5h19" />
+    </>
+  ),
+  phone: (
+    <>
+      <rect x="7" y="2.5" width="10" height="19" rx="2.2" />
+      <path d="M11 18.5h2" />
+    </>
+  ),
   bucket: (
     <>
       <path d="M6.5 10a5.5 5.5 0 0 1 11 0" />

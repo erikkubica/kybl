@@ -50,7 +50,7 @@ import { useKeyboardFit, useSystemBack } from "./useSystemBack";
 import { SHEETS, SWIPEABLE, layerElement, layerZ, useLayerStack, type LayerId } from "./layers";
 import { DocScreen } from "./DocScreen";
 import { ON_DEVICE, connName, isLocal } from "./connName";
-import { rootName, setConnectionNames, setRootNames, useRootName, usesListRoots } from "../connections/roots";
+import { rootIcon, rootName, setConnectionNames, setRootNames, useRootName, usesListRoots } from "../connections/roots";
 import { clearAuthNeeded, useAuthNeeded } from "../connections/authNeeded";
 import { LockScreen, useAppLock } from "./AppLock";
 import { canView, viewerFor } from "../viewers/registry";
@@ -932,7 +932,7 @@ export default function MobileApp() {
             </button>
           )}
           <div className="m-bar-path">
-            <Breadcrumbs compact={!wide} bucket={loc.bucket} label={rootLabel(loc.profileId, loc.bucket)} parts={loc.prefix.split("/").filter(Boolean)} onNavigate={(prefix) => go({ ...loc, prefix }, "out")} />
+            <Breadcrumbs compact={!wide} bucket={loc.bucket} label={rootLabel(loc.profileId, loc.bucket)} icon={rootIcon(loc.profileId, loc.bucket)} parts={loc.prefix.split("/").filter(Boolean)} onNavigate={(prefix) => go({ ...loc, prefix }, "out")} />
           </div>
           <button className="m-icon" onClick={() => setSearchOpen(true)} aria-label="Search">
             <Icon name="search" size={20} />

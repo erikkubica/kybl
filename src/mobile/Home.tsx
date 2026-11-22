@@ -3,7 +3,7 @@
  * connection list the tablet sidebar shares with it.
  */
 import { useState } from "react";
-import { Icon } from "../Icons";
+import { Icon, type IconName } from "../Icons";
 import { FileIcon } from "../components/FileIcon";
 import { ProviderBadge } from "../components/Sidebar";
 import { baseName } from "../format";
@@ -19,7 +19,7 @@ import { useCollapsed } from "./ui";
 import type { Loc } from "./useListing";
 import { connName, isLocal } from "./connName";
 import { useCaps } from "../useCaps";
-import { rootsMode, useRootName } from "../connections/roots";
+import { rootIcon, rootsMode, useRootName } from "../connections/roots";
 import { addressOf } from "../connections/kinds";
 import type { Capabilities } from "../api";
 
@@ -52,8 +52,8 @@ function BucketItem({
   onToggle,
 }: {
   label: string;
-  /** buckets, drives, or this device's folders */
-  icon?: "bucket" | "cloud" | "folder";
+  /** buckets, drives, this device's folders (connections/roots.ts `rootIcon`) */
+  icon?: IconName;
   here: boolean;
   hidden: boolean;
   compact: boolean;
@@ -342,7 +342,7 @@ function ConnCard({
           <BucketItem
             key={b}
             label={bl?.labels?.[b] ?? label(p.id, b)}
-            icon={word === "bucket" ? "bucket" : word === "folder" ? "folder" : "cloud"}
+            icon={rootIcon(p.id, b)}
             here={current?.profileId === p.id && current.bucket === b}
             hidden={hiddenSet.has(b)}
             compact={compact}

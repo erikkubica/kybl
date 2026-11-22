@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { api, errMessage, errSummary } from "../api";
 import { Icon } from "../Icons";
-import { rootName } from "../connections/roots";
+import { rootIcon, rootName } from "../connections/roots";
 import { FileIcon } from "../components/FileIcon";
 import { ProviderBadge } from "../components/Sidebar";
 import { baseName, formatBytes } from "../format";
@@ -97,7 +97,7 @@ export function DestinationScreen({
                   {(buckets[p.id]?.names ?? []).map((b) => (
                     <li key={b}>
                       <button className="m-setting-row" onClick={() => onAt({ profileId: p.id, bucket: b, prefix: "" })}>
-                        <Icon name="bucket" size={18} />
+                        <Icon name={rootIcon(p.id, b)} size={18} />
                         <span className="m-grow">{rootName(p.id, b)}</span>
                         <Icon name="chevron" size={13} className="m-chev" />
                       </button>

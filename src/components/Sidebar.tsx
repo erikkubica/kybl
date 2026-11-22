@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Icon } from "../Icons";
 import { KYBL } from "../kybl";
 import { useCaps } from "../useCaps";
-import { rootsMode } from "../connections/roots";
+import { deviceIcon, rootIcon, rootsMode } from "../connections/roots";
 import { addressOf } from "../connections/kinds";
 import { KyblLockup, KyblMark } from "./KyblMark";
 import { providerMeta } from "../providers";
@@ -23,7 +23,7 @@ export function ProviderBadge({ provider, large }: { provider: string | undefine
   const meta = providerMeta(provider);
   return (
     <span className={`pbadge ${large ? "lg" : ""} ${meta.id === "kybl" ? "kybl" : ""}`} style={{ "--pc": meta.color } as React.CSSProperties} aria-hidden="true">
-      {meta.id === "kybl" ? <KyblMark size={large ? 22 : 17} sun /> : meta.id === "local" ? <Icon name="server" size={large ? 15 : 12} /> : meta.mono}
+      {meta.id === "kybl" ? <KyblMark size={large ? 22 : 17} sun /> : meta.id === "local" ? <Icon name={deviceIcon} size={large ? 15 : 12} /> : meta.mono}
     </span>
   );
 }
@@ -139,7 +139,7 @@ export function Sidebar({
                   aria-disabled={!p || undefined}
                   title={p ? where : `${where}. The connection for this favorite was removed.`}
                 >
-                  <Icon name={f.prefix ? "folder" : "bucket"} size={14} />
+                  <Icon name={f.prefix ? "folder" : rootIcon(f.profileId, f.bucket)} size={14} />
                   <span className="side-label">{f.name}</span>
                   {onRemoveFavorite && (
                     <button
@@ -281,7 +281,7 @@ function SidebarConnection({
   const canOpenByName = !own && mode === "buckets" && !canCreate;
   const here = active && single && bucket === "";
   const activate = () => (single ? onSelectBucket(p, "") : onToggleProfile(p));
-  const rootIcon = own ? "folder" : mode === "drives" ? "cloud" : "bucket";
+  const rootIco = rootIcon(p.id);
   return (
     <div>
       <div
@@ -306,7 +306,7 @@ function SidebarConnection({
       >
         {own ? (
           <span className="pbadge local" aria-hidden="true">
-            <Icon name="server" size={12} />
+            <Icon name={deviceIcon} size={12} />
           </span>
         ) : (
           <ProviderBadge provider={p.provider} />
@@ -373,7 +373,7 @@ function SidebarConnection({
                   })
                 }
               >
-                <Icon name={rootIcon} size={14} />
+                <Icon name={rootIco} size={14} />
                 <span className="side-label" title={own ? b : undefined}>
                   {rootLabel(p.id, b)}
                 </span>

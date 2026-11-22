@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { Icon } from "../Icons";
+import { Icon, type IconName } from "../Icons";
 
 /**
  * The path, fitted to the room it has. The bucket and the current folder always show; when the
@@ -16,8 +16,11 @@ export function Breadcrumbs({
   onNavigate,
   compact = false,
   label = bucket,
+  icon = "bucket",
 }: {
   bucket: string;
+  /** the root's icon (connections/roots.ts `rootIcon`): a bucket, a drive, a folder, a server */
+  icon?: IconName;
   /** what the root is called on screen, when that isn't its id (this computer's folders) */
   label?: string;
   parts: string[];
@@ -63,7 +66,7 @@ export function Breadcrumbs({
       <div className="crumbs-ruler" ref={ruler} aria-hidden="true">
         <span className="crumb-wrap">
           <span className="crumb current">
-            <Icon name="bucket" size={15} />
+            <Icon name={icon} size={15} />
             {!iconOnly && <span className="crumb-label">{label}</span>}
           </span>
         </span>
@@ -83,7 +86,7 @@ export function Breadcrumbs({
 
       <span className={`crumb-wrap crumb-root ${iconOnly ? "icon-only" : ""}`}>
         <button className={`crumb ${n === 0 ? "current" : ""}`} data-drop="" title={label} aria-label={label} onClick={() => onNavigate("")}>
-          <Icon name="bucket" size={15} />
+          <Icon name={icon} size={15} />
           {!iconOnly && <span className="crumb-label">{label}</span>}
         </button>
       </span>
