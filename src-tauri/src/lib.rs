@@ -1,4 +1,6 @@
 mod commands;
+// WP-D: open and save documents for the in-app viewers and editor
+mod doc;
 // "Connect Kybl Storage": browser sign-in on computers and phones
 mod kybl_connect;
 mod mobile;
@@ -138,6 +140,9 @@ pub fn run() {
             prefs::get_app_prefs,
             #[cfg(desktop)]
             prefs::set_app_prefs,
+            // WP-D
+            doc::doc_open,
+            doc::doc_save,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
