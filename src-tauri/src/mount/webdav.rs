@@ -179,14 +179,18 @@ enum Found {
     Dir,
 }
 
+/// A drive with every root: (folder name, root id, read-only).
+type Roots = Arc<Vec<(String, String, bool)>>;
+/// (bytes used, bytes in all)
+type QuotaPair = (u64, Option<u64>);
+
 pub struct Inner {
     open: Opener,
     spec: Spec,
     started: SystemTime,
     listings: Mutex<HashMap<(String, String), Arc<Listing>>>,
-    /// a drive with every root: (folder name, root id, read-only)
-    roots: Mutex<Option<(Instant, Arc<Vec<(String, String, bool)>>)>>,
-    quota: Mutex<Option<(Instant, Option<(u64, Option<u64>)>)>>,
+    roots: Mutex<Option<(Instant, Roots)>>,
+    quota: Mutex<Option<(Instant, Option<QuotaPair>)>>,
     pub blocks: Arc<BlockCache>,
     pub uploads: Arc<WriteBack>,
     junk: JunkStore,
@@ -249,11 +253,11 @@ impl Inner {
     }
 
     /// The roots of a drive that shows all of them, as folder names.
-    async fn roots(&self) -> FsResult<Arc<Vec<(String, String, bool)>>> {
-        if let Some((at, r)) = &*self.roots.lock().unwrap() {
-            if at.elapsed() < Duration::from_secs(60) {
-                return Ok(r.clone());
-            }
+    async fn roots(&self) -> FsResult<Roots> {
+        if let Some((at, r)) = &*self.roots.lock().unwrap()
+            && at.elapsed() < Duration::from_secs(60)
+        {
+            return Ok(r.clone());
         }
         let s = self.storage().await?;
         let mut out: Vec<(String, String, bool)> = Vec::new();
@@ -305,10 +309,10 @@ impl Inner {
     /// The folder `dir` ("" or ending with `/`), from the cache while it is fresh.
     async fn listing(&self, root: &str, dir: &str) -> FsResult<Arc<Listing>> {
         let k = (root.to_string(), dir.to_string());
-        if let Some(l) = self.listings.lock().unwrap().get(&k) {
-            if l.at.elapsed() < TTL {
-                return Ok(l.clone());
-            }
+        if let Some(l) = self.listings.lock().unwrap().get(&k)
+            && l.at.elapsed() < TTL
+        {
+            return Ok(l.clone());
         }
         let s = self.storage().await?;
         let mut l = Listing { at: Instant::now(), dirs: BTreeSet::new(), files: BTreeMap::new() };
@@ -392,13 +396,13 @@ impl Inner {
         if r.is_none() && self.uploads.any_under(root, &dirkey(key)) {
             return Ok(Some((key.to_string(), Found::Dir)));
         }
-        if let Some((real, Found::File(e))) = &r {
-            if real != key {
-                if let Some(p) = self.uploads.get(root, real) {
-                    return Ok(Some((real.clone(), Found::Pending(p))));
-                }
-                return Ok(Some((real.clone(), Found::File(e.clone()))));
+        if let Some((real, Found::File(e))) = &r
+            && real != key
+        {
+            if let Some(p) = self.uploads.get(root, real) {
+                return Ok(Some((real.clone(), Found::Pending(p))));
             }
+            return Ok(Some((real.clone(), Found::File(e.clone()))));
         }
         Ok(r)
     }
@@ -535,11 +539,11 @@ impl Inner {
         };
         let base = self.uploads.base_for(&root, &key, seen);
         let temp = self.uploads.new_temp().map_err(io_err)?;
-        if !o.truncate {
-            if let Err(e) = self.fill(&temp, &root, &found).await {
-                let _ = std::fs::remove_file(&temp);
-                return Err(e);
-            }
+        if !o.truncate
+            && let Err(e) = self.fill(&temp, &root, &found).await
+        {
+            let _ = std::fs::remove_file(&temp);
+            return Err(e);
         }
         let file = std::fs::OpenOptions::new().read(true).write(true).open(&temp).map_err(io_err)?;
         let len = file.metadata().map_err(io_err)?.len();
@@ -612,7 +616,7 @@ impl Inner {
         match self.remote(&root, &key).await? {
             Some((real, Found::File(_))) => {
                 let s = self.storage().await?;
-                s.delete(&root, &[real.clone()], &[], &AtomicBool::new(false), &|_, _| {}).await.map_err(fs_err)?;
+                s.delete(&root, std::slice::from_ref(&real), &[], &AtomicBool::new(false), &|_, _| {}).await.map_err(fs_err)?;
                 self.forget_parent(&root, &real);
                 Ok(())
             }
@@ -774,10 +778,10 @@ impl Inner {
     }
 
     async fn quota(&self) -> FsResult<(u64, Option<u64>)> {
-        if let Some((at, q)) = &*self.quota.lock().unwrap() {
-            if at.elapsed() < QUOTA_TTL {
-                return q.ok_or(FsError::NotImplemented);
-            }
+        if let Some((at, q)) = &*self.quota.lock().unwrap()
+            && at.elapsed() < QUOTA_TTL
+        {
+            return q.ok_or(FsError::NotImplemented);
         }
         let s = self.storage().await?;
         let q = s.quota().await.ok().flatten().map(|q| (q.used, q.total));
@@ -860,10 +864,10 @@ impl fmt::Debug for RemoteRead {
 
 impl RemoteRead {
     async fn block(&mut self, idx: u64) -> FsResult<Bytes> {
-        if let Some((i, b)) = &self.cur {
-            if *i == idx {
-                return Ok(b.clone());
-            }
+        if let Some((i, b)) = &self.cur
+            && *i == idx
+        {
+            return Ok(b.clone());
         }
         let fetched = !self.fs.blocks.has(&self.ver, idx);
         let b = self.fs.blocks.block(&*self.storage, &self.ver, idx).await.map_err(fs_err)?;
@@ -910,9 +914,8 @@ impl DavFile for RemoteRead {
         .boxed()
     }
     fn seek(&mut self, pos: SeekFrom) -> FsFuture<'_, u64> {
-        let r = seek_to(self.pos, self.ver.size, pos).map(|p| {
+        let r = seek_to(self.pos, self.ver.size, pos).inspect(|&p| {
             self.pos = p;
-            p
         });
         async move { r }.boxed()
     }
@@ -1063,9 +1066,8 @@ impl DavFile for WriteFile {
     }
     fn seek(&mut self, pos: SeekFrom) -> FsFuture<'_, u64> {
         let len = self.len();
-        let r = seek_to(self.pos, len, pos).map(|p| {
+        let r = seek_to(self.pos, len, pos).inspect(|&p| {
             self.pos = p;
-            p
         });
         async move { r }.boxed()
     }
@@ -1117,9 +1119,8 @@ impl DavFile for MemFile {
         async move { Ok(b) }.boxed()
     }
     fn seek(&mut self, pos: SeekFrom) -> FsFuture<'_, u64> {
-        let r = seek_to(self.pos as u64, self.data.len() as u64, pos).map(|p| {
+        let r = seek_to(self.pos as u64, self.data.len() as u64, pos).inspect(|&p| {
             self.pos = p as usize;
-            p
         });
         async move { r }.boxed()
     }
@@ -1175,9 +1176,8 @@ impl DavFile for JunkWriter {
         async move { Ok(b) }.boxed()
     }
     fn seek(&mut self, pos: SeekFrom) -> FsFuture<'_, u64> {
-        let r = seek_to(self.pos, self.data.len() as u64, pos).map(|p| {
+        let r = seek_to(self.pos, self.data.len() as u64, pos).inspect(|&p| {
             self.pos = p;
-            p
         });
         async move { r }.boxed()
     }

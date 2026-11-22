@@ -511,10 +511,10 @@ pub async fn mount_remove(app: AppHandle, id: String) -> Result<(), String> {
         l.fs.0.blocks.clear();
     }
     let _ = std::fs::remove_dir_all(cache_dir(&app, &id)?);
-    if let Ok(d) = uploads_dir(&app, &id) {
-        if let Some(parent) = d.parent() {
-            let _ = std::fs::remove_dir_all(parent);
-        }
+    if let Ok(d) = uploads_dir(&app, &id)
+        && let Some(parent) = d.parent()
+    {
+        let _ = std::fs::remove_dir_all(parent);
     }
     let list = {
         let mut list = mgr.configs.lock().unwrap();

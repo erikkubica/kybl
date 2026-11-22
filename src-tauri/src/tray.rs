@@ -139,10 +139,10 @@ pub fn refresh_mounts(app: &AppHandle) {
             let _ = menu.append(&item);
         }
     }
-    if drives.is_empty() {
-        if let Ok(item) = MenuItem::with_id(app, "drives_none", "No drives yet", false, None::<&str>) {
-            let _ = menu.append(&item);
-        }
+    if drives.is_empty()
+        && let Ok(item) = MenuItem::with_id(app, "drives_none", "No drives yet", false, None::<&str>)
+    {
+        let _ = menu.append(&item);
     }
     if let Ok(sep) = PredefinedMenuItem::separator(app) {
         let _ = menu.append(&sep);

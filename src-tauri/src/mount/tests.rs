@@ -356,3 +356,67 @@ fn stores_without_ranges_fill_every_block_from_one_read() {
         assert_eq!(store.reads.lock().unwrap().len(), 1);
     });
 }
+
+/// A real mount: `mount_webdav` into a temp folder, then `ls`, `cat`, `cp`, `mkdir`, `mv` and a
+/// save through the mounted folder, and unmount. Needs no dialog and no admin rights, but it
+/// touches the system's mount table, so it only runs when asked:
+/// `cargo test real_macos_mount -- --ignored`.
+#[cfg(target_os = "macos")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn real_macos_mount() {
+    use std::process::Command;
+    struct Unmount(PathBuf);
+    impl Drop for Unmount {
+        fn drop(&mut self) {
+            let _ = Command::new("/sbin/umount").arg("-f").arg(&self.0).status();
+        }
+    }
+    let d = drive(false).await;
+    let base = d._tmp.0.join("Mounts");
+    let url = d.srv.url();
+    let m = tokio::task::spawn_blocking(move || super::os::mount(&url, &base, "Kybl test", false)).await.unwrap().expect("mounted");
+    let point = PathBuf::from(&m.point);
+    let _guard = Unmount(point.clone());
+    let p2 = point.clone();
+    let out = tokio::task::spawn_blocking(move || {
+        let sh = |cmd: &str| {
+            let o = Command::new("/bin/sh").arg("-c").arg(cmd).current_dir(&p2).output().unwrap();
+            assert!(o.status.success(), "{cmd}: {}", String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stdout).into_owned()
+        };
+        let ls = sh("ls");
+        assert!(ls.contains("a.txt") && ls.contains("docs") && ls.contains("big.bin"), "{ls}");
+        assert_eq!(sh("cat a.txt"), "hello world");
+        assert_eq!(sh("cat docs/b.md"), "# b");
+        // a big file read through the mount, compared byte for byte
+        let copy = p2.parent().unwrap().parent().unwrap().join("big-copy.bin");
+        sh(&format!("cp big.bin '{}'", copy.display()));
+        assert!(std::fs::read(&copy).unwrap() == big(), "cp of big.bin matches");
+        // writing through the mount
+        sh("printf 'written in Finder' > new.txt");
+        sh("cp a.txt docs/a-copy.txt");
+        sh("mkdir made && echo inner > made/inner.txt");
+        sh("mv docs/b.md docs/b-renamed.md");
+        sh("ls -a docs")
+    })
+    .await
+    .unwrap();
+    assert!(out.contains("b-renamed.md"), "{out}");
+    d.drain().await;
+    assert_eq!(on_disk(&d.data, "new.txt").unwrap(), b"written in Finder");
+    assert_eq!(on_disk(&d.data, "docs/a-copy.txt").unwrap(), b"hello world");
+    assert_eq!(on_disk(&d.data, "made/inner.txt").unwrap(), b"inner\n");
+    assert!(d.data.join("docs/b-renamed.md").exists() && !d.data.join("docs/b.md").exists());
+    // no clutter reached the "server"
+    let clutter: Vec<String> = walkdir::WalkDir::new(&d.data)
+        .into_iter()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("._") || n == ".DS_Store")
+        .collect();
+    assert!(clutter.is_empty(), "{clutter:?}");
+    let m2 = m.clone();
+    tokio::task::spawn_blocking(move || super::os::unmount(&m2, "")).await.unwrap().expect("unmounted");
+    assert!(!super::os::is_mounted(&m));
+}

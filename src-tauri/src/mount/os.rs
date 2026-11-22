@@ -179,7 +179,7 @@ pub fn mount(url: &str, _base: &Path, _name: &str, _read_only: bool) -> Result<M
 #[cfg(target_os = "windows")]
 pub fn unmount(m: &Mounted, _url: &str) -> Result<(), String> {
     if !m.point.is_empty() {
-        let _ = Command::new("net").args(["use", &m.point, "/delete", "/y"]).status();
+        let _ = Command::new("net").args(["use", m.point.as_str(), "/delete", "/y"]).status();
     }
     Ok(())
 }

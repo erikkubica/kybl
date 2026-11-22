@@ -225,12 +225,11 @@ impl WriteBack {
         if let Some(p) = st.pending.get(&k) {
             return p.base.clone();
         }
-        if seen.is_none() {
-            if let Some((b, at)) = st.recent.get(&k) {
-                if at.elapsed() < RECENT {
-                    return Some(b.clone());
-                }
-            }
+        if seen.is_none()
+            && let Some((b, at)) = st.recent.get(&k)
+            && at.elapsed() < RECENT
+        {
+            return Some(b.clone());
         }
         seen
     }
@@ -483,10 +482,10 @@ impl WriteBack {
         let mut events = vec![Event::Changed];
         match result {
             Ok(done) => {
-                if !done.conflict {
-                    if let Some(after) = &done.after {
-                        st.recent.insert(k.clone(), (after.clone(), Instant::now()));
-                    }
+                if !done.conflict
+                    && let Some(after) = &done.after
+                {
+                    st.recent.insert(k.clone(), (after.clone(), Instant::now()));
                 }
                 if ours {
                     st.pending.remove(&k);
