@@ -38,7 +38,7 @@ export type DualContext = {
 };
 
 const otherId = (id: PaneId): PaneId => (id === "left" ? "right" : "left");
-const placeName = (p: Pane) => (p.prefix ? destLabel(p.prefix, p.bucket ?? "") : (p.bucketLabel ?? ""));
+const placeName = (p: Pane) => (p.prefix && p.profile ? destLabel(p.prefix, p.bucket ?? "", p.profile.id) : (p.bucketLabel ?? ""));
 
 export function makeDualActions(get: () => DualContext) {
   const pane = (id: PaneId) => (id === "left" ? get().left : get().right);
@@ -169,7 +169,7 @@ export function makeDualActions(get: () => DualContext) {
       if (!get().dual || !dst.here || !src.here) return null;
       const d = dest ?? dst.prefix;
       if (dst.here.profileId === src.here.profileId && dst.bucket === src.bucket && !isValidDest(items, d)) return null;
-      return { dest: d, label: d ? destLabel(d, dst.bucket ?? "") : (dst.bucketLabel ?? ""), copyOnly: crossesDisk(src, dst) };
+      return { dest: d, label: d && dst.profile ? destLabel(d, dst.bucket ?? "", dst.profile.id) : (dst.bucketLabel ?? ""), copyOnly: crossesDisk(src, dst) };
     },
     extraPlaceItems: (): MenuItem[] => {
       const c = get();

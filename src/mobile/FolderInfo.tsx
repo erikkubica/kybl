@@ -5,6 +5,7 @@ import { api, errMessage, errSummary } from "../api";
 import { Icon } from "../Icons";
 import { FileIcon } from "../components/FileIcon";
 import { formatBytes } from "../format";
+import { rootName } from "../connections/roots";
 
 type Size = { bytes: number; objects: number; done: boolean; error?: string };
 
@@ -44,7 +45,10 @@ export function FolderInfo({
     };
   }, [profileId, bucket, prefix]);
 
-  const path = `${bucket}/${prefix}`;
+  // on screen: the root's name ("My Drive", not its id); copied: a real path on this device's own
+  // folders (their root is one), the same readable path elsewhere
+  const shown = [rootName(profileId, bucket), ...prefix.split("/").filter(Boolean)].join("/");
+  const path = /^(\/|[A-Za-z]:[\\/])/.test(bucket) ? `${bucket.replace(/[\\/]$/, "")}/${prefix}`.replace(/\/$/, "") : shown;
   return (
     <div className="m-sheet-backdrop" onClick={onClose}>
       <div className="m-sheet m-info" role="dialog" aria-label={`${name} info`} onClick={(e) => e.stopPropagation()}>
@@ -55,7 +59,7 @@ export function FolderInfo({
           </span>
           <div className="m-info-name">
             <strong>{name}</strong>
-            <small>{path}</small>
+            <small>{shown}</small>
           </div>
         </div>
         <dl className="m-info-props">

@@ -227,7 +227,7 @@ export function MoveDialog({
             ? `${items.length === 1 ? "It’s" : "They’re"} already in this folder. Pick another one.`
             : !valid
               ? "A folder can’t be moved into itself."
-              : `${verb} to ${other ? `${target}/` : "/"}${dest}`}
+              : `${verb} to ${other ? `${label(profileId, target)}/` : "/"}${dest}`}
         </p>
       </div>
       <div className="modal-foot split">

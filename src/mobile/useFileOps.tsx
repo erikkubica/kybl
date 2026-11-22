@@ -464,7 +464,7 @@ export function useFileOps(c: FileOpsCtx) {
     c.clearSelection();
     if (mode === "move") c.closeDetail();
     const items: Target[] = todo.map((e) => ({ from: e.key, to: destKey(e, dest), isPrefix: e.kind === "folder" }));
-    const where = destLabel(dest, b);
+    const where = destLabel(dest, b, pid);
     await checkClashes(pid, b, items, where, async (final, replaced) => {
       if (!final.length) return;
       const label = final.length === 1 ? `“${baseName(final[0].from.replace(/\/$/, ""))}”` : plural(final.length, "item");
@@ -563,7 +563,7 @@ export function useFileOps(c: FileOpsCtx) {
   const queueUploads = async (to: Loc, files: SharedFile[]) => {
     if (!files.length) return;
     const items = files.map((f) => ({ from: f.path, to: to.prefix + f.name, isPrefix: false, file: f }));
-    const where = destLabel(to.prefix, to.bucket);
+    const where = destLabel(to.prefix, to.bucket, to.profileId);
     await checkClashes(to.profileId, to.bucket, items, where, (final) => {
       if (!final.length) return;
       c.transfers.add(final.map((t) => ({ kind: "upload" as const, name: baseName(t.to), profileId: to.profileId, bucket: to.bucket, key: t.to, local: t.file.path, total: t.file.size })));

@@ -227,7 +227,7 @@ export function BrowserPane(p: BrowserPaneProps) {
           onDownload={pane.downloadOne}
         />
       )}
-      {pane.drag && <DragGhost drag={pane.drag} bucket={bucket} />}
+      {pane.drag && profile && <DragGhost drag={pane.drag} bucket={bucket} profileId={profile.id} />}
     </section>
   );
 }

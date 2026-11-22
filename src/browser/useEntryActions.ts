@@ -127,7 +127,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     if (!profile || bucket == null) return;
     try {
       const m = await syncApi.keepOffline(profile.id, bucket, pre);
-      toast("success", `Keeping “${destLabel(pre, bucket)}” on this device. The first sync starts in a moment.`, {
+      toast("success", `Keeping “${destLabel(pre, bucket, profile.id)}” on this device. The first sync starts in a moment.`, {
         label: "Show",
         run: () => void api.revealLocal(m.localPath).catch(() => {}),
       });
@@ -277,7 +277,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       ...(env.extraItemItems?.(list) ?? []),
       !!prefix && !search && {
         type: "item",
-        label: `Move to “${destLabel(parentPrefix(prefix), bucket)}”`,
+        label: `Move to “${destLabel(parentPrefix(prefix), bucket, profile.id)}”`,
         icon: "arrow-up",
         onClick: () => ops.relocate(list, parentPrefix(prefix), "move"),
       },

@@ -13,6 +13,7 @@ import type { FolderSizeInfo } from "./listNav";
 import { EXPIRIES } from "../settings";
 import type { Entry, ObjectDetails } from "../types";
 import { useCaps } from "../useCaps";
+import { rootName } from "../connections/roots";
 // data and import() calls only: the viewers themselves load on first use (see viewers/INTEGRATION.md)
 import { LazyDocumentView, viewerFor } from "../viewers/registry";
 
@@ -316,7 +317,7 @@ function FileDetails({
   const s3Uri = `s3://${bucket}/${entry.key}`;
   // "Photos / 2026" instead of a raw key; the full key lives under Technical details
   const folderPath = entry.key.slice(0, entry.key.length - entry.name.length - (isFolder ? 1 : 0)).replace(/\/$/, "");
-  const where = [bucket, ...folderPath.split("/").filter(Boolean)].join(" › ");
+  const where = [rootName(profileId, bucket), ...folderPath.split("/").filter(Boolean)].join(" › ");
   const [techOpen, setTechOpen] = useState(() => {
     try {
       return localStorage.getItem("s3b.techDetails") === "1";

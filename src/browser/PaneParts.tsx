@@ -1,5 +1,6 @@
 /** The smaller pieces of a browser pane: banners above the list, the status bar and the drag ghost. */
 import { formatBytes } from "../format";
+import { rootName } from "../connections/roots";
 import { destLabel } from "../moving";
 import { Icon } from "../Icons";
 import type { DragState } from "../useItemDrag";
@@ -118,7 +119,7 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
 }
 
 /** What follows the pointer while items are dragged, and what a drop would do. */
-export function DragGhost({ drag, bucket }: { drag: DragState; bucket: string | null }) {
+export function DragGhost({ drag, bucket, profileId }: { drag: DragState; bucket: string | null; profileId: string }) {
   return (
     <div className="drag-ghost" style={{ transform: `translate(${drag.x + 14}px, ${drag.y + 12}px)` }} aria-hidden="true">
       <span className="drag-stack">
@@ -133,7 +134,7 @@ export function DragGhost({ drag, bucket }: { drag: DragState; bucket: string | 
               ? // into the other pane: copies, like a drop into another bucket (⌘ moves)
                 `${drag.copy ? "Copy" : "Move"} to ${drag.label}${drag.copy && !drag.copyOnly ? " · ⌘ to move" : ""}`
               : // Finder's rule: within a bucket a drop moves (⌥ copies), into another bucket it copies (⌘ moves)
-                `${drag.copy ? "Copy" : "Move"} to ${drag.bucket ?? destLabel(drag.dest, bucket ?? "")}${drag.bucket ? (drag.copy ? " · ⌘ to move" : "") : drag.copy ? "" : " · ⌥ to copy"}`
+                `${drag.copy ? "Copy" : "Move"} to ${drag.bucket != null ? rootName(profileId, drag.bucket) : destLabel(drag.dest, bucket ?? "", profileId)}${drag.bucket ? (drag.copy ? " · ⌘ to move" : "") : drag.copy ? "" : " · ⌥ to copy"}`
             : "Drop on a folder or a bucket"}
         </span>
       </span>
