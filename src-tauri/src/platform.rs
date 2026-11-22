@@ -263,6 +263,50 @@ pub async fn open_local(app: AppHandle, path: String) -> Result<(), String> {
     }
 }
 
+/// Puts a local file on the clipboard as a file (not its path as text), so it pastes into a chat,
+/// a mail or a Finder window like a file copied in Finder. macOS for now; elsewhere it says so.
+#[tauri::command]
+pub async fn copy_file_to_clipboard(app: AppHandle, path: String) -> Result<(), String> {
+    must_exist(&path)?;
+    #[cfg(target_os = "macos")]
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        // AppKit wants the pasteboard on the main thread
+        app.run_on_main_thread(move || {
+            let _ = tx.send(pasteboard_file(&path));
+        })
+        .map_err(|e| e.to_string())?;
+        rx.await.map_err(|_| "Couldn't reach the clipboard".to_string())?
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("Copying files to the clipboard works on macOS for now. Download the file instead.".into())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn pasteboard_file(path: &str) -> Result<(), String> {
+    use objc2::{class, msg_send, runtime::AnyObject, runtime::Bool};
+    let c = std::ffi::CString::new(path).map_err(|_| "That file name can't go on the clipboard".to_string())?;
+    unsafe {
+        let s: *mut AnyObject = msg_send![class!(NSString), stringWithUTF8String: c.as_ptr()];
+        let url: *mut AnyObject = msg_send![class!(NSURL), fileURLWithPath: s];
+        if url.is_null() {
+            return Err("Couldn't copy the file".into());
+        }
+        let items: *mut AnyObject = msg_send![class!(NSArray), arrayWithObject: url];
+        let pb: *mut AnyObject = msg_send![class!(NSPasteboard), generalPasteboard];
+        let _: isize = msg_send![pb, clearContents];
+        let ok: Bool = msg_send![pb, writeObjects: items];
+        if ok.as_bool() {
+            Ok(())
+        } else {
+            Err("Couldn't copy the file to the clipboard".into())
+        }
+    }
+}
+
 /// Shows the file in Finder / Explorer / the file manager. Phones have no such place to show:
 /// nothing happens.
 /// Saves bytes the web view holds (a photo or video just taken with the camera picker) as a new

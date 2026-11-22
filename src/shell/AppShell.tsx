@@ -759,14 +759,7 @@ export function AppShell() {
           settings={settings}
           compact={active.compact}
           profiles={saved}
-          onChange={(patch) => {
-            updateSettings(patch);
-            // a tile size picked in Settings applies to both panes again
-            if (patch.tileSize != null) {
-              left.setTile(null);
-              right.setTile(null);
-            }
-          }}
+          onChange={updateSettings}
           // Settings sets it for both panes (each can still change its own from its toolbar)
           onCompact={(c) => {
             left.setCompact(c);

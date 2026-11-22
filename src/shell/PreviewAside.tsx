@@ -9,6 +9,9 @@ import type { Pane } from "../browser/usePane";
 import type { Settings } from "../settings";
 import type { Entry } from "../types";
 
+/** the clipboard takes files on macOS only for now (see platform.rs) */
+const IS_MAC = /Mac/.test(navigator.platform || navigator.userAgent);
+
 const PREVIEW_MIN = 260;
 const PREVIEW_MAX = 760;
 const PREVIEW_DEFAULT = 336;
@@ -117,6 +120,7 @@ export function PreviewAside({
         onCalcSize={(k) => actions.calcSizes([k])}
         onOpenFull={onOpenFull}
         onOpenExternal={(e) => void ops.openInApp(e)}
+        onCopyFile={IS_MAC ? (e) => void ops.copyFile(e) : undefined}
       />
       </div>
     </>

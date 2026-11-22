@@ -640,21 +640,6 @@ export function SettingsPage({
                       })}
                     </div>
                   </Row>
-                  <Row label="Grid tile size" hint="How big tiles and thumbnails are in the grid view.">
-                    <div className="set-range">
-                      <input
-                        type="range"
-                        min={96}
-                        max={320}
-                        step={8}
-                        value={settings.tileSize}
-                        aria-label="Grid tile size"
-                        aria-valuetext={`${settings.tileSize} pixels`}
-                        onChange={(e) => onChange({ tileSize: Number(e.target.value) })}
-                      />
-                      <span className="set-value">{settings.tileSize} px</span>
-                    </div>
-                  </Row>
                   <Row label="File sizes" hint="Decimal: 1 MB = 1,000,000 bytes. Binary: 1 MiB = 1,048,576 bytes.">
                     <Seg
                       label="File sizes"

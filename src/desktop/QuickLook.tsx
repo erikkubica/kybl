@@ -6,7 +6,7 @@ import { FileIcon } from "../components/FileIcon";
 import { ErrorText } from "../components/ErrorText";
 import { MAX_PDF_BYTES, PdfView } from "../components/PdfView";
 import type { Entry } from "../types";
-import { playableUrl } from "../media";
+import { imageUrl, playableUrl } from "../media";
 import { cachedThumb, canThumb, loadThumb } from "../thumbs";
 import { asExport } from "../connections/native";
 // the same previews as the details panel (components/PreviewPane): documents in the document
@@ -31,6 +31,7 @@ export function QuickLook({
   onClose,
   onOpen,
   onDownload,
+  onCopyFile,
 }: {
   profileId: string;
   bucket: string;
@@ -43,6 +44,8 @@ export function QuickLook({
   onOpen: (e: Entry) => void;
   /** absent on this computer's own disk */
   onDownload?: (e: Entry) => void;
+  /** the file itself on the clipboard (⌘C here), to paste into a chat or a folder */
+  onCopyFile?: (e: Entry) => void;
 }) {
   // the list underneath must not see these keys while the preview is up
   useEffect(() => {
@@ -54,6 +57,7 @@ export function QuickLook({
       else if (e.key === "ArrowRight" || e.key === "ArrowDown") onStep(1);
       else if (e.key === "Enter" || (mod && e.key.toLowerCase() === "o")) onOpen(entry);
       else if (mod && (e.key.toLowerCase() === "w" || e.key === ".")) onClose();
+      else if (mod && e.key.toLowerCase() === "c" && onCopyFile && entry.kind === "file" && !window.getSelection()?.toString()) onCopyFile(entry);
       else handled = false;
       if (handled) {
         e.preventDefault();
@@ -62,7 +66,7 @@ export function QuickLook({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [entry, onClose, onStep, onOpen]);
+  }, [entry, onClose, onStep, onOpen, onCopyFile]);
 
   return (
     <div className="ql-backdrop" onMouseDown={onClose}>
@@ -84,6 +88,11 @@ export function QuickLook({
           </div>
           {entry.kind === "file" && (
             <>
+              {onCopyFile && (
+                <button className="btn btn-sm" onClick={() => onCopyFile(entry)} title="Copy the file, to paste into a chat, a mail or a folder (⌘C)">
+                  <Icon name="copy" size={14} /> Copy
+                </button>
+              )}
               {onDownload && (
                 <button className="btn btn-sm" onClick={() => onDownload(entry)}>
                   <Icon name="download" size={14} /> Download
@@ -124,9 +133,20 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
 
   useEffect(() => {
     let live = true;
+    let revoke: (() => void) | undefined;
     // a short delay, so holding an arrow key doesn't start a download for every file it passes
     const t = setTimeout(() => {
-      if (media)
+      if (media && cls === "image")
+        // through the file cache, so Open / Copy / Download afterwards don't fetch it again
+        imageUrl(profileId, bucket, entry)
+          .then((r) => {
+            if (live) {
+              revoke = r.revoke;
+              setUrl(r.url);
+            } else r.revoke?.();
+          })
+          .catch((e) => live && setError(errMessage(e)));
+      else if (media)
         playableUrl(profileId, bucket, entry)
           .then((u) => live && setUrl(u))
           .catch((e) => live && setError(errMessage(e)));
@@ -139,6 +159,8 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
     return () => {
       live = false;
       clearTimeout(t);
+      // after the <img> lets go of it (releaseOnUnmount runs on a timer too)
+      if (revoke) setTimeout(revoke, 0);
     };
   }, [profileId, bucket, entry.key, media, text]);
 
@@ -180,7 +202,17 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
         <span className="spinner" />
       </div>
     );
-  if (cls === "image" && url) return <img ref={releaseOnUnmount} className="ql-image" src={url} alt={entry.name} />;
+  if (cls === "image" && url)
+    return (
+      <img
+        ref={releaseOnUnmount}
+        className="ql-image"
+        src={url}
+        alt={entry.name}
+        // bytes the web view can't decode (a misnamed file): stream it as before instead
+        onError={() => url.startsWith("blob:") && playableUrl(profileId, bucket, entry).then(setUrl, (e) => setError(errMessage(e)))}
+      />
+    );
   if (cls === "video" && url) return <video ref={releaseOnUnmount} className="ql-video" src={url} controls autoPlay />;
   if (cls === "audio" && url)
     return (

@@ -262,27 +262,53 @@ export function makeFileOps(c: OpsContext) {
     }
   };
 
-  /** Downloads a file to Kybl's temporary folder and opens it in its default app. */
-  const openInApp = async (picked: Entry) => {
+  /**
+   * A file of this computer: where it is. Anything else: a copy in Kybl's temporary folder, made
+   * from the file cache when a preview, download or open already fetched this version (the
+   * listing's ETag finds it without asking the server), else downloaded. Null when it failed
+   * (already said so).
+   */
+  const localCopy = async (picked: Entry, verb: string): Promise<string | null> => {
     const { profile, bucket } = c;
-    if (!profile || bucket == null || picked.kind !== "file") return;
+    if (!profile || bucket == null || picked.kind !== "file") return null;
     const e = asExport(picked);
-    if (!e) return void toast("info", NO_EXPORT);
+    if (!e) {
+      toast("info", NO_EXPORT);
+      return null;
+    }
     try {
       if (c.localPaths) {
-        // a file on this computer opens where it is
         const path = await api.localPath(profile.id, bucket, e.key);
-        if (path) return void (await api.openLocal(path));
+        if (path) return path;
       }
       const tmp = await api.tempFolder();
       const local = joinPath(tmp, `${shortHash(`${profile.id}\n${bucket}\n${e.key}`)}/${safeRelPath(e.name) || "file"}`);
-      // no listed ETag: the backend asks for the current one, so a copy from the file cache is
-      // only used while it is still the newest version
-      const [t] = transfers.add([{ kind: "download", name: e.name, profileId: profile.id, bucket, key: e.key, local, total: e.size, overwrite: true }]);
-      if (e.size > 20_000_000) toast("info", `Opening “${e.name}” once it has downloaded…`);
+      const [t] = transfers.add([
+        { kind: "download", name: e.name, profileId: profile.id, bucket, key: e.key, local, total: e.size, overwrite: true, etag: picked.native ? undefined : e.etag },
+      ]);
+      if (e.size > 20_000_000) toast("info", `${verb} “${e.name}” once it has downloaded…`);
       const done = await transfers.whenFinished(t.id);
-      if (done.state === "done") await api.openLocal(done.local);
-      else if (done.state === "error") toast("error", `Couldn’t open “${e.name}”. ${done.error ?? ""}`, showAction);
+      if (done.state === "done") return done.local;
+      if (done.state === "error") toast("error", `Couldn’t get “${e.name}”. ${done.error ?? ""}`, showAction);
+    } catch (err) {
+      toast("error", errMessage(err));
+    }
+    return null;
+  };
+
+  /** Opens a file in its default app (a local copy first, see `localCopy`). */
+  const openInApp = async (picked: Entry) => {
+    const path = await localCopy(picked, "Opening");
+    if (path) await api.openLocal(path).catch((err) => toast("error", errMessage(err)));
+  };
+
+  /** Puts the file itself on the clipboard, to paste into a chat, a mail or a Finder window. */
+  const copyFile = async (picked: Entry) => {
+    const path = await localCopy(picked, "Copying");
+    if (!path) return;
+    try {
+      await api.copyFileToClipboard(path);
+      toast("success", `“${picked.name}” copied. Paste it into a chat, a mail or a folder.`);
     } catch (err) {
       toast("error", errMessage(err));
     }
@@ -718,7 +744,7 @@ export function makeFileOps(c: OpsContext) {
     void relocate(cl.items, dest, mode, { srcBucket: cl.bucket, destBucket: bucket }).then((ok) => ok && usedUp());
   };
 
-  return { uploadPaths, pickAndUpload, downloadEntries, openInApp, askDelete, askRename, askNewFolder, relocate, duplicate, clip, paste };
+  return { uploadPaths, pickAndUpload, downloadEntries, openInApp, copyFile, askDelete, askRename, askNewFolder, relocate, duplicate, clip, paste };
 }
 
 export type FileOps = ReturnType<typeof makeFileOps>;

@@ -273,6 +273,7 @@ function usePaneCore(env: PaneEnv) {
   );
   const closeQuick = useCallback(() => setQuick(null), []);
   const downloadOne = useCallback((e: Entry) => void opsRef.current.downloadEntries([e]), []);
+  const copyFile = useCallback((e: Entry) => void opsRef.current.copyFile(e), []);
   /** Space / F3: opens the preview of the item under the cursor, or closes it. */
   const quickLook = () => {
     if (quick) return setQuick(null);
@@ -360,6 +361,7 @@ function usePaneCore(env: PaneEnv) {
     stepQuick,
     closeQuick,
     downloadOne,
+    copyFile,
     quickLook,
     folderSizes,
     caps,

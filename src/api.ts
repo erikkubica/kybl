@@ -155,6 +155,8 @@ export const api = {
 
   /** Opens a local file in its default app (desktop) or an "Open with" chooser (phones). */
   openLocal: (path: string) => invoke<void>("open_local", { path }),
+  /** puts a local file on the clipboard as a file (pastes into chats, mail, Finder); macOS */
+  copyFileToClipboard: (path: string) => invoke<void>("copy_file_to_clipboard", { path }),
   /** Shows the file in Finder / Explorer / the file manager. Desktop only. */
   revealLocal: (path: string) => invoke<void>("reveal_local", { path }),
   /** System share sheet with local files (phones; macOS share menu where available). */

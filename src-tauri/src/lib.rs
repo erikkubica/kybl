@@ -194,6 +194,7 @@ pub fn run() {
             mobile::native_theme,
             mobile::picked_files,
             platform::open_local,
+            platform::copy_file_to_clipboard,
             platform::reveal_local,
             platform::temp_folder,
             platform::write_temp_file,

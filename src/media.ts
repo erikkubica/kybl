@@ -61,3 +61,36 @@ export async function playableUrl(
   if (!c || c.streaming === "presign") return api.presign(profileId, bucket, e.key, LINK_SECS);
   return mediaUrl(profileId, bucket, e);
 }
+
+/** Up to this size a photo is shown from its bytes, kept in the file cache. */
+const CACHED_IMAGE_MAX = 40_000_000;
+
+/**
+ * A URL to show a photo at full size. Up to 40 MB it comes through the file cache (a blob URL:
+ * `revoke` lets it go), so opening, downloading or copying the photo afterwards needs no second
+ * fetch; bigger ones, and this computer's own files, stream as `playableUrl` does.
+ */
+export async function imageUrl(
+  profileId: string,
+  bucket: string,
+  e: Pick<Entry, "key" | "size" | "etag" | "name">,
+  caps?: Capabilities | null,
+): Promise<{ url: string; revoke?: () => void }> {
+  const c = caps ?? (await capsFor(profileId).catch(() => null));
+  if (!c?.localPaths && e.size <= CACHED_IMAGE_MAX) {
+    try {
+      const bytes = await api.objectBytes(profileId, bucket, e.key, CACHED_IMAGE_MAX, true);
+      const url = URL.createObjectURL(new Blob([bytes], { type: imageType(e.name) }));
+      return { url, revoke: () => URL.revokeObjectURL(url) };
+    } catch {
+      /* stream it instead */
+    }
+  }
+  return { url: await playableUrl(profileId, bucket, e, c) };
+}
+
+function imageType(name: string): string {
+  const ext = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
+  const t: Record<string, string> = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp", avif: "image/avif", svg: "image/svg+xml", bmp: "image/bmp", ico: "image/x-icon", tif: "image/tiff", tiff: "image/tiff" };
+  return t[ext] ?? "application/octet-stream";
+}

@@ -15,6 +15,9 @@ import { ChooseBucket, ListError, Welcome, type EmptyActions } from "./PaneEmpty
 import { DragGhost, PaneBanners, PaneStatusBar } from "./PaneParts";
 import type { Pane } from "./usePane";
 
+/** the clipboard takes files on macOS only for now (see platform.rs) */
+const IS_MAC = /Mac/.test(navigator.platform || navigator.userAgent);
+
 export type BrowserPaneProps = {
   pane: Pane;
   /** the pane the keyboard, menus and sidebar act on */
@@ -217,6 +220,7 @@ export function BrowserPane(p: BrowserPaneProps) {
           onClose={pane.closeQuick}
           onOpen={pane.openEntry}
           onDownload={pane.caps?.localPaths ? undefined : pane.downloadOne}
+          onCopyFile={IS_MAC ? pane.copyFile : undefined}
         />
       )}
       {pane.drag && profile && <DragGhost drag={pane.drag} bucket={bucket} profileId={profile.id} />}

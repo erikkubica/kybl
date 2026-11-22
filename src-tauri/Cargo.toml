@@ -117,6 +117,10 @@ base64 = "0.22"
 # the same rustls the S3 client uses, to hand the account API client those roots too
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
+# macOS: files put on the clipboard (the pasteboard takes file URLs, see platform.rs)
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+
 # iOS: to stop the web view insetting itself for the notch and home bar (the page handles the
 # safe areas itself, see mobile.css)
 [target.'cfg(target_os = "ios")'.dependencies]

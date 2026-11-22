@@ -3,7 +3,7 @@ import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
 import { classify, extOf, formatBytes, formatDateFull, isWebImage, entrySize, entryKind } from "../format";
 import { cachedThumb, canThumb, loadThumb } from "../thumbs";
-import { playableUrl } from "../media";
+import { imageUrl, playableUrl } from "../media";
 import { FileIcon } from "./FileIcon";
 import { MAX_PDF_BYTES, PdfView } from "./PdfView";
 import { ErrorText } from "./ErrorText";
@@ -39,6 +39,8 @@ type DocProps = {
   onOpenFull?(e: Entry): void;
   /** documents: "Open in another app" (download to the temporary folder, then open it) */
   onOpenExternal?(e: Entry): void;
+  /** the file itself on the clipboard, to paste into a chat or a folder (macOS) */
+  onCopyFile?(e: Entry): void;
 };
 
 /** Folder size line: the total once known, live progress while it adds up, else a button. */
@@ -81,6 +83,7 @@ export function PreviewPane({
   onCalcSize,
   onOpenFull,
   onOpenExternal,
+  onCopyFile,
 }: SizeProps & DocProps & {
   profileId: string;
   bucket: string;
@@ -200,6 +203,7 @@ export function PreviewPane({
         onCalcSize={onCalcSize}
         onOpenFull={onOpenFull}
         onOpenExternal={onOpenExternal}
+        onCopyFile={onCopyFile}
       />
     </aside>
   );
@@ -223,6 +227,7 @@ function FileDetails({
   onCalcSize,
   onOpenFull,
   onOpenExternal,
+  onCopyFile,
 }: SizeProps & DocProps & {
   profileId: string;
   bucket: string;
@@ -302,9 +307,20 @@ function FileDetails({
   useEffect(() => {
     if (isFolder) return;
     let live = true;
+    let revoke: (() => void) | undefined;
     const timer = setTimeout(() => {
       if (gone) return;
-      if (previewable && !gated) {
+      if (previewable && !gated && cls === "image") {
+        // through the file cache, so Open / Copy / Download afterwards don't fetch it again
+        imageUrl(profileId, bucket, entry, caps)
+          .then((r) => {
+            if (live) {
+              revoke = r.revoke;
+              setUrl(r.url);
+            } else r.revoke?.();
+          })
+          .catch((e) => live && setError(errMessage(e)));
+      } else if (previewable && !gated) {
         // presigned on S3; through the app where the connection can't presign
         playableUrl(profileId, bucket, entry, caps)
           .then((u) => live && setUrl(u))
@@ -319,6 +335,7 @@ function FileDetails({
     return () => {
       live = false;
       clearTimeout(timer);
+      if (revoke) setTimeout(revoke, 0);
     };
   }, [profileId, bucket, entry.key, entry.size, cls, previewable, gated, isFolder, gone, showsDoc]);
 
@@ -423,7 +440,17 @@ function FileDetails({
             </button>
           </div>
         )}
-        {showsImage && <img ref={releaseOnUnmount} src={url!} alt={entry.name} onError={() => setError("Could not load image")} />}
+        {showsImage && <img
+            ref={releaseOnUnmount}
+            src={url!}
+            alt={entry.name}
+            // bytes the web view can't decode (a misnamed file): stream it as before, then give up
+            onError={() =>
+              url?.startsWith("blob:")
+                ? playableUrl(profileId, bucket, entry, caps).then(setUrl, () => setError("Could not load image"))
+                : setError("Could not load image")
+            }
+          />}
         {!error && url && cls === "video" && <video ref={releaseOnUnmount} src={url} controls preload="metadata" />}
         {!error && url && cls === "audio" && <audio ref={releaseOnUnmount} src={url} controls preload="metadata" />}
         {showsPdf && !error && !gone && <PdfView profileId={profileId} bucket={bucket} objectKey={entry.key} onError={setError} />}
@@ -478,6 +505,11 @@ function FileDetails({
               <Icon name="external" size={15} /> Open
             </button>
           )
+        )}
+        {onCopyFile && !isFolder && !gone && (
+          <button className="btn" onClick={() => onCopyFile(entry)} title="Copy the file, to paste into a chat, a mail or a folder" aria-label="Copy file to clipboard">
+            <Icon name="copy" size={15} />
+          </button>
         )}
         <button className="btn" onClick={onMoveTo} title="Move or copy to…" aria-label="Move or copy to another folder">
           <Icon name="move" size={15} />
