@@ -14,6 +14,7 @@ import { tidyMenu } from "../desktop/menus";
 import { parseLocation } from "../desktop/paths";
 import { GoToDialog } from "../desktop/GoToDialog";
 import { SyncThisFolder } from "../desktop/SyncThisFolder";
+import { MountDialog } from "../mount/MountDialog";
 import { MoveDialog } from "../components/MoveDialog";
 import type { MenuItem } from "../components/Dialogs";
 import type { Entry } from "../types";
@@ -142,6 +143,13 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     }
   };
 
+  /** "Mount as drive…": the folder (or the whole bucket) in Finder through a local WebDAV drive */
+  const askMount = (pre: string) => {
+    if (!profile || bucket == null) return;
+    const [p, b] = [profile, bucket];
+    dialogs.show((close) => createElement(MountDialog, { profileId: p.id, connection: p.name, bucket: b, prefix: pre, onClose: close, onToast: (k, t) => toast(k, t) }));
+  };
+
   const askSync = (pre: string) => {
     if (!profile || bucket == null) return;
     const [pid, b] = [profile.id, bucket];
@@ -213,6 +221,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
           favoriteItem(bucket, prefix),
           !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(prefix) },
           !onDisk && { type: "item", label: "Keep on this device", icon: "download", onClick: () => void keepOffline(prefix) },
+          !onDisk && { type: "item", label: "Mount as drive…", icon: "server", onClick: () => askMount(prefix) },
           !!env.openMigration && { type: "item", label: prefix ? "Copy this folder to another connection…" : "Copy everything to another connection…", icon: "copy", onClick: migrateHere },
           isS3 && { type: "item", label: "Copy S3 URI", icon: "copy", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") },
           onDisk && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: settings.showHiddenFiles, onClick: toggleHidden },
@@ -296,6 +305,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       folder && favoriteItem(bucket, e.key),
       folder && !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(e.key) },
       folder && !onDisk && { type: "item", label: "Keep on this device", icon: "download", onClick: () => void keepOffline(e.key) },
+      folder && !onDisk && { type: "item", label: "Mount as drive…", icon: "server", onClick: () => askMount(e.key) },
       { type: "sep" },
       { type: "item", label: "Rename…", icon: "edit", disabled: !one, onClick: () => ops.askRename(e) },
       { type: "item", label: list.length > 1 ? `Delete ${list.length} items…` : "Delete…", icon: "trash", hint: "⌘⌫", danger: true, onClick: () => ops.askDelete(list) },

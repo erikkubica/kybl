@@ -3,6 +3,7 @@
  * Activity panel, Settings, connection dialogs and the update banner. It owns the panes (one, or
  * two side by side) and routes the sidebar, the keyboard and the menu bar to the active one.
  */
+import { MountDialog } from "../mount/MountDialog";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
@@ -425,6 +426,11 @@ export function AppShell() {
     onOpenBucketByName: (p) => askBucketName(p, id),
   });
 
+  /** "Mount as drive…" for a bucket ("" = the whole connection) */
+  const askMount = (p: Profile, b: string) =>
+    dialogs.show((close) => (
+      <MountDialog profileId={p.id} connection={p.name} bucket={b} prefix="" onClose={close} onToast={(k, t) => toast(k, t)} onOpenSettings={() => openSettings("drives")} />
+    ));
   /** Right-click on a connection: everything in it (its buckets shown in the sidebar) to another connection. */
   const connectionMenu = (p: Profile, x: number, y: number) => {
     const copyAll = async () => {
@@ -445,6 +451,7 @@ export function AppShell() {
         : { type: "item" as const, label: conns.expanded.has(p.id) ? "Collapse" : "Expand", icon: "chevron" as const, onClick: () => toggleConnection(p) },
       // all of this computer is too much to copy in one go: its folders have their own menus
       ...(own ? [] : [{ type: "item" as const, label: "Copy everything to…", icon: "copy" as const, onClick: () => void copyAll() }]),
+      ...(own ? [] : [{ type: "item" as const, label: "Mount as drive…", icon: "server" as const, onClick: () => askMount(p, "") }]),
       ...(own ? [] : [{ type: "sep" as const }, { type: "item" as const, label: "Edit connection…", icon: "edit" as const, onClick: () => setConnDialog({ profile: p }) }]),
     ]);
   };
@@ -454,6 +461,7 @@ export function AppShell() {
     dialogs.menu(x, y, [
       { type: "item", label: "Open", icon: p.id === THIS_MAC.id ? "folder" : "bucket", onClick: () => (active.openBucket(p, b), focusListSoon()) },
       { type: "item", label: "Copy everything to…", icon: "copy", onClick: () => migrations.open({ profileId: p.id, root: b, items: [{ path: "", isDir: true }] }, "copy") },
+      ...(p.id === THIS_MAC.id ? [] : [{ type: "item" as const, label: "Mount as drive…", icon: "server" as const, onClick: () => askMount(p, b) }]),
       { type: "sep" },
       { type: "item", label: hidden ? "Show in the sidebar" : "Hide from the sidebar", icon: hidden ? "eye" : "eye-off", onClick: () => conns.setBucketHidden(p, b, !hidden) },
     ]);

@@ -4,6 +4,7 @@ import { Modal } from "../components/Dialogs";
 import { ErrorText } from "../components/ErrorText";
 import { Icon } from "../Icons";
 import { fileManagerName, findMount, mountWhere, reloadMounts, useMounts } from "./useMounts";
+import { rootName } from "../connections/roots";
 import "./mount.css";
 
 type Toast = (kind: "success" | "error" | "info", text: string) => void;
@@ -42,7 +43,7 @@ export function MountDialog({
 }) {
   const { mounts } = useMounts();
   const existing = findMount(mounts, profileId, bucket, prefix);
-  const [name, setName] = useState(() => suggestedDriveName(connection, bucket, prefix));
+  const [name, setName] = useState(() => suggestedDriveName(connection, bucket ? rootName(profileId, bucket) : "", prefix));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fm = fileManagerName();
