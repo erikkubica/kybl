@@ -23,7 +23,7 @@ export function ProviderBadge({ provider, large }: { provider: string | undefine
   const meta = providerMeta(provider);
   return (
     <span className={`pbadge ${large ? "lg" : ""} ${meta.id === "kybl" ? "kybl" : ""}`} style={{ "--pc": meta.color } as React.CSSProperties} aria-hidden="true">
-      {meta.id === "kybl" ? <KyblMark size={large ? 22 : 17} sun /> : meta.mono}
+      {meta.id === "kybl" ? <KyblMark size={large ? 22 : 17} sun /> : meta.id === "local" ? <Icon name="server" size={large ? 15 : 12} /> : meta.mono}
     </span>
   );
 }

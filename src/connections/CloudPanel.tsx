@@ -18,8 +18,8 @@ const newFlowId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()
 /** Where people make their own app, in one line (no links: they open the console they know). */
 const OWN_APP_HINT: Record<CloudKind, string> = {
   gdrive: "In Google Cloud Console, create an OAuth client of type “Desktop app” under APIs & Services › Credentials.",
-  onedrive: "In Microsoft Entra, register an app under App registrations as a public client with http://localhost as its redirect.",
-  dropbox: "In the Dropbox App Console, create a scoped app with full Dropbox access and use its app key.",
+  onedrive: "In Microsoft Entra, register a public client app with the redirects http://localhost/callback and kybl://oauth/onedrive.",
+  dropbox: "In the Dropbox App Console, create a scoped app with full Dropbox access and the redirects http://localhost:53682/callback and :53683/callback.",
 };
 
 export function CloudPanel({

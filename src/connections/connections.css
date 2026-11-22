@@ -338,6 +338,47 @@
 .m-app .conn-waiting p {
   font-size: calc(13.5 * var(--m-u));
 }
+/* a server's card: the whole header opens it (no bucket rows under it) */
+.m-conn.single .m-conn-head {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.m-conn-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 60px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.m-conn-open:active {
+  background: var(--pressed);
+}
+.m-conn-open .m-chev {
+  flex: none;
+  color: var(--faint);
+}
+.m-conn-open:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+.m-conns.compact .m-conn-open {
+  min-height: 38px;
+  gap: 9px;
+}
+.m-conns.compact .m-conn.single.here .m-conn-open {
+  background: var(--accent-soft);
+}
+.m-conns.compact .m-conn.single.here .m-conn-text strong {
+  color: var(--accent);
+}
 .m-app .auth-badge {
   height: 24px;
   padding: 0 10px;
