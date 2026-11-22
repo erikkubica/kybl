@@ -502,3 +502,17 @@ function demoPdf(): ArrayBuffer {
   out += `trailer\n<< /Size ${objs.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
   return new TextEncoder().encode(out).buffer as ArrayBuffer;
 }
+
+// ---------------------------------------------------------------- WP-D: documents (src/viewers)
+// doc_save sends raw bytes plus headers, and mockIPC drops the headers, so these two commands are
+// answered before the mock: sample files of every viewer kind, saves kept in memory.
+{
+  type Invoke = (cmd: string, args?: unknown, options?: { headers?: Record<string, string> }) => Promise<unknown>;
+  const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: Invoke } }).__TAURI_INTERNALS__;
+  const mocked = internals.invoke;
+  internals.invoke = async (cmd, args, options) => {
+    if (cmd !== "doc_open" && cmd !== "doc_save") return mocked(cmd, args, options);
+    const { handleDoc } = await import("./viewers/devSamples");
+    return handleDoc(cmd, args, options);
+  };
+}
