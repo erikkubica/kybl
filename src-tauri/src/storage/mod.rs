@@ -14,6 +14,8 @@
 
 pub mod generic_cmds;
 pub mod local;
+// WP-A4: video and audio through media:// or a loopback server
+pub mod media;
 pub mod registry;
 pub mod s3;
 pub mod s3_stream;
