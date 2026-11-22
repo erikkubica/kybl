@@ -5,6 +5,10 @@ import { Icon } from "../Icons";
 import { DEFAULT_IGNORE, INTERVALS, prettyPath, type SyncDirection, type SyncMapping } from "../sync";
 import type { Profile } from "../types";
 import { Modal } from "./Dialogs";
+import { ErrorText } from "./ErrorText";
+
+/** Where a new synced folder should point, e.g. "Sync this folder…" from the file browser. */
+export type SyncTarget = { profileId: string; bucket: string; prefix: string };
 
 const DIRECTIONS: { id: SyncDirection; icon: "upload" | "download"; title: string; text: string }[] = [
   {
@@ -29,20 +33,27 @@ export function SyncDialog({
   onSave,
   onClose,
 }: {
-  initial: SyncMapping | null;
+  /**
+   * A synced folder to edit, or (for a new one) the connection, bucket and folder to start
+   * from. Nothing: a new one on the default connection.
+   */
+  initial?: SyncMapping | SyncTarget | null;
   profiles: Profile[];
   defaultProfileId: string | null;
   onSave: (m: SyncMapping) => Promise<void>;
   onClose: () => void;
 }) {
-  const firstProfile = profiles.find((p) => p.id === defaultProfileId) ?? profiles[0];
+  // only a full mapping (with an id) is an edit; a bare target just fills in a new one
+  const existing = initial && "id" in initial ? initial : null;
+  const target = initial && !("id" in initial) ? initial : null;
+  const firstProfile = profiles.find((p) => p.id === (target?.profileId ?? defaultProfileId)) ?? profiles[0];
   const [m, setM] = useState<SyncMapping>(
     () =>
-      initial ?? {
+      existing ?? {
         id: "",
         profileId: firstProfile?.id ?? "",
-        bucket: firstProfile?.bucket ?? "",
-        prefix: "",
+        bucket: target?.bucket ?? firstProfile?.bucket ?? "",
+        prefix: target?.prefix ?? "",
         localPath: "",
         direction: "upload",
         ignore: DEFAULT_IGNORE,
@@ -97,17 +108,17 @@ export function SyncDialog({
   };
 
   const changingTarget =
-    !!initial &&
-    (initial.localPath !== m.localPath ||
-      initial.profileId !== m.profileId ||
-      initial.bucket !== m.bucket ||
-      initial.prefix.replace(/^\/+|\/+$/g, "") !== m.prefix.replace(/^\/+|\/+$/g, "") ||
-      initial.direction !== m.direction);
+    !!existing &&
+    (existing.localPath !== m.localPath ||
+      existing.profileId !== m.profileId ||
+      existing.bucket !== m.bucket ||
+      existing.prefix.replace(/^\/+|\/+$/g, "") !== m.prefix.replace(/^\/+|\/+$/g, "") ||
+      existing.direction !== m.direction);
   const valid = !!m.localPath && !!m.profileId && !!m.bucket.trim();
   const profile = profiles.find((p) => p.id === m.profileId);
 
   return (
-    <Modal title={initial ? "Edit synced folder" : "Sync a folder"} onClose={onClose} width={560}>
+    <Modal title={existing ? "Edit synced folder" : "Sync a folder"} onClose={onClose} width={560}>
       <div className="modal-body sync-form">
         <div className="field">
           <span>Folder on this Mac</span>
@@ -116,7 +127,7 @@ export function SyncDialog({
               <Icon name="folder" size={15} />
               {m.localPath ? prettyPath(m.localPath) : "No folder chosen"}
             </span>
-            <button className="btn btn-sm" onClick={pickFolder}>
+            <button type="button" className="btn btn-sm" onClick={pickFolder} autoFocus={!m.localPath}>
               Choose…
             </button>
           </div>
@@ -235,17 +246,19 @@ export function SyncDialog({
           </p>
         )}
         {error && (
-          <p className="hint error">
-            <Icon name="alert" size={14} /> {error}
-          </p>
+          <div className="result bad" role="alert">
+            <Icon name="alert" size={15} />
+            <ErrorText message={error} />
+          </div>
         )}
+        {!valid && !m.localPath && <p className="hint">Choose a folder on this Mac to start.</p>}
       </div>
       <div className="modal-foot">
         <button className="btn" onClick={onClose}>
           Cancel
         </button>
         <button className="btn btn-primary" disabled={!valid || saving} onClick={save}>
-          {saving ? "Saving…" : initial ? "Save" : "Start syncing"}
+          {saving ? "Saving…" : existing ? "Save" : "Start syncing"}
         </button>
       </div>
     </Modal>

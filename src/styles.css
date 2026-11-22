@@ -4557,3 +4557,11 @@ input[type="range"]:focus-visible {
   outline: 2px solid var(--accent-ring);
   outline-offset: 2px;
 }
+
+/* ---------------------------------------------------------------- form validation next to the field */
+.field-err {
+  color: var(--danger);
+  font-size: 11.5px;
+  font-style: normal;
+  line-height: 1.35;
+}
