@@ -58,6 +58,10 @@ pub async fn save_profile(
     if profile.id.is_empty() {
         profile.id = uuid::Uuid::new_v4().to_string();
     }
+    // reserved for this device's own folders, which are never a saved connection
+    if profile.id == registry::LOCAL_ID {
+        return Err("This connection can't be changed.".into());
+    }
     if let Some(s) = secret.as_deref().filter(|s| !s.is_empty()) {
         set_secret(&state, &profile.id, s).await?;
     } else if profile.kind == ConnKind::S3 && get_secret(&state, &profile.id).await?.is_none() {
