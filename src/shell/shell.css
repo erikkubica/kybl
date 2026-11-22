@@ -130,12 +130,6 @@ body.resizing-row * {
     padding: 0 6px;
   }
 }
-/* a very narrow pane: the compact switch steps aside too (it's in Settings as well) */
-@container (max-width: 470px) {
-  .actionbar [aria-label="Compact layout"] {
-    display: none;
-  }
-}
 
 /* This Mac in the sidebar: a plain badge instead of a provider monogram */
 .pbadge.local {
