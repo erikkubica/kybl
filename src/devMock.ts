@@ -84,7 +84,11 @@ const tree: Record<string, { folders: string[]; objects: ObjInfo[] }> = {
 const otherTrees: Record<string, Record<string, { folders: string[]; objects: ObjInfo[] }>> = {};
 const SHARED_TREE: Record<string, { folders: string[]; objects: ObjInfo[] }> = { "": { folders: ["photos/"], objects: [] } };
 /** The tree a bucket lists from: the demo tree for media-prod (and every root of the other kinds). */
+/** Google Drive, OneDrive and Dropbox connections: their own made-up trees (set further down) */
+let cloudTree: ((profileId: string, bucket: string) => Record<string, { folders: string[]; objects: ObjInfo[] }> | undefined) | null = null;
 function remoteTree(profileId: string, bucket: string) {
+  const cloud = cloudTree?.(profileId, bucket);
+  if (cloud) return cloud;
   if (bucket === "media-prod" || (isOther(profileId) && bucket !== "shared")) return tree;
   if (bucket === "shared") return new Proxy(SHARED_TREE, { get: (t, k: string) => t[k] ?? tree[k] });
   return (otherTrees[`${profileId}\u0000${bucket}`] ??= { "": { folders: [], objects: [] } });
@@ -979,6 +983,11 @@ function demoPdf(): ArrayBuffer {
   const kindOf = (profileId: unknown) => {
     const k = profiles.find((p) => p.id === profileId)?.kind;
     return k && cloudKinds.includes(k) ? k : null;
+  };
+  // moves, copies, uploads and finished jobs (the generic handlers) write into these trees too
+  cloudTree = (profileId, bucket) => {
+    const k = kindOf(profileId);
+    return k ? (trees[k][bucket] ??= { "": { folders: [], objects: [] } }) : undefined;
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleCloud = async (cmd: string, a: any): Promise<unknown> => {

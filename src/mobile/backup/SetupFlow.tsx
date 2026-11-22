@@ -206,7 +206,7 @@ export function SetupFlow({
         </div>
         <nav className="m-actionbar bk-bar-bottom">
           <button className="btn btn-primary m-big-btn" disabled={!dest || dest.profileId === LOCAL_ID} onClick={() => setStep("options")}>
-            {dest && dest.profileId !== LOCAL_ID ? `Back up to ${locLabel(dest)}` : "Choose a folder"}
+            <span className="bk-btn-label">{dest && dest.profileId !== LOCAL_ID ? `Back up to ${dest.dir ? dest.dir.replace(/\/$/, "").split("/").pop() : dest.rootName} on ${dest.connectionName}` : "Choose a folder"}</span>
           </button>
         </nav>
       </>

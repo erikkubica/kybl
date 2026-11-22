@@ -4508,6 +4508,10 @@ button.tp-title:hover .tp-caret {
 .tp-actions {
   flex-shrink: 0;
 }
+/* right-aligned also when the summary has stepped aside */
+.tp-actions {
+  margin-left: auto;
+}
 .tp-tabs {
   flex: 0 1 auto;
   min-width: 0;
@@ -4546,7 +4550,7 @@ button.tp-title:hover .tp-caret {
     display: none;
   }
 }
-@container (max-width: 860px) {
+@container (max-width: 700px) {
   .tp-summary {
     display: none;
   }

@@ -429,6 +429,10 @@
 /* "Back up to Connection / bucket / folder": a long place shortens instead of overflowing */
 .bk-bar-bottom .m-big-btn {
   max-width: 100%;
+  min-width: 0;
+}
+.bk-btn-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
