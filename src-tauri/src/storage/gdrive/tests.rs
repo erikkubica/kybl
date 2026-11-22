@@ -35,11 +35,33 @@ fn files(v: Vec<Value>, next: Option<&str>) -> Resp {
     Resp::json(200, &body)
 }
 
-/// Answers name lookups ("'P' in parents and name = 'x' and trashed = false") from a fixed list.
+/// The names a query asks for: "name = 'x'" (or several joined with "or").
+fn names_in(q: &str) -> Vec<String> {
+    q.split("name = '")
+        .skip(1)
+        .map(|rest| {
+            let mut out = String::new();
+            let mut chars = rest.chars();
+            while let Some(c) = chars.next() {
+                match c {
+                    '\\' => out.extend(chars.next()),
+                    '\'' => break,
+                    c => out.push(c),
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+/// Answers name lookups ("'P' in parents and name = 'x' and trashed = false", or
+/// "(name = 'x' or name = 'y')") from a fixed list.
 fn lookup(req: &Req, all: &[Value]) -> Option<Resp> {
-    let q = req.q("q")?;
-    let name = q.split("name = '").nth(1)?.split("' and").next()?.replace("\\'", "'");
-    Some(files(all.iter().filter(|f| f["name"] == name).cloned().collect(), None))
+    let names = names_in(&req.q("q")?);
+    if names.is_empty() {
+        return None;
+    }
+    Some(files(all.iter().filter(|f| names.iter().any(|n| f["name"] == n.as_str())).cloned().collect(), None))
 }
 
 #[tokio::test]
@@ -92,6 +114,52 @@ async fn listings_number_duplicates_across_pages_and_paths_find_them() {
     assert_eq!(fresh.stat(MY_DRIVE, "a (4).txt").await.unwrap(), None);
     assert_eq!(fresh.stat(MY_DRIVE, "b/").await.unwrap().unwrap().id.as_deref(), Some("dir1"));
     assert_eq!(fresh.stat(MY_DRIVE, "b").await.unwrap(), None, "a folder isn't a file");
+}
+
+/// A folder with three "a.txt" and a real "a (2).txt": the second "a.txt" must not show as
+/// "a (2).txt" too (one of the two would be hidden, and moving "a (2).txt" would copy one file
+/// twice and could delete the other).
+#[tokio::test]
+async fn duplicate_numbers_skip_real_names() {
+    let all = vec![
+        file("real2", "a (2).txt", "text/plain", "2023-01-01T00:00:00Z"),
+        file("id1", "a.txt", "text/plain", "2024-01-01T00:00:00Z"),
+        // same time as id2: the id decides, whatever order Drive sends them in
+        file("id3", "a.txt", "text/plain", "2024-01-02T00:00:00Z"),
+        file("id2", "a.txt", "text/plain", "2024-01-02T00:00:00Z"),
+    ];
+    let a2 = all.clone();
+    let mock = Mock::start(move |req| {
+        if req.path == "/drive/v3/files" {
+            let q = req.q("q").unwrap();
+            if q.contains("name = ") {
+                return lookup(req, &a2).unwrap();
+            }
+            // pages split so the real "a (2).txt" isn't on the page that numbers the copies
+            return match req.q("pageToken").as_deref() {
+                None => files(a2[..1].to_vec(), Some("P2")),
+                Some("P2") => files(a2[1..].to_vec(), None),
+                other => panic!("token {other:?}"),
+            };
+        }
+        if let Some(id) = req.path.strip_prefix("/drive/v3/files/") {
+            return Resp::json(200, a2.iter().find(|f| f["id"] == id).unwrap());
+        }
+        Resp::status(404)
+    })
+    .await;
+    let g = GDrive::with_base(api(fixed("tok")), &mock.base);
+    let p1 = g.list(MY_DRIVE, "", None).await.unwrap();
+    let p2 = g.list(MY_DRIVE, "", p1.next_token).await.unwrap();
+    let shown: Vec<(&str, &str)> = p1.objects.iter().chain(&p2.objects).map(|e| (e.key.as_str(), e.id.as_deref().unwrap())).collect();
+    assert_eq!(shown, vec![("a (2).txt", "real2"), ("a.txt", "id1"), ("a (3).txt", "id2"), ("a (4).txt", "id3")]);
+
+    // with nothing cached, every shown name leads back to its own file
+    let fresh = GDrive::with_base(api(fixed("tok")), &mock.base);
+    for (key, id) in shown {
+        assert_eq!(fresh.stat(MY_DRIVE, key).await.unwrap().unwrap().id.as_deref(), Some(id), "{key}");
+    }
+    assert_eq!(fresh.stat(MY_DRIVE, "a (5).txt").await.unwrap(), None);
 }
 
 #[tokio::test]
