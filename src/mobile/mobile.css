@@ -664,6 +664,18 @@ body {
   animation: m-fade 0.3s;
 }
 
+/* placeholders are static; the photo's thumbnail fades in over one */
+.m-art img.ph {
+  animation: none;
+}
+
+/* what tells a row's placeholder it is near the screen (the art itself watches for its thumbnail) */
+.m-art-ph {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
 .m-art .shimmer {
   inset: 2px 4px;
   border-radius: 6px;

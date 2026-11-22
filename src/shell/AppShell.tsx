@@ -38,6 +38,7 @@ import type { DocumentHandle } from "../viewers/DocumentView";
 import type { Entry } from "../types";
 import type { Profile } from "../types";
 import { useDialogs } from "./useDialogs";
+import { photoMenuItems } from "./photoMenu";
 import { loadExpanded, useConnections } from "./useConnections";
 import { PreviewAside, usePreviewLayout } from "./PreviewAside";
 import { useFinderDrop } from "./useFinderDrop";
@@ -506,6 +507,7 @@ export function AppShell() {
       // all of this computer is too much to copy in one go: its folders have their own menus
       ...(own ? [] : [{ type: "item" as const, label: "Copy everything to…", icon: "copy" as const, onClick: () => void copyAll() }]),
       ...(own ? [] : [{ type: "item" as const, label: "Mount as drive…", icon: "server" as const, onClick: () => askMount(p, "") }]),
+      ...photoMenuItems(p, dialogs),
       ...(own ? [] : [{ type: "sep" as const }, { type: "item" as const, label: "Edit connection…", icon: "edit" as const, onClick: () => setConnDialog({ profile: p }) }]),
     ]);
   };

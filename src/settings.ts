@@ -6,7 +6,7 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { setAbsoluteDates, setByteUnits } from "./format";
-import { setListThumbs } from "./thumbs";
+import { setAppImageMode, type ImageMode } from "./imageMode";
 import { SCHEME_VAR_NAMES, paletteVars, schemeById, type SchemeId } from "./schemes";
 
 export type Theme = "system" | "light" | "dark";
@@ -36,8 +36,11 @@ export type Settings = {
   confirmDelete: boolean;
   /** open the transfers panel when a transfer starts */
   autoOpenTransfers: boolean;
-  /** make thumbnails for photos in lists and grids (each one is a download the first time) */
-  listThumbs: boolean;
+  /**
+   * photos in lists and grids: file icons, ThumbHash placeholders only, or placeholders then
+   * thumbnails (each one a download the first time). Connections can keep their own (imageMode.ts)
+   */
+  imageMode: ImageMode;
   /** desktop: ask where to save downloads; false = straight into the Downloads folder */
   downloadAsk: boolean;
   /** pinned places, shown in the sidebar (desktop) and on the home screen (phones) */
@@ -76,7 +79,7 @@ export const DEFAULTS: Settings = {
   restoreLast: true,
   confirmDelete: true,
   autoOpenTransfers: true,
-  listThumbs: false,
+  imageMode: "placeholders",
   downloadAsk: true,
   favorites: [],
   columns: ["size", "modified", "kind"],
@@ -122,6 +125,13 @@ export function loadSettings(): Settings {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
     const s: Settings = { ...DEFAULTS, ...(saved && typeof saved === "object" ? saved : {}) };
+    // the old on/off thumbnails switch: on keeps thumbnails, off gets placeholders (no downloads)
+    const old = (s as Settings & { listThumbs?: boolean }).listThumbs;
+    if (typeof old === "boolean") {
+      if (!saved.imageMode) s.imageMode = old ? "full" : "placeholders";
+      delete (s as Settings & { listThumbs?: boolean }).listThumbs;
+    }
+    if (!["off", "placeholders", "full"].includes(s.imageMode)) s.imageMode = DEFAULTS.imageMode;
     // one-time: installs from before the Kybl scheme existed move to it if they never picked a look
     if (!localStorage.getItem(BRAND_KEY)) {
       localStorage.setItem(BRAND_KEY, "1");
@@ -175,7 +185,7 @@ export function applySettings(s: Settings) {
   root.dataset.font = s.font;
   setByteUnits(s.binaryUnits);
   setAbsoluteDates(s.absoluteDates);
-  setListThumbs(s.listThumbs);
+  setAppImageMode(s.imageMode);
 
   if ("__TAURI_INTERNALS__" in window) {
     // native title bar / menus follow the chosen theme; null = follow the OS

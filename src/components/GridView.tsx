@@ -3,6 +3,8 @@ import { useMeasured, useWindowed } from "../useWindowed";
 import { formatBytes, entrySize } from "../format";
 import { EmptyState, FileIcon } from "./FileIcon";
 import { cachedThumb, canListThumb, loadThumb } from "../thumbs";
+import { cachedPlaceholder, canPlaceholder, learnPlaceholder, loadPlaceholder } from "../thumbhash";
+import { imageModeFor } from "../imageMode";
 import { useListNav, useMarquee, type Box, type FolderSizeInfo, type SelectKeys } from "./listNav";
 import type { Entry } from "../types";
 
@@ -43,34 +45,62 @@ const Card = memo(function Card({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const visible = useRef(false);
-  const eligible = canListThumb(entry);
+  // the image mode is read at mount: the pane remounts the grid when it changes
+  const eligible = canListThumb(entry, profileId);
+  const phEligible = imageModeFor(profileId) !== "off" && canPlaceholder(entry);
   const [thumb, setThumb] = useState<string | null | undefined>(() =>
     eligible ? cachedThumb(profileId, bucket, entry) : null,
+  );
+  // the blurry ThumbHash stand-in, shown under the thumbnail until that fades in over it
+  const [ph, setPh] = useState<string | null | undefined>(() =>
+    phEligible && !thumb ? cachedPlaceholder(profileId, bucket, entry) : null,
   );
   /** its thumbnail is being made right now (not just queued): only then does the tile shimmer */
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!eligible) return;
+    if (!eligible && !phEligible) return;
     const el = ref.current;
     if (!el) return;
     let alive = true;
+    // what is still to fetch (the state seen by this effect would go stale)
+    let needThumb = eligible && thumb === undefined;
+    let needPh = phEligible && ph === undefined;
+    const asking = { thumb: false, ph: false };
     const request = () => {
-      if (thumb !== undefined) return;
-      loadThumb(
-        profileId,
-        bucket,
-        entry,
-        () => visible.current,
-        () => alive && setLoading(true),
-      ).then((u) => {
-        if (!alive) return;
-        setLoading(false);
-        if (u !== undefined) setThumb(u);
-        // skipped because it was off screen when its turn came; it may be back by now, and the
-        // observer won't fire again while it stays put (it then waited forever)
-        else if (visible.current) request();
-      });
+      if (needThumb && !asking.thumb) {
+        asking.thumb = true;
+        loadThumb(
+          profileId,
+          bucket,
+          entry,
+          () => visible.current,
+          () => alive && setLoading(true),
+        ).then((u) => {
+          asking.thumb = false;
+          if (!alive) return;
+          setLoading(false);
+          if (u !== undefined) {
+            needThumb = false;
+            setThumb(u);
+            if (u) learnPlaceholder(profileId, bucket, entry);
+          }
+          // skipped because it was off screen when its turn came; it may be back by now, and the
+          // observer won't fire again while it stays put (it then waited forever)
+          else if (visible.current) request();
+        });
+      }
+      if (needPh && !asking.ph) {
+        asking.ph = true;
+        loadPlaceholder(profileId, bucket, entry, () => visible.current).then((u) => {
+          asking.ph = false;
+          if (!alive) return;
+          if (u !== undefined) {
+            needPh = false;
+            setPh(u);
+          } else if (visible.current) request();
+        });
+      }
     };
     const io = new IntersectionObserver(
       (items) => {
@@ -87,7 +117,7 @@ const Card = memo(function Card({
       io.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eligible, profileId, bucket, entry.key, entry.etag, entry.size]);
+  }, [eligible, phEligible, profileId, bucket, entry.key, entry.etag, entry.size]);
 
   const folder = entry.kind === "folder";
   const meta = folder ? (size && !size.running ? formatBytes(size.bytes) : "") : entrySize(entry);
@@ -113,16 +143,14 @@ const Card = memo(function Card({
       }}
       title={entry.key}
     >
-      <div className={`card-thumb ${thumb ? "has-img" : ""} ${folder ? "is-folder" : ""}`}>
-        {thumb ? (
-          <img src={thumb} alt="" draggable={false} />
-        ) : (
-          // shimmers only while its thumbnail is really being made (a few at a time), not while it
-          // waits its turn: dozens of waiting tiles animating kept the CPU and GPU busy
-          <FileIcon entry={entry} size={34} big>
-            {loading && thumb === undefined && <span className="shimmer" />}
-          </FileIcon>
-        )}
+      <div className={`card-thumb ${thumb || ph ? "has-img" : ""} ${folder ? "is-folder" : ""}`}>
+        {/* the placeholder is static; the thumbnail fades in over it once */}
+        {ph && <img className="ph" src={ph} alt="" draggable={false} />}
+        {thumb && <img src={thumb} alt="" draggable={false} />}
+        {/* shimmers only while its thumbnail is really being made (a few at a time), not while it
+            waits its turn, and not over a placeholder: dozens of tiles animating kept the CPU and
+            GPU busy */}
+        {!thumb && !ph && <FileIcon entry={entry} size={34} big>{loading && thumb === undefined && <span className="shimmer" />}</FileIcon>}
       </div>
       <div className="card-text">
         <div className="card-name">{label}</div>

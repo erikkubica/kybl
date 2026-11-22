@@ -8,6 +8,7 @@ import { MAX_PDF_BYTES, PdfView } from "../components/PdfView";
 import type { Entry } from "../types";
 import { imageUrl, playableUrl } from "../media";
 import { cachedThumb, canThumb, loadThumb } from "../thumbs";
+import { usePlaceholder } from "../thumbhash";
 import { asExport } from "../connections/native";
 // the same previews as the details panel (components/PreviewPane): documents in the document
 // viewer, images the web view can't draw by their thumbnail, Google files by their Office export
@@ -125,6 +126,8 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
   // HEIC, RAW and the like: the thumbnail the grid makes (the original can't be drawn here)
   const thumbable = cls === "image" && !isWebImage(entry.name) && canThumb(entry);
   const [thumb, setThumb] = useState<string | null | undefined>(() => (thumbable ? cachedThumb(profileId, bucket, entry) : null));
+  // the photo's blurry placeholder while the image loads
+  const placeholder = usePlaceholder(profileId, bucket, cls === "image" ? entry : null);
   const text = cls === "text" && !doc && entry.size <= MAX_TEXT;
   const pdf = cls === "pdf" && entry.size <= MAX_PDF_BYTES;
   const [url, setUrl] = useState<string | null>(null);
@@ -190,6 +193,8 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
       </Suspense>
     );
   if (thumbable && thumb) return <img className="ql-image thumb" src={thumb} alt={entry.name} />;
+  if (((thumbable && thumb === undefined) || (media && cls === "image" && !url)) && placeholder)
+    return <img className="ql-image ph" src={placeholder} alt="" />;
   if (thumbable && thumb === undefined)
     return (
       <div className="ql-none">

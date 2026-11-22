@@ -41,7 +41,7 @@ const MIN_EXIF_THUMB_PX: u32 = 200;
 /// Largest object downloaded whole to make a thumbnail. The web view uses the same limit
 /// (`MAX_BYTES` in thumbs.ts), so it never asks for one that is bound to fail.
 pub const MAX_FULL_DOWNLOAD: i64 = 40 * 1000 * 1000;
-const HEAD_RANGE: usize = 256 * 1024;
+pub(crate) const HEAD_RANGE: usize = 256 * 1024;
 /// Most memory one decoded image may take (about 8000 x 8000 RGBA). Bigger ones get no thumbnail
 /// instead of a memory spike.
 const MAX_DECODE_ALLOC: u64 = 256 * 1024 * 1024;
@@ -60,8 +60,9 @@ fn fnv1a(s: &str) -> u64 {
     h
 }
 
+static DIR: OnceLock<PathBuf> = OnceLock::new();
+
 fn cache_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
-    static DIR: OnceLock<PathBuf> = OnceLock::new();
     if let Some(d) = DIR.get() {
         return Ok(d.clone());
     }
@@ -70,7 +71,7 @@ fn cache_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     Ok(DIR.get_or_init(|| dir).clone())
 }
 
-fn decode_slots() -> Arc<Semaphore> {
+pub(crate) fn decode_slots() -> Arc<Semaphore> {
     static SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
     SLOTS.get_or_init(|| Arc::new(Semaphore::new(DECODE_SLOTS))).clone()
 }
@@ -81,7 +82,7 @@ fn limits() -> Limits {
     l
 }
 
-fn encode(img: DynamicImage) -> Result<Vec<u8>, String> {
+pub(crate) fn encode(img: DynamicImage) -> Result<Vec<u8>, String> {
     // `thumbnail` averages pixels in one pass: far faster than a filtered resize on big photos
     let img = if img.width() > THUMB_PX || img.height() > THUMB_PX {
         img.thumbnail(THUMB_PX, THUMB_PX)
@@ -109,6 +110,11 @@ fn encode(img: DynamicImage) -> Result<Vec<u8>, String> {
 }
 
 fn thumb_from_image_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    encode(decode_image(bytes)?)
+}
+
+/// Decodes a whole image (within the memory cap), turned upright.
+pub(crate) fn decode_image(bytes: &[u8]) -> Result<DynamicImage, String> {
     let mut reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(err)?;
@@ -121,7 +127,7 @@ fn thumb_from_image_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
     let mut img = DynamicImage::from_decoder(decoder).map_err(err)?;
     img.apply_orientation(orientation);
-    encode(img)
+    Ok(img)
 }
 
 /// The JPEG thumbnail a camera embeds in the EXIF block, plus the photo's orientation.
@@ -149,15 +155,22 @@ fn exif_thumbnail(head: &[u8]) -> Option<(Vec<u8>, u8)> {
 }
 
 fn thumb_from_exif(head: &[u8]) -> Option<Vec<u8>> {
+    exif_image(head).filter(sharp_enough).and_then(|img| encode(img).ok())
+}
+
+/// The camera's embedded thumbnail, decoded and turned upright, however small.
+pub(crate) fn exif_image(head: &[u8]) -> Option<DynamicImage> {
     let (bytes, orientation) = exif_thumbnail(head)?;
     let mut img = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg).ok()?;
-    if img.width().max(img.height()) < MIN_EXIF_THUMB_PX {
-        return None;
-    }
     if let Some(o) = Orientation::from_exif(orientation) {
         img.apply_orientation(o);
     }
-    encode(img).ok()
+    Some(img)
+}
+
+/// Big enough to stand in for the photo in the grid (see `MIN_EXIF_THUMB_PX`).
+pub(crate) fn sharp_enough(img: &DynamicImage) -> bool {
+    img.width().max(img.height()) >= MIN_EXIF_THUMB_PX
 }
 
 /// What kind of connection a profile is, without opening it (the cache is looked at first).
@@ -197,8 +210,38 @@ async fn save(path: &Path, jpeg: &[u8]) {
     }
 }
 
-/// The thumbnail JPEG for an object, from the disk cache or freshly made.
+/// The cached thumbnail of one file version, if it was made before.
+pub(crate) fn cached_path<R: Runtime>(app: &AppHandle<R>, profile_id: &str, bucket: &str, key: &str, etag: &str, size: i64) -> Option<PathBuf> {
+    let path = cache_dir(app).ok()?.join(cache_name(kind_of(app, profile_id), profile_id, bucket, key, etag, size));
+    path.is_file().then_some(path)
+}
+
+/// Puts a thumbnail made elsewhere (from a photo just uploaded, see placeholders.rs) into the
+/// cache, so the grid shows it without downloading anything. S3 only, like uploads with one.
+pub(crate) async fn seed(profile_id: &str, bucket: &str, key: &str, etag: &str, size: i64, jpeg: &[u8]) {
+    // the folder is known once the app has started (start-up pruning opens it)
+    if let Some(dir) = DIR.get() {
+        save(&dir.join(cache_name(ConnKind::S3, profile_id, bucket, key, etag, size)), jpeg).await;
+    }
+}
+
+/// The thumbnail JPEG for an object, from the disk cache or freshly made. Every thumbnail also
+/// leaves its ThumbHash placeholder in the local index (placeholders.rs), including ones cached
+/// before placeholders existed.
 async fn thumbnail<R: Runtime>(
+    app: &AppHandle<R>,
+    profile_id: &str,
+    bucket: &str,
+    key: &str,
+    size: i64,
+    etag: &str,
+) -> Result<Vec<u8>, String> {
+    let jpeg = make_thumbnail(app, profile_id, bucket, key, size, etag).await?;
+    crate::placeholders::note_thumbnail(profile_id, bucket, key, etag, size, &jpeg).await;
+    Ok(jpeg)
+}
+
+async fn make_thumbnail<R: Runtime>(
     app: &AppHandle<R>,
     profile_id: &str,
     bucket: &str,
@@ -284,7 +327,7 @@ async fn thumbnail<R: Runtime>(
     Ok(jpeg)
 }
 
-fn may_have_exif(key: &str) -> bool {
+pub(crate) fn may_have_exif(key: &str) -> bool {
     let lower = key.to_lowercase();
     [".jpg", ".jpeg", ".tif", ".tiff"].iter().any(|e| lower.ends_with(e))
 }

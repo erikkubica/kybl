@@ -132,6 +132,19 @@ function thumbFor(key: string): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
+/** Real ThumbHashes of gradients in the demo thumbnails' colours (by the same hue pick as thumbFor). */
+const MOCK_HASHES = [
+  "G+UJHYSKeIiPiIh0d6eId4dwDQd3",
+  "m5YKJQR6eI+ISHeniHd4l3JwGLcH",
+  "ntYJDYp5eIiPh4h0eKd4d36FDwh3",
+  "HdkJHQiJeI+HSIeniHd3l42P99eo",
+  "XScKFYp5eIiPh4dzeKd4d3+M+/eI",
+  "nmUNFQaKiI+HSHeniHd4l3mAXge3",
+  "3UoOHYJ6eHiPh4h0d6iId4mPE7cH",
+  "X3gKJQh6eI+HSIeniHd4l4ByxvhY",
+];
+const mockThumbhash = (key: string) => MOCK_HASHES[Math.abs(hash(key)) % MOCK_HASHES.length];
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const cancelled = new Set<string>();
 
@@ -806,6 +819,19 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       return { thumbnails: 48_200_000, files: 312_500_000 };
     case "clear_caches":
       return 360_700_000;
+    // photo placeholders: two in three demo photos are known on this device, the rest come from
+    // their metadata (a HEAD) after a moment, so both paths show
+    case "placeholders_lookup":
+      await sleep(30);
+      return (a.items as { key: string }[]).map((it) => (/\.(jpe?g|png)$/i.test(it.key) && Math.abs(hash(it.key)) % 3 !== 0 ? mockThumbhash(it.key) : null));
+    case "placeholder_head":
+      await sleep(250 + Math.random() * 400);
+      return /\.(jpe?g|png)$/i.test(a.key) ? mockThumbhash(a.key) : null;
+    case "placeholders_folder":
+      return {};
+    case "placeholders_folder_save":
+    case "placeholder_from_thumbnail":
+      return null;
     case "picked_files":
       return (a.uris as string[]).map((p, i) => ({ path: p, name: p.split("/").pop(), size: 3_000_000 * (i + 1) }));
     case "download_folder":

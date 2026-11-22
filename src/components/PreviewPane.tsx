@@ -3,6 +3,7 @@ import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
 import { classify, extOf, formatBytes, formatDateFull, isWebImage, entrySize, entryKind } from "../format";
 import { cachedThumb, canThumb, loadThumb } from "../thumbs";
+import { usePlaceholder } from "../thumbhash";
 import { imageUrl, playableUrl } from "../media";
 import { FileIcon } from "./FileIcon";
 import { MAX_PDF_BYTES, PdfView } from "./PdfView";
@@ -378,6 +379,9 @@ function FileDetails({
   const loadingMedia = !gone && !error && !gated && ((previewable && !url) || (cls === "text" && !showsDoc && !text));
   const unsupported = !gone && !isFolder && !error && !previewable && !showsPdf && !showsDoc && cls !== "text" && !useThumb;
   const showsImage = !isFolder && !error && !!url && cls === "image";
+  // the photo's blurry placeholder while its thumbnail (or the image itself) loads
+  const placeholder = usePlaceholder(profileId, bucket, cls === "image" && !isFolder ? entry : null);
+  const imageLoading = !gone && !isFolder && !error && ((useThumb && thumb === undefined) || (cls === "image" && previewable && !gated && !url));
 
   return (
     <div className="preview-inner">
@@ -415,7 +419,8 @@ function FileDetails({
             )}
           </>
         )}
-        {!gone && !isFolder && !error && useThumb && thumb === undefined && (
+        {imageLoading && placeholder && <img className="ph" src={placeholder} alt="" />}
+        {!gone && !isFolder && !error && useThumb && thumb === undefined && !placeholder && (
           <div className="preview-note">
             <span className="spinner" />
           </div>
