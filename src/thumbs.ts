@@ -60,6 +60,23 @@ const RETRY_AFTER_MS = 60_000;
 const cache = new Map<string, string | number>();
 const blobs: { k: string; url: string }[] = [];
 const inflight = new Map<string, Promise<string | null>>();
+/** tiles waiting to hear that their thumbnail exists, whoever asked for it (the details panel) */
+const readyHooks = new Map<string, Set<(url: string) => void>>();
+
+/**
+ * Calls `f` when a thumbnail for this file is made anywhere in the app (the preview panel asking
+ * for the selected photo, say), so a tile showing an icon or a placeholder can take it at once.
+ */
+export function onThumbReady(profileId: string, bucket: string, e: Entry, f: (url: string) => void): () => void {
+  const k = keyOf(profileId, bucket, e);
+  let set = readyHooks.get(k);
+  if (!set) readyHooks.set(k, (set = new Set()));
+  set.add(f);
+  return () => {
+    set!.delete(f);
+    if (!set!.size) readyHooks.delete(k);
+  };
+}
 /** thumbnails being made right now (past the queue), and who wants to know when one starts */
 const started = new Set<string>();
 const startHooks = new Map<string, Array<() => void>>();
@@ -188,6 +205,7 @@ export function loadThumb(
         await preload(url);
       }
       remember(k, url);
+      for (const f of readyHooks.get(k) ?? []) f(url);
       return url;
     } catch {
       remember(k, Date.now());

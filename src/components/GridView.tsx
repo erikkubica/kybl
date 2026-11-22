@@ -2,8 +2,8 @@ import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState,
 import { useMeasured, useWindowed } from "../useWindowed";
 import { formatBytes, entrySize } from "../format";
 import { EmptyState, FileIcon } from "./FileIcon";
-import { cachedThumb, canListThumb, loadThumb } from "../thumbs";
-import { cachedPlaceholder, canPlaceholder, learnPlaceholder, loadPlaceholder } from "../thumbhash";
+import { cachedThumb, canListThumb, loadThumb, onThumbReady } from "../thumbs";
+import { cachedPlaceholder, canPlaceholder, forgetPlaceholderMiss, learnPlaceholder, loadPlaceholder } from "../thumbhash";
 import { imageModeFor } from "../imageMode";
 import { useListNav, useMarquee, type Box, type FolderSizeInfo, type SelectKeys } from "./listNav";
 import type { Entry } from "../types";
@@ -48,9 +48,11 @@ const Card = memo(function Card({
   // the image mode is read at mount: the pane remounts the grid when it changes
   const eligible = canListThumb(entry, profileId);
   const phEligible = imageModeFor(profileId) !== "off" && canPlaceholder(entry);
-  const [thumb, setThumb] = useState<string | null | undefined>(() =>
-    eligible ? cachedThumb(profileId, bucket, entry) : null,
-  );
+  const [thumb, setThumb] = useState<string | null | undefined>(() => {
+    if (eligible) return cachedThumb(profileId, bucket, entry);
+    // showing placeholders only: a thumbnail already made on this device costs nothing to show
+    return phEligible ? cachedThumb(profileId, bucket, entry) || null : null;
+  });
   // the blurry ThumbHash stand-in, shown under the thumbnail until that fades in over it
   const [ph, setPh] = useState<string | null | undefined>(() =>
     phEligible && !thumb ? cachedPlaceholder(profileId, bucket, entry) : null,
@@ -112,9 +114,21 @@ const Card = memo(function Card({
       { rootMargin: "240px" },
     );
     io.observe(el);
+    // its thumbnail made elsewhere (the details panel for the selected photo): take it now rather
+    // than waiting for this tile's own turn, or, showing placeholders only, the one it left behind
+    const offReady = onThumbReady(profileId, bucket, entry, (url) => {
+      if (!alive) return;
+      if (eligible || phEligible) {
+        needThumb = false;
+        setLoading(false);
+        setThumb(url);
+        if (!eligible) forgetPlaceholderMiss(profileId, bucket, entry);
+      }
+    });
     return () => {
       alive = false;
       io.disconnect();
+      offReady();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eligible, phEligible, profileId, bucket, entry.key, entry.etag, entry.size]);

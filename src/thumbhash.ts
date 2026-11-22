@@ -282,7 +282,13 @@ export function loadPlaceholder(profileId: string, bucket: string, e: Entry, sti
       await headSlot();
       try {
         if (!stillWanted()) return undefined;
-        const h = await api.placeholderHead(profileId, bucket, itemOf(e)).catch(() => null);
+        let h: string | null;
+        try {
+          h = await api.placeholderHead(profileId, bucket, itemOf(e));
+        } catch {
+          // a failed request (offline, a timeout) isn't "this photo has none": ask again next time
+          return null;
+        }
         remember(profileId, bucket, e, h);
         return h ? placeholderUrl(h) : null;
       } finally {
@@ -300,6 +306,16 @@ export function loadPlaceholder(profileId: string, bucket: string, e: Entry, sti
  * A thumbnail was just made for this photo, so this device's index now has its placeholder: it
  * is picked up for the folder's shared index (the only one that needs it right away).
  */
+/**
+ * A thumbnail of this photo was just made (it leaves its placeholder in this device's index):
+ * forget an earlier "none", so the next ask finds it.
+ */
+export function forgetPlaceholderMiss(profileId: string, bucket: string, e: Entry) {
+  const k = keyOf(profileId, bucket, e);
+  localMissed.delete(k);
+  if (known.get(k) === null) known.delete(k);
+}
+
 export function learnPlaceholder(profileId: string, bucket: string, e: Entry) {
   if (!sharedPlaceholdersOn(profileId) || typeof known.get(keyOf(profileId, bucket, e)) === "string") return;
   void localLookup(profileId, bucket, e).then((h) => h && remember(profileId, bucket, e, h));
