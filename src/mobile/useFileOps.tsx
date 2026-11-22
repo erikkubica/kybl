@@ -311,8 +311,11 @@ export function useFileOps(c: FileOpsCtx) {
   };
 
   // ------------------------------------------------------------ move, copy, rename
-  /** Runs a move/copy; with `undo`, the toast offers to put things back. */
-  const runMove = async (pid: string, b: string, items: Target[], mode: "move" | "copy", title: string, done: string, dest: string, undo: boolean) => {
+  /**
+   * Runs a move/copy. The toast offers Undo for a move, Open (the destination) for a copy, and
+   * nothing after an undo itself.
+   */
+  const runMove = async (pid: string, b: string, items: Target[], mode: "move" | "copy", title: string, done: string, dest: string, isUndo = false) => {
     const id = c.jobs.start({ kind: mode, title, dest, profileId: pid, bucket: b });
     let ok = false;
     try {
@@ -322,12 +325,15 @@ export function useFileOps(c: FileOpsCtx) {
       else if (r.error !== "Cancelled") {
         ok = true;
         const back = items.map((t) => ({ from: t.to, to: t.from, isPrefix: t.isPrefix }));
+        const label = items.length === 1 ? `“${baseName(items[0].from)}”` : plural(items.length, "item");
         c.toast(
           "success",
           done,
-          mode === "move" && undo
-            ? { label: "Undo", run: () => runMove(pid, b, back, "move", `Putting back ${items.length === 1 ? `“${baseName(items[0].from)}”` : plural(items.length, "item")}`, "Put back", parentPrefix(items[0].from), false) }
-            : { label: "Open", run: () => c.go({ profileId: pid, bucket: b, prefix: dest }) },
+          isUndo
+            ? undefined
+            : mode === "move"
+              ? { label: "Undo", run: () => runMove(pid, b, back, "move", `Putting back ${label}`, `Put back ${label}`, parentPrefix(items[0].from), true) }
+              : { label: "Open", run: () => c.go({ profileId: pid, bucket: b, prefix: dest }) },
         );
       }
     } catch (err) {
@@ -370,7 +376,7 @@ export function useFileOps(c: FileOpsCtx) {
     const go = async (final: Target[]) => {
       if (!final.length) return;
       const label = final.length === 1 ? `“${baseName(final[0].from)}”` : plural(final.length, "item");
-      await runMove(pid, b, final, mode, `${mode === "move" ? "Moving" : "Copying"} ${label} to ${where}`, `${mode === "move" ? "Moved" : "Copied"} ${label} to ${where}`, dest, true);
+      await runMove(pid, b, final, mode, `${mode === "move" ? "Moving" : "Copying"} ${label} to ${where}`, `${mode === "move" ? "Moved" : "Copied"} ${label} to ${where}`, dest);
     };
     let clashing: Set<string>;
     try {
@@ -386,7 +392,7 @@ export function useFileOps(c: FileOpsCtx) {
     const n = clashing.size;
     c.setSheet({
       title: n === 1 ? `“${baseName(items.find((t) => clashing.has(t.to))!.to)}” is already in ${where}` : `${plural(n, "item")} are already in ${where}`,
-      message: n === 1 ? "Keep both, replace it, or leave it out?" : "Keep both, replace them, or leave them out?",
+      message: n < items.length ? `Keep both, replace ${n === 1 ? "it" : "them"}, or skip ${n === 1 ? "it" : "them"} and do the rest?` : `Keep both, or replace ${n === 1 ? "it" : "them"}?`,
       items: [
         { icon: "copy", label: "Keep both", run: choose("keep") },
         { icon: "refresh", label: n === 1 ? "Replace it" : "Replace them", danger: true, run: choose("replace") },
@@ -413,7 +419,7 @@ export function useFileOps(c: FileOpsCtx) {
         const to = isFolder ? `${parent}${name}/` : `${parent}${name}`;
         const item: Target = { from: e.key, to, isPrefix: isFolder };
         const run = async () => {
-          const ok = await runMove(pid, b, [item], "move", `Renaming “${e.name}” to “${name}”`, `Renamed to “${name}”`, parent, true);
+          const ok = await runMove(pid, b, [item], "move", `Renaming “${e.name}” to “${name}”`, `Renamed to “${name}”`, parent);
           if (ok) c.renamedDetail(e.key, { ...e, key: to, name });
         };
         // renaming onto an existing name would replace that file without a word

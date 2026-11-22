@@ -167,7 +167,9 @@ export const EntryTile = memo(function EntryTile({ entry, index, profileId, buck
           <Art entry={entry} profileId={profileId} bucket={bucket} />
           {selecting && <Check on={selected} />}
         </span>
-        <span className="m-card-name">{entry.name}</span>
+        <span className="m-card-label">
+          <span className="m-card-name">{entry.name}</span>
+        </span>
         <span className="m-card-meta">{entry.kind === "folder" ? " " : formatBytes(entry.size)}</span>
       </button>
     </div>

@@ -433,14 +433,15 @@ export default function MobileApp() {
   const showGrid = view === "grid" || (view === "auto" && photoFolder);
 
   // the viewer stays on the same photo across refreshes; a deleted one hands over to its neighbour
-  const viewerIdx = viewerKey ? media.findIndex((m) => m.key === viewerKey) : -1;
+  const foundIdx = viewerKey ? media.findIndex((m) => m.key === viewerKey) : -1;
   const lastViewerIdx = useRef(0);
-  if (viewerIdx >= 0) lastViewerIdx.current = viewerIdx;
+  if (foundIdx >= 0) lastViewerIdx.current = foundIdx;
+  // gone from the list: show the neighbour right away (no flicker), then follow it by key
+  const viewerIdx = viewerKey === null ? -1 : foundIdx >= 0 ? foundIdx : media.length ? Math.min(lastViewerIdx.current, media.length - 1) : -1;
   useEffect(() => {
-    if (viewerKey === null || viewerIdx >= 0) return;
-    if (media.length === 0) setViewerKey(null);
-    else setViewerKey(media[Math.min(lastViewerIdx.current, media.length - 1)].key);
-  }, [media, viewerKey, viewerIdx]);
+    if (viewerKey === null || foundIdx >= 0) return;
+    setViewerKey(viewerIdx >= 0 ? media[viewerIdx].key : null);
+  }, [media, viewerKey, foundIdx, viewerIdx]);
 
   // "Newest" and "Largest" sort the whole folder: load every page (people can stop it)
   const stoppedAll = useRef(new Set<string>());
@@ -1025,7 +1026,7 @@ export default function MobileApp() {
       />
       {detail.kind === "file" && (
         <div className="m-detail-open">
-          <button className="btn btn-primary" onClick={() => ops.openIn(detail)}>
+          <button className="btn" onClick={() => ops.openIn(detail)}>
             <MIcon name="open" size={16} /> Open in…
           </button>
           <button className="btn" onClick={() => ops.shareSheet([detail])}>

@@ -106,15 +106,17 @@ export function TransfersScreen({
             <ul className="m-list">
               {jobs.map((j) => (
                 <li key={j.id} className="m-row m-xfer">
-                  <span className={`m-xfer-ico ${j.state}`}>
-                    <Icon name={j.state === "done" ? "check-circle" : j.state === "error" ? "alert" : j.kind === "delete" ? "trash" : j.kind === "rename" ? "edit" : "move"} size={18} />
-                  </span>
-                  <span className="m-row-text">
-                    <span className="m-row-name">{j.title}</span>
-                    <span className="m-row-sub">
-                      {j.state === "running" ? (j.total ? `${j.done.toLocaleString()} of ${j.total.toLocaleString()}${j.eta ? ` · ${j.eta}` : ""}` : "Finding objects…") : j.state === "error" ? errSummary(j.error ?? "Failed") : j.state === "cancelled" ? "Stopped" : "Done"}
+                  <span className="m-xfer-main">
+                    <span className={`m-xfer-ico ${j.state}`}>
+                      <Icon name={j.state === "done" ? "check-circle" : j.state === "error" ? "alert" : j.kind === "delete" ? "trash" : j.kind === "rename" ? "edit" : "move"} size={18} />
                     </span>
-                    {j.state === "running" && <Progress frac={j.frac} />}
+                    <span className="m-row-text">
+                      <span className="m-row-name">{j.title}</span>
+                      <span className="m-row-sub">
+                        {j.state === "running" ? (j.total ? `${j.done.toLocaleString()} of ${j.total.toLocaleString()}${j.eta ? ` · ${j.eta}` : ""}` : "Finding objects…") : j.state === "error" ? errSummary(j.error ?? "Failed") : j.state === "cancelled" ? "Stopped" : "Done"}
+                      </span>
+                      {j.state === "running" && <Progress frac={j.frac} />}
+                    </span>
                   </span>
                   {j.state === "running" ? (
                     <button className="m-icon" onClick={() => api.cancelTransfer(j.id).catch(() => {})} aria-label="Stop">

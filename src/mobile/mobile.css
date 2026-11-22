@@ -769,6 +769,16 @@ body {
   top: -4px;
 }
 
+/* always room for two lines of name, so every grid row has the same height (the grid is windowed) */
+.m-card-label {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  max-width: 100%;
+  min-height: calc(2 * 1.28em + 8px);
+  font-size: calc(13 * var(--m-u));
+}
+
 .m-card-name {
   max-width: 100%;
   margin-top: 6px;
@@ -777,8 +787,6 @@ body {
   font-size: calc(13 * var(--m-u));
   font-weight: 500;
   line-height: 1.28;
-  /* always two lines tall, so every grid row has the same height (the grid is windowed) */
-  min-height: calc(2 * 1.28em + 2px);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -2762,8 +2770,7 @@ input[type="checkbox"].m-switch:checked {
 }
 
 .m-dest-bar {
-  padding-top: 10px;
-  padding-bottom: calc(10px + var(--m-bottom));
+  padding: 10px calc(16px + var(--m-right)) calc(10px + var(--m-bottom)) calc(16px + var(--m-left));
 }
 
 .m-dest-bar .m-big-btn {

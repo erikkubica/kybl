@@ -26,7 +26,7 @@ export function DestinationScreen({
   at: Loc | null;
   profiles: Profile[];
   /** bucket names per connection, as the home screen has them */
-  buckets: Record<string, { names: string[]; loading: boolean }>;
+  buckets: Record<string, { names: string[]; loading: boolean; note?: string | null }>;
   onAt: (l: Loc | null) => void;
   onPick: (l: Loc) => void;
   onBack: () => void;
@@ -88,6 +88,9 @@ export function DestinationScreen({
                     <li className="m-bucket-note">
                       <span className="spinner" /> Loading buckets…
                     </li>
+                  )}
+                  {!buckets[p.id]?.loading && !buckets[p.id]?.names.length && (
+                    <li className="m-bucket-note">{buckets[p.id]?.note ?? "No buckets here yet."}</li>
                   )}
                   {(buckets[p.id]?.names ?? []).map((b) => (
                     <li key={b}>
