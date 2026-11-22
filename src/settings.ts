@@ -38,7 +38,20 @@ export type Settings = {
   autoOpenTransfers: boolean;
   /** make thumbnails for photos in lists and grids (each one is a download the first time) */
   listThumbs: boolean;
+  /** desktop: ask where to save downloads; false = straight into the Downloads folder */
+  downloadAsk: boolean;
+  /** pinned places, shown in the sidebar (desktop) and on the home screen (phones) */
+  favorites: Favorite[];
+  /** list columns shown on desktop, in order (Name is always first) */
+  columns: ColumnId[];
+  /** last sort, restored on launch */
+  sort: { by: "name" | "size" | "modified" | "kind"; desc: boolean };
+  /** desktop grid tile size in px (96..320) */
+  tileSize: number;
 };
+
+export type Favorite = { profileId: string; bucket: string; prefix: string; name: string };
+export type ColumnId = "size" | "modified" | "kind" | "storageClass" | "etag";
 
 export const DEFAULTS: Settings = {
   theme: "system",
@@ -54,6 +67,11 @@ export const DEFAULTS: Settings = {
   confirmDelete: true,
   autoOpenTransfers: true,
   listThumbs: false,
+  downloadAsk: true,
+  favorites: [],
+  columns: ["size", "modified", "kind"],
+  sort: { by: "name", desc: false },
+  tileSize: 160,
 };
 
 export const ACCENTS: { id: Exclude<Accent, "scheme">; label: string; color: string }[] = [
