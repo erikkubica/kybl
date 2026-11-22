@@ -94,6 +94,8 @@ export function Toolbar({
   const parts = prefix.split("/").filter(Boolean);
   const dialogs = useDialogs();
   const bar = useRef<HTMLDivElement>(null);
+  // dual pane: Upload and New folder are always icons (two bars side by side); one pane: labels
+  // while they fit
   const labelsFit = useLabelsFit(bar, `${view}|${dualTools ? 1 : 0}|${dual ? 1 : 0}`);
   /** grid view: one icon for the sort, its choices in a menu (as Finder's Sort By) */
   const sortMenu = (e: React.MouseEvent) => {
@@ -190,7 +192,7 @@ export function Toolbar({
         </div>
       </div>
 
-      <div className={`actionbar ${view === "grid" ? "is-grid" : ""} ${labelsFit ? "" : "tight"}`} ref={bar}>
+      <div className={`actionbar ${view === "grid" ? "is-grid" : ""} ${labelsFit && !dual ? "" : "tight"}`} ref={bar}>
         <button className="btn btn-primary btn-sm btn-upload" disabled={disabled} onClick={(e) => onUploadMenu(...anchorOf(e))} title="Upload files or a folder (⌘U)" aria-label="Upload">
           <Icon name="upload" size={15} />
           <span className="btn-label">Upload</span>
