@@ -160,25 +160,29 @@ pub fn write(dir: &Path, kc: &impl Keychain, map: &Map) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("Could not save the secret key: {e}"))?;
     let path = dir.join(FILE);
     let json = serde_json::to_vec(map).map_err(|e| e.to_string())?;
-    let (key, new_key) = match read_key(kc)? {
-        Some(k) => (k, false),
+    let key = match read_key(kc)? {
+        Some(k) => k,
         None => {
             let mut k = [0u8; 32];
             SystemRandom::new().fill(&mut k).map_err(|_| "No random numbers available".to_string())?;
+            // the new key goes into the keychain, and is read back, before anything is sealed
+            // with it: a file sealed with a key that didn't save could never be opened again, and
+            // the file there now may still open once its own key turns up
+            kc.set(KEY_ACCOUNT, &hex(&k)).map_err(|e| format!("Could not save the secret key to the keychain: {e}"))?;
+            if read_key(kc)? != Some(k) {
+                return Err("Could not save the secret key to the keychain: it didn't read back".into());
+            }
             // a file without its key can't be opened any more; keep it aside rather than lose it
             // (unless the old item is still there: then this is a move that failed before, and
             // the old item holds the keys)
             if path.exists() && kc.get(LEGACY_ACCOUNT).ok().flatten().is_none() {
                 set_aside(&path);
             }
-            (k, true)
+            k
         }
     };
     let sealed = seal(&key, &json)?;
     replace(&path, &sealed)?;
-    if new_key {
-        kc.set(KEY_ACCOUNT, &hex(&key)).map_err(|e| format!("Could not save the secret key to the keychain: {e}"))?;
-    }
     match std::fs::read(&path).ok().and_then(|raw| open(&key, &raw)) {
         Some(m) if m == *map => Ok(()),
         _ => Err("Could not save the secret key: the vault didn't read back".into()),
@@ -270,6 +274,29 @@ mod tests {
         let kc = Mem { garble_key: true, ..Mem::with_legacy(&keys()) };
         assert_eq!(read(&d, &kc).unwrap(), keys());
         assert!(kc.has(LEGACY_ACCOUNT), "a key that didn't read back is no reason to drop the old item");
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn a_new_key_that_wont_save_leaves_the_file_alone() {
+        let d = dir();
+        let kc = Mem::default();
+        write(&d, &kc, &keys()).unwrap();
+        let old_key = kc.items.lock().unwrap().remove(KEY_ACCOUNT).unwrap();
+        let before = files(&d);
+        let raw = std::fs::read(d.join(FILE)).unwrap();
+        // the key item went missing, and the new one won't save (or saves as something else)
+        for kc in [Mem { refuse_key_save: true, ..Mem::default() }, Mem { garble_key: true, ..Mem::default() }] {
+            let mut more = keys();
+            more.insert("p9".into(), "new".into());
+            assert!(write(&d, &kc, &more).is_err());
+            assert_eq!(files(&d), before, "nothing set aside or replaced");
+            assert_eq!(std::fs::read(d.join(FILE)).unwrap(), raw, "the file is still the one the old key opens");
+        }
+        // the old key turns up again (keychain unlocked, restored from a backup): every secret is there
+        let kc = Mem::default();
+        kc.set(KEY_ACCOUNT, &old_key).unwrap();
+        assert_eq!(read(&d, &kc).unwrap(), keys());
         let _ = std::fs::remove_dir_all(d);
     }
 

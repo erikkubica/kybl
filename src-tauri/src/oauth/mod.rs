@@ -13,6 +13,7 @@
 //! with `kind` and `cloud` (account email and id) filled in. Tokens: [`token`].
 
 pub mod http;
+mod loopback;
 #[cfg(test)]
 pub mod mock;
 pub mod token;
@@ -24,8 +25,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 #[cfg(desktop)]
 use tauri_plugin_opener::OpenerExt;
-use tokio::{io::AsyncWriteExt, net::TcpListener};
-
+use self::loopback::{listen, Reply};
 use self::token::{Stored, TokenSource, TokenStore};
 use crate::{
     kybl_connect::{self as kc, Flow},
@@ -210,62 +210,6 @@ fn authorize_url(p: &Provider, tenant: &str, client_id: &str, redirect_uri: &str
     format!("{}?{}", p.auth_url.replace("{tenant}", tenant), qs.join("&"))
 }
 
-// ---------------------------------------------------------------- loopback
-
-/// Binds the loopback listener: any free port, or the first free one of `ports`.
-async fn listen(ports: &[u16]) -> Result<TcpListener, String> {
-    if ports.is_empty() {
-        return TcpListener::bind("127.0.0.1:0").await.map_err(|e| format!("Couldn't start the sign-in listener: {e}"));
-    }
-    for p in ports {
-        if let Ok(l) = TcpListener::bind(("127.0.0.1", *p)).await {
-            return Ok(l);
-        }
-    }
-    let list: Vec<String> = ports.iter().map(u16::to_string).collect();
-    Err(format!("The sign-in needs port {} on this device, and another app is using it. Close that app and try again.", list.join(" or ")))
-}
-
-/// What the browser sees once the code arrived: a page (computers) or a redirect back into the
-/// app (phones, where the tab must close).
-enum Reply<'a> {
-    #[cfg_attr(mobile, allow(dead_code))]
-    Page(&'a str),
-    #[cfg_attr(desktop, allow(dead_code))]
-    Redirect(&'a str),
-}
-
-/// Waits for the browser to come back with a code for our `state`. Stray requests (a favicon, a
-/// wrong or replayed state) get an error and the wait goes on.
-async fn wait_loopback(listener: &TcpListener, state: &str, reply: Reply<'_>) -> Result<String, String> {
-    loop {
-        let (mut stream, _) = listener.accept().await.map_err(|e| e.to_string())?;
-        let Some(target) = kc::read_target(&mut stream).await else { continue };
-        if target.split('?').next() != Some("/callback") {
-            kc::respond(&mut stream, "404 Not Found", "").await;
-            continue;
-        }
-        let q = kc::query(&target);
-        if q.get("state").map(String::as_str) != Some(state) {
-            kc::respond(&mut stream, "400 Bad Request", &kc::page("This sign-in link doesn't belong to the Kybl window that's waiting. Start again from the app.")).await;
-            continue;
-        }
-        let r = kc::code_from_redirect(&q, state);
-        match reply {
-            Reply::Page(ok) => {
-                let msg = if r.is_ok() { ok } else { "The sign-in was cancelled. You can close this tab." };
-                kc::respond(&mut stream, "200 OK", &kc::page(msg)).await;
-            }
-            Reply::Redirect(to) => {
-                let res = format!("HTTP/1.1 302 Found\r\nlocation: {to}\r\ncontent-length: 0\r\ncache-control: no-store\r\nconnection: close\r\n\r\n");
-                let _ = stream.write_all(res.as_bytes()).await;
-                let _ = stream.shutdown().await;
-            }
-        }
-        return r;
-    }
-}
-
 // ---------------------------------------------------------------- the browser part
 
 const NOTHING_BACK: &str = "Nothing came back from the browser. Try again.";
@@ -277,17 +221,29 @@ async fn browser_code(app: &AppHandle, flow: &Flow, redirect: &Redirect, label: 
         return Err("This sign-in isn't available on a computer.".into());
     };
     let listener = listen(ports).await?;
-    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let port = listener.port().map_err(|e| e.to_string())?;
     let uri = format!("http://{host}:{port}/callback");
     app.opener().open_url(url_for(&uri), None::<&str>).map_err(|e| format!("Couldn't open the browser: {e}"))?;
     let ok = format!("You're signed in to {label}. You can close this tab and go back to Kybl.");
     let code = tokio::select! {
-        r = wait_loopback(&listener, state, Reply::Page(&ok)) => r?,
+        r = loopback::wait(&listener, state, Reply::Page(&ok)) => r?,
         _ = flow.cancel.notified() => return Err(CANCELLED.into()),
         _ = tokio::time::sleep(TIMEOUT) => return Err(NOTHING_BACK.into()),
     };
     crate::tray::show_main(app);
     Ok((code, uri))
+}
+
+/// Where the loopback sign-ins on a phone send the tab once the code arrived: back into the app.
+#[cfg(any(mobile, test))]
+const LOOPBACK_DONE: &str = "kybl://oauth/done";
+
+/// The `signIn` call of `KyblConnectPlugin`: the page, the scheme that ends the sign-in, and the
+/// one address under that scheme this sign-in comes back to. Android only accepts that address
+/// (`SignInCallback.kt`): another `kybl://` link opened meanwhile must not end the sign-in.
+#[cfg(any(mobile, test))]
+fn sign_in_args(url: &str, scheme: &str, callback: &str) -> Value {
+    json!({ "url": url, "callbackScheme": scheme, "callbackUrl": callback })
 }
 
 /// Phones: `KyblConnectPlugin` opens the page in a Custom Tab / sign-in sheet that closes when
@@ -308,7 +264,7 @@ async fn browser_code(app: &AppHandle, flow: &Flow, redirect: &Redirect, _label:
         Redirect::Scheme { uri, scheme } => {
             let url = url_for(uri);
             let back = tokio::select! {
-                r = native.0.run_mobile_plugin_async::<Back>("signIn", json!({ "url": url, "callbackScheme": scheme })) => r.map_err(|e| format!("Couldn't open the browser: {}", e.to_string().replace(" Use a code instead.", "")))?,
+                r = native.0.run_mobile_plugin_async::<Back>("signIn", sign_in_args(&url, scheme, uri)) => r.map_err(|e| format!("Couldn't open the browser: {}", e.to_string().replace(" Use a code instead.", "")))?,
                 _ = flow.cancel.notified() => { cancel_native().await; return Err(CANCELLED.into()) }
                 _ = tokio::time::sleep(TIMEOUT) => { cancel_native().await; return Err(NOTHING_BACK.into()) }
             };
@@ -319,13 +275,13 @@ async fn browser_code(app: &AppHandle, flow: &Flow, redirect: &Redirect, _label:
         }
         Redirect::Loopback { host, ports } => {
             let listener = listen(ports).await?;
-            let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+            let port = listener.port().map_err(|e| e.to_string())?;
             let uri = format!("http://{host}:{port}/callback");
             let url = url_for(&uri);
-            let tab = native.0.run_mobile_plugin_async::<Back>("signIn", json!({ "url": url, "callbackScheme": "kybl" }));
+            let tab = native.0.run_mobile_plugin_async::<Back>("signIn", sign_in_args(&url, "kybl", LOOPBACK_DONE));
             tokio::pin!(tab);
             let code = tokio::select! {
-                r = wait_loopback(&listener, state, Reply::Redirect("kybl://oauth/done")) => r,
+                r = loopback::wait(&listener, state, Reply::Redirect(LOOPBACK_DONE)) => r,
                 // closed without signing in (the redirect back only comes after the code)
                 r = &mut tab => match r {
                     Ok(b) if b.cancelled || b.url.is_none() => Err(CANCELLED.to_string()),
@@ -621,33 +577,12 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn loopback_redirects_phones_back_into_the_app() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = listen(&[]).await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let client = tokio::spawn(async move {
-            let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
-            s.write_all(b"GET /callback?code=c0de&state=good HTTP/1.1\r\nhost: x\r\n\r\n").await.unwrap();
-            let mut out = String::new();
-            s.read_to_string(&mut out).await.unwrap();
-            out
-        });
-        assert_eq!(wait_loopback(&listener, "good", Reply::Redirect("kybl://oauth/done")).await.unwrap(), "c0de");
-        let out = client.await.unwrap();
-        assert!(out.starts_with("HTTP/1.1 302"), "{out}");
-        assert!(out.contains("location: kybl://oauth/done"));
-    }
-
-    #[tokio::test]
-    async fn fixed_ports_take_the_next_free_one() {
-        let a = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let b = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let (pa, pb) = (a.local_addr().unwrap().port(), b.local_addr().unwrap().port());
-        drop(b);
-        let ports: &'static [u16] = Box::leak(vec![pa, pb].into_boxed_slice());
-        assert_eq!(listen(ports).await.unwrap().local_addr().unwrap().port(), pb);
-        let only: &'static [u16] = Box::leak(vec![pa].into_boxed_slice());
-        assert!(listen(only).await.unwrap_err().contains("another app"));
+    #[test]
+    fn phones_are_told_which_address_ends_the_sign_in() {
+        let a = sign_in_args("https://login.example/authorize", "kybl", "kybl://oauth/onedrive");
+        assert_eq!(a["callbackScheme"], "kybl");
+        assert_eq!(a["callbackUrl"], "kybl://oauth/onedrive");
+        assert_eq!(sign_in_args("u", "kybl", LOOPBACK_DONE)["callbackUrl"], "kybl://oauth/done");
     }
 }
+
