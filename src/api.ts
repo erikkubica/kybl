@@ -220,3 +220,67 @@ export function errDetail(msg: string): string | null {
   const i = msg.indexOf("\n\n");
   return i < 0 ? null : msg.slice(i + 2);
 }
+
+// ---------------------------------------------------------------- WP-D: documents (src/viewers)
+
+/** What the backend knows about an opened or saved document. ETags come without quotes. */
+export type DocMeta = {
+  etag: string | null;
+  size: number;
+  modified: number | null;
+  contentType: string | null;
+  version: string | null;
+};
+
+/**
+ * What a save expects to find:
+ * - `match`: the file as it was opened (anything else is a conflict),
+ * - `absent`: a new name ("Save as copy"); `headersFrom` lends its content type and headers,
+ * - `any`: overwrite whatever is there.
+ */
+export type DocPrecondition =
+  | { kind: "match"; etag: string | null; size: number; modified: number | null; version: string | null }
+  | { kind: "absent"; headersFrom?: string | null }
+  | { kind: "any" };
+
+/** A save was refused because the file changed (or, with `current` null, was deleted) meanwhile. */
+export class DocConflict extends Error {
+  current: DocMeta | null;
+  constructor(current: DocMeta | null) {
+    super(current ? "This file was changed somewhere else since you opened it." : "This file was deleted since you opened it.");
+    this.current = current;
+  }
+}
+
+/** The opened state as a `match` precondition for the next save. */
+export const expectMeta = (m: DocMeta): DocPrecondition => ({ kind: "match", etag: m.etag, size: m.size, modified: m.modified, version: m.version });
+
+/**
+ * The whole file plus its metadata, from one read. The body is framed as
+ * `[u32 BE json length][json DocMeta][bytes]`. Rejects above `maxBytes`.
+ */
+export async function docOpen(profileId: string, bucket: string, key: string, maxBytes: number): Promise<{ meta: DocMeta; bytes: Uint8Array }> {
+  const raw = await read<ArrayBuffer>("doc_open", { profileId, root: bucket, path: key, maxBytes });
+  const len = new DataView(raw).getUint32(0);
+  const meta = JSON.parse(new TextDecoder().decode(new Uint8Array(raw, 4, len))) as DocMeta;
+  return { meta, bytes: new Uint8Array(raw, 4 + len) };
+}
+
+/** Saves `bytes` (sent raw, no JSON) if `expect` still holds; throws `DocConflict` otherwise. */
+export async function docSave(profileId: string, bucket: string, key: string, bytes: Uint8Array, expect: DocPrecondition): Promise<DocMeta> {
+  try {
+    return await invoke<DocMeta>("doc_save", bytes, {
+      headers: {
+        // IPC headers must be plain ASCII
+        "x-kybl-profile": encodeURIComponent(profileId),
+        "x-kybl-root": encodeURIComponent(bucket),
+        "x-kybl-path": encodeURIComponent(key),
+        "x-kybl-expect": encodeURIComponent(JSON.stringify(expect)),
+      },
+    });
+  } catch (e) {
+    const msg = errMessage(e);
+    if (msg.startsWith("CONFLICT\n\n")) throw new DocConflict(JSON.parse(msg.slice(10)) as DocMeta | null);
+    throw e;
+  }
+}

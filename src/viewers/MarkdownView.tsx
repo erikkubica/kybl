@@ -1,0 +1,115 @@
+/**
+ * Markdown: the source in the editor, the rendered page beside it (or one at a time on narrow
+ * screens). The rendered HTML is cleaned with DOMPurify and shown only inside SandboxFrame.
+ */
+import { useEffect, useMemo, useRef, useState } from "react";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
+import { CodeEditor, type CodeEditorApi } from "./CodeEditor";
+import { SandboxFrame } from "./SandboxFrame";
+import { Segmented, ToolButton } from "./ui";
+import { useNarrow } from "./useNarrow";
+import type { ViewerProps } from "./types";
+
+type Layout = "edit" | "split" | "preview";
+
+export function renderMarkdown(src: string): string {
+  const html = marked.parse(src, { gfm: true, async: false }) as string;
+  return DOMPurify.sanitize(html, { FORCE_BODY: true, FORBID_TAGS: ["form", "input", "button", "textarea", "select"] });
+}
+
+const CSS = `
+body{padding:20px 24px 40px;font-size:15px;line-height:1.6;max-width:860px;margin:0 auto;word-wrap:break-word}
+h1,h2,h3,h4,h5,h6{line-height:1.25;margin:1.4em 0 .6em;font-weight:650}
+h1{font-size:1.9em;padding-bottom:.3em;border-bottom:1px solid var(--border)}
+h2{font-size:1.45em;padding-bottom:.25em;border-bottom:1px solid var(--border)}
+h3{font-size:1.2em}
+body>:first-child{margin-top:0}
+p,ul,ol,blockquote,pre,table{margin:0 0 1em}
+code,pre{font-family:var(--mono);font-size:.88em}
+code{background:var(--code);padding:.15em .35em;border-radius:5px}
+pre{background:var(--panel);border:1px solid var(--border);padding:12px 14px;border-radius:8px;overflow:auto}
+pre code{background:none;padding:0}
+blockquote{margin-left:0;padding:0 1em;color:var(--dim);border-left:3px solid var(--border)}
+table{border-collapse:collapse;display:block;overflow:auto}
+th,td{border:1px solid var(--border);padding:6px 12px}
+th{background:var(--panel);font-weight:600}
+img{max-width:100%}
+hr{border:0;border-top:1px solid var(--border);margin:1.6em 0}
+li+li{margin-top:.25em}
+input[type=checkbox]{margin-right:.4em}
+@media (max-width:600px){body{padding:16px 16px 32px}}
+`;
+
+export default function MarkdownView({ name, text, editable, mode, onEdit, onSave }: ViewerProps) {
+  const full = mode === "full";
+  const narrow = useNarrow();
+  // phones open on the rendered page (reading is the common case); "Edit" is one tap away
+  const [layout, setLayout] = useState<Layout>(() => (!full || !editable || narrow ? "preview" : "split"));
+  const [source, setSource] = useState(text ?? "");
+  const editor = useRef<CodeEditorApi | null>(null);
+  const timer = useRef(0);
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  // phones have no room for two panes
+  const shown: Layout = narrow && layout === "split" ? "edit" : layout;
+  const html = useMemo(() => renderMarkdown(source), [source]);
+
+  const edited = (current: () => string) => {
+    onEdit?.(current);
+    clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setSource(current()), 250);
+  };
+
+  const options: { id: Layout; label: string }[] = narrow
+    ? [
+        { id: "edit", label: "Edit" },
+        { id: "preview", label: "Preview" },
+      ]
+    : [
+        { id: "edit", label: "Edit" },
+        { id: "split", label: "Side by side" },
+        { id: "preview", label: "Preview" },
+      ];
+
+  return (
+    <div className="dv-viewer dv-md">
+      {full && (
+        <div className="dv-tools">
+          {editable ? (
+            <Segmented label="Layout" value={shown} options={options} onChange={setLayout} />
+          ) : (
+            <Segmented
+              label="Layout"
+              value={shown === "preview" ? "preview" : "edit"}
+              options={[
+                { id: "preview", label: "Preview" },
+                { id: "edit", label: "Source" },
+              ]}
+              onChange={setLayout}
+            />
+          )}
+          {shown !== "preview" && <ToolButton icon="search" label="Find" onClick={() => editor.current?.find()} title="Find and replace (⌘F)" />}
+        </div>
+      )}
+      <div className={`dv-md-panes ${shown}`}>
+        {/* the editor stays mounted while hidden, so undo history and cursor survive switching */}
+        {full && (
+          <div className="dv-md-source" hidden={shown === "preview"}>
+            <CodeEditor
+              name={name}
+              text={text ?? ""}
+              editable={editable}
+              wrap
+              fallbackLanguage="Markdown"
+              onEdit={edited}
+              onSave={onSave}
+              onReady={(api) => (editor.current = api)}
+            />
+          </div>
+        )}
+        {shown !== "edit" && <SandboxFrame className="dv-md-preview" title={`Preview of ${name}`} html={html} css={CSS} remoteImages />}
+      </div>
+    </div>
+  );
+}
