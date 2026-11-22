@@ -11,7 +11,7 @@ const SPLIT_KEY = "s3b.split";
 const MIN = 0.2;
 const MAX = 0.8;
 /** below this width (CSS px) the two panes stack */
-const STACK_BELOW = 820; // two panes of at least 400px (shell.css) and the splitter
+const STACK_BELOW = 740; // two panes of at least 360px (shell.css) and the splitter
 
 const clamp = (r: number) => Math.min(MAX, Math.max(MIN, r));
 function loadRatio(): number {

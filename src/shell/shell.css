@@ -25,12 +25,13 @@
 }
 .dual > .browser-pane {
   /* never so narrow that the path and toolbar fall apart (the splitter stops here) */
-  min-width: 400px;
+  min-width: 360px;
   min-height: 0;
+  /* a pane never draws over its neighbour: its list shrinks (and scrolls) instead */
+  overflow: hidden;
 }
 .dual.stacked > .browser-pane {
   min-width: 0;
-  min-height: 160px;
 }
 /* the active pane: an accent line along its top, and its selection in the accent colour */
 .browser-pane.is-active::before {
