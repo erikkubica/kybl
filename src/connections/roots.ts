@@ -108,3 +108,56 @@ const KIND_ROOTS: Partial<Record<ConnKind, Capabilities["roots"]>> = {
 
 /** Connections whose roots come from `listRoots` (S3 keeps `listBuckets`, which may name a bucket by hand). */
 export const usesListRoots = (p: Pick<Profile, "kind" | "id">) => !!p.kind && p.kind !== "s3";
+
+/* ------------------------------------------------------------ this computer: roots inside roots */
+
+/** this computer's roots are paths, and one can sit inside another (Documents in Home in the disk) */
+function isLocal(profileId: string): boolean {
+  return profileId === LOCAL_ID || connKinds.get(profileId) === "local" || !!peekCaps(profileId)?.localPaths;
+}
+const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+/** `path` relative to `dir` when it's inside it (or is it: ""), else null */
+function inside(dir: string, path: string): string | null {
+  const d = norm(dir);
+  const p = norm(path);
+  if (p === d) return "";
+  const base = d === "/" ? "/" : d + "/";
+  return p.toLowerCase().startsWith(base.toLowerCase()) ? p.slice(base.length) : null;
+}
+
+/**
+ * One of this computer's roots opened at its top (Documents): the closest other root holding it
+ * (Home) and where it sits there, so ".." and Up go on to its real parent folder. Null at the
+ * top of the disk, and on every other kind of connection.
+ */
+export function localParent(profileId: string, root: string): { root: string; prefix: string } | null {
+  if (!isLocal(profileId)) return null;
+  let best: { root: string; rel: string } | null = null;
+  for (const r of Object.keys(names.get(profileId) ?? {})) {
+    if (r === root) continue;
+    const rel = inside(r, root);
+    if (rel && (!best || norm(r).length > norm(best.root).length)) best = { root: r, rel };
+  }
+  if (!best) return null;
+  const parts = best.rel.split("/").filter(Boolean);
+  parts.pop();
+  return { root: best.root, prefix: parts.length ? parts.join("/") + "/" : "" };
+}
+
+/**
+ * The sidebar folder to light up for a place on this computer: the closest root holding it, so
+ * Home › Documents lights up Documents. The root itself on every other kind of connection.
+ */
+export function closestLocalRoot(profileId: string, root: string, prefix: string): string {
+  if (!isLocal(profileId)) return root;
+  const abs = norm(root) + (prefix ? (norm(root) === "/" ? "" : "/") + prefix.replace(/\/+$/, "") : "");
+  let best = root;
+  let bestLen = -1;
+  for (const r of Object.keys(names.get(profileId) ?? {})) {
+    if (inside(r, abs) != null && norm(r).length > bestLen) {
+      best = r;
+      bestLen = norm(r).length;
+    }
+  }
+  return best;
+}

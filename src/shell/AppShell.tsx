@@ -30,7 +30,7 @@ import { LS, THIS_MAC, type PaneId } from "../browser/types";
 import { forgetCaps, peekCaps } from "../useCaps";
 import { sendItems } from "./crossPane";
 import { clearAuthNeeded, useAuthNeeded } from "../connections/authNeeded";
-import { rootsMode } from "../connections/roots";
+import { closestLocalRoot, rootsMode } from "../connections/roots";
 import { canView, LazyDocumentView, viewerFor } from "../viewers/registry";
 import { asExport } from "../connections/native";
 import type { DocumentHandle } from "../viewers/DocumentView";
@@ -673,7 +673,8 @@ export function AppShell() {
             activeId={active.profile?.id ?? null}
             expanded={conns.expanded}
             bucketsBy={conns.bucketsBy}
-            bucket={active.bucket}
+            // on this computer, the sidebar folder holding the place (Home › Documents lights up Documents)
+            bucket={active.profile && active.bucket != null ? closestLocalRoot(active.profile.id, active.bucket, active.prefix) : active.bucket}
             onToggleProfile={toggleConnection}
             onEditProfile={(p) => setConnDialog({ profile: p })}
             onNewProfile={() => setConnDialog({ profile: null })}

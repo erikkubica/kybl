@@ -6,6 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { baseName, parentPrefix } from "../format";
+import { localParent } from "../connections/roots";
 import { useFolderSizes } from "../useFolderSizes";
 import { useItemDrag } from "../useItemDrag";
 import { useCaps } from "../useCaps";
@@ -147,6 +148,8 @@ function usePaneCore(env: PaneEnv) {
     [profile, bucket, go],
   );
   const openBucket = useCallback((p: Profile, b: string, startPrefix = "") => go(p, b, startPrefix), [go]);
+  /** a root of this computer that sits in another one (Documents in Home): where Up goes from its top */
+  const upRoot = profile && bucket ? localParent(profile.id, bucket) : null;
 
   const historyStep = (delta: number) => {
     const to = loc.history.step(delta);
@@ -359,8 +362,13 @@ function usePaneCore(env: PaneEnv) {
     openEntry,
     /** what the list shows while searching is relative to the search's folder */
     relBase: search ? search.loc.prefix : null,
-    canUp: !!prefix && !search,
-    goUp: () => prefix && !search && navigate(parentPrefix(prefix)),
+    canUp: !search && (!!prefix || !!upRoot),
+    goUp: () => {
+      if (search) return;
+      if (prefix) return navigate(parentPrefix(prefix));
+      // this computer's Documents at its top goes on up to Home (or the disk), selecting it there
+      if (upRoot && profile && bucket != null) go(profile, upRoot.root, upRoot.prefix, { selectKey: upRoot.prefix + bucket.replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop() + "/" });
+    },
   };
   return pane;
 }
