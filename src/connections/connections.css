@@ -299,6 +299,19 @@
 .auth-badge:hover {
   background: color-mix(in srgb, var(--warn) 28%, transparent);
 }
+/* the sidebar's: a round warning icon (the tooltip and label say what it does) */
+.auth-badge.icon {
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--warn);
+}
+.auth-badge:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 
 /* ---------------------------------------------------------------- phones (bottom sheet) */
 .m-app .kind-grid {
@@ -380,10 +393,26 @@
   color: var(--accent);
 }
 .m-app .auth-badge {
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 12px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 14px;
   font-size: calc(12.5 * var(--m-u));
+}
+/* "Sign in again" on its own line under the connection's name */
+.m-auth-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 16px 10px;
+  font-size: calc(12.5 * var(--m-u));
+  color: var(--dim);
+}
+.m-auth-row span {
+  min-width: 0;
+}
+.m-conns.compact .m-auth-row {
+  padding: 0 8px 6px;
 }
 
 /* the caution under a prompt's field (renaming a folder copied file by file) */

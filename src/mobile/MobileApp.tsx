@@ -17,6 +17,7 @@ import { useJobs } from "../useJobs";
 import { applySettings, loadSettings, saveSettings, type Favorite, type Settings } from "../settings";
 import { Icon, type IconName } from "../Icons";
 import { ConnectionDialog } from "../components/ConnectionDialog";
+import type { ConnectionDialogHandle } from "../connections/ConnectionDialog";
 import { KyblConnectDialog } from "../components/KyblConnectDialog";
 import { KYBL, REVOKED_SAY, isRevokedKey } from "../kybl";
 import { ConfirmDialog, PromptDialog, Toasts, type Toast } from "../components/Dialogs";
@@ -192,6 +193,7 @@ export default function MobileApp() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const openTransfers = useCallback(() => setTransfersOpen(true), []);
   const [connDialog, setConnDialog] = useState<{ profile: Profile | null; reconnect?: boolean } | null>(null);
+  const connRef = useRef<ConnectionDialogHandle>(null);
   const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
   /** Kybl Storage connections have their own editor: there are no keys to edit. */
   const editProfile = useCallback((p: Profile) => {
@@ -570,7 +572,8 @@ export default function MobileApp() {
     confirm: () => setConfirm(null),
     prompt: () => setPrompt(null),
     kybl: () => setKyblDialog(null),
-    conn: () => setConnDialog(null),
+    // something typed into the form asks first; the dialog closes itself through onClose
+    conn: () => (connRef.current ? connRef.current.requestClose() : setConnDialog(null)),
     move: () => setMoveDialog(null),
     migrate: mig.close,
     sheet: () => setSheet(null),
@@ -1584,6 +1587,7 @@ export default function MobileApp() {
       {connDialog && (
         <Layer id="conn" z={z("conn")}>
           <ConnectionDialog
+            ref={connRef}
             initial={connDialog.profile}
             reconnect={connDialog.reconnect}
             onClose={() => setConnDialog(null)}

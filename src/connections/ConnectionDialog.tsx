@@ -6,7 +6,7 @@
  *
  * On phones the same dialog shows as a bottom sheet (mobile.css restyles `.modal`).
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { createPortal } from "react-dom";
 import { api, errMessage, type CloudKind } from "../api";
 import { Icon } from "../Icons";
@@ -37,17 +37,63 @@ export type ConnectionDialogProps = {
   onSaved: (p: Profile) => void;
   onDeleted: (id: string) => void;
   onClose: () => void;
+  /** phones: the system back asks the dialog to close (it may ask about what was typed first) */
+  ref?: Ref<ConnectionDialogHandle>;
+};
+
+export type ConnectionDialogHandle = {
+  /** Closes, asking first when something was typed; a second call while asking keeps editing. */
+  requestClose: () => void;
 };
 
 /** Kinds this version can edit; anything else was saved by a newer Kybl and can only be deleted. */
 const editable = (p: Profile) => p.provider === "kybl" || KINDS.some((k) => k.id === (p.kind ?? "s3"));
 
-export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl, kyblFirst, startKind, reconnect }: ConnectionDialogProps) {
+export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl, kyblFirst, startKind, reconnect, ref }: ConnectionDialogProps) {
   const [pick, setPick] = useState<PickId | null>(initial ? pickOf(initial) : (startKind ?? null));
   const choose = (id: PickId) => {
+    dirty.current = false;
     if (id === "kybl") onKybl?.();
     else setPick(id);
   };
+
+  // Something typed into the form: leaving it (close, Escape, back, "All kinds") asks first, so a
+  // stray click doesn't throw away a half-filled connection.
+  const dirty = useRef(false);
+  const [ask, setAsk] = useState<{ then: () => void } | null>(null);
+  const guarded = (then: () => void) => () => {
+    if (dirty.current) setAsk({ then });
+    else then();
+  };
+  const requestClose = () => {
+    if (ask) setAsk(null);
+    else guarded(onClose)();
+  };
+  useImperativeHandle(ref, () => ({ requestClose }));
+  const discardAsk = ask && (
+    <Modal title={initial ? "Discard your changes?" : "Discard this connection?"} onClose={() => setAsk(null)} width={400}>
+      <div className="modal-body">
+        <p>What you typed here will be lost.</p>
+      </div>
+      <div className="modal-foot">
+        <button type="button" className="btn" onClick={() => setAsk(null)} data-autofocus>
+          Keep editing
+        </button>
+        <button
+          type="button"
+          className="btn btn-danger"
+          onClick={() => {
+            const { then } = ask;
+            setAsk(null);
+            dirty.current = false;
+            then();
+          }}
+        >
+          Discard
+        </button>
+      </div>
+    </Modal>
+  );
 
   if (initial && !editable(initial)) return <Unsupported profile={initial} onDeleted={onDeleted} onClose={onClose} />;
 
@@ -60,7 +106,7 @@ export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl,
   }
 
   const info = kindInfo(pick);
-  const back = initial || startKind ? undefined : () => setPick(null);
+  const back = initial || startKind ? undefined : guarded(() => setPick(null));
   const title = initial ? `Edit ${info.label} connection` : `Add ${info.label}`;
 
   if (isCloudKind(pick)) {
@@ -72,10 +118,22 @@ export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl,
   }
 
   return (
-    <Modal title={title} onClose={onClose} width={pick === "s3" ? 560 : 520}>
-      {/* a Kybl Storage connection opened here (its own dialog is the usual way) edits as S3 */}
-      <KeyedForm key={pick} pick={pick === "kybl" ? "s3" : pick} initial={initial} onSaved={onSaved} onDeleted={onDeleted} onClose={onClose} onBack={back} />
-    </Modal>
+    <>
+      <Modal title={title} onClose={requestClose} width={pick === "s3" ? 560 : 520}>
+        {/* a Kybl Storage connection opened here (its own dialog is the usual way) edits as S3 */}
+        <KeyedForm
+          key={pick}
+          pick={pick === "kybl" ? "s3" : pick}
+          initial={initial}
+          onSaved={onSaved}
+          onDeleted={onDeleted}
+          onClose={onClose}
+          onBack={back}
+          onDirty={() => (dirty.current = true)}
+        />
+      </Modal>
+      {discardAsk}
+    </>
   );
 }
 
@@ -87,13 +145,17 @@ function KeyedForm({
   onDeleted,
   onClose,
   onBack,
+  onDirty,
 }: {
   pick: Exclude<PickId, CloudKind | "kybl">;
   initial: Profile | null;
   onSaved: (p: Profile) => void;
   onDeleted: (id: string) => void;
+  /** after saving or deleting (no question about unsaved typing then) */
   onClose: () => void;
   onBack?: () => void;
+  /** something was typed */
+  onDirty: () => void;
 }) {
   const form = useRef<FormApi>(null);
   const formEl = useRef<HTMLFormElement>(null);
@@ -174,7 +236,10 @@ function KeyedForm({
     void run(then, { ...d, profile: { ...d.profile, net } });
   };
 
-  const onEdit = () => setResult(null);
+  const onEdit = () => {
+    setResult(null);
+    onDirty();
+  };
   const common = { initial, tried, formApi: form, onEdit };
 
   return (

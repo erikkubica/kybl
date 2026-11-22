@@ -267,10 +267,14 @@ function ConnCard({
   const limit = compact || showAll || picking ? names.length : 5;
   const here = single && current?.profileId === p.id && current.bucket === "";
   const sub = !compact && !isLocal(p) ? addressOf(p).replace(/^https?:\/\//, "") : "";
-  const signIn = authNeeded && onSignInAgain && (
-    <button className="auth-badge" onClick={() => onSignInAgain(p)} aria-label={`Sign in to ${connName(p)} again`}>
-      Sign in again
-    </button>
+  // on a line of its own under the name, which stays readable on a narrow phone
+  const signIn = authNeeded && onSignInAgain && !bl?.note && (
+    <div className="m-auth-row">
+      <span>Kybl's access to this account ended.</span>
+      <button className="auth-badge" onClick={() => onSignInAgain(p)} aria-label={`Sign in to ${connName(p)} again`}>
+        Sign in again
+      </button>
+    </div>
   );
   const note = bl?.note && (
     <li className="m-bucket-note">
@@ -303,11 +307,11 @@ function ConnCard({
             </span>
             {!compact && <Icon name="chevron" size={13} className="m-chev" />}
           </button>
-          {signIn}
           <button className="m-icon m-conn-edit" onClick={() => onConnMenu(p)} aria-label={`Options for ${connName(p)}`}>
             <Icon name="more" size={compact ? 16 : 18} />
           </button>
         </header>
+        {signIn}
         {note && <ul className="m-buckets">{note}</ul>}
       </section>
     );
@@ -321,11 +325,11 @@ function ConnCard({
           <strong>{connName(p)}</strong>
           {sub && <small>{sub}</small>}
         </span>
-        {signIn}
         <button className="m-icon m-conn-edit" onClick={() => onConnMenu(p)} aria-label={`Options for ${connName(p)}`}>
           <Icon name="more" size={compact ? 16 : 18} />
         </button>
       </header>
+      {signIn}
       <ul className="m-buckets">
         {picking && <li className="m-bucket-note">Tap a {word} to show or hide it on this list.</li>}
         {bl?.loading && !names.length && (

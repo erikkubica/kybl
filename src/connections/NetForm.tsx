@@ -58,6 +58,12 @@ export function NetForm({
     hostKeyRef.current = fp;
     setHostKeyState(fp);
   };
+  // a trusted key belongs to one server: another address or port must be checked anew (back to
+  // the saved address, the saved key holds again)
+  const placeChanged = (h: string, p: string) => {
+    const same = h.trim().toLowerCase() === start.host.trim().toLowerCase() && (Number(p.trim()) || 0) === (start.port || 0);
+    setHostKey(same ? (start.hostKey ?? null) : null);
+  };
 
   // the saved key stays unless a new one is pasted; a connection that had none needs one now
   const hadKey = editing && initial?.net?.auth === "key";
@@ -143,11 +149,18 @@ export function NetForm({
       ) : (
         <>
           <Field label="Server" error={show("host")}>
-            {(c) => <input {...c} className="mono" value={host} onChange={(e) => edit(setHost)(e.target.value)} placeholder={placeholderHost} inputMode="url" {...RAW} />}
+            {(c) => <input {...c} className="mono" value={host} onChange={(e) => {
+                  edit(setHost)(e.target.value);
+                  placeChanged(e.target.value, port);
+                }} placeholder={placeholderHost} inputMode="url" {...RAW} />}
           </Field>
           <Field label="Port" optional error={show("port")}>
             {(c) => (
-              <input {...c} className="mono" value={port} onChange={(e) => edit(setPort)(e.target.value.replace(/[^\d]/g, ""))} placeholder={String(defaultPort(kind, tls))} inputMode="numeric" {...RAW} />
+              <input {...c} className="mono" value={port} onChange={(e) => {
+                const p = e.target.value.replace(/[^\d]/g, "");
+                edit(setPort)(p);
+                placeChanged(host, p);
+              }} placeholder={String(defaultPort(kind, tls))} inputMode="numeric" {...RAW} />
             )}
           </Field>
         </>

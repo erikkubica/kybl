@@ -311,19 +311,22 @@ function SidebarConnection({
         ) : (
           <ProviderBadge provider={p.provider} />
         )}
-        <span className="side-label">{p.name}</span>
+        <span className="side-label" title={p.cloud?.accountEmail && p.cloud.accountEmail !== p.name ? `${p.name} · ${p.cloud.accountEmail}` : undefined}>
+          {p.name}
+        </span>
+        {/* an icon, not a word: the sidebar is narrow and the name must stay readable */}
         {authNeeded && onSignInAgain && (
           <button
-            className="auth-badge"
+            className="auth-badge icon"
             onClick={(e) => {
               e.stopPropagation();
               onSignInAgain(p);
             }}
             onKeyDown={(e) => e.stopPropagation()}
-            title="Kybl's access to this account ended"
+            title="Kybl's access to this account ended. Sign in again"
             aria-label={`Sign in to ${p.name} again`}
           >
-            Sign in again
+            <Icon name="alert" size={12} />
           </button>
         )}
         {!own && (
