@@ -56,7 +56,11 @@ const Card = memo(function Card({
     const request = () => {
       if (thumb !== undefined) return;
       loadThumb(profileId, bucket, entry, () => visible.current).then((u) => {
-        if (alive && u !== undefined) setThumb(u);
+        if (!alive) return;
+        if (u !== undefined) setThumb(u);
+        // skipped because it was off screen when its turn came; it may be back by now, and the
+        // observer won't fire again while it stays put (it then waited forever)
+        else if (visible.current) request();
       });
     };
     const io = new IntersectionObserver(
@@ -104,9 +108,9 @@ const Card = memo(function Card({
         {thumb ? (
           <img src={thumb} alt="" draggable={false} />
         ) : (
-          <FileIcon entry={entry} size={34} big>
-            {eligible && thumb === undefined && <span className="shimmer" />}
-          </FileIcon>
+          // no shimmer while it loads: dozens of waiting tiles animating kept the CPU and GPU busy
+          // until every thumbnail had arrived
+          <FileIcon entry={entry} size={34} big />
         )}
       </div>
       <div className="card-text">
