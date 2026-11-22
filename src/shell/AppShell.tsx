@@ -623,8 +623,9 @@ export function AppShell() {
           className={sideHidden ? "side-peek" : "side-full"}
           ref={sidePeek.ref}
           onMouseLeave={sideHidden ? sidePeek.leave : undefined}
-          // opening a place from the overlay puts it away
-          onClickCapture={sideHidden ? sidePeek.clicked : undefined}
+          // opening a place from the overlay puts it away: on the way back up, once the row's own
+          // click has opened it (closing on the way down unmounted the row before that)
+          onClick={sideHidden ? sidePeek.clicked : undefined}
         >
           <Sidebar
             profiles={profiles}
