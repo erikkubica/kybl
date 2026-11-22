@@ -181,8 +181,10 @@ const localObj = (key: string, size: number, ageHours: number): ObjInfo => ({ ..
 /** root id -> prefix -> listing */
 const localTree: Record<string, Record<string, { folders: string[]; objects: ObjInfo[] }>> = {
   [HOME]: {
-    "": { folders: ["Desktop/", "Documents/", "Downloads/", "Pictures/"], objects: [localObj("notes.txt", 1_200, 3)] },
+    "": { folders: ["Desktop/", "Documents/", "Downloads/", "Movies/", "Music/", "Pictures/"], objects: [localObj("notes.txt", 1_200, 3)] },
     "Pictures/": { folders: [], objects: [localObj("Pictures/beach.jpg", 3_400_000, 30), localObj("Pictures/hanoi.jpg", 2_800_000, 50)] },
+    "Movies/": { folders: [], objects: [localObj("Movies/holiday.mp4", 84_000_000, 40)] },
+    "Music/": { folders: [], objects: [localObj("Music/tone.wav", 88_244, 60)] },
   },
   [`${HOME}/Desktop`]: { "": { folders: ["Screenshots/"], objects: [localObj("todo.md", 640, 1), localObj("invoice-0042.pdf", 184_000, 26)] }, "Screenshots/": { folders: [], objects: [localObj("Screenshots/shot-1.png", 900_000, 2)] } },
   [`${HOME}/Documents`]: { "": { folders: ["Contracts/"], objects: [localObj("budget-2026.xlsx", 48_000, 70)] }, "Contracts/": { folders: [], objects: [localObj("Contracts/lease.pdf", 320_000, 900)] } },
@@ -275,6 +277,9 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       return s3Caps(profiles.find((x) => x.id === a.profileId));
     case "local_path":
       return a.profileId === LOCAL ? `${a.bucket.replace(/\/$/, "")}/${a.key}` : null;
+    // WP-A4: media of connections without share links plays through the app's media: scheme
+    case "media_base":
+      return { scheme: "media", base: "" };
     case "list_profiles":
       return profiles;
     case "save_profile": {
@@ -585,10 +590,43 @@ async function handle(cmd: string, a: any): Promise<unknown> {
 mockWindows("main");
 mockIPC((cmd, args) => handle(cmd, args), { shouldMockEvents: true });
 
-// thumbnails are plain image URLs on the `thumb:` scheme in the app; here they are made up
+/** A second of a soft tone as a WAV data URL, so audio on the media: scheme plays in the mock. */
+let toneUrl: string | null = null;
+function tone(): string {
+  if (toneUrl) return toneUrl;
+  const rate = 22050;
+  const n = rate;
+  const buf = new DataView(new ArrayBuffer(44 + n * 2));
+  const str = (o: number, s: string) => [...s].forEach((c, i) => buf.setUint8(o + i, c.charCodeAt(0)));
+  str(0, "RIFF");
+  buf.setUint32(4, 36 + n * 2, true);
+  str(8, "WAVEfmt ");
+  buf.setUint32(16, 16, true);
+  buf.setUint16(20, 1, true);
+  buf.setUint16(22, 1, true);
+  buf.setUint32(24, rate, true);
+  buf.setUint32(28, rate * 2, true);
+  buf.setUint16(32, 2, true);
+  buf.setUint16(34, 16, true);
+  str(36, "data");
+  buf.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) buf.setInt16(44 + i * 2, Math.sin((i / rate) * 2 * Math.PI * 440) * 6000 * (1 - i / n), true);
+  toneUrl = URL.createObjectURL(new Blob([buf.buffer], { type: "audio/wav" }));
+  return toneUrl;
+}
+
+// thumbnails (`thumb:`) and media of connections without share links (`media:`) are plain URLs
+// in the app; here images are made up, audio is a short tone, and video has nothing to play (like
+// the made-up presigned links of the S3 connections)
 (window as unknown as { __TAURI_INTERNALS__: { convertFileSrc: (p: string, protocol?: string) => string } }).__TAURI_INTERNALS__.convertFileSrc = (
   path: string,
-) => thumbFor(path.split("\n").slice(4).join("\n"));
+  protocol?: string,
+) => {
+  const key = path.split("\n").slice(4).join("\n");
+  if (protocol === "media" && /\.(mp3|m4a|wav|ogg|flac|aac)$/i.test(key)) return tone();
+  if (protocol === "media" && !/\.(jpe?g|png|gif|webp|bmp|svg|avif)$/i.test(key)) return `media://localhost/${encodeURIComponent(path)}`;
+  return thumbFor(key);
+};
 
 
 /** A tiny valid 3-page PDF, built by hand, for the PDF preview in browser dev mode. */
