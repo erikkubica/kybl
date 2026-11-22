@@ -5,9 +5,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use aws_sdk_s3::{
     error::SdkError,
-    types::{Tag, Tagging},
+    types::{AccessControlPolicy, Permission, Tag, Tagging, Type},
     Client,
 };
+use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use serde::{Deserialize, Deserializer, Serialize};
 use tauri::{AppHandle, State};
 use tokio::{sync::Semaphore, task::JoinSet};
@@ -176,7 +177,12 @@ fn merged(current: Headers, props: ObjectProps) -> Result<Headers, String> {
 
 /// Rewrites an object's headers by copying it onto itself with the new ones (S3 can't edit an
 /// object in place). Fields left out keep their value; tags stay as they are. Big objects take the
-/// multipart copy path, which sets the same headers.
+/// multipart copy path, which sets the same headers and tags.
+///
+/// A copy is a new object, which starts with the default access (private). Access granted to
+/// others (public read, another account) is read first and set again afterwards. What can't be
+/// carried over: Object Lock retention and legal holds stay on the old version (in a versioned
+/// bucket) and the new one gets the bucket's default retention, if any.
 #[tauri::command]
 pub async fn update_object_props(
     app: AppHandle,
@@ -190,9 +196,54 @@ pub async fn update_object_props(
     let head = client.head_object().bucket(&bucket).key(&key).send().await.map_err(sdk_err)?;
     let size = head.content_length().unwrap_or(0);
     let next = merged(Headers::of(&head), props)?;
+    let shared = shared_access(&client, &bucket, &key).await;
     copy_object(&client, &bucket, &key, &bucket, &key, size, Some(&next)).await?;
+    if let Some(policy) = shared {
+        client
+            .put_object_acl()
+            .bucket(&bucket)
+            .key(&key)
+            .access_control_policy(policy)
+            .send()
+            .await
+            .map_err(|e| format!("The changes were saved, but who else can open this file couldn't be set again. Check its sharing.\n\n{}", sdk_err(e)))?;
+    }
     let after = client.head_object().bucket(&bucket).key(&key).send().await.map_err(sdk_err)?;
     Ok(details(key, &after))
+}
+
+/// The object's access list when it grants anything beyond the owner's own full control (which
+/// every new object has anyway). None when there is nothing more, or it can't be read (no
+/// permission, or the bucket doesn't use access lists).
+async fn shared_access(client: &Client, bucket: &str, key: &str) -> Option<AccessControlPolicy> {
+    let acl = client.get_object_acl().bucket(bucket).key(key).send().await.ok()?;
+    let owner = acl.owner().and_then(|o| o.id()).map(str::to_string);
+    let more = acl.grants().iter().any(|g| {
+        let own = g.grantee().is_some_and(|e| *e.r#type() == Type::CanonicalUser && e.id().map(str::to_string) == owner);
+        !(own && g.permission() == Some(&Permission::FullControl))
+    });
+    more.then(|| AccessControlPolicy::builder().set_grants(Some(acl.grants().to_vec())).set_owner(acl.owner().cloned()).build())
+}
+
+/// Characters a tag key or value keeps as they are in the `x-amz-tagging` header (URL query
+/// encoding); everything else is percent-encoded.
+const TAG_SET: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.').remove(b'~');
+
+/// `a=1&b=2` from tags, as the `x-amz-tagging` header wants them.
+fn tagging_query(tags: &[(String, String)]) -> String {
+    tags.iter()
+        .map(|(k, v)| format!("{}={}", utf8_percent_encode(k, TAG_SET), utf8_percent_encode(v, TAG_SET)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// The object's tags for a copy that can't carry them over itself (a multipart copy starts with
+/// none). None when it has none, or they can't be read (no permission, or the provider has no
+/// tags): the copy goes ahead without.
+pub(crate) async fn tagging_header(client: &Client, bucket: &str, key: &str) -> Option<String> {
+    let out = client.get_object_tagging().bucket(bucket).key(key).send().await.ok()?;
+    let tags: Vec<(String, String)> = out.tag_set().iter().map(|t| (t.key().to_string(), t.value().to_string())).collect();
+    (!tags.is_empty()).then(|| tagging_query(&tags))
 }
 
 #[tauri::command]
@@ -248,6 +299,14 @@ pub async fn put_object_tags(
 mod tests {
     use super::*;
     use crate::state::{build_client, Profile};
+
+    #[test]
+    fn tags_are_encoded_for_the_tagging_header() {
+        let t = |k: &str, v: &str| (k.to_string(), v.to_string());
+        assert_eq!(tagging_query(&[t("project", "kybl"), t("env", "prod-1")]), "project=kybl&env=prod-1");
+        assert_eq!(tagging_query(&[t("a b", "x=y&z"), t("café", "1/2")]), "a%20b=x%3Dy%26z&caf%C3%A9=1%2F2");
+        assert_eq!(tagging_query(&[]), "");
+    }
 
     fn props(json: &str) -> ObjectProps {
         serde_json::from_str(json).unwrap()

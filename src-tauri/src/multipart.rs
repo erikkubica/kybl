@@ -383,19 +383,44 @@ async fn upload(
         .iter()
         .map(|(n, etag)| CompletedPart::builder().e_tag(etag).part_number(*n).build())
         .collect();
-    client
+    let asked = SystemTime::now();
+    let completed = client
         .complete_multipart_upload()
         .bucket(bucket)
         .key(key)
         .upload_id(&m.upload_id)
         .multipart_upload(CompletedMultipartUpload::builder().set_parts(Some(parts)).build())
         .send()
-        .await
-        .map_err(sdk_err)?;
+        .await;
+    if let Err(e) = completed {
+        let e = sdk_err(e);
+        // The answer can be lost (a timeout, a dropped connection) after the server put the file
+        // together. Aborting or retrying then would throw away a finished upload: look first.
+        if !completed_anyway(client, bucket, key, total, m.parts.len(), asked).await {
+            return Err(e);
+        }
+    }
     crate::leftovers::upload_ended(&m.upload_id);
     *mp = None;
     progress(total, total);
     Ok(Outcome::Done)
+}
+
+/// Did a CompleteMultipartUpload whose answer went missing go through anyway? The object is
+/// there with the file's size, a multipart ETag of as many parts (`"…-3"`), and was written
+/// around the time it was asked for (servers' clocks may be up to 15 minutes off).
+async fn completed_anyway(client: &Client, bucket: &str, key: &str, total: u64, parts: usize, asked: SystemTime) -> bool {
+    let Ok(head) = client.head_object().bucket(bucket).key(key).send().await else { return false };
+    let modified = head.last_modified().and_then(|d| SystemTime::try_from(*d).ok());
+    looks_completed(head.content_length(), head.e_tag(), modified, total, parts, asked)
+}
+
+fn looks_completed(len: Option<i64>, etag: Option<&str>, modified: Option<SystemTime>, total: u64, parts: usize, asked: SystemTime) -> bool {
+    let skew = Duration::from_secs(15 * 60);
+    let size_ok = len == Some(total as i64);
+    let etag_ok = etag.is_some_and(|t| t.trim_matches('"').ends_with(&format!("-{parts}")));
+    let time_ok = modified.is_some_and(|m| m + skew >= asked);
+    size_ok && etag_ok && time_ok
 }
 
 /// Sends the parts not yet in `m.parts`, several at once. Ok(false) when cancelled.
@@ -516,6 +541,18 @@ mod tests {
     use super::*;
     use crate::state::{build_client, Profile};
     use std::time::Instant;
+
+    #[test]
+    fn a_completed_upload_is_recognised_after_a_lost_answer() {
+        let asked = SystemTime::now();
+        let ago = |s: u64| Some(asked - Duration::from_secs(s));
+        assert!(looks_completed(Some(100), Some("\"abc-3\""), ago(5), 100, 3, asked));
+        assert!(!looks_completed(Some(99), Some("\"abc-3\""), ago(5), 100, 3, asked), "other size");
+        assert!(!looks_completed(Some(100), Some("\"abc\""), ago(5), 100, 3, asked), "a single PUT, not ours");
+        assert!(!looks_completed(Some(100), Some("\"abc-13\""), ago(5), 100, 3, asked), "other part count");
+        assert!(!looks_completed(Some(100), Some("\"abc-3\""), ago(3600), 100, 3, asked), "an older upload");
+        assert!(!looks_completed(None, None, None, 100, 3, asked));
+    }
 
     #[test]
     fn parts_cover_the_file_exactly() {
