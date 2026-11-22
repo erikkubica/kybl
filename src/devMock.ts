@@ -80,6 +80,19 @@ const tree: Record<string, { folders: string[]; objects: ObjInfo[] }> = {
   "exports/": { folders: [], objects: [] },
 };
 
+/** Buckets other than the demo ones start empty and keep what you create in them. */
+const otherTrees: Record<string, Record<string, { folders: string[]; objects: ObjInfo[] }>> = {};
+const SHARED_TREE: Record<string, { folders: string[]; objects: ObjInfo[] }> = { "": { folders: ["photos/"], objects: [] } };
+/** The tree a bucket lists from: the demo tree for media-prod (and every root of the other kinds). */
+function remoteTree(profileId: string, bucket: string) {
+  if (bucket === "media-prod" || (isOther(profileId) && bucket !== "shared")) return tree;
+  if (bucket === "shared") return new Proxy(SHARED_TREE, { get: (t, k: string) => t[k] ?? tree[k] });
+  return (otherTrees[`${profileId}\u0000${bucket}`] ??= { "": { folders: [], objects: [] } });
+}
+function remoteDir(profileId: string, bucket: string, prefix: string) {
+  return remoteTree(profileId, bucket)[prefix];
+}
+
 const HUES = [212, 262, 162, 28, 340, 190, 48, 290];
 function thumbFor(key: string): string {
   const h = Math.abs(hash(key));
@@ -430,7 +443,7 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       if (a.bucket === "logs-archive") throw "Can't reach the storage server. Nothing is answering at that address: check the connection's endpoint, or that the server is running.\n\ndispatch failure: io error: client error (Connect): tcp connect error: Connection refused (os error 61) (DispatchFailure(DispatchFailure { source: ConnectorError { kind: Io, source: hyper_util::client::legacy::Error(Connect, ConnectError(\"tcp connect error\", 127.0.0.1:9099, Os { code: 61, kind: ConnectionRefused }))) } }))";
       if (isOther(a.profileId)) otherConnect(profiles.find((x) => x.id === a.profileId)!, null);
       // every root of the other kinds shows the demo tree (Shared with me: just the photos)
-      const dir = a.bucket === "media-prod" || (isOther(a.profileId) && a.bucket !== "shared") ? tree[a.prefix] : a.bucket === "shared" && !a.prefix ? { folders: ["photos/"], objects: [] } : a.bucket === "shared" ? tree[a.prefix] : undefined;
+      const dir = remoteDir(a.profileId, a.bucket, a.prefix);
       const start = Number(a.token ?? 0);
       const all = dir?.objects ?? [];
       return {
@@ -475,9 +488,15 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     case "presign_get":
       await sleep(200);
       return /\.(jpg|png)$/.test(a.key) ? thumbFor(a.key) : `https://media-prod.nbg1.your-objectstorage.com/${a.key}?X-Amz-Signature=demo`;
-    case "create_folder":
-      tree[""].folders.push(a.prefix);
+    case "create_folder": {
+      // into its parent folder, in this bucket
+      const t = remoteTree(a.profileId, a.bucket);
+      const parent = a.prefix.replace(/[^/]+\/$/, "");
+      const node = (t[parent] ??= { folders: [], objects: [] });
+      if (!node.folders.includes(a.prefix)) node.folders.push(a.prefix);
+      t[a.prefix] ??= { folders: [], objects: [] };
       return null;
+    }
     case "delete_objects": {
       const total = (a.keys.length + a.prefixes.length) * 3000;
       for (let done = 0; done <= total; done += 1000) {
@@ -550,8 +569,10 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       simulateTransfer(a.id, 18_000_000 + Math.random() * 60_000_000);
       return a.destPath;
     case "existing_keys": {
-      const all = new Set(Object.values(tree).flatMap((n) => n.objects.map((o) => o.key)));
-      const dirs = new Set(Object.keys(tree).concat(Object.values(tree).flatMap((n) => n.folders)));
+      // per bucket, like the real backend: media-prod's folders don't exist in an empty bucket
+      const t = remoteTree(a.profileId, a.bucket);
+      const all = new Set(Object.values(t).flatMap((n) => n.objects.map((o) => o.key)));
+      const dirs = new Set(Object.values(t).flatMap((n) => n.folders));
       return {
         keys: (a.keys as string[]).filter((k) => all.has(k)),
         prefixes: (a.prefixes as string[]).filter((p) => dirs.has(p)),
