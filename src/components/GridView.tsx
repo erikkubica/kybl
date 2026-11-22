@@ -55,6 +55,8 @@ const Card = memo(function Card({
   const [ph, setPh] = useState<string | null | undefined>(() =>
     phEligible && !thumb ? cachedPlaceholder(profileId, bucket, entry) : null,
   );
+  /** its thumbnail is being made right now (not just queued): only then does the tile shimmer */
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!eligible && !phEligible) return;
@@ -68,9 +70,16 @@ const Card = memo(function Card({
     const request = () => {
       if (needThumb && !asking.thumb) {
         asking.thumb = true;
-        loadThumb(profileId, bucket, entry, () => visible.current).then((u) => {
+        loadThumb(
+          profileId,
+          bucket,
+          entry,
+          () => visible.current,
+          () => alive && setLoading(true),
+        ).then((u) => {
           asking.thumb = false;
           if (!alive) return;
+          setLoading(false);
           if (u !== undefined) {
             needThumb = false;
             setThumb(u);
@@ -138,9 +147,10 @@ const Card = memo(function Card({
         {/* the placeholder is static; the thumbnail fades in over it once */}
         {ph && <img className="ph" src={ph} alt="" draggable={false} />}
         {thumb && <img src={thumb} alt="" draggable={false} />}
-        {/* no shimmer while it loads: dozens of waiting tiles animating kept the CPU and GPU busy
-            until every thumbnail had arrived */}
-        {!thumb && !ph && <FileIcon entry={entry} size={34} big />}
+        {/* shimmers only while its thumbnail is really being made (a few at a time), not while it
+            waits its turn, and not over a placeholder: dozens of tiles animating kept the CPU and
+            GPU busy */}
+        {!thumb && !ph && <FileIcon entry={entry} size={34} big>{loading && thumb === undefined && <span className="shimmer" />}</FileIcon>}
       </div>
       <div className="card-text">
         <div className="card-name">{label}</div>
