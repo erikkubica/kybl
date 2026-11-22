@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { Icon } from "../Icons";
 import { KYBL } from "../kybl";
+import { useCaps } from "../useCaps";
+import { rootsMode } from "../connections/roots";
+import { addressOf } from "../connections/kinds";
 import { KyblLockup, KyblMark } from "./KyblMark";
 import { providerMeta } from "../providers";
 import type { Profile } from "../types";
@@ -20,7 +23,7 @@ export function ProviderBadge({ provider, large }: { provider: string | undefine
   const meta = providerMeta(provider);
   return (
     <span className={`pbadge ${large ? "lg" : ""} ${meta.id === "kybl" ? "kybl" : ""}`} style={{ "--pc": meta.color } as React.CSSProperties} aria-hidden="true">
-      {meta.id === "kybl" ? <KyblMark size={large ? 22 : 17} sun /> : meta.mono}
+      {meta.id === "kybl" ? <KyblMark size={large ? 22 : 17} sun /> : meta.id === "local" ? <Icon name="server" size={large ? 15 : 12} /> : meta.mono}
     </span>
   );
 }
@@ -64,6 +67,8 @@ export function Sidebar({
   onRemoveFavorite,
   rootLabel = (_p, r) => r,
   builtIn = () => false,
+  authNeeded,
+  onSignInAgain,
   onConnectionMenu,
   onBucketMenu,
 }: {
@@ -96,6 +101,10 @@ export function Sidebar({
   rootLabel?: (profileId: string, root: string) => string;
   /** a connection that comes with the app (This Mac): no edit button, no "Open bucket by name" */
   builtIn?: (p: Profile) => boolean;
+  /** sign-in connections whose access ended (connections/authNeeded) */
+  authNeeded?: Set<string>;
+  /** "Sign in again" on one of those */
+  onSignInAgain?: (p: Profile) => void;
   /** right-click on a connection / a bucket (at the pointer) */
   onConnectionMenu?(p: Profile, x: number, y: number): void;
   onBucketMenu?(p: Profile, bucket: string, x: number, y: number): void;
@@ -116,7 +125,8 @@ export function Sidebar({
             </div>
             {favorites.map((f) => {
               const p = profiles.find((x) => x.id === f.profileId);
-              const where = [p?.name ?? "Removed connection", rootLabel(f.profileId, f.bucket), ...f.prefix.split("/").filter(Boolean)].join(" › ");
+              // a server's one root ("") is the connection itself: no second name for it
+              const where = [p?.name ?? "Removed connection", ...(f.bucket === "" ? [] : [rootLabel(f.profileId, f.bucket)]), ...f.prefix.split("/").filter(Boolean)].join(" › ");
               const open = () => p && onOpenFavorite?.(f);
               return (
                 <div
@@ -155,136 +165,39 @@ export function Sidebar({
             <span>Connections</span>
           </div>
         )}
-        {profiles.map((p) => {
-          const active = p.id === activeId;
-          const open = expanded.has(p.id);
-          const list = bucketsBy[p.id];
-          const hidden = new Set(hiddenBuckets[p.id] ?? []);
-          const hiddenHere = (list?.names ?? []).filter((b) => hidden.has(b));
-          const revealing = showHidden.has(p.id) && hiddenHere.length > 0;
-          const kybl = p.provider === KYBL;
-          const own = builtIn(p);
-          return (
-            <div key={p.id}>
-              <div
-                className={`side-item conn ${open ? "open" : ""} ${active ? "active" : ""}`}
-                onClick={() => onToggleProfile(p)}
-                onContextMenu={onConnectionMenu && ((e) => onConnectionMenu(p, e.clientX, e.clientY))}
-                onKeyDown={onActivate(() => onToggleProfile(p))}
-                role="button"
-                tabIndex={0}
-                aria-expanded={open}
-                title={own ? undefined : p.endpoint}
-              >
-                {own ? (
-                  <span className="pbadge local" aria-hidden="true">
-                    <Icon name="server" size={12} />
-                  </span>
-                ) : (
-                  <ProviderBadge provider={p.provider} />
-                )}
-                <span className="side-label">{p.name}</span>
-                {!own && (
-                  <button
-                    className="icon-btn side-edit"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onEditProfile(p);
-                    }}
-                    title="Edit connection"
-                    aria-label={`Edit connection ${p.name}`}
-                  >
-                    <Icon name="edit" size={14} />
-                  </button>
-                )}
-                <Icon name="chevron" size={13} className="side-caret" />
-              </div>
-              {open && (
-                <div className="bucket-list">
-                  {list?.names.map((b) => {
-                    const here = active && b === bucket;
-                    const isHidden = hidden.has(b);
-                    // the bucket on screen stays listed even when hidden, so you can see where you are
-                    if (isHidden && !revealing && !here) return null;
-                    return (
-                      <div
-                        key={b}
-                        className={`side-item sub bucket-row ${here ? "selected" : ""} ${isHidden ? "is-hidden" : ""}`}
-                        onClick={() => onSelectBucket(p, b)}
-                        onContextMenu={onBucketMenu && ((e) => onBucketMenu(p, b, e.clientX, e.clientY))}
-                        onKeyDown={onActivate(() => onSelectBucket(p, b))}
-                        role="button"
-                        tabIndex={0}
-                        aria-current={here}
-                        // the list's drag (useItemDrag) drops items here: at the bucket's top level
-                        data-drop-bucket={b}
-                        data-drop-profile={p.id}
-                      >
-                        <Icon name={own ? "folder" : "bucket"} size={14} />
-                        <span className="side-label" title={own ? b : undefined}>
-                          {rootLabel(p.id, b)}
-                        </span>
-                        <button
-                          className="icon-btn side-hide"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onHideBucket(p, b, !isHidden);
-                          }}
-                          onKeyDown={(e) => e.stopPropagation()}
-                          title={isHidden ? "Show in the sidebar" : "Hide from the sidebar"}
-                          aria-label={isHidden ? `Show ${rootLabel(p.id, b)} in the sidebar` : `Hide ${rootLabel(p.id, b)} from the sidebar`}
-                        >
-                          <Icon name={isHidden ? "eye" : "eye-off"} size={13} />
-                        </button>
-                      </div>
-                    );
-                  })}
-                  {hiddenHere.length > 0 && (
-                    <button
-                      className="side-item sub link"
-                      onClick={() =>
-                        setShowHidden((cur) => {
-                          const next = new Set(cur);
-                          if (next.has(p.id)) next.delete(p.id);
-                          else next.add(p.id);
-                          return next;
-                        })
-                      }
-                    >
-                      <Icon name={revealing ? "eye-off" : "eye"} size={14} />
-                      <span className="side-label">{revealing ? "Done choosing" : `${hiddenHere.length} hidden`}</span>
-                    </button>
-                  )}
-                  {list?.loading && !list.names.length && <p className="side-note">{own ? "Loading…" : "Loading buckets…"}</p>}
-                  {list?.note && (
-                    <p className="side-note">
-                      {list.note}
-                      {list.reconnect && (
-                        <>
-                          {" "}
-                          <button className="link-btn" onClick={() => onReconnect(p)}>
-                            Connect again
-                          </button>
-                        </>
-                      )}
-                    </p>
-                  )}
-                  {own ? null : kybl ? (
-                    <button className="side-item sub link" onClick={() => onNewBucket(p)}>
-                      <Icon name="plus" size={14} />
-                      <span className="side-label">New bucket</span>
-                    </button>
-                  ) : (
-                    <button className="side-item sub link" onClick={() => onOpenBucketByName(p)}>
-                      <Icon name="plus" size={14} />
-                      <span className="side-label">Open bucket by name</span>
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {profiles.map((p) => (
+          <SidebarConnection
+            key={p.id}
+            p={p}
+            active={p.id === activeId}
+            open={expanded.has(p.id)}
+            list={bucketsBy[p.id]}
+            bucket={bucket}
+            hidden={hiddenBuckets[p.id]}
+            revealing={showHidden.has(p.id)}
+            onReveal={() =>
+              setShowHidden((cur) => {
+                const next = new Set(cur);
+                if (next.has(p.id)) next.delete(p.id);
+                else next.add(p.id);
+                return next;
+              })
+            }
+            own={builtIn(p)}
+            authNeeded={!!authNeeded?.has(p.id)}
+            rootLabel={rootLabel}
+            onToggleProfile={onToggleProfile}
+            onEditProfile={onEditProfile}
+            onSelectBucket={onSelectBucket}
+            onOpenBucketByName={onOpenBucketByName}
+            onNewBucket={onNewBucket}
+            onHideBucket={onHideBucket}
+            onReconnect={onReconnect}
+            onSignInAgain={onSignInAgain}
+            onConnectionMenu={onConnectionMenu}
+            onBucketMenu={onBucketMenu}
+          />
+        ))}
       </div>
       <div className="side-foot">
         <button className="side-item" onClick={onNewProfile}>
@@ -304,5 +217,213 @@ export function Sidebar({
         </button>
       </div>
     </aside>
+  );
+}
+
+/**
+ * One connection in the sidebar. Most fold open on their buckets (or drives, or this computer's
+ * folders); a connection with a single root (a server, one container) has no level to fold: a
+ * click opens it, and it is highlighted while it's on screen.
+ */
+function SidebarConnection({
+  p,
+  active,
+  open,
+  list,
+  bucket,
+  hidden: hiddenList,
+  revealing: revealAsked,
+  onReveal,
+  own,
+  authNeeded,
+  rootLabel,
+  onToggleProfile,
+  onEditProfile,
+  onSelectBucket,
+  onOpenBucketByName,
+  onNewBucket,
+  onHideBucket,
+  onReconnect,
+  onSignInAgain,
+  onConnectionMenu,
+  onBucketMenu,
+}: {
+  p: Profile;
+  active: boolean;
+  open: boolean;
+  list: BucketList | undefined;
+  bucket: string | null;
+  hidden: string[] | undefined;
+  revealing: boolean;
+  onReveal: () => void;
+  own: boolean;
+  authNeeded: boolean;
+  rootLabel: (profileId: string, root: string) => string;
+  onToggleProfile: (p: Profile) => void;
+  onEditProfile: (p: Profile) => void;
+  onSelectBucket: (p: Profile, b: string) => void;
+  onOpenBucketByName: (p: Profile) => void;
+  onNewBucket: (p: Profile) => void;
+  onHideBucket: (p: Profile, bucket: string, hide: boolean) => void;
+  onReconnect: (p: Profile) => void;
+  onSignInAgain?: (p: Profile) => void;
+  onConnectionMenu?(p: Profile, x: number, y: number): void;
+  onBucketMenu?(p: Profile, bucket: string, x: number, y: number): void;
+}) {
+  const caps = useCaps(p.id);
+  const mode = rootsMode(p, caps);
+  const single = mode === "single";
+  const hidden = new Set(hiddenList ?? []);
+  const hiddenHere = (list?.names ?? []).filter((b) => hidden.has(b));
+  const revealing = revealAsked && hiddenHere.length > 0;
+  // making buckets is Kybl Storage's (and whatever else says so); opening one by name is S3's
+  const canCreate = caps ? caps.createRoot : p.provider === KYBL;
+  const canOpenByName = !own && mode === "buckets" && !canCreate;
+  const here = active && single && bucket === "";
+  const activate = () => (single ? onSelectBucket(p, "") : onToggleProfile(p));
+  const rootIcon = own ? "folder" : mode === "drives" ? "cloud" : "bucket";
+  return (
+    <div>
+      <div
+        className={`side-item conn ${open && !single ? "open" : ""} ${active ? "active" : ""} ${here ? "selected" : ""} ${single ? "single" : ""}`}
+        onClick={activate}
+        onKeyDown={onActivate(activate)}
+        role="button"
+        tabIndex={0}
+        aria-expanded={single ? undefined : open}
+        aria-current={here || undefined}
+        aria-label={p.name}
+        title={own ? undefined : addressOf(p)}
+        onContextMenu={
+          onConnectionMenu &&
+          ((e) => {
+            e.preventDefault();
+            onConnectionMenu(p, e.clientX, e.clientY);
+          })
+        }
+        // a server's one root takes dropped items at its top level, like a bucket row
+        {...(single ? { "data-drop-bucket": "", "data-drop-profile": p.id } : {})}
+      >
+        {own ? (
+          <span className="pbadge local" aria-hidden="true">
+            <Icon name="server" size={12} />
+          </span>
+        ) : (
+          <ProviderBadge provider={p.provider} />
+        )}
+        <span className="side-label">{p.name}</span>
+        {authNeeded && onSignInAgain && (
+          <button
+            className="auth-badge"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSignInAgain(p);
+            }}
+            onKeyDown={(e) => e.stopPropagation()}
+            title="Kybl's access to this account ended"
+            aria-label={`Sign in to ${p.name} again`}
+          >
+            Sign in again
+          </button>
+        )}
+        {!own && (
+          <button
+            className="icon-btn side-edit"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEditProfile(p);
+            }}
+            onKeyDown={(e) => e.stopPropagation()}
+            title="Edit connection"
+            aria-label={`Edit connection ${p.name}`}
+          >
+            <Icon name="edit" size={14} />
+          </button>
+        )}
+        {!single && <Icon name="chevron" size={13} className="side-caret" />}
+      </div>
+      {single && active && list?.note && !list.names.length && <p className="side-note">{list.note}</p>}
+      {open && !single && (
+        <div className="bucket-list">
+          {list?.names.map((b) => {
+            const here = active && b === bucket;
+            const isHidden = hidden.has(b);
+            // the bucket on screen stays listed even when hidden, so you can see where you are
+            if (isHidden && !revealing && !here) return null;
+            return (
+              <div
+                key={b}
+                className={`side-item sub bucket-row ${here ? "selected" : ""} ${isHidden ? "is-hidden" : ""}`}
+                onClick={() => onSelectBucket(p, b)}
+                onKeyDown={onActivate(() => onSelectBucket(p, b))}
+                role="button"
+                tabIndex={0}
+                aria-current={here}
+                // the list's drag (useItemDrag) drops items here: at the bucket's top level
+                data-drop-bucket={b}
+                data-drop-profile={p.id}
+                onContextMenu={
+                  onBucketMenu &&
+                  ((e) => {
+                    e.preventDefault();
+                    onBucketMenu(p, b, e.clientX, e.clientY);
+                  })
+                }
+              >
+                <Icon name={rootIcon} size={14} />
+                <span className="side-label" title={own ? b : undefined}>
+                  {rootLabel(p.id, b)}
+                </span>
+                <button
+                  className="icon-btn side-hide"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onHideBucket(p, b, !isHidden);
+                  }}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  title={isHidden ? "Show in the sidebar" : "Hide from the sidebar"}
+                  aria-label={isHidden ? `Show ${rootLabel(p.id, b)} in the sidebar` : `Hide ${rootLabel(p.id, b)} from the sidebar`}
+                >
+                  <Icon name={isHidden ? "eye" : "eye-off"} size={13} />
+                </button>
+              </div>
+            );
+          })}
+          {hiddenHere.length > 0 && (
+            <button className="side-item sub link" onClick={onReveal}>
+              <Icon name={revealing ? "eye-off" : "eye"} size={14} />
+              <span className="side-label">{revealing ? "Done choosing" : `${hiddenHere.length} hidden`}</span>
+            </button>
+          )}
+          {list?.loading && !list.names.length && <p className="side-note">{own || mode === "drives" ? "Loading…" : "Loading buckets…"}</p>}
+          {list?.note && (
+            <p className="side-note">
+              {list.note}
+              {list.reconnect && (
+                <>
+                  {" "}
+                  <button className="link-btn" onClick={() => onReconnect(p)}>
+                    Connect again
+                  </button>
+                </>
+              )}
+            </p>
+          )}
+          {canCreate ? (
+            <button className="side-item sub link" onClick={() => onNewBucket(p)}>
+              <Icon name="plus" size={14} />
+              <span className="side-label">New bucket</span>
+            </button>
+          ) : (
+            canOpenByName && (
+              <button className="side-item sub link" onClick={() => onOpenBucketByName(p)}>
+                <Icon name="plus" size={14} />
+                <span className="side-label">Open bucket by name</span>
+              </button>
+            )
+          )}
+        </div>
+      )}
+    </div>
   );
 }

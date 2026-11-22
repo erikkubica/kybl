@@ -109,7 +109,7 @@ export async function sendToPane(src: Pane, dst: Pane, items: Entry[], mode: "co
  */
 async function downloadInto(src: Pane, items: Entry[], dir: string, c: Ctx, done: () => void) {
   const { profile, bucket } = src;
-  if (!profile || !bucket) return;
+  if (!profile || bucket == null) return;
   const out: Parameters<TransferActions["add"]>[0] = [];
   const add = (key: string, size: number, rel: string) => {
     const safe = safeRelPath(rel);

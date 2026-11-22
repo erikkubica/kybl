@@ -133,7 +133,7 @@ export function Toolbar({
             <Icon name="arrow-up" />
           </button>
         </div>
-        {bucket ? (
+        {bucket != null ? (
           <Breadcrumbs bucket={bucket} label={bucketLabel ?? bucket} parts={parts} onNavigate={onNavigate} />
         ) : (
           <nav className="crumbs" aria-label="Path" data-tauri-drag-region>

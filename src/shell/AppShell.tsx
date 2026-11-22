@@ -26,6 +26,8 @@ import { BrowserPane } from "../browser/BrowserPane";
 import type { EmptyActions } from "../browser/PaneEmpty";
 import { LS, THIS_MAC, type PaneId } from "../browser/types";
 import { forgetCaps, peekCaps } from "../useCaps";
+import { clearAuthNeeded, useAuthNeeded } from "../connections/authNeeded";
+import { rootsMode } from "../connections/roots";
 import { canView, LazyDocumentView, viewerFor } from "../viewers/registry";
 import type { DocumentHandle } from "../viewers/DocumentView";
 import type { Entry } from "../types";
@@ -49,6 +51,8 @@ export function AppShell() {
   const dialogs = useDialogs();
   const { toast } = dialogs;
   const conns = useConnections();
+  // sign-in connections whose access ended: "Sign in again" in the sidebar
+  const authNeeded = useAuthNeeded();
   // the saved connections, then this computer's own folders
   const saved = conns.profiles;
   const profiles = useMemo(() => [...saved, THIS_MAC], [saved]);
@@ -115,12 +119,12 @@ export function AppShell() {
   const dualPreview = usePreviewLayout("s3b.preview.dual", false);
   const preview = dual ? dualPreview : singlePreview;
 
-  const [connDialog, setConnDialogState] = useState<{ profile: Profile | null } | null>(null);
+  const [connDialog, setConnDialogState] = useState<{ profile: Profile | null; reconnect?: boolean } | null>(null);
   const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
   /** Opens the editor for a connection: Kybl Storage connections have their own (no keys to edit). */
-  const setConnDialog = useCallback((d: { profile: Profile | null } | null) => {
+  const setConnDialog = useCallback((d: { profile: Profile | null; reconnect?: boolean } | null) => {
     if (d?.profile?.id === THIS_MAC.id) return; // built in: nothing to edit
-    if (d?.profile?.provider === KYBL) setKyblDialog({ existing: d.profile });
+    if (d?.profile?.provider === KYBL) setKyblDialog({ existing: d.profile, reconnect: d.reconnect });
     else setConnDialogState(d);
   }, []);
 
@@ -195,7 +199,7 @@ export function AppShell() {
   const editor = useRef<DocumentHandle>(null);
   const canOpenDocument = (id: PaneId, e: Entry) => {
     const p = paneById(id);
-    if (e.kind !== "file" || !p.profile || !p.bucket) return false;
+    if (e.kind !== "file" || !p.profile || p.bucket == null) return false;
     // this computer's own files open in their own apps, where they are
     if (peekCaps(p.profile.id)?.localPaths) return false;
     const v = viewerFor(e.name, null, e.size);
@@ -270,8 +274,9 @@ export function AppShell() {
       paneById(id).showConnection(p.id);
       conns.expand(p.id);
       const names = await conns.loadBuckets(p, true);
-      const pick = preferBucket && names.includes(preferBucket) ? preferBucket : p.bucket || names[0];
-      if (pick) paneById(id).openBucket(p, pick, pick === preferBucket ? startPrefix : "");
+      const pick = preferBucket != null && names.includes(preferBucket) ? preferBucket : p.bucket || names[0];
+      // "" is a root too: the one root of a server connection
+      if (pick != null) paneById(id).openBucket(p, pick, pick === preferBucket ? startPrefix : "");
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [conns.expand, conns.loadBuckets],
@@ -295,6 +300,7 @@ export function AppShell() {
 
   /** A connection was deleted: drop it from the sidebar, the history and the screen. */
   const forgetProfile = (id: string) => {
+    clearAuthNeeded(id);
     forgetCaps(id);
     conns.dropProfile(id);
     for (const p of allPanes.current) p.forgetProfile(id);
@@ -410,7 +416,7 @@ export function AppShell() {
   const emptyFor = (id: PaneId): EmptyActions => ({
     onConnectKybl: () => setKyblDialog({ existing: null }),
     onAddConnection: () => setConnDialog({ profile: null }),
-    onReconnect: (p) => setKyblDialog({ existing: p, reconnect: true }),
+    onReconnect: (p) => setConnDialog({ profile: p, reconnect: true }),
     onNewBucket: (p) => askNewBucket(p, id),
     onOpenBucketByName: (p) => askBucketName(p, id),
   });
@@ -426,11 +432,16 @@ export function AppShell() {
       else migrations.open({ profileId: p.id, root: shown[0], items: [], roots: shown.map((b) => ({ id: b, name: conns.rootLabel(p.id, b) })) }, "copy");
     };
     const own = p.id === THIS_MAC.id;
+    // a server's one root has no row of its own: the connection row is the place
+    const single = rootsMode(p, peekCaps(p.id)) === "single";
     dialogs.menu(x, y, [
+      ...(authNeeded.has(p.id) ? [{ type: "item" as const, label: "Sign in again…", icon: "refresh" as const, onClick: () => setConnDialog({ profile: p, reconnect: true }) }] : []),
+      single
+        ? { type: "item" as const, label: "Open", icon: "folder" as const, onClick: () => (active.openBucket(p, ""), focusListSoon()) }
+        : { type: "item" as const, label: conns.expanded.has(p.id) ? "Collapse" : "Expand", icon: "chevron" as const, onClick: () => toggleConnection(p) },
       // all of this computer is too much to copy in one go: its folders have their own menus
       ...(own ? [] : [{ type: "item" as const, label: "Copy everything to…", icon: "copy" as const, onClick: () => void copyAll() }]),
-      ...(own ? [] : [{ type: "item" as const, label: "Edit connection…", icon: "edit" as const, onClick: () => setConnDialog({ profile: p }) }]),
-      { type: "item", label: conns.expanded.has(p.id) ? "Collapse" : "Expand", icon: "chevron", onClick: () => toggleConnection(p) },
+      ...(own ? [] : [{ type: "sep" as const }, { type: "item" as const, label: "Edit connection…", icon: "edit" as const, onClick: () => setConnDialog({ profile: p }) }]),
     ]);
   };
   /** Right-click on a bucket (or one of this computer's folders) in the sidebar. */
@@ -490,7 +501,7 @@ export function AppShell() {
       // with two panes, the one under the pointer; else (or without a position) the active one
       const under = x != null && y != null ? document.elementFromPoint(x, y)?.closest("[data-pane]")?.getAttribute("data-pane") : null;
       const p = dualCtx.current?.dual && under ? paneById(under as PaneId) : activeRef.current;
-      return p.profile && p.bucket ? p.id : null;
+      return p.profile && p.bucket != null ? p.id : null;
     },
     onDrop: (id, paths) => void paneById(id).ops.uploadPaths(paths),
     onRefused: () => overlayUp() && toast("info", "Finish what’s open first, then drop the files again."),
@@ -543,7 +554,9 @@ export function AppShell() {
         onNewBucket={(p) => askNewBucket(p)}
         hiddenBuckets={conns.hiddenBuckets}
         onHideBucket={conns.setBucketHidden}
-        onReconnect={(p) => setKyblDialog({ existing: p, reconnect: true })}
+        onReconnect={(p) => setConnDialog({ profile: p, reconnect: true })}
+        authNeeded={authNeeded}
+        onSignInAgain={(p) => setConnDialog({ profile: p, reconnect: true })}
         favorites={settings.favorites}
         onOpenFavorite={openFavorite}
         onRemoveFavorite={active.actions.removeFavorite}
@@ -571,7 +584,7 @@ export function AppShell() {
           onOpenJob={(j) => {
             if (j.dest == null) return;
             const p = profiles.find((x) => x.id === j.profileId);
-            if (p && j.bucket) active.go(p, j.bucket, j.dest);
+            if (p && j.bucket != null) active.go(p, j.bucket, j.dest);
           }}
           onOpenSync={() => openSettings("sync")}
           open={transfersOpen}
@@ -639,6 +652,7 @@ export function AppShell() {
       {connDialog && (
         <ConnectionDialog
           initial={connDialog.profile}
+          reconnect={connDialog.reconnect}
           onClose={() => setConnDialog(null)}
           onKybl={() => {
             setConnDialog(null);
@@ -647,6 +661,7 @@ export function AppShell() {
           kyblFirst={!saved.some((p) => p.provider === KYBL)}
           onSaved={(p) => {
             forgetCaps(p.id);
+            clearAuthNeeded(p.id);
             conns.upsertProfile(p);
             void connectIn(activeRef.current.id, p);
           }}

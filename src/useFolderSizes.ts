@@ -74,7 +74,7 @@ export function useFolderSizes(profileId: string | null, bucket: string | null, 
   /** Starts the folders that are not already calculated or running. */
   const calc = useCallback(
     (prefixes: string[]) => {
-      if (!profileId || !bucket) return;
+      if (!profileId || bucket == null) return;
       const cur = sizesRef.current;
       const todo = prefixes.filter((p) => !(scope + p in cur) || cur[scope + p].state === "error");
       if (!todo.length) return;
