@@ -88,8 +88,12 @@ pub struct LocalSnapshot {
     pub files: HashMap<String, LocalMeta>,
     /// NFC key -> the name on disk, where they differ (macOS decomposed names)
     pub raw: HashMap<String, String>,
-    /// names that collide once normalised (only possible on Linux); left out
+    /// NFC keys that more than one name on disk normalises to (only possible on Linux): all of
+    /// them are left out, and the run leaves the path alone on both sides
     pub dupes: Vec<String>,
+    /// paths (NFC, relative; "" for the folder itself) that couldn't be read: whatever is below
+    /// them is unknown, not deleted
+    pub unreadable: Vec<String>,
 }
 
 impl LocalSnapshot {
@@ -100,9 +104,13 @@ impl LocalSnapshot {
 
     fn insert(&mut self, rel: String, meta: LocalMeta) {
         let key = nfc(&rel);
+        if self.dupes.contains(&key) {
+            return;
+        }
         if self.files.contains_key(&key) {
             self.files.remove(&key);
-            self.dupes.push(rel);
+            self.raw.remove(&key);
+            self.dupes.push(key);
             return;
         }
         if key != rel {
@@ -130,13 +138,30 @@ fn scan_into(root: &Path, start: &Path, gi: &Gitignore, out: &mut LocalSnapshot)
             Err(_) => false,
         }
     });
-    for entry in walker.flatten() {
+    for entry in walker {
+        let entry = match entry {
+            Ok(e) => e,
+            // a folder that can't be listed (or a file that can't be looked at): what is below
+            // it is unknown, never gone
+            Err(e) => {
+                let rel = e.path().and_then(|p| p.strip_prefix(root).ok()).map(rel_key).unwrap_or_default();
+                out.unreadable.push(nfc(&rel));
+                continue;
+            }
+        };
         if !entry.file_type().is_file() {
             continue;
         }
         let Ok(rel) = entry.path().strip_prefix(root) else { continue };
-        let Ok(meta) = entry.metadata() else { continue };
         let rel = rel_key(rel);
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(e) if e.io_error().is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) => continue,
+            Err(_) => {
+                out.unreadable.push(nfc(&rel));
+                continue;
+            }
+        };
         if safe_rel(&rel) {
             out.insert(rel, local_meta(&meta));
         }
@@ -168,7 +193,11 @@ pub fn rescan_dirty(root: &Path, gi: &Gitignore, base: &dyn BaseState, dirty: &H
         match std::fs::symlink_metadata(d) {
             Ok(m) if m.is_dir() => scan_into(root, d, gi, &mut out),
             Ok(m) if m.is_file() && safe_rel(&rel) => out.insert(rel_key(d.strip_prefix(root).unwrap_or(d)), local_meta(&m)),
-            _ => {}
+            Ok(_) => {}
+            // only "not there" means gone; anything else (no permission, an I/O error) leaves
+            // the path alone this run
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => out.unreadable.push(rel),
         }
     }
     out
@@ -407,6 +436,27 @@ mod tests {
         prune_empty(&root, root.join("e1/e2"));
         assert!(!root.join("e1").exists());
         assert!(root.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn what_cant_be_read_is_reported_not_taken_for_gone() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::fs::canonicalize(std::env::temp_dir()).unwrap().join(format!("kybl-unread-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("locked")).unwrap();
+        std::fs::write(root.join("locked/a.txt"), "a").unwrap();
+        std::fs::write(root.join("b.txt"), "b").unwrap();
+        let gi = build_ignore(&root, &[]);
+        let base: HashMap<String, BaseEntry> = scan_local(&root, &gi).files.iter().map(|(k, l)| (k.clone(), BaseEntry { l_size: l.size, l_mtime: l.mtime, ..Default::default() })).collect();
+        let mode = |m: u32| std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(m)).unwrap();
+        mode(0o000);
+        let full = scan_local(&root, &gi);
+        let quick = rescan_dirty(&root, &gi, &base, &HashSet::from([root.join("locked/a.txt"), root.join("gone.txt")]));
+        mode(0o755);
+        assert_eq!(full.unreadable, vec!["locked".to_string()]);
+        assert!(full.files.contains_key("b.txt"));
+        assert_eq!(quick.unreadable, vec!["locked/a.txt".to_string()]);
         let _ = std::fs::remove_dir_all(&root);
     }
 

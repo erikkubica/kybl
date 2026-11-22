@@ -81,6 +81,23 @@ fn plural(n: usize, one: &str) -> String {
     format!("{n} {one}{}", if n == 1 { "" } else { "s" })
 }
 
+/// The summary part for names left alone because they collide once normalised.
+fn dupes_note(n: usize) -> Option<String> {
+    (n > 0).then(|| format!("{} skipped: the same name is spelled two ways (accents), so Kybl left it alone", plural(n, "name")))
+}
+
+/// "t/2026-11-22/dir/a.txt" -> "t/2026-11-22/dir/a (2).txt"
+fn numbered(key: &str, n: u32) -> String {
+    let (dir, name) = match key.rfind('/') {
+        Some(i) => (&key[..=i], &key[i + 1..]),
+        None => ("", key),
+    };
+    match name.rfind('.') {
+        Some(i) if i > 0 => format!("{dir}{} ({n}){}", &name[..i], &name[i..]),
+        _ => format!("{dir}{name} ({n})"),
+    }
+}
+
 /// Byte progress of one run: finished files plus what the running transfers have sent so far.
 #[derive(Default)]
 struct RunBytes {
@@ -102,7 +119,6 @@ impl RunBytes {
 /// that way, and an edit made since must not be overwritten.
 #[derive(Clone, Copy, Debug)]
 enum Expect {
-    Any,
     Absent,
     Matches(u64, i64),
 }
@@ -181,7 +197,7 @@ async fn exec_transfer(job: Job, ctx: &JobCtx, progress: &(dyn Fn(u64, u64) + Se
         Job::Down { key, dest, remote, keep_local, expect, .. } => {
             let now = std::fs::metadata(&dest).ok();
             let still = match (expect, &now) {
-                (Expect::Any, _) | (Expect::Absent, None) => true,
+                (Expect::Absent, None) => true,
                 (Expect::Matches(s, m), Some(meta)) => meta.len() == s && local::mtime_ms(meta) == m,
                 _ => false,
             };
@@ -252,6 +268,69 @@ impl Engine<'_> {
         })
         .await
         .map_err(|e| e.to_string())
+    }
+
+    /// What this run leaves alone: folders and files that couldn't be read here, and names that
+    /// collide once normalised on either side. They are taken out of both snapshots and the
+    /// base, so nothing is deleted (or sent) for them; the base rows stay in sync.db for the
+    /// next run. Answers a problem to show for the unreadable ones; Err when the folder itself
+    /// can't be read (nothing in it can be trusted to be gone).
+    fn exclude(
+        &self,
+        base: &mut HashMap<String, BaseEntry>,
+        local: &mut LocalSnapshot,
+        remote: Option<&mut RemoteSnapshot>,
+    ) -> Result<Option<String>, String> {
+        if local.unreadable.iter().any(|p| p.is_empty()) {
+            return Err(format!("Kybl can't read the folder {}. Check that it is allowed to, then sync again.", self.local_root.display()));
+        }
+        let mut ex = plan::Excluded::default();
+        for p in local.unreadable.iter().chain(&local.dupes) {
+            ex.add(p);
+        }
+        if let Some(r) = &remote {
+            for p in &r.dupes {
+                ex.add(p);
+            }
+        }
+        if ex.is_empty() {
+            return Ok(None);
+        }
+        ex.strip(base);
+        ex.strip(&mut local.files);
+        if let Some(r) = remote {
+            ex.strip(&mut r.files);
+        }
+        let mut unreadable = local.unreadable.clone();
+        unreadable.sort();
+        unreadable.dedup();
+        Ok(match unreadable.as_slice() {
+            [] => None,
+            [one] => Some(format!("Kybl couldn't read {one} on this computer, so it was left alone this time (nothing in it was synced or deleted).")),
+            [first, ..] => Some(format!(
+                "Kybl couldn't read {} on this computer (like {first}), so they were left alone this time (nothing in them was synced or deleted).",
+                plural(unreadable.len(), "item")
+            )),
+        })
+    }
+
+    /// Works out local MD5s only where they decide between "the same" and "a conflict" (both
+    /// sides changed or untracked, same size, and the other side knows its MD5).
+    async fn fill_md5(&self, local: &mut LocalSnapshot, remote: &RemoteSnapshot, base: &HashMap<String, BaseEntry>) -> Result<(), String> {
+        let want = plan::hash_candidates(&local.files, &remote.files, base);
+        if want.is_empty() {
+            return Ok(());
+        }
+        let paths: Vec<(String, PathBuf)> = want.iter().map(|r| (r.clone(), local.path(&self.local_root, r))).collect();
+        let sums = tokio::task::spawn_blocking(move || paths.into_iter().filter_map(|(r, p)| Some((r, local::md5_file(&p).ok()?))).collect::<Vec<_>>())
+            .await
+            .map_err(|e| e.to_string())?;
+        for (r, sum) in sums {
+            if let Some(l) = local.files.get_mut(&r) {
+                l.md5 = Some(sum);
+            }
+        }
+        Ok(())
     }
 
     async fn scan_remote(&self, gi: &ignore::gitignore::Gitignore) -> Result<RemoteSnapshot, String> {
@@ -335,7 +414,27 @@ impl Engine<'_> {
                     break;
                 }
                 let inside = key.strip_prefix(&self.prefix).unwrap_or(rel);
-                let to = format!("{}{REMOTE_TRASH}/{day}/{inside}", self.prefix);
+                let first = format!("{}{REMOTE_TRASH}/{day}/{inside}", self.prefix);
+                // a file deleted twice the same day keeps both trashed versions
+                let mut to = first.clone();
+                let mut n = 1;
+                let free = loop {
+                    match self.remote.stat(&self.root, &to).await {
+                        Ok(None) => break true,
+                        Ok(Some(_)) if n < 1000 => {
+                            n += 1;
+                            to = numbered(&first, n);
+                        }
+                        Ok(Some(_)) => break false,
+                        Err(e) => {
+                            errors.push(format!("{rel}: {}", e.message));
+                            break false;
+                        }
+                    }
+                };
+                if !free {
+                    continue;
+                }
                 match self.remote.rename(&Loc::new(&self.root, key), &Loc::new(&self.root, to), false).await {
                     Ok(()) => gone.push(rel.clone()),
                     Err(e) if e.kind == crate::storage::ErrKind::NotFound => gone.push(rel.clone()),
@@ -462,9 +561,10 @@ impl Engine<'_> {
     pub async fn upload(&self, full: bool, dirty: Option<HashSet<PathBuf>>) -> Result<RunResult, String> {
         self.check_root()?;
         let gi = build_ignore(&self.local_root, &self.ignore);
-        let base = self.load_base(&gi)?;
-        let local = self.scan_local(&gi, &base, if full { None } else { dirty }).await?;
-        let remote = if full || base.is_empty() { Some(self.scan_remote(&gi).await?) } else { None };
+        let mut base = self.load_base(&gi)?;
+        let mut local = self.scan_local(&gi, &base, if full { None } else { dirty }).await?;
+        let mut remote = if full || base.is_empty() { Some(self.scan_remote(&gi).await?) } else { None };
+        let unreadable = self.exclude(&mut base, &mut local, remote.as_mut())?;
         let guard = self.guard()?;
         let confirmed_used = !guard.confirmed.is_empty();
         let opts = plan::UploadPlanOpts { mirror_deletes: self.mirror_deletes, adopt_existing: true, guard };
@@ -491,7 +591,7 @@ impl Engine<'_> {
                 }
             })
             .collect();
-        let mut errors = Vec::new();
+        let mut errors: Vec<String> = unreadable.into_iter().collect();
         let pending = self.note_held(&p.held, &local, remote.as_ref(), &base, &mut errors)?;
         let total = (jobs.len() + p.delete_remote.len()) as u32;
         if total > 0 {
@@ -509,6 +609,7 @@ impl Engine<'_> {
         if !deleted.is_empty() {
             parts.push(format!("{} deleted on {}", deleted.len(), self.there()));
         }
+        parts.extend(dupes_note(local.dupes.len() + remote.as_ref().map_or(0, |r| r.dupes.len())));
         Ok(RunResult { summary: parts.join(" · "), errors, files: self.db.base_count(&self.id)?, conflicts: 0, pending })
     }
 
@@ -518,9 +619,11 @@ impl Engine<'_> {
     pub async fn download(&self) -> Result<RunResult, String> {
         self.check_root()?;
         let gi = build_ignore(&self.local_root, &self.ignore);
-        let remote = self.scan_remote(&gi).await?;
-        let base = self.load_base(&gi)?;
-        let local = self.scan_local(&gi, &base, None).await?;
+        let mut remote = self.scan_remote(&gi).await?;
+        let mut base = self.load_base(&gi)?;
+        let mut local = self.scan_local(&gi, &base, None).await?;
+        let unreadable = self.exclude(&mut base, &mut local, Some(&mut remote))?;
+        self.fill_md5(&mut local, &remote, &base).await?;
         let guard = self.guard()?;
         let confirmed_used = !guard.confirmed.is_empty();
         let p = plan::plan_download(&local.files, &base, &remote.files, &plan::DownloadPlanOpts { mirror_deletes: self.mirror_deletes, guard });
@@ -537,10 +640,15 @@ impl Engine<'_> {
                 dest: self.pull_dest(rel, &local, &remote),
                 remote: remote.files[rel].clone(),
                 keep_local: *keep_local,
-                expect: Expect::Any,
+                // replace (or set aside) only what the plan saw: an edit made during the run
+                // waits for the next one instead of being overwritten
+                expect: match local.files.get(rel) {
+                    Some(l) => Expect::Matches(l.size, l.mtime),
+                    None => Expect::Absent,
+                },
             })
             .collect();
-        let mut errors = Vec::new();
+        let mut errors: Vec<String> = unreadable.into_iter().collect();
         let pending = self.note_held(&p.held, &local, Some(&remote), &base, &mut errors)?;
         let total = (jobs.len() + p.trash_local.len()) as u32;
         if total > 0 {
@@ -564,6 +672,7 @@ impl Engine<'_> {
         if p.kept_edits > 0 {
             parts.push(format!("{} not overwritten", plural(p.kept_edits, "local edit")));
         }
+        parts.extend(dupes_note(local.dupes.len() + remote.dupes.len()));
         Ok(RunResult { summary: parts.join(" · "), errors, files: self.db.base_count(&self.id)?, conflicts: 0, pending })
     }
 
@@ -597,34 +706,23 @@ impl Engine<'_> {
     pub async fn twoway(&self, full: bool, dirty: Option<HashSet<PathBuf>>) -> Result<RunResult, String> {
         self.check_root()?;
         let gi = build_ignore(&self.local_root, &self.ignore);
-        let base = self.load_base(&gi)?;
+        let mut base = self.load_base(&gi)?;
         let mut local = self.scan_local(&gi, &base, if full { None } else { dirty }).await?;
         let mut remote = self.twoway_remote(&gi, &base, full).await?;
+        let unreadable = self.exclude(&mut base, &mut local, Some(&mut remote))?;
         let now = now_ms();
         self.db.purge_tombstones(now)?;
         let tombstones = self.db.tombstones(&self.id)?;
         let root = self.local_root.clone();
         let case_insensitive = tokio::task::spawn_blocking(move || local::case_insensitive(&root)).await.map_err(|e| e.to_string())?;
 
-        // MD5s only where they decide between "the same" and "a conflict"
-        let want = plan::hash_candidates(&local.files, &remote.files, &base);
-        if !want.is_empty() {
-            let paths: Vec<(String, PathBuf)> = want.iter().map(|r| (r.clone(), local.path(&self.local_root, r))).collect();
-            let sums = tokio::task::spawn_blocking(move || paths.into_iter().filter_map(|(r, p)| Some((r, local::md5_file(&p).ok()?))).collect::<Vec<_>>())
-                .await
-                .map_err(|e| e.to_string())?;
-            for (r, sum) in sums {
-                if let Some(l) = local.files.get_mut(&r) {
-                    l.md5 = Some(sum);
-                }
-            }
-        }
+        self.fill_md5(&mut local, &remote, &base).await?;
 
         let guard = self.guard()?;
         let confirmed_used = !guard.confirmed.is_empty();
         let opts = TwoWayOpts { guard, case_insensitive, device: local::device_name(), date: local::ymd(now), now };
         let plan = plan::plan_twoway(&local.files, &remote.files, &base, &tombstones, &opts);
-        let mut errors = Vec::new();
+        let mut errors: Vec<String> = unreadable.into_iter().collect();
         let pending = self.note_held(&plan.held, &local, Some(&remote), &base, &mut errors)?;
 
         // ---- quick steps first: records, renames, setting conflicts aside

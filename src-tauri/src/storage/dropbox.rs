@@ -384,7 +384,14 @@ impl Storage for Dropbox {
             };
             st.cursor = v["cursor"].as_str().map(str::to_string);
             st.done = v["has_more"].as_bool() != Some(true);
-            let entries: Vec<Meta> = serde_json::from_value(v["entries"].clone()).unwrap_or_default();
+            // an answer that can't be read fails the walk: an empty batch would read as "deleted"
+            let entries: Vec<Meta> = match serde_json::from_value(v["entries"].clone()) {
+                Ok(e) => e,
+                Err(e) => {
+                    st.done = true;
+                    return Some((Err(unexpected(ConnKind::Dropbox, e)), st));
+                }
+            };
             let top = dir_key(dir);
             let batch = entries
                 .into_iter()
@@ -627,7 +634,8 @@ impl Storage for Dropbox {
             return Ok(ChangeBatch { changes: vec![], cursor: v["cursor"].as_str().unwrap_or_default().to_string(), has_more: false });
         };
         let v = self.call("files/list_folder/continue", &json!({ "cursor": cursor })).await?;
-        let entries: Vec<Meta> = serde_json::from_value(v["entries"].clone()).unwrap_or_default();
+        // unreadable: fail rather than move the cursor past changes nobody saw
+        let entries: Vec<Meta> = serde_json::from_value(v["entries"].clone()).map_err(|e| unexpected(ConnKind::Dropbox, e))?;
         let changes = entries
             .into_iter()
             .map(|m| {

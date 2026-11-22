@@ -438,7 +438,13 @@ impl Storage for LocalBackend {
                 if HIDDEN.contains(&name.as_str()) {
                     continue;
                 }
-                let Ok(meta) = std::fs::symlink_metadata(e.path()) else { continue };
+                // gone since the folder was read: skip it; any other error fails the listing, so
+                // a sync never takes a file it couldn't look at for a deleted one
+                let meta = match std::fs::symlink_metadata(e.path()) {
+                    Ok(m) => m,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(e) => return Err(e.into()),
+                };
                 let key = format!("{prefix}{name}");
                 if meta.file_type().is_symlink() {
                     match std::fs::metadata(e.path()) {

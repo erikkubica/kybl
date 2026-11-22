@@ -146,6 +146,58 @@ pub fn remote_from_base(base: &dyn BaseState) -> HashMap<String, RemoteMeta> {
     base.paths().into_iter().filter_map(|p| Some((p.to_string(), base.entry(p)?.remote_view()))).collect()
 }
 
+/// Paths a run leaves alone entirely: folders or files that couldn't be read, and names that
+/// collide once normalised. Missing from a snapshot for those reasons is not "deleted", so they
+/// (and their base rows) are kept out of planning: nothing is sent, fetched or deleted for them
+/// on either side, and their base stays for the next run.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Excluded {
+    /// each path covers itself and everything below it
+    paths: BTreeSet<String>,
+}
+
+impl Excluded {
+    pub fn add(&mut self, path: &str) {
+        self.paths.insert(nfc(path.trim_end_matches('/')));
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.paths.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.paths.len()
+    }
+
+    /// True for an excluded path, or one inside an excluded folder ("" covers everything).
+    pub fn covers(&self, path: &str) -> bool {
+        if self.paths.contains("") {
+            return true;
+        }
+        let mut p = path;
+        loop {
+            if self.paths.contains(p) {
+                return true;
+            }
+            match p.rfind('/') {
+                Some(i) => p = &p[..i],
+                None => return false,
+            }
+        }
+    }
+
+    /// Takes the excluded paths out of a snapshot or a base.
+    pub fn strip<V>(&self, m: &mut HashMap<String, V>) {
+        if !self.is_empty() {
+            m.retain(|k, _| !self.covers(k));
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &String> {
+        self.paths.iter()
+    }
+}
+
 fn sorted<V>(m: &HashMap<String, V>) -> Vec<(&String, &V)> {
     let mut v: Vec<_> = m.iter().collect();
     v.sort_by(|a, b| a.0.cmp(b.0));
@@ -371,7 +423,9 @@ pub fn plan_download(local: &HashMap<String, LocalMeta>, base: &dyn BaseState, r
             },
             None => match lf {
                 None => Some(false),
-                Some(l) if l.size == rf.size => {
+                // already here (a first run over an existing copy): only when it is surely
+                // the same file; otherwise the local one is kept aside as a copy
+                Some(l) if same_content(l, rf) => {
                     p.adopt.push((rel.clone(), BaseEntry::of(l, rf)));
                     None
                 }
@@ -504,17 +558,18 @@ pub fn delta_remote(b: Option<&BaseEntry>, r: Option<&RemoteMeta>) -> Delta {
     }
 }
 
-/// Changed on both sides: is it the same content anyway? By MD5 where both are known. Without
-/// hashes, two files that appeared on both sides since the last sync (a first sync over an
-/// existing copy) count as the same when their sizes match, as one-way sync always adopted
-/// them; files edited on both sides only when their times match too.
-fn same_content(l: &LocalMeta, r: &RemoteMeta, first: bool) -> bool {
+/// Untracked or changed on both sides: is it the same content anyway? By MD5 where both are
+/// known (the runner hashes the local file when the other side has one); without hashes only
+/// when the sizes match and the times are within 2 s. A size match alone is never enough: two
+/// different files of the same size would be recorded as in sync and one of them lost, so
+/// anything unsure is kept both ways as a conflict instead.
+fn same_content(l: &LocalMeta, r: &RemoteMeta) -> bool {
     if l.size != r.size {
         return false;
     }
     match (&l.md5, &r.md5) {
         (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
-        _ => first || (r.modified != 0 && (l.mtime - r.modified).abs() <= 2000),
+        _ => r.modified != 0 && (l.mtime - r.modified).abs() <= 2000,
     }
 }
 
@@ -670,9 +725,13 @@ pub fn plan_twoway(
             .filter(|n| !claimed.contains(n.as_str()) && !remote.contains_key(n.as_str()))
             .filter(|n| {
                 let l = &local[n.as_str()];
+                // the same id *and* the same size and time: a disk hands a deleted file's id to
+                // the next new file, so an id alone could tie two unrelated files together. A
+                // file renamed and edited is a delete (to the Trash) and an upload instead.
+                let same = b.l_size == l.size && b.l_mtime == l.mtime;
                 match (&b.l_fileid, &l.file_id) {
-                    (Some(a), Some(c)) => a == c,
-                    (None, _) | (_, None) => b.l_size == l.size && b.l_mtime == l.mtime,
+                    (Some(a), Some(c)) => a == c && same,
+                    (None, _) | (_, None) => same,
                 }
             })
             .collect();
@@ -757,7 +816,7 @@ pub fn plan_twoway(
             (Created | Modified, None) => plan.ops.push(Op::Push(path.clone())),
             (Created | Modified, Created | Modified) => {
                 let (l, r) = (l.expect("changed"), r.expect("changed"));
-                if same_content(l, r, dl == Created && dr == Created) {
+                if same_content(l, r) {
                     plan.ops.push(Op::Adopt(path.clone(), BaseEntry::of(l, r)));
                 } else {
                     let copy = conflict_name(path, &opts.device, &opts.date, |c| {
@@ -825,6 +884,27 @@ mod tests {
         x.to_string()
     }
 
+    #[test]
+    fn excluded_paths_are_never_planned_as_deletions() {
+        let mut ex = Excluded::default();
+        ex.add("locked/");
+        ex.add("cafe\u{301}.txt");
+        assert!(ex.covers("locked") && ex.covers("locked/a/b.txt") && ex.covers("caf\u{e9}.txt"));
+        assert!(!ex.covers("lockedx/a") && !ex.covers("other.txt"));
+        // "locked/a.txt" couldn't be read here, "café.txt" collides: both look gone locally
+        let mut local = map(&[("ok.txt", l(1, 1))]);
+        let mut remote = map(&[("ok.txt", r(1, "e")), ("locked/a.txt", r(2, "f")), ("caf\u{e9}.txt", r(3, "g"))]);
+        let mut base = map(&[("ok.txt", b(1, 1, 1, "e")), ("locked/a.txt", b(2, 2, 2, "f")), ("caf\u{e9}.txt", b(3, 3, 3, "g"))]);
+        ex.strip(&mut local);
+        ex.strip(&mut remote);
+        ex.strip(&mut base);
+        let p = plan_twoway(&local, &remote, &base, &[], &opts());
+        assert!(p.ops.is_empty() && p.held.is_none(), "{p:?}");
+        let mut all = Excluded::default();
+        all.add("");
+        assert!(all.covers("anything/at/all"));
+    }
+
     // ---- the ΔL × ΔR table, cell by cell
 
     #[test]
@@ -874,9 +954,14 @@ mod tests {
         let rm2 = RemoteMeta { md5: Some("def".into()), ..rm };
         let p = plan_twoway(&map(&[("a", lm)]), &map(&[("a", rm2)]), &map(&[("a", b(1, 5, 1, "e"))]), &[], &opts());
         assert!(matches!(&p.ops[..], [Op::Conflict { .. }]));
-        // first sync over an existing copy without hashes: same size is adopted, like one-way sync did
-        let p = two(&[("a", l(4, 6))], &[("a", r(4, "x"))], &[]);
+        // first sync over an existing copy without hashes: same size and time (within 2 s) is
+        // adopted; same size alone is not proof, so both versions are kept
+        let p = two(&[("a", l(4, 2900))], &[("a", r(4, "x"))], &[]);
         assert!(matches!(&p.ops[..], [Op::Adopt(..)]));
+        let p = two(&[("a", l(4, 3100))], &[("a", r(4, "x"))], &[]);
+        assert!(matches!(&p.ops[..], [Op::Conflict { .. }]), "{p:?}");
+        let p = two(&[("a", l(4, 6))], &[("a", RemoteMeta { modified: 0, ..r(4, "x") })], &[]);
+        assert!(matches!(&p.ops[..], [Op::Conflict { .. }]), "no time there either: {p:?}");
         // edited on both sides to the same size without hashes or matching times: keep both
         let p = two(&[("a", l(4, 600_000))], &[("a", r(4, "x"))], &[("a", b(1, 5, 1, "e"))]);
         assert!(matches!(&p.ops[..], [Op::Conflict { .. }]));
@@ -931,9 +1016,12 @@ mod tests {
         let base = [("old.txt", BaseEntry { l_fileid: Some("1:42".into()), ..b(3, 5, 3, "e") })];
         let p = two(&[("new.txt", li(3, 5, "1:42"))], &[("old.txt", r(3, "e"))], &base);
         assert_eq!(p.ops, vec![Op::RenameRemote { from: s("old.txt"), to: s("new.txt") }]);
-        // renamed and edited: a rename, then the edit goes up
+        // renamed and edited (or a new file that got a deleted one's id): no rename is assumed,
+        // the new file goes up and the old one to the trash
         let p = two(&[("new.txt", li(9, 7, "1:42"))], &[("old.txt", r(3, "e"))], &base);
-        assert_eq!(p.ops, vec![Op::RenameRemote { from: s("old.txt"), to: s("new.txt") }, Op::Push(s("new.txt"))]);
+        assert_eq!(p.ops, vec![Op::Push(s("new.txt")), Op::DeleteRemote(s("old.txt"))]);
+        let p = two(&[("new.txt", li(3, 6, "1:42"))], &[("old.txt", r(3, "e"))], &base);
+        assert_eq!(p.ops, vec![Op::Push(s("new.txt")), Op::DeleteRemote(s("old.txt"))]);
     }
 
     #[test]
@@ -1188,5 +1276,14 @@ mod tests {
         let p = plan_download(&local, &base, &HashMap::new(), &DownloadPlanOpts { mirror_deletes: true, guard: Guard::default() });
         assert!(p.trash_local.is_empty());
         assert_eq!(p.held.unwrap().reason, HoldReason::SideEmpty(Side::Remote));
+        // an untracked local file of the same size but another time (and no hash): kept aside
+        let p = plan_download(&map(&[("x", l(4, 900_000))]), &HashMap::new(), &map(&[("x", r(4, "g"))]), &DownloadPlanOpts::default());
+        assert_eq!(p.downloads, vec![(s("x"), true)]);
+        assert!(p.adopt.is_empty());
+        // the same with matching hashes: adopted whatever the times
+        let lm = LocalMeta { md5: Some("aa".into()), ..l(4, 900_000) };
+        let rm = RemoteMeta { md5: Some("AA".into()), ..r(4, "g") };
+        let p = plan_download(&map(&[("x", lm)]), &HashMap::new(), &map(&[("x", rm)]), &DownloadPlanOpts::default());
+        assert_eq!(p.adopt.len(), 1);
     }
 }

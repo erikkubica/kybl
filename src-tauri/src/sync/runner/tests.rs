@@ -223,7 +223,7 @@ fn renames_stay_renames_on_both_sides() {
 }
 
 #[test]
-fn a_rename_with_an_edit_is_a_rename_and_an_upload() {
+fn a_rename_with_an_edit_is_an_upload_and_a_trashed_original() {
     run(async {
         let p = pair().await;
         write(&p.l("a.txt"), "first");
@@ -231,10 +231,9 @@ fn a_rename_with_an_edit_is_a_rename_and_an_upload() {
         fs::rename(p.l("a.txt"), p.l("b.txt")).unwrap();
         fs::write(p.l("b.txt"), "first, then edited").unwrap();
         let r = p.twoway().await;
-        if cfg!(unix) {
-            assert_eq!(r.summary, "1 uploaded · 1 renamed");
-        }
+        assert_eq!(r.summary, "1 uploaded · 1 deleted");
         assert_eq!(files(&p.remote_dir), vec!["b.txt"]);
+        assert_eq!(read(&p.remote_dir.join(REMOTE_TRASH).join(local::ymd(now_ms())).join("a.txt")), "first");
         assert_eq!(read(&p.r("b.txt")), "first, then edited");
     });
 }
@@ -383,5 +382,70 @@ fn one_way_modes_run_over_any_connection() {
         assert_eq!(r.summary, "1 downloaded · 1 edited file kept as local copies");
         assert_eq!(read(&mirror.join("a (local copy).txt")), "edited in the mirror");
         let _ = fs::remove_dir_all(&mirror);
+    });
+}
+
+#[cfg(unix)]
+fn set_mode(p: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(p, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_folder_that_cant_be_read_is_left_alone_not_deleted() {
+    run(async {
+        let p = pair().await;
+        write(&p.l("locked/a.txt"), "a");
+        write(&p.l("open.txt"), "o");
+        p.twoway().await;
+        assert_eq!(files(&p.remote_dir), vec!["locked/a.txt", "open.txt"]);
+
+        // this computer's copy can't be listed: the other side keeps everything in it
+        set_mode(&p.l("locked"), 0o000);
+        let e = p.engine(Arc::new(AtomicBool::new(false)), &noop);
+        let r = e.twoway(true, None).await.unwrap();
+        set_mode(&p.l("locked"), 0o755);
+        assert_eq!(r.summary, "");
+        assert_eq!(r.pending, 0);
+        assert!(r.errors.iter().any(|e| e.contains("couldn't read locked")), "{:?}", r.errors);
+        assert_eq!(files(&p.remote_dir), vec!["locked/a.txt", "open.txt"]);
+        assert_eq!(p.db.load_base("m").unwrap().len(), 2, "the base rows stay for the next run");
+        // and the same for an upload that mirrors deletions
+        set_mode(&p.l("locked"), 0o000);
+        let r = e.upload(true, None).await.unwrap();
+        set_mode(&p.l("locked"), 0o755);
+        assert!(!r.summary.contains("deleted"), "{}", r.summary);
+        assert_eq!(files(&p.remote_dir), vec!["locked/a.txt", "open.txt"]);
+
+        // the other side's copy can't be listed: the run stops rather than delete anything here
+        set_mode(&p.r("locked"), 0o000);
+        let res = e.twoway(true, None).await;
+        set_mode(&p.r("locked"), 0o755);
+        assert!(res.is_err(), "{res:?}");
+        assert_eq!(files(&p.local), vec!["locked/a.txt", "open.txt"]);
+    });
+}
+
+#[test]
+fn the_remote_trash_keeps_every_version_deleted_the_same_day() {
+    run(async {
+        let p = pair().await;
+        write(&p.l("a.txt"), "first");
+        write(&p.l("b.txt"), "keep");
+        write(&p.l("c.txt"), "keep");
+        p.twoway().await;
+        fs::remove_file(p.l("a.txt")).unwrap();
+        assert_eq!(p.twoway().await.summary, "1 deleted");
+        write(&p.l("a.txt"), "second");
+        p.twoway().await;
+        fs::remove_file(p.l("a.txt")).unwrap();
+        assert_eq!(p.twoway().await.summary, "1 deleted");
+        let day = local::ymd(now_ms());
+        let trash = p.remote_dir.join(REMOTE_TRASH).join(&day);
+        assert_eq!(read(&trash.join("a.txt")), "first");
+        assert_eq!(read(&trash.join("a (2).txt")), "second");
+        assert_eq!(numbered("t/d/x.tar.gz", 3), "t/d/x.tar (3).gz");
+        assert_eq!(numbered("t/d/.env", 2), "t/d/.env (2)");
     });
 }
