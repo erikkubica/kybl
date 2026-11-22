@@ -1,3 +1,4 @@
+import { isTauri } from "@tauri-apps/api/core";
 import type { MenuItem } from "../components/Dialogs";
 
 /**
@@ -15,5 +16,8 @@ export function tidyMenu(items: (MenuItem | false | null | undefined)[]): MenuIt
   return out;
 }
 
-/** Inside the Tauri window on macOS the menu bar owns these shortcuts (they have accelerators). */
-export const MENU_OWNS_SHORTCUTS = "__TAURI_INTERNALS__" in window && /Mac/i.test(navigator.userAgent);
+/**
+ * Inside the real Tauri window on macOS the menu bar owns these shortcuts (they have
+ * accelerators). `isTauri()` and not `__TAURI_INTERNALS__`: the browser dev mock fakes the latter.
+ */
+export const MENU_OWNS_SHORTCUTS = isTauri() && /Mac/i.test(navigator.userAgent);

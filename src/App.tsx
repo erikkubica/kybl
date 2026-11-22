@@ -38,7 +38,8 @@ import { makeFileOps, type ToastAction } from "./desktop/fileOps";
 import { itemClipboard } from "./desktop/clipboard";
 import { undoStack } from "./desktop/undo";
 import { parseLocation } from "./desktop/paths";
-import { MENU_OWNS_SHORTCUTS, tidyMenu } from "./desktop/menus";
+import { tidyMenu } from "./desktop/menus";
+import { useShortcuts } from "./desktop/useShortcuts";
 import { QuickLook } from "./desktop/QuickLook";
 import { GoToDialog } from "./desktop/GoToDialog";
 import { SyncThisFolder } from "./desktop/SyncThisFolder";
@@ -563,11 +564,12 @@ export default function App() {
     [],
   );
 
+  const folderKeys = useMemo(() => new Set(fresh ? listing.folders : []), [fresh, listing.folders]);
   const ops = makeFileOps({
     profile,
     bucket,
     prefix,
-    folderKeys: new Set(fresh ? listing.folders : []),
+    folderKeys,
     settings,
     transfers,
     jobs,
@@ -908,104 +910,22 @@ export default function App() {
     run();
     return true;
   };
-  const routeRef = useRef(route);
-  routeRef.current = route;
-
-  useEffect(() => {
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.defaultPrevented || ev.isComposing) return;
-      const t = ev.target as HTMLElement;
-      const typing = t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable;
-      const onControl = !!t.closest?.("button, a[href], [role=button], [role=menuitem], [role=tab], [role=switch]");
-      const mod = ev.metaKey || ev.ctrlKey;
-      const k = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
-      const textSelected = !!window.getSelection()?.toString();
-      // keys with a menu-bar accelerator on macOS are handled there (the `menu` event)
-      const own = (id: string) => (MENU_OWNS_SHORTCUTS ? null : id);
-      let id: string | null = null;
-      if (mod && k === ",") id = own("settings");
-      else if (mod && ev.shiftKey && k === "n") id = own("new-folder");
-      else if (mod && !ev.shiftKey && k === "u") id = own("upload-files");
-      else if (mod && k === "[") id = own("back");
-      else if (mod && k === "]") id = own("forward");
-      else if (mod && ev.shiftKey && k === "g") id = own("go-to");
-      else if (mod && k === "i") id = own("get-info");
-      else if (mod && k === "l") id = "go-to";
-      else if (mod && k === "r") id = "refresh";
-      else if (mod && k === "f") id = "search";
-      else if (settingsOpen) {
-        // a dialog open on top of settings handles its own Escape
-        if (ev.key === "Escape" && !overlayUp()) setSettingsOpen(false);
-        return;
-      } else if (typing) return;
-      else if (mod && k === "a") id = "select-all";
-      else if (ev.key === "Delete" || (mod && ev.key === "Backspace")) id = "delete";
-      else if (mod && k === "c" && !textSelected) id = "copy";
-      else if (mod && k === "x" && !textSelected) id = "cut";
-      else if (mod && k === "v") id = "paste";
-      else if (mod && k === "z" && !ev.shiftKey) id = "undo";
-      else if (mod && k === "o") id = "open";
-      else if (mod && ev.key === "ArrowUp") id = "go-up";
-      else if (mod && ev.key === "ArrowDown") id = "open";
-      else if (mod) return;
-      else if (ev.key === "Backspace") id = "go-up";
-      else if (ev.key === "F2") id = "rename";
-      else if (onControl && (ev.key === "Enter" || ev.key === " ")) return;
-      else if (ev.key === "Enter") id = selectedEntries.length ? "open" : null;
-      else if (ev.key === " ") id = selectedEntries.length ? "quick-look" : null;
-      else if (ev.key === "Escape") id = "deselect";
-      else if (ev.key.startsWith("Arrow") && (document.activeElement === document.body || !document.activeElement) && !overlayUp()) {
-        // nothing focused (after a sidebar click or a closed dialog): arrows still move in the list
-        const list = document.querySelector<HTMLElement>(".table, .grid-scroll");
-        const grid = list?.classList.contains("grid-scroll");
-        const cols = grid ? getComputedStyle(list!.querySelector(".grid")!).gridTemplateColumns.split(" ").length || 1 : 1;
-        const delta = { ArrowDown: cols, ArrowUp: -cols, ArrowRight: grid ? 1 : 0, ArrowLeft: grid ? -1 : 0 }[ev.key] ?? 0;
-        if (delta && bucket) {
-          ev.preventDefault();
-          moveSelection(delta, ev.shiftKey);
-          list?.focus();
-        }
-        return;
-      }
-      if (!id) return;
-      if (routeRef.current(id)) ev.preventDefault();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
-
-  // menu bar items, the window coming back to the front, mouse back/forward buttons
+  // the window coming back to the front reloads the folder on screen, at most every so often
   const lastResume = useRef(0);
-  const resumeRef = useRef(() => {});
-  resumeRef.current = () => {
-    if (!here || search || lst.loading || overlayUp() || Date.now() - lastResume.current < RESUME_REFRESH_MS) return;
-    lastResume.current = Date.now();
-    void lst.refresh(here);
-  };
-  useEffect(() => {
-    const offs = [
-      listen<string>("menu", (e) => void routeRef.current(String(e.payload))),
-      listen("app-resumed", () => resumeRef.current()),
-    ];
-    const onMouse = (e: MouseEvent) => {
-      if (e.button !== 3 && e.button !== 4) return;
-      e.preventDefault();
-      routeRef.current(e.button === 3 ? "back" : "forward");
-    };
-    // WebKit's own menu (Reload, Inspect…) means nothing here; text fields and selected text keep theirs
-    const onContextMenu = (e: MouseEvent) => {
-      const t = e.target as HTMLElement;
-      if (t.closest?.("input, textarea, [contenteditable=true]") || window.getSelection()?.toString()) return;
-      e.preventDefault();
-    };
-    window.addEventListener("mouseup", onMouse);
-    window.addEventListener("contextmenu", onContextMenu);
-    return () => {
-      for (const off of offs) off.then((f) => f()).catch(() => {});
-      window.removeEventListener("mouseup", onMouse);
-      window.removeEventListener("contextmenu", onContextMenu);
-    };
-  }, []);
+  useShortcuts({
+    route,
+    overlayUp,
+    settingsOpen,
+    closeSettings: () => setSettingsOpen(false),
+    hasSelection: selectedEntries.length > 0,
+    listShown: !!bucket,
+    moveSelection,
+    onResume: () => {
+      if (!here || search || lst.loading || overlayUp() || Date.now() - lastResume.current < RESUME_REFRESH_MS) return;
+      lastResume.current = Date.now();
+      void lst.refresh(here);
+    },
+  });
 
   // ------------------------------------------------------------ drag & drop from Finder
   const dropRef = useRef(ops.uploadPaths);

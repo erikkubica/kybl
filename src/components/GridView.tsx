@@ -208,7 +208,7 @@ export function GridView({
         style={{ gridTemplateColumns: `repeat(auto-fill, min(${tile}px, 100%))` }}
       >
         {entries.slice(win.start, win.end).map((e) => {
-          const rel = e.key.slice(prefix.length);
+          const rel = e.key.slice(prefix.length).replace(/\/$/, "");
           return (
             <Card
               key={e.key}

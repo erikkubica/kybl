@@ -223,7 +223,7 @@ export function FileTable({
         {win.padTop > 0 && <div style={{ height: win.padTop }} aria-hidden="true" />}
         {entries.slice(win.start, win.end).map((e) => {
           const sel = selected.has(e.key);
-          const rel = e.key.slice(prefix.length);
+          const rel = e.key.slice(prefix.length).replace(/\/$/, "");
           const slash = searchMode ? rel.lastIndexOf("/") : -1;
           return (
             <div
