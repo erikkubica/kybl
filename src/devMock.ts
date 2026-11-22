@@ -259,6 +259,8 @@ async function handleLocal(cmd: string, a: any): Promise<unknown> {
 async function handle(cmd: string, a: any): Promise<unknown> {
   // WP-B1: copies between connections (src/jobs/devJobs.ts)
   if (cmd.startsWith("job_")) return (await import("./jobs/devJobs")).handleJob(cmd, a);
+  // WP-C: phone backup (src/mobile/backup/devBackup.ts)
+  if (cmd.startsWith("backup_")) return (await import("./mobile/backup/devBackup")).handleBackup(cmd, a);
   if (a?.profileId === LOCAL) {
     const r = await handleLocal(cmd, a);
     if (r !== undefined) return r;

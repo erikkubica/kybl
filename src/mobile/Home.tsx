@@ -295,6 +295,7 @@ export function HomeScreen({
   onTransfers,
   onSettings,
   error,
+  backupCard,
 }: {
   profiles: Profile[] | null;
   recent: Loc[];
@@ -310,6 +311,8 @@ export function HomeScreen({
   onSettings: () => void;
   /** loading connections failed: never show the first-run welcome then */
   error: string | null;
+  /** WP-C: the photo backup card, above Favorites */
+  backupCard?: React.ReactNode;
 }) {
   const [heroRef, collapsed] = useCollapsed<HTMLDivElement>(profiles?.length);
   const known = (l: Loc) => profiles?.some((p) => p.id === l.profileId);
@@ -353,6 +356,7 @@ export function HomeScreen({
             <>
               {/* the brand sits in the bar; this marks the top so the bar turns solid on scroll */}
               <div className="m-sentinel" ref={heroRef} />
+              {backupCard}
               {favs.length > 0 && (
                 <>
                   <h2 className="m-section">Favorites</h2>
