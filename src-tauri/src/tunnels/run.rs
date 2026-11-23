@@ -552,6 +552,12 @@ mod tests {
         let k = kill.clone();
         let task = tokio::spawn(async move {
             while let Ok((tcp, _)) = listener.accept().await {
+                // while "down", new sign-ins are refused too: otherwise a reconnect could land
+                // between two checks and the test would never see the tunnel retrying
+                if k.load(Ordering::SeqCst) {
+                    drop(tcp);
+                    continue;
+                }
                 let (config, k) = (config.clone(), k.clone());
                 tokio::spawn(async move {
                     let Ok(session) = russh::server::run_stream(config, tcp, Forwarder).await else { return };
