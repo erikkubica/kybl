@@ -148,6 +148,9 @@ export function WorkspaceBar(p: WorkspaceBarProps) {
   const move = (e: React.PointerEvent) => {
     const d = drag.current;
     if (!d) return;
+    // the button came up where we didn't hear it (a switch re-rendered the strip, the window lost
+    // the pointer): that ends the drag, or a plain hover would keep moving the tab
+    if ((e.buttons & 1) === 0) return release();
     const dx = e.clientX - d.startX;
     if (!d.started) {
       if (Math.abs(dx) < DRAG_START) return;
@@ -176,16 +179,18 @@ export function WorkspaceBar(p: WorkspaceBarProps) {
     const d = drag.current;
     drag.current = null;
     if (!d?.started) return;
-    const left = d.els[d.from].getBoundingClientRect().left;
-    // the others are where they stepped aside to; once the order changes that is their own place
-    for (const el of d.els) {
+    const left = d.els[d.from].isConnected ? d.els[d.from].getBoundingClientRect().left : null;
+    // the others are where they stepped aside to; once the order changes that is their own place.
+    // The tabs on screen now, too: a re-render may have put new elements in place of `d.els`.
+    const all = new Set([...d.els, ...(track.current?.querySelectorAll<HTMLElement>(".ws-tab") ?? [])]);
+    for (const el of all) {
       el.style.transition = "none";
       el.style.transform = "";
     }
     void track.current?.offsetWidth;
-    for (const el of d.els) el.style.transition = "";
+    for (const el of all) el.style.transition = "";
     setDragging(false);
-    flip.current = { id: d.id, left };
+    if (left !== null) flip.current = { id: d.id, left };
     if (d.to !== d.from) p.onReorder(d.from, d.to);
   };
 
@@ -236,6 +241,7 @@ export function WorkspaceBar(p: WorkspaceBarProps) {
                 onPointerMove={move}
                 onPointerUp={release}
                 onPointerCancel={release}
+                onLostPointerCapture={release}
                 onDoubleClick={(e) => {
                   if (!(e.target as Element).closest(".ws-cog")) p.onEdit(t.id);
                 }}
