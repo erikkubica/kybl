@@ -8,11 +8,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { baseName, parentPrefix } from "../format";
 import { localParent } from "../connections/roots";
 import { useFolderSizes } from "../useFolderSizes";
-import { useItemDrag } from "../useItemDrag";
 import { peekCaps, useCaps } from "../useCaps";
 import { makeFileOps, type FileOps } from "../desktop/fileOps";
-import { makeDragOut } from "../desktop/dragOut";
-import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
+import type { Place } from "../shell/crossPane";
 import type { Sort } from "../components/FileTable";
 import type { MenuItem } from "../components/Dialogs";
 import type { Settings } from "../settings";
@@ -55,10 +53,8 @@ export type PaneEnv = {
   clearAllSizes: () => void;
   /** after this pane moved to another place (synchronized browsing listens) */
   onNavigated?: (from: Loc | null, to: Loc) => void;
-  /** items dropped on a place shown in another pane; true when that pane took them */
-  dropOnOtherPane?: (items: Entry[], pane: PaneId, dest: string, copy: boolean) => void;
-  /** a drop target in another pane: label and whether it accepts these items */
-  otherPaneTarget?: (pane: PaneId, dest: string | null, items: Entry[]) => { dest: string; label: string } | null;
+  /** a press on items that may become a drag of them (the shell's, shell/useFileDrag.tsx); a click without a drag runs `onClick` */
+  beginItemDrag?: (pane: PaneId, ev: React.MouseEvent, items: Entry[], onClick?: () => void) => void;
   /** extra items for the "…" and empty-space menus (dual pane adds its own) */
   extraPlaceItems?: () => MenuItem[];
   /** the empty-space menu's last item: Split ▸ Right, Down, Left, Up (the shell's) */
@@ -379,37 +375,11 @@ function usePaneCore(env: PaneEnv) {
   };
 
   // ------------------------------------------------------------ press, drag to move
-  const navigateRef = useRef(navigate);
-  navigateRef.current = navigate;
-  // dragged out of the window: the items go to another app as files (desktop/dragOut.ts)
-  const dragOutCtx = useRef<Parameters<typeof makeDragOut>[0]>(() => null);
-  dragOutCtx.current = () =>
-    profile && bucket != null
-      ? { profileId: profile.id, bucket, localPaths: !!caps?.localPaths, transfers: envRef.current.transfers, autoShowActivity: envRef.current.autoShowActivity }
-      : null;
-  const dragOut = useMemo(() => makeDragOut(() => dragOutCtx.current()), []);
-  const { drag, begin: beginDrag } = useItemDrag({
-    paneId: env.id,
-    onDrop: (items, dest, copy, destBucket, pane, destProfile) => {
-      const e = envRef.current;
-      if (pane) e.dropOnOtherPane?.(items, pane, dest, copy);
-      // another connection, or a root of this one the server can't copy into: by the route those take
-      else if (profile && bucket != null && destBucket != null && e.sendItems && (destProfile ? destProfile !== profile.id : viaJobAt({ profileId: profile.id, bucket }, { profileId: profile.id, bucket: destBucket })))
-        e.sendItems(opsRef.current, { profileId: profile.id, bucket }, items, copy ? "copy" : "move", { profileId: destProfile ?? profile.id, bucket: destBucket }, dest);
-      else void opsRef.current.relocate(items, dest, copy ? "copy" : "move", destBucket ? { destBucket } : {});
-    },
-    onSpring: (dest) => navigateRef.current(dest),
-    bucketTarget: (pid, b) => {
-      if (!profile || search) return null;
-      if (pid === profile.id) return b === bucket ? "same" : "other";
-      const to = envRef.current.profiles.find((x) => x.id === pid);
-      if (!to || !envRef.current.sendItems) return null;
-      const root = envRef.current.rootLabel?.(pid, b) ?? b;
-      return { label: b ? `“${root}” on ${to.name}` : to.name, copyOnly: crossesDiskAt({ profileId: profile.id, bucket: "" }, { profileId: pid, bucket: b }) };
-    },
-    paneTarget: (pane, dest, items) => envRef.current.otherPaneTarget?.(pane, dest, items) ?? null,
-    dragOut,
-  });
+  // the drag itself is the shell's (shell/useFileDrag.tsx): it outlives this pane's place
+  const beginDrag = useCallback(
+    (ev: React.MouseEvent, items: Entry[], onClick?: () => void) => envRef.current.beginItemDrag?.(env.id, ev, items, onClick),
+    [env.id],
+  );
 
   const { select, selRef } = sel;
   const onPress = useCallback(
@@ -488,7 +458,6 @@ function usePaneCore(env: PaneEnv) {
     setCompact,
     tile,
     setTile,
-    drag,
     onPress,
     go,
     navigate,

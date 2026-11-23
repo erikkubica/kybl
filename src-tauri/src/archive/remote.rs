@@ -4,10 +4,11 @@
 //! download/upload path; 125 when the archive holds links or unsafe names, which only the
 //! client-side path knows how to leave out.
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::index::Format;
-use crate::storage::{sftp::exec::sh_quote as q, sftp::SftpBackend, SResult, StorageError};
+use crate::actions::quote as q;
+use crate::storage::{sftp::SftpBackend, SResult, StorageError};
 
 /// Exit status of a script whose tool is missing.
 const NO_TOOL: u32 = 127;
@@ -68,33 +69,46 @@ if [ ! -e "$D" ]; then mv "$S" "$D" || exit 1; else cp -R "$S"/. "$D"/ || exit 1
     )
 }
 
-/// Zips on the server. Ok(false): it can't here (no `zip`, no shell), use the other path.
-pub async fn compress(s: &SftpBackend, dir_key: &str, names: &[String], dest_name: &str, cancel: &AtomicBool) -> SResult<bool> {
-    let dir = s.server_path(dir_key).await?;
-    let out = match s.exec(&format!("sh -c {}", q(&compress_script(&dir, names, dest_name))), cancel).await {
-        Ok(o) => o,
-        Err(e) if e.kind == crate::storage::ErrKind::Unsupported => return Ok(false),
+/// Runs a script with `sh` over the connection's SSH session (the shared exec helper, see
+/// storage/sftp/command.rs). Ok(None): the server runs no commands for this user.
+async fn run(s: &SftpBackend, script: &str, cancel: &AtomicBool) -> SResult<Option<(Option<u32>, String)>> {
+    let mut err = Vec::new();
+    let end = match s
+        .exec(&format!("sh -c {}", q(script)), cancel, |is_err, d| {
+            if is_err && err.len() < 64 * 1024 {
+                err.extend_from_slice(d);
+            }
+        })
+        .await
+    {
+        Ok(e) => e,
+        // no exec channel (SFTP-only accounts, chroots): the download/upload path still works
+        Err(_) if !cancel.load(Ordering::Relaxed) => return Ok(None),
         Err(e) => return Err(e),
     };
-    match out.status {
-        Some(0) => Ok(true),
-        Some(NO_TOOL) | None => Ok(false),
-        Some(_) => Err(StorageError::other("The server couldn't zip these files.").with_detail(out.stderr.trim().to_string())),
+    if end.stopped {
+        return Err(StorageError::cancelled());
+    }
+    Ok(Some((end.code, String::from_utf8_lossy(&err).trim().to_string())))
+}
+
+/// Zips on the server. Ok(false): it can't here (no `zip`, no shell), use the other path.
+pub async fn compress(s: &SftpBackend, dir_key: &str, names: &[String], dest_name: &str, cancel: &AtomicBool) -> SResult<bool> {
+    let dir = s.remote_path(dir_key).await?;
+    match run(s, &compress_script(&dir, names, dest_name), cancel).await? {
+        Some((Some(0), _)) => Ok(true),
+        None | Some((Some(NO_TOOL) | None, _)) => Ok(false),
+        Some((_, err)) => Err(StorageError::other("The server couldn't zip these files.").with_detail(err)),
     }
 }
 
 /// Unpacks on the server. Ok(false): it can't here, use the other path.
 pub async fn extract(s: &SftpBackend, archive_key: &str, format: Format, dest_dir_key: &str, folder: &str, cancel: &AtomicBool) -> SResult<bool> {
-    let archive = s.server_path(archive_key).await?;
-    let dir = s.server_path(dest_dir_key).await?;
-    let out = match s.exec(&format!("sh -c {}", q(&extract_script(&archive, format, &dir, folder))), cancel).await {
-        Ok(o) => o,
-        Err(e) if e.kind == crate::storage::ErrKind::Unsupported => return Ok(false),
-        Err(e) => return Err(e),
-    };
-    match out.status {
-        Some(0) => Ok(true),
-        Some(NO_TOOL) | Some(UNSAFE) | None => Ok(false),
-        Some(_) => Err(StorageError::other("The server couldn't unpack this archive.").with_detail(out.stderr.trim().to_string())),
+    let archive = s.remote_path(archive_key).await?;
+    let dir = s.remote_path(dest_dir_key).await?;
+    match run(s, &extract_script(&archive, format, &dir, folder), cancel).await? {
+        Some((Some(0), _)) => Ok(true),
+        None | Some((Some(NO_TOOL | UNSAFE) | None, _)) => Ok(false),
+        Some((_, err)) => Err(StorageError::other("The server couldn't unpack this archive.").with_detail(err)),
     }
 }

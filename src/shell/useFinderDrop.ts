@@ -2,51 +2,98 @@
  * Files and folders dragged in from Finder / Explorer upload into the pane under the pointer
  * (the only pane, or with two panes the one the drop lands on). The webview reports the drag,
  * not the DOM, so the pane is found from the pointer position.
+ *
+ * Over a workspace's tab (`tabs`): resting there opens that workspace (WorkspaceBar
+ * `springLoader`), to drop into one of its panes; letting go there uploads into the folder of its
+ * active pane.
  */
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { PaneId } from "../browser/types";
 import { isDraggingOut } from "../desktop/dragOut";
+import { springLoader, type TabDropTarget } from "./WorkspaceBar";
 
 export function useFinderDrop({
   target,
   onDrop,
   onRefused,
+  tabs,
 }: {
   /** the pane at this point (CSS pixels) that accepts uploads, or null */
   target: (x: number | null, y: number | null) => PaneId | null;
   onDrop: (pane: PaneId, paths: string[]) => void;
   /** files were dropped where nothing takes them (no bucket open, or a dialog is up) */
   onRefused?: () => void;
+  /** workspace tabs: the one under the point (not the one on screen), whether it takes files, resting on it, letting go there */
+  tabs?: {
+    at: (x: number, y: number) => string | null;
+    accepts: (id: string) => boolean;
+    onSpring: (id: string) => void;
+    onDrop: (id: string, paths: string[]) => void;
+  };
 }) {
   const [over, setOver] = useState<PaneId | null>(null);
-  const cbs = useRef({ target, onDrop, onRefused });
-  cbs.current = { target, onDrop, onRefused };
+  const [tab, setTab] = useState<TabDropTarget | null>(null);
+  const cbs = useRef({ target, onDrop, onRefused, tabs });
+  cbs.current = { target, onDrop, onRefused, tabs };
 
   useEffect(() => {
     let un: (() => void) | undefined;
+    let gone = false;
+    const spring = springLoader((id) => {
+      setTab(null);
+      cbs.current.tabs?.onSpring(id);
+    });
+    /** the tab under the point, if any (and its hover state on the bar) */
+    const tabAt = (x: number | null, y: number | null) => {
+      const id = x != null && y != null ? (cbs.current.tabs?.at(x, y) ?? null) : null;
+      spring.over(id);
+      const ok = id ? cbs.current.tabs!.accepts(id) : false;
+      setTab((cur) => (!id ? null : cur?.id === id && cur.ok === ok ? cur : { id, ok, spring: true }));
+      return id;
+    };
     getCurrentWebview()
       .onDragDropEvent((e) => {
         const p = e.payload;
         // our own items dragged out and back in: not an upload into the folder they came from
-        if (isDraggingOut()) return setOver(null);
+        if (isDraggingOut()) {
+          spring.cancel();
+          setTab(null);
+          return setOver(null);
+        }
         // positions come in physical pixels
         const at = "position" in p && p.position ? [p.position.x / devicePixelRatio, p.position.y / devicePixelRatio] : [null, null];
-        if (p.type === "enter" || p.type === "over") setOver(cbs.current.target(at[0], at[1]));
-        else if (p.type === "leave") setOver(null);
-        else if (p.type === "drop") {
+        if (p.type === "enter" || p.type === "over") setOver(tabAt(at[0], at[1]) ? null : cbs.current.target(at[0], at[1]));
+        else if (p.type === "leave") {
+          spring.cancel();
+          setTab(null);
           setOver(null);
+        } else if (p.type === "drop") {
+          setOver(null);
+          const ws = tabAt(at[0], at[1]);
+          spring.cancel();
+          setTab(null);
+          if (ws) {
+            if (cbs.current.tabs!.accepts(ws)) cbs.current.tabs!.onDrop(ws, p.paths);
+            return;
+          }
           const pane = cbs.current.target(at[0], at[1]);
           if (pane) cbs.current.onDrop(pane, p.paths);
           else if (p.paths.length) cbs.current.onRefused?.();
         }
       })
       .then((u) => {
-        un = u;
+        // unmounted before the listener was in place (React's dev double mount): no second listener
+        if (gone) u();
+        else un = u;
       })
       .catch(() => {});
-    return () => un?.();
+    return () => {
+      gone = true;
+      spring.cancel();
+      un?.();
+    };
   }, []);
 
-  return over;
+  return { over, tab };
 }

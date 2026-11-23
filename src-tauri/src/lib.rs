@@ -1,3 +1,4 @@
+mod actions;
 mod commands;
 // .zip / .tar / .tar.gz: browse like a folder, extract, compress
 mod archive;
@@ -241,6 +242,9 @@ pub fn run() {
             transfers::start_upload,
             transfers::start_download,
             transfers::cancel_transfer,
+            actions::custom_action_run,
+            actions::custom_action_stop,
+            actions::custom_action_preview,
             transfers::active_transfers,
             #[cfg(desktop)]
             sync::sync_list,

@@ -114,6 +114,21 @@ pub fn insert(id: &str, s: Arc<dyn Storage>) {
     OPEN.lock().unwrap().insert(id.to_string(), s);
 }
 
+/// An SFTP connection of its own (not the shared one that lists and transfers), for running
+/// commands over SSH: custom actions "On the server". The caller disconnects it when done.
+pub async fn open_sftp<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id: &str) -> Result<SftpBackend, String> {
+    let profile = load_profiles(app)?
+        .into_iter()
+        .find(|p| p.id == profile_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+    if profile.kind != ConnKind::Sftp {
+        return Err("Commands run on the server only over SFTP (SSH) connections.".into());
+    }
+    let cfg = net::net_config(profile.net.as_ref())?;
+    let secrets = net_secrets(state, &profile, &cfg, None).await?;
+    Ok(SftpBackend::new(&cfg, secrets)?)
+}
+
 /// Drops the open backend of a connection (saved with new settings, or deleted).
 pub fn forget(profile_id: &str) {
     OPEN.lock().unwrap().remove(profile_id);

@@ -5,7 +5,8 @@
 import { listen } from "@tauri-apps/api/event";
 import { createStore, useStore } from "./store";
 
-export type JobKind = "move" | "copy" | "delete" | "rename";
+/** "action": a custom action running (src/actions); its id is the run's, so Stop reaches it */
+export type JobKind = "move" | "copy" | "delete" | "rename" | "action";
 export type JobState = "running" | "done" | "error" | "cancelled";
 
 export type Job = {

@@ -411,6 +411,119 @@
   background: var(--pressed);
   color: var(--text);
 }
+/* ---------------------------------------------------------------- moving panes (usePaneDrag.tsx)
+   The header's empty part is the pane's grip (only where there is somewhere to move it); while a
+   pane is dragged it dims, and an overlay on the pane under the pointer shows where it would go. */
+.chrome.can-move {
+  cursor: grab;
+}
+.chrome.can-move .toolbar > :not(.spacer, .conn-sep) {
+  cursor: default;
+}
+body.pane-dragging,
+body.pane-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+body.pane-dragging.pane-drag-refused,
+body.pane-dragging.pane-drag-refused * {
+  cursor: not-allowed !important;
+}
+.browser-pane.lifted {
+  opacity: 0.45;
+  transition: opacity 0.12s;
+}
+.pane-drop-zone {
+  position: fixed;
+  z-index: 950;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--accent-solid);
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--accent-solid) 13%, transparent);
+  pointer-events: none;
+  transition: left 0.1s var(--ease), top 0.1s var(--ease), width 0.1s var(--ease), height 0.1s var(--ease), background 0.1s, border-color 0.1s;
+  animation: pane-zone-in 0.1s ease-out;
+}
+.pane-drop-zone.refused {
+  border-style: dashed;
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+.pane-drop-zone.leaving {
+  animation: pane-zone-out 0.2s var(--ease) forwards;
+}
+@keyframes pane-zone-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes pane-zone-out {
+  to {
+    opacity: 0;
+  }
+}
+.pane-drop-label {
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: var(--shadow-sm);
+}
+.pane-drop-zone.refused .pane-drop-label {
+  color: var(--muted);
+}
+.pane-ghost-name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* a workspace tab with a pane (or later files) dragged over it: it takes it, it can't, or it is
+   about to open (the line along its bottom fills over WorkspaceBar SPRING_MS) */
+.ws-tab.drop-over {
+  background: var(--hover);
+  color: var(--text);
+}
+.ws-tab.drop-ok {
+  border-color: var(--accent-solid);
+  background: color-mix(in srgb, var(--accent-solid) 13%, transparent);
+}
+.ws-tab.drop-no {
+  border-style: dashed;
+  border-color: var(--border-strong);
+}
+.ws-new.drop-over {
+  position: relative;
+  background: var(--hover);
+  color: var(--text);
+}
+.ws-tab.springing::after,
+.ws-new.springing::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent-solid);
+  transform-origin: left;
+  animation: ws-spring 0.5s linear forwards;
+}
+@keyframes ws-spring {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
 /* the other pane as a drop target (items dragged from this one) */
 .browser-pane.drop-target::after {
   content: "";

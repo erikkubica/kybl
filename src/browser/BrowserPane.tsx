@@ -12,7 +12,7 @@ import { GridView } from "../components/GridView";
 import { QuickLook } from "../desktop/QuickLook";
 import type { Settings } from "../settings";
 import { ChooseBucket, ListError, Welcome, type EmptyActions } from "./PaneEmpty";
-import { DragGhost, PaneBanners, PaneStatusBar } from "./PaneParts";
+import { PaneBanners, PaneStatusBar } from "./PaneParts";
 import type { Pane } from "./usePane";
 import { useImageModes } from "../imageMode";
 import type { MenuItem } from "../components/Dialogs";
@@ -48,6 +48,10 @@ export type BrowserPaneProps = {
   empty: EmptyActions;
   /** the pane was clicked or focused: it becomes the active one */
   onActivate: () => void;
+  /** the header's empty part was pressed: maybe the start of dragging this pane elsewhere (shell/usePaneDrag) */
+  onGrip?: (e: React.PointerEvent<HTMLElement>) => void;
+  /** this pane is being dragged: it dims while the drop overlay shows where it would go */
+  lifted?: boolean;
   style?: CSSProperties;
 };
 
@@ -87,9 +91,10 @@ export function BrowserPane(p: BrowserPaneProps) {
 
   return (
     <section
-      className={`browser-pane ${p.dual ? (active ? "is-active" : "is-inactive") : ""}`}
+      className={`browser-pane ${p.dual ? (active ? "is-active" : "is-inactive") : ""} ${p.lifted ? "lifted" : ""}`}
       data-pane={pane.id}
-      data-drop-pane={p.dual ? "" : undefined}
+      // (items dragged from another workspace drop on a single pane's empty space too)
+      data-drop-pane=""
       data-active-pane={active ? "" : undefined}
       aria-label={p.dual ? p.label : undefined}
       onMouseDownCapture={p.onActivate}
@@ -139,6 +144,7 @@ export function BrowserPane(p: BrowserPaneProps) {
         onGoTo={here ? (t) => void actions.goToPath(t) : undefined}
         favorite={actions.isFavorite}
         onToggleFavorite={here ? () => actions.toggleFavorite(bucket!, prefix) : undefined}
+        onGrip={p.onGrip}
       />
 
       <PaneBanners pane={pane} />
@@ -263,7 +269,6 @@ export function BrowserPane(p: BrowserPaneProps) {
           onOpenExternal={(e) => void ops.openInApp(e)}
         />
       )}
-      {pane.drag && !pane.drag.outside && profile && <DragGhost drag={pane.drag} bucket={bucket} profileId={profile.id} />}
     </section>
   );
 }

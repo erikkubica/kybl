@@ -15,7 +15,8 @@ export const TILE_MAX = 320;
  *   [connection badge] connection › … › folder name   ……   [⋯] [+] [view] [search] [panes]
  * Creating things sits behind +, the pane's less frequent actions (favorites among them) behind ⋯
  * and how the list looks behind the eye, so a pane at its least width (340px) still fits on one
- * row: the folder's name gives way first. The right side's buttons never hide.
+ * row: the folder's name gives way first. The right side's buttons never hide. The empty stretch
+ * (……) is the pane's grip: dragging it moves the pane in the layout or to another workspace.
  */
 export function Toolbar({
   bucket,
@@ -56,6 +57,7 @@ export function Toolbar({
   onGoTo,
   favorite,
   onToggleFavorite,
+  onGrip,
 }: {
   bucket: string | null;
   /** what the root is called on screen (defaults to `bucket`) */
@@ -116,6 +118,12 @@ export function Toolbar({
   /** the folder on screen is a favorite; the star toggles it */
   favorite?: boolean;
   onToggleFavorite?: () => void;
+  /**
+   * a press on the header's empty part (not a button, the path or the badge): the start of
+   * dragging the pane to another place in the layout (shell/usePaneDrag). Absent when there is
+   * nowhere to move it.
+   */
+  onGrip?: (e: React.PointerEvent<HTMLElement>) => void;
 }) {
   const parts = prefix.split("/").filter(Boolean);
   const dialogs = useDialogs();
@@ -172,8 +180,18 @@ export function Toolbar({
   const searchOpen = !!query || searchActive;
 
   return (
-    <header className="chrome">
-      <div className={`toolbar ${searchOpen ? "search-open" : ""}`} data-tauri-drag-region>
+    <header
+      className={`chrome ${onGrip ? "can-move" : ""}`}
+      onPointerDown={
+        onGrip &&
+        ((e) => {
+          // only the empty part: the header's own padding, the row between its items, the spacer
+          const t = e.target as Element;
+          if (t === e.currentTarget || t.matches(".toolbar, .toolbar > .spacer") || t.closest(".conn-sep")) onGrip(e);
+        })
+      }
+    >
+      <div className={`toolbar ${searchOpen ? "search-open" : ""}`}>
         {onSwitchConnection && (
           <>
             <button
@@ -231,12 +249,12 @@ export function Toolbar({
         {bucket != null ? (
           <PathTitle label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} onGoTo={onGoTo} />
         ) : (
-          <nav className="crumbs path-title" aria-label="Path" data-tauri-drag-region>
+          <nav className="crumbs path-title" aria-label="Path">
             <span className="crumb muted">No bucket selected</span>
           </nav>
         )}
 
-        <div className="spacer" data-tauri-drag-region />
+        <div className="spacer" />
 
         <button className="icon-btn tb-more" onClick={moreMenu} title="More actions" aria-label="More actions" aria-haspopup="menu">
           <Icon name="more" />

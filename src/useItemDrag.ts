@@ -7,9 +7,14 @@
  * items land at that bucket's top level, also in another connection). A drop moves; hold ⌥ to copy (at the press or any time
  * during the drag). Places that only take copies (`copyOnly`) always copy.
  *
- * Dual pane: every pane's root carries `data-pane="<id>"` and `data-drop-pane`. A drop on a folder,
+ * Several panes: every pane's root carries `data-pane="<id>"` and `data-drop-pane`. A drop on a folder,
  * breadcrumb or empty space of ANOTHER pane goes to that pane's place (`paneTarget` decides and
  * names it), and moves like any other drop (⌥ copies).
+ *
+ * One drag for the whole window (the shell owns it, shell/useFileDrag.tsx), so it outlives the
+ * pane it started in: over a workspace's tab (`tabs`), letting go drops into that workspace, and
+ * resting there opens it with the drag still going. `home` says which pane still shows the place
+ * the items came from (none once another workspace is on screen): its own folders are plain moves.
  *
  * Out of the window: when the pointer leaves it with the button down, `dragOut` hands the items to
  * the system's drag (desktop/dragOut.ts), so they drop into Finder, a mail or a chat as files.
@@ -24,6 +29,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { isValidDest } from "./moving";
 import type { DragOut } from "./desktop/dragOut";
 import type { Entry } from "./types";
+import { springLoader, type TabDropTarget } from "./shell/WorkspaceBar";
 
 export type DragState = {
   items: Entry[];
@@ -43,9 +49,20 @@ export type DragState = {
   copyOnly?: boolean;
   /** the pointer is outside the window (the items are about to go to another app) */
   outside?: boolean;
+  /** a workspace's tab under the pointer (WorkspaceBar `drop`) */
+  tab?: TabDropTarget | null;
+  /** what the ghost says where nothing takes the items (a tab that only opens, or refuses) */
+  note?: string | null;
 };
 
+/**
+ * A workspace's tab under the pointer: letting go there drops into it (`label` names where), it
+ * can't take the items (`why`), or (`open`) resting on it is all it does.
+ */
+export type TabTarget = { label: string; copyOnly?: boolean } | { why: string } | { open: string };
+
 const THRESHOLD = 5;
+/** resting on a folder this long opens it */
 const SPRING_MS = 900;
 /** Fetching for a drag out starts this close to the window's edge. */
 const NEAR_EDGE = 48;
@@ -61,18 +78,19 @@ function scrollerAt(x: number, y: number): HTMLElement | null {
 }
 
 export function useItemDrag<P extends string = string>({
-  paneId,
+  home,
   onDrop,
   onSpring,
   bucketTarget,
   paneTarget,
+  tabs,
   dragOut,
 }: {
-  /** the pane the drag starts in (dual pane) */
-  paneId?: P;
+  /** the pane that still shows the items' place (their own folders there are plain moves); null when none does */
+  home: () => P | null;
   onDrop: (items: Entry[], dest: string, copy: boolean, destBucket: string | null, pane: P | null, destProfile: string | null) => void;
-  /** hovering a folder for a moment opens it (Finder's spring-loaded folders) */
-  onSpring: (dest: string) => void;
+  /** hovering a folder for a moment opens it (Finder's spring-loaded folders), in pane `pane` (null: home) */
+  onSpring: (dest: string, pane: P | null) => void;
   /**
    * Whether a sidebar bucket accepts the items: null = no, "same" = the bucket they are in (a
    * move to its top level), "other" = another bucket of the same connection, or for a bucket of
@@ -84,12 +102,19 @@ export function useItemDrag<P extends string = string>({
    * shows), and the label of that place; null = no.
    */
   paneTarget?: (pane: P, dest: string | null, items: Entry[]) => { dest: string; label: string; copyOnly?: boolean } | null;
+  /** workspace tabs: which is under the point (not the one on screen), what it does with the items, resting on it, letting go there */
+  tabs?: {
+    at: (x: number, y: number) => string | null;
+    target: (id: string, items: Entry[]) => TabTarget;
+    onSpring: (id: string) => void;
+    onDrop: (id: string, items: Entry[], copy: boolean) => void;
+  };
   /** hands the drag to the system when the pointer leaves the window (desktop) */
   dragOut?: DragOut;
 }) {
   const [drag, setDrag] = useState<DragState | null>(null);
-  const cbs = useRef({ paneId, onDrop, onSpring, bucketTarget, paneTarget, dragOut });
-  cbs.current = { paneId, onDrop, onSpring, bucketTarget, paneTarget, dragOut };
+  const cbs = useRef({ home, onDrop, onSpring, bucketTarget, paneTarget, tabs, dragOut });
+  cbs.current = { home, onDrop, onSpring, bucketTarget, paneTarget, tabs, dragOut };
   const cleanup = useRef<(() => void) | null>(null);
 
   useEffect(() => () => cleanup.current?.(), []);
@@ -117,6 +142,22 @@ export function useItemDrag<P extends string = string>({
     let alt = ev.altKey;
     let springTimer = 0;
     let springFor: string | null = null;
+    /** the workspace tab under the pointer and what it does */
+    let tab: { id: string; t: TabTarget } | null = null;
+    /** the tab that just opened ("+" is still there under the pointer): it doesn't open again until left */
+    let sprung: string | null = null;
+    const tabSpring = springLoader((id) => {
+      if (ended) return;
+      tab = null;
+      sprung = id;
+      cbs.current.tabs?.onSpring(id);
+      // another layout is under the pointer now: what it is over there
+      requestAnimationFrame(() => {
+        if (ended || outside) return;
+        over(x, y);
+        show();
+      });
+    });
     const isCopy = () => copyOnly || alt;
     let x = sx;
     let y = sy;
@@ -144,7 +185,7 @@ export function useItemDrag<P extends string = string>({
       copyOnly = false;
       const pane = (el?.closest("[data-pane]")?.getAttribute("data-pane") ?? null) as P | null;
       let ok = false;
-      if (el && pane && cbs.current.paneId && pane !== cbs.current.paneId) {
+      if (el && pane && pane !== cbs.current.home()) {
         // a place in the other pane
         const t = d != null || el.hasAttribute("data-drop-pane") ? cbs.current.paneTarget?.(pane, d, items) : null;
         if (t) {
@@ -178,24 +219,51 @@ export function useItemDrag<P extends string = string>({
         label = null;
         copyOnly = false;
       }
-      // spring-load folder rows/tiles (not breadcrumbs: those are one click away anyway)
-      const springable = ok && !destPane && el!.hasAttribute("data-spring") ? d : null;
-      if (springable !== springFor) {
+      // spring-load folder rows/tiles, in any pane (not breadcrumbs: those are one click away anyway)
+      const springPane = destPane;
+      const springable = ok && el!.hasAttribute("data-spring") ? d : null;
+      const springKey = springable == null ? null : `${springPane ?? ""}:${springable}`;
+      if (springKey !== springFor) {
         window.clearTimeout(springTimer);
-        springFor = springable;
+        springFor = springKey;
         if (springable != null)
           springTimer = window.setTimeout(() => {
             light(null);
             dest = null;
             destBucket = null;
             destProfile = null;
+            destPane = null;
             setDrag((st) => (st ? { ...st, dest: null, bucket: null, pane: null, label: null } : st));
-            cbs.current.onSpring(springable);
+            cbs.current.onSpring(springable, springPane);
           }, SPRING_MS);
       }
     };
 
-    const show = () => setDrag({ items, x, y, dest, bucket: destBucket, profile: destProfile, pane: destPane, label, copy: isCopy(), copyOnly, outside });
+    /** What is under the point: a workspace's tab, else a place in the window (`hit`). */
+    const over = (x: number, y: number) => {
+      let id = cbs.current.tabs?.at(x, y) ?? null;
+      if (id !== sprung) sprung = null;
+      else id = null;
+      tabSpring.over(id);
+      if (!id) {
+        tab = null;
+        return hit(x, y);
+      }
+      unlight();
+      tab = { id, t: cbs.current.tabs!.target(id, items) };
+      if ("label" in tab.t) {
+        label = tab.t.label;
+        copyOnly = !!tab.t.copyOnly;
+      }
+    };
+    const tabState = (): Pick<DragState, "tab" | "note"> => {
+      if (!tab) return { tab: null, note: null };
+      const ok = "label" in tab.t ? true : "why" in tab.t ? false : null;
+      return { tab: { id: tab.id, ok, spring: tabSpring.pending === tab.id }, note: "why" in tab.t ? tab.t.why : "open" in tab.t ? tab.t.open : null };
+    };
+
+    const show = () =>
+      setDrag({ items, x, y, dest: tab && "label" in tab.t ? "" : dest, bucket: destBucket, profile: destProfile, pane: destPane, label, copy: isCopy(), copyOnly, outside, ...tabState() });
 
     const unlight = () => {
       light(null);
@@ -213,6 +281,7 @@ export function useItemDrag<P extends string = string>({
     const scrollTick = () => {
       scrollFrame = 0;
       if (outside || ended) return;
+      if (tab) return;
       const list = scrollerAt(x, y);
       if (!list) return;
       const r = list.getBoundingClientRect();
@@ -264,10 +333,12 @@ export function useItemDrag<P extends string = string>({
       if (outside) {
         // nothing in the window is under the pointer, and nothing there scrolls
         unlight();
+        tab = null;
+        tabSpring.over(null);
         handOver();
       } else {
         if (handing === "refused") handing = "no";
-        hit(x, y);
+        over(x, y);
         if (!scrollFrame) scrollFrame = requestAnimationFrame(scrollTick);
       }
       show();
@@ -278,11 +349,14 @@ export function useItemDrag<P extends string = string>({
       const b = destBucket;
       const p = destPane;
       const prof = destProfile;
+      const t = tab;
       alt = e.altKey;
       const c = isCopy();
       end();
       if (!wasActive) onClick?.();
-      else if (d != null) cbs.current.onDrop(items, d, c, b, p, prof);
+      else if (t) {
+        if ("label" in t.t) cbs.current.tabs?.onDrop(t.id, items, c);
+      } else if (d != null) cbs.current.onDrop(items, d, c, b, p, prof);
     };
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape" && active) {
@@ -299,6 +373,8 @@ export function useItemDrag<P extends string = string>({
       ended = true;
       if (scrollFrame) cancelAnimationFrame(scrollFrame);
       window.clearTimeout(springTimer);
+      tabSpring.cancel();
+      tab = null;
       light(null);
       document.body.classList.remove("dragging-items");
       window.removeEventListener("mousemove", move);

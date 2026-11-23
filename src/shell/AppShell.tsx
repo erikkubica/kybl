@@ -62,20 +62,26 @@ import {
   loadLinks,
   MAX_PANES,
   minSize,
+  movePane,
+  moveToward,
   relation,
   sameLink,
   saveLayout,
   saveLinks,
   setSizes,
+  shapeOf,
   splitPane,
   syncedWith,
   toggleLink,
   type Dir,
+  type DropZone,
   type PaneNode,
   type SyncLink,
 } from "./paneLayout";
 import { makeDualActions, paneName, type DualContext } from "./dualActions";
-import { WorkspaceBar, type PaneSwitcher } from "./WorkspaceBar";
+import { WorkspaceBar, wsTabAt, type PaneSwitcher } from "./WorkspaceBar";
+import { usePaneDrag, type DropCheck } from "./usePaneDrag";
+import { useFileDrag } from "./useFileDrag";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import {
   copyLayout,
@@ -98,6 +104,8 @@ import type { HistorySnap } from "../browser/useHistory";
 import { sameLoc } from "../browser/useListing";
 import { PaneContext } from "./PaneContext";
 import { useMigrationHost } from "./useMigrationHost";
+import { usePalette } from "../palette/usePalette";
+import { forgetPlacesOf } from "../palette/recent";
 import {
   allGroups,
   groupLabel,
@@ -373,6 +381,8 @@ export function AppShell() {
   };
   const closeEditor = async () => (editor.current ? editor.current.requestClose() : true);
 
+  /** a press on items starts the shell's drag of them (useFileDrag, further down) */
+  const beginItemDrag = useRef<PaneEnv["beginItemDrag"]>(undefined);
   const envFor = (id: PaneId): PaneEnv => ({
     id,
     storageKey: paneKeys(id).last,
@@ -402,6 +412,7 @@ export function AppShell() {
     },
     // the empty-space menu's Split ▸ (splitItems is defined further down; this runs on a right-click)
     splitItems: () => [{ type: "submenu", label: "Split", icon: "dual-pane", items: () => splitItems(id) }],
+    beginItemDrag: (...a) => beginItemDrag.current?.(...a),
     ...dualPane.envFor(id),
   });
   // one pane per slot, always (hooks can't come and go with the layout); a slot that isn't on
@@ -499,6 +510,7 @@ export function AppShell() {
   /** A connection was deleted: drop it from the sidebar, the history and the screen. */
   const forgetProfile = (id: string) => {
     recents.forget(id);
+    forgetPlacesOf(id);
     clearAuthNeeded(id);
     forgetCaps(id);
     conns.dropProfile(id);
@@ -598,7 +610,7 @@ export function AppShell() {
    * Splits a pane: the new one opens the same place (and view) and becomes the active pane. It
    * goes right of or below the pane, or with `before` left of or above it.
    */
-  const split = (dir: Dir, id: PaneId = activeId, before = false) => {
+  const split = (dir: Dir, id: PaneId = activeId, before = false, fill?: (fresh: PaneId) => void) => {
     const room = splitRoom(dir, id);
     if (room.ok === "no") return toast("info", room.why);
     // the panes need the sidebar's width: it folds to its rail, as a narrow Finder window hides its sidebar
@@ -611,7 +623,9 @@ export function AppShell() {
     const src = slot(id);
     const p = slot(fresh);
     opened.current.add(fresh);
-    if (src.here && src.profile) p.go(src.profile, src.here.bucket, src.here.prefix);
+    // `fill`: the new pane opens somewhere else (the command palette's ⌘↵)
+    if (fill) fill(fresh);
+    else if (src.here && src.profile) p.go(src.profile, src.here.bucket, src.here.prefix);
     else p.showConnection(src.profile?.id ?? null);
     if (p.view !== src.view) p.setView(src.view);
     setTree(splitPane(t, id, dir, fresh, before));
@@ -691,6 +705,7 @@ export function AppShell() {
       ? ([
           { type: "sep" },
           { type: "item", label: "Make panes the same size", onClick: () => setTree((t) => equalize(t)) },
+          { type: "submenu", label: "Move pane", icon: "move", items: () => moveItems(id) },
           { type: "sep" },
           { type: "item", label: "Close pane", icon: "x", hint: "⌘W", onClick: () => void close(id) },
           { type: "item", label: "Close other panes", onClick: () => closeOthers(id) },
@@ -767,34 +782,40 @@ export function AppShell() {
    * opens; without one, This Mac), and takes its layout and links. Synchronized
    * browsing doesn't follow these moves, and a pane waiting out of step forgets it.
    */
+  /**
+   * Points slot `id` at a pane as a workspace kept it: its place, how it looked, its Back / Forward
+   * and how far down its list was (`fallback`: where it opens without a place; without one, This Mac).
+   */
+  const fillSlot = (id: PaneId, s: PaneSnap | undefined, hist: HistorySnap | null, fallback: Loc | null) => {
+    const p = slot(id);
+    p.closeQuick();
+    p.ent.setQuery("");
+    p.applyView(s?.view ?? DEFAULT_VIEW);
+    opened.current.add(id);
+    const at = s?.loc ?? fallback;
+    const prof = at ? profiles.find((x) => x.id === at.profileId) : null;
+    if (at && prof) {
+      p.go(prof, at.bucket, at.prefix, { history: false });
+      p.history.load(hist, at);
+      void conns.loadBuckets(prof);
+      if (s?.scroll && s.loc) pendingScroll.current.set(id, { loc: s.loc, top: s.scroll });
+    } else {
+      p.showConnection(null);
+      p.history.load(null, null);
+      void connectIn(id, THIS_MAC);
+    }
+  };
   const applyLayout = (l: Layout, wsId: string, fallback: Loc | null, focus = true) => {
     const nextIds = leaves(l.tree);
     const hist = histories.current.get(wsId) ?? {};
     pendingScroll.current.clear();
     dualPane.quietly(() => {
       for (const id of PANE_IDS) {
-        const p = slot(id);
         if (!nextIds.includes(id)) {
           if (ids.includes(id)) vacate(id);
           continue;
         }
-        const s = l.panes[id];
-        p.closeQuick();
-        p.ent.setQuery("");
-        p.applyView(s?.view ?? DEFAULT_VIEW);
-        opened.current.add(id);
-        const at = s?.loc ?? fallback;
-        const prof = at ? profiles.find((x) => x.id === at.profileId) : null;
-        if (at && prof) {
-          p.go(prof, at.bucket, at.prefix, { history: false });
-          p.history.load(hist[id] ?? null, at);
-          void conns.loadBuckets(prof);
-          if (s?.scroll && s.loc) pendingScroll.current.set(id, { loc: s.loc, top: s.scroll });
-        } else {
-          p.showConnection(null);
-          p.history.load(null, null);
-          void connectIn(id, THIS_MAC);
-        }
+        fillSlot(id, l.panes[id], hist[id] ?? null, fallback);
       }
     });
     dualPane.forgetBehind();
@@ -965,6 +986,192 @@ export function AppShell() {
   };
   /** the parts of a layout that "Use the folders open now" would change */
   const placeKey = (l: Layout) => JSON.stringify([l.tree, l.links, leaves(l.tree).map((id) => [l.panes[id]?.loc ?? null, l.panes[id]?.view ?? null])]);
+
+  // ------------------------------------------------------------ moving panes
+  // A pane dragged by its header's empty part (usePaneDrag) docks beside another or swaps with
+  // it, or goes to another workspace: dropped on its tab, or into its layout once resting on the
+  // tab has opened it. The panes menu's Move pane ▸ steps it with the keyboard. A pane that moves
+  // keeps its slot, place, view, Back / Forward and links; one that changes workspace keeps all
+  // but its links (the panes they were with stay behind) and takes a free slot there.
+  /** Whether layout `t` fits the room the panes have now. */
+  const fitsRoom = (t: PaneNode) => {
+    const room = paneRoom();
+    const need = minSize(t);
+    return !room || (need.w <= room.w + 0.5 && need.h <= room.h + 0.5);
+  };
+  /** How far down each list on screen is, given back once the layout has changed (a pane that moves to another split is drawn anew). */
+  const keepScrolls = () => {
+    for (const id of ids) {
+      const here = slot(id).here;
+      const top = listScroller(id)?.scrollTop;
+      if (here && top) pendingScroll.current.set(id, { loc: here, top });
+    }
+  };
+  /** The panes on screen laid out as `next` (the same panes, moved): `id` is the one that moved and becomes the active one. */
+  const rearrange = (id: PaneId, next: PaneNode) => {
+    if (shapeOf(next) === shapeOf(treeRef.current)) return;
+    keepScrolls();
+    setTree(next);
+    setActiveId(id);
+    focusSoon(id);
+  };
+  /** Move pane ▸ Left, Right, Up, Down: past its neighbour that way, greyed out at the window's edge or without room. */
+  const moveItems = (id: PaneId): MenuItem[] =>
+    (["left", "right", "up", "down"] as const).map((d) => {
+      const next = moveToward(treeRef.current, id, d);
+      return {
+        type: "item",
+        label: d[0].toUpperCase() + d.slice(1),
+        icon: `arrow-${d}` as const,
+        disabled: !next || !fitsRoom(next),
+        onClick: () => next && rearrange(id, next),
+      };
+    });
+  /** the pane being dragged: its slot and the workspace it is in (on screen or not, once resting on a tab opened another) */
+  const dragFrom = useRef<{ ws: string; id: PaneId } | null>(null);
+  /** the dragged pane isn't in the workspace on screen */
+  const dragAway = () => !!dragFrom.current && dragFrom.current.ws !== ws.active;
+  /** A pane of a workspace not on screen, as it was left there. */
+  const keptPane = (wsId: string, id: PaneId) => ({ snap: ws.list.find((w) => w.id === wsId)?.panes[id], hist: histories.current.get(wsId)?.[id] ?? null });
+  /** A layout without pane `id`; the only pane leaves an empty one behind (a workspace always has one). */
+  const withoutPane = (l: Layout, id: PaneId): Layout => {
+    const t = closePane(l.tree, id);
+    if (!t) return oneLayout(null);
+    const panes = { ...l.panes };
+    delete panes[id];
+    return { tree: t, links: l.links.filter((x) => !x.includes(id)), recent: l.recent.filter((x) => x !== id), panes };
+  };
+  /** Takes pane `id` out of workspace `wsId` (not the one on screen). */
+  const takeFromKept = (wsId: string, id: PaneId) => {
+    const h = histories.current.get(wsId);
+    if (h) delete h[id];
+    setWs((cur) => ({ ...cur, list: cur.list.map((w) => (w.id === wsId ? { ...w, ...withoutPane(w, id) } : w)) }));
+  };
+  /** Takes pane `id` off the screen: closed, or as the only one, an empty pane in its place. */
+  const takeFromLive = (id: PaneId) => {
+    if (close(id)) return;
+    vacate(id);
+    applyLayout(oneLayout(null), ws.active, null);
+  };
+  /** Where a pane goes in workspace `l` (dropped on its tab): right of its active pane, else below it; or why it can't. */
+  const placeIn = (l: Layout, name: string): { tree: PaneNode; fresh: PaneId } | string => {
+    const ls = leaves(l.tree);
+    const fresh = freeSlot(l.tree);
+    if (!fresh || ls.length >= MAX_PANES) return `“${name}” already shows ${MAX_PANES} panes, the most a workspace can. Close one there first.`;
+    const act = l.recent.find((x) => ls.includes(x)) ?? ls[0];
+    for (const dir of ["row", "col"] as const) {
+      const t = splitPane(l.tree, act, dir, fresh);
+      if (fitsRoom(t)) return { tree: t, fresh };
+    }
+    return `There isn’t room for another pane in “${name}”. Make the window bigger, or close a pane there.`;
+  };
+  /** Pane `fresh` beside pane `target` on side `zone` of it. */
+  const dockAt = (t: PaneNode, target: PaneId, zone: DropZone, fresh: PaneId) =>
+    splitPane(t, target, zone === "left" || zone === "right" ? "row" : "col", fresh, zone === "left" || zone === "top");
+  /** What dropping the dragged pane on pane `target`'s `zone` would do. */
+  const checkDrop = (id: PaneId, target: PaneId, zone: DropZone): DropCheck => {
+    const t = treeRef.current;
+    if (!dragAway()) {
+      if (target === id) return null;
+      const next = movePane(t, id, target, zone);
+      if (shapeOf(next) === shapeOf(t)) return null;
+      return fitsRoom(next) ? "ok" : { why: "Not enough room" };
+    }
+    // brought from another workspace: it takes a free slot here
+    const fresh = freeSlot(t);
+    if (!fresh || leaves(t).length >= MAX_PANES) return { why: `${MAX_PANES} panes at most` };
+    return fitsRoom(dockAt(t, target, zone, fresh)) ? "ok" : { why: "Not enough room" };
+  };
+  const dropPane = (id: PaneId, target: PaneId, zone: DropZone) => {
+    const from = dragFrom.current;
+    if (!from || from.ws === ws.active) return rearrange(id, movePane(treeRef.current, id, target, zone));
+    // from the workspace it was dragged out of, into a free slot here
+    const t = treeRef.current;
+    const fresh = freeSlot(t);
+    if (!fresh) return;
+    const { snap, hist } = keptPane(from.ws, from.id);
+    keepScrolls();
+    dualPane.quietly(() => fillSlot(fresh, snap, hist, null));
+    setTree(dockAt(t, target, zone, fresh));
+    setActiveId(fresh);
+    focusSoon(fresh);
+    takeFromKept(from.ws, from.id);
+  };
+  /** latest steps for a toast's button (by the time it is clicked this render's values are old) */
+  const wsShow = useRef((_id: string) => {});
+  wsShow.current = switchWorkspace;
+  /** Whether letting go of the dragged pane on workspace `wsId`'s tab moves it there (null: the tab it came from, which only opens). */
+  const canToWorkspace = (_id: PaneId, wsId: string) => {
+    const from = dragFrom.current;
+    const w = ws.list.find((x) => x.id === wsId);
+    if (!from || !w || wsId === ws.active) return null;
+    if (wsId === from.ws) return null;
+    return typeof placeIn(w, w.name) !== "string";
+  };
+  /** The dragged pane let go on workspace `wsId`'s tab: it moves into that workspace, which stays where it is. */
+  const toWorkspace = (_id: PaneId, wsId: string) => {
+    const from = dragFrom.current;
+    const w = ws.list.find((x) => x.id === wsId);
+    if (!from || !w || wsId === from.ws || wsId === ws.active) return;
+    const placed = placeIn(w, w.name);
+    if (typeof placed === "string") return toast("info", placed);
+    const onScreen = from.ws === ws.active;
+    const name = onScreen ? nameOf(from.id) : (keptPane(from.ws, from.id).snap?.loc?.prefix.split("/").filter(Boolean).pop() ?? "The pane");
+    const { snap, hist } = onScreen ? { snap: snapOf(from.id, true), hist: slot(from.id).history.save() } : keptPane(from.ws, from.id);
+    const f = placed.fresh;
+    histories.current.set(wsId, { ...histories.current.get(wsId), [f]: hist ?? undefined });
+    setWs((cur) => ({
+      ...cur,
+      list: cur.list.map((x) =>
+        x.id !== wsId
+          ? x
+          : { ...x, tree: placed.tree, links: x.links.filter((l) => !l.includes(f)), recent: [f, ...x.recent.filter((r) => r !== f)], panes: { ...x.panes, [f]: snap } },
+      ),
+    }));
+    if (onScreen) takeFromLive(from.id);
+    else takeFromKept(from.ws, from.id);
+    toast("info", `Moved “${name}” to “${w.name}”`, { label: "Show", run: () => wsShow.current(wsId) });
+  };
+  const paneDrag = usePaneDrag({
+    // anywhere to move it: another pane, or another workspace (not with one pane at a time in a small window)
+    enabled: !cramped && (ids.length > 1 || ws.list.length > 1),
+    activeWs: ws.active,
+    ghost: (id) => ({ provider: slot(id).profile?.provider, name: nameOf(id) }),
+    centre: () => !dragAway(),
+    check: checkDrop,
+    onDrop: dropPane,
+    canToWorkspace,
+    onToWorkspace: toWorkspace,
+    onSpring: (_id, wsId) => switchWorkspace(wsId),
+    onStart: (id) => (dragFrom.current = { ws: ws.active, id }),
+    onEnd: () => (dragFrom.current = null),
+  });
+
+  // ------------------------------------------------------------ dragging files
+  // Items dragged from a list (useFileDrag): onto folders and panes, the sidebar, and other
+  // workspaces (their tabs: dropped there, or resting there to open them and drop inside).
+  /** A workspace not on screen: its name and the place of its active pane (where a drop on its tab lands). */
+  const wsDest = (id: string) => {
+    const w = ws.list.find((x) => x.id === id);
+    if (!w) return null;
+    const ls = leaves(w.tree);
+    const act = w.recent.find((x) => ls.includes(x)) ?? ls[0];
+    return { name: w.name, loc: w.panes[act]?.loc ?? null };
+  };
+  const fileDrag = useFileDrag({
+    activeWs: ws.active,
+    slot,
+    profiles,
+    rootLabel: conns.rootLabel,
+    cross: () => dualCtx.current!,
+    transfers,
+    autoShowActivity,
+    toast,
+    wsDest,
+    switchWorkspace,
+    newWorkspaceAt: (loc) => addWorkspace({ ...oneLayout({ loc, view: DEFAULT_VIEW }), id: newId(), name: nextName(ws.list), color: null, start: "restore", saved: null }, undefined, false),
+  });
+  beginItemDrag.current = fileDrag.begin;
 
   // refresh listing once all uploads have finished
   useEffect(
@@ -1327,9 +1534,9 @@ export function AppShell() {
     !!docRef.current ||
     dialogs.isOpen() ||
     !!(connDialog || kyblDialog || importOpen || allPanes.current.some((p) => p.quick)) ||
-    !!document.querySelector(".modal-backdrop, .ctx-menu, .ql-backdrop, .ws-pop");
+    !!document.querySelector(".modal-backdrop, .ctx-menu, .ql-backdrop, .ws-pop, .palette-backdrop");
 
-  useShellCommands({
+  const route = useShellCommands({
     active,
     visible: panesRef.current,
     overlayUp,
@@ -1373,8 +1580,68 @@ export function AppShell() {
     closeEditor,
   });
 
+  // ------------------------------------------------------------ command palette (⌘K)
+  const routeRef = useRef(route);
+  routeRef.current = route;
+  /** ⌘↵ in the palette: a new pane to the right, opened at `fill`'s place */
+  const inNewPane = (fill: (fresh: PaneId) => void) => {
+    const why = splitRefusal("row", activeId);
+    if (why) return toast("info", why);
+    split("row", activeId, false, fill);
+  };
+  const palette = usePalette({
+    here: active.here,
+    blocked: overlayUp,
+    host: () => ({
+      profiles,
+      builtIn: (p) => p.id === THIS_MAC.id,
+      recentConnections: recents.recent,
+      rootLabel: conns.rootLabel,
+      favorites: settings.favorites,
+      active,
+      panes: panesRef.current,
+      route: (id) => routeRef.current(id),
+      openConnection: (p, newPane) => (newPane ? inNewPane((fresh) => void connectIn(fresh, p)) : openConnection(p)),
+      openPlace: (loc, newPane, selectKey) => {
+        const p = profiles.find((x) => x.id === loc.profileId);
+        if (!p) return toast("error", "That connection no longer exists.");
+        void conns.loadBuckets(p);
+        if (newPane) return inNewPane((fresh) => slot(fresh).go(p, loc.bucket, loc.prefix, { selectKey }));
+        activeRef.current.go(p, loc.bucket, loc.prefix, { selectKey });
+        focusListSoon();
+      },
+      openFavorite: (f, newPane) => {
+        const p = profiles.find((x) => x.id === f.profileId);
+        if (newPane && p) inNewPane((fresh) => slot(fresh).go(p, f.bucket, f.prefix));
+        else openFavorite(f);
+      },
+      splitRefusal: (dir) => splitRefusal(dir, activeId),
+      closeOtherPanes: () => closeOthers(),
+      equalizePanes: () => setTree((t) => equalize(t)),
+      syncPartners: facing
+        .filter(({ pair: [a, b] }) => a === activeId || b === activeId)
+        .map(({ pair: [a, b] }) => {
+          const id = a === activeId ? b : a;
+          const dir = relation(tree, activeId, id);
+          return { id, name: dir ? `the pane ${dir === "up" ? "above" : dir === "down" ? "below" : `to the ${dir}`}` : nameOf(id), on: isLinked(activeId, id) };
+        }),
+      toggleSync: (id) => toggleSync(activeId, id),
+      workspaces: ws.list.map((w) => ({ id: w.id, name: w.name, active: w.id === ws.active })),
+      switchWorkspace,
+      showActivity: showActivityPanel,
+      openSettings,
+      importConnections: () => setImportOpen(true),
+      undo,
+      settings,
+      updateSettings,
+      settingsOpen,
+      closeSettings: () => setSettingsOpen(false),
+      toast: (k, t) => toast(k, t),
+    }),
+  });
+
   // ------------------------------------------------------------ drag & drop from Finder
-  const dropOver = useFinderDrop({
+  const { over: dropOver, tab: finderTab } = useFinderDrop({
     target: (x, y) => {
       // a dialog owns the screen: nothing lands behind it
       if (overlayUp()) return null;
@@ -1385,6 +1652,26 @@ export function AppShell() {
     },
     onDrop: (id, paths) => void paneById(id).ops.uploadPaths(paths),
     onRefused: () => overlayUp() && toast("info", "Finish what’s open first, then drop the files again."),
+    // over a workspace's tab: resting there opens it; letting go uploads into its active pane's folder
+    tabs: {
+      at: (x, y) => {
+        const id = overlayUp() ? null : wsTabAt(x, y);
+        return id === ws.active ? null : id;
+      },
+      accepts: (id) => {
+        const at = wsDest(id)?.loc;
+        return !!at && profiles.some((p) => p.id === at.profileId);
+      },
+      onSpring: switchWorkspace,
+      onDrop: (id, paths) => {
+        const w = wsDest(id);
+        const at = w?.loc;
+        if (!w || !at) return;
+        void activeRef.current.ops.uploadPaths(paths, at.prefix, at).then((ok) => {
+          if (ok) toast("info", `Uploading to ${at.prefix ? baseName(at.prefix) : conns.rootLabel(at.profileId, at.bucket)} in “${w.name}”`, { label: "Show", run: () => wsShow.current(id) });
+        });
+      },
+    },
   });
 
   // ------------------------------------------------------------ render
@@ -1430,6 +1717,9 @@ export function AppShell() {
     onActivate: () => {
       if (dual && activeId !== p.id) setActiveId(p.id);
     },
+    onGrip: paneDrag.grip?.(p.id),
+    // (after resting on a tab opened another workspace, this slot may be another pane)
+    lifted: paneDrag.dragging === p.id && !dragAway(),
   });
   const nameOf = (id: PaneId) => paneName(slot(id)) || slot(id).profile?.name || "Empty pane";
   const paneSwitcher: PaneSwitcher | null =
@@ -1546,7 +1836,10 @@ export function AppShell() {
           onSettings={(id, anchor) => setWsSettings((cur) => (cur?.id === id ? null : { id, anchor }))}
           onReorder={moveWorkspace}
           switcher={paneSwitcher}
+          drop={paneDrag.tabDrop ?? fileDrag.tabDrop ?? finderTab}
         />
+        {paneDrag.view}
+        {fileDrag.view}
         <PaneContext.Provider value={{ panes: panesRef.current, active, other, dual, setActive: setActiveId }}>
           {dual ? (
             <div className="content dual-wrap">
@@ -1716,6 +2009,7 @@ export function AppShell() {
         />
       )}
       {migrations.element}
+      {palette.element}
       {!settingsOpen && <UpdateBanner st={updates} />}
     </div>
   );

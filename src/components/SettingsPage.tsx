@@ -12,12 +12,13 @@ import { KyblLockup } from "./KyblMark";
 import { SyncSection } from "./SyncSection";
 // WP-E4: drives
 import { MountsSection } from "../mount/MountsSection";
+import { ActionsSection } from "../actions/ActionsSection";
 import { syncApi, type AppPrefs } from "../sync";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { actionLabel, ago, installAndRestart, updatesApi, useUpdates } from "../updates";
 import { formatBytes } from "../format";
 
-export type SettingsPageId = "general" | "appearance" | "browsing" | "transfers" | "sync" | "drives" | "connections" | "storage" | "shortcuts";
+export type SettingsPageId = "general" | "appearance" | "browsing" | "transfers" | "actions" | "sync" | "drives" | "connections" | "storage" | "shortcuts";
 type Page = SettingsPageId;
 
 const NAV: { title: string; items: { id: Page; label: string; icon: IconName }[] }[] = [
@@ -28,6 +29,7 @@ const NAV: { title: string; items: { id: Page; label: string; icon: IconName }[]
       { id: "appearance", label: "Appearance", icon: "eye" },
       { id: "browsing", label: "Browsing", icon: "folder" },
       { id: "transfers", label: "Transfers and sharing", icon: "upload" },
+      { id: "actions", label: "Actions", icon: "play" },
     ],
   },
   {
@@ -60,6 +62,8 @@ const FONTS: { id: FontChoice; label: string; family: string }[] = [
 
 /** Every shortcut the file browser knows (desktop/useShortcuts.ts, the lists and the menu bar). */
 const SHORTCUTS: { label: string; keys: string[] }[] = [
+  { label: "Command palette: connections, folders, commands, files", keys: ["⌘", "K"] },
+  { label: "Command palette: open in a new pane / complete a path", keys: ["⌘↵", "Tab"] },
   { label: "Search this folder", keys: ["⌘", "F"] },
   { label: "Find a connection in the sidebar", keys: ["⌥", "⌘", "F"] },
   { label: "Show or hide the sidebar", keys: ["⌥", "⌘", "S"] },
@@ -698,6 +702,7 @@ export function SettingsPage({
 
             {page === "sync" && <SyncSection profiles={profiles} activeProfileId={activeProfileId} onToast={onToast} />}
             {page === "drives" && <MountsSection profiles={profiles} onToast={onToast} />}
+            {page === "actions" && <ActionsSection onToast={onToast} />}
 
             {page === "connections" && (
               <>
