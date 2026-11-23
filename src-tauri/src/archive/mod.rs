@@ -280,6 +280,8 @@ struct Task<R: Runtime> {
     id: String,
     cancel: Arc<AtomicBool>,
     last: Mutex<Instant>,
+    /// said with "done": what was left out
+    note: Mutex<Option<String>>,
 }
 
 impl<R: Runtime> Task<R> {
@@ -313,12 +315,12 @@ where
         }
         c.insert(id.clone(), cancel.clone());
     }
-    let task = Arc::new(Task { app: app.clone(), id: id.clone(), cancel, last: Mutex::new(Instant::now() - Duration::from_secs(1)) });
+    let task = Arc::new(Task { app: app.clone(), id: id.clone(), cancel, last: Mutex::new(Instant::now() - Duration::from_secs(1)), note: Mutex::new(None) });
     task.emit("running", 0, 0, None);
     tauri::async_runtime::spawn(async move {
         let res = work(task.clone()).await;
         match res {
-            Ok(total) => task.emit("done", total, total, None),
+            Ok(total) => task.emit("done", total, total, task.note.lock().unwrap().take()),
             Err(e) if e.is_cancelled() || task.cancel.load(Ordering::Relaxed) => task.emit("cancelled", 0, 0, None),
             Err(e) => task.emit("error", 0, 0, Some(e.to_string())),
         }
@@ -446,7 +448,10 @@ pub async fn archive_compress(app: AppHandle, state: State<'_, AppState>, id: St
             }
         }
 
-        let plan = ops::plan_pack(&*src, &job.root, &job.items).await?;
+        let (plan, left_out) = ops::plan_pack(&*src, &job.root, &job.items).await?;
+        if !left_out.is_empty() {
+            *task.note.lock().unwrap() = Some(ops::left_out_note(&left_out));
+        }
         let total: u64 = plan.iter().map(|i| i.size).sum();
         let t = task.clone();
         let tick = move |n: u64| t.tick(n, total);

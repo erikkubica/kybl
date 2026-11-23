@@ -493,6 +493,19 @@ async fn drive_changes_skip_unreadable_parents_and_shared_drives() {
     assert!(mock.seen("/drive/v3/files/sd").is_empty(), "no walk up a shared drive");
 }
 
+/// B3-1: "Shared with me" has no folder id for a change to end at; its feed is refused (a sync
+/// lists it in full) rather than reporting every change as a removal.
+#[tokio::test]
+async fn shared_with_me_has_no_change_feed() {
+    let mock = Mock::start(|_| Resp::status(500)).await;
+    let g = GDrive::with_base(api(fixed("tok")), &mock.base);
+    for cursor in [None, Some("C1".to_string())] {
+        let e = g.changes(SHARED, cursor).await.unwrap_err();
+        assert_eq!(e.kind, ErrKind::Unsupported);
+    }
+    assert!(mock.seen("/drive/v3/changes").is_empty());
+}
+
 #[tokio::test]
 async fn renaming_at_the_top_of_my_drive_is_not_a_move() {
     let mut f = file("f1", "a.txt", "text/plain", "2023-01-01T00:00:00Z");

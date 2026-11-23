@@ -204,6 +204,16 @@ pub async fn plan(
                     if rel.is_empty() || e.native.is_some() || ignore.matches(rel, false) {
                         continue;
                     }
+                    // a link on this computer (to a file or a folder) is listed, never followed
+                    // out of the folder (`local_links`)
+                    if crate::local_links::skip_listed_link(src.caps(), e) {
+                        let target = e.link.as_deref().unwrap_or("");
+                        items.push(NewItem {
+                            not_copied: Some(format!("Not copied: this is a link to “{target}”, and Kybl doesn't follow links inside a folder.")),
+                            ..link_item(&e.key, target, join(&base_dst, rel))
+                        });
+                        continue;
+                    }
                     items.push(file_item(src, e, join(&base_dst, rel)));
                 }
                 page.next_token

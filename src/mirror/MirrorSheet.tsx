@@ -239,7 +239,7 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
   /** what the list shows: also a run for other options of these same folders, faded until previewed again */
   const shown = preview && JSON.stringify([preview.config.src, preview.config.dst]) === JSON.stringify([src, dst]) ? preview.plan : null;
   const removes = shown ? shown.remove.length + shown.removeDirs.length : 0;
-  const skipItems = useMemo(() => (shown ? [...shown.blocked, ...shown.kept, ...shown.unchanged] : []), [shown]);
+  const skipItems = useMemo(() => (shown ? [...shown.blocked, ...shown.links, ...shown.kept, ...shown.unchanged] : []), [shown]);
   const gitRules = gitignore ? parseRules(gitignore).length : 0;
   const localDst = !!caps.dst?.localPaths;
   const trash = !!caps.dst?.trash || localDst;
@@ -252,6 +252,7 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
     if (preview.dstMissing) notes.push("The destination folder isn't there yet; it's made first.");
     if (compare === "checksum" && plan.checksummed < plan.upload.filter((u) => u.why === "changed").length + plan.same) notes.push("Files without a checksum on both sides were compared by size and date.");
     if (plan.blocked.length) notes.push(`${files(plan.blocked.length)} can't be mirrored: a file and a folder have the same name.`);
+    if (plan.links.length) notes.push("Links are left alone: nothing at or behind a link is copied or deleted.");
   }
 
   const primary = !fresh ? (

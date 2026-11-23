@@ -13,7 +13,7 @@ import { refreshJobs, startMigrations } from "../jobs/useMigrations";
 import { makeMatcher } from "./ignore";
 import { caseInsensitiveKind, defaultTolerance, foldersOverlap, planIsEmpty, planMirror, type Listing, type MirrorPlan } from "./plan";
 import { getMirror, markRun, type MirrorConfig } from "./store";
-import { Cancelled, walk, type Place } from "./walk";
+import { Cancelled, folderMissing, listerFor, walk, type Place } from "./walk";
 
 export type MirrorPreview = {
   config: MirrorConfig;
@@ -72,16 +72,17 @@ async function kindOf(profileId: string): Promise<string | undefined> {
   }
 }
 
-/** Lists the destination; a folder that isn't there yet is an empty one (made when the mirror runs). */
+/**
+ * Lists the destination; a folder that isn't there yet is an empty one (made when the mirror
+ * runs). Only a folder its parent lists to the end without is taken as not there: any other
+ * failure stays a failure, never an empty destination that would be copied over in full.
+ */
 async function walkDst(at: Place, caps: Capabilities | null, ex: ReturnType<typeof makeMatcher>, signal?: AbortSignal, onCount?: (n: number) => void): Promise<{ list: Listing; missing: boolean }> {
   try {
     return { list: await walk(at, caps, ex, { signal, onCount }), missing: false };
   } catch (e) {
     if (e instanceof Cancelled || !at.dir) throw e;
-    // gone, or never made: its parent lists without it
-    const parent = at.dir.replace(/[^/]+\/$/, "");
-    const page = await api.listObjects(at.profileId, at.root, parent, null).catch(() => null);
-    if (!page || page.folders.includes(at.dir)) throw e;
+    if (!(await folderMissing(listerFor(at), at, signal))) throw e;
     return { list: { files: new Map(), dirs: new Set(), excluded: 0 }, missing: true };
   }
 }

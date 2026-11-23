@@ -272,7 +272,7 @@ export function useFileOps(c: FileOpsCtx) {
         for (const rf of found) {
           const rel = rf.key.slice(base.length);
           if (rel.endsWith("/")) continue;
-          items.push({ kind: "download", name: rel, profileId: l.profileId, bucket: l.bucket, key: rf.key, local: join(rel), total: rf.size });
+          items.push({ kind: "download", name: rel, profileId: l.profileId, bucket: l.bucket, key: rf.key, local: join(rel), total: rf.size, base: dir });
         }
       }
       pill.done();

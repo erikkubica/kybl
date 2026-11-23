@@ -243,7 +243,7 @@ export function makeFileOps(c: OpsContext) {
       const items: Parameters<TransferActions["add"]>[0] = [];
       const add = (key: string, size: number, rel: string, etag?: string | null) => {
         const safe = safeRelPath(rel);
-        if (safe) items.push({ kind: "download", name: safe, profileId: pid, bucket, key, local: joinPath(dir, safe), total: size, etag });
+        if (safe) items.push({ kind: "download", name: safe, profileId: pid, bucket, key, local: joinPath(dir, safe), total: size, etag, base: dir });
       };
       for (const e of list) {
         if (e.kind === "file") {

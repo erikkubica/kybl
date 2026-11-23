@@ -58,11 +58,44 @@ pub enum Outcome {
 }
 
 pub async fn copy_item(ctx: &Ctx, item: Item, inflight: Arc<AtomicU64>) -> Outcome {
+    if let Some(why) = link_refusal(ctx, &item) {
+        return Outcome::Failed(why);
+    }
     let r = if item.is_dir { make_dir(ctx, &item).await } else { copy_file(ctx, &item, &inflight).await };
     match r {
         Ok(o) => o,
         Err(e) => classify(ctx, &item, e).await,
     }
+}
+
+/// The rule for links on this computer (`local_links`), for one item: what is read from a picked
+/// folder here isn't a link or reached through one (a link to `~/.aws/credentials` in a project
+/// folder is never uploaded), and what comes from elsewhere isn't written through a link in the
+/// destination folder (a remote `Documents/x` never lands in a linked `~/Documents`). Checked
+/// when the item runs, so a mirror's list (planned by the page) and a link made since planning
+/// are covered too.
+fn link_refusal(ctx: &Ctx, item: &Item) -> Option<String> {
+    let spec = &ctx.spec;
+    let src_local = ctx.src.caps().local_paths;
+    let own = |p: &str| p.trim_end_matches('/').to_string();
+    if src_local {
+        // the picked folder it is in; a picked file (or link) itself is the user's own choice
+        let sel = spec.src.items.iter().filter(|s| s.is_dir).map(|s| super::plan::normalize_dir(&s.path)).filter(|d| item.src_path.starts_with(d.as_str()) && own(&item.src_path) != own(d)).max_by_key(String::len);
+        if let Some(sel) = sel
+            && let (Some(base), Some(path)) = (ctx.src.local_path(&spec.src.root, &own(&sel)), ctx.src.local_path(&spec.src.root, &own(&item.src_path)))
+            && let Err(why) = crate::local_links::safe_source(&base, &path)
+        {
+            return Some(why);
+        }
+    }
+    if !src_local
+        && ctx.dst.caps().local_paths
+        && let (Some(base), Some(path)) = (ctx.dst.local_path(&spec.dst.root, &own(&spec.dst.dir)), ctx.dst.local_path(&spec.dst.root, &own(&item.dst_path)))
+        && let Err(why) = crate::local_links::safe_write_target(&base, &path)
+    {
+        return Some(why);
+    }
+    None
 }
 
 async fn classify(ctx: &Ctx, item: &Item, e: StorageError) -> Outcome {

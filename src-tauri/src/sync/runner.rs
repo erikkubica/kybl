@@ -278,22 +278,25 @@ impl Engine<'_> {
         .map_err(|e| e.to_string())
     }
 
-    /// What this run leaves alone: folders and files that couldn't be read here, and names that
-    /// collide once normalised on either side. They are taken out of both snapshots and the
-    /// base, so nothing is deleted (or sent) for them; the base rows stay in sync.db for the
-    /// next run. Answers a problem to show for the unreadable ones; Err when the folder itself
-    /// can't be read (nothing in it can be trusted to be gone).
+    /// What this run leaves alone: folders and files that couldn't be read here, links here (a
+    /// synced folder replaced by a link isn't deleted on the other side, and nothing is written
+    /// through it), and names that collide once normalised on either side. They are taken out of
+    /// both snapshots and the base, so nothing is deleted (or sent) for them; the base rows stay
+    /// in sync.db for the next run. Links are left alone without a word (they are common: a
+    /// project's `node_modules/.bin`, a `.venv`), and must not turn every run into a failure.
+    /// Answers the notice to show for the unreadable ones; Err when the folder itself can't be
+    /// read (nothing in it can be trusted to be gone).
     fn exclude(
         &self,
         base: &mut HashMap<String, BaseEntry>,
         local: &mut LocalSnapshot,
         remote: Option<&mut RemoteSnapshot>,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Vec<String>, String> {
         if local.unreadable.iter().any(|p| p.is_empty()) {
             return Err(format!("Kybl can't read the folder {}. Check that it is allowed to, then sync again.", self.local_root.display()));
         }
         let mut ex = plan::Excluded::default();
-        for p in local.unreadable.iter().chain(&local.dupes) {
+        for p in local.unreadable.iter().chain(&local.dupes).chain(&local.links) {
             ex.add(p);
         }
         if let Some(r) = &remote {
@@ -302,24 +305,26 @@ impl Engine<'_> {
             }
         }
         if ex.is_empty() {
-            return Ok(None);
+            return Ok(vec![]);
         }
         ex.strip(base);
         ex.strip(&mut local.files);
         if let Some(r) = remote {
             ex.strip(&mut r.files);
         }
+        let mut notes = Vec::new();
         let mut unreadable = local.unreadable.clone();
         unreadable.sort();
         unreadable.dedup();
-        Ok(match unreadable.as_slice() {
-            [] => None,
-            [one] => Some(format!("Kybl couldn't read {one} on this computer, so it was left alone this time (nothing in it was synced or deleted).")),
-            [first, ..] => Some(format!(
+        match unreadable.as_slice() {
+            [] => {}
+            [one] => notes.push(format!("Kybl couldn't read {one} on this computer, so it was left alone this time (nothing in it was synced or deleted).")),
+            [first, ..] => notes.push(format!(
                 "Kybl couldn't read {} on this computer (like {first}), so they were left alone this time (nothing in them was synced or deleted).",
                 plural(unreadable.len(), "item")
             )),
-        })
+        }
+        Ok(notes)
     }
 
     /// Works out local MD5s only where they decide between "the same" and "a conflict" (both
@@ -364,15 +369,16 @@ impl Engine<'_> {
     }
 
     /// Runs the transfers with limited parallelism, writing the base and reporting as they
-    /// finish. Answers how many uploads and downloads made it.
-    async fn run_jobs(&self, jobs: Vec<Job>, total: u32, errors: &mut Vec<String>) -> (usize, usize) {
+    /// finish. Answers how many uploads and downloads made it, and whether any was skipped
+    /// because its file changed again meanwhile (left for the next run to look at afresh).
+    async fn run_jobs(&self, jobs: Vec<Job>, total: u32, errors: &mut Vec<String>) -> (usize, usize, bool) {
         let ups: HashSet<String> = jobs.iter().filter(|j| matches!(j, Job::Up { .. })).map(|j| j.rel().to_string()).collect();
         let total_bytes: u64 = jobs.iter().map(Job::size).sum();
         let bytes = Arc::new(RunBytes::default());
         let ctx = Arc::new(JobCtx { remote: self.remote.clone(), root: self.root.clone(), local_root: self.local_root.clone(), md5: self.md5(), cancel: self.cancel.clone() });
         let mut set = JoinSet::new();
         let mut queue = jobs.into_iter();
-        let (mut done, mut up_ok, mut down_ok) = (0u32, 0usize, 0usize);
+        let (mut done, mut up_ok, mut down_ok, mut skipped) = (0u32, 0usize, 0usize, false);
         // a single big file can take many minutes: report byte progress on a timer, not only per file
         let mut tick = tokio::time::interval(Duration::from_millis(400));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -395,7 +401,8 @@ impl Engine<'_> {
                                 Ok(()) => down_ok += 1,
                                 Err(e) => errors.push(format!("{rel}: {e}")),
                             },
-                            Ok(Done::Skipped | Done::Cancelled) => {}
+                            Ok(Done::Skipped) => skipped = true,
+                            Ok(Done::Cancelled) => {}
                             Err(e) if e == crate::storage::CANCELLED => {}
                             Err(e) => errors.push(format!("{rel}: {e}")),
                         }
@@ -405,7 +412,7 @@ impl Engine<'_> {
             }
             (self.report)(Tick { done, total, bytes: bytes.total(), total_bytes, current: bytes.slowest() });
         }
-        (up_ok, down_ok)
+        (up_ok, down_ok, skipped)
     }
 
     /// Deletes (or moves to the remote trash) the given paths on the other side. Answers the
@@ -613,7 +620,7 @@ impl Engine<'_> {
         if total > 0 {
             (self.report)(Tick { total, ..Default::default() });
         }
-        let (uploaded, _) = self.run_jobs(jobs, total, &mut errors).await;
+        let (uploaded, _, _) = self.run_jobs(jobs, total, &mut errors).await;
         let dels: Vec<(String, String)> = p.delete_remote.iter().map(|rel| (rel.clone(), self.push_key(rel, &local, rs))).collect();
         let deleted = self.delete_remote(&dels, &mut errors).await;
         self.db.drop_base_many(&self.id, &deleted)?;
@@ -670,7 +677,7 @@ impl Engine<'_> {
         if total > 0 {
             (self.report)(Tick { total, ..Default::default() });
         }
-        let (_, downloaded) = self.run_jobs(jobs, total, &mut errors).await;
+        let (_, downloaded, _) = self.run_jobs(jobs, total, &mut errors).await;
         let trash: Vec<(String, PathBuf)> = p.trash_local.iter().map(|rel| (rel.clone(), local.path(&self.local_root, rel))).collect();
         let trashed = self.delete_local(trash, &base, &mut errors).await;
         self.db.drop_base_many(&self.id, &trashed)?;
@@ -755,6 +762,9 @@ impl Engine<'_> {
 
         // ---- quick steps first: records, renames, setting conflicts aside
         let (mut renamed, mut conflicts) = (0usize, 0usize);
+        // something the plan wanted done was left for the next run (its file changed again
+        // meanwhile): the feed that reported it has to be read again (B4-3)
+        let mut left_alone = false;
         let mut jobs: Vec<Job> = Vec::new();
         let mut del_local: Vec<(String, PathBuf)> = Vec::new();
         let mut del_remote: Vec<(String, String)> = Vec::new();
@@ -834,6 +844,7 @@ impl Engine<'_> {
                     // only set aside what the plan saw: a newer edit is looked at next run
                     let same = std::fs::metadata(&src).is_ok_and(|m| m.len() == l.size && local::mtime_ms(&m) == l.mtime);
                     if !same || dst.exists() {
+                        left_alone = true;
                         continue;
                     }
                     if let Err(e) = local::no_link_on_the_way(&self.local_root, &dst) {
@@ -892,7 +903,8 @@ impl Engine<'_> {
         if total > 0 {
             (self.report)(Tick { total, ..Default::default() });
         }
-        let (ups, downs) = self.run_jobs(jobs, total, &mut errors).await;
+        let (ups, downs, skipped_jobs) = self.run_jobs(jobs, total, &mut errors).await;
+        left_alone |= skipped_jobs;
 
         // ---- deletions last, each remembered first so a lagging listing can't undo it
         let mut deleted = 0usize;
@@ -915,6 +927,8 @@ impl Engine<'_> {
             }
             let gone = self.delete_local(del_local.clone(), &base, &mut errors).await;
             let failed: Vec<(String, Side)> = del_local.iter().filter(|(p, _)| !gone.contains(p)).map(|(p, _)| (p.clone(), Side::Local)).collect();
+            // a file edited here since the scan is kept, without an error
+            left_alone |= !failed.is_empty();
             self.db.clear_tombstones(&self.id, &failed)?;
             self.db.drop_base_many(&self.id, &gone)?;
             deleted += gone.len();
@@ -924,7 +938,7 @@ impl Engine<'_> {
         // transfer or delete, a stop, or a change this run had to leave alone, the next quick run
         // reads the same changes again. A standing notice alone doesn't hold it back, or every
         // run would re-read (or, with an expired cursor, re-list) the other side until it's gone.
-        if errors.len() == standing && !skipped_changes && !held_from_feed && !self.cancelled() {
+        if errors.len() == standing && !skipped_changes && !left_alone && !held_from_feed && !self.cancelled() {
             match next_cursor {
                 Some(NextCursor::Changes(c)) => self.db.set_remote_cursor(&self.id, Some(&c))?,
                 Some(NextCursor::Full { at, cursor }) => self.db.set_full_scan(&self.id, at, cursor.as_deref())?,

@@ -544,7 +544,8 @@ fn the_remote_trash_keeps_every_version_deleted_the_same_day() {
 fn downloads_never_write_through_a_linked_folder() {
     run(async {
         // S2-1: `work` here is a link to a folder outside the synced one; the scan doesn't
-        // follow it, so `work/report.txt` on the other side looks new here
+        // follow it, and (B4-2) leaves it alone: nothing is written through it, and no run fails
+        // over it
         let p = pair().await;
         let outside = tmp("outside");
         write(&outside.join("keep.txt"), "mine");
@@ -552,15 +553,72 @@ fn downloads_never_write_through_a_linked_folder() {
         write(&p.r("work/report.txt"), "theirs");
         write(&p.r("ok.txt"), "ok");
         let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(true, None).await.unwrap();
-        assert!(r.errors.iter().any(|e| e.contains("is a link")), "{:?}", r.errors);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
         assert_eq!(read(&p.l("ok.txt")), "ok");
         assert!(!outside.join("report.txt").exists(), "nothing written outside the synced folder");
         let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).download().await.unwrap();
-        assert!(r.errors.iter().any(|e| e.contains("is a link")), "{:?}", r.errors);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
         assert!(!outside.join("report.txt").exists());
         assert_eq!(read(&outside.join("keep.txt")), "mine");
+        assert!(p.r("work/report.txt").exists(), "and the other side's files stay");
         assert!(local::link_on_the_way(&p.local, &p.local.join("a/b.txt")).is_none(), "folders not made yet are fine");
         assert!(local::link_on_the_way(&p.local, &outside.join("x")).is_some(), "outside the folder");
         let _ = fs::remove_dir_all(&outside);
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn a_synced_folder_replaced_by_a_link_is_not_deleted_on_the_other_side() {
+    run(async {
+        // B4-2: the user moves a synced folder away and leaves a link in its place
+        let p = pair().await;
+        write(&p.l("work/a.txt"), "a");
+        write(&p.l("work/sub/b.txt"), "b");
+        write(&p.l("top.txt"), "t");
+        p.twoway().await;
+        assert_eq!(files(&p.remote_dir), vec!["top.txt", "work/a.txt", "work/sub/b.txt"]);
+        let away = tmp("archive");
+        fs::rename(p.l("work"), away.join("work")).unwrap();
+        std::os::unix::fs::symlink(away.join("work"), p.local.join("work")).unwrap();
+        for full in [true, false] {
+            let dirty: HashSet<PathBuf> = [p.local.join("work")].into();
+            let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(full, if full { None } else { Some(dirty) }).await.unwrap();
+            assert!(r.errors.is_empty(), "{:?}", r.errors);
+            assert_eq!(files(&p.remote_dir), vec!["top.txt", "work/a.txt", "work/sub/b.txt"], "nothing deleted over there (full: {full})");
+        }
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).upload(true, None).await.unwrap();
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert_eq!(files(&p.remote_dir), vec!["top.txt", "work/a.txt", "work/sub/b.txt"]);
+        assert_eq!(files(&away.join("work")), vec!["a.txt", "sub/b.txt"]);
+        let _ = fs::remove_dir_all(&away);
+    });
+}
+
+#[test]
+fn a_change_left_for_the_next_run_keeps_the_listing_unhandled() {
+    run(async {
+        // B4-3: the other side's edit is planned as a download, but this computer's copy changes
+        // again before it runs: the download is skipped, so this listing (or a change feed) must
+        // not count as handled, or the other side's edit would be forgotten until a full listing
+        let p = pair().await;
+        write(&p.l("a.txt"), "a");
+        p.twoway().await;
+        let first = p.db.cursor("m").unwrap().last_full_scan;
+        assert!(first.is_some());
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        write(&p.r("a.txt"), "edited over there");
+        let edited = AtomicBool::new(false);
+        let local = p.l("a.txt");
+        let report = |t: Tick| {
+            // the plan is made: edit this computer's copy before the download starts
+            if t.total > 0 && !edited.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                fs::write(&local, "edited here, again and longer").unwrap();
+            }
+        };
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &report).twoway(true, None).await.unwrap();
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert_eq!(read(&p.l("a.txt")), "edited here, again and longer", "the newer edit here isn't overwritten");
+        assert_eq!(p.db.cursor("m").unwrap().last_full_scan, first, "the other side's edit is read again next time");
     });
 }

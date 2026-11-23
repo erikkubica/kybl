@@ -128,7 +128,7 @@ async function fulfil(c: DragOutContext, e: Entry, path: string) {
     // the backend already made the folder, so an empty one arrives too
     for (const f of await api.listAllUnder(c.profileId, c.bucket, e.key)) {
       const rel = safeRelPath(f.key.slice(e.key.length));
-      if (rel) items.push({ kind: "download", name: rel, profileId: c.profileId, bucket: c.bucket, key: f.key, local: joinPath(path, rel), total: f.size, overwrite: true });
+      if (rel) items.push({ kind: "download", name: rel, profileId: c.profileId, bucket: c.bucket, key: f.key, local: joinPath(path, rel), total: f.size, overwrite: true, base: path });
     }
   } else {
     const x = asExport(e);

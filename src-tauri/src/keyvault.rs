@@ -104,13 +104,13 @@ fn set_aside(path: &Path) {
     }
 }
 
-/// Writes next to the file and renames over it, so a crash never leaves half a file.
+/// Writes next to the file and renames over it, so a crash never leaves half a file: through
+/// [`crate::state::write_atomic`], which flushes the file to disk before the rename and the
+/// folder after it (a power loss can't leave an empty vault in place of the only copy of every
+/// secret) and uses a temporary name of its own (two running copies of Kybl can't mix their
+/// writes into one file). Only bytes are written: sealing and keys are untouched.
 fn replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
-    std::fs::write(&tmp, bytes).map_err(|e| format!("Could not save the secret key: {e}"))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("Could not save the secret key: {e}"))
+    crate::state::write_atomic(path, bytes).map_err(|e| format!("Could not save the secret key: {e}"))
 }
 
 /// Every secret, moving the old keychain item's into the file on the way.
@@ -298,6 +298,20 @@ mod tests {
         let mut v: Vec<String> = std::fs::read_dir(d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
         v.sort();
         v
+    }
+
+    /// B3-3 / S3-4: the vault is replaced through a temporary file of its own (another running
+    /// copy's half-written one is never renamed in) that is gone afterwards.
+    #[test]
+    fn replacing_uses_a_temporary_file_of_its_own() {
+        let d = dir();
+        let kc = Mem::default();
+        std::fs::write(d.join(format!("{FILE}.tmp")), b"another copy's half").unwrap();
+        write(&d, &kc, &keys()).unwrap();
+        assert_eq!(read(&d, &kc).unwrap(), keys());
+        assert_eq!(std::fs::read(d.join(format!("{FILE}.tmp"))).unwrap(), b"another copy's half", "not used or replaced");
+        assert!(files(&d).iter().all(|f| !f.ends_with(".tmp") || f == &format!("{FILE}.tmp")), "{:?}", files(&d));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

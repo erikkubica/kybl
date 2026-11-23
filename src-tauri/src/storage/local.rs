@@ -439,8 +439,8 @@ impl Storage for LocalBackend {
     /// Folders first, then files, each in name order; 1,000 a page. Each page is read afresh and
     /// starts after the last name the previous one sent (see [`net::page_after`]), so files
     /// coming and going meanwhile can't make a walk skip others. Links show as files (a link to a
-    /// file with that file's size and time) and are never descended into: a walk or a move of a
-    /// folder stays inside it.
+    /// file with that file's size and time), carry their target in `link`, and are never
+    /// descended into: a walk or a move of a folder stays inside it.
     async fn list(&self, root: &str, dir: &str, token: Option<String>) -> SResult<Page> {
         let p = self.resolve(root, dir, true).await?;
         let prefix = match dir.strip_suffix('/').unwrap_or(dir) {
@@ -466,9 +466,12 @@ impl Storage for LocalBackend {
                 };
                 let key = format!("{prefix}{name}");
                 if meta.file_type().is_symlink() {
+                    // marked with where it points, so anything going through the folder can tell
+                    // (`local_links`: never followed out of a copied, mirrored or zipped folder)
+                    let link = Some(std::fs::read_link(e.path()).map(|t| t.to_string_lossy().into_owned()).unwrap_or_default());
                     match std::fs::metadata(e.path()) {
-                        Ok(target) if target.is_file() => files.push(file_entry(key, &target)),
-                        Ok(_) => files.push(link_entry(key, &meta)),
+                        Ok(target) if target.is_file() => files.push(Entry { link, ..file_entry(key, &target) }),
+                        Ok(_) => files.push(Entry { link, ..link_entry(key, &meta) }),
                         // a broken link has nothing to show
                         Err(_) => {}
                     }
@@ -1025,6 +1028,8 @@ mod tests {
             let keys: Vec<_> = page.objects.iter().map(|o| o.key.as_str()).collect();
             assert_eq!(keys, vec!["sel/file-link", "sel/link", "sel/loop", "sel/own.txt"]);
             assert_eq!(page.objects[0].size, 4, "a link to a file shows that file");
+            let links: Vec<_> = page.objects.iter().map(|o| o.link.is_some()).collect();
+            assert_eq!(links, vec![true, true, true, false], "links say so (S2-3)");
             assert!(b.stat(&root, "sel/link").await.unwrap().is_some_and(|e| !e.is_dir()));
 
             let mut keys = Vec::new();

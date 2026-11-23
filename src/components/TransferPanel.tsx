@@ -690,6 +690,7 @@ function TransferPanelView({
                       <ErrorText message={t.error} />
                     </div>
                   )}
+                  {t.state === "done" && t.error && <div className="tp-note">{t.error}</div>}
                 </div>
                 <div className="tp-meta">
                   {t.state === "running" && (
