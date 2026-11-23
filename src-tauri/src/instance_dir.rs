@@ -34,6 +34,15 @@ fn private(_dir: &Path) {}
 /// This run's own folder below `base` (made private to this user), claimed on first use. The
 /// first claim also removes what ended runs left below `base`.
 pub fn claim(base: &Path) -> io::Result<PathBuf> {
+    claim_adopting(base, |_, _| true)
+}
+
+/// [`claim`], handing each folder an ended run left to `adopt(this run's folder, that folder)`
+/// before it is removed, so what has to outlive a run (the list of what it left on servers) can
+/// be taken over into this run's folder first. `adopt` returning false keeps that folder for a
+/// later start. This run's folder and lock exist before the sweep, so what `adopt` writes into
+/// it is never lost to a crash in between.
+pub fn claim_adopting(base: &Path, mut adopt: impl FnMut(&Path, &Path) -> bool) -> io::Result<PathBuf> {
     let mut held = HELD.lock().unwrap();
     if let Some((dir, _)) = held.get(base) {
         std::fs::create_dir_all(dir)?;
@@ -41,13 +50,13 @@ pub fn claim(base: &Path) -> io::Result<PathBuf> {
     }
     std::fs::create_dir_all(base)?;
     private(base);
-    sweep(base, None);
     let name = format!("{}-{}", std::process::id(), &uuid::Uuid::new_v4().simple().to_string()[..8]);
     let lock = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(base.join(format!("{name}.{LOCK}")))?;
     lock.try_lock().map_err(|e| io::Error::other(e.to_string()))?;
     let dir = base.join(&name);
     std::fs::create_dir_all(&dir)?;
     private(&dir);
+    sweep_adopting(base, Some(&name), &mut |gone| adopt(&dir, gone));
     held.insert(base.to_path_buf(), (dir.clone(), lock));
     Ok(dir)
 }
@@ -60,7 +69,13 @@ pub fn clear(base: &Path) {
 }
 
 /// Removes the folders below `base` that no running Kybl holds (`own`: a name to keep regardless).
-pub(crate) fn sweep(base: &Path, own: Option<&str>) {
+#[cfg(test)]
+fn sweep(base: &Path, own: Option<&str>) {
+    sweep_adopting(base, own, &mut |_| true);
+}
+
+/// [`sweep`], asking `adopt` about each folder first (false: it stays for a later start).
+fn sweep_adopting(base: &Path, own: Option<&str>, adopt: &mut dyn FnMut(&Path) -> bool) {
     let Ok(entries) = std::fs::read_dir(base) else { return };
     let mut locks = vec![];
     let mut dirs = vec![];
@@ -84,7 +99,12 @@ pub(crate) fn sweep(base: &Path, own: Option<&str>) {
         if f.try_lock().is_err() || young {
             continue;
         }
-        let _ = std::fs::remove_dir_all(base.join(stem));
+        // still locked here while it is taken over, so no other start takes it over as well
+        let gone = base.join(stem);
+        if gone.is_dir() && !adopt(&gone) {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(&gone);
         drop(f);
         let _ = std::fs::remove_file(path);
     }
@@ -94,6 +114,9 @@ pub(crate) fn sweep(base: &Path, own: Option<&str>) {
             continue;
         }
         if path.is_dir() {
+            if !adopt(&path) {
+                continue;
+            }
             let _ = std::fs::remove_dir_all(&path);
         } else {
             let _ = std::fs::remove_file(&path);

@@ -18,7 +18,10 @@ use std::{
     collections::HashMap,
     io::Cursor,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex, OnceLock,
+    },
     time::SystemTime,
 };
 
@@ -50,6 +53,13 @@ const DECODE_SLOTS: usize = 2;
 /// The disk cache is trimmed back to `CACHE_KEEP` (oldest first) once it grows past `CACHE_MAX`.
 const CACHE_MAX: u64 = 400 * 1024 * 1024;
 const CACHE_KEEP: u64 = 300 * 1024 * 1024;
+/// Kybl can run for weeks (in the tray): the cache is checked again after this many bytes of
+/// new thumbnails, not only at start-up.
+const TRIM_AFTER: u64 = 32 * 1024 * 1024;
+/// Bytes of thumbnails written since the cache was last checked.
+static WRITTEN: AtomicU64 = AtomicU64::new(0);
+/// A check is running.
+static TRIMMING: AtomicBool = AtomicBool::new(false);
 
 fn fnv1a(s: &str) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
@@ -204,9 +214,23 @@ fn cache_name(kind: ConnKind, profile_id: &str, bucket: &str, key: &str, etag: &
 }
 
 async fn save(path: &Path, jpeg: &[u8]) {
-    let tmp = path.with_extension("tmp");
-    if tokio::fs::write(&tmp, jpeg).await.is_ok() {
-        let _ = tokio::fs::rename(&tmp, path).await;
+    // a temporary name of its own: the same thumbnail can be made twice at once
+    let tmp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4().simple()));
+    if tokio::fs::write(&tmp, jpeg).await.is_err() || tokio::fs::rename(&tmp, path).await.is_err() {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return;
+    }
+    let len = jpeg.len() as u64;
+    if WRITTEN.fetch_add(len, Ordering::Relaxed) + len >= TRIM_AFTER && !TRIMMING.swap(true, Ordering::SeqCst) {
+        WRITTEN.store(0, Ordering::Relaxed);
+        if let Some(dir) = path.parent().map(Path::to_path_buf) {
+            tauri::async_runtime::spawn(async move {
+                let _ = tokio::task::spawn_blocking(move || trim(&dir, CACHE_MAX, CACHE_KEEP)).await;
+                TRIMMING.store(false, Ordering::SeqCst);
+            });
+        } else {
+            TRIMMING.store(false, Ordering::SeqCst);
+        }
     }
 }
 
@@ -464,33 +488,37 @@ fn reply(status: StatusCode, body: Vec<u8>) -> Response<Vec<u8>> {
 }
 
 /// Keeps the disk cache bounded: once it is over `CACHE_MAX`, the oldest thumbnails are removed
-/// until it is back under `CACHE_KEEP`. Runs once at start-up.
+/// until it is back under `CACHE_KEEP`. Runs at start-up, and again as new thumbnails add up
+/// (see `save`).
 pub async fn prune_cache<R: Runtime>(app: AppHandle<R>) {
     let Ok(dir) = cache_dir(&app) else { return };
-    let _ = tokio::task::spawn_blocking(move || {
-        let Ok(rd) = std::fs::read_dir(&dir) else { return };
-        let mut files: Vec<(SystemTime, u64, PathBuf)> = rd
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let m = e.metadata().ok()?;
-                m.is_file().then(|| (m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len(), e.path()))
-            })
-            .collect();
-        let mut total: u64 = files.iter().map(|f| f.1).sum();
-        if total <= CACHE_MAX {
-            return;
+    let _ = tokio::task::spawn_blocking(move || trim(&dir, CACHE_MAX, CACHE_KEEP)).await;
+}
+
+/// Removes the oldest files in `dir` until it holds `keep` bytes or less, once it holds more than
+/// `max`.
+fn trim(dir: &Path, max: u64, keep: u64) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut files: Vec<(SystemTime, u64, PathBuf)> = rd
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let m = e.metadata().ok()?;
+            m.is_file().then(|| (m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len(), e.path()))
+        })
+        .collect();
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    if total <= max {
+        return;
+    }
+    files.sort_by_key(|f| f.0);
+    for (_, len, path) in files {
+        if total <= keep {
+            break;
         }
-        files.sort_by_key(|f| f.0);
-        for (_, len, path) in files {
-            if total <= CACHE_KEEP {
-                break;
-            }
-            if std::fs::remove_file(&path).is_ok() {
-                total -= len;
-            }
+        if std::fs::remove_file(&path).is_ok() {
+            total -= len;
         }
-    })
-    .await;
+    }
 }
 
 /// Deletes all cached thumbnails. Returns the number of bytes freed.
@@ -533,6 +561,36 @@ mod tests {
     use crate::state::{build_client, Profile};
     use image::{ImageFormat, RgbImage, RgbaImage};
     use tauri::test::{mock_builder, mock_context, noop_assets};
+
+    #[test]
+    fn trimming_removes_the_oldest_thumbnails_down_to_the_keep_size() {
+        let dir = std::env::temp_dir().join(format!("kybl-thumb-trim-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let now = SystemTime::now();
+        for i in 0..10u64 {
+            let p = dir.join(format!("{i}.jpg"));
+            std::fs::write(&p, [0u8; 100]).unwrap();
+            std::fs::File::options().write(true).open(&p).unwrap().set_modified(now - std::time::Duration::from_secs(100 - i)).unwrap();
+        }
+        trim(&dir, 2000, 500);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 10, "under the limit: nothing goes");
+        trim(&dir, 900, 500);
+        let mut left: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, ["5.jpg", "6.jpg", "7.jpg", "8.jpg", "9.jpg"], "the newest stay");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn saving_a_thumbnail_twice_at_once_leaves_one_file() {
+        let dir = std::env::temp_dir().join(format!("kybl-thumb-save-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("a.jpg");
+        tokio::join!(save(&p, b"one"), save(&p, b"two"), save(&p, b"three"));
+        let names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names, ["a.jpg"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn ids_unpack_with_any_key() {

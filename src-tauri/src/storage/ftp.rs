@@ -148,41 +148,150 @@ fn offers_tls<'a>(feats: impl IntoIterator<Item = (&'a str, Option<&'a str>)>) -
 /// The servers ("user@host:port") an "encrypt if available" connection once reached with TLS,
 /// kept in the app's data folder: such a server refusing later is not taken as "it only speaks
 /// plain FTP" (that refusal is what someone on the network would forge to read the password).
+///
+/// The list only ever grows. Every write re-reads the file under a lock and merges (another
+/// running Kybl may have added servers since), and goes through a flushed temporary file. A file
+/// that can't be read is never taken for "nothing seen": what can still be read from it is kept,
+/// the damaged copy is set aside, and for the rest of the run every server counts as seen (an
+/// "encrypt if available" connection then refuses plain FTP and says how to allow it).
 pub mod tls_memory {
     use std::{
         collections::HashSet,
-        path::PathBuf,
+        path::{Path, PathBuf},
         sync::{Mutex, OnceLock},
     };
 
     static PATH: OnceLock<PathBuf> = OnceLock::new();
-    static SEEN: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+    static MEMORY: Mutex<Option<Memory>> = Mutex::new(None);
+
+    #[derive(Default, Debug)]
+    pub(super) struct Memory {
+        seen: HashSet<String>,
+        /// the file couldn't be read whole: entries may be missing, so every server counts as seen
+        doubt: bool,
+    }
+
+    impl Memory {
+        pub(super) fn seen(&self, key: &str) -> bool {
+            self.doubt || self.seen.contains(key)
+        }
+    }
 
     /// Where the list is kept (set once at start-up; without it, it lasts until the app quits).
     pub fn init(path: PathBuf) {
         let _ = PATH.set(path);
     }
 
-    fn with<T>(f: impl FnOnce(&mut HashSet<String>) -> T) -> T {
-        let mut g = SEEN.lock().unwrap();
-        let set = g.get_or_insert_with(|| {
-            PATH.get().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    /// The quoted names still readable in a damaged file (a list cut short, stray bytes).
+    fn salvage(raw: &[u8]) -> HashSet<String> {
+        let text = String::from_utf8_lossy(raw);
+        let mut out = HashSet::new();
+        let mut rest = text.as_ref();
+        while let Some(start) = rest.find('"') {
+            let after = &rest[start + 1..];
+            let mut end = None;
+            let mut escaped = false;
+            for (i, c) in after.char_indices() {
+                match c {
+                    '\\' if !escaped => escaped = true,
+                    '"' if !escaped => {
+                        end = Some(i);
+                        break;
+                    }
+                    _ => escaped = false,
+                }
+            }
+            let Some(end) = end else { break };
+            if let Ok(s) = serde_json::from_str::<String>(&format!("\"{}", &after[..=end]))
+                && !s.is_empty()
+            {
+                out.insert(s);
+            }
+            rest = &after[end + 1..];
+        }
+        out
+    }
+
+    /// Merges what the file holds into `m`. A damaged file: what can be read is kept, the file is
+    /// set aside and rewritten from that, and `m` stays in doubt. A file that exists but can't be
+    /// opened: in doubt too, and left alone (false: the file must not be written over).
+    pub(super) fn merge_from_disk(path: &Path, m: &mut Memory) -> bool {
+        let raw = match std::fs::read(path) {
+            Ok(raw) => raw,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
+            Err(_) => {
+                m.doubt = true;
+                return false;
+            }
+        };
+        match serde_json::from_slice::<Vec<String>>(&raw) {
+            Ok(list) => m.seen.extend(list),
+            Err(_) => {
+                m.doubt = true;
+                m.seen.extend(salvage(&raw));
+                let aside = path.with_extension(format!("damaged-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)));
+                if std::fs::rename(path, &aside).is_err() {
+                    return false;
+                }
+                let _ = write(path, m);
+            }
+        }
+        true
+    }
+
+    fn write(path: &Path, m: &Memory) -> std::io::Result<()> {
+        let mut list: Vec<&String> = m.seen.iter().collect();
+        list.sort();
+        crate::state::write_atomic(path, &serde_json::to_vec(&list).map_err(std::io::Error::other)?)
+    }
+
+    /// Adds `key` and writes the list: the file read again and merged first, under a lock that
+    /// other running copies of Kybl take too, so no copy's entries are ever dropped.
+    pub(super) fn add_and_save(path: &Path, m: &mut Memory, key: &str) {
+        m.seen.insert(key.to_string());
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let lock = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path.with_extension("lock"));
+        let _held = lock.as_ref().ok().filter(|f| f.lock().is_ok());
+        // a file that couldn't be read is never written over (it may hold entries this run lacks)
+        if merge_from_disk(path, m) {
+            let _ = write(path, m);
+        }
+    }
+
+    fn with<T>(f: impl FnOnce(&mut Memory, Option<&Path>) -> T) -> T {
+        let mut g = MEMORY.lock().unwrap();
+        let path = PATH.get().map(PathBuf::as_path);
+        let m = g.get_or_insert_with(|| {
+            let mut m = Memory::default();
+            if let Some(p) = path {
+                merge_from_disk(p, &mut m);
+            }
+            m
         });
-        f(set)
+        f(m, path)
     }
 
     pub fn seen(key: &str) -> bool {
-        with(|s| s.contains(key))
+        with(|m, path| {
+            // another running Kybl may have reached this server with TLS since the list was read
+            if !m.seen(key)
+                && let Some(p) = path
+            {
+                merge_from_disk(p, m);
+            }
+            m.seen(key)
+        })
     }
 
     pub fn remember(key: &str) {
-        let list = with(|s| s.insert(key.to_string()).then(|| s.iter().cloned().collect::<Vec<_>>()));
-        if let (Some(list), Some(path)) = (list, PATH.get()) {
-            let tmp = path.with_extension("tmp");
-            if serde_json::to_vec(&list).ok().is_some_and(|b| std::fs::write(&tmp, b).is_ok()) {
-                let _ = std::fs::rename(&tmp, path);
+        with(|m, path| match path {
+            Some(p) if !m.seen.contains(key) => add_and_save(p, m, key),
+            _ => {
+                m.seen.insert(key.to_string());
             }
-        }
+        })
     }
 }
 
@@ -1092,6 +1201,44 @@ mod tests {
         tls_memory::remember(&k);
         assert!(tls_memory::seen(&k));
         assert!(!NOT_OFFERED.contains(&421) && !NOT_OFFERED.contains(&431));
+    }
+
+    #[test]
+    fn tls_memory_of_two_running_copies_is_merged_never_dropped() {
+        use tls_memory::{add_and_save, merge_from_disk, Memory};
+        let dir = std::env::temp_dir().join(format!("kybl-tls-{}", uuid::Uuid::new_v4().simple()));
+        let path = dir.join("ftp-tls-seen.json");
+        // both copies read the (empty) list at start
+        let (mut a, mut b) = (Memory::default(), Memory::default());
+        merge_from_disk(&path, &mut a);
+        merge_from_disk(&path, &mut b);
+        add_and_save(&path, &mut a, "u@one:21");
+        add_and_save(&path, &mut b, "u@two:21");
+        let mut fresh = Memory::default();
+        merge_from_disk(&path, &mut fresh);
+        assert!(fresh.seen("u@one:21") && fresh.seen("u@two:21"), "{fresh:?}");
+        assert!(!fresh.seen("u@three:21"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_damaged_tls_memory_fails_closed_and_keeps_what_it_can() {
+        use tls_memory::{merge_from_disk, Memory};
+        let dir = std::env::temp_dir().join(format!("kybl-tls-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ftp-tls-seen.json");
+        // cut short by a crash
+        std::fs::write(&path, br#"["u@one:21","u@t\"wo:21","u@thr"#).unwrap();
+        let mut m = Memory::default();
+        merge_from_disk(&path, &mut m);
+        assert!(m.seen("u@never-seen:21"), "a damaged list must not be taken for 'nothing seen'");
+        let mut next_run = Memory::default();
+        merge_from_disk(&path, &mut next_run);
+        assert!(next_run.seen("u@one:21") && next_run.seen("u@t\"wo:21"), "what was readable is kept: {next_run:?}");
+        assert!(!next_run.seen("u@never-seen:21"), "the rewritten list reads normally again");
+        let aside = std::fs::read_dir(&dir).unwrap().filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().contains("damaged")).count();
+        assert_eq!(aside, 1, "the damaged file is set aside, not deleted");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

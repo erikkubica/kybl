@@ -24,7 +24,10 @@ mod tests;
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
@@ -106,7 +109,16 @@ pub struct MountManager {
     busy: tokio::sync::Mutex<()>,
     /// drives that were mounted when the app began to quit (mounted again by `resume`)
     resume: Mutex<Vec<String>>,
+    /// held while this run looks after the drives (see [`own_drives`])
+    owner: Mutex<Option<std::fs::File>>,
+    /// another running Kybl looks after the drives
+    elsewhere: AtomicBool,
+    /// one write of `mounts.json` at a time
+    saving: Mutex<()>,
 }
+
+/// What a drive shows while another running Kybl looks after the drives.
+const OTHER_COPY: &str = "Another copy of Kybl that is running looks after the drives. Quit that copy, then try again here.";
 
 // ---------------------------------------------------------------- persistence
 
@@ -118,20 +130,85 @@ fn load_configs(app: &AppHandle) -> Vec<MountConfig> {
     config_path(app).ok().and_then(|p| std::fs::read(p).ok()).and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default()
 }
 
-fn save_configs(app: &AppHandle, list: &[MountConfig]) -> Result<(), String> {
-    let p = config_path(app)?;
+pub(crate) fn write_configs(p: &std::path::Path, list: &[MountConfig]) -> Result<(), String> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(err)?;
     }
-    let tmp = p.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(list).map_err(err)?).map_err(err)?;
-    // the file holds each drive's path token: this account only
+    // the file holds each drive's path token: this account only (`write_atomic` keeps the
+    // permissions the file has, so a new one is made private before anything is in it)
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+    if !p.exists() {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new().write(true).create(true).truncate(false).mode(0o600).open(p).map_err(err)?;
     }
-    std::fs::rename(&tmp, &p).map_err(err)
+    crate::state::write_atomic(p, &serde_json::to_vec_pretty(list).map_err(err)?).map_err(err)
+}
+
+/// Writes the drives as they are now. One write at a time, each of the list as it is then, so
+/// an older list never lands after a newer one.
+fn persist(app: &AppHandle) -> Result<(), String> {
+    let mgr = app.state::<MountManager>();
+    let _one = mgr.saving.lock().unwrap();
+    let list = mgr.configs.lock().unwrap().clone();
+    write_configs(&config_path(app)?, &list)
+}
+
+fn owner_lock_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_data_dir().map_err(err)?.join("mounts.lock"))
+}
+
+/// Whether this run looks after the drives, taking them over when no other running Kybl does.
+/// Drives (their mount points, pending saves and `mounts.json`) belong to this account, not to
+/// one run, so only the run holding the lock mounts, unmounts or changes them: a second copy of
+/// the app would otherwise unmount the first one's drives and upload its pending saves twice.
+/// Taking them over later (the other copy quit) reads `mounts.json` again, as it left it.
+fn own_drives(app: &AppHandle) -> bool {
+    let mgr = app.state::<MountManager>();
+    let mut owner = mgr.owner.lock().unwrap();
+    if owner.is_some() {
+        return true;
+    }
+    let Ok(path) = owner_lock_path(app) else { return true };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let Ok(f) = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path) else { return true };
+    match try_own(f) {
+        Owner::Mine(f) => {
+            *owner = Some(f);
+            drop(owner);
+            let was_other = mgr.elsewhere.swap(false, Ordering::SeqCst);
+            let list = load_configs(app);
+            let ids: Vec<String> = list.iter().map(|c| c.id.clone()).collect();
+            *mgr.configs.lock().unwrap() = list;
+            if was_other {
+                for id in ids {
+                    emit(app, &id);
+                }
+            }
+            true
+        }
+        Owner::Other => {
+            mgr.elsewhere.store(true, Ordering::SeqCst);
+            false
+        }
+        // a file system without locks: no other copy can be told apart, go on as before
+        Owner::Unknown => true,
+    }
+}
+
+enum Owner {
+    Mine(std::fs::File),
+    Other,
+    Unknown,
+}
+
+fn try_own(f: std::fs::File) -> Owner {
+    match f.try_lock() {
+        Ok(()) => Owner::Mine(f),
+        Err(std::fs::TryLockError::WouldBlock) => Owner::Other,
+        Err(std::fs::TryLockError::Error(_)) => Owner::Unknown,
+    }
 }
 
 fn cache_dir(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
@@ -169,6 +246,25 @@ impl MountManager {
         let live = self.live.lock().unwrap();
         let l = live.get(&c.id);
         let (uploading, upload_bytes, upload_sent) = l.map(|l| l.fs.0.uploads.stats()).unwrap_or_default();
+        if l.is_none() && os::unsupported_reason().is_none() && self.elsewhere.load(Ordering::SeqCst) {
+            return MountInfo {
+                id: c.id.clone(),
+                profile_id: c.profile_id.clone(),
+                bucket: c.bucket.clone(),
+                prefix: c.prefix.clone(),
+                name: c.name.clone(),
+                read_only: c.read_only,
+                state: "error",
+                error: Some(OTHER_COPY.into()),
+                mount_point: None,
+                uploading: 0,
+                upload_bytes: 0,
+                upload_sent: 0,
+                upload_error: None,
+                notice: None,
+                cache_bytes: 0,
+            };
+        }
         MountInfo {
             id: c.id.clone(),
             profile_id: c.profile_id.clone(),
@@ -254,6 +350,14 @@ async fn root_read_only(app: &AppHandle, c: &MountConfig) -> bool {
 async fn mount_one(app: &AppHandle, id: &str) {
     let mgr = app.state::<MountManager>();
     let _one = mgr.busy.lock().await;
+    // quitting: `shutdown` has unmounted (or is unmounting) what was mounted; nothing new now
+    if crate::quit::quitting() {
+        return;
+    }
+    if os::unsupported_reason().is_none() && !own_drives(app) {
+        emit(app, id);
+        return;
+    }
     let Some(mut c) = mgr.config(id) else { return };
     if let Some(why) = os::unsupported_reason() {
         let _ = ensure_live(app, &c);
@@ -289,15 +393,11 @@ async fn mount_one(app: &AppHandle, id: &str) {
                     c.port = s.port;
                 }
                 mgr.set(id, |l| l.server = Some(s));
-                let list = {
-                    let mut list = mgr.configs.lock().unwrap();
-                    if let Some(x) = list.iter_mut().find(|x| x.id == id) {
-                        x.port = c.port;
-                        x.token = c.token.clone();
-                    }
-                    list.clone()
-                };
-                let _ = save_configs(app, &list);
+                if let Some(x) = mgr.configs.lock().unwrap().iter_mut().find(|x| x.id == id) {
+                    x.port = c.port;
+                    x.token = c.token.clone();
+                }
+                let _ = persist(app);
             }
             Err(e) => {
                 mgr.set(id, |l| {
@@ -371,6 +471,10 @@ async fn unmount_one(app: &AppHandle, id: &str, stop_uploads: bool, force: bool)
 /// At start-up: mounts the saved drives again.
 pub fn setup(app: &AppHandle) {
     app.manage(MountManager::default());
+    // only one running Kybl looks after the drives; the others list them with why they can't
+    if os::unsupported_reason().is_none() {
+        own_drives(app);
+    }
     let configs = load_configs(app);
     *app.state::<MountManager>().configs.lock().unwrap() = configs.clone();
     let app = app.clone();
@@ -397,7 +501,6 @@ pub fn setup(app: &AppHandle) {
 /// next start.
 pub async fn shutdown(app: &AppHandle, limit: Duration) {
     let Some(mgr) = app.try_state::<MountManager>() else { return };
-    let ids: Vec<String> = mgr.live.lock().unwrap().keys().cloned().collect();
     // small saves still waiting get a moment to go up first
     let queues: Vec<_> = mgr.live.lock().unwrap().values().map(|l| l.fs.0.uploads.clone()).collect();
     let _ = futures_util::future::join_all(queues.iter().map(|q| q.drain(limit / 3))).await;
@@ -405,6 +508,9 @@ pub async fn shutdown(app: &AppHandle, limit: Duration) {
     *mgr.resume.lock().unwrap() = mgr.live.lock().unwrap().iter().filter(|(_, l)| l.mounted.is_some()).map(|(id, _)| id.clone()).collect();
     let all = async {
         let _one = mgr.busy.lock().await;
+        // taken once a mount still under way (start-up) is done, so that drive goes too; any
+        // mount after this one sees `quitting` and doesn't start
+        let ids: Vec<String> = mgr.live.lock().unwrap().keys().cloned().collect();
         for id in &ids {
             let _ = unmount_one(app, id, true, true).await;
         }
@@ -498,13 +604,16 @@ pub async fn mount_add(app: AppHandle, profile_id: String, bucket: String, prefi
         let state = app.state::<AppState>();
         registry::open(&app, &state, &profile_id).await?;
     }
-    let mgr = app.state::<MountManager>();
-    if let Some(same) = mgr.configs.lock().unwrap().iter().find(|c| c.profile_id == profile_id && c.bucket == bucket && c.prefix == prefix) {
-        return Err(format!("This is already a drive: “{}”.", same.name));
+    if !own_drives(&app) {
+        return Err(OTHER_COPY.into());
     }
+    let mgr = app.state::<MountManager>();
     let wanted = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| default_name(&app, &profile_id, &bucket, &prefix));
     let c = {
         let mut list = mgr.configs.lock().unwrap();
+        if let Some(same) = list.iter().find(|c| c.profile_id == profile_id && c.bucket == bucket && c.prefix == prefix) {
+            return Err(format!("This is already a drive: “{}”.", same.name));
+        }
         let taken: Vec<String> = list.iter().map(|c| c.name.clone()).collect();
         let c = MountConfig {
             id: uuid::Uuid::new_v4().to_string(),
@@ -518,9 +627,12 @@ pub async fn mount_add(app: AppHandle, profile_id: String, bucket: String, prefi
             cache_limit_mb: None,
         };
         list.push(c.clone());
-        save_configs(&app, &list)?;
         c
     };
+    if let Err(e) = persist(&app) {
+        mgr.configs.lock().unwrap().retain(|x| x.id != c.id);
+        return Err(e);
+    }
     mount_one(&app, &c.id).await;
     Ok(mgr.info_of(&c))
 }
@@ -578,6 +690,10 @@ async fn remove_drive(app: &AppHandle, id: &str, connection_gone: bool) -> Resul
     let id = id.to_string();
     let mgr = app.state::<MountManager>();
     let _one = mgr.busy.lock().await;
+    // its pending saves and cache are the other copy's to look after while it runs
+    if os::unsupported_reason().is_none() && !own_drives(app) {
+        return Err(OTHER_COPY.into());
+    }
     let c = mgr.config(&id).ok_or("This drive isn't there any more.")?;
     let waiting = || mgr.live.lock().unwrap().get(&id).map(|l| l.fs.0.uploads.stats().0).unwrap_or(0);
     let still_uploading = |n: usize| {
@@ -631,12 +747,8 @@ async fn remove_drive(app: &AppHandle, id: &str, connection_gone: bool) -> Resul
     {
         let _ = std::fs::remove_dir_all(parent);
     }
-    let list = {
-        let mut list = mgr.configs.lock().unwrap();
-        list.retain(|x| x.id != id);
-        list.clone()
-    };
-    save_configs(app, &list)?;
+    mgr.configs.lock().unwrap().retain(|x| x.id != id);
+    persist(app)?;
     let _ = app.emit(STATUS_EVENT, MountInfo { state: "removed", ..mgr.info_of(&c) });
     crate::tray::refresh_mounts(app);
     Ok(())
