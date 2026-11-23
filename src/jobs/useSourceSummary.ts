@@ -27,7 +27,8 @@ const itemName = (i: MigrationItem, rootName: string) => (i.path === "" ? rootNa
 
 export function useSourceSummary(source: MigrationSource, verb: "copy" | "move") {
   const [srcNames, setSrcNames] = useState<{ connection: string; root: string } | null>(null);
-  const [sizes, setSizes] = useState<{ bytes: number; files: number; counting: boolean }>({ bytes: 0, files: 0, counting: false });
+  // `uncounted`: folders too many to count up front, so the amount says "plus N folders"
+  const [sizes, setSizes] = useState<{ bytes: number; files: number; counting: boolean; uncounted?: number }>({ bytes: 0, files: 0, counting: false });
   const multi = !!source.roots && source.roots.length > 0;
 
   // names of where the items come from
@@ -57,7 +58,7 @@ export function useSourceSummary(source: MigrationSource, verb: "copy" | "move")
       : source.items.filter((i) => i.isDir).map((i) => ({ root: source.root, path: i.path }));
     const base = { bytes: files.reduce((s, i) => s + (i.size ?? 0), 0), files: files.length };
     if (folders.length === 0 || folders.length > 20) {
-      setSizes({ ...base, counting: false });
+      setSizes({ ...base, counting: false, uncounted: multi ? 0 : folders.length });
       return;
     }
     setSizes({ ...base, counting: true });
@@ -87,6 +88,7 @@ export function useSourceSummary(source: MigrationSource, verb: "copy" | "move")
     multi ? `${source.roots!.length} ${source.roots!.length === 1 ? "bucket" : "buckets"}` : "",
     sizes.files > 0 ? `${sizes.files.toLocaleString()} ${sizes.files === 1 ? "file" : "files"}` : "",
     sizes.bytes > 0 || sizes.files > 0 ? `${formatBytes(sizes.bytes)}${sizes.counting ? " so far" : ""}` : "",
+    sizes.uncounted ? `${sizes.files > 0 ? "plus " : ""}${sizes.uncounted.toLocaleString()} folders` : "",
   ].filter(Boolean);
   /** " (12 files, 40 MB)" or "" while nothing is known */
   const amount = count.length ? ` (${count.join(", ")})` : "";

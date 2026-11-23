@@ -34,8 +34,11 @@ export type OpResult = { done: number; total: number; error: string | null };
 
 export const api = {
   listProfiles: () => invoke<Profile[]>("list_profiles"),
-  saveProfile: (profile: Profile, secret?: string) =>
-    invoke<Profile>("save_profile", { profile, secret: secret || null }),
+  /** `clearSecret`: forget the saved password (FTP and WebDAV), when no new one is given */
+  saveProfile: (profile: Profile, secret?: string, clearSecret?: boolean) =>
+    invoke<Profile>("save_profile", { profile, secret: secret || null, clearSecret: !!clearSecret }),
+  /** a saved connection has a password in the vault */
+  profileHasSecret: (id: string) => invoke<boolean>("profile_has_secret", { id }),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
   /** Files connections under sidebar groups by id ("" = the top level); returns every profile. */
   setProfileGroups: (groups: Record<string, string>) =>

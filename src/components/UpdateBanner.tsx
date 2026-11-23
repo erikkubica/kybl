@@ -12,6 +12,7 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
   const [, rerender] = useState(0);
   const [started, setStarted] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [restartError, setRestartError] = useState<string | null>(null);
   const rel = st?.available;
   if (!st || !rel) return null;
   const working = st.phase === "downloading" || st.phase === "installing";
@@ -60,10 +61,19 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
         ) : st.phase === "ready" ? (
           <>
             <b>Kybl {rel.version} is installed</b>
-            <small>{busy ? "Transfers are still running. Restart when they finish, or now to stop them." : "Restart to start using it."}</small>
+            <small className={restartError ? "update-err" : undefined}>
+              {restartError ?? (busy ? "Transfers are still running. Restart when they finish, or now to stop them." : "Restart to start using it.")}
+            </small>
             <div className="update-actions">
-              <button className="btn btn-sm btn-primary" onClick={() => updatesApi.restart(true).catch(() => {})}>
-                Restart now
+              <button
+                className="btn btn-sm btn-primary"
+                onClick={() => {
+                  setRestartError(null);
+                  // forced only once the user was told transfers are running
+                  updatesApi.restart(busy).catch((e) => (String(e) === "busy" ? setBusy(true) : setRestartError(String(e))));
+                }}
+              >
+                {busy ? "Restart and stop transfers" : "Restart now"}
               </button>
             </div>
           </>

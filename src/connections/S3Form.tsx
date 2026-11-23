@@ -5,6 +5,7 @@ import { providerMeta } from "../providers";
 import { ProviderBadge } from "../components/Sidebar";
 import type { Profile } from "../types";
 import { Field, RAW, SecretInput, type FormApi } from "./fields";
+import { endpointAfterRegion } from "./s3Endpoint";
 
 type Preset = {
   id: string;
@@ -104,7 +105,7 @@ export function S3Form({ initial, tried, formApi, onEdit }: { initial: Profile |
   };
   const pickRegion = (r: string) => {
     setRegion(r);
-    setEndpoint(preset.endpoint(r));
+    setEndpoint(endpointAfterRegion(preset.endpoint, region, r, endpoint));
     onEdit();
   };
 

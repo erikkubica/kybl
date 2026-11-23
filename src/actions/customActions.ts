@@ -21,7 +21,7 @@ import type { MenuItem } from "../components/Dialogs";
 import type { Dialogs } from "../shell/useDialogs";
 import type { TransferActions } from "../useTransfers";
 import type { useJobs } from "../useJobs";
-import type { Entry, Profile } from "../types";
+import type { Entry, Profile, Transfer } from "../types";
 import { OutputSheet } from "./OutputSheet";
 
 // ------------------------------------------------------------ the actions
@@ -552,7 +552,14 @@ async function localItems(ctx: ActionContext, runId: string, targets: Entry[]): 
   const started = ctx.transfers.add(
     files.map(({ e, x, local }) => ({ kind: "download" as const, name: x.name, profileId: pid, bucket, key: x.key, local, total: x.size, overwrite: true, etag: e.native ? undefined : x.etag })),
   );
-  const done = await Promise.all(started.map((t) => ctx.transfers.whenFinished(t.id)));
+  // Stop while getting them cancels these downloads too (see stopOrCancel)
+  preparing.set(runId, () => started.forEach((t) => ctx.transfers.cancel(t.id)));
+  let done: Transfer[];
+  try {
+    done = await Promise.all(started.map((t) => ctx.transfers.whenFinished(t.id)));
+  } finally {
+    preparing.delete(runId);
+  }
   const bad = done.find((t) => t.state !== "done");
   if (bad) throw new Error(bad.state === "cancelled" ? "Cancelled" : `Couldn’t get “${bad.name}”. ${bad.error ?? ""}`.trim());
   return { items: done.map((t) => ({ path: t.local, isDir: false })), dir };
@@ -635,10 +642,16 @@ export async function runAction(ctx: ActionContext, a: CustomAction, list: Entry
   }
 }
 
-/** Stop: before it runs (still downloading) marks it so it never starts; while running asks the backend. */
+/** Cancels the downloads of a run that is still getting its files, by run id. */
+const preparing = new Map<string, () => void>();
+
+/** Stop: before it runs (still downloading) marks it so it never starts and cancels the downloads; while running asks the backend. */
 export function stopOrCancel(runId: string) {
   const r = runsStore.get()[runId];
-  if (r?.state === "preparing") patchRun(runId, { state: "stopped", finished: Date.now() });
+  if (r?.state === "preparing") {
+    patchRun(runId, { state: "stopped", finished: Date.now() });
+    preparing.get(runId)?.();
+  }
   void stopRun(runId);
 }
 

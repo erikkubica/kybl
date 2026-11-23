@@ -130,7 +130,8 @@ export function Segmented<T extends string>({ label, value, options, onChange }:
 }
 
 /** The parts of a connection the dialog needs from whichever form is showing. */
-export type Draft = { profile: Profile; secret?: string };
+/** `clearSecret`: forget the saved password ("Remove saved password", FTP and WebDAV) */
+export type Draft = { profile: Profile; secret?: string; clearSecret?: boolean };
 
 /** What every kind's form gives the dialog (through `formApi`). */
 export type FormApi = {

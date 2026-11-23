@@ -211,7 +211,14 @@ export function ImportDialog({ onClose, onImported, toast }: Props) {
             </p>
           </div>
           <div className="modal-foot split">
-            <button type="button" className="btn" onClick={() => setSource(null)}>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setSource(null);
+                setError(null);
+              }}
+            >
               Back
             </button>
             <button type="button" className="btn btn-primary" onClick={() => void chooseFile(source)}>
@@ -225,6 +232,9 @@ export function ImportDialog({ onClose, onImported, toast }: Props) {
 }
 
 type Group = { key: string; label: string; sites: ImportSite[] };
+
+/** "Select all" and folder boxes tick these: importable and not already in Kybl */
+const bulkPickable = (s: ImportSite) => !s.skip && !s.duplicateOf;
 
 function SiteList({
   preview,
@@ -263,11 +273,11 @@ function SiteList({
     return [...by.values()].sort((a, b) => Number(!!a.key) - Number(!!b.key));
   }, [visible]);
 
-  const importable = (list: ImportSite[]) => list.filter((s) => !s.skip);
+  // bulk ticking leaves out sites already in Kybl (they can still be ticked one by one); unticking takes all
   const setMany = (list: ImportSite[], on: boolean) =>
     setPicked((cur) => {
       const next = new Set(cur);
-      for (const s of importable(list)) on ? next.add(s.id) : next.delete(s.id);
+      for (const s of list) if (!s.skip) on ? bulkPickable(s) && next.add(s.id) : next.delete(s.id);
       return next;
     });
   const toggle = (id: string) =>
@@ -353,7 +363,7 @@ function SiteList({
 }
 
 function FolderHead({ group, picked, onSet }: { group: Group; picked: Set<string>; onSet: (on: boolean) => void }) {
-  const can = group.sites.filter((s) => !s.skip);
+  const can = group.sites.filter(bulkPickable);
   const n = can.filter((s) => picked.has(s.id)).length;
   const box = useRef<HTMLInputElement>(null);
   useEffect(() => {

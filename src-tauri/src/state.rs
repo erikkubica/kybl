@@ -587,6 +587,24 @@ pub async fn set_secret(state: &AppState, profile_id: &str, secret: &str) -> Res
     Ok(())
 }
 
+/// Forgets only a connection's main secret (a password the server no longer wants); its
+/// `{id}#…` ones stay.
+pub async fn remove_main_secret(state: &AppState, profile_id: &str) -> Result<(), String> {
+    let dir = state.vault_dir.get().map(PathBuf::as_path);
+    let mut guard = state.secrets.lock().await;
+    if guard.is_none() {
+        *guard = Some(vault::read(dir)?);
+    }
+    let map = guard.as_mut().expect("vault loaded above");
+    if map.remove(profile_id).is_some() {
+        vault::write(dir, map)?;
+    }
+    if let Some(legacy) = vault::legacy(profile_id) {
+        legacy.delete();
+    }
+    Ok(())
+}
+
 /// Forgets a connection's secrets: the main one and every `{id}#…` one (sign-in tokens, SSH key).
 pub async fn delete_secret(state: &AppState, profile_id: &str) -> Result<(), String> {
     let dir = state.vault_dir.get().map(PathBuf::as_path);

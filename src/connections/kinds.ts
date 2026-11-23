@@ -87,7 +87,7 @@ export function baseProfile(id: string, name: string, kind: ConnKind): Profile {
 export function netTitle(kind: NetKind, n: NetConfig): string {
   if (kind === "webdav" && n.url?.trim()) {
     try {
-      const u = new URL(n.url.trim().replace(/^davs?:|^webdav:/i, "https:"));
+      const u = new URL(n.url.trim().replace(/^(web)?davs?:/i, "https:"));
       return n.user ? `${n.user}@${u.host}` : u.host;
     } catch {
       return n.url.trim();

@@ -423,6 +423,8 @@ export function Sidebar({
   const many = profiles.length > FILTER_MIN;
   const showFind = many || findAsked || !!query;
   const found = useMemo(() => findConnections(profiles, query), [profiles, query]);
+  // a stray space alone doesn't swap the list for "no match"
+  const searching = query.trim() !== "";
   // the overlay from the folded rail, brought up by ⌥⌘F or the rail's "All connections": it
   // takes the request that opened it
   // at once when the field is there (keys typed straight after ⌥⌘F land in it), else as soon as
@@ -473,10 +475,10 @@ export function Sidebar({
   };
   // the keyboard's row stays in view as it moves
   useEffect(() => {
-    if (!query) return;
+    if (!searching) return;
     const hit = found[cursor];
     if (hit) document.getElementById(`side-find-${hit.p.id}`)?.scrollIntoView({ block: "nearest" });
-  }, [cursor, query, found]);
+  }, [cursor, searching, found]);
 
   // ---- groups and recent
   const layout = useMemo(() => sidebarLayout(profiles), [profiles]);
@@ -509,7 +511,7 @@ export function Sidebar({
   const scrollRef = useRef<HTMLDivElement>(null);
   const revealed = useRef<string | null>(null);
   useLayoutEffect(() => {
-    if (!activeId || query) return;
+    if (!activeId || searching) return;
     if (revealed.current === activeId) return;
     const row = scrollRef.current?.querySelector(`[data-conn-row="${CSS.escape(activeId)}"]`);
     if (!row) return;
@@ -575,9 +577,9 @@ export function Sidebar({
             placeholder="Find connection"
             aria-label="Find a connection"
             role="combobox"
-            aria-expanded={!!query}
+            aria-expanded={searching}
             aria-controls="side-find-results"
-            aria-activedescendant={query && found[cursor] ? `side-find-${found[cursor].p.id}` : undefined}
+            aria-activedescendant={searching && found[cursor] ? `side-find-${found[cursor].p.id}` : undefined}
             spellCheck={false}
             autoCorrect="off"
             autoCapitalize="off"
@@ -603,7 +605,7 @@ export function Sidebar({
         </div>
       )}
       <div className="sidebar-scroll" ref={scrollRef}>
-        {query ? (
+        {searching ? (
           <FindResults
             found={found}
             query={query}

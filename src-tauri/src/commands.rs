@@ -54,6 +54,7 @@ pub async fn save_profile(
     state: State<'_, AppState>,
     mut profile: Profile,
     secret: Option<String>,
+    clear_secret: Option<bool>,
 ) -> Result<Profile, String> {
     if profile.id.is_empty() {
         profile.id = uuid::Uuid::new_v4().to_string();
@@ -73,6 +74,9 @@ pub async fn save_profile(
     }
     if let Some(s) = secret.as_deref().filter(|s| !s.is_empty()) {
         set_secret(&state, &profile.id, s).await?;
+    } else if clear_secret.unwrap_or(false) && matches!(profile.kind, ConnKind::Ftp | ConnKind::Webdav) {
+        // "Remove saved password": the server takes an anonymous / password-less sign-in now
+        crate::state::remove_main_secret(&state, &profile.id).await?;
     } else if profile.kind == ConnKind::S3 && get_secret(&state, &profile.id).await?.is_none() {
         return Err("A secret key is required for a new connection".into());
     }
@@ -89,6 +93,13 @@ pub async fn save_profile(
     // the connection may point somewhere else now (another endpoint or account)
     crate::filecache::forget_profile(&app, &profile.id).await;
     Ok(profile)
+}
+
+/// Whether a saved connection has a password (main secret) in the vault, so its form can say
+/// "Unchanged" only when there is one.
+#[tauri::command]
+pub async fn profile_has_secret(state: State<'_, AppState>, id: String) -> Result<bool, String> {
+    Ok(get_secret(&state, &id).await?.is_some_and(|s| !s.is_empty()))
 }
 
 /// Files connections under sidebar groups (`None` or "": the top level), by id. Only the group

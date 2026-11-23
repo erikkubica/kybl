@@ -269,7 +269,8 @@ export function JobsPanel({
   const jobs = useMigrations();
   const active = jobs.filter((j) => !isFinished(j));
   const done = jobs.filter(isFinished).slice(0, limit);
-  const clearable = jobs.filter(isFinished);
+  // done without problems, or cancelled: failed and partly failed copies stay (Resume, Try again)
+  const clearable = jobs.filter((j) => (j.progress.state === "done" && j.progress.filesFailed === 0) || j.progress.state === "cancelled");
 
   if (jobs.length === 0) {
     if (hideWhenEmpty) return null;

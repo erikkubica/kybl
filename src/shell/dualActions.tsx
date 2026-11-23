@@ -18,7 +18,7 @@ import type { Entry, Profile } from "../types";
 import type { TransferActions } from "../useTransfers";
 import type { Pane, PaneEnv } from "../browser/usePane";
 import type { Loc, PaneId } from "../browser/types";
-import { compareFolders, diffSelection } from "../compare/compareFolders";
+import { compareFolders, diffSelection, etagsComparable } from "../compare/compareFolders";
 import { CompareSummary } from "../compare/CompareSummary";
 import { crossesDisk, sendToPane, viaJob } from "./crossPane";
 import type { Dialogs } from "./useDialogs";
@@ -215,7 +215,7 @@ export function makeDualActions(get: () => DualContext) {
       c.dialogs.toast("info", "Clear the search to compare the folders");
       return;
     }
-    const diff = compareFolders(left.ent.allEntries, right.ent.allEntries);
+    const diff = compareFolders(left.ent.allEntries, right.ent.allEntries, { etags: etagsComparable(left.profile, right.profile) });
     const sel = diffSelection(diff);
     // a filter would hide some of what gets selected
     left.ent.setQuery("");
