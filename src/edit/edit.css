@@ -1,0 +1,258 @@
+/* Editing files of any connection (src/edit): the save-rule question, the conflict question,
+   the "Editing" list in the Activity panel and the editor sheet. Tokens from styles.css. */
+
+/* ---------------------------------------------------------------- "When you save this file:" */
+.ed-ask {
+  margin-bottom: 8px;
+  color: var(--dim);
+}
+.ed-choices {
+  display: grid;
+  gap: 6px;
+}
+.ed-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--field);
+  cursor: pointer;
+  line-height: 1.4;
+  transition: border-color 0.12s, background 0.12s;
+}
+.ed-choice:hover {
+  border-color: var(--border-strong);
+}
+.ed-choice.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.ed-choice input {
+  flex: none;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+.ed-choice-text {
+  flex: 1;
+  min-width: 0;
+}
+.ed-rec {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+/* ---------------------------------------------------------------- changed on the server */
+.ed-answers {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+}
+.ed-answer {
+  justify-content: flex-start;
+  gap: 9px;
+  height: auto;
+  min-height: 34px;
+  padding: 6px 12px;
+  text-align: left;
+  white-space: normal;
+}
+.ed-answer .spinner {
+  width: 14px;
+  height: 14px;
+}
+.ed-dim {
+  color: var(--dim);
+  font-weight: normal;
+}
+.modal-body p.ed-error {
+  margin: 10px 0 0;
+  color: var(--danger);
+}
+
+/* ---------------------------------------------------------------- "Editing (n)" */
+.ed-chip-wrap {
+  position: relative;
+  flex: none;
+}
+.ed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ed-chip:hover,
+.ed-chip.on {
+  background: var(--hover);
+  color: var(--text);
+}
+.ed-chip .spinner {
+  width: 11px;
+  height: 11px;
+}
+.ed-chip .pill {
+  margin: 0;
+}
+.pill.warn {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+}
+.ed-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 60;
+  width: min(460px, calc(100vw - 32px));
+  max-height: min(380px, 60vh);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--raised);
+  box-shadow: var(--shadow-lg);
+  animation: pop-in 0.16s var(--ease);
+  cursor: default;
+}
+.ed-pop-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 14px 6px;
+  font-size: 12.5px;
+}
+.ed-rows {
+  margin: 0;
+  padding: 0 6px 6px;
+  list-style: none;
+  overflow-y: auto;
+}
+.ed-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+.ed-row:hover {
+  background: var(--hover);
+}
+.ed-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ed-name,
+.ed-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ed-name {
+  font-size: 13px;
+}
+.ed-sub {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+.ed-state {
+  flex: none;
+  color: var(--dim);
+  font-size: 12px;
+}
+.ed-state.ok {
+  color: var(--ok);
+}
+.ed-state.warn {
+  color: var(--warn);
+}
+.ed-state.bad {
+  color: var(--danger);
+}
+.ed-row-acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.ed-row-acts .icon-btn {
+  width: 26px;
+  height: 26px;
+}
+.ed-pop-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* ---------------------------------------------------------------- "Edit in Kybl" */
+.ed-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  display: grid;
+  place-items: center;
+  padding: 52px 24px 24px;
+  background: var(--scrim);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: fade-in 0.14s;
+}
+.ed-sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(1100px, calc(100vw - 48px));
+  height: min(860px, calc(100vh - 76px));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  animation: pop-in 0.2s var(--ease);
+}
+.ed-sheet-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ed-sheet-body > .dv {
+  flex: 1;
+}
+.ed-rule {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--dim);
+  font-size: 11.5px;
+}
+@media (max-width: 700px) {
+  .ed-backdrop {
+    padding: 0;
+  }
+  .ed-sheet {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+  }
+}
+
+/* ---------------------------------------------------------------- Quick Look's info column */
+.info-edit {
+  display: flex;
+  margin-top: 8px;
+}

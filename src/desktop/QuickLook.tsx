@@ -39,6 +39,8 @@ export type QuickInfoActions = SizeProps & {
   /** servers: "Permissions…" and a link's "Show original" */
   onPermissions?(list: Entry[]): void;
   onShowOriginal?(e: Entry): void;
+  /** "Edit" for text-like files: the edit menu at the button (src/edit) */
+  onEdit?(e: Entry, at: { x: number; y: number }): void;
 };
 
 const isTyping = (t: EventTarget | null) => {
@@ -348,6 +350,7 @@ function QuickInfo({
         onCopyFile={onCopyFile}
         onPermissions={act.onPermissions && (() => act.onPermissions!([entry]))}
         onShowOriginal={act.onShowOriginal && (() => act.onShowOriginal!(entry))}
+        onEdit={act.onEdit && ((at) => act.onEdit!(entry, at))}
       />
     </div>
   );

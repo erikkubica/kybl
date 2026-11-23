@@ -1286,6 +1286,19 @@ function demoPdf(): ArrayBuffer {
   };
 }
 
+// ---------------------------------------------------------------- editing in another app (src/edit)
+// edit_* stand in for edit.rs; the console plays the other app (see src/edit/devEditMock.ts)
+{
+  type Invoke = (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
+  const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: Invoke } }).__TAURI_INTERNALS__;
+  const next = internals.invoke;
+  internals.invoke = async (cmd, args, options) => {
+    if (!cmd.startsWith("edit_")) return next(cmd, args, options);
+    const { handleEdit } = await import("./edit/devEditMock");
+    return handleEdit(cmd, (args ?? {}) as Record<string, unknown>);
+  };
+}
+
 // ---------------------------------------------------------------- WP-A2: cloud drive sign-in
 // oauth_start "signs in" after a moment and adds a connection with a made-up drive; Google
 // Drive, OneDrive and Dropbox connections answer the browse commands from the trees below.

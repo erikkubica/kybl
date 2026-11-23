@@ -106,6 +106,10 @@ import { PaneContext } from "./PaneContext";
 import { useMigrationHost } from "./useMigrationHost";
 import { usePalette } from "../palette/usePalette";
 import { forgetPlacesOf } from "../palette/recent";
+import { useEdit, type EditPlace } from "../edit/useEdit";
+import { EditorSheet } from "../edit/EditorSheet";
+import { LazyEditConflictHost, LazyEditingChip } from "../edit/lazy";
+import { useEditCount, type SaveRule } from "../edit/editStore";
 import {
   allGroups,
   groupLabel,
@@ -357,7 +361,8 @@ export function AppShell() {
 
   // ------------------------------------------------------------ full-window editor
   // Open on a text, code, Markdown, CSV, JSON or Office file shows it here, over everything
-  const [doc, setDoc] = useState<{ pane: PaneId; profileId: string; bucket: string; entry: Entry } | null>(null);
+  // `rule`: opened by "Edit in Kybl" (a sheet, saving under the rule picked for this edit)
+  const [doc, setDoc] = useState<{ pane: PaneId; profileId: string; bucket: string; entry: Entry; rule?: SaveRule; sheet?: boolean } | null>(null);
   const docRef = useRef(doc);
   docRef.current = doc;
   const editor = useRef<DocumentHandle>(null);
@@ -383,6 +388,24 @@ export function AppShell() {
 
   /** a press on items starts the shell's drag of them (useFileDrag, further down) */
   const beginItemDrag = useRef<PaneEnv["beginItemDrag"]>(undefined);
+  // ------------------------------------------------------------ Edit (src/edit)
+  const editPlace = (id: PaneId): EditPlace | null => {
+    const p = paneById(id);
+    if (!p.profile || p.bucket == null) return null;
+    return { profileId: p.profile.id, bucket: p.bucket, onDisk: !!peekCaps(p.profile.id)?.localPaths, ops: p.ops, pane: id };
+  };
+  const editing = useEditCount();
+  const edits = useEdit({
+    dialogs,
+    transfers,
+    reloadIfShowing,
+    openInKybl: (place, e, rule) => {
+      const id = (place.pane as PaneId | undefined) ?? activeRef.current.id;
+      paneById(id).closeQuick();
+      setDoc({ pane: id, profileId: place.profileId, bucket: place.bucket, entry: e, rule: rule ?? "ifUnchanged", sheet: true });
+    },
+  });
+
   const envFor = (id: PaneId): PaneEnv => ({
     id,
     storageKey: paneKeys(id).last,
@@ -403,6 +426,14 @@ export function AppShell() {
     rootLabel: conns.rootLabel,
     openDocument: (e) => openDocument(id, e),
     canOpenDocument: (e) => canOpenDocument(id, e),
+    editItems: (e) => {
+      const place = editPlace(id);
+      return place ? edits.itemsFor(place, e) : [];
+    },
+    editFile: (e) => {
+      const place = editPlace(id);
+      if (place) edits.editFile(place, e);
+    },
     openMigration: migrations.open,
     openDriveSettings: () => openSettings("drives"),
     sendItems: (ops, src, items, mode, dst, dest, onStarted) => {
@@ -1895,7 +1926,20 @@ export function AppShell() {
           }}
           onClearFailed={() => void clearFailed()}
           onReveal={(t) => revealItemInDir(t.local).catch(() => {})}
+          extraShown={editing > 0}
+          extra={
+            editing > 0 && (
+              <Suspense fallback={null}>
+                <LazyEditingChip connectionName={(pid) => profiles.find((x) => x.id === pid)?.name ?? ""} onStop={(list) => void edits.stop(list)} onReopen={edits.reopen} onReveal={edits.reveal} />
+              </Suspense>
+            )
+          }
         />
+        {editing > 0 && (
+          <Suspense fallback={null}>
+            <LazyEditConflictHost onStop={(s) => void edits.stop([s])} />
+          </Suspense>
+        )}
       </main>
 
       {settingsOpen && (
@@ -1965,25 +2009,29 @@ export function AppShell() {
         />
       )}
       {doc && (
-        <Suspense fallback={null}>
-          <LazyDocumentView
-            ref={editor}
-            profileId={doc.profileId}
-            bucket={doc.bucket}
-            entry={doc.entry}
-            mode="full"
-            onClose={() => {
-              setDoc(null);
-              requestAnimationFrame(() => focusPaneList(doc.pane));
-            }}
-            onSaved={() => {
-              // size, date and ETag changed (or a copy appeared); the editor's header says
-              // "Saved" / "Saved as …" itself, so no toast on top
-              reloadIfShowing(doc.profileId, doc.bucket);
-            }}
-            onOpenExternal={(e) => void paneById(doc.pane).ops.openInApp(e)}
-          />
-        </Suspense>
+        <DocShell sheet={!!doc.sheet} rule={doc.rule && peekCaps(doc.profileId)?.localPaths ? undefined : doc.rule}>
+          <Suspense fallback={null}>
+            <LazyDocumentView
+              ref={editor}
+              profileId={doc.profileId}
+              bucket={doc.bucket}
+              entry={doc.entry}
+              mode="full"
+              inline={doc.sheet}
+              saveRule={doc.rule}
+              onClose={() => {
+                setDoc(null);
+                requestAnimationFrame(() => focusPaneList(doc.pane));
+              }}
+              onSaved={() => {
+                // size, date and ETag changed (or a copy appeared); the editor's header says
+                // "Saved" / "Saved as …" itself, so no toast on top
+                reloadIfShowing(doc.profileId, doc.bucket);
+              }}
+              onOpenExternal={(e) => void paneById(doc.pane).ops.openInApp(e)}
+            />
+          </Suspense>
+        </DocShell>
       )}
       {wsSettings && wsOpen && (
         <WorkspaceSettings
@@ -2070,4 +2118,9 @@ function useSidePeek(folded: boolean, menuUp: () => boolean) {
     [close],
   );
   return { open, byFind, ref, hover, leave, clicked, show, close };
+}
+
+/** The document editor full-window ("Open"), or in a sheet ("Edit in Kybl", src/edit). */
+function DocShell({ sheet, rule, children }: { sheet: boolean; rule?: SaveRule; children: React.ReactNode }) {
+  return sheet ? <EditorSheet rule={rule}>{children}</EditorSheet> : <>{children}</>;
 }
