@@ -516,23 +516,56 @@ export function AppShell() {
     if (!one) return null;
     return { w: one.clientWidth - (dualPreview.previewOpen ? dualPreview.previewWidth : 0), h: one.clientHeight };
   };
-  /** Why pane `id` can't be split that way, or null when it can: a free slot, and room for every pane after it. */
-  const splitRefusal = (dir: Dir, id: PaneId): string | null => {
+  /** The width the sidebar gave up when a split folded it (0: it wasn't folded for a split). */
+  const autoFold = useRef(0);
+  useEffect(() => {
+    if (!sideHidden) autoFold.current = 0;
+  }, [sideHidden]);
+  /** After panes close: a sidebar a split folded comes back once the panes left fit beside it. */
+  const unfoldIfRoom = (next: PaneNode) => {
+    const box = document.querySelector<HTMLElement>(".splits");
+    if (!autoFold.current || !sideHidden || !box) return;
+    if (minSize(next).w <= box.clientWidth - autoFold.current) toggleSidebar();
+  };
+  /** The folded sidebar's rail (styles.css, `.app.side-hidden`). */
+  const SIDE_RAIL_W = 82;
+  /** The width folding the sidebar to its rail would give the panes (0 when it's folded already). */
+  const sideSpare = () => {
+    if (sideHidden) return 0;
+    const side = document.querySelector<HTMLElement>(".app .side-full > aside.sidebar");
+    return side ? Math.max(0, side.offsetWidth - SIDE_RAIL_W) : 0;
+  };
+  /**
+   * Whether pane `id` can be split that way: "no" with the reason (no free slot, or no room even
+   * with the sidebar folded), "fold" when it fits once the sidebar folds to its rail, or "ok".
+   */
+  const splitRoom = (dir: Dir, id: PaneId): { ok: "ok" | "fold" } | { ok: "no"; why: string } => {
     const t = treeRef.current;
     const fresh = freeSlot(t);
-    if (!fresh || leaves(t).length >= MAX_PANES) return `Kybl shows up to ${MAX_PANES} panes. Close one to make room.`;
+    if (!fresh || leaves(t).length >= MAX_PANES) return { ok: "no", why: `Kybl shows up to ${MAX_PANES} panes. Close one to make room.` };
     const room = paneRoom();
     const need = minSize(splitPane(t, id, dir, fresh));
-    if (room && (need.w > room.w || need.h > room.h)) return "There isn’t room for another pane. Make the window bigger, or close a pane.";
-    return null;
+    if (!room || (need.w <= room.w && need.h <= room.h)) return { ok: "ok" };
+    if (need.h <= room.h && need.w <= room.w + sideSpare()) return { ok: "fold" };
+    return { ok: "no", why: "There isn’t room for another pane. Make the window bigger, or close a pane." };
+  };
+  /** Why pane `id` can't be split that way, or null when it can (folding the sidebar if need be). */
+  const splitRefusal = (dir: Dir, id: PaneId): string | null => {
+    const r = splitRoom(dir, id);
+    return r.ok === "no" ? r.why : null;
   };
   /**
    * Splits a pane: the new one opens the same place (and view) and becomes the active pane. It
    * goes right of or below the pane, or with `before` left of or above it.
    */
   const split = (dir: Dir, id: PaneId = activeId, before = false) => {
-    const why = splitRefusal(dir, id);
-    if (why) return toast("info", why);
+    const room = splitRoom(dir, id);
+    if (room.ok === "no") return toast("info", room.why);
+    // the panes need the sidebar's width: it folds to its rail, as a narrow Finder window hides its sidebar
+    if (room.ok === "fold") {
+      autoFold.current = sideSpare();
+      toggleSidebar();
+    }
     const t = treeRef.current;
     const fresh = freeSlot(t)!;
     const src = slot(id);
@@ -570,6 +603,7 @@ export function AppShell() {
     if (!next) return false;
     vacate(id);
     setTree(next);
+    unfoldIfRoom(next);
     unlink((x) => x === id);
     setRecent((cur) => cur.filter((x) => x !== id));
     if (id === activeId) focusSoon(recent.find((x) => x !== id && leaves(next).includes(x)) ?? leaves(next)[0]);
@@ -578,6 +612,7 @@ export function AppShell() {
   const closeOthers = (id: PaneId = activeId) => {
     for (const x of ids) if (x !== id) vacate(x);
     setTree(leaf(id));
+    unfoldIfRoom(leaf(id));
     unlink((x) => x !== id);
     setActiveId(id);
     focusSoon(id);
