@@ -16,6 +16,16 @@ HASH="${KYBL_SIGNING_HASH:-$(cat "$DIR/identity-hash.txt" 2>/dev/null || true)}"
 [ -n "$HASH" ] || { echo "Set KYBL_SIGNING_HASH or put the identity hash in $DIR/identity-hash.txt"; exit 1; }
 [ -f "$KC" ] || { echo "Missing $KC. See $DIR/README.txt"; exit 1; }
 
+# The built-in sign-in clients (Google Drive, OneDrive, Dropbox) are compiled in from KYBL_* variables,
+# as release.yml does from the repo secrets. Locally they come from $DIR/oauth.env (KEY=value lines),
+# kept outside the repo like the signing files.
+if [ -f "$DIR/oauth.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$DIR/oauth.env"
+  set +a
+fi
+
 security unlock-keychain -p "$(cat "$DIR/password.txt")" "$KC"
 OLD_LIST="$(security list-keychains -d user | tr -d '"')"
 restore() { security list-keychains -d user -s $OLD_LIST; }
