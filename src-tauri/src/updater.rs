@@ -700,8 +700,31 @@ fn can_restart(_app: &AppHandle) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     appimage().ok_or("Not running from an AppImage")?;
     #[cfg(windows)]
-    _app.state::<Updater>().file.lock().unwrap().as_ref().filter(|(f, _)| f.is_file()).ok_or("The installer is missing. Try again.")?;
+    {
+        // the installer is checked here too (and again in `restart`): a file gone or changed
+        // in the cache fails before anything was stopped, and the update can be downloaded
+        // again instead of staying "ready" with a file that will never run
+        let file = _app.state::<Updater>().file.lock().unwrap().clone();
+        let checked = match &file {
+            Some((f, sha)) if f.is_file() => still_matches(f, sha),
+            _ => Err("The installer is missing. Try again.".into()),
+        };
+        if let Err(e) = checked {
+            forget_download(_app);
+            return Err(e);
+        }
+    }
     Ok(())
+}
+
+/// Back to "nothing downloaded": the next install downloads (and checks) the file again.
+#[cfg(windows)]
+fn forget_download(app: &AppHandle) {
+    app.state::<Updater>().file.lock().unwrap().take();
+    update(app, |st| {
+        st.phase = "";
+        st.received = 0;
+    });
 }
 
 #[cfg(target_os = "macos")]
@@ -723,7 +746,10 @@ fn restart(app: &AppHandle) -> Result<(), String> {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let (file, sha) = app.state::<Updater>().file.lock().unwrap().clone().ok_or("The installer is missing. Try again.")?;
     // it waited in the cache since it was checked: what runs is what was checked
-    still_matches(&file, &sha)?;
+    if let Err(e) = still_matches(&file, &sha) {
+        forget_download(app);
+        return Err(e);
+    }
     let started = if file.extension().is_some_and(|e| e.eq_ignore_ascii_case("msi")) {
         // msiexec cannot start the app afterwards: chain it
         let exe = std::env::current_exe().map_err(err)?;

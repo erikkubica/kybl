@@ -15,6 +15,9 @@ const GOOGLE_APPS: &str = "application/vnd.google-apps.";
 /// The fields Kybl reads of a file.
 pub const FILE_FIELDS: &str = "id,name,mimeType,size,modifiedTime,createdTime,md5Checksum,parents,version,thumbnailLink,shortcutDetails,webViewLink";
 
+/// What a shortcut to a file borrows from its target (see [`DFile::take_target`]).
+pub const TARGET_FIELDS: &str = "size,md5Checksum,modifiedTime,version";
+
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Shortcut {
@@ -47,6 +50,14 @@ impl DFile {
             Some(s) if self.mime_type == SHORTCUT && !s.target_id.is_empty() => (&s.target_id, &s.target_mime_type),
             _ => (&self.id, &self.mime_type),
         }
+    }
+    /// A shortcut takes on its target's size, MD5, time and version (fetched with
+    /// [`TARGET_FIELDS`]): what reading it gives. Its own id, name and parents stay.
+    pub fn take_target(&mut self, t: DFile) {
+        self.size = t.size;
+        self.md5_checksum = t.md5_checksum;
+        self.modified_time = t.modified_time.or(self.modified_time.take());
+        self.version = t.version.or(self.version.take());
     }
     pub fn is_folder(&self) -> bool {
         self.target().1 == FOLDER

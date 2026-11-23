@@ -1,7 +1,7 @@
 // Mirror's plan (src/mirror/plan.ts): new, changed, gone, excluded, FTP times. Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { caseInsensitiveKind, compareFiles, defaultTolerance, detectOffset, groupByFolder, planIsEmpty, planMirror, type Listing, type MFile, type PlanOptions } from "../../src/mirror/plan.ts";
+import { caseInsensitiveKind, compareFiles, defaultTolerance, detectOffset, foldersOverlap, groupByFolder, planIsEmpty, planMirror, type Listing, type MFile, type PlanOptions } from "../../src/mirror/plan.ts";
 
 const T = Date.UTC(2026, 10, 20, 12, 0, 0);
 const MIN = 60_000;
@@ -128,4 +128,24 @@ test("excluded counts come through, and changes group by folder", () => {
   assert.equal(p.excluded, 9);
   const g = groupByFolder(p.upload);
   assert.deepEqual(g.map((x) => [x.dir, x.items.length, x.bytes]), [["", 1, 4], ["a/", 2, 3], ["b/", 1, 3]]);
+});
+
+test("folders inside each other are caught, Windows roots included", () => {
+  const at = (profileId: string, root: string, dir: string) => ({ profileId, root, dir });
+  const L = (root: string, dir: string) => at("local", root, dir);
+  assert.equal(foldersOverlap(at("a", "r", "site/"), at("a", "r", "out/"), false), false);
+  assert.equal(foldersOverlap(at("a", "r", "site/"), at("a", "r", "site/out/"), false), true);
+  assert.equal(foldersOverlap(at("a", "r", "site/"), at("a", "q", ""), false), false);
+  assert.equal(foldersOverlap(L("/home/me", "Sites/"), L("/home/me/Sites", "acme/"), false), true);
+  assert.equal(foldersOverlap(L("/home/me", "Sites/acme/"), L("/home/me/Sites", "acme-live/"), false), false);
+  assert.equal(foldersOverlap(L("/home/me/Sites", ""), L("/home/me/Sites2", ""), false), false);
+  assert.equal(foldersOverlap(L("/home/me/a", ""), L("/home/me/A", ""), false), false, "case counts on Linux");
+  assert.equal(foldersOverlap(L("/Users/me/a", ""), L("/Users/me/A/x", ""), true), true, "not on macOS");
+  // B4-1: backslash roots, slash folders below them
+  assert.equal(foldersOverlap(L("C:\\Users\\me", "Sites/"), L("C:\\Users\\me\\Sites", "out/"), false), true);
+  assert.equal(foldersOverlap(L("C:\\Users\\me\\Sites", ""), L("C:\\Users\\me", "Sites/out/"), false), true);
+  assert.equal(foldersOverlap(L("C:\\Users\\me", "Sites/"), L("c:\\users\\ME\\sites", ""), false), true);
+  assert.equal(foldersOverlap(L("C:\\", ""), L("C:\\Data", ""), false), true);
+  assert.equal(foldersOverlap(L("C:\\Users\\me", "Sites/"), L("C:\\Users\\me\\Sites2", ""), false), false);
+  assert.equal(foldersOverlap(L("C:\\Users\\me", ""), L("D:\\Users\\me", ""), false), false);
 });

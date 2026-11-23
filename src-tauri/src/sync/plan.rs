@@ -186,6 +186,17 @@ impl Excluded {
         }
     }
 
+    /// The other side looks different under an excluded path than the base remembers it: a
+    /// change there that this run leaves alone, so whatever read it (a change feed) must read
+    /// it again next time.
+    pub fn other_side_changed(&self, base: &HashMap<String, BaseEntry>, remote: &HashMap<String, RemoteMeta>) -> bool {
+        if self.is_empty() {
+            return false;
+        }
+        let changed = base.iter().filter(|(k, _)| self.covers(k)).any(|(k, b)| !remote.get(k).is_some_and(|r| b.remote_matches(r)));
+        changed || remote.keys().any(|k| self.covers(k) && !base.contains_key(k))
+    }
+
     /// Takes the excluded paths out of a snapshot or a base.
     pub fn strip<V>(&self, m: &mut HashMap<String, V>) {
         if !self.is_empty() {

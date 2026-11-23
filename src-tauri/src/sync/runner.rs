@@ -152,6 +152,8 @@ enum Done {
 struct JobCtx {
     remote: Arc<dyn Storage>,
     root: String,
+    /// the synced folder: downloads never write through a link below it
+    local_root: PathBuf,
     md5: bool,
     cancel: Arc<AtomicBool>,
 }
@@ -195,6 +197,9 @@ async fn exec_transfer(job: Job, ctx: &JobCtx, progress: &(dyn Fn(u64, u64) + Se
             }
         }
         Job::Down { key, dest, remote, keep_local, expect, .. } => {
+            // a folder on the way that is a link (`work -> ~/Documents`) isn't in the scan, so
+            // the file looks absent here: writing it would land outside the synced folder
+            local::no_link_on_the_way(&ctx.local_root, &dest)?;
             let now = std::fs::metadata(&dest).ok();
             let still = match (expect, &now) {
                 (Expect::Absent, None) => true,
@@ -361,7 +366,7 @@ impl Engine<'_> {
         let ups: HashSet<String> = jobs.iter().filter(|j| matches!(j, Job::Up { .. })).map(|j| j.rel().to_string()).collect();
         let total_bytes: u64 = jobs.iter().map(Job::size).sum();
         let bytes = Arc::new(RunBytes::default());
-        let ctx = Arc::new(JobCtx { remote: self.remote.clone(), root: self.root.clone(), md5: self.md5(), cancel: self.cancel.clone() });
+        let ctx = Arc::new(JobCtx { remote: self.remote.clone(), root: self.root.clone(), local_root: self.local_root.clone(), md5: self.md5(), cancel: self.cancel.clone() });
         let mut set = JoinSet::new();
         let mut queue = jobs.into_iter();
         let (mut done, mut up_ok, mut down_ok) = (0u32, 0usize, 0usize);
@@ -471,6 +476,10 @@ impl Engine<'_> {
         let res = tokio::task::spawn_blocking(move || {
             let mut ok: Vec<(String, PathBuf)> = Vec::new();
             for (rel, p, b) in checks {
+                // a folder replaced by a link since it was synced: what's behind it isn't ours
+                if local::link_on_the_way(&root, &p).is_some() {
+                    continue;
+                }
                 let same = match (std::fs::metadata(&p), b) {
                     (Ok(m), Some(b)) => b.local_matches(&local_meta(&m)),
                     (Err(_), _) => true, // already gone
@@ -712,6 +721,13 @@ impl Engine<'_> {
         let mut base = self.load_base(&gi)?;
         let mut local = self.scan_local(&gi, &base, if full { None } else { dirty }).await?;
         let (mut remote, next_cursor) = self.twoway_remote(&gi, &base, full).await?;
+        // a path this computer can't read is left alone; the other side's changes under it are
+        // then not handled, and the feed has to be read from here again next time
+        let skipped_changes = {
+            let mut ex = plan::Excluded::default();
+            local.unreadable.iter().for_each(|p| ex.add(p));
+            ex.other_side_changed(&base, &remote.files)
+        };
         let unreadable = self.exclude(&mut base, &mut local, Some(&mut remote))?;
         let now = now_ms();
         self.db.purge_tombstones(now)?;
@@ -727,6 +743,12 @@ impl Engine<'_> {
         let plan = plan::plan_twoway(&local.files, &remote.files, &base, &tombstones, &opts);
         let mut errors: Vec<String> = unreadable.into_iter().collect();
         let pending = self.note_held(&plan.held, &local, Some(&remote), &base, &mut errors)?;
+        // the notices so far stand until the user acts (an unreadable folder, deletions waiting
+        // for a confirmation); only what comes after them is a failure of this run
+        let standing = errors.len();
+        // a deletion here that waits for a confirmation came from the other side's changes:
+        // they are read again until it is confirmed
+        let held_from_feed = plan.held.as_ref().is_some_and(|h| h.items.iter().any(|(_, side)| *side == Side::Local));
 
         // ---- quick steps first: records, renames, setting conflicts aside
         let (mut renamed, mut conflicts) = (0usize, 0usize);
@@ -770,7 +792,11 @@ impl Engine<'_> {
                     let Some(b) = base.get(from) else { continue };
                     let src = local.path(&self.local_root, from);
                     let dst = self.pull_dest(to, &local, &remote);
+                    let root = &self.local_root;
                     let res = (|| -> std::io::Result<std::fs::Metadata> {
+                        if let Err(e) = local::no_link_on_the_way(root, &dst).and_then(|_| local::no_link_on_the_way(root, &src)) {
+                            return Err(std::io::Error::other(e));
+                        }
                         if let Some(parent) = dst.parent() {
                             std::fs::create_dir_all(parent)?;
                         }
@@ -805,6 +831,10 @@ impl Engine<'_> {
                     // only set aside what the plan saw: a newer edit is looked at next run
                     let same = std::fs::metadata(&src).is_ok_and(|m| m.len() == l.size && local::mtime_ms(&m) == l.mtime);
                     if !same || dst.exists() {
+                        continue;
+                    }
+                    if let Err(e) = local::no_link_on_the_way(&self.local_root, &dst) {
+                        errors.push(format!("{path}: {e}"));
                         continue;
                     }
                     if let Err(e) = std::fs::rename(&src, &dst) {
@@ -887,9 +917,11 @@ impl Engine<'_> {
             deleted += gone.len();
         }
         self.finish(confirmed_used)?;
-        // the feed is only "handled up to here" once everything in it was: after a problem or a
-        // stop, the next quick run reads the same changes again
-        if errors.is_empty() && !self.cancelled() {
+        // the feed is only "handled up to here" once everything in it was: after a failed
+        // transfer or delete, a stop, or a change this run had to leave alone, the next quick run
+        // reads the same changes again. A standing notice alone doesn't hold it back, or every
+        // run would re-read (or, with an expired cursor, re-list) the other side until it's gone.
+        if errors.len() == standing && !skipped_changes && !held_from_feed && !self.cancelled() {
             match next_cursor {
                 Some(NextCursor::Changes(c)) => self.db.set_remote_cursor(&self.id, Some(&c))?,
                 Some(NextCursor::Full { at, cursor }) => self.db.set_full_scan(&self.id, at, cursor.as_deref())?,

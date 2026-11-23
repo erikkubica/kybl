@@ -81,6 +81,28 @@ export function caseInsensitiveKind(kind: string | undefined | null, platform: s
   return kind === "local" && /Mac|Win|iPhone|iPad|iPod/i.test(platform);
 }
 
+type At = { profileId: string; root: string; dir: string };
+
+/**
+ * One of the two folders is inside the other (or they are the same), like the job engine's
+ * `jobs::mirror::overlaps`. On this device the full paths count, whatever the roots: they are
+ * compared with `/` as the only separator (Windows roots come with `\`), at folder boundaries,
+ * and ignoring letter case where the disk does (`foldCase`, or a Windows-style root).
+ */
+export function foldersOverlap(src: At, dst: At, foldCase: boolean): boolean {
+  if (src.profileId !== dst.profileId) return false;
+  const inside = (a: string, b: string) => a.startsWith(b) || b.startsWith(a);
+  if (src.profileId !== "local") return src.root === dst.root && inside(src.dir, dst.dir);
+  const windows = (r: string) => r.includes("\\") || r[1] === ":";
+  const fold = foldCase || windows(src.root) || windows(dst.root);
+  const full = (p: At) => {
+    const joined = `${p.root}/${p.dir}`.replace(/\\/g, "/");
+    const out = (joined.startsWith("/") ? "/" : "") + joined.split("/").filter(Boolean).map((s) => `${s}/`).join("");
+    return fold ? out.toLowerCase() : out;
+  };
+  return inside(full(src), full(dst));
+}
+
 /**
  * A whole-hour clock difference most same-size pairs share (the destination's time minus the
  * source's), or 0. Needs at least 3 such pairs, more than match without one, and half of them.
