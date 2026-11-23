@@ -896,6 +896,8 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       }
       if (!a.profile.endpoint) throw "Endpoint is required";
       return "Connected. 4 buckets visible.";
+    case "ftp_allow_plain":
+      return null;
     case "create_bucket":
       await sleep(200);
       if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(a.bucket)) throw "Bucket names are 3-63 characters: lowercase letters, digits, dots and hyphens.";

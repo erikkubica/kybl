@@ -383,8 +383,7 @@ pub(crate) async fn move_with<R: Runtime>(
 
 /// Copies by reading and writing the bytes (stores without a server-side copy).
 pub(crate) async fn copy_through(s: &dyn Storage, from: &Loc, to: &Loc, is_dir: bool, cancel: &Arc<AtomicBool>) -> SResult<()> {
-    let copy_file = |src: String, dst: String| async move {
-        let r = s.read(&from.root, &src, None, None).await?;
+    let write_file = |r: ReadStream, dst: String| async move {
         let src = WriteSource::Stream { len: r.len, body: r.body, reopen: None };
         match s.write(&to.root, &dst, src, WriteOpts::default(), &|_, _| {}, cancel).await? {
             WriteOutcome::Done(_) => Ok(()),
@@ -392,6 +391,7 @@ pub(crate) async fn copy_through(s: &dyn Storage, from: &Loc, to: &Loc, is_dir: 
             WriteOutcome::Conflict(_) => Err(StorageError::conflict()),
         }
     };
+    let copy_file = |src: String, dst: String| async move { write_file(s.read(&from.root, &src, None, None).await?, dst).await };
     if !is_dir {
         return copy_file(from.path.clone(), to.path.clone()).await;
     }
@@ -410,8 +410,14 @@ pub(crate) async fn copy_through(s: &dyn Storage, from: &Loc, to: &Loc, is_dir: 
                 if s.caps().links {
                     s.make_link(&to.root, &dst, target).await?;
                 } else if !e.is_dir() {
-                    // a link to a file: what it points at is copied, as a download would get it
-                    copy_file(e.key, dst).await?;
+                    // a link to a file: what it points at is copied, as a download would get it.
+                    // FTP's LIST shows every link as a file, links to folders too: one that can't
+                    // be read as a file is left out (and said), unless the connection itself failed
+                    match s.read(&from.root, &e.key, None, None).await {
+                        Ok(r) => write_file(r, dst).await?,
+                        Err(err) if link_read_is_fatal(&err) => return Err(err),
+                        Err(_) => skipped.push(e.key),
+                    }
                 } else {
                     skipped.push(e.key);
                 }
@@ -423,9 +429,15 @@ pub(crate) async fn copy_through(s: &dyn Storage, from: &Loc, to: &Loc, is_dir: 
         }
     }
     if !skipped.is_empty() {
-        return Err(StorageError::other(format!("Copied, except {} link(s) to folders this connection can't make.", skipped.len())).with_detail(skipped.join("\n")));
+        return Err(StorageError::other(format!("Copied, except {} link(s) to folders (or to something no longer there), which this connection can't copy.", skipped.len())).with_detail(skipped.join("\n")));
     }
     Ok(())
+}
+
+/// A link that couldn't be read as a file during a copy stops the copy only when the connection
+/// itself is in trouble; otherwise it is taken for a link to a folder (or to nothing) and left out.
+fn link_read_is_fatal(e: &StorageError) -> bool {
+    matches!(e.kind, ErrKind::Network | ErrKind::Cancelled | ErrKind::NeedsAuth | ErrKind::RateLimited | ErrKind::UntrustedCert | ErrKind::CertChanged | ErrKind::Unencrypted)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -549,12 +561,11 @@ pub(crate) async fn download_resumable(
     // a partial file of an earlier attempt: the rest of the same version, if the server can
     let mut resumed = None;
     if let Some(version) = resume
-        && let Ok(m) = tokio::fs::metadata(&part).await
+        && let Some((f, have)) = dest::open_part(&part).await
         && let Ok(Some(now)) = s.stat(bucket, key).await
-        && let Some(at) = continue_at(m.len(), Some(now.size.max(0) as u64), Some(version), ranged)
+        && let Some(at) = continue_at(have, Some(now.size.max(0) as u64), Some(version), ranged)
         && let Ok(r) = s.read(bucket, key, Some(at..now.size as u64), Some(version)).await
         && r.range.as_ref().map(|g| g.start) == Some(at)
-        && let Ok(f) = tokio::fs::OpenOptions::new().append(true).open(&part).await
     {
         resumed = Some((r, at, f, now.size as u64));
     }
@@ -564,7 +575,7 @@ pub(crate) async fn download_resumable(
             let r = s.read(bucket, key, None, None).await?;
             let total = r.total.or(r.len).unwrap_or(0);
             let etag = r.etag.clone();
-            let f = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;
+            let f = dest::create_part(&part).await.map_err(|e| e.to_string())?;
             crate::leftovers::partial_started(&part);
             (r, 0, f, total, etag)
         }

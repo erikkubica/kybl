@@ -218,6 +218,7 @@ pub fn run() {
             import::import_preview,
             import::import_apply,
             commands::test_connection,
+            storage::ftp::ftp_allow_plain,
             commands::list_buckets,
             commands::create_bucket,
             commands::list_objects,

@@ -142,6 +142,12 @@ export type CertTrouble = {
   validUntil: string | null;
 };
 
+/** FTP "encrypt if available": the server offered no encryption and the user hasn't agreed to
+ *  plain FTP for it yet (nothing was sent in clear); see src-tauri/src/storage/BACKENDS.md. */
+export function plainFtpUnconfirmed(msg: string): boolean {
+  return /^ftp-plain-unconfirmed\s*$/m.test(msg);
+}
+
 export function certTrouble(msg: string): CertTrouble | null {
   const m = msg.match(/^cert-(untrusted|changed) ([0-9A-Fa-f:]+)(?: expected (\S+))?\s*$/m);
   if (!m) return null;

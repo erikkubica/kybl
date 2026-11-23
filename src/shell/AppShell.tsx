@@ -1467,6 +1467,12 @@ export function AppShell() {
       conns.upsertProfile(saved);
       if (reopen) await connectIn(id, saved);
     },
+    // an "encrypt if available" FTP server that offered no encryption: the user agreed to plain FTP
+    onAllowPlainFtp: async (p, reopen) => {
+      if (!p.net) return;
+      await api.ftpAllowPlain(p.net);
+      if (reopen) await connectIn(id, p);
+    },
     missing: rec.notes[id],
   });
 

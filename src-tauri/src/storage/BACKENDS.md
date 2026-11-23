@@ -35,7 +35,7 @@ Warn when the address is `http://` (or `tls: "none"`): the password and files tr
 |---|---|
 | `host` | server name or address (`ftp.example.com`, `ftp.example.com:2121` also works) |
 | `port` | 0 = 21, or 990 with implicit TLS |
-| `tls` | `"none"` plain FTP, `"explicit"` (AUTH TLS on port 21, usual "FTPS"/"FTPES"), `"implicit"` (TLS from the first byte, port 990), `"auto"` (AUTH TLS when offered, plain FTP when refused: FileZilla's "TLS if available") |
+| `tls` | `"none"` plain FTP, `"explicit"` (AUTH TLS on port 21, usual "FTPS"/"FTPES"), `"implicit"` (TLS from the first byte, port 990), `"auto"` (AUTH TLS when offered, plain FTP when refused and the user agreed: FileZilla's "TLS if available", see below) |
 | `user` | user name; empty signs in as `anonymous` |
 | `basePath` | starting folder: absolute (`/var/www`) or relative to the login folder. It must exist |
 
@@ -87,6 +87,13 @@ since you trusted it. Someone may be intercepting the connection…". The user c
 one. Errors without a certificate to trust keep "The server's security certificate isn't trusted.
 If the server uses its own certificate, Kybl can't connect to it securely." (Rust:
 `storage::certtrust`.)
+
+With `"auto"`, a server that refuses AUTH TLS is used over plain FTP only once the user agreed
+for that `user@host:port` (the refusal is exactly what someone on the network would forge). Until
+then nothing is sent in clear and the connection fails with `ErrKind::Unencrypted`, the detail's
+first line being `ftp-plain-unconfirmed`. "Connect without encryption" calls
+`ftp_allow_plain({ net })` and connects again. A server that encrypted a connection before, or
+lists AUTH TLS in FEAT, is never used unencrypted, agreed or not.
 
 ## SFTP (`kind: "sftp"`)
 

@@ -241,7 +241,7 @@ export function NetForm({
           <input type="checkbox" checked={tls === "auto"} onChange={(e) => edit(setTls)(e.target.checked ? "auto" : "explicit")} />
           <span>
             Fall back to plain FTP if the server doesn't support encryption
-            <em>Like FileZilla’s “TLS if available”. Once the server has encrypted a connection (or when it says it can), Kybl no longer falls back. Still, leave this off once you know the server supports FTPS.</em>
+            <em>Like FileZilla’s “TLS if available”, except that Kybl asks you once before it first sends your password unencrypted. Once the server has encrypted a connection (or when it says it can), Kybl no longer falls back. Still, leave this off once you know the server supports FTPS.</em>
           </span>
         </label>
       )}

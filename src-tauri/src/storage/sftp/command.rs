@@ -13,9 +13,9 @@ use std::{
 use russh::{ChannelMsg, Sig};
 
 use super::{ssh_error, SftpBackend};
-use crate::storage::{HashKind, SResult, StorageError};
+use crate::storage::{ErrKind, HashKind, SResult, StorageError};
 
-/// Servers (`user@host`) that ran no hash command: files there are checked by size only.
+/// Servers (`user@host:port`) that ran no hash command: files there are checked by size only.
 static NO_HASH: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
 
 /// The hash at the start of a hash command's output ("<hex>  name", or the bare hex of `md5 -q`).
@@ -69,6 +69,17 @@ fn read_hash_run(out: &str) -> HashRun {
     HashRun::ThisFile
 }
 
+/// A hash command that couldn't run at all. Only the server refusing the command request itself
+/// means it runs none for this user; anything else may pass (a dropped connection, a channel
+/// refused while the server's MaxSessions are taken by transfers): this file only.
+fn failed_run(e: &StorageError) -> HashRun {
+    if e.kind == ErrKind::Unsupported {
+        HashRun::NoCommands
+    } else {
+        HashRun::ThisFile
+    }
+}
+
 /// How a command on the server ended.
 pub struct ExecEnd {
     /// the exit status, None when the server didn't say (stopped, or the connection dropped)
@@ -100,7 +111,8 @@ impl SftpBackend {
                     Some(ChannelMsg::Data { data }) => on_data(false, &data),
                     Some(ChannelMsg::ExtendedData { data, .. }) => on_data(true, &data),
                     Some(ChannelMsg::ExitStatus { exit_status }) => code = Some(exit_status),
-                    Some(ChannelMsg::Failure) => return Err(StorageError::other("The server refused to run commands for this user.")),
+                    // the server said no to running commands at all (its answer to the exec request)
+                    Some(ChannelMsg::Failure) => return Err(StorageError::new(ErrKind::Unsupported, "The server refused to run commands for this user.")),
                     Some(_) => {}
                     None => break,
                 },
@@ -132,7 +144,7 @@ impl SftpBackend {
     /// such command (an SFTP-only account, no shell); such a server isn't asked again this run.
     /// Given at most 20 s plus the time to read the file at 50 MB/s.
     pub async fn hash_on_server(&self, key: &str, size: u64) -> SResult<Option<(HashKind, String)>> {
-        let who = format!("{}@{}", self.user, self.host);
+        let who = format!("{}@{}:{}", self.user, self.host, self.port);
         if NO_HASH.lock().unwrap().contains(&who) {
             return Ok(None);
         }
@@ -152,9 +164,7 @@ impl SftpBackend {
             Ok(end) if !end.stopped => read_hash_run(&String::from_utf8_lossy(&out)),
             // out of time (a slow disk, a huge file): this file only
             Ok(_) => HashRun::ThisFile,
-            // the server refuses commands for this user (not a dropped connection)
-            Err(e) if e.kind != crate::storage::ErrKind::Network => HashRun::NoCommands,
-            Err(_) => HashRun::ThisFile,
+            Err(e) => failed_run(&e),
         };
         Ok(match run {
             HashRun::Hash(kind, hex) => Some((kind, hex)),
@@ -202,6 +212,11 @@ mod tests {
         // a forced sftp-only account answers with its own text, never our closing line
         assert_eq!(read_hash_run("This service allows sftp connections only.\n"), HashRun::NoCommands);
         assert_eq!(read_hash_run(""), HashRun::NoCommands);
+        // the exec request refused outright: no commands; a channel that couldn't open (all
+        // sessions busy with transfers) or a dropped connection: only this file
+        assert_eq!(failed_run(&StorageError::new(ErrKind::Unsupported, "refused")), HashRun::NoCommands);
+        assert_eq!(failed_run(&StorageError::other("The server didn't run the command.")), HashRun::ThisFile);
+        assert_eq!(failed_run(&StorageError::new(ErrKind::Network, "dropped")), HashRun::ThisFile);
     }
 
     /// The command as a login shell runs it, on a file with a quote and a space in its name.

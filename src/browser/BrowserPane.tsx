@@ -211,7 +211,7 @@ export function BrowserPane(p: BrowserPaneProps) {
           {profile && bucket != null && (
             <>
               {listError && entries.length === 0 && !search ? (
-                <ListError profile={profile} error={listError} onRetry={ent.refresh} onReconnect={p.empty.onReconnect} onTrustCert={p.empty.onTrustCert} />
+                <ListError profile={profile} error={listError} onRetry={ent.refresh} onReconnect={p.empty.onReconnect} onTrustCert={p.empty.onTrustCert} onAllowPlainFtp={p.empty.onAllowPlainFtp} />
               ) : pane.view === "grid" ? (
                 <GridView
                   key={`${settings.binaryUnits}${settings.absoluteDates}${imageModes}`}

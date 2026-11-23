@@ -53,7 +53,7 @@ impl Source for FileZilla {
     fn hints(&self, sites: &[ImportedSite]) -> Vec<String> {
         let mut out = vec![];
         if sites.iter().any(|s| s.protocol == FTP_IF_AVAILABLE) {
-            out.push("FileZilla's “FTP over TLS if available” sites keep that setting: encrypted when the server supports it, plain FTP when it doesn't. Turn the fallback off in a site's settings once you know its server supports FTPS.".into());
+            out.push("FileZilla's “FTP over TLS if available” sites keep that setting: encrypted when the server supports it, plain FTP when it doesn't (Kybl asks you once per server before anything is sent unencrypted). Turn the fallback off in a site's settings once you know its server supports FTPS.".into());
         }
         out
     }

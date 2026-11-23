@@ -459,6 +459,14 @@ async fn upload(
         .iter()
         .map(|(n, etag)| CompletedPart::builder().e_tag(etag).part_number(*n).build())
         .collect();
+    // what tells a lost answer apart from an earlier upload of the same size: the ETag these parts
+    // make (servers that hash parts with MD5), or else the object that was there before
+    let part_etags: Vec<String> = m.parts.values().cloned().collect();
+    let expected = crate::storage::s3_stream::multipart_etag(&part_etags);
+    let before = match expected {
+        Some(_) => None,
+        None => client.head_object().bucket(bucket).key(key).send().await.ok().map(|h| h.e_tag().unwrap_or_default().to_string()),
+    };
     let asked = SystemTime::now();
     let completed = client
         .complete_multipart_upload()
@@ -478,7 +486,8 @@ async fn upload(
             let e = sdk_err(e);
             // The answer can be lost (a timeout, a dropped connection) after the server put the file
             // together. Aborting or retrying then would throw away a finished upload: look first.
-            if !completed_anyway(client, bucket, key, total, m.parts.len(), asked).await {
+            let ours = Ours { total, parts: m.parts.len(), expected: expected.as_deref(), before: before.as_deref(), asked };
+            if !completed_anyway(client, bucket, key, &ours).await {
                 return Err(e);
             }
         }
@@ -489,21 +498,40 @@ async fn upload(
     Ok(Outcome::Done)
 }
 
-/// Did a CompleteMultipartUpload whose answer went missing go through anyway? The object is
-/// there with the file's size, a multipart ETag of as many parts (`"…-3"`), and was written
-/// around the time it was asked for (servers' clocks may be up to 15 minutes off).
-async fn completed_anyway(client: &Client, bucket: &str, key: &str, total: u64, parts: usize, asked: SystemTime) -> bool {
-    let Ok(head) = client.head_object().bucket(bucket).key(key).send().await else { return false };
-    let modified = head.last_modified().and_then(|d| SystemTime::try_from(*d).ok());
-    looks_completed(head.content_length(), head.e_tag(), modified, total, parts, asked)
+/// What the upload being completed looks like once the server has put it together.
+struct Ours<'a> {
+    total: u64,
+    parts: usize,
+    /// the multipart ETag its parts make, when the part ETags are MD5s
+    expected: Option<&'a str>,
+    /// the key's ETag before Complete was asked (looked up only without `expected`)
+    before: Option<&'a str>,
+    asked: SystemTime,
 }
 
-fn looks_completed(len: Option<i64>, etag: Option<&str>, modified: Option<SystemTime>, total: u64, parts: usize, asked: SystemTime) -> bool {
+/// Did a CompleteMultipartUpload whose answer went missing go through anyway? The object is
+/// there with the file's size and the ETag its parts make. Where part ETags aren't MD5s
+/// (encrypting servers), it has a multipart ETag of as many parts (`"…-3"`) other than the one
+/// there before, written around the time it was asked for (servers' clocks may be up to 15
+/// minutes off). An earlier upload of the same size and part count is never taken for this one.
+async fn completed_anyway(client: &Client, bucket: &str, key: &str, ours: &Ours<'_>) -> bool {
+    let Ok(head) = client.head_object().bucket(bucket).key(key).send().await else { return false };
+    let modified = head.last_modified().and_then(|d| SystemTime::try_from(*d).ok());
+    looks_completed(head.content_length(), head.e_tag(), modified, ours)
+}
+
+fn looks_completed(len: Option<i64>, etag: Option<&str>, modified: Option<SystemTime>, ours: &Ours<'_>) -> bool {
+    let bare = |t: &str| t.trim_matches('"').to_ascii_lowercase();
+    let Some(etag) = etag.map(bare) else { return false };
+    let size_ok = len == Some(ours.total as i64);
+    if let Some(expected) = ours.expected {
+        return size_ok && etag == bare(expected);
+    }
     let skew = Duration::from_secs(15 * 60);
-    let size_ok = len == Some(total as i64);
-    let etag_ok = etag.is_some_and(|t| t.trim_matches('"').ends_with(&format!("-{parts}")));
-    let time_ok = modified.is_some_and(|m| m + skew >= asked);
-    size_ok && etag_ok && time_ok
+    let etag_ok = etag.ends_with(&format!("-{}", ours.parts));
+    let changed = ours.before.is_none_or(|b| bare(b) != etag);
+    let time_ok = modified.is_some_and(|m| m + skew >= ours.asked);
+    size_ok && etag_ok && changed && time_ok
 }
 
 /// Sends the parts not yet in `m.parts`, several at once. Ok(false) when cancelled.
@@ -652,12 +680,24 @@ mod tests {
     fn a_completed_upload_is_recognised_after_a_lost_answer() {
         let asked = SystemTime::now();
         let ago = |s: u64| Some(asked - Duration::from_secs(s));
-        assert!(looks_completed(Some(100), Some("\"abc-3\""), ago(5), 100, 3, asked));
-        assert!(!looks_completed(Some(99), Some("\"abc-3\""), ago(5), 100, 3, asked), "other size");
-        assert!(!looks_completed(Some(100), Some("\"abc\""), ago(5), 100, 3, asked), "a single PUT, not ours");
-        assert!(!looks_completed(Some(100), Some("\"abc-13\""), ago(5), 100, 3, asked), "other part count");
-        assert!(!looks_completed(Some(100), Some("\"abc-3\""), ago(3600), 100, 3, asked), "an older upload");
-        assert!(!looks_completed(None, None, None, 100, 3, asked));
+        // part ETags that aren't MD5s (an encrypting server): judged against what was there before
+        let opaque = |before: Option<&'static str>| Ours { total: 100, parts: 3, expected: None, before, asked };
+        assert!(looks_completed(Some(100), Some("\"abc-3\""), ago(5), &opaque(None)));
+        assert!(looks_completed(Some(100), Some("\"abc-3\""), ago(5), &opaque(Some("\"old-3\""))));
+        assert!(!looks_completed(Some(100), Some("\"abc-3\""), ago(5), &opaque(Some("\"abc-3\""))), "the earlier upload, unchanged");
+        assert!(!looks_completed(Some(99), Some("\"abc-3\""), ago(5), &opaque(None)), "other size");
+        assert!(!looks_completed(Some(100), Some("\"abc\""), ago(5), &opaque(None)), "a single PUT, not ours");
+        assert!(!looks_completed(Some(100), Some("\"abc-13\""), ago(5), &opaque(None)), "other part count");
+        assert!(!looks_completed(Some(100), Some("\"abc-3\""), ago(3600), &opaque(None)), "an older upload");
+        assert!(!looks_completed(None, None, None, &opaque(None)));
+        // MD5 part ETags: only the ETag these very parts make counts, however recent another is
+        let parts = ["\"0cc175b9c0f1b6a831c399e269772661\"".to_string(), "\"92eb5ffee6ae2fec3ad71c777531578f\"".to_string()];
+        let expected = crate::storage::s3_stream::multipart_etag(&parts).unwrap();
+        let md5 = Ours { total: 100, parts: 2, expected: Some(&expected), before: None, asked };
+        assert!(looks_completed(Some(100), Some(&format!("\"{expected}\"")), ago(5), &md5));
+        assert!(looks_completed(Some(100), Some(&expected.to_uppercase()), ago(5), &md5));
+        assert!(!looks_completed(Some(100), Some("\"ffffffffffffffffffffffffffffffff-2\""), ago(5), &md5), "a recent upload of the same size and part count");
+        assert!(!looks_completed(Some(99), Some(&expected), ago(5), &md5));
     }
 
     #[test]

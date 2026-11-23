@@ -19,6 +19,7 @@ async function read<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
 import type {
   ListResult,
   LocalFile,
+  NetConfig,
   ObjectDetails,
   Profile,
   RemoteFile,
@@ -45,6 +46,9 @@ export const api = {
     invoke<Profile[]>("set_profile_groups", { groups: Object.fromEntries(Object.entries(groups).map(([id, g]) => [id, g || null])) }),
   testConnection: (profile: Profile, secret?: string) =>
     invoke<string>("test_connection", { profile, secret: secret || null }),
+  /** "Connect without encryption": this "encrypt if available" FTP server may be used over plain
+   *  FTP when it offers no encryption (asked once per server, after an `ftp-plain-unconfirmed` error). */
+  ftpAllowPlain: (net: NetConfig) => invoke<void>("ftp_allow_plain", { net }),
 
   listBuckets: (profileId: string) =>
     read<{ name: string; created: number | null }[]>("list_buckets", { profileId }),

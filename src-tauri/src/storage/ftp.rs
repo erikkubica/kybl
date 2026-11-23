@@ -14,7 +14,7 @@
 //! in place.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     ops::Range,
     sync::{
         atomic::AtomicBool,
@@ -137,6 +137,39 @@ const NOT_OFFERED: [u32; 4] = [500, 502, 504, 534];
 
 const TLS_STOPPED: &str = "This server encrypted the connection before (or says it can), but now refuses to. Kybl didn't fall back to plain FTP, so nothing was sent unencrypted. Something on this network may be in the way: try another network. If the server really stopped offering encryption, turn encryption off in this connection's settings.";
 
+const PLAIN_ASK: &str = "This server didn't offer encryption, so Kybl hasn't sent your password. If you know this server only speaks plain FTP, you can connect without encryption: your password and files then cross the network unencrypted. On a public or unknown network, someone may be blocking encryption on purpose.";
+
+/// The first line of a [`PLAIN_ASK`] error's detail, for the UI to offer "Connect without
+/// encryption" (which calls [`ftp_allow_plain`]).
+pub const PLAIN_MARK: &str = "ftp-plain-unconfirmed";
+
+/// "Connect without encryption": the user agrees that the "encrypt if available" FTP server of
+/// `net` may be used over plain FTP when it offers no encryption. A server that encrypted a
+/// connection before (or says it can) is still never used unencrypted.
+#[tauri::command]
+pub fn ftp_allow_plain(net: NetConfig) -> Result<(), String> {
+    let b = FtpBackend::new(&net, None)?;
+    tls_memory::allow_plain(&b.tls_key());
+    Ok(())
+}
+
+/// Which of the folders MLSD listed (`dirs`) LIST shows as links (`listed`: name, is a link).
+/// Err(name) for a folder LIST doesn't show at all: it can't be told apart from a link.
+fn link_dirs<'a>(dirs: impl IntoIterator<Item = &'a str>, listed: impl IntoIterator<Item = (&'a str, bool)>) -> Result<HashSet<String>, String> {
+    let listed: HashMap<&str, bool> = listed.into_iter().collect();
+    let mut links = HashSet::new();
+    for d in dirs {
+        match listed.get(d) {
+            Some(true) => {
+                links.insert(d.to_string());
+            }
+            Some(false) => {}
+            None => return Err(d.to_string()),
+        }
+    }
+    Ok(links)
+}
+
 /// Whether a FEAT answer lists AUTH TLS (or SSL).
 fn offers_tls<'a>(feats: impl IntoIterator<Item = (&'a str, Option<&'a str>)>) -> bool {
     feats.into_iter().any(|(k, v)| {
@@ -176,7 +209,26 @@ pub mod tls_memory {
     }
 
     pub fn remember(key: &str) {
-        let list = with(|s| s.insert(key.to_string()).then(|| s.iter().cloned().collect::<Vec<_>>()));
+        add(key.to_string());
+    }
+
+    /// Kept in the same list, marked apart from the servers seen with TLS.
+    fn plain_entry(key: &str) -> String {
+        format!("plain:{key}")
+    }
+
+    /// The user agreed that this server, which offers no encryption, may be used over plain FTP.
+    /// Asked before the first unencrypted sign-in; a lost list only means being asked again.
+    pub fn allow_plain(key: &str) {
+        add(plain_entry(key));
+    }
+
+    pub fn plain_allowed(key: &str) -> bool {
+        with(|s| s.contains(&plain_entry(key)))
+    }
+
+    fn add(entry: String) {
+        let list = with(|s| s.insert(entry).then(|| s.iter().cloned().collect::<Vec<_>>()));
         if let (Some(list), Some(path)) = (list, PATH.get()) {
             let tmp = path.with_extension("tmp");
             if serde_json::to_vec(&list).ok().is_some_and(|b| std::fs::write(&tmp, b).is_ok()) {
@@ -250,6 +302,13 @@ impl FtpBackend {
                         if offers_tls(feats.iter().map(|(k, v)| (k.as_str(), v.as_deref()))) {
                             let _ = plain.quit().await;
                             return Err(StorageError::new(ErrKind::Network, TLS_STOPPED).with_detail(r.to_string()));
+                        }
+                        // the first time, nothing goes out in clear (the password above all)
+                        // until the user agrees: the refusal may be forged, and only they can
+                        // tell whether this server really speaks nothing but plain FTP
+                        if !tls_memory::plain_allowed(&self.tls_key()) {
+                            let _ = plain.quit().await;
+                            return Err(StorageError::new(ErrKind::Unencrypted, PLAIN_ASK).with_detail(format!("{PLAIN_MARK}\n{r}")));
                         }
                         plain
                     }
@@ -445,7 +504,12 @@ impl FtpBackend {
             // removed as a link and the folder it points at is never emptied
             let mlsd = self.feats.get().is_some_and(|f| f.mlsd);
             let links: HashSet<String> = if mlsd && items.iter().any(|(f, _)| f.is_directory()) {
-                self.list_raw_as(&path, false).await.unwrap_or_default().into_iter().filter(|(f, _)| f.is_symlink()).map(|(f, _)| f.name().to_string()).collect()
+                // when LIST can't tell (refused, failed, a folder missing from it), stop rather
+                // than walk into what may be a link to a folder elsewhere
+                let unsure = |detail: String| StorageError::new(ErrKind::Other, format!("Stopped deleting {path}: Kybl couldn't check which folders in it are links to other folders, so it didn't go into them.")).with_detail(detail);
+                let listed = self.list_raw_as(&path, false).await.map_err(|e| unsure(e.to_string()))?;
+                let dirs = items.iter().filter(|(f, _)| f.is_directory()).map(|(f, _)| f.name());
+                link_dirs(dirs, listed.iter().map(|(f, _)| (f.name(), f.is_symlink()))).map_err(|name| unsure(format!("LIST didn't show {name}")))?
             } else {
                 HashSet::new()
             };
@@ -625,14 +689,41 @@ impl Storage for FtpBackend {
             Ok(Err(FtpError::UnexpectedResponse(r))) if matches!(r.status.code(), 550 | 551) => {
                 return Err(StorageError::not_found().with_detail(r.to_string()));
             }
-            _ => None,
+            // a server without SIZE (or that won't say for this file): read on without it
+            Ok(Err(FtpError::UnexpectedResponse(_))) => None,
+            // an answer that didn't parse: read on, but the connection isn't trusted again
+            Ok(Err(FtpError::BadResponse)) => {
+                lease.healthy = false;
+                None
+            }
+            // a reply that may still come (a timeout), or a broken connection: this connection is
+            // out of step and must not go back to the pool
+            Ok(Err(e)) => {
+                lease.healthy = false;
+                return Err(ftp_error(e, &self.host));
+            }
+            Err(_) => {
+                lease.healthy = false;
+                return Err(timed_out(&self.host));
+            }
         };
         // without one asked for, a tag of its own (one MDTM), so a download can resume
         if etag.is_none()
             && let Some(n) = total
-            && let Ok(Ok(m)) = tokio::time::timeout(CMD_TIMEOUT, lease.ftp().mdtm(&full)).await
         {
-            etag = Some(format!("{MDTM_TAG}{n:x}-{m}"));
+            match tokio::time::timeout(CMD_TIMEOUT, lease.ftp().mdtm(&full)).await {
+                Ok(Ok(m)) => etag = Some(format!("{MDTM_TAG}{n:x}-{m}")),
+                Ok(Err(FtpError::UnexpectedResponse(_))) => {}
+                Ok(Err(FtpError::BadResponse)) => lease.healthy = false,
+                Ok(Err(e)) => {
+                    lease.healthy = false;
+                    return Err(ftp_error(e, &self.host));
+                }
+                Err(_) => {
+                    lease.healthy = false;
+                    return Err(timed_out(&self.host));
+                }
+            }
         }
         if let Some(t) = own
             && etag.as_deref() != Some(t)
@@ -1074,6 +1165,7 @@ fn ftp_error(e: FtpError, host: &str) -> StorageError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::Ordering;
     use suppaftp::Status;
 
     #[test]
@@ -1092,6 +1184,84 @@ mod tests {
         tls_memory::remember(&k);
         assert!(tls_memory::seen(&k));
         assert!(!NOT_OFFERED.contains(&421) && !NOT_OFFERED.contains(&431));
+    }
+
+    /// Deleting a folder only goes into the folders LIST confirms aren't links; one LIST doesn't
+    /// show (a listing that failed to parse, a name it mangles) stops the delete.
+    #[test]
+    fn folders_are_only_walked_into_when_list_says_they_are_no_links() {
+        let links = link_dirs(["real", "link"], [("real", false), ("link", true), ("file.txt", false)]).unwrap();
+        assert_eq!(links, HashSet::from(["link".to_string()]));
+        assert_eq!(link_dirs(["real", "gone"], [("real", false)]), Err("gone".to_string()));
+        assert_eq!(link_dirs(["real"], []), Err("real".to_string()), "an empty LIST of a folder that has folders");
+        assert!(link_dirs([], []).unwrap().is_empty());
+    }
+
+    /// A tiny FTP server that refuses AUTH TLS and lists no AUTH in FEAT; says whether a USER
+    /// (the sign-in, sent in clear here) ever reached it.
+    async fn plain_only_server() -> (u16, Arc<std::sync::atomic::AtomicBool>) {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let signed_in = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = signed_in.clone();
+        tokio::spawn(async move {
+            loop {
+                let (sock, _) = listener.accept().await.unwrap();
+                let flag = flag.clone();
+                tokio::spawn(async move {
+                    let (r, mut w) = sock.into_split();
+                    let mut lines = BufReader::new(r).lines();
+                    w.write_all(b"220 hello\r\n").await.unwrap();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        let cmd = line.split(' ').next().unwrap_or("").to_ascii_uppercase();
+                        let reply: &[u8] = match cmd.as_str() {
+                            "AUTH" => b"502 not here\r\n",
+                            "FEAT" => b"211-Features:\r\n MLST type*;size*;\r\n211 End\r\n",
+                            "USER" => {
+                                flag.store(true, Ordering::Relaxed);
+                                b"331 password please\r\n"
+                            }
+                            "PASS" => b"230 in\r\n",
+                            "PWD" => b"257 \"/\"\r\n",
+                            "CWD" => b"250 ok\r\n",
+                            "QUIT" => {
+                                let _ = w.write_all(b"221 bye\r\n").await;
+                                return;
+                            }
+                            _ => b"200 ok\r\n",
+                        };
+                        if w.write_all(reply).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        (port, signed_in)
+    }
+
+    /// "Encrypt if available" and a server that refuses encryption (as someone on the network
+    /// could forge): the first time, nothing is signed in over plain FTP until the user agrees.
+    #[test]
+    fn plain_ftp_waits_for_the_users_consent() {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let (port, signed_in) = plain_only_server().await;
+            let cfg = NetConfig { host: "127.0.0.1".into(), port, user: format!("u{}", uuid::Uuid::new_v4().simple()), tls: TlsMode::Auto, ..Default::default() };
+            let b = FtpBackend::new(&cfg, Some("secret".into())).unwrap();
+            let e = b.connect().await.err().expect("no consent yet");
+            assert_eq!(e.kind, ErrKind::Unencrypted, "{e}");
+            assert!(e.to_string().lines().any(|l| l == PLAIN_MARK), "{e}");
+            assert!(!signed_in.load(Ordering::Relaxed), "the password was never sent");
+            // "Connect without encryption"
+            ftp_allow_plain(cfg.clone()).unwrap();
+            let ftp = b.connect().await;
+            assert!(ftp.is_ok(), "{:?}", ftp.err());
+            assert!(signed_in.load(Ordering::Relaxed));
+            // a server that encrypted before is still never used in clear, agreed or not
+            tls_memory::remember(&b.tls_key());
+            assert_eq!(b.connect().await.err().map(|e| e.message), Some(TLS_STOPPED.to_string()));
+        });
     }
 
     #[test]
