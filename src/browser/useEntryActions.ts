@@ -97,7 +97,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     // one document opens in the app's editor; several go to their own apps
     if (files.length === 1 && env.openDocument?.(files[0])) return;
     if (files.length > 10) toast("info", "Opening the first 10 files");
-    for (const f of files.slice(0, 10)) void ops.openInApp(f);
+    // one question about the programs among them, for all of them
+    void ops.openFiles(files.slice(0, 10));
   };
 
   const doSearch = (q: string) => {

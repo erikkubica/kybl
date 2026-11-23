@@ -1952,6 +1952,16 @@ body.resizing-col * {
   background: var(--danger-soft);
   color: var(--danger);
 }
+.confirm-icon.warn {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+/* a few names in a confirm ("Run 3 programs?") */
+.modal-body .confirm-list {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
 /* with an icon: icon, title and × in one row, the text under the title */
 .modal.compact .modal-head {
   justify-content: flex-start;

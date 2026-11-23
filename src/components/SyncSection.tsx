@@ -10,8 +10,7 @@ import type { Profile } from "../types";
 import { SyncDialog } from "./SyncDialog";
 import "./sync.css";
 import { useDialogs } from "../shell/useDialogs";
-import { okToRun, openIn } from "../desktop/openGuard";
-import { runsCode } from "../desktop/runnable";
+import { baseName as leafOf, okToRun, openFromConnection } from "../desktop/openGuard";
 
 const DIR_ICON = { upload: "upload", download: "download", twoway: "sync" } as const;
 const DIR_TITLE = { upload: "Uploads to the remote folder", download: "Mirrors the remote folder", twoway: "Two-way: changes go both ways" };
@@ -198,10 +197,9 @@ function ConflictsPanel({ m, count, run }: { m: SyncMapping; count: number; run:
   if (!items || items.length === 0) return null;
   const open = async (c: SyncConflict) => {
     // both came from the connection at some point: a program is asked about first, once
-    const names = [c.localPath, c.copyLocalPath].map((p) => p.split(/[\\/]/).pop() ?? p);
-    if (!(await okToRun(names.find(runsCode) ?? names[0], dialogs.confirm))) return;
-    openIn(c.localPath, undefined).catch(() => {});
-    openIn(c.copyLocalPath, undefined).catch(() => {});
+    const paths = [c.localPath, c.copyLocalPath];
+    if (!(await okToRun(paths.map(leafOf), dialogs.confirm))) return;
+    for (const p of paths) await openFromConnection(p, dialogs.confirm, undefined, leafOf(p), true).catch(() => {});
   };
   return (
     <div className="sync-attn" role="group" aria-label="Conflicts">
