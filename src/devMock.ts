@@ -507,6 +507,11 @@ async function handle(cmd: string, a: any): Promise<unknown> {
   if (cmd.startsWith("job_")) return (await import("./jobs/devJobs")).handleJob(cmd, a);
   // WP-C: phone backup (src/mobile/backup/devBackup.ts)
   if (cmd.startsWith("backup_")) return (await import("./mobile/backup/devBackup")).handleBackup(cmd, a);
+  // custom actions (src/actions/devActions.ts); Activity's Stop on one reaches it as cancel_transfer
+  if (cmd.startsWith("custom_action_") || cmd === "cancel_transfer") {
+    const r = await (await import("./actions/devActions")).handleAction(cmd, a);
+    if (cmd !== "cancel_transfer") return r;
+  }
   if (a?.profileId === LOCAL) {
     const r = await handleLocal(cmd, a);
     if (r !== undefined) return r;

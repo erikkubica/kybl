@@ -8,6 +8,7 @@
 //! One SSH connection per backend carries every request (SFTP runs many at once over it). It
 //! sends keepalives, and a dropped connection is opened again on the next request.
 
+pub mod command;
 pub mod hostkey;
 pub mod replace;
 
