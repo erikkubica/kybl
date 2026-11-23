@@ -152,7 +152,7 @@ impl FtpBackend {
             let mut ftp = match self.tls {
                 TlsMode::None => Ftp::connect(&addr).await.map_err(err)?,
                 TlsMode::Explicit => Ftp::connect(&addr).await.map_err(err)?.into_secure(tls(), &self.host).await.map_err(|e| match e {
-                    FtpError::UnexpectedResponse(_) => StorageError::new(ErrKind::Network, "This server doesn't offer encryption on this port. Try implicit encryption (port 990), or “If available” if the server only speaks plain FTP.")
+                    FtpError::UnexpectedResponse(_) => StorageError::new(ErrKind::Network, "This server doesn't offer encryption on this port. Try implicit encryption (port 990), or allow the fallback to plain FTP if the server only speaks that.")
                         .with_detail(e.to_string()),
                     e => err(e),
                 })?,

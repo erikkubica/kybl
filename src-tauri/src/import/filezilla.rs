@@ -53,7 +53,7 @@ impl Source for FileZilla {
     fn hints(&self, sites: &[ImportedSite]) -> Vec<String> {
         let mut out = vec![];
         if sites.iter().any(|s| s.protocol == FTP_IF_AVAILABLE) {
-            out.push("FileZilla's “FTP over TLS if available” sites keep that setting: encrypted when the server supports it, plain FTP when it doesn't. Switch a site to FTPS once you know its server supports it.".into());
+            out.push("FileZilla's “FTP over TLS if available” sites keep that setting: encrypted when the server supports it, plain FTP when it doesn't. Turn the fallback off in a site's settings once you know its server supports FTPS.".into());
         }
         out
     }
@@ -65,7 +65,7 @@ const FTP_IF_AVAILABLE: &str = "FTP (TLS if available)";
 /// or the protocol's name and why it can't be imported.
 fn protocol(n: i64) -> Result<(ConnKind, TlsMode, &'static str), (String, String)> {
     Ok(match n {
-        // FileZilla tries AUTH TLS and falls back to plain, as Kybl's "If available" does
+        // FileZilla tries AUTH TLS and falls back to plain, as FTPS with Kybl's fallback does
         0 => (ConnKind::Ftp, TlsMode::Auto, FTP_IF_AVAILABLE),
         1 => (ConnKind::Sftp, TlsMode::None, "SFTP"),
         3 => (ConnKind::Ftp, TlsMode::Implicit, "FTPS (implicit TLS)"),
