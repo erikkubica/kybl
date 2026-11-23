@@ -12,7 +12,7 @@ export const TILE_MAX = 320;
 
 /**
  * A desktop pane's header: one row, left to right
- *   [↑] [connection] folder name [⋯]   ……   [+] [view] [details] [search] [panes]
+ *   [connection badge] connection › [↑] folder name [⋯]   ……   [+] [view] [search] [panes]
  * Creating things sits behind +, the pane's less frequent actions (favorites among them) behind ⋯
  * and how the list looks behind the eye, so a pane at its least width (340px) still fits on one
  * row: the folder's name gives way first. The right side's buttons never hide.
@@ -176,17 +176,6 @@ export function Toolbar({
   return (
     <header className="chrome">
       <div className={`toolbar ${searchOpen ? "search-open" : ""}`} data-tauri-drag-region>
-        <button
-          className="icon-btn"
-          disabled={disabled || !canUp}
-          onClick={onUp}
-          // dropping items on it moves them up a level, as the parent crumb used to
-          data-drop={!disabled && prefix ? parentPrefix(prefix) : undefined}
-          title={canUp ? "Enclosing folder (⌘↑) · drop items here to move them up" : "Enclosing folder (⌘↑)"}
-          aria-label="Enclosing folder"
-        >
-          <Icon name="arrow-up" />
-        </button>
         {onSwitchConnection && (
           <>
             <button
@@ -214,11 +203,25 @@ export function Toolbar({
                   {connName}
                 </button>
                 <span className="conn-sep" aria-hidden>
-                  /
+                  <Icon name="chevron" size={12} />
                 </span>
               </>
             )}
           </>
+        )}
+        {/* up a level sits in the path, just before the folder it leaves (only when there's one to go to) */}
+        {canUp && (
+          <button
+            className="icon-btn tb-up"
+            disabled={disabled}
+            onClick={onUp}
+            // dropping items on it moves them up a level, as the parent crumb used to
+            data-drop={!disabled && prefix ? parentPrefix(prefix) : undefined}
+            title="Enclosing folder (⌘↑) · drop items here to move them up"
+            aria-label="Enclosing folder"
+          >
+            <Icon name="arrow-up" size={14} />
+          </button>
         )}
         {bucket != null ? (
           <PathTitle label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} onGoTo={onGoTo} />

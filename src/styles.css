@@ -395,8 +395,9 @@ code {
 /* which server or account the pane is on, before the folder's name: muted, a step of the path
    (a click goes to the top), and it gives way before the folder's name does */
 .toolbar > .conn-name {
-  flex: 0 40 auto;
-  min-width: 0;
+  /* it gives way almost entirely before the folder's name starts to */
+  flex: 0 1000 auto;
+  min-width: 36px;
   max-width: 220px;
   height: 26px;
   padding: 0 6px;
@@ -419,8 +420,20 @@ code {
   opacity: 1;
 }
 .toolbar > .conn-sep {
-  margin-left: -2px;
+  display: inline-flex;
+  flex: none;
+  margin: 0 -2px;
   color: var(--faint);
+}
+/* up a level, inside the path: smaller and quieter than the header's buttons */
+.toolbar > .icon-btn.tb-up {
+  width: 24px;
+  height: 24px;
+  margin: 0 -2px 0 0;
+  color: var(--muted);
+}
+.toolbar > .icon-btn.tb-up:hover {
+  color: var(--text);
 }
 /* "…" holds much of what had its own button: its dots as heavy as the other icons' lines */
 .tb-more svg {
