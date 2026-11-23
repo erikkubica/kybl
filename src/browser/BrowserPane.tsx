@@ -226,7 +226,7 @@ export function BrowserPane(p: BrowserPaneProps) {
           onCopyFile={IS_MAC ? pane.copyFile : undefined}
         />
       )}
-      {pane.drag && profile && <DragGhost drag={pane.drag} bucket={bucket} profileId={profile.id} />}
+      {pane.drag && !pane.drag.outside && profile && <DragGhost drag={pane.drag} bucket={bucket} profileId={profile.id} />}
     </section>
   );
 }

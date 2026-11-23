@@ -11,6 +11,7 @@ import { useFolderSizes } from "../useFolderSizes";
 import { useItemDrag } from "../useItemDrag";
 import { peekCaps, useCaps } from "../useCaps";
 import { makeFileOps, type FileOps } from "../desktop/fileOps";
+import { makeDragOut } from "../desktop/dragOut";
 import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
 import type { Sort } from "../components/FileTable";
 import type { MenuItem } from "../components/Dialogs";
@@ -285,6 +286,13 @@ function usePaneCore(env: PaneEnv) {
   // ------------------------------------------------------------ press, drag to move
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
+  // dragged out of the window: the items go to another app as files (desktop/dragOut.ts)
+  const dragOutCtx = useRef<Parameters<typeof makeDragOut>[0]>(() => null);
+  dragOutCtx.current = () =>
+    profile && bucket != null
+      ? { profileId: profile.id, bucket, localPaths: !!caps?.localPaths, transfers: envRef.current.transfers, autoShowActivity: envRef.current.autoShowActivity }
+      : null;
+  const dragOut = useMemo(() => makeDragOut(() => dragOutCtx.current()), []);
   const { drag, begin: beginDrag } = useItemDrag({
     paneId: env.id,
     onDrop: (items, dest, copy, destBucket, pane, destProfile) => {
@@ -305,6 +313,7 @@ function usePaneCore(env: PaneEnv) {
       return { label: b ? `“${root}” on ${to.name}` : to.name, copyOnly: crossesDiskAt({ profileId: profile.id, bucket: "" }, { profileId: pid, bucket: b }) };
     },
     paneTarget: (pane, dest, items) => envRef.current.otherPaneTarget?.(pane, dest, items) ?? null,
+    dragOut,
   });
 
   const { select, selRef } = sel;

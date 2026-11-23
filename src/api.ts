@@ -174,6 +174,14 @@ export const api = {
   openLocal: (path: string) => invoke<void>("open_local", { path }),
   /** puts a local file on the clipboard as a file (pastes into chats, mail, Finder); macOS */
   copyFileToClipboard: (path: string) => invoke<void>("copy_file_to_clipboard", { path }),
+  /**
+   * Starts the system's drag of items out of the window (desktop/dragOut.ts), from where the
+   * pointer is; fails when nothing can go or the button is already up. Promised items (macOS)
+   * come back as `drag-out-promise` events, answered with `dragOutDone`.
+   */
+  startDragOut: (token: string, items: { path: string | null; name: string; folder: boolean }[], image: string | null) =>
+    invoke<void>("start_drag_out", { token, items, image }),
+  dragOutDone: (token: string, index: number, error: string | null) => invoke<void>("drag_out_done", { token, index, error }),
   /** Shows the file in Finder / Explorer / the file manager. Desktop only. */
   revealLocal: (path: string) => invoke<void>("reveal_local", { path }),
   /**

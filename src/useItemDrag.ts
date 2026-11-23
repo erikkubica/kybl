@@ -10,9 +10,19 @@
  * Dual pane: every pane's root carries `data-pane="<id>"` and `data-drop-pane`. A drop on a folder,
  * breadcrumb or empty space of ANOTHER pane goes to that pane's place (`paneTarget` decides and
  * names it), and moves like any other drop (⌥ copies).
+ *
+ * Out of the window: when the pointer leaves it with the button down, `dragOut` hands the items to
+ * the system's drag (desktop/dragOut.ts), so they drop into Finder, a mail or a chat as files.
+ * Back inside before that happened, the drag carries on here as before.
+ *
+ * The press is the page's own (its default is prevented): otherwise WebKit treats it as the start of
+ * a text selection and scrolls the list whenever the pointer is beyond it, which with the pointer
+ * outside the window meant the pane kept scrolling. Lists scroll while the pointer is near their
+ * top or bottom edge instead (inside the window only).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isValidDest } from "./moving";
+import type { DragOut } from "./desktop/dragOut";
 import type { Entry } from "./types";
 
 export type DragState = {
@@ -31,10 +41,24 @@ export type DragState = {
   copy: boolean;
   /** the place only takes copies (this computer and the cloud): it never moves */
   copyOnly?: boolean;
+  /** the pointer is outside the window (the items are about to go to another app) */
+  outside?: boolean;
 };
 
 const THRESHOLD = 5;
 const SPRING_MS = 900;
+/** Fetching for a drag out starts this close to the window's edge. */
+const NEAR_EDGE = 48;
+/** Lists scroll while the pointer is this close to their top or bottom. */
+const SCROLL_EDGE = 28;
+
+/** The list under the pointer that can scroll up or down (the grid itself, the table's body). */
+function scrollerAt(x: number, y: number): HTMLElement | null {
+  for (let el = document.elementFromPoint(x, y) as HTMLElement | null; el && el !== document.body; el = el.parentElement) {
+    if (el.scrollHeight > el.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return el;
+  }
+  return null;
+}
 
 export function useItemDrag<P extends string = string>({
   paneId,
@@ -42,6 +66,7 @@ export function useItemDrag<P extends string = string>({
   onSpring,
   bucketTarget,
   paneTarget,
+  dragOut,
 }: {
   /** the pane the drag starts in (dual pane) */
   paneId?: P;
@@ -59,10 +84,12 @@ export function useItemDrag<P extends string = string>({
    * shows), and the label of that place; null = no.
    */
   paneTarget?: (pane: P, dest: string | null, items: Entry[]) => { dest: string; label: string; copyOnly?: boolean } | null;
+  /** hands the drag to the system when the pointer leaves the window (desktop) */
+  dragOut?: DragOut;
 }) {
   const [drag, setDrag] = useState<DragState | null>(null);
-  const cbs = useRef({ paneId, onDrop, onSpring, bucketTarget, paneTarget });
-  cbs.current = { paneId, onDrop, onSpring, bucketTarget, paneTarget };
+  const cbs = useRef({ paneId, onDrop, onSpring, bucketTarget, paneTarget, dragOut });
+  cbs.current = { paneId, onDrop, onSpring, bucketTarget, paneTarget, dragOut };
   const cleanup = useRef<(() => void) | null>(null);
 
   useEffect(() => () => cleanup.current?.(), []);
@@ -70,6 +97,12 @@ export function useItemDrag<P extends string = string>({
   const begin = useCallback((ev: React.MouseEvent, items: Entry[], onClick?: () => void) => {
     if (ev.button !== 0 || items.length === 0) return;
     cleanup.current?.();
+    ev.preventDefault();
+    // what the prevented press would have done: focus the list (keys work on it), or drop the focus
+    const focusable = (ev.target as Element).closest<HTMLElement>("[tabindex], button, a[href], input, textarea, select");
+    if (focusable) {
+      if (document.activeElement !== focusable) focusable.focus({ preventScroll: true });
+    } else (document.activeElement as HTMLElement | null)?.blur?.();
     const sx = ev.clientX;
     const sy = ev.clientY;
     let active = false;
@@ -85,6 +118,14 @@ export function useItemDrag<P extends string = string>({
     let springTimer = 0;
     let springFor: string | null = null;
     const isCopy = () => copyOnly || alt;
+    let x = sx;
+    let y = sy;
+    let outside = false;
+    let warmed = false;
+    /** the hand-over to the system: idle, under way, or it said no (not tried again until back inside) */
+    let handing: "no" | "trying" | "refused" = "no";
+    let scrollFrame = 0;
+    let ended = false;
 
     const light = (el: HTMLElement | null) => {
       if (lit === el) return;
@@ -154,6 +195,56 @@ export function useItemDrag<P extends string = string>({
       }
     };
 
+    const show = () => setDrag({ items, x, y, dest, bucket: destBucket, profile: destProfile, pane: destPane, label, copy: isCopy(), copyOnly, outside });
+
+    const unlight = () => {
+      light(null);
+      dest = null;
+      destBucket = null;
+      destProfile = null;
+      destPane = null;
+      label = null;
+      copyOnly = false;
+      window.clearTimeout(springTimer);
+      springFor = null;
+    };
+
+    // the list under the pointer scrolls while it is near its top or bottom
+    const scrollTick = () => {
+      scrollFrame = 0;
+      if (outside || ended) return;
+      const list = scrollerAt(x, y);
+      if (!list) return;
+      const r = list.getBoundingClientRect();
+      let dy = 0;
+      if (y < r.top + SCROLL_EDGE) dy = -Math.min(24, (r.top + SCROLL_EDGE - y) / 2);
+      else if (y > r.bottom - SCROLL_EDGE) dy = Math.min(24, (y - (r.bottom - SCROLL_EDGE)) / 2);
+      const before = list.scrollTop;
+      if (dy) list.scrollTop += dy;
+      if (list.scrollTop === before) return;
+      hit(x, y);
+      show();
+      scrollFrame = requestAnimationFrame(scrollTick);
+    };
+
+    /** The pointer left the window: hand the items to the system's drag, if it takes them. */
+    const handOver = () => {
+      const out = cbs.current.dragOut;
+      if (!out || handing !== "no") return;
+      handing = "trying";
+      void out.start(items, () => outside && !ended).then(
+        (took) => {
+          if (ended) return;
+          if (took) end();
+          // back inside before it was ready: try again when it leaves again
+          else handing = outside ? "refused" : "no";
+        },
+        () => {
+          handing = "refused";
+        },
+      );
+    };
+
     const move = (e: MouseEvent) => {
       if (!active) {
         if (Math.hypot(e.clientX - sx, e.clientY - sy) < THRESHOLD) return;
@@ -161,8 +252,25 @@ export function useItemDrag<P extends string = string>({
         document.body.classList.add("dragging-items");
       }
       alt = e.altKey;
-      hit(e.clientX, e.clientY);
-      setDrag({ items, x: e.clientX, y: e.clientY, dest, bucket: destBucket, profile: destProfile, pane: destPane, label, copy: isCopy(), copyOnly });
+      x = e.clientX;
+      y = e.clientY;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      outside = x < 0 || y < 0 || x >= w || y >= h;
+      if (!warmed && cbs.current.dragOut && Math.min(x, y, w - x, h - y) < NEAR_EDGE) {
+        warmed = true;
+        cbs.current.dragOut.warm(items);
+      }
+      if (outside) {
+        // nothing in the window is under the pointer, and nothing there scrolls
+        unlight();
+        handOver();
+      } else {
+        if (handing === "refused") handing = "no";
+        hit(x, y);
+        if (!scrollFrame) scrollFrame = requestAnimationFrame(scrollTick);
+      }
+      show();
     };
     const up = (e: MouseEvent) => {
       const wasActive = active;
@@ -188,6 +296,8 @@ export function useItemDrag<P extends string = string>({
       }
     };
     const end = () => {
+      ended = true;
+      if (scrollFrame) cancelAnimationFrame(scrollFrame);
       window.clearTimeout(springTimer);
       light(null);
       document.body.classList.remove("dragging-items");

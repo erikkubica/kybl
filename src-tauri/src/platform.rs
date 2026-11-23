@@ -12,6 +12,8 @@
 pub(crate) mod android;
 /// "Open with": the apps for a type, and opening an item with one (desktop).
 pub(crate) mod apps;
+/// Dragging items out of Kybl into another app (desktop).
+pub(crate) mod drag_out;
 #[cfg(target_os = "ios")]
 pub(crate) mod ios;
 /// The Android secret-key file, sealed with a Keystore key (generic, so it is tested here).
