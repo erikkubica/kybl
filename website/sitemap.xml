@@ -10,4 +10,16 @@
     <image:image><image:loc>https://kybl.app/assets/shots/app-connect.webp</image:loc></image:image>
     <image:image><image:loc>https://kybl.app/assets/shots/app-sync.webp</image:loc></image:image>
   </url>
+  <url>
+    <loc>https://kybl.app/privacy-policy/</loc>
+    <lastmod>2026-11-23</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>https://kybl.app/terms-of-service/</loc>
+    <lastmod>2026-11-23</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
 </urlset>
