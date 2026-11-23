@@ -293,5 +293,15 @@ export function makeDualActions(get: () => DualContext) {
     "pane-move": () => (multi() ? void sendSelection("move") : false),
   };
 
-  return { envFor, commands, sameFolderInOther, swap, compare };
+  return {
+    envFor,
+    commands,
+    sameFolderInOther,
+    swap,
+    compare,
+    /** moves panes without synchronized browsing following (another workspace coming up) */
+    quietly,
+    /** forgets which linked panes wait out of step (the workspace they belong to went away) */
+    forgetBehind: () => behind.clear(),
+  };
 }

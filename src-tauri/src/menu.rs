@@ -17,7 +17,7 @@ use tauri::{
 };
 
 /// Item ids passed to the page as they are.
-const PAGE_ITEMS: [&str; 31] = [
+const PAGE_ITEMS: [&str; 39] = [
     "duplicate",
     "new-connection",
     "new-folder",
@@ -49,6 +49,14 @@ const PAGE_ITEMS: [&str; 31] = [
     "tiles-bigger",
     "tiles-smaller",
     "toggle-compact",
+    "new-workspace",
+    "next-workspace",
+    "prev-workspace",
+    "move-workspace-left",
+    "move-workspace-right",
+    "rename-workspace",
+    "workspace-settings",
+    "close-workspace",
 ];
 
 /// Handled here, not by the page (named apart from the tray menu's ids, which share the handler).
@@ -170,6 +178,19 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         &[
             &PredefinedMenuItem::minimize(app, None)?,
             &PredefinedMenuItem::maximize(app, None)?,
+            &sep()?,
+            // workspaces, the window's tabs (where Safari keeps its tab items). The page handles
+            // these keys as well (⌃Tab, ⌥⌘1–9 and ⌥⇧⌘[ / ] only there): whichever gets the press
+            // first runs it, so one the menu can't match still works
+            &item("new-workspace", "New Workspace", Some("CmdOrCtrl+T"))?,
+            &item("prev-workspace", "Show Previous Workspace", Some("CmdOrCtrl+Shift+["))?,
+            &item("next-workspace", "Show Next Workspace", Some("CmdOrCtrl+Shift+]"))?,
+            &item("move-workspace-left", "Move Workspace Left", None)?,
+            &item("move-workspace-right", "Move Workspace Right", None)?,
+            &item("rename-workspace", "Rename Workspace…", None)?,
+            &item("workspace-settings", "Workspace Settings…", None)?,
+            &item("close-workspace", "Close Workspace", None)?,
+            &sep()?,
         ],
     )?;
     let menu = Menu::with_items(app, &[&app_menu, &file, &edit, &view, &go, &window])?;

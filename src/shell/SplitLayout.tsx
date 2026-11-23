@@ -2,10 +2,10 @@
  * The browser panes laid out as a tree of splits (paneLayout.ts), with a draggable divider
  * between neighbours (double-click shares the room evenly, arrow keys nudge it).
  *
- * A window too small for every pane at its least size shows the active pane alone, with a slim
- * strip above it to switch to the others: squeezing several panes below the size their header
- * row needs would leave none of them usable, and scrolling a whole layout sideways is worse.
- * The layout comes back as soon as there is room again.
+ * A window too small for every pane at its least size shows the active pane alone, and the
+ * workspace bar offers the others (`onCramped`): squeezing several panes below the size their
+ * header row needs would leave none of them usable, and scrolling a whole layout sideways is
+ * worse. The layout comes back as soon as there is room again.
  *
  * Each divider carries a small round link button for every pair of panes facing each other across
  * it (paneLayout `facingPairs`), at the middle of the stretch the two share: it switches
@@ -17,7 +17,7 @@ import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Re
 import type { PaneId } from "../browser/types";
 import { Icon } from "../Icons";
 import type { MenuItem } from "../components/Dialogs";
-import { DIVIDER, dividerPairs, facingPairs, fit, leaves, minSize, sameLink, type PaneNode } from "./paneLayout";
+import { DIVIDER, dividerPairs, facingPairs, fit, minSize, sameLink, type PaneNode } from "./paneLayout";
 
 /** the least stretch of a divider a link button needs: its own 22 px and a little air, so two never touch */
 const LINK_ROOM = 32;
@@ -33,9 +33,13 @@ export type SplitLayoutProps = {
   onEqualize: (path: number[]) => void;
   /** the room the layout has, whenever it changes (splitting checks there is space) */
   onRoom?: (w: number, h: number) => void;
-  /** the narrow window's strip: a pane's name, and picking one */
+  /** a pane's name (the link buttons' labels) */
   nameOf: (id: PaneId) => string;
-  onPick: (id: PaneId) => void;
+  /**
+   * whether the window is too small for every pane: then only the active one shows, and the shell
+   * offers the others in the workspace bar (WorkspaceBar's pane switcher)
+   */
+  onCramped?: (cramped: boolean) => void;
   /** synchronized browsing links panes `a` and `b` */
   linked: (a: PaneId, b: PaneId) => boolean;
   /** the link button on a divider: switches synchronized browsing for that pair */
@@ -64,35 +68,17 @@ export function SplitLayout(p: SplitLayoutProps) {
 
   const need = minSize(p.tree);
   const cramped = !!room && (room.w < need.w || room.h < need.h);
-  const ids = leaves(p.tree);
   const known = useMemo(() => dividerPairs(p.tree), [p.tree]);
+  const onCramped = useRef(p.onCramped);
+  onCramped.current = p.onCramped;
+  useLayoutEffect(() => onCramped.current?.(cramped), [cramped]);
+  // gone (one pane left): nothing is squeezed any more
+  useLayoutEffect(() => () => onCramped.current?.(false), []);
 
   return (
     <div className="splits" ref={box}>
       {cramped ? (
-        <div className="split-cramped">
-          <div className="split-strip" role="tablist" aria-label="Panes">
-            <span className="split-strip-note" title="The window is too small to show every pane. Make it bigger, or close a pane.">
-              {ids.length} panes
-            </span>
-            {ids.map((id, i) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={id === p.activeId}
-                className={`split-strip-tab ${id === p.activeId ? "on" : ""}`}
-                onClick={() => p.onPick(id)}
-                title={p.nameOf(id)}
-              >
-                {/* numbered: two panes often show folders of the same name */}
-                <span className="split-strip-n">{i + 1}</span>
-                {p.nameOf(id)}
-              </button>
-            ))}
-          </div>
-          {p.pane(p.activeId, { flex: "1 1 0px" })}
-        </div>
+        <div className="split-cramped">{p.pane(p.activeId, { flex: "1 1 0px" })}</div>
       ) : (
         room && <Node node={fit(p.tree, room.w, room.h)} path={[]} style={{ flex: "1 1 0px" }} w={room.w} h={room.h} known={known} {...p} />
       )}
