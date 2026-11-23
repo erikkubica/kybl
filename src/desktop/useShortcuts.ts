@@ -7,6 +7,7 @@
 import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { MENU_ACCELERATORS, MENU_OWNS_SHORTCUTS, menuKeydown } from "./menus";
+import { menuFromKey, watchMenuKeys } from "./menuKeyWatch";
 
 export type ShortcutOptions = {
   /** runs a command by id; false when it didn't (a dialog is up, or it doesn't apply) */
@@ -147,11 +148,13 @@ export function useShortcuts(opts: ShortcutOptions) {
       if (t.closest?.("input, textarea, [contenteditable=true]") || window.getSelection()?.toString()) return;
       e.preventDefault();
     };
+    watchMenuKeys();
     const onMenu = (id: string) => {
       // the full editor or a preview has the keyboard: a menu-bar accelerator (macOS takes those
-      // keys before the page) goes back to it as the key, and never acts behind it
+      // keys before the page) goes back to it as the key, and never acts behind it. A click on
+      // the menu item runs the command (the editor closes first; a dialog refuses it).
       const { muted, overlayUp } = o.current;
-      if (MENU_OWNS_SHORTCUTS && id !== "settings" && (muted?.() || overlayUp())) {
+      if (MENU_OWNS_SHORTCUTS && id !== "settings" && (muted?.() || overlayUp()) && menuFromKey()) {
         const init = menuKeydown(id);
         if (init) {
           (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", init));

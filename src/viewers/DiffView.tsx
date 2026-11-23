@@ -12,7 +12,7 @@ import { formatBytes, plural } from "../format";
 import { decodeText } from "./text";
 import { diffIds, tokenIds, toRows, wordDiff, type Piece, type Row } from "./myers";
 import { DIFF_MAX_BYTES, type DiffSide } from "./diff";
-import { eolDifference, eolOf } from "./eol";
+import { eolOf, noDifferenceNote } from "./eol";
 import { Note, Segmented, ToolButton } from "./ui";
 import "./viewers.css";
 import "./diff.css";
@@ -111,7 +111,7 @@ export function DiffView({ left, right, title, onClose }: { left: DiffSide; righ
       if (i === 0 || rows[i - 1].t === "same") hunks.push(i);
     });
     const sameText = texts[0] === texts[1];
-    const eolNote = sameText || hunks.length ? "" : eolDifference(texts[0], texts[1]);
+    const eolNote = sameText || hunks.length ? "" : noDifferenceNote(texts[0], texts[1], a, b);
     return { a, b, rows, hunks, added, removed, eol: [eolOf(texts[0]), eolOf(texts[1])] as const, sameText, eolNote };
   }, [texts?.[0], texts?.[1], prefs.ignoreWs]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -271,7 +271,7 @@ export function DiffView({ left, right, title, onClose }: { left: DiffSide; righ
         <p>
           <strong>{diff.sameText ? "The files are identical." : "No differences."}</strong>
         </p>
-        {!diff.sameText && <p>{prefs.ignoreWs ? "They differ only in spaces and tabs." : diff.eolNote}</p>}
+        {!diff.sameText && <p>{diff.eolNote}</p>}
       </Note>
     );
   else

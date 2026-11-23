@@ -8,8 +8,8 @@ import { Icon } from "../Icons";
 import type { Profile } from "../types";
 import { useCaps } from "../useCaps";
 import { rootsMode } from "../connections/roots";
-import { certTrouble, isCloudKind, plainFtpUnconfirmed } from "../connections/kinds";
-import { AllowPlainFtpButton, TrustCertButton } from "../connections/CertTrustSheet";
+import { isCloudKind } from "../connections/kinds";
+import { ConnFixButton, connTrouble } from "../connections/ConnFix";
 
 /** The shell's ways out of an empty pane. */
 export type EmptyActions = {
@@ -24,12 +24,12 @@ export type EmptyActions = {
   /** "Connect without encryption" for an FTP server that offered none: let it use plain FTP;
    *  with `reopen`, connect again (else the caller retries what failed). */
   onAllowPlainFtp: (p: Profile, reopen: boolean) => Promise<void>;
+  /** An SFTP server's key (new, or changed since it was trusted) the user chose to trust: save it
+   *  on the connection; with `reopen`, connect again (else the caller retries what failed). */
+  onTrustHostKey: (p: Profile, fp: string, reopen: boolean) => Promise<void>;
   /** a workspace recipe's pane whose connection isn't on this device: its name (it stays empty) */
   missing?: string;
 };
-
-/** What the trust sheet calls the server: the name connected to, else the connection's. */
-const serverName = (p: Profile, host: string | null) => host || p.net?.host || p.name;
 
 export function Welcome({ actions }: { actions: EmptyActions }) {
   if (actions.missing)
@@ -87,10 +87,9 @@ export function ChooseBucket({
   const kybl = caps ? caps.createRoot : profile.provider === KYBL;
   const byName = !kybl && mode === "buckets";
   const what = mode === "drives" ? "place" : "bucket";
-  // a server whose own certificate stopped it before its one root could be listed
-  const cert = profile.net && error ? certTrouble(error) : null;
-  // an "encrypt if available" FTP server that offered no encryption: nothing sent yet
-  const plain = !!(profile.net && error && plainFtpUnconfirmed(error));
+  // a server's own certificate, an FTP server without encryption, an SFTP key to trust: stopped
+  // before its one root could be listed, and fixable here
+  const fix = connTrouble(profile, error);
   // FTP, SFTP, WebDAV…: one root, nothing to choose; it's connecting, or it couldn't
   const single = mode === "single";
   const failed = !!(note || error);
@@ -102,13 +101,15 @@ export function ChooseBucket({
         </div>
         <h1>{single ? (failed ? `Couldn’t connect to ${profile.name}` : `Connecting to ${profile.name}…`) : `Choose a ${what}`}</h1>
         <p>{note || (single ? (failed ? "" : "Opening its files.") : `Pick a ${what} from the sidebar.`)}</p>
-        {cert ? (
+        {fix ? (
           <div className="cert-actions">
-            <TrustCertButton cert={cert} host={serverName(profile, cert.host)} className="btn btn-primary" onTrust={(fp) => actions.onTrustCert(profile, fp, true)} />
-          </div>
-        ) : plain ? (
-          <div className="cert-actions">
-            <AllowPlainFtpButton className="btn" onAllow={() => actions.onAllowPlainFtp(profile, true)} />
+            <ConnFixButton
+              trouble={fix}
+              className={fix.kind === "plain" ? "btn" : "btn btn-primary"}
+              onTrustCert={(fp) => actions.onTrustCert(profile, fp, true)}
+              onAllowPlain={() => actions.onAllowPlainFtp(profile, true)}
+              onTrustHostKey={(fp) => actions.onTrustHostKey(profile, fp, true)}
+            />
           </div>
         ) : reconnect ? (
           <button className="btn btn-primary" onClick={() => actions.onReconnect(profile)}>
@@ -133,6 +134,7 @@ export function ListError({
   onReconnect,
   onTrustCert,
   onAllowPlainFtp,
+  onTrustHostKey,
 }: {
   profile: Profile;
   error: string;
@@ -140,14 +142,14 @@ export function ListError({
   onReconnect: (p: Profile) => void;
   onTrustCert: EmptyActions["onTrustCert"];
   onAllowPlainFtp: EmptyActions["onAllowPlainFtp"];
+  onTrustHostKey: EmptyActions["onTrustHostKey"];
 }) {
   const revoked = profile.provider === KYBL && isRevokedKey(error);
   // a Google Drive / OneDrive / Dropbox sign-in that ended: sign in again, then it loads
   const signIn = isCloudKind(profile.kind) && /sign in again|no longer signed in|invalid_grant|expired or revoked/i.test(error);
-  // FTPS / WebDAV with the server's own certificate: trust it, then list again
-  const cert = profile.net ? certTrouble(error) : null;
-  // an "encrypt if available" FTP server that offered no encryption: agree, then list again
-  const plain = !!profile.net && plainFtpUnconfirmed(error);
+  // FTPS / WebDAV with the server's own certificate, an "encrypt if available" FTP server that
+  // offered none, an SFTP key to trust: fix it, then list again
+  const fix = connTrouble(profile, error);
   return (
     <div className="empty error-state">
       <div className="empty-art">
@@ -158,26 +160,21 @@ export function ListError({
       <div className="error-msg">
         <ErrorText message={revoked ? kyblError(error) : error} />
       </div>
-      {cert ? (
+      {fix ? (
         <div className="cert-actions">
-          <TrustCertButton
-            cert={cert}
-            host={serverName(profile, cert.host)}
-            className="btn btn-primary btn-sm"
-            onTrust={async (fp) => {
+          <ConnFixButton
+            trouble={fix}
+            className={fix.kind === "plain" ? "btn btn-sm" : "btn btn-primary btn-sm"}
+            onTrustCert={async (fp) => {
               await onTrustCert(profile, fp, false);
               onRetry();
             }}
-          />
-          <button className="btn btn-sm" onClick={onRetry}>
-            <Icon name="retry" size={13} /> Try again
-          </button>
-        </div>
-      ) : plain ? (
-        <div className="cert-actions">
-          <AllowPlainFtpButton
-            onAllow={async () => {
+            onAllowPlain={async () => {
               await onAllowPlainFtp(profile, false);
+              onRetry();
+            }}
+            onTrustHostKey={async (fp) => {
+              await onTrustHostKey(profile, fp, false);
               onRetry();
             }}
           />

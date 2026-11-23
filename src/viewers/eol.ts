@@ -12,3 +12,16 @@ export function eolDifference(a: string, b: string): string {
   if (endsWithBreak(a) !== endsWithBreak(b)) return "One ends with a line break and the other doesn't.";
   return "They differ only in how lines end.";
 }
+
+/**
+ * The note under "No differences" when the texts aren't identical. `a` / `b` are their lines
+ * (without line breaks). With whitespace ignored the lines may still differ in spaces; when they
+ * don't, the line endings are the real reason.
+ */
+export function noDifferenceNote(ta: string, tb: string, a: readonly string[], b: readonly string[]): string {
+  const sameLines = a.length === b.length && a.every((l, i) => l === b[i]);
+  if (sameLines) return eolDifference(ta, tb);
+  const [ea, eb] = [eolOf(ta), eolOf(tb)];
+  if ((ea && eb && ea !== eb) || endsWithBreak(ta) !== endsWithBreak(tb)) return "They differ only in spaces, tabs and line endings.";
+  return "They differ only in spaces and tabs.";
+}

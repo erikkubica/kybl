@@ -62,6 +62,9 @@ import type { DocumentHandle } from "../viewers/DocumentView";
 import { capsFor, forgetCaps, peekCaps, useCaps } from "../useCaps";
 import { MigrationDialog, type MigrationSource } from "../jobs";
 import { useMigrate } from "./useMigrate";
+import { ConnFixRow, hasConnFix, type ConnFixes } from "./ConnFixRow";
+import { hideUnderLayer } from "./hideUnderLayer";
+import { trustOnProfile } from "../connections/ConnFix";
 import "../styles.css";
 import "./mobile.css";
 
@@ -359,6 +362,7 @@ export default function MobileApp() {
     setBuckets((m) => ({ ...m, [p.id]: { names: m[p.id]?.names ?? [], note: null, loading: true } }));
     let names: string[] = [];
     let note: string | null = null;
+    let error: string | undefined;
     let revoked = false;
     let labels: Record<string, string> | undefined;
     // the "+" row follows what the connection can do: make buckets, open one by name, or neither
@@ -374,6 +378,7 @@ export default function MobileApp() {
       } else names = (await api.listBuckets(p.id)).map((b) => b.name);
     } catch (e) {
       const msg = errMessage(e);
+      error = msg;
       revoked = p.provider === KYBL && isRevokedKey(msg);
       note = revoked
         ? REVOKED_SAY
@@ -384,7 +389,7 @@ export default function MobileApp() {
     if (p.bucket && !names.includes(p.bucket)) names = [p.bucket, ...names];
     // buckets opened by name stay with the connection (a key may reach buckets it cannot list)
     if (!usesListRoots(p)) for (const b of readJson<Record<string, string[]>>("m.extraBuckets", {})[p.id] ?? []) if (!names.includes(b)) names.push(b);
-    setBuckets((m) => ({ ...m, [p.id]: { names, labels, add, note: names.length && !revoked ? null : note, loading: false, revoked } }));
+    setBuckets((m) => ({ ...m, [p.id]: { names, labels, add, note: names.length && !revoked ? null : note, error: names.length && !revoked ? undefined : error, loading: false, revoked } }));
     return names;
   }, []);
 
@@ -400,6 +405,24 @@ export default function MobileApp() {
       return null;
     }
   }, []);
+
+  /** Fixes a connection error offers (as on the desktop): the profile to connect with afterwards. */
+  const connFixes = useMemo<ConnFixes>(() => {
+    const save = async (p: Profile, what: Parameters<typeof trustOnProfile>[1]) => {
+      const saved = await trustOnProfile(p, what);
+      forgetCaps(saved.id);
+      await reloadProfiles();
+      return saved;
+    };
+    return {
+      trustCert: (p, fp) => save(p, { certFingerprint: fp }),
+      trustHostKey: (p, fp) => save(p, { hostKey: fp }),
+      allowPlain: async (p) => {
+        if (p.net) await api.ftpAllowPlain(p.net);
+        return p;
+      },
+    };
+  }, [reloadProfiles]);
 
   const startup = useCallback(async (restore: boolean) => {
     const list = await reloadProfiles();
@@ -477,9 +500,10 @@ export default function MobileApp() {
     for (const p of listed ?? []) if (buckets[p.id]?.note && !buckets[p.id]?.revoked) loadBuckets(p);
     if (profilesError) void startup(false);
   }, [reloadListing, listed, buckets, loadBuckets, profilesError, startup]);
-  const net = useNetwork(() => {
-    // thumbnails that failed while offline get another try
-    retryFailedThumbs();
+  const net = useNetwork((why) => {
+    // thumbnails that failed while offline get another try (on resume, not ones that just failed
+    // for good: an undecodable file isn't downloaded again on every switch back)
+    retryFailedThumbs(why);
     refreshAll();
   });
   const offline = !net.online || (!!lst.error && isNetworkError(lst.error));
@@ -592,6 +616,9 @@ export default function MobileApp() {
   });
   const top: LayerId | undefined = stack[stack.length - 1];
   const z = (id: LayerId) => layerZ(Math.max(0, stack.indexOf(id)));
+  // what a sheet, screen or the viewer covers is out of reach for screen readers and the keyboard
+  // too, and the layer takes the focus
+  useEffect(() => hideUnderLayer(top), [top, stack.length, wide, locked]);
   /** How each layer closes when back reaches it. */
   const closeLayer: Record<LayerId, () => void> = {
     confirm: () => setConfirm(null),
@@ -676,6 +703,16 @@ export default function MobileApp() {
     return () => cancelAnimationFrame(f);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finding]);
+
+  // turning a tablet (or unfolding a phone) across the wide layout's size moves the folder into
+  // another parent, a new scroller: it picks the folder's place up when it mounts
+  const wasWide = useRef(wide);
+  useLayoutEffect(() => {
+    if (wasWide.current === wide) return;
+    wasWide.current = wide;
+    if (loc && !finding) pendingScroll.current = lst.scrollOf(loc) || null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wide]);
 
   // ------------------------------------------------------------ pull to refresh
   const pullRefresh = useCallback(async () => {
@@ -1072,9 +1109,13 @@ export default function MobileApp() {
             <div className="m-note m-note-err" role="alert">
               <Icon name="alert" size={15} />
               <span>Couldn’t update this list. {errSummary(lst.error)}</span>
-              <button className="m-text-btn" disabled={lst.refreshing} onClick={() => void reloadListing({ quiet: true })}>
-                Retry
-              </button>
+              {locProfile && hasConnFix(locProfile, lst.error) ? (
+                <ConnFixRow profile={locProfile} error={lst.error} fixes={connFixes} then={() => void reloadListing({ quiet: true })} className="m-text-btn" bare />
+              ) : (
+                <button className="m-text-btn" disabled={lst.refreshing} onClick={() => void reloadListing({ quiet: true })}>
+                  Retry
+                </button>
+              )}
             </div>
           )}
 
@@ -1115,6 +1156,8 @@ export default function MobileApp() {
               <h3>{isNetworkError(lst.error) ? "No connection" : `Couldn’t open this ${loc.prefix ? "folder" : rootNoun}`}</h3>
               {/* the plain sentence only: the SDK's debug text helps nobody on a phone */}
               <p className="m-empty-err">{isNetworkError(lst.error) ? "Check your internet connection and try again." : errSummary(lst.error)}</p>
+              {/* a certificate, plain FTP or a server key to agree to: the fix, then it lists again */}
+              {locProfile && <ConnFixRow profile={locProfile} error={lst.error} fixes={connFixes} then={() => void reloadListing({ quiet: false })} />}
               <button className="btn" onClick={() => void reloadListing({ quiet: false })}>
                 <Icon name="retry" size={14} /> Try again
               </button>
@@ -1173,7 +1216,8 @@ export default function MobileApp() {
           )}
           {listing.next && !search && lst.loadingAll === null && (
             <div ref={sentinel} className="m-more">
-              {lst.loading ? (
+              {/* (also while it waits for a refresh to finish first) */}
+              {lst.loading || lst.moreWaiting ? (
                 <span className="spinner" />
               ) : (
                 <button className="btn btn-sm" onClick={() => void loadMore()}>
@@ -1273,6 +1317,7 @@ export default function MobileApp() {
       current={loc}
       compact={wide}
       onRetry={loadBuckets}
+      fixes={connFixes}
       onRetryProfiles={() => void startup(false)}
       onOpen={(p, b) => go({ profileId: p.id, bucket: b, prefix: "" })}
       onAdd={() => setConnDialog({ profile: null })}
@@ -1399,7 +1444,23 @@ export default function MobileApp() {
       {offline && (
         <div className="m-offline" role="status">
           <MIcon name="wifi-off" size={15} />
-          <span>{net.online ? "Can't reach the storage" : "You're offline"} · Kybl refreshes when you're back</span>
+          {net.online ? (
+            // the phone says it's online, so no "back online" will come to refresh by itself
+            <>
+              <span>Can't reach the storage</span>
+              <button className="m-offline-retry" 
+                disabled={lst.refreshing || lst.loading}
+                onClick={() => {
+                  retryFailedThumbs();
+                  refreshAll();
+                }}
+              >
+                Retry
+              </button>
+            </>
+          ) : (
+            <span>You're offline · Kybl refreshes when you're back</span>
+          )}
         </div>
       )}
       {wide ? (
@@ -1564,6 +1625,7 @@ export default function MobileApp() {
               setIntake(null);
             }}
             onBack={() => backRef.current()}
+            fixes={connFixes}
           />
         )}
       </Presence>

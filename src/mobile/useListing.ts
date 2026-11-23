@@ -30,13 +30,26 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
   const [loading, setLoading] = useState(false);
   /** a quiet refresh of a list already on screen */
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /** the last refresh failed: the list on screen may be out of date until one works */
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  /** the last "load more" / "load all" failed (a later page working clears it, not a refresh's) */
+  const [pageError, setPageError] = useState<string | null>(null);
+  const error = refreshError ?? pageError;
   /** "load every page" for sorting: how many items so far, null when not running */
   const [loadingAll, setLoadingAll] = useState<number | null>(null);
   const cache = useRef(new Map<string, Cached>());
   const reqId = useRef(0);
   const cur = useRef<Loc | null>(null);
   const listingRef = useRef(listing);
+  /** bumped by stopAll, a refresh and leaving, so a "load all" still waiting or paging stops */
+  const allToken = useRef(0);
+  /** a "load all" is running (or waiting for a refresh): "load more" and it never run together */
+  const allRunning = useRef(false);
+  const endAll = useCallback(() => {
+    allToken.current++;
+    allRunning.current = false;
+    setLoadingAll(null);
+  }, []);
 
   const setListing = useCallback((l: Listing) => {
     listingRef.current = l;
@@ -77,19 +90,21 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
       const id = ++reqId.current;
       const had = listingRef.current;
       const quiet = opts.quiet ?? had.pages > 0;
-      setLoadingAll(null);
+      // a "load all" stops (it reads on from the list this brings, if the sort still wants it)
+      endAll();
       if (quiet) setRefreshing(true);
       else setLoading(true);
       try {
         const res = await fetchPages(l, Math.max(1, had.pages), id);
         if (!res) return;
         settle(l, true);
-        setError(null);
+        setRefreshError(null);
+        setPageError(null);
         setListing(res);
       } catch (e) {
         if (id !== reqId.current) return;
         settle(l, false);
-        setError(errMessage(e));
+        setRefreshError(errMessage(e));
         // a failed quiet refresh keeps what is on screen; the banner says what went wrong
         // and a failed first load shows nothing, but is not remembered as an empty folder
         if (!quiet) {
@@ -104,7 +119,7 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
         }
       }
     },
-    [fetchPages, settle, setListing],
+    [fetchPages, settle, setListing, endAll],
   );
 
   /** Re-reads the folder on screen, keeping as many pages as are loaded. */
@@ -133,8 +148,9 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
   const open = useCallback(
     (l: Loc | null): number => {
       cur.current = l;
-      setError(null);
-      setLoadingAll(null);
+      setRefreshError(null);
+      setPageError(null);
+      endAll();
       if (!l) {
         reqId.current++;
         listingRef.current = EMPTY;
@@ -159,19 +175,29 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
       void reload({ quiet: false });
       return 0;
     },
-    [reload],
+    [reload, endAll],
   );
 
   /** The next page, when the end of the list comes into view. */
   const more = useRef(false);
+  /** "load more" asked while a refresh runs: it waits, and says so (the footer's spinner) */
+  const [moreWaiting, setMoreWaiting] = useState(false);
   const loadMore = useCallback(async () => {
     const l = cur.current;
-    if (!l || !listingRef.current.next || loading || more.current) return;
+    if (!l || !listingRef.current.next || loading || more.current || allRunning.current) return;
     more.current = true;
     try {
       // a refresh in flight (after a delete, an upload) finishes first: cancelling it would leave
       // the old list on screen with the next page added to it, and its progress bar up
-      if (!(await afterRefresh(l))) return;
+      if (refreshRun.current) {
+        setMoreWaiting(true);
+        try {
+          if (!(await afterRefresh(l))) return;
+        } finally {
+          setMoreWaiting(false);
+        }
+      }
+      if (allRunning.current) return;
       const had = listingRef.current;
       if (!had.next) return;
       const id = ++reqId.current;
@@ -179,7 +205,7 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
       try {
         const res = await api.listObjects(l.profileId, l.bucket, l.prefix, had.next);
         if (id !== reqId.current) return;
-        setError(null);
+        setPageError(null);
         setListing({
           folders: [...had.folders, ...res.folders],
           objects: [...had.objects, ...res.objects],
@@ -187,7 +213,7 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
           pages: had.pages + 1,
         });
       } catch (e) {
-        if (id === reqId.current) setError(errMessage(e));
+        if (id === reqId.current) setPageError(errMessage(e));
       } finally {
         if (id === reqId.current) setLoading(false);
       }
@@ -196,51 +222,53 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
     }
   }, [loading, afterRefresh, setListing]);
 
-  /** bumped by stopAll, so a "load all" still waiting for a refresh doesn't start */
-  const allToken = useRef(0);
-
   /** Every remaining page, for sorting the whole folder. `stopAll` (or leaving) stops it. */
   const loadAll = useCallback(async () => {
     const l = cur.current;
-    if (!l || !listingRef.current.next) return;
+    // a page being loaded (or waiting to) finishes first; the sort asks again once it has
+    if (!l || !listingRef.current.next || more.current) return;
     const token = ++allToken.current;
+    allRunning.current = true;
     setLoadingAll(listingRef.current.folders.length + listingRef.current.objects.length);
-    // after a refresh in flight, from the list it brings (see loadMore)
-    if (!(await afterRefresh(l)) || token !== allToken.current) return;
-    let acc = listingRef.current;
-    if (!acc.next) {
-      setLoadingAll(null);
-      return;
-    }
-    const id = ++reqId.current;
-    setLoadingAll(acc.folders.length + acc.objects.length);
     try {
-      while (acc.next) {
-        const res = await api.listObjects(l.profileId, l.bucket, l.prefix, acc.next);
-        if (id !== reqId.current) return;
-        acc = { folders: [...acc.folders, ...res.folders], objects: [...acc.objects, ...res.objects], next: res.nextToken, pages: acc.pages + 1 };
-        setLoadingAll(acc.folders.length + acc.objects.length);
-        // show progress in the list every few pages, not on every one (each is a full re-sort)
-        if (acc.pages % 5 === 0 || !acc.next) setListing(acc);
+      // after a refresh in flight, from the list it brings (see loadMore)
+      if (!(await afterRefresh(l)) || token !== allToken.current) return;
+      let acc = listingRef.current;
+      if (!acc.next) return;
+      const id = ++reqId.current;
+      setLoadingAll(acc.folders.length + acc.objects.length);
+      try {
+        while (acc.next) {
+          const res = await api.listObjects(l.profileId, l.bucket, l.prefix, acc.next);
+          if (id !== reqId.current) return;
+          acc = { folders: [...acc.folders, ...res.folders], objects: [...acc.objects, ...res.objects], next: res.nextToken, pages: acc.pages + 1 };
+          setLoadingAll(acc.folders.length + acc.objects.length);
+          // show progress in the list every few pages, not on every one (each is a full re-sort)
+          if (acc.pages % 5 === 0 || !acc.next) setListing(acc);
+        }
+        // every page came: an earlier page's failure is over (a failed refresh's isn't)
+        setPageError(null);
+      } catch (e) {
+        if (id === reqId.current) setPageError(errMessage(e));
+      } finally {
+        if (id === reqId.current) setListing(acc);
       }
-    } catch (e) {
-      if (id === reqId.current) setError(errMessage(e));
     } finally {
-      if (id === reqId.current) {
-        setListing(acc);
+      // however it ended, unless a newer "load all" took over: the note with Stop goes
+      if (token === allToken.current) {
+        allRunning.current = false;
         setLoadingAll(null);
       }
     }
   }, [afterRefresh, setListing]);
 
   const stopAll = useCallback(() => {
-    allToken.current++;
-    setLoadingAll(null);
+    endAll();
     // a refresh in flight runs on (it isn't what Stop is for)
     if (refreshRun.current) return;
     reqId.current++;
     setLoading(false);
-  }, []);
+  }, [endAll]);
 
   /** Remembers where the list was scrolled, for coming back to it. */
   const saveScroll = useCallback((l: Loc, top: number) => {
@@ -262,5 +290,5 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
     }
   }, []);
 
-  return { listing, loading, refreshing, error, loadingAll, open, reload, loadMore, loadAll, stopAll, saveScroll, scrollOf, forget };
+  return { listing, loading, refreshing, error, refreshError, loadingAll, moreWaiting, open, reload, loadMore, loadAll, stopAll, saveScroll, scrollOf, forget };
 }

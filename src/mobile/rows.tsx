@@ -68,6 +68,10 @@ function useThumb(entry: Entry, profileId: string, bucket: string) {
   const phOk = imageModeFor(profileId) !== "off" && canPlaceholder(entry);
   const [ph, setPh] = useState<string | null | undefined>(() => (phOk ? cachedPlaceholder(profileId, bucket, entry) : null));
   const phRef = useRef<HTMLSpanElement>(null);
+  // none yet (a request that failed offline isn't remembered): asked again once the network is
+  // back, as thumbnails are; one known to have none answers from the cache
+  const [phRetry, setPhRetry] = useState(0);
+  useEffect(() => (phOk && ph === null ? onThumbRetry(() => setPhRetry((n) => n + 1)) : undefined), [phOk, ph]);
   useEffect(() => {
     if (!phOk) return setPh(null);
     const known = cachedPlaceholder(profileId, bucket, entry);
@@ -82,7 +86,7 @@ function useThumb(entry: Entry, profileId: string, bucket: string) {
       stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phOk, profileId, bucket, entry.key, entry.etag, entry.size]);
+  }, [phOk, profileId, bucket, entry.key, entry.etag, entry.size, phRetry]);
   const [url, setUrl] = useState<string | null | undefined>(() => (ok ? cachedThumb(profileId, bucket, entry) : null));
   const ref = useRef<HTMLSpanElement>(null);
   // the file version the thumbnail on show belongs to: a replaced photo (same key, new etag or

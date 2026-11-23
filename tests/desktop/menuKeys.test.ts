@@ -1,7 +1,7 @@
 // Menu-bar accelerators handed back as keydowns (src/desktop/menus.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MENU_ACCELERATORS, menuKeydown } from "../../src/desktop/menus.ts";
+import { MENU_ACCELERATORS, menuByKey, menuKeydown } from "../../src/desktop/menus.ts";
 
 test("letters, with and without Shift", () => {
   assert.deepEqual(pick(menuKeydown("duplicate")), { key: "d", code: "KeyD", metaKey: true, shiftKey: false, altKey: false });
@@ -21,6 +21,13 @@ test("brackets, backslash, period, plus and minus", () => {
 test("every accelerator maps, click-only items don't", () => {
   for (const id of Object.keys(MENU_ACCELERATORS)) assert.ok(menuKeydown(id), id);
   assert.equal(menuKeydown("refresh"), null);
+});
+
+test("a menu event is the key while ⌘ is held or just pressed, else a click", () => {
+  assert.equal(menuByKey(true, 0, 50_000), true);
+  assert.equal(menuByKey(false, 49_800, 50_000), true);
+  assert.equal(menuByKey(false, 40_000, 50_000), false);
+  assert.equal(menuByKey(false, 0, 50_000), false);
 });
 
 function pick(e: KeyboardEventInit | null) {

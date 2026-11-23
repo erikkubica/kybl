@@ -9,6 +9,8 @@ import { driveItems } from "../mount/driveMenu";
 import { findMount, useMounts } from "../mount/useMounts";
 import type { MountInfo } from "../api";
 import { tidyMenu } from "../desktop/menus";
+import { menuFromKey } from "../desktop/menuKeyWatch";
+import { trustOnProfile } from "../connections/ConnFix";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTerminalPanes } from "../terminal/useTerminalPanes";
 import { terminalBusy } from "../terminal/api";
@@ -1555,7 +1557,15 @@ export function AppShell() {
     // a server's own certificate, trusted from its error: saved on the connection like any edit
     onTrustCert: async (p, fp, reopen) => {
       if (!p.net) return;
-      const saved = await api.saveProfile({ ...p, net: { ...p.net, certFingerprint: fp } });
+      const saved = await trustOnProfile(p, { certFingerprint: fp });
+      forgetCaps(saved.id);
+      conns.upsertProfile(saved);
+      if (reopen) await connectIn(id, saved);
+    },
+    // an SFTP server's key (first seen, or changed) trusted from its error: saved the same way
+    onTrustHostKey: async (p, fp, reopen) => {
+      if (!p.net) return;
+      const saved = await trustOnProfile(p, { hostKey: fp });
       forgetCaps(saved.id);
       conns.upsertProfile(saved);
       if (reopen) await connectIn(id, saved);
@@ -2392,7 +2402,8 @@ const MAC_KEYS = /Mac/i.test(navigator.platform || navigator.userAgent);
  */
 function handBackKey(key: string, code: string): boolean {
   const el = document.activeElement;
-  if (!el?.closest?.("[data-own-keys]")) return false;
+  // a click on the menu item isn't the key: it sizes the tiles
+  if (!el?.closest?.("[data-own-keys]") || !menuFromKey()) return false;
   el.dispatchEvent(new KeyboardEvent("keydown", { key, code, metaKey: MAC_KEYS, ctrlKey: !MAC_KEYS, shiftKey: !MAC_KEYS, bubbles: true, cancelable: true }));
   return true;
 }

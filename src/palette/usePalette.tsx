@@ -9,6 +9,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { listen } from "@tauri-apps/api/event";
 import type { Loc } from "../browser/types";
 import { notePlace } from "./recent";
+import { menuFromKey, watchMenuKeys } from "../desktop/menuKeyWatch";
 import type { PaletteHost } from "./types";
 
 /** the palette's chunk has arrived (until then, what is typed is kept for it) */
@@ -77,10 +78,12 @@ export function usePalette({ host, blocked, here }: { host: () => PaletteHost; b
     window.addEventListener("keydown", onKey, true);
     // the menu item (with its ⌘K accelerator, which the menu bar may take before the page sees
     // the key): inside a [data-own-keys] element the key is handed back to it as a keydown
+    // (a click on the menu item opens the palette)
+    watchMenuKeys();
     const un = listen<string>("menu", (e) => {
       if (e.payload !== PALETTE_MENU_ID) return;
       const el = document.activeElement;
-      if (el && ownsKeys(el)) {
+      if (el && ownsKeys(el) && menuFromKey()) {
         el.dispatchEvent(new KeyboardEvent("keydown", { key: "k", code: "KeyK", metaKey: MAC, ctrlKey: !MAC, bubbles: true, cancelable: true }));
         return;
       }
