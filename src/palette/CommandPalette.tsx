@@ -13,6 +13,7 @@ import { addressOf, kindInfo, pickOf } from "../connections/kinds";
 import { closestLocalRoot, deviceIcon, setRootNames } from "../connections/roots";
 import { baseName } from "../format";
 import { Icon, type IconName } from "../Icons";
+import { key } from "../components/keys";
 import { providerMeta } from "../providers";
 import type { Entry, Profile } from "../types";
 import { registeredCommands, type PaletteCommand } from "./commands";
@@ -139,7 +140,7 @@ export default function CommandPalette({
         title: c.title,
         detail: c.group,
         extra: [c.group, c.keywords].filter(Boolean).join(" "),
-        hint: c.shortcut,
+        hint: c.shortcut && key(c.shortcut),
         kbd: !!c.shortcut,
         icon: c.icon ?? "chevron",
         disabled: c.disabled || null,

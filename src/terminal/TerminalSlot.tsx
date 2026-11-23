@@ -58,7 +58,7 @@ export function TerminalSlot(p: TerminalSlotProps) {
       { type: "item", label: "Smaller text", hint: K("−"), onClick: act("font-") },
       { type: "item", label: "Actual size", hint: K("0"), onClick: act("font0") },
       { type: "sep" },
-      { type: "item", label: "Close terminal", icon: "x", hint: "⌘W", onClick: p.onClose },
+      { type: "item", label: "Close terminal", icon: "x", hint: MAC ? "⌘W" : undefined, onClick: p.onClose },
     ]);
   };
   return (

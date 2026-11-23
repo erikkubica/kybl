@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { IconName } from "../Icons";
 import type { MenuItem } from "./Dialogs";
 import { useDialogs } from "../shell/useDialogs";
+import { k } from "./keys";
+import { IS_MAC } from "./pointer";
 
 /**
  * The desktop pane's place in its one-row header: just the current folder's name (the root's
@@ -19,6 +21,7 @@ export function PathTitle({
   parts,
   onNavigate,
   onGoTo,
+  goTo,
 }: {
   /** what the root is called on screen */
   label: string;
@@ -28,12 +31,14 @@ export function PathTitle({
   onNavigate: (prefix: string) => void;
   /** typing a path (same rules as Go to folder); without it the name is plain text */
   onGoTo?: (path: string) => void;
+  /** the path the field starts with, and its example (`goToText`) */
+  goTo?: { initial: string; placeholder: string };
 }) {
   const dialogs = useDialogs();
   const [editing, setEditing] = useState<string | null>(null);
   const editInput = useRef<HTMLInputElement>(null);
   const nav = useRef<HTMLElement>(null);
-  const startEdit = () => setEditing("/" + parts.map((p) => p + "/").join(""));
+  const startEdit = () => setEditing(goTo?.initial ?? "/" + parts.map((p) => p + "/").join(""));
   // a passive effect, not a layout one: opened from a menu ("Go to folder…"), the menu gives focus
   // back as it goes, in its own passive cleanup, which React runs before this
   useEffect(() => {
@@ -82,7 +87,7 @@ export function PathTitle({
           className="crumbs-input"
           value={editing}
           aria-label={`Path in ${label}`}
-          placeholder="/photos/2026 or s3://bucket/photos"
+          placeholder={goTo?.placeholder ?? "/photos/2026"}
           spellCheck={false}
           autoCorrect="off"
           autoCapitalize="off"
@@ -109,11 +114,11 @@ export function PathTitle({
       <button
         type="button"
         className="crumb current path-name"
-        title={onGoTo ? `${full}\nClick to type a path (⇧⌘G) · right-click or ⌘-click for the enclosing folders` : `${full}\nRight-click or ⌘-click for the enclosing folders`}
+        title={k(onGoTo ? `${full}\nClick to type a path (⇧⌘G) · right-click or ⌘-click for the enclosing folders` : `${full}\nRight-click or ⌘-click for the enclosing folders`)}
         aria-label={onGoTo ? `${full}. Type a path` : full}
         onClick={(e) => {
           // ⌘-click lists the enclosing folders, as on a Finder window's title
-          if (e.metaKey || !onGoTo) parentsMenu(...below(e.currentTarget));
+          if ((IS_MAC ? e.metaKey : e.ctrlKey) || !onGoTo) parentsMenu(...below(e.currentTarget));
           else startEdit();
         }}
         onContextMenu={(e) => {

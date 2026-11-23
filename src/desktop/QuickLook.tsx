@@ -18,6 +18,7 @@ import { releaseOnUnmount } from "../releaseMedia";
 import { useLocalCopy } from "../localCopyProgress";
 import { useRevealHit } from "./revealHit";
 import type { ContentHit } from "../browser/devtoolsApi";
+import { k } from "../components/keys";
 
 const MAX_TEXT = 50 * 1000 * 1000;
 /** the info column shows by itself (until it is switched off or on) in a window at least this wide */
@@ -35,6 +36,8 @@ export type QuickInfoActions = SizeProps & {
   onDownload?(list: Entry[]): void;
   onRename(e: Entry): void;
   onMoveTo(list: Entry[]): void;
+  /** what the move button says (inside an archive: "Extract to…") */
+  moveLabel?: string;
   onDelete(list: Entry[]): void;
   /** properties saved, or the file turned out to be gone: list the folder again */
   onChanged?(): void;
@@ -221,7 +224,7 @@ export function QuickLook({
                   style={busy?.verb === "copy" ? ({ "--p": `${busy.percent}%` } as React.CSSProperties) : undefined}
                   onClick={() => onCopyFile(entry)}
                   disabled={!!busy}
-                  title="Copy the file, to paste into a chat, a mail or a folder (⌘C)"
+                  title={k("Copy the file, to paste into a chat, a mail or a folder (⌘C)")}
                 >
                   <Icon name="copy" size={14} /> {busy?.verb === "copy" ? `Copying ${busy.percent}%` : "Copy"}
                 </button>
@@ -239,7 +242,7 @@ export function QuickLook({
               style={busy?.verb === "open" ? ({ "--p": `${busy.percent}%` } as React.CSSProperties) : undefined}
               onClick={() => onOpen(entry)}
               disabled={!!busy}
-              title={entry.kind === "folder" ? "Open the folder (↵)" : "Open in its app (⌘O)"}
+              title={k(entry.kind === "folder" ? "Open the folder (↵)" : "Open in its app (⌘O)")}
             >
               <Icon name={entry.kind === "folder" ? "folder" : "reveal"} size={14} /> {busy?.verb === "open" ? `Opening ${busy.percent}%` : "Open"}
             </button>
@@ -249,7 +252,7 @@ export function QuickLook({
             onClick={toggleInfo}
             aria-pressed={infoOpen}
             aria-label="Info"
-            title={infoOpen ? "Hide info (⌘I)" : "Show info (⌘I)"}
+            title={k(infoOpen ? "Hide info (⌘I)" : "Show info (⌘I)")}
           >
             <Icon name="info" />
           </button>
@@ -276,6 +279,7 @@ export function QuickLook({
                   onCalcSize={act.onCalcSize}
                   onDownload={act.onDownload && (() => act.onDownload!(group!))}
                   onMoveTo={() => moveTo(group!)}
+                  moveLabel={act.moveLabel}
                   onDelete={() => act.onDelete(group!)}
                 />
               ) : (
@@ -349,6 +353,7 @@ function QuickInfo({
         onDownload={act.onDownload && (() => act.onDownload!([entry]))}
         onRename={() => onRename(entry)}
         onMoveTo={() => onMoveTo([entry])}
+        moveLabel={act.moveLabel}
         onDelete={() => act.onDelete([entry])}
         onChanged={act.onChanged}
         folderSize={act.folderSize}

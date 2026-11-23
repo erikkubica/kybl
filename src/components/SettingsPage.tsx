@@ -19,7 +19,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { actionLabel, ago, installAndRestart, updatesApi, useUpdates } from "../updates";
 import { formatBytes } from "../format";
 import { useTransfersActive } from "../useTransfers";
-import { spellKeys } from "./shortcutKeys";
+import { keysIn, spellKeys } from "./shortcutKeys";
 
 /** Shortcut keys show Mac glyphs on a Mac, Ctrl, Alt and Shift elsewhere. */
 const MAC = /Mac/i.test(navigator.userAgent);
@@ -212,7 +212,7 @@ function Row({ label, hint, stack, children }: { label: ReactNode; hint?: string
     <div className={`set-row ${stack ? "stack" : ""}`}>
       <div className="set-label">
         {label}
-        {hint && <small>{hint}</small>}
+        {hint && <small>{keysIn(hint, MAC)}</small>}
       </div>
       {children}
     </div>
@@ -591,7 +591,7 @@ export function SettingsPage({
 
                 <h3 className="set-title">Safety</h3>
                 <div className="set-card">
-                  <Row label="Confirm before deleting" hint="Deleting from a bucket cannot be undone.">
+                  <Row label="Confirm before deleting" hint="On most connections a delete cannot be undone. Drives and the Trash keep what you delete.">
                     <Switch label="Confirm before deleting" on={settings.confirmDelete} onChange={(confirmDelete) => onChange({ confirmDelete })} />
                   </Row>
                   <Row label="Secret keys" hint="Stored in the system keychain, never in a settings file.">
@@ -778,7 +778,7 @@ export function SettingsPage({
               <>
                 <h3 className="set-title">Connections</h3>
                 <div className="set-card">
-                  {profiles.length === 0 && <Row label="No connections yet" hint="Add one to start browsing a bucket." />}
+                  {profiles.length === 0 && <Row label="No connections yet" hint="Add one to start browsing." />}
                   {profiles.map((p) => (
                     <div key={p.id} className="conn-row">
                       <ProviderBadge provider={p.provider} large />

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { errDetail, errSummary } from "../api";
 import { Icon, type IconName } from "../Icons";
+import { ariaKey, k } from "./keys";
 
 /** Elements Tab can reach inside a dialog or menu. */
 const FOCUSABLE =
@@ -476,7 +477,7 @@ function PlainRow({ it, onClose, onHover }: { it: Exclude<MenuItem, { type: "sub
       className={`ctx-item ${it.danger ? "danger" : ""}`}
       role={it.checked === undefined ? "menuitem" : "menuitemcheckbox"}
       aria-checked={it.checked === undefined ? undefined : it.checked}
-      aria-keyshortcuts={it.hint || undefined}
+      aria-keyshortcuts={ariaKey(it.hint)}
       data-label={it.label}
       disabled={it.disabled}
       onMouseEnter={(e) => {
@@ -490,7 +491,7 @@ function PlainRow({ it, onClose, onHover }: { it: Exclude<MenuItem, { type: "sub
     >
       <ItemIcon it={it} />
       <span className="ctx-label">{it.label}</span>
-      {it.hint && <span className="ctx-hint">{it.hint}</span>}
+      {it.hint && <span className="ctx-hint">{k(it.hint)}</span>}
     </button>
   );
 }
@@ -877,7 +878,7 @@ function ToastItem({ toast: t, dismiss }: { toast: Toast; dismiss: (id: number) 
     >
       <Icon name={t.kind === "error" ? "alert" : t.kind === "success" ? "check-circle" : "info"} size={16} />
       <div className="toast-body">
-        <span>{errSummary(t.text)}</span>
+        <span>{k(errSummary(t.text))}</span>
         {detail && open && <pre className="toast-detail selectable">{detail}</pre>}
       </div>
       {detail && (

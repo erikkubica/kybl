@@ -28,6 +28,7 @@ import {
   type KindSection,
   type Range,
 } from "../connections/groups";
+import { k } from "./keys";
 
 const SYNC_LABEL: Record<SyncState, string> = {
   idle: "Synced folders are up to date",
@@ -599,7 +600,7 @@ export function Sidebar({
             </button>
           ) : (
             <kbd className="side-find-key" aria-hidden="true">
-              ⌥⌘F
+              {k("⌥⌘F")}
             </kbd>
           )}
         </div>
@@ -719,7 +720,7 @@ export function Sidebar({
         >
           <Icon name="sync" size={15} />
         </button>
-        <button className="icon-btn" onClick={onOpenSettings} title="Settings (⌘,)" aria-label="Settings">
+        <button className="icon-btn" onClick={onOpenSettings} title={k("Settings (⌘,)")} aria-label="Settings">
           <Icon name="settings" size={16} />
         </button>
       </div>
@@ -952,7 +953,7 @@ export function SidebarToggle({ open, overlay, onToggle }: { open: boolean; over
       type="button"
       className={`icon-btn side-toggle ${open || overlay ? "" : "in-rail"}`}
       onClick={onToggle}
-      title={`${open ? "Collapse" : "Expand"} sidebar (⌥⌘S)`}
+      title={k(`${open ? "Collapse" : "Expand"} sidebar (⌥⌘S)`)}
       aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
       aria-expanded={open}
     >
@@ -1089,7 +1090,7 @@ export function SidebarRail({
           );
         })}
         {long && (
-          <button type="button" className="rail-btn rail-more" onClick={onMore} title={`All ${profiles.length} connections (⌥⌘F)`} aria-label={`All ${profiles.length} connections`}>
+          <button type="button" className="rail-btn rail-more" onClick={onMore} title={k(`All ${profiles.length} connections (⌥⌘F)`)} aria-label={`All ${profiles.length} connections`}>
             <Icon name="search" size={16} />
             <span className="rail-more-count" aria-hidden="true">
               {profiles.length > 999 ? "999+" : profiles.length}
@@ -1110,7 +1111,7 @@ export function SidebarRail({
         >
           <Icon name="sync" size={15} />
         </button>
-        <button type="button" className="icon-btn" onClick={onOpenSettings} title="Settings (⌘,)" aria-label="Settings">
+        <button type="button" className="icon-btn" onClick={onOpenSettings} title={k("Settings (⌘,)")} aria-label="Settings">
           <Icon name="settings" size={16} />
         </button>
       </div>

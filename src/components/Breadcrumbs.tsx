@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "../Icons";
+import { k } from "./keys";
 
 /**
  * The path, fitted to the room it has. The bucket and the current folder always show; when the
@@ -83,7 +84,7 @@ export function Breadcrumbs({
   const startEdit = () => setEditing("/" + parts.map((p) => p + "/").join(""));
   // the folder you're in: a click types a path (going to it again would do nothing)
   const here = (go: () => void) => (onGoTo ? startEdit : go);
-  const hereTitle = (name: string) => (onGoTo ? `${name} · click to type a path (⇧⌘G)` : name);
+  const hereTitle = (name: string) => (onGoTo ? k(`${name} · click to type a path (⇧⌘G)`) : name);
   const sep = <Icon name="chevron" size={12} className="crumb-sep" />;
 
   if (editing != null && onGoTo)

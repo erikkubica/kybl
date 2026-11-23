@@ -37,3 +37,26 @@ export function spellKeys(keys: string[], mac: boolean): string[] {
   if (mods) out.push(keyLabel(mods, false));
   return out;
 }
+
+/** a run of modifiers and the key it goes with, inside running text ("Upload (⌘U, ⇧⌘N)", "⌘-click", "⌥ to copy") */
+const IN_TEXT = /[⌃⌘⌥⇧]+(?:[⌫⌦↵←→↑↓−]|F\d{1,2}|Tab|Space|[A-Z0-9](?![a-z])|[[\]\\.,=+`/;'](?![A-Za-z]))?/g;
+
+/**
+ * Every shortcut written with Mac glyphs inside a sentence (a tooltip, a toast, a menu hint),
+ * spelled for this system: "Paste with ⌘V" → "Paste with Ctrl+V", "⌘-click" → "Ctrl-click".
+ */
+export function keysIn(text: string, mac: boolean): string {
+  if (mac || !text) return text;
+  return text.replace(IN_TEXT, (m) => keyLabel(m, false));
+}
+
+const ARIA_KEYS: Record<string, string> = { "⌫": "Backspace", "⌦": "Delete", "↵": "Enter", "←": "ArrowLeft", "→": "ArrowRight", "↑": "ArrowUp", "↓": "ArrowDown", "−": "-" };
+
+/** One shortcut ("⇧⌘N") as `aria-keyshortcuts` wants it ("Shift+Meta+N"); undefined for anything else. */
+export function ariaKeys(keys: string | undefined, mac: boolean): string | undefined {
+  const m = keys && /^([⌃⌘⌥⇧]*)(.+)$/.exec(keys);
+  if (!m || !/^([⌫⌦↵←→↑↓−]|F\d{1,2}|Tab|Space|.)$/.test(m[2])) return undefined;
+  const names: Record<string, string> = { "⌃": "Control", "⌘": mac ? "Meta" : "Control", "⌥": "Alt", "⇧": "Shift" };
+  const mods = [...new Set([...m[1]].map((c) => names[c]))];
+  return [...mods, ARIA_KEYS[m[2]] ?? m[2]].join("+");
+}

@@ -3,6 +3,7 @@ import { formatBytes, sumSizes, hasSize } from "../format";
 import { rootName } from "../connections/roots";
 import { destLabel } from "../moving";
 import { Icon } from "../Icons";
+import { k } from "../components/keys";
 import type { DragState } from "../useItemDrag";
 import { MAX_SORT_ITEMS } from "./useEntries";
 import type { Pane } from "./usePane";
@@ -169,10 +170,10 @@ export function DragGhost({ drag, bucket, profileId }: { drag: DragState; bucket
             : drag.dest != null
             ? drag.label != null
               ? // into the other pane: moves (⌥ copies), unless that place only takes copies
-                `${drag.copy ? "Copy" : "Move"} to ${drag.label}${drag.copy || drag.copyOnly ? "" : " · ⌥ to copy"}`
+                `${drag.copy ? "Copy" : "Move"} to ${drag.label}${drag.copy || drag.copyOnly ? "" : " · " + k("⌥ to copy")}`
               : // a drop moves; ⌥ copies
-                `${drag.copy ? "Copy" : "Move"} to ${drag.bucket != null ? rootName(profileId, drag.bucket) : destLabel(drag.dest, bucket ?? "", profileId)}${drag.copy ? "" : " · ⌥ to copy"}`
-            : (drag.note ?? "Drop on a folder or a bucket")}
+                `${drag.copy ? "Copy" : "Move"} to ${drag.bucket != null ? rootName(profileId, drag.bucket) : destLabel(drag.dest, bucket ?? "", profileId)}${drag.copy ? "" : " · " + k("⌥ to copy")}`
+            : (drag.note ?? "Drop on a folder")}
         </span>
       </span>
     </div>

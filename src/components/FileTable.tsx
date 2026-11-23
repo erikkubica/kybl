@@ -11,6 +11,7 @@ import { useListNav, useMarquee, type Box, type FolderSizeInfo, type SelectKeys 
 import { storageClassLabel } from "./storageClasses";
 import { DEFAULTS, type ColumnId } from "../settings";
 import type { Entry } from "../types";
+import { k } from "./keys";
 
 export type SortKey = "name" | "size" | "modified" | "kind";
 export type Sort = { key: SortKey; dir: "asc" | "desc" };
@@ -491,7 +492,7 @@ export function FileTable({
             className={`row is-folder row-up ${upActive ? "active" : ""}`}
             role="row"
             data-drop={parentPrefix(prefix)}
-            title="Enclosing folder (⌘↑)"
+            title={k("Enclosing folder (⌘↑)")}
             onMouseDown={(ev) => ev.button === 0 && ev.preventDefault()}
             onDoubleClick={onGoUp}
             onContextMenu={(ev) => ev.preventDefault()}

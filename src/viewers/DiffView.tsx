@@ -15,6 +15,7 @@ import { eolDifference, eolOf } from "./eol";
 import { Note, Segmented, ToolButton } from "./ui";
 import "./viewers.css";
 import "./diff.css";
+import { k } from "../components/keys";
 
 /** Unchanged lines kept around each change; longer unchanged stretches fold. */
 const CONTEXT = 3;
@@ -343,7 +344,7 @@ export function DiffView({ left, right, title, onClose }: { left: DiffSide; righ
         <ToolButton label="Ignore whitespace" pressed={prefs.ignoreWs} onClick={() => setPrefs({ ignoreWs: !prefs.ignoreWs })} />
         <span className="dif-gap" />
         <span className="dif-pos">{ready ? (at >= 0 ? `${at + 1} of ${hunks.length}` : `${hunks.length} changes`) : ""}</span>
-        <ToolButton icon="arrow-up" label="Previous" title="Previous change (⇧F7 or p)" disabled={!ready} onClick={() => jump(at - 1)} />
+        <ToolButton icon="arrow-up" label="Previous" title={k("Previous change (⇧F7 or p)")} disabled={!ready} onClick={() => jump(at - 1)} />
         <ToolButton icon="arrow-down" label="Next" title="Next change (F7 or n)" disabled={!ready} onClick={() => jump(at + 1)} />
       </div>
       <div className="dv-body">{content}</div>

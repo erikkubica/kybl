@@ -25,6 +25,10 @@ import { localCopies, type LocalCopyVerb } from "../localCopyProgress";
 import { parentOf, renameRounds } from "../batchRename";
 import { BatchRenameDialog } from "./BatchRenameDialog";
 import { okToRun as askToRun, openIn } from "./openGuard";
+import { OS } from "./openWith";
+import { addressKind, deleteWording, itemAddress } from "../itemText";
+import { rootName, rootsMode } from "../connections/roots";
+import { key } from "../components/keys";
 
 export type ToastAction = NonNullable<Toast["action"]>;
 
@@ -370,15 +374,22 @@ export function makeFileOps(c: OpsContext) {
       run();
       return;
     }
+    // drives and this computer (with "Move to Trash" on) keep deleted items to restore
+    const say = deleteWording({ what, count: list.length, folders: folders.length > 0, trash: !!peekCaps(pid)?.trash, local: !!c.localPaths, windows: OS === "win" });
     c.confirm({
-      title: `Delete ${what}?`,
-      label: "Delete",
-      danger: true,
+      title: say.title,
+      label: say.label,
+      danger: say.danger,
       message: (
         <>
           <p>
-            {folders.length > 0 ? "Folders are deleted together with everything inside them. " : ""}
-            This permanently removes the {list.length === 1 ? "item" : "items"} from the bucket and <strong>cannot be undone</strong>.
+            {say.text}
+            {say.danger && (
+              <>
+                {" "}
+                and <strong>cannot be undone</strong>.
+              </>
+            )}
           </p>
           {files.length > 0 && (
             <p>
@@ -911,13 +922,18 @@ export function makeFileOps(c: OpsContext) {
     c.reloadIfShowing(pid, b);
   };
 
-  /** ⌘C / ⌘X: remembers the items (and puts their S3 URIs on the clipboard as text). */
+  /**
+   * ⌘C / ⌘X: remembers the items, and puts their addresses on the clipboard as text (S3 URIs on
+   * S3, full paths on this computer, paths in the root elsewhere).
+   */
   const clip = (list: Entry[], mode: "copy" | "cut") => {
     const { profile, bucket } = c;
     if (!profile || bucket == null || !list.length) return;
     itemClipboard.set({ mode, profileId: profile.id, bucket, items: list });
-    navigator.clipboard?.writeText(list.map((e) => `s3://${bucket}/${e.key}`).join("\n")).catch(() => {});
-    toast("info", `${mode === "cut" ? "Cut" : "Copied"} ${whatOf(list)}. Paste with ⌘V in another folder.`);
+    const kind = addressKind({ roots: peekCaps(profile.id)?.roots, localPaths: c.localPaths, kind: profile.kind });
+    const label = rootsMode(profile, peekCaps(profile.id)) === "drives" ? rootName(profile.id, bucket) : undefined;
+    navigator.clipboard?.writeText(list.map((e) => itemAddress(kind, bucket, e.key, label)).join("\n")).catch(() => {});
+    toast("info", `${mode === "cut" ? "Cut" : "Copied"} ${whatOf(list)}. Paste with ${key("⌘V")} in another folder.`);
   };
 
   /** ⌘V: copies or moves the clipped items into `dest` of the bucket on screen. */

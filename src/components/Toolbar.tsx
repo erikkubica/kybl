@@ -6,6 +6,7 @@ import type { MenuItem } from "./Dialogs";
 import type { Sort, SortKey } from "./FileTable";
 import { useDialogs } from "../shell/useDialogs";
 import { parentPrefix } from "../format";
+import { k } from "./keys";
 
 export const TILE_MIN = 96;
 export const TILE_MAX = 320;
@@ -56,6 +57,7 @@ export function Toolbar({
   connName,
   onSwitchConnection,
   onGoTo,
+  goTo,
   favorite,
   onToggleFavorite,
   afterPath,
@@ -122,6 +124,8 @@ export function Toolbar({
   onSwitchConnection?: (x: number, y: number) => void;
   /** typing a path into the bar (Go to folder) */
   onGoTo?: (path: string) => void;
+  /** what typing a path starts with, and its example */
+  goTo?: { initial: string; placeholder: string };
   /** the folder on screen is a favorite; the star toggles it */
   favorite?: boolean;
   onToggleFavorite?: () => void;
@@ -250,7 +254,7 @@ export function Toolbar({
               onClick={onUp}
               // dropping items on it moves them up a level
               data-drop={!disabled ? parentPrefix(prefix) : undefined}
-              title={`${parts[parts.length - 2]} (⌘↑)`}
+              title={k(`${parts[parts.length - 2]} (⌘↑)`)}
               aria-label={`Enclosing folder, ${parts[parts.length - 2]}`}
             >
               …
@@ -261,7 +265,7 @@ export function Toolbar({
           </>
         )}
         {bucket != null ? (
-          <PathTitle label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} onGoTo={onGoTo} />
+          <PathTitle label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} onGoTo={onGoTo} goTo={goTo} />
         ) : (
           <nav className="crumbs path-title" aria-label="Path">
             <span className="crumb muted">{emptyLabel ?? "No bucket selected"}</span>
@@ -279,7 +283,7 @@ export function Toolbar({
           className="icon-btn tb-create"
           disabled={disabled || readOnly}
           onClick={createMenu}
-          title={readOnly ? "Archives open read-only" : "Upload or create (⌘U, ⇧⌘N)"}
+          title={k(readOnly ? "Archives open read-only" : "Upload or create (⌘U, ⇧⌘N)")}
           aria-label="Upload or create"
           aria-haspopup="menu"
         >
@@ -300,7 +304,7 @@ export function Toolbar({
         {/* folded to its icon until clicked (or ⌘F), and while a filter or search is on it stays open */}
         <div
           className={`search ${!searchOpen ? "folded" : ""}`}
-          title={!searchOpen ? "Filter, or search subfolders (⌘F)" : undefined}
+          title={!searchOpen ? k("Filter, or search subfolders (⌘F)") : undefined}
           onMouseDown={(e) => {
             if (disabled || (e.target as HTMLElement).closest("input, button")) return;
             e.preventDefault();
@@ -341,7 +345,7 @@ export function Toolbar({
               <Icon name="x" size={12} />
             </button>
           ) : (
-            <kbd>⌘F</kbd>
+            <kbd>{k("⌘F")}</kbd>
           )}
         </div>
 

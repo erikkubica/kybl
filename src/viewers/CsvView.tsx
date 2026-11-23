@@ -8,6 +8,7 @@ import { DataGrid } from "./DataGrid";
 import { Note, Segmented, ToolButton } from "./ui";
 import type { CsvRequest, CsvResponse } from "./csv.worker";
 import type { ViewerProps } from "./types";
+import { k } from "../components/keys";
 
 type Tab = "table" | "text";
 
@@ -72,7 +73,7 @@ export default function CsvView({ name, text, editable, mode, onEdit, onSave }: 
             onChange={setTab}
           />
           {tab === "table" && <ToolButton label="First row is the header" pressed={headerRow} onClick={() => setHeaderRow((v) => !v)} />}
-          {tab === "text" && <ToolButton icon="search" label="Find" onClick={() => editor.current?.find()} title="Find and replace (⌘F)" />}
+          {tab === "text" && <ToolButton icon="search" label="Find" onClick={() => editor.current?.find()} title={k("Find and replace (⌘F)")} />}
           {tab === "table" && parsed?.error && (
             <span className="dv-status bad" title={parsed.error}>
               {parsed.error}

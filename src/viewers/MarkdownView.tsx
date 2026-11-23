@@ -12,6 +12,7 @@ import { Segmented, ToolButton } from "./ui";
 import { useNarrow } from "./useNarrow";
 import type { ViewerProps } from "./types";
 import { formatBytes } from "../format";
+import { k } from "../components/keys";
 
 type Layout = "edit" | "split" | "preview";
 
@@ -120,7 +121,7 @@ export default function MarkdownView({ name, text, editable, mode, onEdit, onSav
               onChange={setLayout}
             />
           )}
-          {shown !== "preview" && <ToolButton icon="search" label="Find" onClick={() => editor.current?.find()} title="Find and replace (⌘F)" />}
+          {shown !== "preview" && <ToolButton icon="search" label="Find" onClick={() => editor.current?.find()} title={k("Find and replace (⌘F)")} />}
           {big && shown !== "edit" && snapshot != null && snapshot !== source && (
             <ToolButton icon="refresh" label="Update preview" title="Large file: the preview isn't redrawn while you type" onClick={() => setSnapshot(source)} />
           )}

@@ -4,6 +4,7 @@
  * files shared from other apps). MobileApp owns the state; these are the actions on it.
  */
 import { NO_EXPORT, exportable } from "../connections/native";
+import { deleteWording } from "../itemText";
 import { useRef } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, errMessage, errSummary, type Capabilities } from "../api";
@@ -337,20 +338,20 @@ export function useFileOps(c: FileOpsCtx) {
     };
     if (!c.settings.confirmDelete) return void run();
     // drives (Google Drive, OneDrive, Dropbox) keep deleted items in their trash
-    const trash = !!c.caps?.trash;
-    const them = list.length === 1 ? "it" : "them";
+    const say = deleteWording({ what: label, count: list.length, folders: folders.length > 0, trash: !!c.caps?.trash, local: !!c.caps?.localPaths });
     c.setConfirm({
-      title: trash ? `Move ${label} to the Trash?` : `Delete ${label}?`,
-      label: trash ? "Move to Trash" : "Delete",
-      danger: !trash,
-      message: trash ? (
+      title: say.title,
+      label: say.label,
+      danger: say.danger,
+      message: (
         <p>
-          {folders.length > 0 ? "Folders go with everything inside them. " : ""}You can restore {them} from the Trash of this drive.
-        </p>
-      ) : (
-        <p>
-          {folders.length > 0 ? "Folders are deleted with everything inside them. " : ""}
-          This permanently removes {them} and <strong>cannot be undone</strong>.
+          {say.text}
+          {say.danger && (
+            <>
+              {" "}
+              and <strong>cannot be undone</strong>.
+            </>
+          )}
         </p>
       ),
       run,

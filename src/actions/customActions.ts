@@ -392,7 +392,7 @@ const RESERVED: Record<string, string> = (() => {
 /** Why `combo` can't be this action's shortcut (taken by the app or another action), or null. */
 export function shortcutProblem(combo: string, selfId: string | null, list = actionsStore.get()): string | null {
   const parts = combo.split("+");
-  if (!parts.includes("Mod") && !/^F\d+$/.test(parts[parts.length - 1])) return "Use ⌘ (Ctrl) with a key, or an F-key.";
+  if (!parts.includes("Mod") && !/^F\d+$/.test(parts[parts.length - 1])) return MAC ? "Use ⌘ with a key, or an F-key." : "Use Ctrl with a key, or an F-key.";
   const taken = RESERVED[combo];
   if (taken) return `${comboLabel(combo)} is already ${taken}.`;
   // the menu bar's accelerators (menus.ts) in their own words: "⇧⌘N"

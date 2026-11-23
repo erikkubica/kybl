@@ -192,6 +192,7 @@ export function PropsEditor({
   name,
   details,
   onSaved,
+  onHeadersSaved,
   onCancel,
 }: {
   profileId: string;
@@ -200,6 +201,8 @@ export function PropsEditor({
   name: string;
   details: ObjectDetails;
   onSaved: (d: ObjectDetails) => void;
+  /** the headers saved but the tags did not: show the new headers, keep the form open */
+  onHeadersSaved?: (d: ObjectDetails) => void;
   onCancel: () => void;
 }) {
   const uid = useId();
@@ -276,8 +279,8 @@ export function PropsEditor({
         try {
           await api.setObjectTags(profileId, bucket, objectKey, nextTags);
         } catch (e) {
-          // the headers did save: show them, keep the form open for the tags
-          if (headersChanged) onSaved(d);
+          // the headers did save: show them (the new baseline), keep the form open for the tags
+          if (headersChanged) onHeadersSaved?.(d);
           throw new Error(`The properties were saved, but the tags were not.\n\n${errMessage(e)}`);
         }
       }

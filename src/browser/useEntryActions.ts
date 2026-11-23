@@ -13,8 +13,9 @@ import { baseName, parentPrefix } from "../format";
 import { destLabel, entryParent } from "../moving";
 import { expiryLabel, type Favorite } from "../settings";
 import { tidyMenu } from "../desktop/menus";
-import { openInItems } from "../desktop/openWith";
+import { OS, openInItems } from "../desktop/openWith";
 import { parseLocation } from "../desktop/paths";
+import { addressKind, goToText, isAbsolutePath, resolveLocalPath } from "../itemText";
 import { GoToDialog } from "../desktop/GoToDialog";
 import { SyncThisFolder } from "../desktop/SyncThisFolder";
 import { MountDialog } from "../mount/MountDialog";
@@ -161,11 +162,19 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     );
   };
 
-  /** Go to folder: a path in this bucket, `bucket/path` or an s3:// address. */
+  const addr = addressKind({ roots: caps?.roots, localPaths: caps?.localPaths, kind: profile?.kind });
+  /** what Go to folder starts with and says, for this kind of connection */
+  const goTo = goToText(addr, bucket ?? "", prefix, pane.bucketLabel ?? bucket ?? "");
+  /** Go to folder: a path in this bucket, `bucket/path` or an s3:// address; on this computer a full path. */
   const goToPath = async (input: string) => {
     if (!profile) return;
     const names = conns.bucketsBy[profile.id]?.names ?? [];
-    const loc = parseLocation(input, names);
+    let loc = parseLocation(input, names);
+    if (addr === "local" && isAbsolutePath(input)) {
+      const at = resolveLocalPath(input, names.length ? names : bucket ? [bucket] : []);
+      if (!at) return void toast("error", "That path isn’t in any folder Kybl can open.");
+      loc = { bucket: at.root, prefix: at.prefix };
+    }
     const b = loc?.bucket ?? bucket;
     // "" is a real root: a server's (or a single container's) one root
     if (!loc || b == null) return;
@@ -191,7 +200,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       bar.dispatchEvent(new Event("kybl-edit-path"));
       return;
     }
-    dialogs.show((close) => createElement(GoToDialog, { bucket, prefix, onGo: goToPath, onClose: close }));
+    dialogs.show((close) => createElement(GoToDialog, { ...goTo, onGo: goToPath, onClose: close }));
   };
   /** "Keep on this device": a two-way synced copy in ~/Kybl/…, opened in Finder when ready */
   const keepOffline = async (pre: string) => {
@@ -481,7 +490,9 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       ...(folder ? mirrorFor(e.key) : []),
       { type: "sep" },
       { type: "item", label: one ? "Rename…" : `Rename ${list.length} items…`, icon: "edit", hint: "F2", onClick: () => rename(list) },
-      { type: "item", label: list.length > 1 ? `Delete ${list.length} items…` : "Delete…", icon: "trash", hint: "⌘⌫", danger: true, onClick: () => ops.askDelete(list) },
+      caps?.trash
+        ? { type: "item", label: `Move to ${onDisk && OS === "win" ? "Recycle Bin" : "Trash"}${settings.confirmDelete ? "…" : ""}`, icon: "trash", hint: "⌘⌫", onClick: () => ops.askDelete(list) }
+        : { type: "item", label: list.length > 1 ? `Delete ${list.length} items…` : "Delete…", icon: "trash", hint: "⌘⌫", danger: true, onClick: () => ops.askDelete(list) },
     ]));
     dialogs.menu(ev.clientX, ev.clientY, items);
   };
@@ -549,6 +560,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     migrate,
     askGoTo,
     goToPath,
+    goTo,
     toggleFavorite,
     isFavorite: !!(profile && bucket != null && favoriteOf(profile.id, bucket, prefix)),
     calcSizes,

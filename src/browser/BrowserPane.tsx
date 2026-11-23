@@ -198,6 +198,7 @@ export function BrowserPane(p: BrowserPaneProps) {
         connName={pane.profile?.name}
         onSwitchConnection={p.onSwitchConnection}
         onGoTo={here ? (t) => void actions.goToPath(t) : undefined}
+        goTo={actions.goTo}
         favorite={actions.isFavorite}
         onToggleFavorite={here ? () => actions.toggleFavorite(bucket!, prefix) : undefined}
         afterPath={pane.git.info && <BranchChip info={pane.git.info} />}
@@ -322,7 +323,9 @@ export function BrowserPane(p: BrowserPaneProps) {
             onDownload: pane.caps?.localPaths ? undefined : (list) => void ops.downloadEntries(list, pane.relBase),
             // inside an archive (read-only) these say so, as the keyboard commands do
             onRename: (e) => (pane.archive.inArchive ? actions.commands.rename() : ops.askRename(e)),
-            onMoveTo: (list) => actions.askMove(list),
+            // inside an archive (read-only) the move button extracts instead
+            onMoveTo: (list) => (pane.archive.inArchive ? void pane.archive.extractTo(list) : actions.askMove(list)),
+            moveLabel: pane.archive.inArchive ? "Extract to…" : undefined,
             onDelete: pane.archive.inArchive ? () => actions.commands.delete() : pane.deleteFromQuick,
             onChanged: ent.refresh,
             folderSize: pane.folderSizes.view,
