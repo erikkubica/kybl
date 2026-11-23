@@ -104,6 +104,8 @@ import type { HistorySnap } from "../browser/useHistory";
 import { sameLoc } from "../browser/useListing";
 import { PaneContext } from "./PaneContext";
 import { useMigrationHost } from "./useMigrationHost";
+import { usePalette } from "../palette/usePalette";
+import { forgetPlacesOf } from "../palette/recent";
 import {
   allGroups,
   groupLabel,
@@ -508,6 +510,7 @@ export function AppShell() {
   /** A connection was deleted: drop it from the sidebar, the history and the screen. */
   const forgetProfile = (id: string) => {
     recents.forget(id);
+    forgetPlacesOf(id);
     clearAuthNeeded(id);
     forgetCaps(id);
     conns.dropProfile(id);
@@ -607,7 +610,7 @@ export function AppShell() {
    * Splits a pane: the new one opens the same place (and view) and becomes the active pane. It
    * goes right of or below the pane, or with `before` left of or above it.
    */
-  const split = (dir: Dir, id: PaneId = activeId, before = false) => {
+  const split = (dir: Dir, id: PaneId = activeId, before = false, fill?: (fresh: PaneId) => void) => {
     const room = splitRoom(dir, id);
     if (room.ok === "no") return toast("info", room.why);
     // the panes need the sidebar's width: it folds to its rail, as a narrow Finder window hides its sidebar
@@ -620,7 +623,9 @@ export function AppShell() {
     const src = slot(id);
     const p = slot(fresh);
     opened.current.add(fresh);
-    if (src.here && src.profile) p.go(src.profile, src.here.bucket, src.here.prefix);
+    // `fill`: the new pane opens somewhere else (the command palette's ⌘↵)
+    if (fill) fill(fresh);
+    else if (src.here && src.profile) p.go(src.profile, src.here.bucket, src.here.prefix);
     else p.showConnection(src.profile?.id ?? null);
     if (p.view !== src.view) p.setView(src.view);
     setTree(splitPane(t, id, dir, fresh, before));
@@ -1529,9 +1534,9 @@ export function AppShell() {
     !!docRef.current ||
     dialogs.isOpen() ||
     !!(connDialog || kyblDialog || importOpen || allPanes.current.some((p) => p.quick)) ||
-    !!document.querySelector(".modal-backdrop, .ctx-menu, .ql-backdrop, .ws-pop");
+    !!document.querySelector(".modal-backdrop, .ctx-menu, .ql-backdrop, .ws-pop, .palette-backdrop");
 
-  useShellCommands({
+  const route = useShellCommands({
     active,
     visible: panesRef.current,
     overlayUp,
@@ -1573,6 +1578,66 @@ export function AppShell() {
     dual,
     editorOpen: () => !!docRef.current,
     closeEditor,
+  });
+
+  // ------------------------------------------------------------ command palette (⌘K)
+  const routeRef = useRef(route);
+  routeRef.current = route;
+  /** ⌘↵ in the palette: a new pane to the right, opened at `fill`'s place */
+  const inNewPane = (fill: (fresh: PaneId) => void) => {
+    const why = splitRefusal("row", activeId);
+    if (why) return toast("info", why);
+    split("row", activeId, false, fill);
+  };
+  const palette = usePalette({
+    here: active.here,
+    blocked: overlayUp,
+    host: () => ({
+      profiles,
+      builtIn: (p) => p.id === THIS_MAC.id,
+      recentConnections: recents.recent,
+      rootLabel: conns.rootLabel,
+      favorites: settings.favorites,
+      active,
+      panes: panesRef.current,
+      route: (id) => routeRef.current(id),
+      openConnection: (p, newPane) => (newPane ? inNewPane((fresh) => void connectIn(fresh, p)) : openConnection(p)),
+      openPlace: (loc, newPane, selectKey) => {
+        const p = profiles.find((x) => x.id === loc.profileId);
+        if (!p) return toast("error", "That connection no longer exists.");
+        void conns.loadBuckets(p);
+        if (newPane) return inNewPane((fresh) => slot(fresh).go(p, loc.bucket, loc.prefix, { selectKey }));
+        activeRef.current.go(p, loc.bucket, loc.prefix, { selectKey });
+        focusListSoon();
+      },
+      openFavorite: (f, newPane) => {
+        const p = profiles.find((x) => x.id === f.profileId);
+        if (newPane && p) inNewPane((fresh) => slot(fresh).go(p, f.bucket, f.prefix));
+        else openFavorite(f);
+      },
+      splitRefusal: (dir) => splitRefusal(dir, activeId),
+      closeOtherPanes: () => closeOthers(),
+      equalizePanes: () => setTree((t) => equalize(t)),
+      syncPartners: facing
+        .filter(({ pair: [a, b] }) => a === activeId || b === activeId)
+        .map(({ pair: [a, b] }) => {
+          const id = a === activeId ? b : a;
+          const dir = relation(tree, activeId, id);
+          return { id, name: dir ? `the pane ${dir === "up" ? "above" : dir === "down" ? "below" : `to the ${dir}`}` : nameOf(id), on: isLinked(activeId, id) };
+        }),
+      toggleSync: (id) => toggleSync(activeId, id),
+      workspaces: ws.list.map((w) => ({ id: w.id, name: w.name, active: w.id === ws.active })),
+      switchWorkspace,
+      showActivity: showActivityPanel,
+      openSettings,
+      importConnections: () => setImportOpen(true),
+      undo,
+      settings,
+      updateSettings,
+      settingsOpen,
+      closeSettings: () => setSettingsOpen(false),
+      toast: (k, t) => toast(k, t),
+    }),
   });
 
   // ------------------------------------------------------------ drag & drop from Finder
@@ -1944,6 +2009,7 @@ export function AppShell() {
         />
       )}
       {migrations.element}
+      {palette.element}
       {!settingsOpen && <UpdateBanner st={updates} />}
     </div>
   );

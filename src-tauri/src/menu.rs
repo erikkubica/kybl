@@ -17,7 +17,7 @@ use tauri::{
 };
 
 /// Item ids passed to the page as they are.
-const PAGE_ITEMS: [&str; 39] = [
+const PAGE_ITEMS: [&str; 40] = [
     "duplicate",
     "new-connection",
     "new-folder",
@@ -57,6 +57,7 @@ const PAGE_ITEMS: [&str; 39] = [
     "rename-workspace",
     "workspace-settings",
     "close-workspace",
+    "command-palette",
 ];
 
 /// Handled here, not by the page (named apart from the tray menu's ids, which share the handler).
@@ -133,6 +134,9 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         "View",
         true,
         &[
+            // the page takes ⌘K first too (and leaves it to a terminal pane that owns its keys)
+            &item("command-palette", "Command Palette…", Some("CmdOrCtrl+K"))?,
+            &sep()?,
             &item("refresh", "Refresh", None)?,
             &item("search", "Search…", None)?,
             &item("toggle-hidden", "Show Hidden Files", Some("CmdOrCtrl+Shift+Period"))?,
