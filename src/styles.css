@@ -433,7 +433,8 @@ code {
 /* a narrow pane: the panes button folds into "…"; while searching or typing a path
    the name or the view buttons step aside so the field has room */
 @container (max-width: 420px) {
-  .toolbar > .tb-panes {
+  .toolbar > .tb-panes,
+  .toolbar > .tb-upload {
     display: none;
   }
   .toolbar:is(.search-open, :has(.search:focus-within)) > .path-title {

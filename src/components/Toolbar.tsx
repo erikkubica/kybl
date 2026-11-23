@@ -12,10 +12,11 @@ export const TILE_MAX = 320;
 
 /**
  * A desktop pane's header: one row, left to right
- *   [+] [↑] [connection] folder name [⋯]   ……   [view] [details] [search] [panes]
+ *   [+] [↑] [connection] folder name [⋯]   ……   [upload] [view] [details] [search] [panes]
  * Creating things sits behind +, the pane's less frequent actions (favorites among them) behind ⋯
  * and how the list looks behind the eye, so a pane at its least width (340px) still fits on one
- * row: the folder's name gives way first, then (below ~420px) the panes button folds into ⋯.
+ * row: the folder's name gives way first, then (below ~420px) the panes button folds into ⋯ and
+ * the upload button steps aside (+ has uploading too).
  */
 export function Toolbar({
   bucket,
@@ -226,6 +227,24 @@ export function Toolbar({
         </button>
 
         <div className="spacer" data-tauri-drag-region />
+
+        {/* uploading is common enough for its own button (folders: right-click, the + menu or ⇧⌘U) */}
+        <button
+          className="icon-btn tb-upload"
+          disabled={disabled}
+          onClick={() => onUpload(false)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            dialogs.menu(e.clientX, e.clientY, [
+              { type: "item", label: "Upload files…", icon: "upload", hint: "⌘U", onClick: () => onUpload(false) },
+              { type: "item", label: "Upload folder…", icon: "folder", hint: "⇧⌘U", onClick: () => onUpload(true) },
+            ]);
+          }}
+          title="Upload files (⌘U) · right-click to upload a folder (⇧⌘U)"
+          aria-label="Upload files"
+        >
+          <Icon name="upload" />
+        </button>
 
         <button
           className="icon-btn tb-view"
