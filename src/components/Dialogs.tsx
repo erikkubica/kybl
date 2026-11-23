@@ -343,6 +343,62 @@ function ItemIcon({ it }: { it: Extract<MenuItem, { type: "item" | "submenu" }> 
   return it.icon ? <Icon name={it.icon} size={15} /> : <span style={{ width: 15 }} />;
 }
 
+/** A menu with more rows than this gets a find field at its top (connections, groups, buckets). */
+const FIND_AT = 12;
+const rowCount = (items: MenuItem[]) => items.filter((it) => it.type === "item" || it.type === "submenu").length;
+
+/** The rows to draw, with their places in `items`: all of them, or with `q`, the rows whose label has every word of it. */
+function findRows(items: MenuItem[], q: string): { it: MenuItem; i: number }[] {
+  const all = items.map((it, i) => ({ it, i }));
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return all;
+  return all.filter(({ it }) => (it.type === "item" || it.type === "submenu") && words.every((w) => it.label.toLowerCase().includes(w)));
+}
+
+/**
+ * The find field at a long menu's top: typing filters the rows, ↓ goes into them, Enter picks the
+ * first, Esc clears it (and closes the menu when it's empty).
+ */
+function MenuFind({ value, onChange, panel }: { value: string; onChange: (v: string) => void; panel: React.RefObject<HTMLDivElement | null> }) {
+  return (
+    <div className="ctx-find" role="presentation">
+      <Icon name="search" size={13} />
+      <input
+        className="ctx-find-input"
+        value={value}
+        placeholder="Find"
+        aria-label="Find in this menu"
+        spellCheck={false}
+        autoComplete="off"
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            e.stopPropagation();
+            focusFirst(panel.current);
+          } else if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            e.stopPropagation();
+            panel.current?.querySelector<HTMLButtonElement>(".ctx-item:not(:disabled)")?.click();
+          } else if (e.key === "Escape" && value) {
+            e.preventDefault();
+            e.stopPropagation();
+            onChange("");
+          } else if (e.key !== "Tab") e.stopPropagation();
+        }}
+      />
+    </div>
+  );
+}
+
+/** A printable key pressed on a menu row with a find field: it goes to the field instead. */
+const toFind = (e: React.KeyboardEvent, panel: HTMLElement | null) => {
+  const input = panel?.querySelector<HTMLInputElement>(".ctx-find-input");
+  if (!input || e.key.length !== 1 || e.metaKey || e.ctrlKey || e.altKey || e.key === " ") return false;
+  input.focus({ preventScroll: true });
+  return true;
+};
+
 /** Whether a menu panel has more above or below what shows. */
 function useScrollEdges(panel: React.RefObject<HTMLDivElement | null>, dep: unknown) {
   const [edge, setEdge] = useState({ up: false, down: false });
@@ -455,7 +511,10 @@ export function ContextMenu({
   const subSeq = useRef(0);
   const timer = useRef<number | undefined>(undefined);
   const clearTimer = () => window.clearTimeout(timer.current);
-  const edge = useScrollEdges(ref, pos);
+  const finds = rowCount(items) > FIND_AT;
+  const [q, setQ] = useState("");
+  const rows = findRows(items, q);
+  const edge = useScrollEdges(ref, `${pos.x},${pos.y},${pos.maxH},${rows.length}`);
 
   useEffect(() => {
     const el = ref.current;
@@ -484,7 +543,7 @@ export function ContextMenu({
 
   useEffect(() => {
     const prev = document.activeElement;
-    const first = ref.current?.querySelector<HTMLElement>(".ctx-item:not(:disabled)");
+    const first = ref.current?.querySelector<HTMLElement>(".ctx-find-input, .ctx-item:not(:disabled)");
     (first ?? ref.current)?.focus({ preventScroll: true });
     const inside = (t: EventTarget | null) => t instanceof Node && (!!ref.current?.contains(t) || !!subRef.current?.contains(t));
     const away = () => {
@@ -498,6 +557,8 @@ export function ContextMenu({
       away();
     };
     const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLInputElement | null;
+      if (e.key === "Escape" && t?.classList?.contains("ctx-find-input") && t.value) return;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -568,6 +629,10 @@ export function ContextMenu({
       openSub(Number(el.dataset.index), el, true);
       return;
     }
+    if (finds && toFind(e, ref.current)) {
+      if (subNow.current) closeSub(false);
+      return;
+    }
     if (navigate(e, ref.current, typed) && subNow.current) closeSub(false);
   };
 
@@ -584,8 +649,14 @@ export function ContextMenu({
         onContextMenu={(e) => e.preventDefault()}
         onKeyDown={keys}
       >
+        {finds && <MenuFind value={q} onChange={(v) => (setQ(v), subNow.current && closeSub(false))} panel={ref} />}
         {edge.up && <ScrollArrow panel={ref} dir="up" />}
-        {items.map((it, i) =>
+        {finds && q && !rows.length && (
+          <div className="ctx-heading" role="presentation">
+            Nothing matches
+          </div>
+        )}
+        {rows.map(({ it, i }) =>
           it.type === "submenu" ? (
             <button
               key={i}
@@ -626,6 +697,7 @@ export function ContextMenu({
       </div>
       {sub && (
         <SubPanel
+          key={sub.index}
           panelRef={subRef}
           sub={sub}
           onClose={onClose}
@@ -657,7 +729,10 @@ function SubPanel({
 }) {
   const [pos, setPos] = useState<{ x: number; y: number; maxH: number } | null>(null);
   const { anchor, items, focus } = sub;
-  const edge = useScrollEdges(panelRef, pos);
+  const finds = !!items && rowCount(items) > FIND_AT;
+  const [q, setQ] = useState("");
+  const rows = items ? findRows(items, q) : [];
+  const edge = useScrollEdges(panelRef, `${pos?.x},${pos?.y},${pos?.maxH},${rows.length}`);
 
   useLayoutEffect(() => {
     const el = panelRef.current;
@@ -675,7 +750,11 @@ function SubPanel({
   useEffect(() => {
     // opened from the keyboard: keys go to the submenu even while its items load
     if (!focus) return;
-    if (items) focusFirst(panelRef.current);
+    if (items) {
+      const find = panelRef.current?.querySelector<HTMLElement>(".ctx-find-input");
+      if (find) find.focus({ preventScroll: true });
+      else focusFirst(panelRef.current);
+    }
     if (!panelRef.current?.contains(document.activeElement)) panelRef.current?.focus({ preventScroll: true });
   }, [focus, items, panelRef]);
 
@@ -697,21 +776,22 @@ function SubPanel({
         } else if (e.key === "Tab") {
           e.preventDefault();
           onClose();
-        } else navigate(e, panelRef.current, typed);
+        } else if (!(finds && toFind(e, panelRef.current))) navigate(e, panelRef.current, typed);
       }}
     >
+      {finds && <MenuFind value={q} onChange={setQ} panel={panelRef} />}
       {edge.up && <ScrollArrow panel={panelRef} dir="up" />}
       {items === null ? (
         <div className="ctx-heading ctx-loading" role="presentation">
           Loading…
         </div>
-      ) : items.length === 0 ? (
+      ) : rows.length === 0 ? (
         <div className="ctx-heading" role="presentation">
-          Nothing to show
+          {q ? "Nothing matches" : "Nothing to show"}
         </div>
       ) : (
         // one level deep: a submenu inside a submenu isn't drawn
-        items.map((it, i) => (it.type === "submenu" ? null : <PlainRow key={i} it={it} onClose={onClose} />))
+        rows.map(({ it, i }) => (it.type === "submenu" ? null : <PlainRow key={i} it={it} onClose={onClose} />))
       )}
       {edge.down && <ScrollArrow panel={panelRef} dir="down" />}
     </div>

@@ -386,27 +386,39 @@ code {
 }
 .icon-btn.conn-switch {
   display: inline-flex;
-  flex-direction: row;
   align-items: center;
   width: auto;
   min-width: 32px;
-  flex: 0 40 auto;
-  gap: 6px;
   padding: 0 4px;
   margin: 0 0 0 2px;
 }
-/* which server or account the pane is on, before the folder's name: muted, and it gives way
-   before the folder's name does */
-.conn-switch .conn-name {
+/* which server or account the pane is on, before the folder's name: muted, a step of the path
+   (a click goes to the top), and it gives way before the folder's name does */
+.toolbar > .conn-name {
+  flex: 0 40 auto;
   min-width: 0;
   max-width: 220px;
+  height: 26px;
+  padding: 0 6px;
   overflow: hidden;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: var(--muted);
-  font-size: 13px;
+  cursor: default;
 }
-.conn-switch .conn-sep {
+.toolbar > .conn-name:not(:disabled):hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.toolbar > .conn-name:disabled {
+  opacity: 1;
+}
+.toolbar > .conn-sep {
   margin-left: -2px;
   color: var(--faint);
 }
@@ -433,8 +445,7 @@ code {
 /* a narrow pane: the panes button folds into "…"; while searching or typing a path
    the name or the view buttons step aside so the field has room */
 @container (max-width: 420px) {
-  .toolbar > .tb-panes,
-  .toolbar > .tb-upload {
+  .toolbar > .tb-panes {
     display: none;
   }
   .toolbar:is(.search-open, :has(.search:focus-within)) > .path-title {
@@ -4227,6 +4238,41 @@ body.dragging-items * {
 .ctx-menu {
   overflow-y: auto;
   outline: none;
+}
+/* a long menu's find field: it stays at the top while the rows scroll */
+.ctx-find {
+  position: sticky;
+  top: -5px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  margin: -5px -5px 4px;
+  padding: 0 11px;
+  border-bottom: 1px solid var(--border);
+  background: var(--raised);
+  color: var(--faint);
+}
+.ctx-find .ctx-find-input,
+.ctx-find .ctx-find-input:focus {
+  height: auto;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+.ctx-find-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.ctx-find ~ .ctx-scroll.up {
+  top: 29px;
 }
 /* a long menu's top and bottom arrows: they float over the items (no jump when they appear) */
 .ctx-scroll {

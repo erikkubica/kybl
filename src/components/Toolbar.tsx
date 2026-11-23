@@ -12,11 +12,10 @@ export const TILE_MAX = 320;
 
 /**
  * A desktop pane's header: one row, left to right
- *   [+] [↑] [connection] folder name [⋯]   ……   [upload] [view] [details] [search] [panes]
+ *   [↑] [connection] folder name [⋯]   ……   [+] [view] [details] [search] [panes]
  * Creating things sits behind +, the pane's less frequent actions (favorites among them) behind ⋯
  * and how the list looks behind the eye, so a pane at its least width (340px) still fits on one
- * row: the folder's name gives way first, then (below ~420px) the panes button folds into ⋯ and
- * the upload button steps aside (+ has uploading too).
+ * row: the folder's name gives way first, then (below ~420px) the panes button folds into ⋯.
  */
 export function Toolbar({
   bucket,
@@ -181,9 +180,6 @@ export function Toolbar({
   return (
     <header className="chrome">
       <div className={`toolbar ${searchOpen ? "search-open" : ""}`} data-tauri-drag-region>
-        <button className="icon-btn" disabled={disabled} onClick={createMenu} title="Upload or create (⌘U, ⇧⌘N)" aria-label="Upload or create" aria-haspopup="menu">
-          <Icon name="plus" />
-        </button>
         <button
           className="icon-btn"
           disabled={disabled || !canUp}
@@ -196,24 +192,37 @@ export function Toolbar({
           <Icon name="arrow-up" />
         </button>
         {onSwitchConnection && (
-          <button
-            className="icon-btn conn-switch"
-            onClick={(e) => onSwitchConnection(...anchorOf(e))}
-            title={connName ? `${connName} · click to switch connection or bucket` : "Switch connection or bucket"}
-            aria-label={connName ? `Connection ${connName}. Switch connection or bucket` : "Switch connection or bucket"}
-            aria-haspopup="menu"
-          >
-            <ProviderBadge provider={provider} />
-            {/* at the top, the root's own name already says it when they match (a server named after its host) */}
+          <>
+            <button
+              className="icon-btn conn-switch"
+              onClick={(e) => onSwitchConnection(...anchorOf(e))}
+              title={connName ? `${connName} · switch connection or bucket` : "Switch connection or bucket"}
+              aria-label="Switch connection or bucket"
+              aria-haspopup="menu"
+            >
+              <ProviderBadge provider={provider} />
+            </button>
+            {/* the connection's name reads as the first step of the path, and acts like one: it goes to
+                the top. At the top the root's own name already says it when they match. */}
             {connName && !(parts.length === 0 && connName === (bucketLabel ?? bucket)) && (
               <>
-                <span className="conn-name">{connName}</span>
+                <button
+                  type="button"
+                  className="conn-name"
+                  disabled={disabled || parts.length === 0}
+                  onClick={() => onNavigate("")}
+                  title={parts.length ? `Go to the top of ${bucketLabel ?? bucket ?? connName}` : connName}
+                  // dropping items here moves them to the top, as on a breadcrumb
+                  data-drop={!disabled && parts.length ? "" : undefined}
+                >
+                  {connName}
+                </button>
                 <span className="conn-sep" aria-hidden>
                   /
                 </span>
               </>
             )}
-          </button>
+          </>
         )}
         {bucket != null ? (
           <PathTitle label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} onGoTo={onGoTo} />
@@ -228,23 +237,10 @@ export function Toolbar({
 
         <div className="spacer" data-tauri-drag-region />
 
-        {/* uploading is common enough for its own button (folders: right-click, the + menu or ⇧⌘U) */}
-        <button
-          className="icon-btn tb-upload"
-          disabled={disabled}
-          onClick={() => onUpload(false)}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            dialogs.menu(e.clientX, e.clientY, [
-              { type: "item", label: "Upload files…", icon: "upload", hint: "⌘U", onClick: () => onUpload(false) },
-              { type: "item", label: "Upload folder…", icon: "folder", hint: "⇧⌘U", onClick: () => onUpload(true) },
-            ]);
-          }}
-          title="Upload files (⌘U) · right-click to upload a folder (⇧⌘U)"
-          aria-label="Upload files"
-        >
-          <Icon name="upload" />
+        <button className="icon-btn tb-create" disabled={disabled} onClick={createMenu} title="Upload or create (⌘U, ⇧⌘N)" aria-label="Upload or create" aria-haspopup="menu">
+          <Icon name="plus" />
         </button>
+
 
         <button
           className="icon-btn tb-view"
