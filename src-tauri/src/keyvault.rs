@@ -104,13 +104,10 @@ fn set_aside(path: &Path) {
     }
 }
 
-/// Writes next to the file and renames over it, so a crash never leaves half a file.
+/// Writes next to the file (a temporary name of its own, so two copies of the app saving at once
+/// never mix their bytes) and renames over it, so a crash never leaves half a file.
 fn replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
-    std::fs::write(&tmp, bytes).map_err(|e| format!("Could not save the secret key: {e}"))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("Could not save the secret key: {e}"))
+    crate::state::write_atomic(path, bytes).map_err(|e| format!("Could not save the secret key: {e}"))
 }
 
 /// Every secret, moving the old keychain item's into the file on the way.

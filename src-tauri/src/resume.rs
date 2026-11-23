@@ -5,7 +5,10 @@
 //! came from, the parts of an S3 multipart upload, the session of a cloud drive upload, or the
 //! temporary file on an SFTP / FTP server.
 //!
-//! Kept in `transfers.json` in the app's data folder. What a kept transfer left behind (partial
+//! Kept in `transfers.json` in this run's own folder below the data folder (`leftovers::run_dir`),
+//! so a second Kybl running at the same time never writes over (or resumes) this one's. A start
+//! takes over the files of runs that ended, together with their `leftovers` ledgers, so exactly
+//! one start gets each run's kept transfers. What a kept transfer left behind (partial
 //! files, open uploads) is the store's to clean up, not `leftovers`': that one skips anything
 //! named here (see [`keeps_upload`], [`keeps_partial`]). Records older than [`KEEP_FOR`] are
 //! given up and handed to `leftovers` for cleaning.
@@ -71,9 +74,15 @@ impl Saved {
     }
 }
 
+/// The one shared file older versions kept in the data folder, once a start moved it into its
+/// own folder (a rename: only one start can take it).
+const LEGACY: &str = "legacy-transfers.json";
+
 static PATH: OnceLock<PathBuf> = OnceLock::new();
 static RECORDS: Mutex<Option<HashMap<String, Saved>>> = Mutex::new(None);
 static SAVING: AtomicBool = AtomicBool::new(false);
+/// Held while the file is written.
+static WRITING: Mutex<()> = Mutex::new(());
 
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -95,19 +104,64 @@ fn changed() {
     });
 }
 
-/// Writes the file now (aside, then renamed over it, so a crash never leaves half of it).
+/// Writes the file now (to a temporary file of its own, renamed over it, so a crash never leaves
+/// half of it). One save at a time, each writing what is current then, so an older list never
+/// lands after a newer one.
 pub fn save() {
     let Some(path) = PATH.get() else { return };
-    let json = with(|r| {
-        let mut list: Vec<&Saved> = r.values().collect();
-        list.sort_by(|a, b| a.saved.cmp(&b.saved).then(a.id.cmp(&b.id)));
-        serde_json::to_vec(&list)
-    });
-    let Ok(json) = json else { return };
-    let tmp = path.with_extension("json.tmp");
-    if std::fs::write(&tmp, json).and_then(|_| std::fs::rename(&tmp, path)).is_err() {
-        let _ = std::fs::remove_file(&tmp);
+    let _one = WRITING.lock().unwrap();
+    let list = with(|r| r.values().cloned().collect::<Vec<_>>());
+    let _ = write(path, list);
+}
+
+fn read(path: &Path) -> Option<Vec<Saved>> {
+    std::fs::read(path).ok().and_then(|raw| serde_json::from_slice(&raw).ok())
+}
+
+fn write(path: &Path, mut list: Vec<Saved>) -> std::io::Result<()> {
+    list.sort_by(|a, b| a.saved.cmp(&b.saved).then(a.id.cmp(&b.id)));
+    crate::state::write_atomic(path, &serde_json::to_vec(&list).map_err(std::io::Error::other)?)
+}
+
+/// Adds `from` to `into`; of two records of one transfer the newer stays.
+fn merge(into: &mut Vec<Saved>, from: Vec<Saved>) {
+    for s in from {
+        match into.iter_mut().find(|x| x.id == s.id) {
+            Some(x) if x.saved < s.saved => *x = s,
+            Some(_) => {}
+            None => into.push(s),
+        }
     }
+}
+
+/// Takes the kept transfers of a run that ended (its folder `from`) into this run's folder
+/// `into`, written there before that folder is removed (see `leftovers::run_dir`).
+pub fn adopt(into: &Path, from: &Path) -> std::io::Result<()> {
+    let theirs: Vec<Saved> = [FILE, LEGACY].iter().filter_map(|f| read(&from.join(f))).flatten().collect();
+    if theirs.is_empty() {
+        return Ok(());
+    }
+    let mut all = read(&into.join(FILE)).unwrap_or_default();
+    merge(&mut all, theirs);
+    write(&into.join(FILE), all)
+}
+
+/// This run's file in its folder `dir`, with what older versions kept in the shared file
+/// `legacy` moved in (a rename, so two starts never both take it).
+fn load(dir: &Path, legacy: Option<&Path>) -> (PathBuf, Vec<Saved>) {
+    let path = dir.join(FILE);
+    let mut list = read(&path).unwrap_or_default();
+    let moved = dir.join(LEGACY);
+    if let Some(legacy) = legacy {
+        let _ = std::fs::rename(legacy, &moved);
+    }
+    if let Some(old) = read(&moved) {
+        merge(&mut list, old);
+        if write(&path, list.clone()).is_ok() {
+            let _ = std::fs::remove_file(&moved);
+        }
+    }
+    (path, list)
 }
 
 /// Records (or replaces) a transfer.
@@ -195,10 +249,9 @@ fn read_back(list: Vec<Saved>, at: u64) -> (HashMap<String, Saved>, Vec<Saved>) 
 /// At start-up, before `leftovers::start`: reads what an earlier run kept. Kept downloads get
 /// their names back (see `transfers::adopt`); stale ones are handed to `leftovers` to clean up.
 pub fn start(app: &AppHandle) {
-    let Ok(dir) = app.path().app_data_dir() else { return };
-    let _ = std::fs::create_dir_all(&dir);
-    let path = dir.join(FILE);
-    let list: Vec<Saved> = std::fs::read(&path).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default();
+    let Some(dir) = crate::leftovers::run_dir(app) else { return };
+    let legacy = app.path().app_data_dir().ok().map(|d| d.join(FILE));
+    let (path, list) = load(&dir, legacy.as_deref());
     let (keep, stale) = read_back(list, now());
     let kept: Vec<Saved> = keep.values().cloned().collect();
     *RECORDS.lock().unwrap() = Some(keep);
@@ -274,6 +327,36 @@ mod tests {
         assert_eq!(keep["fail"].state, "error", "failed stays failed (Retry carries on)");
         assert!(!keep.contains_key("odd"));
         assert_eq!(stale.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["old"]);
+    }
+
+    #[test]
+    fn kept_transfers_of_ended_runs_and_older_versions_are_taken_over_once() {
+        let root = std::env::temp_dir().join(format!("kybl-resume-runs-{}", uuid::Uuid::new_v4().simple()));
+        let (own, gone) = (root.join("own"), root.join("gone"));
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::create_dir_all(&gone).unwrap();
+        write(&own.join(FILE), vec![saved("mine", "paused", 5), saved("both", "paused", 1)]).unwrap();
+        write(&gone.join(FILE), vec![saved("theirs", "error", 3), saved("both", "error", 9)]).unwrap();
+        adopt(&own, &gone).unwrap();
+        let mut got = read(&own.join(FILE)).unwrap();
+        got.sort_by(|a, b| a.id.cmp(&b.id));
+        assert_eq!(got.iter().map(|s| (s.id.as_str(), s.state.as_str())).collect::<Vec<_>>(), [("both", "error"), ("mine", "paused"), ("theirs", "error")], "the newer record of one transfer wins");
+        // nothing to take over: this run's file stays as it is
+        adopt(&own, &root.join("missing")).unwrap();
+        assert_eq!(read(&own.join(FILE)).unwrap().len(), 3);
+
+        // the shared file of an older version: moved in by one start only
+        let legacy = root.join("transfers.json");
+        write(&legacy, vec![saved("old", "paused", 2)]).unwrap();
+        let (path, list) = load(&own, Some(&legacy));
+        assert_eq!(path, own.join(FILE));
+        assert!(list.iter().any(|s| s.id == "old") && !legacy.exists() && !own.join(LEGACY).exists());
+        let other = root.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        let (_, second) = load(&other, Some(&legacy));
+        assert!(second.is_empty(), "a second start must not resume the same transfers");
+        assert!(read(&own.join(FILE)).unwrap().iter().any(|s| s.id == "old"), "written into this run's own file");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

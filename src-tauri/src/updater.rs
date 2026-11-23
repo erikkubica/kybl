@@ -115,7 +115,7 @@ fn save(app: &AppHandle, st: &UpdateStatus) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(err)?;
     }
     let s = Stored { auto: st.auto, skipped: st.skipped.clone() };
-    std::fs::write(p, serde_json::to_vec(&s).map_err(err)?).map_err(err)
+    crate::state::write_atomic(&p, &serde_json::to_vec(&s).map_err(err)?).map_err(err)
 }
 
 /// Changes the status and tells the window (and the menu bar) about it.

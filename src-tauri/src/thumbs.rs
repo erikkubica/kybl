@@ -77,7 +77,8 @@ fn cache_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
         return Ok(d.clone());
     }
     let dir = app.path().app_cache_dir().map_err(err)?.join("thumbs");
-    std::fs::create_dir_all(&dir).map_err(err)?;
+    // thumbnails of private pictures: this account only
+    crate::filecache::private_dir(&dir).map_err(err)?;
     Ok(DIR.get_or_init(|| dir).clone())
 }
 
@@ -215,8 +216,11 @@ fn cache_name(kind: ConnKind, profile_id: &str, bucket: &str, key: &str, etag: &
 
 async fn save(path: &Path, jpeg: &[u8]) {
     // a temporary name of its own: the same thumbnail can be made twice at once
+    // (made private to this account)
     let tmp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4().simple()));
-    if tokio::fs::write(&tmp, jpeg).await.is_err() || tokio::fs::rename(&tmp, path).await.is_err() {
+    let (t, bytes) = (tmp.clone(), jpeg.to_vec());
+    let wrote = tokio::task::spawn_blocking(move || crate::filecache::write_private(&t, &bytes)).await.is_ok_and(|r| r.is_ok());
+    if !wrote || tokio::fs::rename(&tmp, path).await.is_err() {
         let _ = tokio::fs::remove_file(&tmp).await;
         return;
     }

@@ -199,7 +199,8 @@ impl WriteBack {
     /// files no record refers to are moved to [`RECOVERED`] instead. Only unfinished saves
     /// (`.part`) are removed.
     pub fn open(dir: PathBuf) -> Self {
-        let _ = std::fs::create_dir_all(&dir);
+        // the user's saves, not uploaded yet: this account only
+        let _ = crate::filecache::private_dir(&dir);
         let mut st = State::default();
         let json = dir.join("pending.json");
         match std::fs::read(&json) {
@@ -227,7 +228,8 @@ impl WriteBack {
             if keep.contains(&name) || !e.file_type().is_ok_and(|t| t.is_file()) {
                 continue;
             }
-            if name.ends_with(".part") || name == "pending.json.tmp" {
+            let record_tmp = name == "pending.json.tmp" || (name.starts_with(".pending.json.") && name.ends_with(".tmp"));
+            if name.ends_with(".part") || record_tmp {
                 // a save that never finished (or a record never moved into place)
                 let _ = std::fs::remove_file(e.path());
             } else if name.ends_with(".bin") {
@@ -272,7 +274,7 @@ impl WriteBack {
     /// A fresh file to write a save into (not yet a pending upload).
     pub fn new_temp(&self) -> std::io::Result<PathBuf> {
         let p = self.dir.join(format!("{}.part", uuid::Uuid::new_v4()));
-        std::fs::File::create(&p)?;
+        crate::filecache::private_file(&p)?;
         Ok(p)
     }
 
@@ -281,20 +283,8 @@ impl WriteBack {
     /// shown on the status line until a later write works.
     fn persist(&self, st: &State) {
         let res = (|| -> std::io::Result<()> {
-            use std::io::Write;
             let list: Vec<&Pending> = st.pending.values().collect();
-            let raw = serde_json::to_vec(&list)?;
-            let tmp = self.dir.join("pending.json.tmp");
-            let mut f = std::fs::File::create(&tmp)?;
-            f.write_all(&raw)?;
-            f.sync_all()?;
-            drop(f);
-            std::fs::rename(&tmp, self.dir.join("pending.json"))?;
-            // the rename itself, on disks that need the folder flushed too
-            if let Ok(d) = std::fs::File::open(&self.dir) {
-                let _ = d.sync_all();
-            }
-            Ok(())
+            crate::state::write_atomic(&self.dir.join("pending.json"), &serde_json::to_vec(&list)?)
         })();
         let mut err = self.persist_error.lock().unwrap();
         match res {

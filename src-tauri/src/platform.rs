@@ -414,19 +414,10 @@ fn percent_decode(s: &str) -> String {
 }
 
 /// A per-app scratch folder for files opened in another app ("Open" on desktop, "Open in…" on
-/// phones). Emptied at startup, so it never grows without bound.
+/// phones): this run's own (see `open_copies`), so a second Kybl never empties it under this one.
 #[tauri::command]
 pub async fn temp_folder(app: tauri::AppHandle) -> Result<String, String> {
-    use tauri::Manager;
-    let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("open");
-    static CLEANED: std::sync::Once = std::sync::Once::new();
-    let fresh = !CLEANED.is_completed();
-    CLEANED.call_once(|| {});
-    if fresh {
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-    }
-    tokio::fs::create_dir_all(&dir).await.map_err(|e| format!("Couldn't create a temporary folder: {e}"))?;
-    Ok(dir.to_string_lossy().into_owned())
+    Ok(crate::open_copies::folder(&app).await?.to_string_lossy().into_owned())
 }
 
 #[tauri::command]

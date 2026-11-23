@@ -92,15 +92,12 @@ pub fn load_config<R: Runtime>(app: &AppHandle<R>) -> SyncConfig {
     config_path(app).ok().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|raw| serde_json::from_str(&raw).ok()).unwrap_or_default()
 }
 
-pub fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, data).map_err(err)?;
-    std::fs::rename(&tmp, path).map_err(err)
-}
-
+/// Written through a temporary file of its own and a rename (`state::write_atomic`): a crash,
+/// or a second Kybl saving at the same moment, never leaves half a file that would read as no
+/// sync folders at all.
 pub fn save_config<R: Runtime>(app: &AppHandle<R>, cfg: &SyncConfig) -> Result<(), String> {
     let raw = serde_json::to_vec_pretty(cfg).map_err(err)?;
-    write_atomic(&config_path(app)?, &raw)
+    crate::state::write_atomic(&config_path(app)?, &raw).map_err(err)
 }
 
 pub fn norm_prefix(p: &str) -> String {

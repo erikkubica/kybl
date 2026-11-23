@@ -500,13 +500,22 @@ pub fn save_profiles<R: Runtime>(app: &AppHandle<R>, profiles: &[Profile], _held
     write_atomic(&path, raw.as_bytes()).map_err(|e| format!("Couldn't save the connections: {e}"))
 }
 
-/// Writes `bytes` to `path` through a temporary file in the same folder and a rename.
+/// Writes `bytes` to `path` through a temporary file of its own in the same folder (a unique
+/// name, so two writers, a second running Kybl among them, never write into one file) and a
+/// rename. The file keeps the permissions it had; a new one is this account's only (0600).
 pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let tmp = path.with_file_name(format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
     let res = (|| {
-        let mut f = std::fs::File::create(&tmp)?;
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            o.mode(0o600);
+        }
+        let mut f = o.open(&tmp)?;
         // keep the permissions the file had
         if let Ok(meta) = std::fs::metadata(path) {
             let _ = f.set_permissions(meta.permissions());
@@ -791,6 +800,40 @@ mod tests {
         assert!(json.contains(r#""group":"Clients/Acme""#), "{json}");
         let back: Profile = serde_json::from_str(&json).unwrap();
         assert_eq!(back.group.as_deref(), Some("Clients/Acme"));
+    }
+
+    #[test]
+    fn atomic_writes_racing_each_other_never_mix_and_new_files_are_private() {
+        let dir = std::env::temp_dir().join(format!("kybl-atomic-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("state.json");
+        // two writers (two running copies of the app) saving the same file at once
+        let writers: Vec<_> = (0..4u8)
+            .map(|i| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..10 {
+                        write_atomic(&path, &vec![b'a' + i; 16 * 1024]).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        let got = std::fs::read(&path).unwrap();
+        assert_eq!(got.len(), 16 * 1024);
+        assert!(got.iter().all(|b| *b == got[0]), "bytes of two writers mixed");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "a temporary file was left behind");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+            write_atomic(&path, b"x").unwrap();
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o640, "an existing file keeps its permissions");
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
