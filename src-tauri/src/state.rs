@@ -71,6 +71,9 @@ pub enum TlsMode {
     Explicit,
     /// TLS from the first byte (FTPS on 990, HTTPS)
     Implicit,
+    /// FTP only: AUTH TLS when the server offers it, plain FTP when it refuses (FileZilla's default,
+    /// "FTP over TLS if available")
+    Auto,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]

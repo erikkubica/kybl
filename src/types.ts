@@ -42,8 +42,9 @@ export type NetConfig = {
   user: string;
   /** The folder the connection starts in ("" for the server's own start). */
   basePath: string;
-  /** "explicit": STARTTLS / AUTH TLS; "implicit": TLS from the first byte (FTPS on 990, HTTPS). */
-  tls: "none" | "explicit" | "implicit";
+  /** "explicit": STARTTLS / AUTH TLS; "implicit": TLS from the first byte (FTPS on 990, HTTPS);
+   *  "auto" (FTP only): AUTH TLS when the server offers it, plain FTP when it refuses. */
+  tls: "none" | "explicit" | "implicit" | "auto";
   /** "key": a private key kept in the vault as `{id}#ssh`. */
   auth: "password" | "key" | "agent";
   /** SFTP: the server key's SHA-256 fingerprint, trusted on first use. */

@@ -178,6 +178,7 @@ export function NetForm({
             options={[
               { value: "explicit", label: "FTPS" },
               { value: "implicit", label: "FTPS, implicit" },
+              { value: "auto", label: "If available" },
               { value: "none", label: "None" },
             ]}
           />
@@ -186,11 +187,14 @@ export function NetForm({
               ? "The usual secure FTP (also called FTPES), on port 21."
               : tls === "implicit"
                 ? "Older secure FTP, encrypted from the first byte, usually on port 990."
-                : "Plain FTP, for servers that offer nothing else."}
+                : tls === "auto"
+                  ? "Encrypted when the server supports it, plain FTP when it doesn't (FileZilla's default)."
+                  : "Plain FTP, for servers that offer nothing else."}
           </small>
         </div>
       )}
       {kind === "ftp" && tls === "none" && <Warning>Plain FTP isn't encrypted. Your password and every file cross the network where others could read them. Use it only on networks you trust.</Warning>}
+      {kind === "ftp" && tls === "auto" && <Warning>If the server doesn't offer encryption, Kybl connects without it, and someone on the network could make that happen on purpose. Choose FTPS once you know the server supports it.</Warning>}
       {davInsecure && <Warning>This address starts with http://, so your password and files travel unencrypted. Use https:// if the server supports it.</Warning>}
 
       <Field label="User name" optional={kind !== "sftp"} error={show("user")} hint={kind === "ftp" ? "Leave empty to sign in as anonymous." : undefined}>

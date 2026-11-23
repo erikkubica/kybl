@@ -35,7 +35,7 @@ Warn when the address is `http://` (or `tls: "none"`): the password and files tr
 |---|---|
 | `host` | server name or address (`ftp.example.com`, `ftp.example.com:2121` also works) |
 | `port` | 0 = 21, or 990 with implicit TLS |
-| `tls` | `"none"` plain FTP, `"explicit"` (AUTH TLS on port 21, usual "FTPS"/"FTPES"), `"implicit"` (TLS from the first byte, port 990) |
+| `tls` | `"none"` plain FTP, `"explicit"` (AUTH TLS on port 21, usual "FTPS"/"FTPES"), `"implicit"` (TLS from the first byte, port 990), `"auto"` (AUTH TLS when offered, plain FTP when refused: FileZilla's "TLS if available") |
 | `user` | user name; empty signs in as `anonymous` |
 | `basePath` | starting folder: absolute (`/var/www`) or relative to the login folder. It must exist |
 

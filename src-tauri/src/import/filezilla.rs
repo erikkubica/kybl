@@ -53,7 +53,7 @@ impl Source for FileZilla {
     fn hints(&self, sites: &[ImportedSite]) -> Vec<String> {
         let mut out = vec![];
         if sites.iter().any(|s| s.protocol == FTP_IF_AVAILABLE) {
-            out.push("FileZilla's “FTP over TLS if available” sites are imported with TLS turned on. If one of them only speaks plain FTP, turn encryption off in its settings.".into());
+            out.push("FileZilla's “FTP over TLS if available” sites keep that setting: encrypted when the server supports it, plain FTP when it doesn't. Switch a site to FTPS once you know its server supports it.".into());
         }
         out
     }
@@ -65,9 +65,8 @@ const FTP_IF_AVAILABLE: &str = "FTP (TLS if available)";
 /// or the protocol's name and why it can't be imported.
 fn protocol(n: i64) -> Result<(ConnKind, TlsMode, &'static str), (String, String)> {
     Ok(match n {
-        // FileZilla tries AUTH TLS and falls back to plain; Kybl can't fall back silently, so it
-        // keeps the encryption (and the dialog says how to turn it off)
-        0 => (ConnKind::Ftp, TlsMode::Explicit, FTP_IF_AVAILABLE),
+        // FileZilla tries AUTH TLS and falls back to plain, as Kybl's "If available" does
+        0 => (ConnKind::Ftp, TlsMode::Auto, FTP_IF_AVAILABLE),
         1 => (ConnKind::Sftp, TlsMode::None, "SFTP"),
         3 => (ConnKind::Ftp, TlsMode::Implicit, "FTPS (implicit TLS)"),
         4 => (ConnKind::Ftp, TlsMode::Explicit, "FTPES (explicit TLS)"),
@@ -429,7 +428,7 @@ mod tests {
 
         let top = by_name(&sites, "Top & level");
         assert!(top.folder.is_empty());
-        assert_eq!((top.kind, top.tls, top.port), (Some(ConnKind::Ftp), TlsMode::Explicit, 21));
+        assert_eq!((top.kind, top.tls, top.port), (Some(ConnKind::Ftp), TlsMode::Auto, 21));
         assert_eq!(top.secret.as_deref(), Some("s3cret!"));
         assert_eq!(top.auth, SiteAuth::Password);
         assert_eq!(top.start_dir, "/home/alice");
@@ -505,6 +504,8 @@ mod tests {
 
     #[test]
     fn protocols_and_skips() {
+        assert_eq!(protocol(0).unwrap(), (ConnKind::Ftp, TlsMode::Auto, FTP_IF_AVAILABLE));
+        assert_eq!(serde_json::to_string(&TlsMode::Auto).unwrap(), "\"auto\"");
         assert_eq!(protocol(1).unwrap().0, ConnKind::Sftp);
         assert_eq!(protocol(3).unwrap().1, TlsMode::Implicit);
         assert_eq!(protocol(4).unwrap().1, TlsMode::Explicit);

@@ -15,7 +15,10 @@
 use std::{
     collections::HashSet,
     ops::Range,
-    sync::{atomic::AtomicBool, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant, UNIX_EPOCH},
 };
 
@@ -101,6 +104,8 @@ pub struct FtpBackend {
     host: String,
     port: u16,
     tls: TlsMode,
+    /// `TlsMode::Auto` found the server refuses AUTH TLS, so later connections skip asking
+    plain_fallback: AtomicBool,
     user: String,
     password: String,
     base_cfg: String,
@@ -126,6 +131,7 @@ impl FtpBackend {
             host,
             port,
             tls: cfg.tls,
+            plain_fallback: AtomicBool::new(false),
             user: cfg.user.trim().to_string(),
             password: password.unwrap_or_default(),
             base_cfg: cfg.base_path.trim().to_string(),
@@ -146,10 +152,21 @@ impl FtpBackend {
             let mut ftp = match self.tls {
                 TlsMode::None => Ftp::connect(&addr).await.map_err(err)?,
                 TlsMode::Explicit => Ftp::connect(&addr).await.map_err(err)?.into_secure(tls(), &self.host).await.map_err(|e| match e {
-                    FtpError::UnexpectedResponse(_) => StorageError::new(ErrKind::Network, "This server doesn't offer encryption on this port. Try implicit encryption (port 990), or turn encryption off if the server only speaks plain FTP.")
+                    FtpError::UnexpectedResponse(_) => StorageError::new(ErrKind::Network, "This server doesn't offer encryption on this port. Try implicit encryption (port 990), or “If available” if the server only speaks plain FTP.")
                         .with_detail(e.to_string()),
                     e => err(e),
                 })?,
+                TlsMode::Auto if self.plain_fallback.load(Ordering::Relaxed) => Ftp::connect(&addr).await.map_err(err)?,
+                TlsMode::Auto => match Ftp::connect(&addr).await.map_err(err)?.into_secure(tls(), &self.host).await {
+                    Ok(ftp) => ftp,
+                    // AUTH TLS refused: the server only speaks plain FTP. A failed handshake is not a
+                    // refusal and stays an error.
+                    Err(FtpError::UnexpectedResponse(_)) => {
+                        self.plain_fallback.store(true, Ordering::Relaxed);
+                        Ftp::connect(&addr).await.map_err(err)?
+                    }
+                    Err(e) => return Err(err(e)),
+                },
                 #[allow(deprecated)]
                 TlsMode::Implicit => Ftp::connect_secure_implicit(&addr, tls(), &self.host).await.map_err(err)?,
             };

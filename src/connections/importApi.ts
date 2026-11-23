@@ -32,7 +32,7 @@ export type ImportSite = {
   port: number;
   user: string;
   startDir: string;
-  tls: "none" | "explicit" | "implicit";
+  tls: "none" | "explicit" | "implicit" | "auto";
   auth: SiteAuth;
   notes: string[];
   skip: string | null;

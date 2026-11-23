@@ -22,7 +22,7 @@ const profiles: Profile[] = [
   { id: "g1", name: "Google Drive (demo@gmail.com)", kind: "gdrive", provider: "gdrive", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, cloud: { accountEmail: "demo@gmail.com", accountId: "1001", clientId: null, tenant: null, scopes: ["drive"] } },
 ];
 
-const FZ_HINT = "FileZilla's “FTP over TLS if available” sites are imported with TLS turned on. If one of them only speaks plain FTP, turn encryption off in its settings.";
+const FZ_HINT = "FileZilla's “FTP over TLS if available” sites keep that setting: encrypted when the server supports it, plain FTP when it doesn't. Switch a site to FTPS once you know its server supports it.";
 
 /** A made-up FileZilla site list for "Import connections" (every name and host is fictional). */
 function mockImportSites(): ImportSite[] {
@@ -36,7 +36,7 @@ function mockImportSites(): ImportSite[] {
     port: 21,
     user: `user${i}`,
     startDir: "",
-    tls: "explicit",
+    tls: "auto",
     auth: "password",
     notes: [],
     skip: null,

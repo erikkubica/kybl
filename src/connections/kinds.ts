@@ -101,7 +101,7 @@ export function addressOf(p: Profile): string {
   if (n) {
     if (p.kind === "webdav" && n.url) return n.url;
     const port = n.port ? `:${n.port}` : "";
-    const scheme = p.kind === "ftp" ? (n.tls === "none" ? "ftp" : "ftps") : (p.kind ?? "");
+    const scheme = p.kind === "ftp" ? (n.tls === "none" || n.tls === "auto" ? "ftp" : "ftps") : (p.kind ?? "");
     return `${scheme}://${n.host}${port}${n.basePath ? `/${n.basePath.replace(/^\//, "")}` : ""}`;
   }
   if (p.blob) return p.blob.container ? `${p.blob.account ? `${p.blob.account}/` : ""}${p.blob.container}` : p.blob.account;
