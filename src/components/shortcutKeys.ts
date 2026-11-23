@@ -45,7 +45,7 @@ const IN_TEXT = /[⌃⌘⌥⇧]+(?:[⌫⌦↵←→↑↓−]|F\d{1,2}|Tab|Space
  * Every shortcut written with Mac glyphs inside a sentence (a tooltip, a toast, a menu hint),
  * spelled for this system: "Paste with ⌘V" → "Paste with Ctrl+V", "⌘-click" → "Ctrl-click".
  */
-export function keysIn(text: string, mac: boolean): string {
+export function keysInText(text: string, mac: boolean): string {
   if (mac || !text) return text;
   return text.replace(IN_TEXT, (m) => keyLabel(m, false));
 }
@@ -60,3 +60,6 @@ export function ariaKeys(keys: string | undefined, mac: boolean): string | undef
   const mods = [...new Set([...m[1]].map((c) => names[c]))];
   return [...mods, ARIA_KEYS[m[2]] ?? m[2]].join("+");
 }
+
+/** Where the app's tray icon lives: the menu bar on a Mac, the system tray elsewhere. */
+export const trayName = (mac: boolean) => (mac ? "menu bar" : "system tray");

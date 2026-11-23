@@ -36,7 +36,7 @@ export type ArchiveCtx = {
   openMigration?: OpenMigration;
 };
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+import { plural } from "../format";
 
 export function makeArchiveOps(c: ArchiveCtx) {
   const inArchive = isArchiveId(c.profile?.id);

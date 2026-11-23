@@ -13,13 +13,13 @@ import { addressOf, kindInfo, pickOf } from "../connections/kinds";
 import { closestLocalRoot, deviceIcon, setRootNames } from "../connections/roots";
 import { baseName } from "../format";
 import { Icon, type IconName } from "../Icons";
-import { key } from "../components/keys";
 import { providerMeta } from "../providers";
 import type { Entry, Profile } from "../types";
 import { registeredCommands, type PaletteCommand } from "./commands";
 import { matchWords, runs } from "./fuzzy";
 import { notePick, recentPicks, recentPlaces } from "./recent";
 import { shellCommands } from "./shellCommands";
+import { keys } from "../components/osText";
 import type { PaletteHost } from "./types";
 import "./palette.css";
 
@@ -140,7 +140,7 @@ export default function CommandPalette({
         title: c.title,
         detail: c.group,
         extra: [c.group, c.keywords].filter(Boolean).join(" "),
-        hint: c.shortcut && key(c.shortcut),
+        hint: c.shortcut && keys(c.shortcut),
         kbd: !!c.shortcut,
         icon: c.icon ?? "chevron",
         disabled: c.disabled || null,

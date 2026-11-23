@@ -5,6 +5,7 @@ import { extList, hasExt } from "../../src/actions/extMatch.ts";
 
 test("the box is split, dots dropped, lower-cased", () => {
   assert.deepEqual(extList("jpg, .PNG; tar.gz"), ["jpg", "png", "tar.gz"]);
+  assert.deepEqual(extList("*.jpg, *.PNG *"), ["jpg", "png"]);
 });
 
 test("double extensions match; plain ones as before", () => {

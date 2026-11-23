@@ -14,6 +14,7 @@
  *   Windows and Linux have no promises here: such items stay behind, and with nothing left the drag
  *   simply stays inside the window.
  */
+import { plural } from "../format";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage } from "../api";
@@ -142,7 +143,7 @@ async function fulfil(c: DragOutContext, e: Entry, path: string) {
   const done = await Promise.all(started.map((t) => c.transfers.whenFinished(t.id)));
   const failed = done.filter((t) => t.state !== "done");
   if (failed.length === 1 && done.length === 1) throw new Error(failed[0].error ?? "The download didn’t finish");
-  if (failed.length) throw new Error(`${failed.length} of ${done.length} files didn’t download`);
+  if (failed.length) throw new Error(`${failed.length} of ${plural(done.length, "file")} didn’t download`);
 }
 
 function listenOnce() {

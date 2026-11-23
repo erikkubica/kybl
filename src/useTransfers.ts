@@ -63,6 +63,8 @@ const sending = new Set<string>();
 const sent = new Set<string>();
 /** Cancel or Pause asked while the start command was under way: sent again once it returns. */
 const held = new Map<string, "cancel" | "pause">();
+/** Resume or Retry pressed while the start command was under way: started again once it returns. */
+const again = new Set<string>();
 /** Callers waiting for a transfer to end (see `whenFinished`). */
 const waiters = new Map<string, ((t: Transfer) => void)[]>();
 
@@ -163,6 +165,7 @@ function forget(id: string) {
   runners.delete(id);
   sent.delete(id);
   held.delete(id);
+  again.delete(id);
 }
 
 /** A queued row the backend hasn't been given yet (see `sending`). */
@@ -281,15 +284,38 @@ async function start(t: Transfer) {
     held.delete(t.id);
     if (want === "cancel") api.cancelTransfer(t.id).catch(() => {});
     else if (want === "pause") api.pauseTransfer(t.id).catch(() => {});
+    else if (startAgain(t.id)) return;
   } catch (e) {
     sending.delete(t.id);
+    const want = held.get(t.id);
     held.delete(t.id);
-    const failed: Transfer = { ...(byId.get(t.id) ?? t), state: "error", error: errMessage(e) };
+    const cur = byId.get(t.id) ?? t;
+    // the user stopped it while it was starting: it ends the way they asked, without an error
+    if (want) {
+      again.delete(t.id);
+      const stopped: Transfer = { ...cur, state: want === "cancel" ? "cancelled" : "paused", error: null, speed: 0 };
+      byId.set(t.id, stopped);
+      settle(stopped);
+      markDirty();
+      return;
+    }
+    if (startAgain(t.id)) return;
+    const failed: Transfer = { ...cur, state: "error", error: errMessage(e) };
     byId.set(t.id, failed);
     settle(failed);
     markDirty();
     onErrorRef(errMessage(e));
   }
+}
+
+/** A Resume or Retry that came while the row was starting: hand it over once more. */
+function startAgain(id: string): boolean {
+  if (!again.delete(id)) return false;
+  const cur = byId.get(id);
+  if (!cur || cur.state !== "queued") return false;
+  sent.delete(id);
+  void start(cur);
+  return true;
 }
 
 /** Takes finished transfers off the list. */
@@ -316,8 +342,15 @@ function requeue(id: string): Transfer | null {
   const t = byId.get(id);
   if (!t || t.state === "queued" || t.state === "running" || t.state === "done") return null;
   const fresh: Transfer = { ...t, state: "queued", error: null, speed: 0, verified: undefined };
+  // to the end of the list: it finishes after the rest, so Done and pruning see it as the newest
+  byId.delete(id);
   byId.set(id, fresh);
   lastSample.delete(id);
+  // its first start command is still under way: start it again once that returns
+  if (sending.has(id)) {
+    held.delete(id);
+    again.add(id);
+  }
   // the backend let go of it when it ended: `start` hands it over again
   sent.delete(id);
   currentRun.add(id);

@@ -56,7 +56,7 @@ export type FileOpsCtx = {
   renamedDetail: (from: string, e: Entry) => void;
 };
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+import { plural } from "../format";
 const what = (list: { name: string }[]) => (list.length === 1 ? `“${list[0].name}”` : plural(list.length, "item"));
 /** Camera captures go to the temporary file in pieces this big, so a long video is never all in memory. */
 const CAPTURE_CHUNK = 8 * 1024 * 1024;
@@ -321,8 +321,8 @@ export function useFileOps(c: FileOpsCtx) {
         const r = await api.deleteObjects(pid, b, files.map((e) => e.key), folders.map((e) => e.key), id);
         c.jobs.finish(id, r);
         // stopped from Transfers: part of it is still there
-        if (r.error === "Cancelled") c.toast("info", `Stopped deleting after ${r.done} of ${r.total} objects`);
-        else if (r.error) c.toast("error", `Deleting stopped after ${r.done} of ${r.total} objects. ${errSummary(r.error)}`);
+        if (r.error === "Cancelled") c.toast("info", `Stopped deleting after ${r.done} of ${plural(r.total, "object")}`);
+        else if (r.error) c.toast("error", `Deleting stopped after ${r.done} of ${plural(r.total, "object")}. ${errSummary(r.error)}`);
         else {
           all = true;
           c.toast("success", c.caps?.trash ? `Moved ${label} to the Trash` : `Deleted ${label}`);

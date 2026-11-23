@@ -782,6 +782,7 @@ export function AppShell() {
       title: busy === 1 ? "A program is still running in a terminal" : `Programs are still running in ${busy} terminals`,
       label,
       danger: true,
+      icon: "alert",
       message: <p>{busy === 1 ? "Closing ends it, and what the terminal has printed is gone." : "Closing ends them, and what the terminals have printed is gone."}</p>,
     });
   /** the terminals' sessions among panes `of` on screen */

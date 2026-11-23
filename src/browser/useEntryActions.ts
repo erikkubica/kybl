@@ -3,6 +3,7 @@
  * space, the toolbar's "…" menu, share links, Move to…, Go to folder, favorites, and the command
  * ids the keyboard and the menu bar run (see desktop/useShortcuts).
  */
+import { keys } from "../components/osText";
 import { asExport } from "../connections/native";
 import { createElement, useEffect, useRef } from "react";
 import { registerCommands, type PaletteCommand } from "../palette/commands";
@@ -98,7 +99,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     // one document opens in the app's editor; several go to their own apps
     if (files.length === 1 && env.openDocument?.(files[0])) return;
     if (files.length > 10) toast("info", "Opening the first 10 files");
-    for (const f of files.slice(0, 10)) void ops.openInApp(f);
+    // one question about the programs among them, for all of them
+    void ops.openFiles(files.slice(0, 10));
   };
 
   const doSearch = (q: string) => {
@@ -513,7 +515,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     "upload-files": () => void ops.pickAndUpload(false),
     "upload-folder": () => void ops.pickAndUpload(true),
     download: () =>
-      onDisk ? toast("info", "These files are already on this computer. Copy (⌘C) or Copy or move to… puts them somewhere else.") : void ops.downloadEntries(selectedEntries, relBase),
+      onDisk ? toast("info", keys("These files are already on this computer. Copy (⌘C) or Copy or move to… puts them somewhere else.")) : void ops.downloadEntries(selectedEntries, relBase),
     refresh: ent.refresh,
     "go-up": () => void pane.goUp(),
     back: () => pane.historyStep(-1),

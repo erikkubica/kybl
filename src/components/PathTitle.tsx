@@ -1,8 +1,8 @@
+import { keys } from "./osText";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { IconName } from "../Icons";
 import type { MenuItem } from "./Dialogs";
 import { useDialogs } from "../shell/useDialogs";
-import { k } from "./keys";
 import { IS_MAC } from "./pointer";
 
 /**
@@ -114,7 +114,7 @@ export function PathTitle({
       <button
         type="button"
         className="crumb current path-name"
-        title={k(onGoTo ? `${full}\nClick to type a path (⇧⌘G) · right-click or ⌘-click for the enclosing folders` : `${full}\nRight-click or ⌘-click for the enclosing folders`)}
+        title={keys(onGoTo ? `${full}\nClick to type a path (⇧⌘G) · right-click or ⌘-click for the enclosing folders` : `${full}\nRight-click or ⌘-click for the enclosing folders`)}
         aria-label={onGoTo ? `${full}. Type a path` : full}
         onClick={(e) => {
           // ⌘-click lists the enclosing folders, as on a Finder window's title

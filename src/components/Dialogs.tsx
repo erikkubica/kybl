@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { errDetail, errSummary } from "../api";
 import { Icon, type IconName } from "../Icons";
-import { ariaKey, k } from "./keys";
+import { ariaKey, keys } from "./osText";
 
 /** Elements Tab can reach inside a dialog or menu. */
 const FOCUSABLE =
@@ -149,6 +149,7 @@ export function ConfirmDialog({
   message,
   confirmLabel,
   danger,
+  icon = danger ? "trash" : undefined,
   onConfirm,
   onClose,
 }: {
@@ -156,6 +157,8 @@ export function ConfirmDialog({
   message: ReactNode;
   confirmLabel: string;
   danger?: boolean;
+  /** the title's icon; a danger confirm shows the trash unless another is given */
+  icon?: IconName;
   onConfirm: () => void;
   onClose: () => void;
 }) {
@@ -167,9 +170,9 @@ export function ConfirmDialog({
       // nothing typed here to lose, so a click outside may cancel
       dismissOnBackdrop
       icon={
-        danger ? (
-          <div className="confirm-icon">
-            <Icon name="trash" size={19} />
+        icon ? (
+          <div className={icon === "alert" ? "confirm-icon warn" : "confirm-icon"}>
+            <Icon name={icon} size={19} />
           </div>
         ) : undefined
       }
@@ -200,6 +203,7 @@ export function PromptDialog({
   label,
   initial,
   confirmLabel,
+  selectAll,
   note,
   check,
   onSubmit,
@@ -209,6 +213,8 @@ export function PromptDialog({
   label: string;
   initial: string;
   confirmLabel: string;
+  /** select the whole value (a number), not just the part before an extension */
+  selectAll?: boolean;
   /** a caution under the field (renaming a folder that is copied file by file, say) */
   note?: string;
   /** what's wrong with a value, shown under the field (the dialog stays open); null when fine */
@@ -221,9 +227,9 @@ export function PromptDialog({
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
     input.current?.focus();
-    const dot = initial.lastIndexOf(".");
+    const dot = selectAll ? -1 : initial.lastIndexOf(".");
     input.current?.setSelectionRange(0, dot > 0 ? dot : initial.length);
-  }, [initial]);
+  }, [initial, selectAll]);
   const submit = () => {
     const v = value.trim();
     if (!v) return;
@@ -491,7 +497,7 @@ function PlainRow({ it, onClose, onHover }: { it: Exclude<MenuItem, { type: "sub
     >
       <ItemIcon it={it} />
       <span className="ctx-label">{it.label}</span>
-      {it.hint && <span className="ctx-hint">{k(it.hint)}</span>}
+      {it.hint && <span className="ctx-hint">{keys(it.hint)}</span>}
     </button>
   );
 }
@@ -878,7 +884,7 @@ function ToastItem({ toast: t, dismiss }: { toast: Toast; dismiss: (id: number) 
     >
       <Icon name={t.kind === "error" ? "alert" : t.kind === "success" ? "check-circle" : "info"} size={16} />
       <div className="toast-body">
-        <span>{k(errSummary(t.text))}</span>
+        <span>{keys(errSummary(t.text))}</span>
         {detail && open && <pre className="toast-detail selectable">{detail}</pre>}
       </div>
       {detail && (

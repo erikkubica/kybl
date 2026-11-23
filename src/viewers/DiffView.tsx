@@ -3,11 +3,12 @@
  * folders' "Compare" for files that differ, and anyone else through `openDiff` (diff.ts). Syntax
  * neutral, monospace, line numbers; unchanged stretches fold away around the changes.
  */
+import { keys } from "../components/osText";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { docOpen, errMessage } from "../api";
 import { Icon } from "../Icons";
-import { formatBytes } from "../format";
+import { formatBytes, plural } from "../format";
 import { decodeText } from "./text";
 import { diffIds, tokenIds, toRows, wordDiff, type Piece, type Row } from "./myers";
 import { DIFF_MAX_BYTES, type DiffSide } from "./diff";
@@ -15,7 +16,6 @@ import { eolDifference, eolOf } from "./eol";
 import { Note, Segmented, ToolButton } from "./ui";
 import "./viewers.css";
 import "./diff.css";
-import { k } from "../components/keys";
 
 /** Unchanged lines kept around each change; longer unchanged stretches fold. */
 const CONTEXT = 3;
@@ -343,8 +343,8 @@ export function DiffView({ left, right, title, onClose }: { left: DiffSide; righ
         <ToolButton icon="list" label="Wrap" title="Wrap long lines" pressed={prefs.wrap} onClick={() => setPrefs({ wrap: !prefs.wrap })} />
         <ToolButton label="Ignore whitespace" pressed={prefs.ignoreWs} onClick={() => setPrefs({ ignoreWs: !prefs.ignoreWs })} />
         <span className="dif-gap" />
-        <span className="dif-pos">{ready ? (at >= 0 ? `${at + 1} of ${hunks.length}` : `${hunks.length} changes`) : ""}</span>
-        <ToolButton icon="arrow-up" label="Previous" title={k("Previous change (⇧F7 or p)")} disabled={!ready} onClick={() => jump(at - 1)} />
+        <span className="dif-pos">{ready ? (at >= 0 ? `${at + 1} of ${hunks.length}` : plural(hunks.length, "change")) : ""}</span>
+        <ToolButton icon="arrow-up" label="Previous" title={keys("Previous change (⇧F7 or p)")} disabled={!ready} onClick={() => jump(at - 1)} />
         <ToolButton icon="arrow-down" label="Next" title="Next change (F7 or n)" disabled={!ready} onClick={() => jump(at + 1)} />
       </div>
       <div className="dv-body">{content}</div>

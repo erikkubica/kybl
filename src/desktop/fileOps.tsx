@@ -4,9 +4,11 @@
  * names checks for clashes first, and moves, renames and copies that can be reversed safely leave
  * an Undo behind.
  */
+import { keys } from "../components/osText";
 import { NO_EXPORT, asExport, exportable } from "../connections/native";
 import { peekCaps } from "../useCaps";
 import type { ReactNode } from "react";
+import type { ConfirmOptions } from "../shell/useDialogs";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { api, errMessage } from "../api";
 import { formatBytes, parentPrefix, sumSizes } from "../format";
@@ -24,11 +26,10 @@ import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
 import { localCopies, type LocalCopyVerb } from "../localCopyProgress";
 import { parentOf, renameRounds } from "../batchRename";
 import { BatchRenameDialog } from "./BatchRenameDialog";
-import { okToRun as askToRun, openIn } from "./openGuard";
 import { OS } from "./openWith";
 import { addressKind, deleteWording, itemAddress } from "../itemText";
 import { rootName, rootsMode } from "../connections/roots";
-import { key } from "../components/keys";
+import { okToRun as askToRun, openFromConnection, openOwnFile, type OpenApp } from "./openGuard";
 
 export type ToastAction = NonNullable<Toast["action"]>;
 
@@ -48,7 +49,7 @@ export type OpsContext = {
   showActivity: () => void;
   showFailed?: () => void;
   setBusy: (text: string | null) => void;
-  confirm: (o: { title: string; message: ReactNode; label: string; danger?: boolean }) => Promise<boolean>;
+  confirm: (o: ConfirmOptions) => Promise<boolean>;
   prompt: (o: { title: string; label: string; initial: string; confirmLabel: string; note?: string; run: (v: string) => void }) => void;
   /** shows a dialog of its own (the Batch rename dialog) */
   show?: (render: (close: () => void) => ReactNode) => void;
@@ -75,7 +76,7 @@ export type OpsContext = {
 /** Undo of a copy deletes the copied objects; past this many it asks first. */
 const UNDO_CONFIRM_OVER = 100;
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+import { plural } from "../format";
 const whatOf = (list: { name: string }[]) => (list.length === 1 ? `“${list[0].name}”` : plural(list.length, "item"));
 
 export function makeFileOps(c: OpsContext) {
@@ -311,25 +312,45 @@ export function makeFileOps(c: OpsContext) {
     return null;
   };
 
-  /** A program, script or installer from a connection (not this computer) is asked about first. */
-  const okToRun = (picked: Entry): Promise<boolean> => (c.localPaths ? Promise.resolve(true) : askToRun(picked.name, c.confirm));
+  /** The name a file opens under (a Google Doc: what it exports as). */
+  const openName = (e: Entry) => asExport(e)?.name ?? e.name;
 
-  /** Opens a file in its default app (a local copy first, see `localCopy`). */
-  const openInApp = async (picked: Entry) => {
-    if (!(await okToRun(picked))) return;
-    const path = await localCopy(picked, "open");
-    if (path) await openIn(path, undefined).catch((err) => toast("error", errMessage(err)));
+  /**
+   * Programs, scripts or installers from a connection (not this computer) about to open in `app`
+   * are asked about first, all in one question. True when they may open.
+   */
+  const okToRun = (picked: Entry | Entry[], app: OpenApp = undefined): Promise<boolean> =>
+    c.localPaths ? Promise.resolve(true) : askToRun((Array.isArray(picked) ? picked : [picked]).map(openName), c.confirm, app);
+
+  /**
+   * Opens `path`, `picked`'s copy on this computer, in `app`: the one way this pane opens a file
+   * in another app (a connection's file goes through the open guard). `asked`: `okToRun` said yes.
+   */
+  const openPath = async (path: string, app: OpenApp, picked: Entry, asked: boolean) => {
+    if (c.localPaths) await openOwnFile(path, app);
+    else await openFromConnection(path, c.confirm, app, openName(picked), asked);
   };
 
   /**
-   * "Open with ▸ app": like Open, with the app the person chose (an `AppChoice.path`). `app`
-   * null: Windows' own "How do you want to open this file?" window. `asked`: the caller already
-   * asked about running it.
+   * "Open with ▸ app": opens a file in `app` (an `AppChoice.path`; undefined the default app, null
+   * Windows' own "How do you want to open this file?" window), a local copy first (`localCopy`).
+   * `asked`: the caller already asked about running it.
    */
-  const openWith = async (picked: Entry, app: string | null, asked = false) => {
-    if (!asked && !(await okToRun(picked))) return;
+  const openWith = async (picked: Entry, app: OpenApp, asked = false) => {
+    if (!asked && !(await okToRun(picked, app))) return;
     const path = await localCopy(picked, "open");
-    if (path) await openIn(path, app).catch((err) => toast("error", errMessage(err)));
+    if (path) await openPath(path, app, picked, true).catch((err) => toast("error", errMessage(err)));
+  };
+
+  /** Opens a file in its default app. */
+  const openInApp = (picked: Entry) => openWith(picked, undefined);
+
+  /** Opens several files in their default apps: one question about the programs among them, for all. */
+  const openFiles = async (list: Entry[]) => {
+    if (list.length === 1) return openWith(list[0], undefined);
+    if (!(await okToRun(list))) return;
+    const paths = await Promise.all(list.map((e) => localCopy(e, "open")));
+    for (const [i, path] of paths.entries()) if (path) await openPath(path, undefined, list[i], true).catch((err) => toast("error", errMessage(err)));
   };
 
   /** Puts the file itself on the clipboard, to paste into a chat, a mail or a Finder window. */
@@ -361,7 +382,7 @@ export function makeFileOps(c: OpsContext) {
         const r = await api.deleteObjects(pid, b, files.map((e) => e.key), folders.map((e) => e.key), id);
         jobs.finish(id, r, run);
         if (r.error && r.error !== "Cancelled")
-          toast("error", `Deleting stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`, showAction);
+          toast("error", `Deleting stopped after ${r.done.toLocaleString()} of ${plural(r.total, "object")}. ${r.error}`, showAction);
       } catch (e) {
         jobs.finish(id, { error: errMessage(e) }, run);
         toast("error", errMessage(e), showAction);
@@ -442,7 +463,7 @@ export function makeFileOps(c: OpsContext) {
       try {
         const r = await api.moveMany(pid, srcB, todo, kind !== "copy", id, dstB !== srcB ? dstB : null);
         jobs.finish(id, r, again);
-        if (r.error && r.error !== "Cancelled") toast("error", `Stopped again after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`, showAction);
+        if (r.error && r.error !== "Cancelled") toast("error", `Stopped again after ${r.done.toLocaleString()} of ${plural(r.total, "object")}. ${r.error}`, showAction);
       } catch (e) {
         jobs.finish(id, { error: errMessage(e) }, again);
         toast("error", errMessage(e), showAction);
@@ -474,7 +495,7 @@ export function makeFileOps(c: OpsContext) {
     try {
       const r = await api.moveMany(pid, toBucket, items.map((i) => ({ from: i.to, to: i.from, isPrefix: i.isPrefix })), true, id, toBucket !== fromBucket ? fromBucket : null);
       jobs.finish(id, r, retry);
-      if (r.error && r.error !== "Cancelled") toast("error", `Undo stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`, showAction);
+      if (r.error && r.error !== "Cancelled") toast("error", `Undo stopped after ${r.done.toLocaleString()} of ${plural(r.total, "object")}. ${r.error}`, showAction);
     } catch (e) {
       jobs.finish(id, { error: errMessage(e) }, retry);
       toast("error", errMessage(e), showAction);
@@ -538,6 +559,7 @@ export function makeFileOps(c: OpsContext) {
             title: `Replace “${name}”?`,
             label: "Replace",
             danger: true,
+            icon: "alert",
             message: <p>A file with this name already exists here. Renaming “{e.name}” will overwrite it, and that can’t be undone.</p>,
           });
           if (!ok) return;
@@ -552,7 +574,7 @@ export function makeFileOps(c: OpsContext) {
           const r = await api.moveMany(pid, b, items, true, id);
           jobs.finish(id, r, retry);
           if (r.error && r.error !== "Cancelled")
-            toast("error", `Renaming stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`, showAction);
+            toast("error", `Renaming stopped after ${r.done.toLocaleString()} of ${plural(r.total, "object")}. ${r.error}`, showAction);
           else renamed = !r.error;
         } catch (err) {
           jobs.finish(id, { error: errMessage(err) }, retry);
@@ -812,7 +834,7 @@ export function makeFileOps(c: OpsContext) {
       if (r.error && r.error !== "Cancelled")
         toast(
           "error",
-          `Stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}` +
+          `Stopped after ${r.done.toLocaleString()} of ${plural(r.total, "object")}. ${r.error}` +
             (mode === "move" ? " Everything not moved yet is still in its old place." : ""),
           showAction,
         );
@@ -880,7 +902,7 @@ export function makeFileOps(c: OpsContext) {
     try {
       const r = await api.moveMany(pid, b, items, false, id);
       jobs.finish(id, r, retry);
-      if (r.error && r.error !== "Cancelled") toast("error", `Stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`, showAction);
+      if (r.error && r.error !== "Cancelled") toast("error", `Stopped after ${r.done.toLocaleString()} of ${plural(r.total, "object")}. ${r.error}`, showAction);
       ok = !r.error;
     } catch (err) {
       jobs.finish(id, { error: errMessage(err) }, retry);
@@ -903,7 +925,7 @@ export function makeFileOps(c: OpsContext) {
         title: `Delete ${plural(keys.length, "copied object")}?`,
         label: "Delete copies",
         danger: true,
-        message: <p>Undoing the {label} deletes the {keys.length.toLocaleString()} objects it made. Anything added there since stays.</p>,
+        message: <p>Undoing the {label} deletes the {plural(keys.length, "object")} it made. Anything added there since stays.</p>,
       });
       if (!go) return;
     }
@@ -933,7 +955,7 @@ export function makeFileOps(c: OpsContext) {
     const kind = addressKind({ roots: peekCaps(profile.id)?.roots, localPaths: c.localPaths, kind: profile.kind });
     const label = rootsMode(profile, peekCaps(profile.id)) === "drives" ? rootName(profile.id, bucket) : undefined;
     navigator.clipboard?.writeText(list.map((e) => itemAddress(kind, bucket, e.key, label)).join("\n")).catch(() => {});
-    toast("info", `${mode === "cut" ? "Cut" : "Copied"} ${whatOf(list)}. Paste with ${key("⌘V")} in another folder.`);
+    toast("info", keys(`${mode === "cut" ? "Cut" : "Copied"} ${whatOf(list)}. Paste with ⌘V in another folder.`));
   };
 
   /** ⌘V: copies or moves the clipped items into `dest` of the bucket on screen. */
@@ -958,7 +980,7 @@ export function makeFileOps(c: OpsContext) {
     void relocate(cl.items, dest, mode, { srcBucket: cl.bucket, destBucket: bucket }).then((ok) => ok && usedUp());
   };
 
-  return { uploadPaths, pickAndUpload, downloadEntries, localCopy, okToRun, openInApp, openWith, copyFile, askDelete, askRename, askBatchRename, askNewFolder, relocate, duplicate, clip, paste };
+  return { uploadPaths, pickAndUpload, downloadEntries, localCopy, okToRun, openPath, openInApp, openFiles, openWith, copyFile, askDelete, askRename, askBatchRename, askNewFolder, relocate, duplicate, clip, paste };
 }
 
 export type FileOps = ReturnType<typeof makeFileOps>;

@@ -1,3 +1,4 @@
+import { plural } from "../format";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../Icons";
 import { KYBL } from "../kybl";
@@ -13,6 +14,7 @@ import type { MountInfo } from "../api";
 import { findMount } from "../mount/useMounts";
 import { driveBadgeTitle } from "../mount/driveMenu";
 import { TunnelBadge } from "../tunnels/TunnelBadge";
+import { keys } from "./osText";
 import {
   FILTER_MIN,
   RECENT_MIN,
@@ -28,7 +30,6 @@ import {
   type KindSection,
   type Range,
 } from "../connections/groups";
-import { k } from "./keys";
 
 const SYNC_LABEL: Record<SyncState, string> = {
   idle: "Synced folders are up to date",
@@ -237,8 +238,8 @@ function KindSectionRow({
         role="button"
         tabIndex={0}
         aria-expanded={open}
-        aria-label={`${section.label}, ${n} connections`}
-        title={holdsActive ? `${section.label}: the connection on screen is in here` : `${n} ${section.label} connections`}
+        aria-label={`${section.label}, ${plural(n, "connection")}`}
+        title={holdsActive ? `${section.label}: the connection on screen is in here` : `${n} ${section.label} ${n === 1 ? "connection" : "connections"}`}
       >
         <ProviderBadge provider={section.kind} />
         <span className="side-label">{section.label}</span>
@@ -600,7 +601,7 @@ export function Sidebar({
             </button>
           ) : (
             <kbd className="side-find-key" aria-hidden="true">
-              {k("⌥⌘F")}
+              {keys("⌥⌘F")}
             </kbd>
           )}
         </div>
@@ -720,7 +721,7 @@ export function Sidebar({
         >
           <Icon name="sync" size={15} />
         </button>
-        <button className="icon-btn" onClick={onOpenSettings} title={k("Settings (⌘,)")} aria-label="Settings">
+        <button className="icon-btn" onClick={onOpenSettings} title={keys("Settings (⌘,)")} aria-label="Settings">
           <Icon name="settings" size={16} />
         </button>
       </div>
@@ -953,7 +954,7 @@ export function SidebarToggle({ open, overlay, onToggle }: { open: boolean; over
       type="button"
       className={`icon-btn side-toggle ${open || overlay ? "" : "in-rail"}`}
       onClick={onToggle}
-      title={k(`${open ? "Collapse" : "Expand"} sidebar (⌥⌘S)`)}
+      title={keys(`${open ? "Collapse" : "Expand"} sidebar (⌥⌘S)`)}
       aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
       aria-expanded={open}
     >
@@ -1078,8 +1079,8 @@ export function SidebarRail({
                 const r = e.currentTarget.getBoundingClientRect();
                 onSection?.(s, r.right + 6, r.top);
               }}
-              title={`${s.tree.count} ${s.label} connections`}
-              aria-label={`${s.label}: ${s.tree.count} connections`}
+              title={`${s.tree.count} ${s.label} ${s.tree.count === 1 ? "connection" : "connections"}`}
+              aria-label={`${s.label}: ${plural(s.tree.count, "connection")}`}
               aria-haspopup="menu"
             >
               <ProviderBadge provider={s.kind} large />
@@ -1090,7 +1091,7 @@ export function SidebarRail({
           );
         })}
         {long && (
-          <button type="button" className="rail-btn rail-more" onClick={onMore} title={k(`All ${profiles.length} connections (⌥⌘F)`)} aria-label={`All ${profiles.length} connections`}>
+          <button type="button" className="rail-btn rail-more" onClick={onMore} title={keys(`All ${profiles.length} connections (⌥⌘F)`)} aria-label={`All ${profiles.length} connections`}>
             <Icon name="search" size={16} />
             <span className="rail-more-count" aria-hidden="true">
               {profiles.length > 999 ? "999+" : profiles.length}
@@ -1111,7 +1112,7 @@ export function SidebarRail({
         >
           <Icon name="sync" size={15} />
         </button>
-        <button type="button" className="icon-btn" onClick={onOpenSettings} title={k("Settings (⌘,)")} aria-label="Settings">
+        <button type="button" className="icon-btn" onClick={onOpenSettings} title={keys("Settings (⌘,)")} aria-label="Settings">
           <Icon name="settings" size={16} />
         </button>
       </div>

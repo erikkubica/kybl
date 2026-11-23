@@ -1,3 +1,4 @@
+import { TRAY } from "../components/osText";
 import { useState } from "react";
 import { errMessage, mountApi, type MountInfo } from "../api";
 import { ErrorText } from "../components/ErrorText";
@@ -6,7 +7,7 @@ import { Icon } from "../Icons";
 import { prettyPath } from "../sync";
 import type { Profile } from "../types";
 import { fileManagerName, mountWhere, reloadMounts, useMounts } from "./useMounts";
-import { ejectLabel } from "./driveMenu";
+import { ejectLabel, retryDrive } from "./driveMenu";
 import "./mount.css";
 
 type Toast = (kind: "success" | "error" | "info", text: string) => void;
@@ -143,7 +144,7 @@ export function MountsSection({ profiles, onToast }: { profiles: Profile[]; onTo
                   </>
                 ) : (
                   m.state !== "unsupported" && (
-                    <button className="btn btn-sm" disabled={busy === m.id || m.state === "mounting"} onClick={() => run(m.id, () => mountApi.mountRetry(m.id))}>
+                    <button className="btn btn-sm" disabled={busy === m.id || m.state === "mounting"} onClick={() => run(m.id, () => retryDrive(m.id, onToast))}>
                       <Icon name={m.state === "error" ? "retry" : "play"} size={13} /> {m.state === "error" ? "Try again" : "Mount"}
                     </button>
                   )
@@ -197,7 +198,7 @@ export function MountsSection({ profiles, onToast }: { profiles: Profile[]; onTo
         <div className="set-row">
           <div className="set-label">
             While Kybl runs
-            <small>Drives need Kybl running, also in the menu bar. They come back when Kybl starts, and unmount when you quit.</small>
+            <small>Drives need Kybl running, also in the {TRAY}. They come back when Kybl starts, and unmount when you quit.</small>
           </div>
         </div>
       </div>

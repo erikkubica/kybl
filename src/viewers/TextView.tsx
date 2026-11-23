@@ -1,11 +1,11 @@
 /** Plain text, code, YAML and JSON (with Format and a validity check). */
+import { keys } from "../components/osText";
 import { useEffect, useRef, useState } from "react";
 import { CodeEditor, type CodeEditorApi } from "./CodeEditor";
 import { ToolButton } from "./ui";
 import { compactJson, formatJson } from "./jsonFormat";
 import { describeJsonError } from "./jsonCheck";
 import type { ViewerProps } from "./types";
-import { k } from "../components/keys";
 
 type JsonState = { ok: true } | { ok: false; message: string } | null;
 
@@ -80,7 +80,7 @@ export default function TextView({ kind, name, text, editable, mode, onEdit, onS
     <div className="dv-viewer dv-text">
       {full && (
         <div className="dv-tools">
-          <ToolButton icon="search" label="Find" onClick={() => editor.current?.find()} title={k("Find and replace (⌘F)")} />
+          <ToolButton icon="search" label="Find" onClick={() => editor.current?.find()} title={keys("Find and replace (⌘F)")} />
           <ToolButton label="Wrap lines" pressed={wrap} onClick={() => setWrap((w) => !w)} />
           {isJson && editable && <ToolButton label={jsonLines ? "Tidy lines" : "Format"} onClick={format} disabled={json?.ok === false} />}
           {isJson && json && (

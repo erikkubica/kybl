@@ -19,7 +19,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { actionLabel, ago, installAndRestart, updatesApi, useUpdates } from "../updates";
 import { formatBytes } from "../format";
 import { useTransfersActive } from "../useTransfers";
-import { keysIn, spellKeys } from "./shortcutKeys";
+import { spellKeys } from "./shortcutKeys";
+import { keys, TRAY } from "./osText";
 
 /** Shortcut keys show Mac glyphs on a Mac, Ctrl, Alt and Shift elsewhere. */
 const MAC = /Mac/i.test(navigator.userAgent);
@@ -212,7 +213,7 @@ function Row({ label, hint, stack, children }: { label: ReactNode; hint?: string
     <div className={`set-row ${stack ? "stack" : ""}`}>
       <div className="set-label">
         {label}
-        {hint && <small>{keysIn(hint, MAC)}</small>}
+        {hint && <small>{keys(hint)}</small>}
       </div>
       {children}
     </div>
@@ -577,12 +578,12 @@ export function SettingsPage({
 
                 {prefs && (
                   <>
-                    <h3 className="set-title">Menu bar</h3>
+                    <h3 className="set-title">{MAC ? "Menu bar" : "System tray"}</h3>
                     <div className="set-card">
-                      <Row label="Keep running in the menu bar" hint="Closing the window keeps the app (and folder sync) running behind the menu bar icon. Quit from that icon or with ⌘Q.">
-                        <Switch label="Keep running in the menu bar" on={prefs.closeToTray} onChange={(closeToTray) => changePrefs({ closeToTray })} />
+                      <Row label={`Keep running in the ${TRAY}`} hint={`Closing the window keeps the app (and folder sync) running behind the ${TRAY} icon. Quit from that icon${MAC ? " or with ⌘Q" : ""}.`}>
+                        <Switch label={`Keep running in the ${TRAY}`} on={prefs.closeToTray} onChange={(closeToTray) => changePrefs({ closeToTray })} />
                       </Row>
-                      <Row label="Open at login" hint="Starts quietly in the menu bar when you log in, so synced folders stay current.">
+                      <Row label="Open at login" hint={`Starts quietly in the ${TRAY} when you log in, so synced folders stay current.`}>
                         <Switch label="Open at login" on={prefs.launchAtLogin} onChange={(launchAtLogin) => changePrefs({ launchAtLogin })} />
                       </Row>
                     </div>
@@ -594,8 +595,8 @@ export function SettingsPage({
                   <Row label="Confirm before deleting" hint="On most connections a delete cannot be undone. Drives and the Trash keep what you delete.">
                     <Switch label="Confirm before deleting" on={settings.confirmDelete} onChange={(confirmDelete) => onChange({ confirmDelete })} />
                   </Row>
-                  <Row label="Secret keys" hint="Stored in the system keychain, never in a settings file.">
-                    <span className="set-value">Keychain</span>
+                  <Row label="Secret keys" hint="Saved encrypted, never in a settings file. The key is in the system keychain.">
+                    <span className="set-value">Encrypted</span>
                   </Row>
                 </div>
 
@@ -758,7 +759,7 @@ export function SettingsPage({
 
                 <h3 className="set-title">Sharing</h3>
                 <div className="set-card">
-                  <Row label="Share link lifetime" hint="Used by the quick “Copy link” actions. Get Info (⌘I) can still pick another.">
+                  <Row label="Share link lifetime" hint={keys("Used by the quick “Copy link” actions. Get Info (⌘I) can still pick another.")}>
                     <Seg
                       label="Share link lifetime"
                       value={settings.linkExpiry}

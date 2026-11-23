@@ -8,8 +8,8 @@
 import { createElement, useCallback, useEffect, useRef } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, errMessage, errSummary, type AppChoice } from "../api";
-import { appsFor } from "../desktop/openWith";
-import { okToRun, openFromConnection, openIn } from "../desktop/openGuard";
+import { appsFor } from "../desktop/appsFor";
+import { okToRun, openFromConnection } from "../desktop/openGuard";
 import { EDIT_MAX } from "../viewers/registry";
 import { editableInKybl } from "./editable";
 import { formatBytes } from "../format";
@@ -82,11 +82,12 @@ export function useEdit({
     [dialogs],
   );
 
-  /** The private copy in its app; `asked`: about running it, already (else asked here). */
+  /**
+   * The private copy in its app; `asked`: about running it, already. The copy's own name is
+   * checked too (edit.rs shortens long names).
+   */
   const openCopy = async (s: EditSession, app: App, asked = false) => {
-    const to = app === undefined ? undefined : app.path;
-    if (asked) await openIn(s.local, to);
-    else await openFromConnection(s.local, dialogs.confirm, to, s.name);
+    await openFromConnection(s.local, dialogs.confirm, app?.path, s.name, asked);
   };
 
   /** A remote file in another app: the rule, a private copy, the app, then uploads on save. */
@@ -95,8 +96,9 @@ export function useEdit({
       // already on this computer: it opens where it is, and its app saves it in place
       return app === undefined ? void place.ops.openInApp(e) : void place.ops.openWith(e, app.path);
     }
-    // a program or script opened in its default app runs: asked first, as on Open
-    if (!(await okToRun(e.name, dialogs.confirm))) return;
+    // a program or script opened in its default app (or a terminal) runs: asked first, as on
+    // Open; a script going to an editor the person picked is only read, so it isn't
+    if (!(await okToRun([e.name], dialogs.confirm, app?.path))) return;
     const rule = await askRule(e.name, app?.name);
     if (!rule) return;
     const had = findSession(place.profileId, place.bucket, e.key);

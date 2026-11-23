@@ -1,8 +1,9 @@
+import { TRAY } from "./osText";
 import { useEffect, useRef, useState } from "react";
 import { ErrorText } from "./ErrorText";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { errMessage } from "../api";
-import { formatBytes, formatSpeed } from "../format";
+import { formatBytes, formatSpeed, plural } from "../format";
 import { etaLabel } from "../useJobs";
 import { Icon } from "../Icons";
 import { ago, prettyPath, syncApi, type PendingDelete, type SyncConflict, type SyncMapping, type SyncStatus, useSync } from "../sync";
@@ -10,8 +11,7 @@ import type { Profile } from "../types";
 import { SyncDialog } from "./SyncDialog";
 import "./sync.css";
 import { useDialogs } from "../shell/useDialogs";
-import { okToRun, openIn } from "../desktop/openGuard";
-import { runsCode } from "../desktop/runnable";
+import { baseName as leafOf, okToRun, openFromConnection } from "../desktop/openGuard";
 
 const DIR_ICON = { upload: "upload", download: "download", twoway: "sync" } as const;
 const DIR_TITLE = { upload: "Uploads to the remote folder", download: "Mirrors the remote folder", twoway: "Two-way: changes go both ways" };
@@ -62,7 +62,7 @@ function StatusLine({ m, st, paused }: { m: SyncMapping; st: SyncStatus | undefi
           <i style={{ width: `${pct}%` }} />
         </div>
         <span>
-          {DIR_VERB[m.direction]} {st.done.toLocaleString()} of {st.total.toLocaleString()} files
+          {DIR_VERB[m.direction]} {st.done.toLocaleString()} of {plural(st.total, "file")}
           {st.totalBytes > 0 && ` · ${formatBytes(st.bytes)} of ${formatBytes(st.totalBytes)}`}
           {rate > 0 && ` · ${formatSpeed(rate)}`}
           {eta && ` · ${eta}`}
@@ -198,10 +198,9 @@ function ConflictsPanel({ m, count, run }: { m: SyncMapping; count: number; run:
   if (!items || items.length === 0) return null;
   const open = async (c: SyncConflict) => {
     // both came from the connection at some point: a program is asked about first, once
-    const names = [c.localPath, c.copyLocalPath].map((p) => p.split(/[\\/]/).pop() ?? p);
-    if (!(await okToRun(names.find(runsCode) ?? names[0], dialogs.confirm))) return;
-    openIn(c.localPath, undefined).catch(() => {});
-    openIn(c.copyLocalPath, undefined).catch(() => {});
+    const paths = [c.localPath, c.copyLocalPath];
+    if (!(await okToRun(paths.map(leafOf), dialogs.confirm))) return;
+    for (const p of paths) await openFromConnection(p, dialogs.confirm, undefined, leafOf(p), true).catch(() => {});
   };
   return (
     <div className="sync-attn" role="group" aria-label="Conflicts">
@@ -302,7 +301,7 @@ export function SyncSection({
             <Icon name="sync" size={24} />
           </div>
           <h4>Keep a folder in sync</h4>
-          <p>Back up a folder from this Mac, keep a local mirror of a remote folder, or keep both sides the same. Syncing keeps running in the menu bar when the window is closed.</p>
+          <p>Back up a folder from this Mac, keep a local mirror of a remote folder, or keep both sides the same. Syncing keeps running in the {TRAY} when the window is closed.</p>
           <button className="btn btn-primary btn-sm" onClick={() => setEditing("new")} disabled={profiles.length === 0}>
             <Icon name="plus" size={14} /> Add folder
           </button>
@@ -388,7 +387,7 @@ export function SyncSection({
             <div className="set-row">
               <div className="set-label">
                 Pause syncing
-                <small>Stops all folders until you resume. Also in the menu bar icon.</small>
+                <small>Stops all folders until you resume. Also in the {TRAY} icon.</small>
               </div>
               <button
                 className={`switch ${sync.pausedAll ? "on" : ""}`}

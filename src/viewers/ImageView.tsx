@@ -3,11 +3,11 @@
  * screens, double-click or double-tap to switch between fit and actual size. SVGs are shown
  * through <img>, which never runs scripts inside them.
  */
+import { keys } from "../components/osText";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ToolButton } from "./ui";
 import type { ViewerProps } from "./types";
 import { releaseOnUnmount } from "../releaseMedia";
-import { k } from "../components/keys";
 
 const TYPES: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp",
@@ -112,9 +112,9 @@ export default function ImageView({ name, bytes, mode }: ViewerProps) {
         <div className="dv-tools">
           <ToolButton label="Fit" pressed={scale === null} onClick={() => setScale(null)} />
           <ToolButton label="Actual size" pressed={scale === 1} onClick={() => zoomTo(1)} />
-          <ToolButton label="Zoom out" onClick={() => zoomTo(s / 1.25)} title={k("Zoom out (⌘−)")} />
+          <ToolButton label="Zoom out" onClick={() => zoomTo(s / 1.25)} title={keys("Zoom out (⌘−)")} />
           <span className="dv-zoom">{Math.round(s * 100)}%</span>
-          <ToolButton label="Zoom in" onClick={() => zoomTo(s * 1.25)} title={k("Zoom in (⌘+)")} />
+          <ToolButton label="Zoom in" onClick={() => zoomTo(s * 1.25)} title={keys("Zoom in (⌘+)")} />
           {natural && (
             <span className="dv-status">
               {natural.w} × {natural.h}

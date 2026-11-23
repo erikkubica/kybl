@@ -1,4 +1,5 @@
 /** Settings → Actions: the custom actions, switched on and off, edited, exported and imported. */
+import { IS_MAC as MAC_KEYS } from "../components/pointer";
 import { useEffect, useRef, useState } from "react";
 import { Modal } from "../components/Dialogs";
 import { Icon } from "../Icons";
@@ -22,7 +23,6 @@ import {
   type CustomAction,
 } from "./customActions";
 import { templateProblem } from "./templateCheck";
-import { k } from "../components/keys";
 import "./actions.css";
 
 type ToastFn = (kind: "success" | "error" | "info", text: string) => void;
@@ -195,7 +195,7 @@ function ShortcutField({ value, selfId, onChange }: { value: string | null; self
           <Icon name="x" size={13} />
         </button>
       )}
-      <small className={problem ? "ca-bad" : ""}>{problem ?? (recording ? k("Press a key combination with ⌘, or an F-key. ⌫ removes it.") : "Click, then press the keys.")}</small>
+      <small className={problem ? "ca-bad" : ""}>{problem ?? (recording ? `Press a key combination with ${MAC_KEYS ? "⌘" : "Ctrl"}, or an F-key. ${MAC_KEYS ? "⌫" : "Backspace"} removes it.` : "Click, then press the keys.")}</small>
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { keys } from "./osText";
 import { useRef, type ReactNode, type RefObject } from "react";
 import { Icon, type IconName } from "../Icons";
 import { PathTitle } from "./PathTitle";
@@ -6,7 +7,6 @@ import type { MenuItem } from "./Dialogs";
 import type { Sort, SortKey } from "./FileTable";
 import { useDialogs } from "../shell/useDialogs";
 import { parentPrefix } from "../format";
-import { k } from "./keys";
 
 export const TILE_MIN = 96;
 export const TILE_MAX = 320;
@@ -254,7 +254,7 @@ export function Toolbar({
               onClick={onUp}
               // dropping items on it moves them up a level
               data-drop={!disabled ? parentPrefix(prefix) : undefined}
-              title={k(`${parts[parts.length - 2]} (⌘↑)`)}
+              title={keys(`${parts[parts.length - 2]} (⌘↑)`)}
               aria-label={`Enclosing folder, ${parts[parts.length - 2]}`}
             >
               …
@@ -283,7 +283,7 @@ export function Toolbar({
           className="icon-btn tb-create"
           disabled={disabled || readOnly}
           onClick={createMenu}
-          title={k(readOnly ? "Archives open read-only" : "Upload or create (⌘U, ⇧⌘N)")}
+          title={readOnly ? "Archives open read-only" : keys("Upload or create (⌘U, ⇧⌘N)")}
           aria-label="Upload or create"
           aria-haspopup="menu"
         >
@@ -304,7 +304,7 @@ export function Toolbar({
         {/* folded to its icon until clicked (or ⌘F), and while a filter or search is on it stays open */}
         <div
           className={`search ${!searchOpen ? "folded" : ""}`}
-          title={!searchOpen ? k("Filter, or search subfolders (⌘F)") : undefined}
+          title={!searchOpen ? keys("Filter, or search subfolders (⌘F)") : undefined}
           onMouseDown={(e) => {
             if (disabled || (e.target as HTMLElement).closest("input, button")) return;
             e.preventDefault();
@@ -345,7 +345,7 @@ export function Toolbar({
               <Icon name="x" size={12} />
             </button>
           ) : (
-            <kbd>{k("⌘F")}</kbd>
+            <kbd>{keys("⌘F")}</kbd>
           )}
         </div>
 

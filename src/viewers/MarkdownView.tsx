@@ -2,6 +2,7 @@
  * Markdown: the source in the editor, the rendered page beside it (or one at a time on narrow
  * screens). The rendered HTML is cleaned with DOMPurify and shown only inside SandboxFrame.
  */
+import { keys } from "../components/osText";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Marked } from "marked";
 import { headingSlugger, htmlText } from "./slug";
@@ -12,7 +13,6 @@ import { Segmented, ToolButton } from "./ui";
 import { useNarrow } from "./useNarrow";
 import type { ViewerProps } from "./types";
 import { formatBytes } from "../format";
-import { k } from "../components/keys";
 
 type Layout = "edit" | "split" | "preview";
 
@@ -121,7 +121,7 @@ export default function MarkdownView({ name, text, editable, mode, onEdit, onSav
               onChange={setLayout}
             />
           )}
-          {shown !== "preview" && <ToolButton icon="search" label="Find" onClick={() => editor.current?.find()} title={k("Find and replace (⌘F)")} />}
+          {shown !== "preview" && <ToolButton icon="search" label="Find" onClick={() => editor.current?.find()} title={keys("Find and replace (⌘F)")} />}
           {big && shown !== "edit" && snapshot != null && snapshot !== source && (
             <ToolButton icon="refresh" label="Update preview" title="Large file: the preview isn't redrawn while you type" onClick={() => setSnapshot(source)} />
           )}

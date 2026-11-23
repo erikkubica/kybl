@@ -18,7 +18,7 @@ import { Icon } from "../Icons";
 import { isMenuKey } from "../components/Dialogs";
 import type { PaneId } from "../browser/types";
 import { colorValue } from "./workspaces";
-import { k } from "../components/keys";
+import { keys } from "../components/osText";
 
 export type WorkspaceTab = { id: string; name: string; color: string | null; panes: number };
 
@@ -343,7 +343,7 @@ export function WorkspaceBar(p: WorkspaceBarProps) {
           })}
         </div>
       </div>
-      <button type="button" className={`icon-btn ws-new ${p.drop?.id === NEW_WS ? "drop-over springing" : ""}`} onClick={(e) => p.onNew(e.currentTarget.getBoundingClientRect())} title={k("New workspace (⌘T)")} aria-label="New workspace">
+      <button type="button" className={`icon-btn ws-new ${p.drop?.id === NEW_WS ? "drop-over springing" : ""}`} onClick={(e) => p.onNew(e.currentTarget.getBoundingClientRect())} title={keys("New workspace (⌘T)")} aria-label="New workspace">
         <Icon name="plus" size={15} />
       </button>
       <div className="ws-fill" data-tauri-drag-region />

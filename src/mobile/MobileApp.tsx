@@ -11,7 +11,7 @@ import { asExport } from "../connections/native";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage, errSummary } from "../api";
-import { baseName, classify, isPlayableVideo, isWebImage, parentPrefix } from "../format";
+import { baseName, classify, isPlayableVideo, isWebImage, parentPrefix, plural } from "../format";
 import { useTransfers, useTransferList } from "../useTransfers";
 import { useJobs } from "../useJobs";
 import { applySettings, loadSettings, saveSettings, type Favorite, type Settings } from "../settings";
@@ -1129,7 +1129,7 @@ export default function MobileApp() {
                 </svg>
               </div>
               <h3>Looking for “{search.query}”</h3>
-              <p>{search.scanned ? `${search.scanned.toLocaleString()} files checked in ${title}` : `Going through ${title}…`}</p>
+              <p>{search.scanned ? `${plural(search.scanned, "file")} checked in ${title}` : `Going through ${title}…`}</p>
               <div className="m-seek-bar" />
             </div>
           ) : lst.loading && entries.length === 0 && !search && !filter ? (
