@@ -68,6 +68,9 @@ pub struct ImportedSite {
     /// SFTP: the private key file the other app signs in with; read only when importing
     #[serde(skip)]
     pub key_file: Option<PathBuf>,
+    /// SFTP: tunnels to make with it (SSH config's `LocalForward`)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tunnels: Vec<crate::tunnels::TunnelDef>,
 }
 
 impl ImportedSite {
@@ -89,6 +92,7 @@ impl ImportedSite {
             skip: None,
             secret: None,
             key_file: None,
+            tunnels: vec![],
         }
     }
 }
@@ -412,6 +416,7 @@ pub fn to_profile(site: &ImportedSite, name: String) -> Result<Mapped, String> {
         host_key: None,
         cert_fingerprint: None,
         url: None,
+        tunnels: if kind == ConnKind::Sftp { site.tunnels.clone() } else { vec![] },
     };
     match kind {
         ConnKind::Ftp => {

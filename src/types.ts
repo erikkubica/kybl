@@ -56,6 +56,21 @@ export type NetConfig = {
   certFingerprint?: string | null;
   /** WebDAV: the full address, when given instead of host and port. */
   url?: string | null;
+  /** SFTP: SSH tunnels (local port forwards) through the server (src/tunnels). */
+  tunnels?: TunnelDef[];
+};
+
+/** One SSH tunnel of an SFTP connection: 127.0.0.1:localPort → remoteHost:remotePort, as the server sees it. */
+export type TunnelDef = {
+  /** stable within the connection; "" for a new one (the backend gives it one) */
+  id: string;
+  /** optional: the place it goes stands in */
+  name: string;
+  localPort: number;
+  remoteHost: string;
+  remotePort: number;
+  /** started when Kybl first opens the connection */
+  autoStart: boolean;
 };
 
 /** The account behind a sign-in connection. Tokens live in the vault (`{id}#oauth`), never here. */

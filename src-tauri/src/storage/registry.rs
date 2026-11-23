@@ -33,7 +33,11 @@ pub async fn open<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id: 
             .into_iter()
             .find(|p| p.id == profile_id)
             .ok_or_else(|| "Connection not found".to_string())?;
-        build(app, state, &profile, None).await?
+        let s = build(app, state, &profile, None).await?;
+        // its "Start when the connection opens" SSH tunnels
+        #[cfg(desktop)]
+        crate::tunnels::run::autostart(app, &profile);
+        s
     };
     OPEN.lock().unwrap().insert(profile_id.to_string(), s.clone());
     Ok(s)

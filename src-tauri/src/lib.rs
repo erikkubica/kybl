@@ -57,6 +57,8 @@ mod placeholders;
 mod terminal;
 mod thumbs;
 mod transfer_notice;
+// SSH tunnels (local port forwards) of SFTP connections
+mod tunnels;
 mod transfers;
 #[cfg(desktop)]
 mod tray;
@@ -280,6 +282,15 @@ pub fn run() {
             terminal::terminal_ack,
             #[cfg(desktop)]
             terminal::terminal_close,
+            // SSH tunnels
+            #[cfg(desktop)]
+            tunnels::run::tunnel_list,
+            #[cfg(desktop)]
+            tunnels::run::tunnel_start,
+            #[cfg(desktop)]
+            tunnels::run::tunnel_stop,
+            #[cfg(desktop)]
+            tunnels::run::tunnel_port_check,
             #[cfg(desktop)]
             terminal::terminal_busy,
             #[cfg(desktop)]

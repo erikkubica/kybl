@@ -48,6 +48,7 @@ import type { PickId } from "../connections/kinds";
 import { useDialogs } from "./useDialogs";
 import type { MenuItem } from "../components/Dialogs";
 import { photoMenuItems } from "./photoMenu";
+import { tunnelMenuItems, useTunnelCommands } from "../tunnels/tunnelMenu";
 import { loadExpanded, useConnections } from "./useConnections";
 import { useFinderDrop } from "./useFinderDrop";
 import { useShellCommands } from "./useShellCommands";
@@ -151,6 +152,8 @@ export function AppShell() {
   // the saved connections, then this computer's own folders
   const saved = conns.profiles;
   const profiles = useMemo(() => [...saved, THIS_MAC], [saved]);
+  // ⌘K: Start / Stop tunnel “name” for SFTP connections' SSH tunnels
+  useTunnelCommands(saved, toast);
   const [transfersOpen, setTransfersOpen] = useState(true);
   // the activity panel was opened on purpose: it stays up with a note even with nothing going on
   const [activityAsked, setActivityAsked] = useState(false);
@@ -1557,6 +1560,7 @@ export function AppShell() {
       ...(own ? [] : [{ type: "item" as const, label: "Copy everything to…", icon: "copy" as const, onClick: () => void copyAll() }]),
       ...(own ? [] : driveFor(p, "")),
       ...photoMenuItems(p, dialogs),
+      ...tunnelMenuItems(p, toast),
       // This Mac is built in, not saved: it stays where it is
       ...(own
         ? []

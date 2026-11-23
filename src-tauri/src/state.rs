@@ -118,6 +118,9 @@ pub struct NetConfig {
     pub cert_fingerprint: Option<String>,
     /// WebDAV: the full address, when given instead of host and port
     pub url: Option<String>,
+    /// SFTP: SSH tunnels (local port forwards) through the server, see `tunnels`
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tunnels: Vec<crate::tunnels::TunnelDef>,
 }
 
 /// The account behind a sign-in connection. Tokens live in the vault (`{id}#oauth`).

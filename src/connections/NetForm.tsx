@@ -4,6 +4,7 @@ import { Icon } from "../Icons";
 import type { NetConfig, Profile } from "../types";
 import { baseProfile, defaultPort, emptyNet, netTitle, type NetKind } from "./kinds";
 import { Field, PHONE, RAW, SecretInput, Segmented, Warning, type FormApi } from "./fields";
+import { TunnelsSection, tidyTunnels, tunnelProblem } from "../tunnels/TunnelsSection";
 
 /** A WebDAV address from a profile saved with host and port instead of a URL. */
 function davUrl(n: NetConfig): string {
@@ -49,6 +50,8 @@ export function NetForm({
   const certFpRef = useRef(certFp);
   const keyFile = useRef<HTMLInputElement>(null);
   const [keyNote, setKeyNote] = useState<string | null>(null);
+  // SFTP: SSH tunnels through the server (src/tunnels)
+  const [tunnels, setTunnels] = useState(start.tunnels ?? []);
   const editing = !!initial;
 
   const edit =
@@ -110,6 +113,7 @@ export function NetForm({
           : looksLikeKey(privateKey)
             ? null
             : "This doesn't look like a private key. It starts with “-----BEGIN”.",
+    tunnels: kind === "sftp" ? tunnelProblem(tunnels) : null,
   };
   const show = (k: keyof typeof problems) => (tried ? problems[k] : null);
 
@@ -126,6 +130,7 @@ export function NetForm({
         hostKey: kind === "sftp" ? hostKeyRef.current : null,
         certFingerprint: kind === "sftp" ? null : certFpRef.current,
         url: kind === "webdav" ? davHref : null,
+        tunnels: kind === "sftp" ? tidyTunnels(tunnels) : [],
       };
       const profile: Profile = { ...baseProfile(initial?.id ?? "", name.trim() || netTitle(kind, net), kind), net };
       let secret: string | undefined;
@@ -332,6 +337,7 @@ export function NetForm({
           </button>
         </div>
       )}
+      {kind === "sftp" && !PHONE && <TunnelsSection profileId={initial?.id ?? ""} tunnels={tunnels} tried={tried} onChange={edit(setTunnels)} />}
       {kind !== "sftp" && certFp && (
         <div className="conn-fp span2">
           <Icon name="check-circle" size={14} />
