@@ -417,6 +417,283 @@ fn a_short_read_is_never_cached_as_a_whole_block() {
     });
 }
 
+// ---------------------------------------------------------------- speed with a slow server
+
+/// A store that answers slowly and counts what it is asked: two buckets, `b` holding
+/// `Videos/clip-N.mp4` files of `size` bytes, each a pattern of its own.
+struct SlowStore {
+    caps: crate::storage::Capabilities,
+    clips: usize,
+    size: u64,
+    list_delay: Duration,
+    roots_delay: Duration,
+    quota_delay: Duration,
+    /// listings of `Videos/`
+    lists: std::sync::atomic::AtomicUsize,
+    roots_calls: std::sync::atomic::AtomicUsize,
+    reads: std::sync::Mutex<Vec<(String, Option<std::ops::Range<u64>>)>>,
+}
+
+impl SlowStore {
+    fn new(clips: usize, size: u64) -> Self {
+        Self {
+            caps: crate::storage::Capabilities { range_read: true, ..Default::default() },
+            clips,
+            size,
+            list_delay: Duration::ZERO,
+            roots_delay: Duration::ZERO,
+            quota_delay: Duration::ZERO,
+            lists: Default::default(),
+            roots_calls: Default::default(),
+            reads: Default::default(),
+        }
+    }
+    fn byte(key: &str, at: u64) -> u8 {
+        ((at + key.len() as u64) % 251) as u8
+    }
+    fn lists(&self) -> usize {
+        self.lists.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    fn reads(&self) -> Vec<(String, Option<std::ops::Range<u64>>)> {
+        self.reads.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl Storage for SlowStore {
+    fn kind(&self) -> crate::storage::ConnKind {
+        crate::storage::ConnKind::S3
+    }
+    fn caps(&self) -> &crate::storage::Capabilities {
+        &self.caps
+    }
+    async fn roots(&self) -> crate::storage::SResult<Vec<crate::storage::RootInfo>> {
+        self.roots_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        tokio::time::sleep(self.roots_delay).await;
+        Ok(["a", "b"].iter().map(|n| crate::storage::RootInfo { id: n.to_string(), name: n.to_string(), kind: RootKind::Bucket, created: None, read_only: false }).collect())
+    }
+    async fn list(&self, root: &str, dir: &str, _: Option<String>) -> crate::storage::SResult<crate::storage::Page> {
+        // counted for the big folder only: the folders above it are listed too, on the way
+        if dir == "Videos/" {
+            self.lists.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        tokio::time::sleep(self.list_delay).await;
+        let mut page = crate::storage::Page { folders: vec![], objects: vec![], next_token: None };
+        match (root, dir) {
+            ("b", "") => page.folders.push("Videos/".into()),
+            ("b", "Videos/") => {
+                for i in 0..self.clips {
+                    page.objects.push(crate::storage::Entry { key: format!("Videos/clip-{i}.mp4"), size: self.size as i64, etag: Some(format!("e{i}")), ..Default::default() });
+                }
+            }
+            _ => {}
+        }
+        Ok(page)
+    }
+    async fn stat(&self, _: &str, _: &str) -> crate::storage::SResult<Option<crate::storage::Entry>> {
+        panic!("the drive answers from listings, never a stat per file");
+    }
+    async fn read(&self, _: &str, path: &str, range: Option<std::ops::Range<u64>>, _: Option<&str>) -> crate::storage::SResult<crate::storage::ReadStream> {
+        self.reads.lock().unwrap().push((path.to_string(), range.clone()));
+        let r = range.unwrap_or(0..self.size);
+        let (a, b) = (r.start.min(self.size), r.end.min(self.size));
+        let bytes: Vec<u8> = (a..b).map(|i| Self::byte(path, i)).collect();
+        let len = bytes.len() as u64;
+        let chunks: Vec<std::io::Result<bytes::Bytes>> = bytes.chunks(64 * 1024).map(|c| Ok(bytes::Bytes::copy_from_slice(c))).collect();
+        Ok(crate::storage::ReadStream { body: Box::pin(futures_util::stream::iter(chunks)), len: Some(len), total: Some(self.size), range: Some(a..b), etag: None, content_type: None })
+    }
+    async fn write(
+        &self,
+        _: &str,
+        _: &str,
+        _: crate::storage::WriteSource,
+        _: crate::storage::WriteOpts<'_>,
+        _: crate::storage::Progress<'_>,
+        _: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> crate::storage::SResult<crate::storage::WriteOutcome> {
+        crate::storage::unsupported()
+    }
+    async fn mkdir(&self, _: &str, _: &str) -> crate::storage::SResult<()> {
+        crate::storage::unsupported()
+    }
+    async fn delete(&self, _: &str, _: &[String], _: &[String], _: &std::sync::atomic::AtomicBool, _: &(dyn Fn(u64, u64) + Send + Sync)) -> crate::storage::SResult<(u64, u64)> {
+        crate::storage::unsupported()
+    }
+    async fn rename(&self, _: &crate::storage::Loc, _: &crate::storage::Loc, _: bool) -> crate::storage::SResult<()> {
+        crate::storage::unsupported()
+    }
+    async fn quota(&self) -> crate::storage::SResult<Option<crate::storage::Quota>> {
+        tokio::time::sleep(self.quota_delay).await;
+        Ok(Some(crate::storage::Quota { used: 1, total: Some(2) }))
+    }
+}
+
+struct SlowDrive {
+    _tmp: Tmp,
+    store: Arc<SlowStore>,
+    fs: KyblFs,
+    srv: server::Server,
+    http: reqwest::Client,
+}
+
+impl SlowDrive {
+    async fn new(store: SlowStore) -> Self {
+        let base = std::env::temp_dir().join(format!("kybl-slow-{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(store);
+        let blocks = Arc::new(BlockCache::open(base.join("cache"), 256 * 1024 * 1024));
+        let uploads = Arc::new(WriteBack::open(base.join("uploads")));
+        let fs = KyblFs::new(opener(store.clone()), Spec { bucket: String::new(), prefix: String::new(), read_only: false }, blocks, uploads);
+        let srv = server::start(fs.clone(), 0, server::random_token(), false).await.unwrap();
+        Self { _tmp: Tmp(base), store, fs, srv, http: crate::storage::net::http() }
+    }
+    /// PROPFIND `path`, asking for the quota like Finder; (status, body, time taken).
+    async fn propfind(&self, path: &str, depth: &str) -> (u16, String, Duration) {
+        let body = r#"<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:getlastmodified/><D:getcontentlength/><D:resourcetype/><D:quota-available-bytes/><D:quota-used-bytes/></D:prop></D:propfind>"#;
+        let t = std::time::Instant::now();
+        let r = self
+            .http
+            .request(Method::from_bytes(b"PROPFIND").unwrap(), format!("{}{path}", self.srv.url()))
+            .header("Depth", depth)
+            .header("Content-Type", "text/xml")
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        let st = r.status().as_u16();
+        (st, r.text().await.unwrap(), t.elapsed())
+    }
+    async fn get_range(&self, path: &str, a: u64, b: u64) -> Vec<u8> {
+        let r = self.http.get(format!("{}{path}", self.srv.url())).header("Range", format!("bytes={a}-{b}")).send().await.unwrap();
+        assert_eq!(r.status(), StatusCode::PARTIAL_CONTENT);
+        r.bytes().await.unwrap().to_vec()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_top_answers_fast_while_the_quota_is_slow() {
+    let mut store = SlowStore::new(3, 10);
+    store.quota_delay = Duration::from_secs(5);
+    let d = SlowDrive::new(store).await;
+    let (st, body, took) = d.propfind("", "1").await;
+    assert_eq!(st, 207);
+    assert!(body.contains("a/") && body.contains("b/"), "{body}");
+    assert!(took < Duration::from_millis(1500), "the top waited {took:?} for the quota");
+    // asked again while the quota is still being counted: no waiting at all now
+    let (_, _, took) = d.propfind("", "0").await;
+    assert!(took < Duration::from_millis(300), "the second ask waited {took:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn expired_listings_and_roots_answer_from_the_cache_and_refresh_behind() {
+    let mut store = SlowStore::new(2183, 10);
+    store.list_delay = Duration::from_millis(800);
+    store.roots_delay = Duration::from_millis(800);
+    let d = SlowDrive::new(store).await;
+    // first time: the server is asked, and that is slow
+    let (st, body, took) = d.propfind("b/Videos/", "1").await;
+    assert_eq!(st, 207);
+    assert!(body.contains("clip-2182.mp4"), "every clip listed");
+    assert!(took >= Duration::from_millis(800));
+    assert_eq!(d.store.lists(), 1);
+    // well past the TTL: answered at once from the cache, refreshed behind it
+    d.fs.0.age_caches(super::webdav::TTL + Duration::from_secs(1));
+    let (st, body, took) = d.propfind("b/Videos/", "1").await;
+    assert_eq!(st, 207);
+    assert!(body.contains("clip-2182.mp4"));
+    assert!(took < Duration::from_millis(400), "a stale listing waited {took:?}");
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(d.store.lists(), 2, "one refresh behind the stale answer");
+    // fresh again: no more calls
+    d.propfind("b/Videos/", "1").await;
+    assert_eq!(d.store.lists(), 2);
+    // a listing older than STALE is not trusted any more: that ask waits for a fresh one
+    d.fs.0.age_caches(super::webdav::STALE + Duration::from_secs(1));
+    // (the list of roots is still answered at once, however old: roots rarely change)
+    let roots = d.store.roots_calls.load(std::sync::atomic::Ordering::SeqCst);
+    let (_, body, took) = d.propfind("", "1").await;
+    assert!(body.contains("b/") && took < Duration::from_millis(400), "old roots waited {took:?}");
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    assert_eq!(d.store.roots_calls.load(std::sync::atomic::Ordering::SeqCst), roots + 1, "refreshed behind");
+    d.fs.0.age_caches(super::webdav::STALE + Duration::from_secs(1));
+    let (_, _, took) = d.propfind("b/Videos/", "1").await;
+    assert!(took >= Duration::from_millis(800));
+    assert_eq!(d.store.lists(), 3);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_same_folder_asked_for_at_once_is_listed_once() {
+    let mut store = SlowStore::new(500, 10);
+    store.list_delay = Duration::from_millis(500);
+    let d = Arc::new(SlowDrive::new(store).await);
+    // the drive's top and the bucket first, so only the folder itself is left to list
+    d.propfind("b/", "1").await;
+    let before = d.store.lists();
+    let asks: Vec<_> = (0..8)
+        .map(|_| {
+            let d = d.clone();
+            tokio::spawn(async move { d.propfind("b/Videos/", "1").await })
+        })
+        .collect();
+    for a in asks {
+        let (st, body, _) = a.await.unwrap();
+        assert_eq!(st, 207);
+        assert!(body.contains("clip-499.mp4"));
+    }
+    assert_eq!(d.store.lists() - before, 1, "eight PROPFINDs, one listing");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_lone_read_fetches_one_block_and_reading_front_to_back_reads_ahead() {
+    let size = 20 * BLOCK + 12345;
+    let d = SlowDrive::new(SlowStore::new(2, size)).await;
+    let key = "Videos/clip-0.mp4";
+    // Finder peeking at the end of a video (where an MP4's index often is) for its icon
+    let (a, b) = (size - 8 * 1024, size - 1);
+    let got = d.get_range("b/Videos/clip-0.mp4", a, b).await;
+    assert_eq!(got, (a..=b).map(|i| SlowStore::byte(key, i)).collect::<Vec<_>>());
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let reads = d.store.reads();
+    assert_eq!(reads.len(), 1, "one block, nothing fetched ahead: {reads:?}");
+    let r = reads[0].1.clone().unwrap();
+    assert_eq!(r, 20 * BLOCK..size, "only the last block");
+    // and the start: one block too
+    d.get_range("b/Videos/clip-1.mp4", 0, 4095).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(d.store.reads().len(), 2);
+    // reading on from there, front to back: the next blocks come ahead of the reader
+    d.get_range("b/Videos/clip-1.mp4", 4096, BLOCK + 10).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let ahead: Vec<_> = d.store.reads().into_iter().filter(|(k, _)| k == "Videos/clip-1.mp4").map(|(_, r)| r.unwrap().start / BLOCK).collect();
+    assert!(ahead.contains(&2) && ahead.contains(&3), "blocks 2 and 3 fetched ahead: {ahead:?}");
+    // the whole file still reads right, from start to end
+    let all = d.http.get(format!("{}b/Videos/clip-1.mp4", d.srv.url())).send().await.unwrap().bytes().await.unwrap();
+    assert!(all.iter().enumerate().all(|(i, &x)| x == SlowStore::byte("Videos/clip-1.mp4", i as u64)) && all.len() as u64 == size);
+    // each block was fetched once, however it was asked for
+    let mut seen: Vec<_> = d.store.reads().into_iter().filter(|(k, _)| k == "Videos/clip-1.mp4").map(|(_, r)| r.unwrap().start).collect();
+    let n = seen.len();
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen.len(), n, "no block downloaded twice");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_change_made_through_the_drive_is_never_hidden_by_a_listing_under_way() {
+    // a refresh that started before a change must not put the old folder back in the cache
+    let mut store = SlowStore::new(3, 10);
+    store.list_delay = Duration::from_millis(300);
+    let d = SlowDrive::new(store).await;
+    d.propfind("b/Videos/", "1").await;
+    d.fs.0.age_caches(super::webdav::TTL + Duration::from_secs(1));
+    // stale answer; refresh starts behind it
+    d.propfind("b/Videos/", "1").await;
+    // Kybl changes the folder while that refresh is under way
+    d.fs.0.forget_folder("b", "Videos/");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let before = d.store.lists();
+    d.propfind("b/Videos/", "1").await;
+    assert_eq!(d.store.lists(), before + 1, "the refresh from before the change wasn't kept");
+}
+
 /// A real mount: `mount_webdav` into a temp folder, then `ls`, `cat`, `cp`, `mkdir`, `mv` and a
 /// save through the mounted folder, and unmount. Needs no dialog and no admin rights, but it
 /// touches the system's mount table, so it only runs when asked:

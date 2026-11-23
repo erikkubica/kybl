@@ -5,6 +5,12 @@
 //! A block is named after the file *version* (connection, root, key and the etag, or size and
 //! time when there is no etag), so a file that changes on the server is fetched again and the
 //! old blocks simply age out. Two readers asking for the same block share one download.
+//!
+//! Downloads are bounded: at most [`FETCHES`] block downloads at once, of which at most
+//! [`PREFETCHES`] are read-ahead, so a burst of preview reads (Finder draws an icon for every
+//! video in view by reading its start and end) can't hog the connection, and a file being read
+//! front to back always has room. Folder listings don't go through here and never wait on it.
+//! Disk reads and writes of blocks run off the async threads.
 
 use std::{
     collections::HashMap,
@@ -17,9 +23,16 @@ use futures_util::StreamExt;
 
 use crate::storage::{SResult, Storage, StorageError};
 
-/// Bytes per block: big enough that streaming a video is a handful of requests per second,
-/// small enough that a peek at a file's header (Quick Look, thumbnails) stays cheap.
-pub const BLOCK: u64 = 4 * 1024 * 1024;
+/// Bytes per block: small, because most reads on a drive are peeks (Finder reads the start
+/// and the end of every video and photo in view to draw its icon), and each peek costs a whole
+/// block. Files read front to back fetch several blocks ahead instead (`webdav::RemoteRead`),
+/// so streaming still moves in big steps. Was 4 MiB: 8 MiB per icon with the old read-ahead.
+pub const BLOCK: u64 = 1024 * 1024;
+
+/// Block downloads at once, over everything this drive reads.
+pub const FETCHES: usize = 6;
+/// Of those, read-ahead downloads at once; past it read-ahead is skipped, never queued.
+pub const PREFETCHES: usize = 3;
 
 /// The cache's default size per drive.
 pub const DEFAULT_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
@@ -37,9 +50,11 @@ pub struct FileVersion {
 impl FileVersion {
     /// The stem of this version's block files: a hash, so keys of any length and character fit.
     fn stem(&self) -> String {
+        // the block size is part of the name: blocks cached with another size are never read
+        // as this one's (they just age out)
         let d = ring::digest::digest(
             &ring::digest::SHA256,
-            format!("{}\n{}\n{}\n{}", self.root, self.key, self.size, self.version).as_bytes(),
+            format!("{}\n{}\n{}\n{}\n{BLOCK}", self.root, self.key, self.size, self.version).as_bytes(),
         );
         d.as_ref()[..16].iter().map(|b| format!("{b:02x}")).collect()
     }
@@ -63,6 +78,10 @@ pub struct BlockCache {
     index: Mutex<Index>,
     /// one lock per block being fetched, so the same block isn't downloaded twice at once
     inflight: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// room for block downloads ([`FETCHES`])
+    fetches: tokio::sync::Semaphore,
+    /// room for read-ahead ([`PREFETCHES`])
+    prefetches: Arc<tokio::sync::Semaphore>,
 }
 
 impl BlockCache {
@@ -90,7 +109,14 @@ impl BlockCache {
             index.used += len;
             index.entries.insert(name, (len, index.tick));
         }
-        let c = Self { dir, limit, index: Mutex::new(index), inflight: Mutex::default() };
+        let c = Self {
+            dir,
+            limit,
+            index: Mutex::new(index),
+            inflight: Mutex::default(),
+            fetches: tokio::sync::Semaphore::new(FETCHES),
+            prefetches: Arc::new(tokio::sync::Semaphore::new(PREFETCHES)),
+        };
         c.evict(None);
         c
     }
@@ -118,13 +144,16 @@ impl BlockCache {
         start..(start + BLOCK).min(v.size)
     }
 
-    /// The cached block, if there is one (and marks it as just used).
-    fn cached(&self, name: &str) -> Option<Bytes> {
-        let mut ix = self.index.lock().unwrap();
-        if !ix.entries.contains_key(name) {
+    /// The cached block, if there is one (and marks it as just used). The file is read off the
+    /// async threads and outside the index lock, so other readers don't queue behind the disk.
+    async fn cached(&self, name: &str) -> Option<Bytes> {
+        if !self.index.lock().unwrap().entries.contains_key(name) {
             return None;
         }
-        match std::fs::read(self.dir.join(name)) {
+        let path = self.dir.join(name);
+        let read = tokio::task::spawn_blocking(move || std::fs::read(path)).await.unwrap_or_else(|e| Err(std::io::Error::other(e)));
+        let mut ix = self.index.lock().unwrap();
+        match read {
             Ok(b) => {
                 ix.tick += 1;
                 let t = ix.tick;
@@ -147,28 +176,58 @@ impl BlockCache {
         self.index.lock().unwrap().entries.contains_key(&Self::name(v, idx))
     }
 
-    /// Writes a block aside and swaps it in, then makes room.
-    fn store(&self, name: &str, bytes: &[u8]) {
+    /// Whether the block is being downloaded right now.
+    pub fn fetching(&self, v: &FileVersion, idx: u64) -> bool {
+        self.inflight.lock().unwrap().contains_key(&Self::name(v, idx))
+    }
+
+    /// Fetches block `idx` in the background when read-ahead has room; false when it hadn't
+    /// (read-ahead is a bonus: it never waits, so it never delays a read someone asked for).
+    pub fn prefetch(self: &Arc<Self>, s: Arc<dyn Storage>, v: &FileVersion, idx: u64) -> bool {
+        if idx >= v.blocks() || self.has(v, idx) || self.fetching(v, idx) {
+            return true;
+        }
+        let Ok(permit) = self.prefetches.clone().try_acquire_owned() else { return false };
+        let (me, v) = (self.clone(), v.clone());
+        tokio::spawn(async move {
+            let _ = me.block(&*s, &v, idx).await;
+            drop(permit);
+        });
+        true
+    }
+
+    /// Writes a block aside and swaps it in (off the async threads), then makes room.
+    async fn store(&self, name: &str, bytes: Bytes) {
         let path = self.dir.join(name);
         let tmp = self.dir.join(format!("{name}.tmp"));
-        if std::fs::write(&tmp, bytes).is_err() || std::fs::rename(&tmp, &path).is_err() {
-            let _ = std::fs::remove_file(&tmp);
+        let len = bytes.len() as u64;
+        let wrote = tokio::task::spawn_blocking(move || {
+            if std::fs::write(&tmp, &bytes).is_err() || std::fs::rename(&tmp, &path).is_err() {
+                let _ = std::fs::remove_file(&tmp);
+                return false;
+            }
+            true
+        })
+        .await
+        .unwrap_or(false);
+        if !wrote {
             return;
         }
         {
             let mut ix = self.index.lock().unwrap();
             ix.tick += 1;
             let t = ix.tick;
-            if let Some((old, _)) = ix.entries.insert(name.to_string(), (bytes.len() as u64, t)) {
+            if let Some((old, _)) = ix.entries.insert(name.to_string(), (len, t)) {
                 ix.used -= old;
             }
-            ix.used += bytes.len() as u64;
+            ix.used += len;
         }
         self.evict(Some(name));
     }
 
     /// Drops least recently used blocks until the cache fits its limit (never `keep`).
     fn evict(&self, keep: Option<&str>) {
+        let mut gone = Vec::new();
         let mut ix = self.index.lock().unwrap();
         while ix.used > self.limit {
             let Some(victim) = ix
@@ -183,7 +242,12 @@ impl BlockCache {
             if let Some((len, _)) = ix.entries.remove(&victim) {
                 ix.used -= len;
             }
-            let _ = std::fs::remove_file(self.dir.join(&victim));
+            gone.push(victim);
+        }
+        // deleted outside the lock: readers of other blocks don't wait on the disk
+        drop(ix);
+        for name in gone {
+            let _ = std::fs::remove_file(self.dir.join(name));
         }
     }
 
@@ -193,15 +257,18 @@ impl BlockCache {
             return Ok(Bytes::new());
         }
         let name = Self::name(v, idx);
-        if let Some(b) = self.cached(&name) {
+        if let Some(b) = self.cached(&name).await {
             return Ok(b);
         }
         let lock = self.inflight.lock().unwrap().entry(name.clone()).or_default().clone();
         let result = {
             let _held = lock.lock().await;
-            match self.cached(&name) {
+            match self.cached(&name).await {
                 Some(b) => Ok(b),
-                None => self.fetch(s, v, idx).await,
+                None => {
+                    let _slot = self.fetches.acquire().await.expect("never closed");
+                    self.fetch(s, v, idx).await
+                }
             }
         };
         // the last one out removes the lock
@@ -222,7 +289,7 @@ impl BlockCache {
             // a short answer (a dropped connection, a file that shrank) is passed on but never
             // kept: cached, it would be served as the whole block until the file changes
             if bytes.len() as u64 == want.end - want.start {
-                self.store(&Self::name(v, idx), &bytes);
+                self.store(&Self::name(v, idx), bytes.clone()).await;
             }
             return Ok(bytes);
         }
@@ -239,7 +306,7 @@ impl BlockCache {
                 buf.extend_from_slice(&piece);
                 if buf.len() as u64 == BLOCK {
                     let b = std::mem::replace(&mut buf, BytesMut::with_capacity(BLOCK as usize)).freeze();
-                    self.store(&Self::name(v, at), &b);
+                    self.store(&Self::name(v, at), b.clone()).await;
                     if at == idx {
                         ours = Some(b);
                     }
@@ -251,7 +318,7 @@ impl BlockCache {
             let b = buf.freeze();
             // the last block only when the file really ended there
             if at * BLOCK + b.len() as u64 == v.size {
-                self.store(&Self::name(v, at), &b);
+                self.store(&Self::name(v, at), b.clone()).await;
             }
             if at == idx {
                 ours = Some(b);

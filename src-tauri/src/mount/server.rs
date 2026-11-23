@@ -11,11 +11,15 @@
 //!   server through a DNS name that points at this computer.
 //! - **Port**: the drive's previous port is tried first. A mount left behind by a crash has the
 //!   old token, so it is replaced by a fresh mount (`os::mount`).
+//! - **Timing**: with `KYBL_DRIVE_TIMING=1` in the environment, every request (method, path,
+//!   status, time to the answer's headers) and every folder listing fetched from the server is
+//!   printed to stderr, to see where a slow Finder window waits.
 
 use std::{
     convert::Infallible,
     net::Ipv4Addr,
-    sync::Arc,
+    sync::{Arc, OnceLock},
+    time::Instant,
 };
 
 use bytes::Bytes;
@@ -47,6 +51,14 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         self.task.abort();
+    }
+}
+
+/// Prints `what()` to stderr when `KYBL_DRIVE_TIMING=1` (built only then).
+pub fn timing(what: impl FnOnce() -> String) {
+    static ON: OnceLock<bool> = OnceLock::new();
+    if *ON.get_or_init(|| std::env::var("KYBL_DRIVE_TIMING").as_deref() == Ok("1")) {
+        eprintln!("[drive] {}", what());
     }
 }
 
@@ -120,5 +132,10 @@ async fn serve(dav: &DavHandler, hosts: &[String], prefix: &str, req: Request<In
     if !under {
         return plain(StatusCode::NOT_FOUND, "Not here.");
     }
-    dav.handle(req).await.map(|b| b.boxed_unsync())
+    let started = Instant::now();
+    let (method, rel) = (req.method().clone(), path[prefix.len()..].to_string());
+    let depth = req.headers().get("depth").and_then(|d| d.to_str().ok()).map(str::to_string);
+    let res = dav.handle(req).await.map(|b| b.boxed_unsync());
+    timing(|| format!("{method} {rel} depth={} -> {} in {} ms", depth.as_deref().unwrap_or("-"), res.status().as_u16(), started.elapsed().as_millis()));
+    res
 }
