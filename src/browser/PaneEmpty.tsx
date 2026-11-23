@@ -86,14 +86,17 @@ export function ChooseBucket({
   const what = mode === "drives" ? "place" : "bucket";
   // a server whose own certificate stopped it before its one root could be listed
   const cert = profile.net && error ? certTrouble(error) : null;
+  // FTP, SFTP, WebDAV…: one root, nothing to choose; it's connecting, or it couldn't
+  const single = mode === "single";
+  const failed = !!(note || error);
   return (
     <div className="welcome">
       <div className="welcome-card">
         <div className="welcome-logo plain">
-          <Icon name="bucket" size={30} />
+          {single && !failed ? <span className="spinner" /> : <Icon name={single ? "server" : "bucket"} size={30} />}
         </div>
-        <h1>Choose a {what}</h1>
-        <p>{note || `Pick a ${what} from the sidebar.`}</p>
+        <h1>{single ? (failed ? `Couldn’t connect to ${profile.name}` : `Connecting to ${profile.name}…`) : `Choose a ${what}`}</h1>
+        <p>{note || (single ? (failed ? "" : "Opening its files.") : `Pick a ${what} from the sidebar.`)}</p>
         {cert ? (
           <div className="cert-actions">
             <TrustCertButton cert={cert} host={serverName(profile, cert.host)} className="btn btn-primary" onTrust={(fp) => actions.onTrustCert(profile, fp, true)} />

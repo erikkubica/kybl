@@ -1108,6 +1108,22 @@ kbd {
   color: var(--dim);
   animation: fade-in 0.25s;
 }
+/* a pane-filling message (a folder that failed to load): scrolls in a short pane instead of
+   being clipped; auto margins centre it when it fits */
+.pane > .empty {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  justify-content: flex-start;
+  padding-top: 24px;
+  padding-bottom: 24px;
+}
+.pane > .empty > :first-child {
+  margin-top: auto;
+}
+.pane > .empty > :last-child {
+  margin-bottom: auto;
+}
 .empty-art {
   display: grid;
   place-items: center;
@@ -1261,14 +1277,18 @@ kbd {
 /* ---------------------------------------------------------------- welcome */
 .welcome {
   flex: 1;
+  min-height: 0;
   display: grid;
-  place-items: center;
+  /* the card centres itself with auto margins: when the pane is too short it scrolls from the
+     top instead of being clipped at both ends */
+  overflow: auto;
   padding: 24px;
   background: radial-gradient(600px 320px at 50% 38%, var(--accent-soft), transparent 70%);
   animation: fade-in 0.3s;
 }
 .welcome-card {
   max-width: 440px;
+  margin: auto;
   text-align: center;
 }
 .welcome-card h1 {
