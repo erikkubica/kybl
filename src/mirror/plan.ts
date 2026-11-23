@@ -24,6 +24,13 @@ export type PlanOptions = {
   compare: CompareMode;
   /** modification times this close count as the same */
   toleranceMs: number;
+  /**
+   * The destination doesn't tell names apart by letter case (this Mac's or PC's disk, OneDrive,
+   * Dropbox, Box): a file there is matched by its name in any case, and two source names that
+   * differ only in case can't both be mirrored. Either way a destination name that differs from a
+   * source name only in case is never deleted (a server's case rules aren't always known).
+   */
+  caseInsensitive?: boolean;
 };
 
 export type Change = { rel: string; size: number; why: "new" | "changed" | "same" | "gone" | "kept" | "blocked"; note?: string; file?: MFile };
@@ -65,6 +72,16 @@ export function defaultTolerance(kinds: (string | undefined | null)[]): number {
 }
 
 /**
+ * Whether a destination of this kind tells names apart by letter case: like the job engine's
+ * `storage::case_insensitive`, this device's disk on macOS, iOS and Windows (from `platform`,
+ * e.g. the user agent), and OneDrive, Dropbox and Box.
+ */
+export function caseInsensitiveKind(kind: string | undefined | null, platform: string): boolean {
+  if (kind === "onedrive" || kind === "dropbox" || kind === "box") return true;
+  return kind === "local" && /Mac|Win|iPhone|iPad|iPod/i.test(platform);
+}
+
+/**
  * A whole-hour clock difference most same-size pairs share (the destination's time minus the
  * source's), or 0. Needs at least 3 such pairs, more than match without one, and half of them.
  */
@@ -99,28 +116,46 @@ const depth = (rel: string) => rel.replace(/\/$/, "").split("/").length;
 export function planMirror(src: Listing, dst: Listing, o: PlanOptions): MirrorPlan {
   const out: MirrorPlan = { upload: [], mkdirs: [], remove: [], removeDirs: [], kept: [], blocked: [], unchanged: [], same: 0, sameBytes: 0, uploadBytes: 0, removeBytes: 0, excluded: src.excluded + dst.excluded, offsetMs: 0, checksummed: 0 };
 
+  const ci = !!o.caseInsensitive;
+  const fold = (rel: string) => (ci ? rel.toLowerCase() : rel);
+  // the destination's names as it tells them apart
+  const dstFiles = new Map<string, MFile>();
+  for (const [rel, d] of dst.files) if (!dstFiles.has(fold(rel))) dstFiles.set(fold(rel), d);
+  const dstDirs = new Set([...dst.dirs].map(fold));
+  const dstFile = (rel: string) => dst.files.get(rel) ?? dstFiles.get(fold(rel));
+
   // a name that is a file on one side and a folder on the other: neither can replace the other
   const blockedDirs: string[] = [];
-  for (const rel of src.files.keys()) if (dst.dirs.has(`${rel}/`)) out.blocked.push({ rel, size: src.files.get(rel)!.size, why: "blocked", note: "a folder of this name is at the destination" });
+  for (const rel of src.files.keys()) if (dstDirs.has(fold(`${rel}/`))) out.blocked.push({ rel, size: src.files.get(rel)!.size, why: "blocked", note: "a folder of this name is at the destination" });
   for (const dir of src.dirs) {
     const name = dir.slice(0, -1);
-    if (dst.files.has(name)) {
+    if (dstFiles.has(fold(name))) {
       out.blocked.push({ rel: dir, size: 0, why: "blocked", note: "a file of this name is at the destination" });
       blockedDirs.push(dir);
     }
   }
-  const isBlocked = (rel: string) => out.blocked.some((b) => b.rel === rel) || blockedDirs.some((d) => rel.startsWith(d));
+  // two source files whose names differ only in case would land on one file there: the first in
+  // path order is mirrored, the others can't be
+  if (ci) {
+    const seen = new Set<string>();
+    for (const rel of [...src.files.keys()].sort(byPath)) {
+      if (seen.has(fold(rel))) out.blocked.push({ rel, size: src.files.get(rel)!.size, why: "blocked", note: "another file here differs only in letter case, and the destination can't keep both" });
+      else seen.add(fold(rel));
+    }
+  }
+  const blockedSet = new Set(out.blocked.map((b) => b.rel));
+  const isBlocked = (rel: string) => blockedSet.has(rel) || blockedDirs.some((d) => rel.startsWith(d));
 
   const pairs: [MFile, MFile][] = [];
   for (const [rel, s] of src.files) {
-    const d = dst.files.get(rel);
+    const d = dstFile(rel);
     if (d) pairs.push([s, d]);
   }
   out.offsetMs = o.compare === "time" && o.toleranceMs < HOUR ? detectOffset(pairs, o.toleranceMs) : 0;
 
   for (const [rel, s] of src.files) {
     if (isBlocked(rel)) continue;
-    const d = dst.files.get(rel);
+    const d = dstFile(rel);
     if (!d) {
       out.upload.push({ rel, size: s.size, why: "new", file: s });
       out.uploadBytes += s.size;
@@ -137,7 +172,7 @@ export function planMirror(src: Listing, dst: Listing, o: PlanOptions): MirrorPl
       out.sameBytes += s.size;
     }
   }
-  for (const dir of src.dirs) if (!dst.dirs.has(dir) && !isBlocked(dir)) out.mkdirs.push(dir);
+  for (const dir of src.dirs) if (!dstDirs.has(fold(dir)) && !isBlocked(dir)) out.mkdirs.push(dir);
 
   // at the destination only. A name that differs from a source file's only in letter case is
   // kept: where case doesn't count it is the file just copied, and deleting it would lose that

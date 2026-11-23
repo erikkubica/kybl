@@ -111,7 +111,11 @@ impl Live {
         }
     }
 
+    /// An item failed. A folder isn't among the files counted until it fails (as `db::counts`).
     pub(super) fn failed(&self, item: &db::Item) {
+        if item.is_dir {
+            self.files_total.fetch_add(1, Ordering::Relaxed);
+        }
         self.files_failed.fetch_add(1, Ordering::Relaxed);
         self.bytes_failed.fetch_add(item.size.max(0) as u64, Ordering::Relaxed);
     }

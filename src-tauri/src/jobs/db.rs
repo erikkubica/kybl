@@ -217,6 +217,77 @@ pub fn insert_planned_job(c: &mut Connection, id: &str, spec_json: &str, items: 
     tx.commit().map_err(e)
 }
 
+/// Why a mirror's copy isn't made: another of its files lands on the same destination file.
+pub const MIRROR_CLASH: &str = "Another file of this mirror has the same name apart from letter case, and the destination doesn't tell them apart, so only one of them was copied.";
+/// Why a mirror's deletion isn't made: the mirror copies something of that name there.
+pub const MIRROR_KEPT: &str = "Kept: the mirror copies a file or folder of this name here (letter case aside), so deleting it could delete the copy.";
+
+/// The mirror's own check of the page's lists before it copies, with `fold` the destination's
+/// rule for telling paths apart (`storage::fold_path`):
+/// - copies record their folded destination, and a file that lands on one another file of the
+///   job already lands on (two source names that differ only in case) fails instead of
+///   overwriting it;
+/// - a deletion whose path is, letter case aside always, a copy's destination or a folder one is
+///   in is skipped: where case doesn't count it is the very file the job writes. Case is ignored
+///   here whatever `fold` says, since a server's case rules aren't always known (a stale variant
+///   kept is harmless; the copy deleted isn't).
+pub fn guard_mirror(c: &mut Connection, job_id: &str, fold: &dyn Fn(&str) -> String) -> DbResult<()> {
+    let tx = c.transaction().map_err(e)?;
+    {
+        let rows = {
+            let mut st = tx
+                .prepare("SELECT src_path, dst_path, COALESCE(dst_fold, ''), is_dir, state FROM items WHERE job_id = ?1 AND del = 0 ORDER BY src_path")
+                .map_err(e)?;
+            st.query_map([job_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)? != 0, r.get::<_, String>(4)?)))
+                .map_err(e)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(e)?
+        };
+        let mut set_fold = tx.prepare_cached("UPDATE items SET dst_fold = ?3 WHERE job_id = ?1 AND src_path = ?2").map_err(e)?;
+        let mut clash = tx
+            .prepare_cached("UPDATE items SET state = 'failed', skip = 1, error = ?3 WHERE job_id = ?1 AND src_path = ?2 AND state = 'pending'")
+            .map_err(e)?;
+        let mut owner: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        // copied paths and the folders they are in, lowercased
+        let mut written: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (src, dst, old_fold, is_dir, _state) in &rows {
+            let f = fold(dst);
+            if &f != old_fold {
+                set_fold.execute(params![job_id, src, f]).map_err(e)?;
+            }
+            let lower = f.to_lowercase();
+            let mut at = 0;
+            while let Some(i) = lower[at..].find('/') {
+                at += i + 1;
+                written.insert(lower[..at].to_string());
+            }
+            written.insert(lower);
+            if *is_dir {
+                continue;
+            }
+            match owner.get(&f) {
+                Some(first) if first != src => {
+                    clash.execute(params![job_id, src, MIRROR_CLASH]).map_err(e)?;
+                }
+                _ => {
+                    owner.insert(f, src.clone());
+                }
+            }
+        }
+        let dels = {
+            let mut st = tx.prepare("SELECT src_path, dst_path FROM items WHERE job_id = ?1 AND del = 1 AND state = 'pending'").map_err(e)?;
+            st.query_map([job_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(e)?.collect::<Result<Vec<_>, _>>().map_err(e)?
+        };
+        let mut keep = tx.prepare_cached("UPDATE items SET state = 'skipped', skip = 1, error = ?3 WHERE job_id = ?1 AND src_path = ?2").map_err(e)?;
+        for (src, dst) in &dels {
+            if written.contains(&fold(dst).to_lowercase()) {
+                keep.execute(params![job_id, src, MIRROR_KEPT]).map_err(e)?;
+            }
+        }
+    }
+    tx.commit().map_err(e)
+}
+
 pub fn set_planned(c: &Connection, job_id: &str) -> DbResult<()> {
     c.execute("UPDATE jobs SET planned = 1, list_cursor_json = NULL, updated = ?2 WHERE id = ?1", params![job_id, now_ms()]).map_err(e)?;
     Ok(())
@@ -479,7 +550,8 @@ pub fn retry_failed(c: &Connection, job_id: &str) -> DbResult<usize> {
     c.execute("UPDATE items SET state = 'pending', attempts = 0, error = NULL WHERE job_id = ?1 AND state = 'failed' AND skip = 0", [job_id]).map_err(e)
 }
 
-/// Totals of a job's files (folders aren't counted).
+/// Totals of a job's files. Folders aren't counted, except failed ones: a job whose only
+/// failure is a folder didn't finish cleanly, and its failures must show.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Counts {
     pub files_total: u64,
@@ -498,7 +570,7 @@ pub struct Counts {
 
 pub fn counts(c: &Connection, job_id: &str) -> DbResult<Counts> {
     let mut st = c
-        .prepare_cached("SELECT state, skip, COUNT(*), COALESCE(SUM(size), 0) FROM items WHERE job_id = ?1 AND is_dir = 0 GROUP BY state, skip")
+        .prepare_cached("SELECT state, skip, COUNT(*), COALESCE(SUM(size), 0) FROM items WHERE job_id = ?1 AND (is_dir = 0 OR state = 'failed') GROUP BY state, skip")
         .map_err(e)?;
     let mut n = Counts::default();
     let rows = st

@@ -340,8 +340,9 @@ pub fn plan_upload(local: &HashMap<String, LocalMeta>, base: &dyn BaseState, rem
                 if unchanged {
                     // gone from the other side or replaced there: local is the source of truth
                     rf.is_none_or(|rf| rf.size != lf.size)
-                } else if let Some(rf) = rf.filter(|rf| opts.adopt_existing && tracked.is_none() && rf.size == lf.size && rf.modified >= lf.mtime) {
-                    // first run over an existing copy: adopt it instead of uploading again
+                } else if let Some(rf) = rf.filter(|rf| opts.adopt_existing && tracked.is_none() && same_content(lf, rf)) {
+                    // first run over an existing copy: adopt it instead of uploading again. A
+                    // size match alone is never enough (a remote time is often just the upload's)
                     p.adopt.push((rel.clone(), BaseEntry::of(lf, rf)));
                     false
                 } else {
@@ -1243,6 +1244,25 @@ mod tests {
         // backup without adopting sends it
         let o = UploadPlanOpts { adopt_existing: false, ..Default::default() };
         assert_eq!(plan_upload(&local, &base, Some(&remote), &o).uploads, vec![s("a"), s("b"), s("c")]);
+    }
+
+    #[test]
+    fn upload_adopts_only_a_copy_proven_the_same() {
+        let local = map(&[("log", l(10, 5_000)), ("hashed", LocalMeta { md5: Some("aa".into()), ..l(10, 5_000) }), ("other", LocalMeta { md5: Some("aa".into()), ..l(10, 5_000) })]);
+        let base: HashMap<String, BaseEntry> = HashMap::new();
+        // same size, and newer there (an upload time): not proof, it's sent
+        let remote = map(&[
+            ("log", RemoteMeta::new(10, "e", 900_000)),
+            ("hashed", RemoteMeta { md5: Some("AA".into()), ..RemoteMeta::new(10, "e", 900_000) }),
+            ("other", RemoteMeta { md5: Some("bb".into()), ..RemoteMeta::new(10, "e", 5_000) }),
+        ]);
+        let p = plan_upload(&local, &base, Some(&remote), &UploadPlanOpts::default());
+        assert_eq!(p.adopt.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["hashed"]);
+        assert_eq!(p.uploads, vec![s("log"), s("other")], "another MD5 is another file whatever the times");
+        // times within the tolerance and no hashes: the same file
+        let remote = map(&[("log", RemoteMeta::new(10, "e", 6_500))]);
+        let p = plan_upload(&map(&[("log", l(10, 5_000))]), &base, Some(&remote), &UploadPlanOpts::default());
+        assert_eq!(p.adopt.len(), 1);
     }
 
     #[test]

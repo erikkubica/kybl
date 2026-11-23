@@ -565,6 +565,10 @@ impl Engine<'_> {
         let mut local = self.scan_local(&gi, &base, if full { None } else { dirty }).await?;
         let mut remote = if full || base.is_empty() { Some(self.scan_remote(&gi).await?) } else { None };
         let unreadable = self.exclude(&mut base, &mut local, remote.as_mut())?;
+        if let Some(r) = &remote {
+            // an untracked file of the same size there is adopted only on proof (its MD5)
+            self.fill_md5(&mut local, r, &base).await?;
+        }
         let guard = self.guard()?;
         let confirmed_used = !guard.confirmed.is_empty();
         let opts = plan::UploadPlanOpts { mirror_deletes: self.mirror_deletes, adopt_existing: true, guard };
@@ -680,26 +684,25 @@ impl Engine<'_> {
 
     /// The remote snapshot of a two-way run: a full listing on `full` runs (and the first one),
     /// the change feed where the store has one, else the base (a quick run after a local change).
-    async fn twoway_remote(&self, gi: &ignore::gitignore::Gitignore, base: &HashMap<String, BaseEntry>, full: bool) -> Result<RemoteSnapshot, String> {
+    /// The other side for a two-way run, and where its change feed goes on from: saved by the run
+    /// only once it got through everything (see [`NextCursor`]).
+    async fn twoway_remote(&self, gi: &ignore::gitignore::Gitignore, base: &HashMap<String, BaseEntry>, full: bool) -> Result<(RemoteSnapshot, Option<NextCursor>), String> {
         let cursor = self.db.cursor(&self.id)?;
         if !full && !base.is_empty() {
             if let Some(c) = cursor.remote_cursor.filter(|_| self.remote.caps().changes) {
                 match remote::scan_changes(&*self.remote, &self.root, &self.prefix, gi, base, c, &self.cancel).await {
-                    Ok((snap, next)) => {
-                        self.db.set_remote_cursor(&self.id, Some(&next))?;
-                        return Ok(snap);
-                    }
+                    Ok((snap, next)) => return Ok((snap, Some(NextCursor::Changes(next)))),
                     Err(e) if e.is_cancelled() => return Err(e.into()),
                     Err(_) => {} // an expired cursor: list in full
                 }
             } else {
-                return Ok(RemoteSnapshot { files: plan::remote_from_base(base), ..Default::default() });
+                return Ok((RemoteSnapshot { files: plan::remote_from_base(base), ..Default::default() }, None));
             }
         }
-        let snap = self.scan_remote(gi).await?;
+        // taken before listing: a change made while the listing runs is in the feed after it
         let next = remote::fresh_cursor(&*self.remote, &self.root).await;
-        self.db.set_full_scan(&self.id, now_ms(), next.as_deref())?;
-        Ok(snap)
+        let snap = self.scan_remote(gi).await?;
+        Ok((snap, Some(NextCursor::Full { at: now_ms(), cursor: next })))
     }
 
     /// Keeps both sides the same: changes on either side are copied to the other.
@@ -708,7 +711,7 @@ impl Engine<'_> {
         let gi = build_ignore(&self.local_root, &self.ignore);
         let mut base = self.load_base(&gi)?;
         let mut local = self.scan_local(&gi, &base, if full { None } else { dirty }).await?;
-        let mut remote = self.twoway_remote(&gi, &base, full).await?;
+        let (mut remote, next_cursor) = self.twoway_remote(&gi, &base, full).await?;
         let unreadable = self.exclude(&mut base, &mut local, Some(&mut remote))?;
         let now = now_ms();
         self.db.purge_tombstones(now)?;
@@ -771,7 +774,8 @@ impl Engine<'_> {
                         if let Some(parent) = dst.parent() {
                             std::fs::create_dir_all(parent)?;
                         }
-                        if dst.exists() {
+                        // a change of capitals on a disk that ignores case finds the file itself
+                        if dst.exists() && !local::same_entry(&src, &dst) {
                             return Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "something with the new name is already here"));
                         }
                         std::fs::rename(&src, &dst)?;
@@ -826,11 +830,7 @@ impl Engine<'_> {
                     let Some(l) = local.files.get(p) else { continue };
                     // replace only what the plan saw there (or nothing): an edit made there
                     // meanwhile becomes a conflict next run instead of being overwritten
-                    let pre = match remote.files.get(p) {
-                        None => Precondition::IfNoneMatch,
-                        Some(r) if !r.etag.is_empty() => Precondition::IfMatch(r.etag.clone()),
-                        Some(_) => Precondition::None,
-                    };
+                    let pre = push_precondition(remote.files.get(p));
                     jobs.push(Job::Up {
                         rel: p.clone(),
                         path: local.path(&self.local_root, p),
@@ -887,6 +887,15 @@ impl Engine<'_> {
             deleted += gone.len();
         }
         self.finish(confirmed_used)?;
+        // the feed is only "handled up to here" once everything in it was: after a problem or a
+        // stop, the next quick run reads the same changes again
+        if errors.is_empty() && !self.cancelled() {
+            match next_cursor {
+                Some(NextCursor::Changes(c)) => self.db.set_remote_cursor(&self.id, Some(&c))?,
+                Some(NextCursor::Full { at, cursor }) => self.db.set_full_scan(&self.id, at, cursor.as_deref())?,
+                None => {}
+            }
+        }
 
         let mut parts = Vec::new();
         let ups = ups - conflicts.min(ups);
@@ -948,6 +957,25 @@ pub fn resolve_conflict(db: &SyncDb, id: &str, root: &Path, copy: &str, keep: &s
         _ => return Err("Unknown choice".into()),
     }
     db.remove_conflict(id, copy)
+}
+
+/// Where the other side's change feed goes on from after a two-way run.
+enum NextCursor {
+    /// a quick run read the feed up to here
+    Changes(String),
+    /// a full run listed everything; the feed's position from just before the listing
+    Full { at: i64, cursor: Option<String> },
+}
+
+/// What a push may replace: only the remote file the plan saw there (or nothing), so an edit
+/// made there meanwhile becomes a conflict next run instead of being overwritten. Stores without
+/// ETags compare its size and time as listed.
+fn push_precondition(seen: Option<&RemoteMeta>) -> Precondition {
+    match seen {
+        None => Precondition::IfNoneMatch,
+        Some(r) if !r.etag.is_empty() => Precondition::IfMatch(r.etag.clone()),
+        Some(r) => Precondition::IfUnchanged { etag: None, size: r.size as i64, modified: (r.modified != 0).then_some(r.modified) },
+    }
 }
 
 #[cfg(test)]

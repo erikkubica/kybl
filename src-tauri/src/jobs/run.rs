@@ -136,6 +136,7 @@ async fn run(inner: &Arc<Inner>, id: &str, ctl: &Arc<Ctl>) {
     inner.host.started(id, &spec.title, &ctl.stop);
     let end = work(&mut r, &spec, ctl).await;
     let ok = match end {
+        // folders count here once failed (see db::counts)
         JobState::Done => Some(r.live.files_failed.load(Ordering::Relaxed) == 0),
         JobState::Failed => Some(false),
         _ => None,
@@ -216,6 +217,17 @@ async fn work(r: &mut Runner<'_>, spec: &Arc<JobSpec>, ctl: &Arc<Ctl>) -> JobSta
         }
     }
 
+    // a mirror's lists come from the page: checked against the destination's own name rules
+    // before anything is written or deleted
+    if spec.mirror.is_some() {
+        let kind = dst.kind();
+        let guarded = db::guard_mirror(&mut inner.db.lock().unwrap(), &id, &|p| crate::storage::fold_path(kind, p));
+        if let Err(e) = guarded {
+            r.set(JobState::Failed, Phase::Finished, Some(e));
+            return JobState::Failed;
+        }
+    }
+
     // 2. copy
     let _ = db::reset_running(&inner.db.lock().unwrap(), Some(&id));
     r.reload();
@@ -242,7 +254,9 @@ async fn work(r: &mut Runner<'_>, spec: &Arc<JobSpec>, ctl: &Arc<Ctl>) -> JobSta
         if !blocked {
             while set.len() < crate::tuning::concurrency() {
                 if queue.is_empty() && !drained {
-                    match db::take_pending(&mut inner.db.lock().unwrap(), &id, BATCH) {
+                    // bound first: the guard must be gone before `r.set` locks the database again
+                    let taken = db::take_pending(&mut inner.db.lock().unwrap(), &id, BATCH);
+                    match taken {
                         Ok(items) if items.is_empty() => drained = true,
                         Ok(items) => queue.extend(items),
                         Err(e) => {
@@ -268,7 +282,8 @@ async fn work(r: &mut Runner<'_>, spec: &Arc<JobSpec>, ctl: &Arc<Ctl>) -> JobSta
             if drained {
                 // requeued items (retries, network drops) are pending again: look once more
                 drained = false;
-                match db::take_pending(&mut inner.db.lock().unwrap(), &id, BATCH) {
+                let taken = db::take_pending(&mut inner.db.lock().unwrap(), &id, BATCH);
+                match taken {
                     Ok(items) if items.is_empty() => break,
                     Ok(items) => {
                         queue.extend(items);

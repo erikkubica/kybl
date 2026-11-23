@@ -11,7 +11,7 @@ import { api, errMessage, jobsApi, type Capabilities, type JobSpec } from "../ap
 import { capsFor } from "../useCaps";
 import { refreshJobs, startMigrations } from "../jobs/useMigrations";
 import { makeMatcher } from "./ignore";
-import { defaultTolerance, planIsEmpty, planMirror, type Listing, type MirrorPlan } from "./plan";
+import { caseInsensitiveKind, defaultTolerance, planIsEmpty, planMirror, type Listing, type MirrorPlan } from "./plan";
 import { getMirror, markRun, type MirrorConfig } from "./store";
 import { Cancelled, walk, type Place } from "./walk";
 
@@ -23,6 +23,8 @@ export type MirrorPreview = {
   /** the .gitignore patterns that were added, when there was one and it was asked for */
   gitignore: string | null;
   toleranceMs: number;
+  /** the destination doesn't tell names apart by letter case */
+  caseInsensitive: boolean;
   /** both listings, so a change of mode or comparison is planned again without listing */
   lists: { src: Listing; dst: Listing; compare: MirrorConfig["compare"] };
 };
@@ -108,8 +110,9 @@ export async function previewMirror(config: MirrorConfig, opts: { signal?: Abort
   const compare = config.compare === "checksum" && !canChecksum(srcCaps, dstCaps) ? "time" : config.compare;
   if (compare === "checksum") await fillChecksums(config, src, dst.list, srcCaps, dstCaps, signal, onStatus);
   const toleranceMs = defaultTolerance([srcKind, dstKind]);
-  const plan = planMirror(src, dst.list, { deleteExtra: config.deleteExtra, compare, toleranceMs });
-  return { config, plan, dstMissing: dst.missing, gitignore, toleranceMs, lists: { src, dst: dst.list, compare } };
+  const caseInsensitive = caseInsensitiveKind(dstKind, typeof navigator === "undefined" ? "" : navigator.userAgent);
+  const plan = planMirror(src, dst.list, { deleteExtra: config.deleteExtra, compare, toleranceMs, caseInsensitive });
+  return { config, plan, dstMissing: dst.missing, gitignore, toleranceMs, caseInsensitive, lists: { src, dst: dst.list, compare } };
 }
 
 /**
@@ -123,7 +126,7 @@ export function replan(p: MirrorPreview, config: MirrorConfig): MirrorPreview | 
   if (!same(p.config, config)) return null;
   if (config.compare === "checksum" && p.lists.compare !== "checksum") return null;
   const compare = config.compare === "checksum" ? p.lists.compare : config.compare;
-  const plan = planMirror(p.lists.src, p.lists.dst, { deleteExtra: config.deleteExtra, compare, toleranceMs: p.toleranceMs });
+  const plan = planMirror(p.lists.src, p.lists.dst, { deleteExtra: config.deleteExtra, compare, toleranceMs: p.toleranceMs, caseInsensitive: p.caseInsensitive });
   return { ...p, config, plan };
 }
 
