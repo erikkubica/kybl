@@ -442,16 +442,13 @@ code {
   flex: 1 1 auto;
   min-width: 140px;
 }
-/* a narrow pane: the panes button folds into "…"; while searching or typing a path
-   the name or the view buttons step aside so the field has room */
 @container (max-width: 420px) {
-  .toolbar > .tb-panes {
-    display: none;
-  }
+  /* the right side's buttons always stay; the left side makes room: while searching the folder's
+     name steps aside, while typing a path the connection's name and "…" do */
   .toolbar:is(.search-open, :has(.search:focus-within)) > .path-title {
     display: none;
   }
-  .toolbar:has(.path-title.editing) > :is(.tb-view, .search) {
+  .toolbar:has(.path-title.editing) > :is(.conn-name, .conn-sep, .tb-more) {
     display: none;
   }
 }

@@ -15,7 +15,7 @@ export const TILE_MAX = 320;
  *   [↑] [connection] folder name [⋯]   ……   [+] [view] [details] [search] [panes]
  * Creating things sits behind +, the pane's less frequent actions (favorites among them) behind ⋯
  * and how the list looks behind the eye, so a pane at its least width (340px) still fits on one
- * row: the folder's name gives way first, then (below ~420px) the panes button folds into ⋯.
+ * row: the folder's name gives way first. The right side's buttons never hide.
  */
 export function Toolbar({
   bucket,
