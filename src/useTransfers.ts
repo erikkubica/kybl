@@ -39,6 +39,12 @@ const overwriteIds = new Set<string>();
 const requested = new Map<string, string>();
 /** The listed version of each download, by id (see `NewTransfer.etag`). */
 const listed = new Map<string, { etag: string; size: number }>();
+/**
+ * Transfers the backend runs on its own, shown here with `track` (uploads of files edited in
+ * another app, src/edit): never started, cancelled or retried through the queue. Retry runs
+ * their own hook instead (which keeps their safety checks).
+ */
+const external = new Map<string, { retry?: () => void }>();
 /** Callers waiting for a transfer to end (see `whenFinished`). */
 const waiters = new Map<string, ((t: Transfer) => void)[]>();
 
@@ -203,7 +209,7 @@ function clearWhere(pick: (t: Transfer) => boolean) {
     if (!pick(t)) continue;
     // a failed or stopped one can't be retried once it is off the list: let the backend drop
     // what it kept to resume it (a partial download, an open multipart upload)
-    if (t.state !== "done") api.cancelTransfer(id).catch(() => {});
+    if (t.state !== "done" && !external.delete(id)) api.cancelTransfer(id).catch(() => {});
     byId.delete(id);
     overwriteIds.delete(id);
     requested.delete(id);
@@ -215,6 +221,11 @@ function clearWhere(pick: (t: Transfer) => boolean) {
 
 /** Puts a finished transfer back in the queue under the same id, so the backend can resume it. */
 function requeue(id: string): Transfer | null {
+  const ext = external.get(id);
+  if (ext) {
+    ext.retry?.();
+    return null;
+  }
   const t = byId.get(id);
   if (!t || t.state === "queued" || t.state === "running" || t.state === "done") return null;
   const fresh: Transfer = { ...t, state: "queued", error: null, speed: 0 };
@@ -250,12 +261,33 @@ const actions = {
     return created;
   },
   cancel(id: string) {
-    api.cancelTransfer(id).catch(() => {});
+    if (!external.has(id)) api.cancelTransfer(id).catch(() => {});
   },
   cancelAll() {
     for (const t of byId.values()) {
-      if (t.state === "queued" || t.state === "running") api.cancelTransfer(t.id).catch(() => {});
+      if ((t.state === "queued" || t.state === "running") && !external.has(t.id)) api.cancelTransfer(t.id).catch(() => {});
     }
+  },
+  /**
+   * Shows (or updates) a transfer the backend runs by itself, under its own id; `retry` is what
+   * Retry does for it. It never goes through the queue.
+   */
+  track(t: Omit<Transfer, "speed">, hooks?: { retry?: () => void }) {
+    listenOnce();
+    if (hooks || !external.has(t.id)) external.set(t.id, hooks ?? external.get(t.id) ?? {});
+    const next: Transfer = { ...t, error: t.error ?? null, speed: 0 };
+    byId.set(t.id, next);
+    settle(next);
+    dirty = true;
+    flush();
+    markDirty();
+  },
+  /** Takes a `track`ed transfer off the list (its failure was dealt with another way). */
+  untrack(id: string) {
+    if (!external.delete(id)) return;
+    byId.delete(id);
+    dirty = true;
+    flush();
   },
   retry(id: string) {
     const fresh = requeue(id);

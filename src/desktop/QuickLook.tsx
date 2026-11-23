@@ -36,6 +36,8 @@ export type QuickInfoActions = SizeProps & {
   onDelete(list: Entry[]): void;
   /** properties saved, or the file turned out to be gone: list the folder again */
   onChanged?(): void;
+  /** "Edit" for text-like files: the edit menu at the button (src/edit) */
+  onEdit?(e: Entry, at: { x: number; y: number }): void;
 };
 
 const isTyping = (t: EventTarget | null) => {
@@ -343,6 +345,7 @@ function QuickInfo({
         onCalcSize={act.onCalcSize}
         onOpenExternal={onOpenExternal}
         onCopyFile={onCopyFile}
+        onEdit={act.onEdit && ((at) => act.onEdit!(entry, at))}
       />
     </div>
   );

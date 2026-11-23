@@ -50,7 +50,7 @@ pub struct DocMeta {
 /// What the editor expects to find when it saves (`x-kybl-expect`).
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
-pub enum Precondition {
+pub(crate) enum Precondition {
     /// The file as it was opened; anything else there is a conflict.
     #[serde(rename_all = "camelCase")]
     Match {
@@ -176,6 +176,20 @@ fn check(expect: &Precondition, now: Option<&DocMeta>) -> Result<(), String> {
 
 fn conflict(now: Option<&DocMeta>) -> String {
     format!("CONFLICT\n\n{}", serde_json::to_string(&now).unwrap_or_else(|_| "null".into()))
+}
+
+/// A save's `CONFLICT` error read back: `Some(now)` (None inside when the file is gone), or None
+/// for any other error.
+pub(crate) fn parse_conflict(e: &str) -> Option<Option<DocMeta>> {
+    let json = e.strip_prefix("CONFLICT\n\n")?;
+    Some(serde_json::from_str::<Option<DocMeta>>(json).unwrap_or(None))
+}
+
+impl Precondition {
+    /// "Only if it's still this version": the file as `m` describes it.
+    pub(crate) fn matching(m: &DocMeta) -> Self {
+        Precondition::Match { etag: m.etag.clone(), size: m.size, modified: m.modified, version: m.version.clone() }
+    }
 }
 
 /// `[u32 BE json_len][json][bytes]`
@@ -374,15 +388,19 @@ pub async fn doc_open(
     path: String,
     max_bytes: u64,
 ) -> Result<tauri::ipc::Response, String> {
-    let client = match crate::storage::connect(&app, &state, &profile_id).await? {
+    let (meta, bytes) = open_bytes(&app, &state, profile_id, root, path, max_bytes).await?;
+    Ok(tauri::ipc::Response::new(frame(&meta, &bytes)))
+}
+
+/// A file's bytes and the metadata of exactly that version (from the file cache when it holds
+/// the current version). Shared by `doc_open` and editing in another app (edit.rs).
+pub(crate) async fn open_bytes(app: &AppHandle, state: &AppState, profile_id: String, root: String, path: String, max_bytes: u64) -> Result<(DocMeta, Vec<u8>), String> {
+    let client = match crate::storage::connect(app, state, &profile_id).await? {
         Conn::S3(c) => c,
         // this computer's files and the other providers: read through the storage core
-        Conn::Other(s) => {
-            let (meta, bytes) = other_open(&*s, &root, &path, max_bytes).await?;
-            return Ok(tauri::ipc::Response::new(frame(&meta, &bytes)));
-        }
+        Conn::Other(s) => return other_open(&*s, &root, &path, max_bytes).await,
     };
-    let cache = crate::filecache::get(&app);
+    let cache = crate::filecache::get(app);
     // Seen before (a preview, a download, "Open"): a HEAD tells whether the copy on disk is still
     // the current version. Never cached: straight to the GET, no HEAD spent.
     if let Some(c) = cache
@@ -393,16 +411,16 @@ pub async fn doc_open(
         let id = ident(&meta);
         let (p, r, k) = (profile_id.clone(), root.clone(), path.clone());
         if let Ok(Some(bytes)) = tokio::task::spawn_blocking(move || c.read(&p, &r, &k, &id)).await {
-            return Ok(tauri::ipc::Response::new(frame(&meta, &bytes)));
+            return Ok((meta, bytes));
         }
     }
     let (meta, bytes) = s3_read(&client, &root, &path, max_bytes).await?;
-    let body = frame(&meta, &bytes);
     if let Some(c) = cache {
         let id = ident(&meta);
-        tokio::task::spawn_blocking(move || c.store_bytes(&profile_id, &root, &path, &id, &bytes));
+        let kept = bytes.clone();
+        tokio::task::spawn_blocking(move || c.store_bytes(&profile_id, &root, &path, &id, &kept));
     }
-    Ok(tauri::ipc::Response::new(body))
+    Ok((meta, bytes))
 }
 
 // ---------------------------------------------------------------- other connections
@@ -472,23 +490,28 @@ pub async fn doc_save(app: AppHandle, state: State<'_, AppState>, request: tauri
     let InvokeBody::Raw(bytes) = request.body() else {
         return Err("Expected the file's contents as raw bytes".into());
     };
-    let bytes = bytes.clone();
+    save_bytes(&app, &state, profile_id, bucket, key, bytes.clone(), &expect).await
+}
 
-    let provider = load_profiles(&app)?
+/// Saves `bytes` to `key` under `expect`: the same compare-then-write (and `If-Match` where the
+/// provider honours it) as the editor's ⌘S. Errors starting with `CONFLICT\n\n` carry what is
+/// there now (see [`parse_conflict`]). Shared by `doc_save` and editing in another app (edit.rs).
+pub(crate) async fn save_bytes(app: &AppHandle, state: &AppState, profile_id: String, bucket: String, key: String, bytes: Vec<u8>, expect: &Precondition) -> Result<DocMeta, String> {
+    let provider = load_profiles(app)?
         .into_iter()
         .find(|p| p.id == profile_id)
         .map(|p| p.provider)
         .unwrap_or_default();
     let guard = guard_for(&provider);
     let keep_kms = provider == "aws";
-    let client = match crate::storage::connect(&app, &state, &profile_id).await? {
+    let client = match crate::storage::connect(app, state, &profile_id).await? {
         Conn::S3(c) => c,
-        Conn::Other(s) => return other_save(&*s, &bucket, &key, bytes, &expect).await,
+        Conn::Other(s) => return other_save(&*s, &bucket, &key, bytes, expect).await,
     };
-    let cache = crate::filecache::get(&app);
+    let cache = crate::filecache::get(app);
     // editor saves are small (EDIT_MAX), so keeping a copy for the cache costs little
     let kept = cache.map(|_| bytes.clone());
-    let result = save(&client, &bucket, &key, bytes, &expect, guard, keep_kms).await;
+    let result = save(&client, &bucket, &key, bytes, expect, guard, keep_kms).await;
     if let (Some(c), Some(kept)) = (cache, kept) {
         match &result {
             // the next open finds the saved version; the old one goes with it

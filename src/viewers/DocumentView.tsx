@@ -44,6 +44,8 @@ export type DocumentViewProps = {
   onOpenFull?: (entry: Entry) => void;
   /** full mode: fill the parent instead of covering the whole window */
   inline?: boolean;
+  /** "auto": ⌘S overwrites whatever is there; default: only if it's still the version opened */
+  saveRule?: "auto" | "ifUnchanged";
   ref?: Ref<DocumentHandle>;
 };
 
@@ -75,7 +77,7 @@ const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 /** the Mac app's window buttons float over the top-left corner of the page */
 const macWindow = /Macintosh|Mac OS X/.test(navigator.userAgent) && !window.matchMedia("(pointer: coarse)").matches;
 
-export default function DocumentView({ profileId, bucket, entry: given, mode, onClose, onSaved, onOpenExternal, onOpenFull, inline, ref }: DocumentViewProps) {
+export default function DocumentView({ profileId, bucket, entry: given, mode, onClose, onSaved, onOpenExternal, onOpenFull, inline, saveRule, ref }: DocumentViewProps) {
   const full = mode === "full";
   // Google Docs, Sheets and Slides have no bytes of their own: show their Office export, read-only
   // (saving it would make a new .docx next to the original, not change the Google file)
@@ -197,8 +199,8 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
   const save = useCallback(async () => {
     if (!ready || !editable || saving) return false;
     if (!dirty) return true;
-    return saveAs(target, expectMeta(ready.meta));
-  }, [ready, editable, saving, dirty, saveAs, target]);
+    return saveAs(target, saveRule === "auto" ? { kind: "any" } : expectMeta(ready.meta));
+  }, [ready, editable, saving, dirty, saveAs, target, saveRule]);
 
   const saveCopy = useCallback(async () => {
     for (let n = 1; n <= 50; n++) {

@@ -67,6 +67,10 @@ export type PaneEnv = {
   openDocument?: (e: Entry) => boolean;
   /** whether `openDocument` would take this file */
   canOpenDocument?: (e: Entry) => boolean;
+  /** "Edit", "Edit with ▸", "Edit in Kybl" for one file (src/edit); empty when it can't be edited */
+  editItems?: (e: Entry) => MenuItem[];
+  /** ⌘E and Quick Look's Edit: edits a file in its default app, uploading saves (src/edit) */
+  editFile?: (e: Entry) => void;
   /** what to call a root on screen ("Desktop" for this computer's /Users/me/Desktop) */
   rootLabel?: (profileId: string, root: string) => string;
   /** folders were renamed, moved or deleted (favorites follow) */

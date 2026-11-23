@@ -253,6 +253,7 @@ export function BrowserPane(p: BrowserPaneProps) {
             onChanged: ent.refresh,
             folderSize: pane.folderSizes.view,
             onCalcSize: (k) => actions.calcSizes([k]),
+            onEdit: actions.editMenuAt,
           }}
           onStep={pane.stepQuick}
           onPick={pane.pickQuick}

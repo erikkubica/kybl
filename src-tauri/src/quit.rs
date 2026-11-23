@@ -39,7 +39,8 @@ pub fn set_unsaved_documents(count: usize) {
 /// Open documents with unsaved changes. While there are any, the hidden window is kept (not
 /// destroyed to free memory) and closing or quitting asks first.
 pub fn unsaved() -> usize {
-    UNSAVED.load(Ordering::SeqCst)
+    // files edited in another app whose last save isn't on the server yet count too
+    UNSAVED.load(Ordering::SeqCst) + crate::edit::unsynced()
 }
 
 /// How long aborting open uploads may hold up quitting.
@@ -189,6 +190,8 @@ pub async fn clean_up(app: &AppHandle) {
     crate::transfers::shutdown(&app.state::<AppState>(), CLEANUP_LIMIT).await;
     // WP-E4: drives unmount; their waiting uploads carry on next start
     crate::mount::shutdown(app, CLEANUP_LIMIT).await;
+    // files edited in another app: stop watching, delete the copies
+    crate::edit::shutdown(app).await;
     // what couldn't be aborted in time stays written down for the next start
     crate::leftovers::save();
     STAGE.store(LEAVING, Ordering::SeqCst);

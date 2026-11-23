@@ -10,6 +10,9 @@ mod dest;
 mod filecache;
 // WP-D: open and save documents for the in-app viewers and editor
 mod doc;
+// "Edit" in another app: a private copy, watched, uploaded back when saved
+#[cfg(desktop)]
+mod edit;
 // "Connect Kybl Storage": browser sign-in on computers and phones
 mod kybl_connect;
 // uploads and partial downloads an earlier run left behind (killed, crashed): cleaned at start
@@ -157,6 +160,8 @@ pub fn run() {
                 tauri::async_runtime::spawn(sync::init(handle.clone()));
                 // WP-E4: saved drives are mounted again
                 mount::setup(&handle);
+                // copies left by "Edit" in an earlier run
+                edit::setup(&handle);
             }
             #[cfg(mobile)]
             {
@@ -279,6 +284,17 @@ pub fn run() {
             // WP-D
             doc::doc_open,
             doc::doc_save,
+            // editing in another app
+            #[cfg(desktop)]
+            edit::edit_start,
+            #[cfg(desktop)]
+            edit::edit_list,
+            #[cfg(desktop)]
+            edit::edit_stop,
+            #[cfg(desktop)]
+            edit::edit_retry,
+            #[cfg(desktop)]
+            edit::edit_resolve,
             // WP-B1: copying and moving between connections
             jobs::job_create,
             jobs::job_list,

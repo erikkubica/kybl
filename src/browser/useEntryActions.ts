@@ -353,6 +353,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => pane.navigate(entryParent(e), e.key) },
       // Show in Finder, Open with ▸ (desktop/openWith.ts)
       ...(one ? openInItems({ profileId: profile.id, bucket, onDisk, ops, toast }, e) : []),
+      // Edit, Edit with ▸, Edit in Kybl: saves upload back (src/edit)
+      ...(one && e.kind === "file" ? (env.editItems?.(e) ?? []) : []),
       // this computer's own files aren't downloaded: Copy, Move and F5/F6 put them elsewhere
       !onDisk && { type: "item", label: one && e.native?.exports.length ? `Download as ${e.native.exports[0].label}` : "Download", icon: "download", hint: "⇧⌘D", onClick: () => ops.downloadEntries(list, relBase) },
       // a Google Doc / Sheet / Slides: its other formats (PDF…)
@@ -420,6 +422,11 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     open: () => openSelection(),
     "quick-look": pane.quickLook,
     "get-info": () => pane.getInfo(),
+    edit: () => {
+      const files = selectedEntries.filter((x) => x.kind === "file");
+      if (files.length === 1) env.editFile?.(files[0]);
+      else toast("info", files.length ? "Edit one file at a time." : "Select a file to edit.");
+    },
     copy: () => ops.clip(selectedEntries, "copy"),
     cut: () => ops.clip(selectedEntries, "cut"),
     duplicate: () => selectedEntries.length > 0 && void ops.duplicate(selectedEntries),
@@ -428,8 +435,12 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     "toggle-hidden": toggleHidden,
   };
 
+  /** Quick Look's Edit button: the edit menu at `at` (src/edit) */
+  const editMenuAt = env.editItems ? (e: Entry, at: { x: number; y: number }) => dialogs.menu(at.x, at.y, env.editItems!(e)) : undefined;
+
   return {
     commands,
+    editMenuAt,
     openSelection,
     doSearch,
     clearSearch,

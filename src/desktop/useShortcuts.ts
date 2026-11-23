@@ -99,6 +99,7 @@ export function useShortcuts(opts: ShortcutOptions) {
       else if (mod && k === "z" && !ev.shiftKey) id = "undo";
       else if (mod && k === "d" && !ev.shiftKey) id = own("duplicate");
       else if (mod && k === "o") id = "open";
+      else if (mod && k === "e" && !ev.shiftKey && !ev.altKey) id = own("edit");
       else if (mod && ev.key === "ArrowUp") id = "go-up";
       else if (mod && ev.key === "ArrowDown") id = "open";
       // Finder's "show hidden files" (by code: Shift turns "." into ">")

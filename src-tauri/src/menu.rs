@@ -17,8 +17,9 @@ use tauri::{
 };
 
 /// Item ids passed to the page as they are.
-const PAGE_ITEMS: [&str; 39] = [
+const PAGE_ITEMS: [&str; 40] = [
     "duplicate",
+    "edit",
     "new-connection",
     "new-folder",
     "upload-files",
@@ -107,6 +108,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &item("download", "Download", Some("CmdOrCtrl+Shift+D"))?,
             &sep()?,
             &item("get-info", "Get Info", Some("CmdOrCtrl+I"))?,
+            &item("edit", "Edit", Some("CmdOrCtrl+E"))?,
             &item("rename", "Rename…", None)?,
             &item("duplicate", "Duplicate", Some("CmdOrCtrl+D"))?,
             &item("delete", "Delete…", None)?,

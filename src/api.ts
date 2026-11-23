@@ -295,7 +295,7 @@ export type TransferPrefs = {
  * Native app events (listen with `@tauri-apps/api/event`):
  * - `menu` (string): macOS menu bar / app menu item ids: "new-folder", "upload-files",
  *   "upload-folder", "download", "refresh", "go-up", "back", "forward", "go-to", "search",
- *   "select-all", "delete", "rename", "duplicate" (⌘D), "get-info", "settings", "new-connection".
+ *   "select-all", "delete", "rename", "duplicate" (⌘D), "get-info", "edit" (⌘E), "settings", "new-connection".
  *   Panes (View menu): "split-right" (⌘\), "split-down" (⇧⌘\), "close-pane",
  *   "swap-panes" (⇧⌘S), "same-folder", "compare-folders", "pane-copy" (F5), "pane-move" (F6),
  *   "switch-pane", "toggle-hidden", "toggle-sidebar" (⌥⌘S), "filter-connections" (⌥⌘F), "tiles-bigger" (⌘+), "tiles-smaller" (⌘−), "toggle-compact" (all in the View menu).

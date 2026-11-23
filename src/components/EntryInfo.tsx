@@ -20,6 +20,7 @@ import { EXPIRIES } from "../settings";
 import type { Entry, ObjectDetails } from "../types";
 import { useCaps } from "../useCaps";
 import { rootName } from "../connections/roots";
+import { editableInKybl } from "../edit/editable";
 import { useLocalCopy } from "../localCopyProgress";
 
 /** A details request for a key that no longer exists (deleted or moved elsewhere). */
@@ -102,6 +103,8 @@ export type EntryInfoProps = SizeProps & {
   onOpenExternal?(e: Entry): void;
   /** the file itself on the clipboard, to paste into a chat or a folder (macOS) */
   onCopyFile?(e: Entry): void;
+  /** text-like files: "Edit" (opens the edit menu at the button) */
+  onEdit?(at: { x: number; y: number }): void;
   /**
    * "pane": under a preview, the first action is the big one (phones). "sheet": a column beside
    * Quick Look's preview, which has Open in its own header, so the actions are all plain buttons
@@ -130,6 +133,7 @@ export function EntryInfo({
   onCalcSize,
   onOpenExternal,
   onCopyFile,
+  onEdit,
   variant = "pane",
 }: EntryInfoProps) {
   const isFolder = entry.kind === "folder";
@@ -266,6 +270,22 @@ export function EntryInfo({
           <Icon name="trash" size={15} />
         </button>
       </div>
+
+      {/* text-like files: Edit, Edit with ▸, Edit in Kybl (src/edit); saves upload back */}
+      {onEdit && !isFolder && !gone && editableInKybl(entry) && (
+        <div className="info-edit">
+          <button
+            className="btn btn-sm"
+            onClick={(ev) => {
+              const r = ev.currentTarget.getBoundingClientRect();
+              onEdit({ x: r.left, y: r.bottom + 4 });
+            }}
+            aria-haspopup="menu"
+          >
+            <Icon name="edit" size={13} /> Edit…
+          </button>
+        </div>
+      )}
 
       {!isFolder && !gone && canShare && (
         <div className="section">

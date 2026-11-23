@@ -76,6 +76,7 @@ const SHORTCUTS: { label: string; keys: string[] }[] = [
   { label: "Add to selection", keys: ["⌘", "click"] },
   { label: "Select an area", keys: ["drag on empty space"] },
   { label: "Open folder or file", keys: ["⌘", "O"] },
+  { label: "Edit a file (uploads it back when you save)", keys: ["⌘", "E"] },
   { label: "Quick Look", keys: ["Space"] },
   { label: "Get Info (Quick Look with details)", keys: ["⌘", "I"] },
   { label: "Actions menu for the selection", keys: ["⇧", "F10"] },

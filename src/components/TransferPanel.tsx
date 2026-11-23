@@ -144,6 +144,10 @@ type PanelProps = {
    * user opened it on purpose (an Activity button or menu item). Off: no activity, no panel.
    */
   showEmpty?: boolean;
+  /** something of the caller's in the header ("Editing (n)", src/edit); it renders nothing when idle */
+  extra?: React.ReactNode;
+  /** `extra` has something to show: the panel stays, even with no transfers */
+  extraShown?: boolean;
 };
 
 function TransferPanelView({
@@ -172,11 +176,13 @@ function TransferPanelView({
   tab = "activity",
   onTab,
   onOpenMigrationDest,
+  extra,
+  extraShown,
 }: PanelProps) {
   const jobActions = useJobs();
   const nothing = transfers.length === 0 && jobs.length === 0 && syncs.length === 0;
   // no activity and no copies between connections: no panel, unless it was opened on purpose
-  if (nothing && migrations === 0 && !(showEmpty && open)) return null;
+  if (nothing && migrations === 0 && !(showEmpty && open) && !extraShown) return null;
   const onJobs = tab === "jobs";
   const pickTab = (t: ActivityTab) => {
     onTab?.(t);
@@ -311,6 +317,7 @@ function TransferPanelView({
             </button>
           </div>
         )}
+        {extra}
         {/* with tabs the counts sit on the tabs */}
         {!onTab && (
           <span className="tp-counts">
