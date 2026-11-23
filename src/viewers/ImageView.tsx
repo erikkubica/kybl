@@ -7,6 +7,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ToolButton } from "./ui";
 import type { ViewerProps } from "./types";
 import { releaseOnUnmount } from "../releaseMedia";
+import { zoomKey } from "./zoomKeys";
+import { keyLabel } from "../components/shortcutKeys";
 
 const TYPES: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp",
@@ -15,6 +17,8 @@ const TYPES: Record<string, string> = {
 const MIN = 0.05;
 const MAX = 16;
 const clamp = (s: number) => Math.min(MAX, Math.max(MIN, s));
+const MAC = /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
+const keys = (k: string) => keyLabel(k, MAC);
 
 export default function ImageView({ name, bytes, mode }: ViewerProps) {
   const full = mode === "full";
@@ -75,6 +79,21 @@ export default function ImageView({ name, bytes, mode }: ViewerProps) {
     return () => el.removeEventListener("wheel", onWheel);
   });
 
+  // ⌘/Ctrl + / − / 0, as the buttons' tooltips say (the full viewer only: a preview is small)
+  useEffect(() => {
+    if (!full) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      const z = zoomKey(e);
+      if (!z) return;
+      e.preventDefault();
+      if (z === "fit") setScale(null);
+      else zoomTo(z === "in" ? s * 1.25 : s / 1.25);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   // two-finger pinch on touch screens; one finger scrolls natively
   const pts = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<{ d0: number; s0: number } | null>(null);
@@ -109,11 +128,11 @@ export default function ImageView({ name, bytes, mode }: ViewerProps) {
     <div className="dv-viewer dv-image">
       {full && (
         <div className="dv-tools">
-          <ToolButton label="Fit" pressed={scale === null} onClick={() => setScale(null)} />
+          <ToolButton label="Fit" pressed={scale === null} onClick={() => setScale(null)} title={`Fit (${keys("⌘0")})`} />
           <ToolButton label="Actual size" pressed={scale === 1} onClick={() => zoomTo(1)} />
-          <ToolButton label="Zoom out" onClick={() => zoomTo(s / 1.25)} title="Zoom out (⌘−)" />
+          <ToolButton label="Zoom out" onClick={() => zoomTo(s / 1.25)} title={`Zoom out (${keys("⌘−")})`} />
           <span className="dv-zoom">{Math.round(s * 100)}%</span>
-          <ToolButton label="Zoom in" onClick={() => zoomTo(s * 1.25)} title="Zoom in (⌘+)" />
+          <ToolButton label="Zoom in" onClick={() => zoomTo(s * 1.25)} title={`Zoom in (${keys("⌘+")})`} />
           {natural && (
             <span className="dv-status">
               {natural.w} × {natural.h}

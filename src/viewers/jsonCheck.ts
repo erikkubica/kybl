@@ -115,8 +115,11 @@ export function jsonErrorOffset(text: string): number {
 export function describeJsonError(text: string, message: string, firstLine = 1): string {
   const at = jsonErrorOffset(text);
   const clean = message
-    .replace(/ in JSON at position \d+.*$/s, "")
-    .replace(/, ".*" is not valid JSON$/s, "")
+    // V8: "… in JSON at position 12 (line 1 column 13)", "… after JSON at position 12 …"
+    .replace(/ (in|after) JSON at position \d+.*$/s, (_m, w: string) => (w === "after" ? " after JSON" : ""))
+    .replace(/ \(line \d+ column \d+\)/g, "")
+    // V8 quotes the text, cut short with "..." on either side when it's long
+    .replace(/,\s*(?:\.\.\.)?".*"(?:\.\.\.)? is not valid JSON$/s, "")
     .replace(/^JSON Parse error: /, "")
     .trim();
   if (at < 0) return clean;

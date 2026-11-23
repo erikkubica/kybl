@@ -22,6 +22,7 @@ import { useCaps } from "../useCaps";
 import { rootIcon, rootsMode, useRootName } from "../connections/roots";
 import { addressOf } from "../connections/kinds";
 import type { Capabilities } from "../api";
+import { ConnFixRow, hasConnFix, type ConnFixes } from "./ConnFixRow";
 
 /** `revoked`: a Kybl Storage key the storage no longer knows (offer "Connect again") */
 export type Buckets = {
@@ -29,6 +30,8 @@ export type Buckets = {
   note: string | null;
   loading: boolean;
   revoked?: boolean;
+  /** the whole error behind `note` (its detail lines say what the user can fix) */
+  error?: string;
   /** names to show, where a root's id isn't one (this phone's folders are ids by path) */
   labels?: Record<string, string>;
   /** the "+" row: make a bucket, open one by name, or neither (what the connection can do) */
@@ -112,6 +115,7 @@ export function Connections({
   current,
   compact,
   onRetry,
+  fixes,
   onRetryProfiles,
   onOpen,
   onAdd,
@@ -133,6 +137,8 @@ export function Connections({
   current: Loc | null;
   compact: boolean;
   onRetry: (p: Profile) => void;
+  /** trust a certificate or server key, allow plain FTP: what a connection's error offers */
+  fixes?: ConnFixes;
   onRetryProfiles: () => void;
   onOpen: (p: Profile, bucket: string) => void;
   onAdd: () => void;
@@ -186,6 +192,7 @@ export function Connections({
           authNeeded={!!authNeeded?.has(p.id)}
           onSignInAgain={onSignInAgain}
           onRetry={onRetry}
+          fixes={fixes}
           onOpen={onOpen}
           onConnMenu={onConnMenu}
           onAddBucket={onAddBucket}
@@ -228,6 +235,7 @@ function ConnCard({
   authNeeded,
   onSignInAgain,
   onRetry,
+  fixes,
   onOpen,
   onConnMenu,
   onAddBucket,
@@ -247,6 +255,7 @@ function ConnCard({
   authNeeded: boolean;
   onSignInAgain?: (p: Profile) => void;
   onRetry: (p: Profile) => void;
+  fixes?: ConnFixes;
   onOpen: (p: Profile, bucket: string) => void;
   onConnMenu: (p: Profile) => void;
   onAddBucket: (p: Profile) => void;
@@ -287,6 +296,9 @@ function ConnCard({
         <button className="btn btn-primary btn-sm" onClick={() => onSignInAgain(p)}>
           Sign in again
         </button>
+      ) : fixes && hasConnFix(p, bl.error) ? (
+        // a certificate, plain FTP or a server key to agree to: Retry alone would fail the same way
+        <ConnFixRow profile={p} error={bl.error} fixes={fixes} then={onRetry} className="btn btn-primary btn-sm" bare />
       ) : (
         <button className="btn btn-sm" onClick={() => onRetry(p)}>
           Retry

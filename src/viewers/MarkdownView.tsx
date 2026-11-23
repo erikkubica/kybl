@@ -75,6 +75,10 @@ export default function MarkdownView({ name, text, editable, mode, onEdit, onSav
 
   // phones have no room for two panes
   const shown: Layout = narrow && layout === "split" ? "edit" : layout;
+  // the editor is built the first time the source is shown (a big file read as a page never pays
+  // for it), then kept
+  const [editorUsed, setEditorUsed] = useState(shown !== "preview");
+  if (shown !== "preview" && !editorUsed) setEditorUsed(true);
   // Rendering runs on the UI thread: above RENDER_MAX it would freeze the window for seconds on
   // every pause in typing, so a big file shows as text until "Render preview", and that rendered
   // copy is only redrawn on "Update preview"
@@ -136,7 +140,7 @@ export default function MarkdownView({ name, text, editable, mode, onEdit, onSav
       )}
       <div className={`dv-md-panes ${shown}`}>
         {/* the editor stays mounted while hidden, so undo history and cursor survive switching */}
-        {full && (
+        {full && editorUsed && (
           <div className="dv-md-source" hidden={shown === "preview"}>
             <CodeEditor
               name={name}

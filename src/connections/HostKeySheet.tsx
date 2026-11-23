@@ -3,10 +3,50 @@
  * "changed": the server's key differs from the one trusted before, which is what an interception
  * looks like, so the safe answer is the default and replacing the key takes a deliberate click.
  */
+import { useState } from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "../Icons";
 import { Modal } from "../components/Dialogs";
+import { errMessage } from "../api";
+import type { HostKeyAsk } from "./connTrouble";
 
-export type HostKeyAsk = { kind: "unknown"; host: string; fp: string } | { kind: "changed"; host: string; now: string; saved: string };
+export type { HostKeyAsk } from "./connTrouble";
+
+/**
+ * From a folder's error: "Trust this server…" (first connection) or "Check the new key…" (it
+ * changed), opening the same sheet the connection dialog shows. `onTrust` saves the key.
+ */
+export function TrustHostKeyButton({ ask, onTrust, className = "btn btn-sm" }: { ask: HostKeyAsk; onTrust: (fp: string) => Promise<void> | void; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const trust = async (fp: string) => {
+    setOpen(false);
+    setBusy(true);
+    setFailed(null);
+    try {
+      await onTrust(fp);
+    } catch (e) {
+      setFailed(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <button type="button" className={className} onClick={() => setOpen(true)} disabled={busy}>
+        {busy ? <span className="spinner" /> : <Icon name={ask.kind === "changed" ? "alert" : "check-circle"} size={13} />}
+        {ask.kind === "changed" ? "Check the new key…" : "Trust this server…"}
+      </button>
+      {failed && (
+        <span className="cert-failed" role="alert">
+          {failed}
+        </span>
+      )}
+      {open && createPortal(<HostKeySheet ask={ask} onTrust={(fp) => void trust(fp)} onClose={() => setOpen(false)} />, document.querySelector(".m-app") ?? document.body)}
+    </>
+  );
+}
 
 export function HostKeySheet({ ask, onTrust, onClose }: { ask: HostKeyAsk; onTrust: (fp: string) => void; onClose: () => void }) {
   if (ask.kind === "unknown") {

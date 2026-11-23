@@ -21,6 +21,10 @@ export default function CsvView({ name, text, editable, mode, onEdit, onSave }: 
   const editor = useRef<CodeEditorApi | null>(null);
   const worker = useRef<Worker | null>(null);
   const seq = useRef(0);
+  // the editor is built the first time the text is shown (building it for a 50 MB file stalls
+  // the window, and the table is what's on screen), then kept so undo history survives
+  const [textUsed, setTextUsed] = useState(false);
+  if (tab === "text" && !textUsed) setTextUsed(true);
 
   useEffect(
     () => () => {
@@ -90,7 +94,7 @@ export default function CsvView({ name, text, editable, mode, onEdit, onSave }: 
         ) : (
           <Note spinner>Reading the table…</Note>
         ))}
-      {full && (
+      {full && textUsed && (
         <div className="dv-csv-text" hidden={tab !== "text"}>
           <CodeEditor
             name={name}

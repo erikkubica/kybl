@@ -2,6 +2,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { api } from "./api";
 import { HEIC_IN_WEBVIEW, extOf, isHeic } from "./format";
 import { imageModeFor } from "./imageMode";
+import { retryFailure } from "./thumbRetry";
 import type { Entry } from "./types";
 
 /** Formats the thumbnail engine can decode (EXIF thumbnails for jpg/tif, full decode for the rest). */
@@ -101,9 +102,20 @@ export function onThumbRetry(f: () => void): () => void {
   return () => void retryHooks.delete(f);
 }
 
-/** The network is back (or the app resumed): thumbnails that failed meanwhile are asked for again. */
-export function retryFailedThumbs() {
-  for (const [k, v] of cache) if (typeof v === "number") cache.delete(k);
+/** failures made while the device said it was offline */
+const offlineFails = new Set<string>();
+
+/**
+ * The network is back, or the app resumed: thumbnails that failed meanwhile are asked for again
+ * (on resume only those that failed offline or a while ago: see retryFailure).
+ */
+export function retryFailedThumbs(why: "online" | "resumed" = "online") {
+  const now = Date.now();
+  for (const [k, v] of cache) {
+    if (typeof v !== "number" || !retryFailure(why, v, offlineFails.has(k), now, RETRY_AFTER_MS)) continue;
+    cache.delete(k);
+    offlineFails.delete(k);
+  }
   for (const f of [...retryHooks]) f();
 }
 
@@ -117,10 +129,14 @@ export function cachedThumb(profileId: string, bucket: string, e: Entry): string
 
 function remember(k: string, v: string | number) {
   cache.delete(k);
+  offlineFails.delete(k);
   cache.set(k, v);
   if (cache.size > MAX_CACHE) {
     const first = cache.keys().next().value;
-    if (first !== undefined) cache.delete(first);
+    if (first !== undefined) {
+      cache.delete(first);
+      offlineFails.delete(first);
+    }
   }
 }
 
@@ -229,6 +245,7 @@ export function loadThumb(
       return url;
     } catch {
       remember(k, Date.now());
+      if (typeof navigator !== "undefined" && navigator.onLine === false) offlineFails.add(k);
       return null;
     } finally {
       release();

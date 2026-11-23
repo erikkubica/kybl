@@ -46,3 +46,12 @@ test("message with line and column, whatever the engine said", () => {
   assert.equal(describeJsonError(text, "Unexpected token } in JSON at position 19"), "Line 3, column 8: Unexpected token }");
   assert.equal(describeJsonError('[1,]', "Unexpected token ']', \"[1,]\" is not valid JSON", 4), "Line 4, column 4: Unexpected token ']'");
 });
+
+test("V8's long-text and position forms are cut away", () => {
+  const text = '{\n  "a": 1,\n  "b": }\n';
+  assert.equal(describeJsonError(text, 'Unexpected token \'}\', ..."e": 1,\n  }\n}" is not valid JSON'), "Line 3, column 8: Unexpected token '}'");
+  assert.equal(describeJsonError(text, 'Unexpected token \'}\', "{\n  "a": 1"... is not valid JSON'), "Line 3, column 8: Unexpected token '}'");
+  assert.equal(describeJsonError(text, 'Unexpected token \'}\', ..."a": 1"... is not valid JSON'), "Line 3, column 8: Unexpected token '}'");
+  assert.equal(describeJsonError(text, "Expected ',' or '}' after property value in JSON at position 19 (line 3 column 8)"), "Line 3, column 8: Expected ',' or '}' after property value");
+  assert.equal(describeJsonError('{"a":1}{"b":2}', "Unexpected non-whitespace character after JSON at position 7 (line 1 column 8)"), "Line 1, column 8: Unexpected non-whitespace character after JSON");
+});

@@ -1077,6 +1077,7 @@ body {
 .m-bucket-note {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 14px 16px;
   color: var(--dim);
@@ -1084,7 +1085,7 @@ body {
 }
 
 .m-bucket-note span:first-child:not(.spinner) {
-  flex: 1;
+  flex: 1 1 180px;
 }
 
 .m-add-row {
@@ -2666,6 +2667,25 @@ input[type="checkbox"].m-switch:checked {
   text-overflow: ellipsis;
 }
 
+.m-offline-retry {
+  flex: none;
+  margin: -4px -8px -4px 2px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  pointer-events: auto;
+}
+
+.m-offline-retry:disabled {
+  opacity: 0.5;
+}
+
 /* ------------------------------------------------------------ busy pill */
 /* "Getting “photo.heic” 40%" while a file is fetched for another app, with Cancel */
 .m-pills {
@@ -3084,4 +3104,10 @@ input[type="checkbox"].m-switch:checked {
 .m-app.m-toasts-top .m-pills {
   top: calc(var(--m-top) + 10px);
   bottom: auto;
+}
+
+/* a layer that took the focus when it opened (hideUnderLayer.ts) draws no ring around itself */
+.m-app > [data-layer] [tabindex="-1"]:focus-visible,
+.m-app > [data-layer][tabindex="-1"]:focus-visible {
+  outline: none;
 }

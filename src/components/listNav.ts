@@ -112,8 +112,8 @@ export function useListNav({
         const idx = [...selected].map((k) => entries.findIndex((e) => e.key === k)).filter((i) => i >= 0);
         if (idx.length === 0) return cur;
         const at = cur ? entries.findIndex((e) => e.key === cur) : -1;
-        const lo = Math.min(...idx);
-        const hi = Math.max(...idx);
+        const lo = idx.reduce((a, b) => (b < a ? b : a));
+        const hi = idx.reduce((a, b) => (b > a ? b : a));
         return entries[at >= 0 && Math.abs(at - lo) < Math.abs(at - hi) ? lo : hi].key;
       });
     }
@@ -325,8 +325,8 @@ export function useMarquee({
       if (sel) sel([...result], cursor);
       else if (idx.length) {
         // without onSelectKeys the app can only select a range: from the first touched item to the last
-        const lo = Math.min(...idx);
-        const hi = Math.max(...idx);
+        const lo = idx.reduce((a, b) => (b < a ? b : a));
+        const hi = idx.reduce((a, b) => (b > a ? b : a));
         move(-list.length, false);
         move(lo, false);
         if (hi > lo) move(hi - lo, true);

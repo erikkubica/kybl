@@ -1,0 +1,45 @@
+/**
+ * A menu-bar item's click and its accelerator key both arrive as the same `menu` event. ⌘ itself
+ * still reaches the page, so watching it tells them apart: a key hands the press back to whatever
+ * has the keyboard (the editor, a terminal), a click runs the command.
+ */
+import { menuByKey } from "./menus";
+
+let cmdHeld = false;
+let lastCmdDown = 0;
+let watching = false;
+
+function watch() {
+  if (watching || typeof window === "undefined") return;
+  watching = true;
+  window.addEventListener(
+    "keydown",
+    (ev) => {
+      // our own handed-back keydowns don't count
+      if (!ev.isTrusted || !(ev.metaKey || ev.ctrlKey)) return;
+      cmdHeld = true;
+      lastCmdDown = performance.now();
+    },
+    true,
+  );
+  window.addEventListener(
+    "keyup",
+    (ev) => {
+      if (ev.key === "Meta" || ev.key === "Control" || !(ev.metaKey || ev.ctrlKey)) cmdHeld = false;
+    },
+    true,
+  );
+  window.addEventListener("blur", () => (cmdHeld = false));
+  window.addEventListener("pointerdown", (ev) => ev.metaKey || ev.ctrlKey || (cmdHeld = false), true);
+}
+
+/** Starts watching ⌘ (once); call it early, before the first `menu` event can arrive. */
+export function watchMenuKeys(): void {
+  watch();
+}
+
+/** True when the `menu` event arriving now came from its accelerator key, false for a click. */
+export function menuFromKey(): boolean {
+  watch();
+  return menuByKey(cmdHeld, lastCmdDown, performance.now());
+}

@@ -5,6 +5,7 @@
  */
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useWindowed } from "../useWindowed";
+import { columnCount } from "./gridShape";
 
 const ROW = 28;
 const NUM_W = 52;
@@ -19,12 +20,25 @@ export function columnName(i: number): string {
   return s;
 }
 
-export function DataGrid({ rows, header, firstRowNumber = 1, label }: { rows: string[][]; header?: string[] | null; firstRowNumber?: number; label: string }) {
+export function DataGrid({
+  rows,
+  header,
+  firstRowNumber = 1,
+  label,
+  note,
+}: {
+  rows: string[][];
+  header?: string[] | null;
+  firstRowNumber?: number;
+  label: string;
+  /** added to the row and column count ("only the first 200,000 rows") */
+  note?: string;
+}) {
   const scroller = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<{ r: number; c: number } | null>(null);
   const [h, setH] = useState({ left: 0, width: 1200 });
 
-  const cols = useMemo(() => Math.max(header?.length ?? 0, ...rows.slice(0, 2000).map((r) => r.length), 1), [rows, header]);
+  const cols = useMemo(() => columnCount(rows, header), [rows, header]);
   // widths from the header and the first few hundred rows
   const widths = useMemo(() => {
     const w = new Array<number>(cols).fill(MIN_W);
@@ -130,6 +144,7 @@ export function DataGrid({ rows, header, firstRowNumber = 1, label }: { rows: st
         ) : (
           <span className="dv-grid-hint">
             {rows.length.toLocaleString()} {rows.length === 1 ? "row" : "rows"} · {cols.toLocaleString()} {cols === 1 ? "column" : "columns"}
+            {note && ` · ${note}`}
           </span>
         )}
       </div>

@@ -12,6 +12,7 @@ import { baseName, formatBytes } from "../format";
 import type { Profile } from "../types";
 import type { Loc } from "./useListing";
 import { connName } from "./connName";
+import { ConnFixRow, type ConnFixes } from "./ConnFixRow";
 
 export type SharedFile = { path: string; name: string; size: number };
 
@@ -26,6 +27,7 @@ export function DestinationScreen({
   onAt,
   onPick,
   onBack,
+  fixes,
 }: {
   files: SharedFile[];
   at: Loc | null;
@@ -35,6 +37,8 @@ export function DestinationScreen({
   onAt: (l: Loc | null) => void;
   onPick: (l: Loc) => void;
   onBack: () => void;
+  /** trust a certificate or server key, allow plain FTP: what a connection's error offers */
+  fixes?: ConnFixes;
 }) {
   const [folders, setFolders] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +49,7 @@ export function DestinationScreen({
   const [next, setNext] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const gen = useRef(0);
+  const atProfile = at ? profiles.find((p) => p.id === at.profileId) : undefined;
 
   /** Up to FOLDER_PAGES pages of folders from `token` on ("More folders" reads on). */
   const readFolders = async (l: Loc, token: string | null) => {
@@ -63,7 +68,7 @@ export function DestinationScreen({
       } while (token && n < FOLDER_PAGES);
       setNext(token);
     } catch (e) {
-      if (g === gen.current) setError(errSummary(errMessage(e)));
+      if (g === gen.current) setError(errMessage(e));
     } finally {
       if (g === gen.current) setBusy(false);
     }
@@ -140,7 +145,8 @@ export function DestinationScreen({
               <Icon name="alert" size={30} />
             </div>
             <h3>Couldn't open this folder</h3>
-            <p className="m-empty-err">{error}</p>
+            <p className="m-empty-err">{errSummary(error)}</p>
+            {fixes && atProfile && <ConnFixRow profile={atProfile} error={error} fixes={fixes} then={() => onAt({ ...at })} />}
             <button className="btn" onClick={() => onAt({ ...at })}>
               <Icon name="retry" size={14} /> Try again
             </button>

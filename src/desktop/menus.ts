@@ -59,6 +59,17 @@ export const MENU_ACCELERATORS: Record<string, string> = {
   "tiles-smaller": "⌘−",
 };
 
+/** How long after a ⌘ key press a `menu` event still counts as that key's accelerator. */
+export const MENU_KEY_WINDOW_MS = 1000;
+
+/**
+ * Whether a `menu` event came from its accelerator key rather than a click on the menu bar: both
+ * arrive the same way, but ⌘ itself still reaches the page (held now, or pressed just before).
+ */
+export function menuByKey(cmdHeld: boolean, lastCmdDown: number, now: number): boolean {
+  return cmdHeld || now - lastCmdDown < MENU_KEY_WINDOW_MS;
+}
+
 /** [key, code, key with Shift] for the accelerators that aren't letters */
 const KEYS: Record<string, [string, string, string]> = {
   "[": ["[", "BracketLeft", "{"],
