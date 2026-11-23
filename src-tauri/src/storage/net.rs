@@ -27,48 +27,62 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 
 // ---------------------------------------------------------------- TLS and HTTP
 
-/// rustls on ring, trusting the system's roots on a computer and Mozilla's on a phone (which keep
-/// theirs where rustls can't read them; see `state::mobile_tls`).
+/// The system's root certificates on a computer, Mozilla's on a phone (which keeps its own where
+/// rustls can't read them; see `state::mobile_tls`).
+pub fn roots() -> Arc<rustls::RootCertStore> {
+    static ROOTS: OnceLock<Arc<rustls::RootCertStore>> = OnceLock::new();
+    ROOTS
+        .get_or_init(|| {
+            let mut roots = rustls::RootCertStore::empty();
+            #[cfg(desktop)]
+            for cert in rustls_native_certs::load_native_certs().certs {
+                let _ = roots.add(cert);
+            }
+            #[cfg(mobile)]
+            for cert in webpki_root_certs::TLS_SERVER_ROOT_CERTS {
+                let _ = roots.add(cert.clone());
+            }
+            Arc::new(roots)
+        })
+        .clone()
+}
+
+/// rustls on ring, trusting [`roots`]. Server connections that can trust a server's own
+/// certificate use [`super::certtrust::client_config`] instead.
 pub fn tls_config() -> Arc<rustls::ClientConfig> {
     static CFG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
     CFG.get_or_init(|| {
-        let mut roots = rustls::RootCertStore::empty();
-        #[cfg(desktop)]
-        for cert in rustls_native_certs::load_native_certs().certs {
-            let _ = roots.add(cert);
-        }
-        #[cfg(mobile)]
-        for cert in webpki_root_certs::TLS_SERVER_ROOT_CERTS {
-            let _ = roots.add(cert.clone());
-        }
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let cfg = rustls::ClientConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()
             .expect("ring supports the default TLS versions")
-            .with_root_certificates(roots)
+            .with_root_certificates(roots())
             .with_no_client_auth();
         Arc::new(cfg)
     })
     .clone()
 }
 
-/// One HTTP client for WebDAV and the OpenDAL backends: one connection pool, one TLS setup.
+/// One HTTP client for the OpenDAL backends: one connection pool, one TLS setup.
 pub fn http() -> reqwest::Client {
     static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
-    HTTP.get_or_init(|| {
-        reqwest::Client::builder()
-            .tls_backend_preconfigured((*tls_config()).clone())
-            .user_agent(concat!("Kybl/", env!("CARGO_PKG_VERSION")))
-            .connect_timeout(CONNECT_TIMEOUT)
-            // no whole-request timeout: uploads of big files take as long as they take
-            .read_timeout(Duration::from_secs(120))
-            // some servers drop idle connections without a word; don't reuse stale ones
-            .pool_idle_timeout(Duration::from_secs(30))
-            .tcp_keepalive(Duration::from_secs(30))
-            .build()
-            .expect("HTTP client")
-    })
-    .clone()
+    HTTP.get_or_init(|| http_with(&tls_config())).clone()
+}
+
+/// An HTTP client with the usual settings and the given TLS setup (WebDAV: its own, which may
+/// trust the server's certificate).
+pub fn http_with(tls: &rustls::ClientConfig) -> reqwest::Client {
+    reqwest::Client::builder()
+        .tls_backend_preconfigured(tls.clone())
+        .user_agent(concat!("Kybl/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(CONNECT_TIMEOUT)
+        // no whole-request timeout: uploads of big files take as long as they take
+        .read_timeout(Duration::from_secs(120))
+        // some servers drop idle connections without a word; don't reuse stale ones
+        .pool_idle_timeout(Duration::from_secs(30))
+        .tcp_keepalive(Duration::from_secs(30))
+        .build()
+        .expect("HTTP client")
 }
 
 // ---------------------------------------------------------------- settings and secrets

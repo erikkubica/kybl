@@ -1,6 +1,7 @@
 /**
  * The kinds of connection people can add, as the "New connection" picker shows them, and the
- * helpers the forms share (field defaults, profile building, the host-key error format).
+ * helpers the forms share (field defaults, profile building, the host-key and certificate error
+ * formats).
  */
 import type { CloudKind } from "../api";
 import type { BlobConfig, ConnKind, NetConfig, Profile } from "../types";
@@ -71,6 +72,7 @@ export const emptyNet = (kind: NetKind): NetConfig => ({
   tls: kind === "webdav" ? "implicit" : kind === "ftp" ? "explicit" : "none",
   auth: "password",
   hostKey: null,
+  certFingerprint: null,
   url: kind === "webdav" ? "" : null,
 });
 
@@ -118,4 +120,41 @@ export function hostKeyUnknown(msg: string): string | null {
 export function hostKeyChanged(msg: string): { now: string; saved: string } | null {
   const m = msg.match(/host-key-changed (SHA256:\S+) expected (SHA256:\S+)/);
   return m ? { now: m[1], saved: m[2] } : null;
+}
+
+// ---------------------------------------------------------------- certificates (FTPS, WebDAV)
+/** A server certificate that didn't check out, as the error's details describe it (see
+ *  src-tauri/src/storage/BACKENDS.md). "changed": another certificate was trusted before. */
+export type CertTrouble = {
+  kind: "untrusted" | "changed";
+  /** the certificate's SHA-256 fingerprint, "AB:CD:…" */
+  fp: string;
+  /** the one trusted before ("changed") */
+  saved: string | null;
+  /** self-signed, unknown-issuer, wrong-name, expired, not-yet-valid, other */
+  reasons: string[];
+  /** the name Kybl connected to */
+  host: string | null;
+  /** who it's made out to, who signed it, "YYYY-MM-DD" dates */
+  name: string | null;
+  issuer: string | null;
+  validFrom: string | null;
+  validUntil: string | null;
+};
+
+export function certTrouble(msg: string): CertTrouble | null {
+  const m = msg.match(/^cert-(untrusted|changed) ([0-9A-Fa-f:]+)(?: expected (\S+))?\s*$/m);
+  if (!m) return null;
+  const field = (k: string) => msg.match(new RegExp(`^${k}: (.*)$`, "m"))?.[1].trim() || null;
+  return {
+    kind: m[1] as CertTrouble["kind"],
+    fp: m[2],
+    saved: m[3] ?? null,
+    reasons: (field("reason") ?? "other").split(/,\s*/).filter(Boolean),
+    host: field("host"),
+    name: field("name"),
+    issuer: field("issuer"),
+    validFrom: field("valid-from"),
+    validUntil: field("valid-until"),
+  };
 }

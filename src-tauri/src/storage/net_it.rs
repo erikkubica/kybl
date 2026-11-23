@@ -431,3 +431,76 @@ fn ftp_and_sftp_replace_files_without_leftovers() {
         replaces_cleanly(&b, &sftp.root).await;
     });
 }
+
+/// A throwaway self-signed certificate and its key, for servers with their own certificate
+/// (CN=ftp.example.test, so 127.0.0.1 is the wrong name too).
+const OWN_CERT: &str = "-----BEGIN CERTIFICATE-----
+MIIByTCCAW+gAwIBAgIUWigG6zlhc3l6jtMxnGkGBzYvpJswCgYIKoZIzj0EAwIw
+MjEZMBcGA1UEAwwQZnRwLmV4YW1wbGUudGVzdDEVMBMGA1UECgwMRXhhbXBsZSBU
+ZXN0MB4XDTI2MTEyMzA4MjY0OVoXDTM2MTEyMDA4MjY0OVowMjEZMBcGA1UEAwwQ
+ZnRwLmV4YW1wbGUudGVzdDEVMBMGA1UECgwMRXhhbXBsZSBUZXN0MFkwEwYHKoZI
+zj0CAQYIKoZIzj0DAQcDQgAEx/xE4wXOzCExrU0wczbEq01mxnlCcR3DIV49BLsr
+CHevxfcHUJXvxwNH8du2gNsFOsvVT1jHjmYpuvxGfecnNKNjMGEwHQYDVR0OBBYE
+FPjMu3wkmGyfOA+k68z7tFeQc/hwMA8GA1UdEwEB/wQFMAMBAf8wLwYDVR0RBCgw
+JoIQZnRwLmV4YW1wbGUudGVzdIISZmlsZXMuZXhhbXBsZS50ZXN0MAoGCCqGSM49
+BAMCA0gAMEUCIQDuxuQfHqFUkaWJFpf/j6w6nYewZyThL3kVsNpgNxNy8QIgZzII
+BSz/1ArRW0tf2oYSPg+k++jDF7xJFFvP0adKvxc=
+-----END CERTIFICATE-----
+";
+const OWN_KEY: &str = "-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgicLYm4kiVEXFAcvh
+2nymV3yHcB2HIk2hTMv7MP4D/IyhRANCAATH/ETjBc7MITGtTTBzNsSrTWbGeUJx
+HcMhXj0EuysId6/F9wdQle/HA0fx27aA2wU6y9VPWMeOZim6/EZ95yc0
+-----END PRIVATE KEY-----
+";
+const OWN_FP: &str = "94:55:1B:95:48:5F:AF:F2:72:2A:C5:BA:1C:1C:6E:2E:CA:AD:A1:C4:BC:20:2E:10:23:52:03:58:07:3B:46:FD";
+
+/// FTPS and WebDAV over https with the server's own certificate: refused with its fingerprint,
+/// accepted once trusted, refused loudly when another one was trusted.
+#[test]
+fn servers_with_their_own_certificate_connect_once_trusted() {
+    let keys = std::env::temp_dir().join(format!("kybl-cert-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&keys).unwrap();
+    let (cert, key) = (keys.join("cert.pem"), keys.join("key.pem"));
+    std::fs::write(&cert, OWN_CERT).unwrap();
+    std::fs::write(&key, OWN_KEY).unwrap();
+    let tls = ["--cert", cert.to_str().unwrap(), "--key", key.to_str().unwrap()];
+    let passive = |port: u16| {
+        let lo = if port < 30000 { 42000 } else { 22000 } + (port % 1000) * 10;
+        vec!["--passive-port".to_string(), format!("{lo}-{}", lo + 9)]
+    };
+    let Some(ftp) = serve_with("ftp", &tls, passive) else { return };
+    let Some(dav) = serve("webdav", &tls) else { return };
+    rt().block_on(async {
+        // rclone's FTP server speaks TLS from the first byte when given a certificate
+        let ftp_cfg = |pin: Option<&str>| NetConfig { tls: TlsMode::Implicit, cert_fingerprint: pin.map(str::to_string), ..net(ftp.port) };
+        let dav_cfg = |pin: Option<&str>| NetConfig { url: Some(format!("https://127.0.0.1:{}/", dav.port)), tls: TlsMode::Implicit, cert_fingerprint: pin.map(str::to_string), ..net(dav.port) };
+        let ftp_b = |pin| FtpBackend::new(&ftp_cfg(pin), Some(PASS.into())).unwrap();
+        let dav_b = |pin| WebdavBackend::new(&dav_cfg(pin), Some(PASS.into())).unwrap();
+        let other = "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF";
+
+        for (what, unknown, changed) in [
+            ("ftp", ftp_b(None).roots().await.err(), ftp_b(Some(other)).roots().await.err()),
+            ("webdav", dav_b(None).roots().await.err(), dav_b(Some(other)).roots().await.err()),
+        ] {
+            let e = unknown.unwrap_or_else(|| panic!("{what}: an unknown certificate connected"));
+            assert_eq!(e.kind, ErrKind::UntrustedCert, "{what}: {e}");
+            let d = e.detail.clone().unwrap();
+            assert!(d.starts_with(&format!("cert-untrusted {OWN_FP}\nreason: self-signed")), "{what}: {d}");
+            assert!(d.contains("\nname: ftp.example.test\n"), "{what}: {d}");
+            let e = changed.unwrap_or_else(|| panic!("{what}: another certificate than the trusted one connected"));
+            assert_eq!(e.kind, ErrKind::CertChanged, "{what}: {e}");
+            assert!(e.detail.unwrap().starts_with(&format!("cert-changed {OWN_FP} expected {other}")));
+        }
+
+        // trusted: everything works, data connections included
+        let b = ftp_b(Some(OWN_FP));
+        put(&b, "t/a.txt", b"over tls").await;
+        assert_eq!(read_all(&b, "t/a.txt", None).await, b"over tls");
+        assert_eq!(std::fs::read(ftp.root.join("t/a.txt")).unwrap(), b"over tls");
+        let b = dav_b(Some(&OWN_FP.to_lowercase()));
+        put(&b, "t/b.txt", b"over https").await;
+        assert_eq!(read_all(&b, "t/b.txt", None).await, b"over https");
+    });
+    let _ = std::fs::remove_dir_all(&keys);
+}

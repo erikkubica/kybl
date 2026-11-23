@@ -71,6 +71,7 @@ export function useConnections() {
     setBucketsBy((m) => ({ ...m, [p.id]: { names: m[p.id]?.names ?? [], note: null, loading: true } }));
     let names: string[] = [];
     let note: string | null = null;
+    let error: string | null = null;
     let reconnect = false;
     try {
       if (usesListRoots(p)) {
@@ -81,6 +82,7 @@ export function useConnections() {
       } else names = (await api.listBuckets(p.id)).map((b) => b.name);
     } catch (e) {
       const msg = errMessage(e);
+      error = msg;
       reconnect = p.provider === KYBL && isRevokedKey(msg);
       note = reconnect
         ? "This computer's key was revoked, or the account was deleted."
@@ -89,7 +91,7 @@ export function useConnections() {
           : errSummary(msg);
     }
     if (p.bucket && !names.includes(p.bucket)) names = [p.bucket, ...names];
-    setBucketsBy((m) => ({ ...m, [p.id]: { names, note: names.length ? null : note, loading: false, reconnect } }));
+    setBucketsBy((m) => ({ ...m, [p.id]: { names, note: names.length ? null : note, error: names.length ? null : error, loading: false, reconnect } }));
     return names;
   }, []);
 

@@ -12,6 +12,7 @@
 //! providers, copying between connections, the editor), so not all of them are used yet.
 #![allow(dead_code)]
 
+pub mod certtrust;
 pub mod dal;
 pub mod ftp;
 pub mod generic_cmds;
@@ -559,6 +560,11 @@ pub enum ErrKind {
     UnknownHost,
     /// SFTP: the server's key isn't the one trusted earlier
     HostKeyChanged,
+    /// FTPS / WebDAV: the server's TLS certificate didn't check out and none was trusted; the
+    /// detail carries what the user checks before trusting it (see `certtrust`)
+    UntrustedCert,
+    /// FTPS / WebDAV: the certificate isn't the one trusted earlier
+    CertChanged,
     Other,
 }
 

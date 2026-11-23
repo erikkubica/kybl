@@ -88,8 +88,10 @@ impl WebdavBackend {
             }
             None => root_name(&cfg.host, &cfg.base_path),
         };
+        // its own client: it may trust the server's own certificate (see `certtrust`)
+        let pin = cfg.cert_fingerprint.as_deref().filter(|f| !f.trim().is_empty());
         Ok(Self {
-            client: http(),
+            client: http_with(&certtrust::client_config(pin).0),
             candidates,
             base: OnceCell::new(),
             user: cfg.user.trim().to_string(),
@@ -115,8 +117,8 @@ impl WebdavBackend {
                     match self.probe(url).await {
                         Ok(true) => return Ok(url.clone()),
                         Ok(false) => {}
-                        // a wrong password or an unreachable server won't get better at another path
-                        Err(e) if matches!(e.kind, ErrKind::NeedsAuth | ErrKind::Network) => return Err(e),
+                        // a wrong password, an unreachable server or its certificate won't get better at another path
+                        Err(e) if matches!(e.kind, ErrKind::NeedsAuth | ErrKind::Network | ErrKind::UntrustedCert | ErrKind::CertChanged) => return Err(e),
                         Err(e) => last = Some(e),
                     }
                 }
@@ -894,6 +896,10 @@ pub(crate) fn days_from_civil(y: i64, m: i64, d: i64) -> Option<i64> {
 
 pub(crate) fn http_error(e: reqwest::Error) -> StorageError {
     use std::error::Error as _;
+    // a certificate the user can check and trust
+    if let Some(r) = certtrust::refusal_in(&e) {
+        return r.into_error();
+    }
     let mut src: Option<&dyn std::error::Error> = e.source();
     let mut io: Option<&std::io::Error> = None;
     let mut chain = e.to_string();

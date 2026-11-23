@@ -2,7 +2,8 @@
  * Adding or editing a connection. New ones start on the kind picker; each kind has its own form
  * (S3 keys, a server's address, a storage account, or a browser sign-in) and they share Test,
  * Save and Delete here. SFTP servers are trusted on first use: a test or save that meets an
- * unknown (or changed) server key asks before going on.
+ * unknown (or changed) server key asks before going on. An FTPS or WebDAV server whose own
+ * certificate doesn't check out gets "Trust this certificate…" under the test result.
  *
  * On phones the same dialog shows as a bottom sheet (mobile.css restyles `.modal`).
  */
@@ -13,7 +14,7 @@ import { Icon } from "../Icons";
 import { Modal } from "../components/Dialogs";
 import { ErrorText } from "../components/ErrorText";
 import type { Profile } from "../types";
-import { KINDS, hostKeyChanged, hostKeyUnknown, isCloudKind, kindInfo, pickOf, type BlobKind, type NetKind, type PickId } from "./kinds";
+import { KINDS, certTrouble, hostKeyChanged, hostKeyUnknown, isCloudKind, kindInfo, pickOf, type BlobKind, type NetKind, type PickId } from "./kinds";
 import { SECRET_NOTE, Segmented, type Draft, type FormApi } from "./fields";
 import { KindPicker } from "./KindPicker";
 import { S3Form } from "./S3Form";
@@ -22,6 +23,7 @@ import { BlobForm } from "./BlobForm";
 import { CloudPanel } from "./CloudPanel";
 import { DeleteControl } from "./DeleteControl";
 import { HostKeySheet, type HostKeyAsk } from "./HostKeySheet";
+import { TrustCertButton } from "./CertTrustSheet";
 import "./connections.css";
 import { appImageMode, connImageMode, IMAGE_MODES, imageModeLabel, setConnImageMode, setSharedPlaceholders, SHARE_PLACEHOLDERS_TEXT, sharedPlaceholdersOn, type ImageMode } from "../imageMode";
 
@@ -184,7 +186,8 @@ function KeyedForm({
   // field messages appear once Save or Test was tried, not while typing the first time
   const [tried, setTried] = useState(false);
   const [busy, setBusy] = useState<"test" | "save" | "delete" | null>(null);
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  // a failed test or save keeps what was tried, so trusting a certificate can try it again
+  const [result, setResult] = useState<{ ok: boolean; text: string; then?: "test" | "save"; draft?: Draft } | null>(null);
   const [hostAsk, setHostAsk] = useState<(HostKeyAsk & { then: "test" | "save"; draft: Draft }) | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
   // how photos show for this connection (kept on this device, applied on Save)
@@ -237,7 +240,7 @@ function KeyedForm({
       const changed = hostKeyChanged(msg);
       if (fp) setHostAsk({ kind: "unknown", host: hostOf(d.profile), fp, then: what, draft: d });
       else if (changed) setHostAsk({ kind: "changed", host: hostOf(d.profile), now: changed.now, saved: changed.saved, then: what, draft: d });
-      else setResult({ ok: false, text: msg });
+      else setResult({ ok: false, text: msg, then: what, draft: d });
     } finally {
       if (live.current) setBusy((b) => (b === what ? null : b));
     }
@@ -262,6 +265,17 @@ function KeyedForm({
     const net = d.profile.net ? { ...d.profile.net, hostKey: fp } : d.profile.net;
     void run(then, { ...d, profile: { ...d.profile, net } });
   };
+
+  /** "Trust this certificate…": remember it in the form and try again. */
+  const trustCert = async (fp: string) => {
+    if (!result?.draft || !result.then) return;
+    const { then, draft: d } = result;
+    form.current?.setCertFingerprint?.(fp);
+    onDirty();
+    const net = d.profile.net ? { ...d.profile.net, certFingerprint: fp } : d.profile.net;
+    await run(then, { ...d, profile: { ...d.profile, net } });
+  };
+  const cert = result && !result.ok && result.draft?.profile.net ? certTrouble(result.text) : null;
 
   const onEdit = () => {
     setResult(null);
@@ -330,7 +344,14 @@ function KeyedForm({
         {result && (
           <div ref={resultRef} className={`result span2 ${result.ok ? "ok" : "bad"}`} role={result.ok ? "status" : "alert"}>
             <Icon name={result.ok ? "check-circle" : "alert"} size={15} />
-            <ErrorText message={result.text} />
+            <div>
+              <ErrorText message={result.text} />
+              {cert && result.draft && (
+                <div className="cert-actions">
+                  <TrustCertButton cert={cert} host={cert.host || hostOf(result.draft.profile)} onTrust={trustCert} />
+                </div>
+              )}
+            </div>
           </div>
         )}
       </form>

@@ -69,6 +69,8 @@ export type BucketList = {
   loading: boolean;
   /** a Kybl Storage key that no longer works: offer to connect again */
   reconnect?: boolean;
+  /** the whole error behind `note` (a server certificate to trust, say) */
+  error?: string | null;
 };
 
 export function Sidebar({

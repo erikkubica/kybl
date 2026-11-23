@@ -373,6 +373,7 @@ pub fn to_profile(site: &ImportedSite, name: String) -> Result<Mapped, String> {
         tls: site.tls,
         auth: NetAuth::Password,
         host_key: None,
+        cert_fingerprint: None,
         url: None,
     };
     match kind {

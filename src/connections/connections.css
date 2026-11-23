@@ -269,6 +269,43 @@
   font-family: var(--mono);
 }
 
+/* ---------------------------------------------------------------- a server's own certificate */
+.cert-details {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 12px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.cert-details dt {
+  color: var(--dim);
+  font-weight: 600;
+}
+.cert-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.cert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+}
+.cert-actions .btn svg {
+  margin-right: 2px;
+}
+.cert-failed {
+  flex-basis: 100%;
+  color: var(--danger);
+  font-size: 12px;
+}
+.result .cert-actions {
+  justify-content: flex-start;
+  margin-top: 8px;
+}
+
 /* ---------------------------------------------------------------- sidebar: one-root connections */
 /* a server's one root has no row of its own: the connection row is the place, highlighted like a
    bucket row while it's on screen */

@@ -102,6 +102,9 @@ pub struct NetConfig {
     pub auth: NetAuth,
     /// SFTP: the server key's SHA-256 fingerprint, trusted on first use
     pub host_key: Option<String>,
+    /// FTPS and WebDAV over https: the SHA-256 fingerprint ("AB:CD:…") of the server's own
+    /// certificate, trusted although it doesn't check out (see `storage::certtrust`)
+    pub cert_fingerprint: Option<String>,
     /// WebDAV: the full address, when given instead of host and port
     pub url: Option<String>,
 }
@@ -683,5 +686,17 @@ mod tests {
         assert_eq!(friendly(&e, "ServiceError { code: Some(\"AccessDenied\") }"), Some("Access denied. This key isn't allowed to do that. If the key is brand new, give it a few minutes: some providers take a while to activate new keys."));
         assert!(friendly(&e, "NoSuchBucket: gone").unwrap().contains("doesn't exist"));
         assert_eq!(friendly(&e, "something nobody has seen"), None);
+    }
+
+    #[test]
+    fn trusted_certificates_save_and_old_connections_load() {
+        // saved before certificates could be trusted
+        let old: NetConfig = serde_json::from_str(r#"{"host":"ftp.example.test","port":0,"user":"me","basePath":"","tls":"explicit","auth":"password","hostKey":null,"url":null}"#).unwrap();
+        assert_eq!(old.cert_fingerprint, None);
+        assert_eq!(old.tls, TlsMode::Explicit);
+        let n = NetConfig { host: "ftp.example.test".into(), cert_fingerprint: Some("AB:CD".into()), ..Default::default() };
+        let json = serde_json::to_value(&n).unwrap();
+        assert_eq!(json["certFingerprint"], "AB:CD");
+        assert_eq!(serde_json::from_value::<NetConfig>(json).unwrap(), n);
     }
 }

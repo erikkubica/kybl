@@ -8,7 +8,8 @@ import { Icon } from "../Icons";
 import type { Profile } from "../types";
 import { useCaps } from "../useCaps";
 import { rootsMode } from "../connections/roots";
-import { isCloudKind } from "../connections/kinds";
+import { certTrouble, isCloudKind } from "../connections/kinds";
+import { TrustCertButton } from "../connections/CertTrustSheet";
 
 /** The shell's ways out of an empty pane. */
 export type EmptyActions = {
@@ -17,7 +18,13 @@ export type EmptyActions = {
   onReconnect: (p: Profile) => void;
   onNewBucket: (p: Profile) => void;
   onOpenBucketByName: (p: Profile) => void;
+  /** A server's own certificate the user chose to trust: save it on the connection; with
+   *  `reopen`, connect again (else the caller retries what failed). */
+  onTrustCert: (p: Profile, fp: string, reopen: boolean) => Promise<void>;
 };
+
+/** What the trust sheet calls the server: the name connected to, else the connection's. */
+const serverName = (p: Profile, host: string | null) => host || p.net?.host || p.name;
 
 export function Welcome({ actions }: { actions: EmptyActions }) {
   return (
@@ -42,13 +49,28 @@ export function Welcome({ actions }: { actions: EmptyActions }) {
   );
 }
 
-export function ChooseBucket({ profile, note, reconnect, actions }: { profile: Profile; note: string | null; reconnect: boolean; actions: EmptyActions }) {
+export function ChooseBucket({
+  profile,
+  note,
+  error,
+  reconnect,
+  actions,
+}: {
+  profile: Profile;
+  note: string | null;
+  /** the whole error behind `note`, when listing the roots failed */
+  error?: string | null;
+  reconnect: boolean;
+  actions: EmptyActions;
+}) {
   const caps = useCaps(profile.id);
   const mode = rootsMode(profile, caps);
   // making buckets is Kybl Storage's (or whatever says it can); naming one by hand is S3's
   const kybl = caps ? caps.createRoot : profile.provider === KYBL;
   const byName = !kybl && mode === "buckets";
   const what = mode === "drives" ? "place" : "bucket";
+  // a server whose own certificate stopped it before its one root could be listed
+  const cert = profile.net && error ? certTrouble(error) : null;
   return (
     <div className="welcome">
       <div className="welcome-card">
@@ -57,7 +79,11 @@ export function ChooseBucket({ profile, note, reconnect, actions }: { profile: P
         </div>
         <h1>Choose a {what}</h1>
         <p>{note || `Pick a ${what} from the sidebar.`}</p>
-        {reconnect ? (
+        {cert ? (
+          <div className="cert-actions">
+            <TrustCertButton cert={cert} host={serverName(profile, cert.host)} className="btn btn-primary" onTrust={(fp) => actions.onTrustCert(profile, fp, true)} />
+          </div>
+        ) : reconnect ? (
           <button className="btn btn-primary" onClick={() => actions.onReconnect(profile)}>
             <Icon name="refresh" size={14} /> Connect again
           </button>
@@ -73,10 +99,24 @@ export function ChooseBucket({ profile, note, reconnect, actions }: { profile: P
   );
 }
 
-export function ListError({ profile, error, onRetry, onReconnect }: { profile: Profile; error: string; onRetry: () => void; onReconnect: (p: Profile) => void }) {
+export function ListError({
+  profile,
+  error,
+  onRetry,
+  onReconnect,
+  onTrustCert,
+}: {
+  profile: Profile;
+  error: string;
+  onRetry: () => void;
+  onReconnect: (p: Profile) => void;
+  onTrustCert: EmptyActions["onTrustCert"];
+}) {
   const revoked = profile.provider === KYBL && isRevokedKey(error);
   // a Google Drive / OneDrive / Dropbox sign-in that ended: sign in again, then it loads
   const signIn = isCloudKind(profile.kind) && /sign in again|no longer signed in|invalid_grant|expired or revoked/i.test(error);
+  // FTPS / WebDAV with the server's own certificate: trust it, then list again
+  const cert = profile.net ? certTrouble(error) : null;
   return (
     <div className="empty error-state">
       <div className="empty-art">
@@ -87,7 +127,22 @@ export function ListError({ profile, error, onRetry, onReconnect }: { profile: P
       <div className="error-msg">
         <ErrorText message={revoked ? kyblError(error) : error} />
       </div>
-      {revoked || signIn ? (
+      {cert ? (
+        <div className="cert-actions">
+          <TrustCertButton
+            cert={cert}
+            host={serverName(profile, cert.host)}
+            className="btn btn-primary btn-sm"
+            onTrust={async (fp) => {
+              await onTrustCert(profile, fp, false);
+              onRetry();
+            }}
+          />
+          <button className="btn btn-sm" onClick={onRetry}>
+            <Icon name="retry" size={13} /> Try again
+          </button>
+        </div>
+      ) : revoked || signIn ? (
         <button className="btn btn-primary btn-sm kybl-reconnect" onClick={() => onReconnect(profile)}>
           <Icon name="refresh" size={13} /> {signIn ? "Sign in again" : "Connect again"}
         </button>
