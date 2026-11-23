@@ -12,7 +12,7 @@ export const TILE_MAX = 320;
 
 /**
  * A desktop pane's header: one row, left to right
- *   [connection badge] connection › … › folder name [⋯]   ……   [+] [view] [search] [panes]
+ *   [connection badge] connection › … › folder name   ……   [⋯] [+] [view] [search] [panes]
  * Creating things sits behind +, the pane's less frequent actions (favorites among them) behind ⋯
  * and how the list looks behind the eye, so a pane at its least width (340px) still fits on one
  * row: the folder's name gives way first. The right side's buttons never hide.
@@ -235,11 +235,12 @@ export function Toolbar({
             <span className="crumb muted">No bucket selected</span>
           </nav>
         )}
+
+        <div className="spacer" data-tauri-drag-region />
+
         <button className="icon-btn tb-more" onClick={moreMenu} title="More actions" aria-label="More actions" aria-haspopup="menu">
           <Icon name="more" />
         </button>
-
-        <div className="spacer" data-tauri-drag-region />
 
         <button className="icon-btn tb-create" disabled={disabled} onClick={createMenu} title="Upload or create (⌘U, ⇧⌘N)" aria-label="Upload or create" aria-haspopup="menu">
           <Icon name="plus" />

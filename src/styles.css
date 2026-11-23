@@ -469,7 +469,7 @@ code {
   .toolbar:is(.search-open, :has(.search:focus-within)) > .path-title {
     display: none;
   }
-  .toolbar:has(.path-title.editing) > :is(.conn-name, .conn-sep, .tb-more) {
+  .toolbar:has(.path-title.editing) > :is(.conn-name, .conn-sep, .crumb-up) {
     display: none;
   }
 }
