@@ -325,7 +325,7 @@ function KeyedForm({
                     setGroup(e.target.value);
                     onEdit();
                   }}
-                  placeholder="None: listed at the top level"
+                  placeholder="None"
                 />
                 <datalist id="conn-groups">
                   {groups.map((g) => (

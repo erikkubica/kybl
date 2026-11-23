@@ -43,6 +43,7 @@ import { asExport } from "../connections/native";
 import type { DocumentHandle } from "../viewers/DocumentView";
 import type { Entry } from "../types";
 import type { Profile } from "../types";
+import type { PickId } from "../connections/kinds";
 import { useDialogs } from "./useDialogs";
 import type { MenuItem } from "../components/Dialogs";
 import { photoMenuItems } from "./photoMenu";
@@ -77,7 +78,26 @@ import {
 import { makeDualActions, paneName, type DualContext } from "./dualActions";
 import { PaneContext } from "./PaneContext";
 import { useMigrationHost } from "./useMigrationHost";
-import { allGroups, groupLabel, groupOf, normalizeGroup, parentGroup, renamedOpen, renameGroup, ungroup, useOpenGroups, useRecentConnections, type GroupChanges } from "../connections/groups";
+import {
+  allGroups,
+  groupLabel,
+  groupOf,
+  inScope,
+  normalizeGroup,
+  parentGroup,
+  renamedOpen,
+  renameGroup,
+  revealKeys,
+  ungroup,
+  useOpenGroups,
+  useRecentConnections,
+  type GroupChanges,
+  type GroupNode,
+  type KindSection,
+} from "../connections/groups";
+
+/** The connection dialog: editing `profile`, or a new one (on `startKind`'s form, when given). */
+type ConnDialogAsk = { profile: Profile | null; reconnect?: boolean; startKind?: PickId };
 
 /** Gives a pane's file list keyboard focus (after a sidebar click the arrows should move in it). */
 export function focusPaneList(id: PaneId) {
@@ -180,11 +200,11 @@ export function AppShell() {
   const dualPreview = usePreviewLayout("s3b.preview.dual", false);
   const preview = dual ? dualPreview : singlePreview;
 
-  const [connDialog, setConnDialogState] = useState<{ profile: Profile | null; reconnect?: boolean } | null>(null);
+  const [connDialog, setConnDialogState] = useState<ConnDialogAsk | null>(null);
   const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   /** Opens the editor for a connection: Kybl Storage connections have their own (no keys to edit). */
-  const setConnDialog = useCallback((d: { profile: Profile | null; reconnect?: boolean } | null) => {
+  const setConnDialog = useCallback((d: ConnDialogAsk | null) => {
     if (d?.profile?.id === THIS_MAC.id) return; // built in: nothing to edit
     if (d?.profile?.provider === KYBL) setKyblDialog({ existing: d.profile, reconnect: d.reconnect });
     else setConnDialogState(d);
@@ -690,14 +710,16 @@ export function AppShell() {
     },
   });
 
-  // the connection in the pane in use: first in Recent, and its group folds open in the sidebar
+  // the connection in the pane in use: first in Recent, and its kind section and group fold open
+  // in the sidebar
   const activeProfile = active.profile;
   useEffect(() => {
     if (!activeProfile) return;
     recents.push(activeProfile.id);
-    openGroups.reveal(groupOf(activeProfile));
+    openGroups.reveal(revealKeys(profiles, activeProfile));
+    // (a section appears once there are a few of a kind: the count matters too)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProfile?.id, activeProfile?.group]);
+  }, [activeProfile?.id, activeProfile?.group, profiles.length]);
 
   /** A found or recent connection opens in the pane in use (or just takes the keyboard there, if it's already on screen). */
   const openConnection = (p: Profile) => {
@@ -726,7 +748,7 @@ export function AppShell() {
     if (g === groupOf(p)) return;
     void applyGroups({ [p.id]: g });
     // follow it there, so it's plain where it went
-    openGroups.reveal(g);
+    openGroups.reveal(revealKeys(profiles, { ...p, group: g }));
   };
   /** A connection's "Move to group" submenu: every group, the top level, or a new one. */
   const groupItems = (p: Profile): MenuItem[] => {
@@ -753,8 +775,12 @@ export function AppShell() {
       ...groups.map((g): MenuItem => ({ type: "item", label: groupLabel(g), icon: "folder", checked: g === cur || undefined, onClick: () => moveToGroup(p, g) })),
     ]);
   };
-  /** Right-click on a group's row in the sidebar. */
-  const groupMenu = (path: string, x: number, y: number) => {
+  /**
+   * Right-click on a group's row in the sidebar. A group inside a kind section ("Acme" under
+   * SFTP) changes for the connections listed there: what the row shows is what moves.
+   */
+  const groupMenu = (path: string, scope: string, x: number, y: number) => {
+    const listed = inScope(saved, scope);
     dialogs.menu(x, y, [
       {
         type: "item",
@@ -771,8 +797,8 @@ export function AppShell() {
               const to = normalizeGroup(v);
               if (!to || to === path) return;
               if (to.startsWith(`${path}/`)) return toast("info", "A group can’t go inside itself.");
-              void applyGroups(renameGroup(saved, path, to));
-              openGroups.update((cur) => renamedOpen(cur, path, to));
+              void applyGroups(renameGroup(listed, path, to));
+              openGroups.update((cur) => renamedOpen(cur, path, to, scope));
             },
           }),
       },
@@ -781,12 +807,49 @@ export function AppShell() {
         label: parentGroup(path) ? `Ungroup (move into ${groupLabel(parentGroup(path))})` : "Ungroup",
         icon: "arrow-up",
         onClick: () => {
-          void applyGroups(ungroup(saved, path));
-          openGroups.update((cur) => renamedOpen(cur, path, parentGroup(path)));
+          void applyGroups(ungroup(listed, path));
+          openGroups.update((cur) => renamedOpen(cur, path, parentGroup(path), scope));
         },
       },
       { type: "sep" },
-      { type: "item", label: "Collapse all groups", icon: "chevron", disabled: !openGroups.open.size, onClick: openGroups.collapseAll },
+      { type: "item", label: "Collapse all", icon: "chevron", disabled: !openGroups.open.size, onClick: openGroups.collapseAll },
+    ]);
+  };
+  /** Right-click on a kind section ("FTP"): fold everything shut, or add another of that kind. */
+  const sectionMenu = (s: KindSection, x: number, y: number) =>
+    dialogs.menu(x, y, [
+      { type: "item", label: openGroups.open.has(s.key) ? "Collapse" : "Expand", icon: "chevron", onClick: () => openGroups.toggle(s.key) },
+      { type: "item", label: "Collapse all", icon: "chevron", disabled: !openGroups.open.size, onClick: openGroups.collapseAll },
+      { type: "sep" },
+      { type: "item", label: `New ${s.label} connection…`, icon: "plus", onClick: () => setConnDialog({ profile: null, startKind: s.kind }) },
+    ]);
+  /**
+   * The folded rail's icon for a kind section: its connections in a menu (a submenu per group
+   * first, compact however long the list below them, then the connections at its top), the one on
+   * screen ticked.
+   */
+  const railSection = (s: KindSection, x: number, y: number) => {
+    const item = (p: Profile): MenuItem => ({ type: "item", label: p.name, checked: p.id === active.profile?.id || undefined, onClick: () => openConnection(p) });
+    // menus go one submenu deep: every group holding connections is one, by its whole path
+    const holding: GroupNode[] = [];
+    const walk = (n: GroupNode) => {
+      for (const g of n.groups) {
+        if (g.items.length) holding.push(g);
+        walk(g);
+      }
+    };
+    walk(s.tree);
+    const level = (n: GroupNode): MenuItem[] =>
+      tidyMenu([
+        ...holding.map((g): MenuItem => ({ type: "submenu", label: `${groupLabel(g.path)} (${g.items.length})`, icon: "folder", items: () => g.items.map(item) })),
+        holding.length > 0 && n.items.length > 0 && { type: "sep" },
+        ...n.items.map(item),
+      ]);
+    dialogs.menu(x, y, [
+      { type: "label", label: `${s.label} · ${s.tree.count}` },
+      ...level(s.tree),
+      { type: "sep" },
+      { type: "item", label: `New ${s.label} connection…`, icon: "plus", onClick: () => setConnDialog({ profile: null, startKind: s.kind }) },
     ]);
   };
 
@@ -1041,6 +1104,7 @@ export function AppShell() {
           onHover={sidePeek.hover}
           recent={recents.recent}
           onMore={findConnection}
+          onSection={railSection}
         />
       )}
       {(!sideHidden || sidePeek.open) && (
@@ -1091,6 +1155,7 @@ export function AppShell() {
             openGroups={openGroups.open}
             onToggleGroup={openGroups.toggle}
             onGroupMenu={groupMenu}
+            onSectionMenu={sectionMenu}
             onOpenConnection={openConnection}
             findSignal={findSignal}
             findOnMount={sideHidden && sidePeek.byFind}
@@ -1201,6 +1266,7 @@ export function AppShell() {
         <ConnectionDialog
           initial={connDialog.profile}
           reconnect={connDialog.reconnect}
+          startKind={connDialog.startKind}
           onClose={() => setConnDialog(null)}
           onKybl={() => {
             setConnDialog(null);
