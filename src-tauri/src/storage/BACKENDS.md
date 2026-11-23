@@ -51,8 +51,42 @@ Capabilities: real folders, native rename, range reads (REST), conditional write
 (`compare`), no server copy (copies go through Kybl). Uploads go to `.name.kybl-…` and are
 renamed onto the target (servers refusing dot names get the file written in place).
 
-Certificates: FTPS trusts the system's root certificates (Mozilla's on phones). A server with a
-self-signed certificate is refused with "The server's security certificate isn't trusted…".
+Certificates: FTPS trusts the system's root certificates (Mozilla's on phones), or the one
+certificate the user trusted (`certFingerprint`, below).
+
+### A server's own certificate (FTPS and WebDAV over https)
+
+| field | meaning |
+|---|---|
+| `certFingerprint` | SHA-256 of the server's leaf certificate, `AB:CD:…` (case, colons and a `SHA256:` prefix don't matter). Empty until the user trusts it |
+
+A server is accepted when its chain checks out as usual, or when its leaf certificate has the
+trusted fingerprint (its issuer, name and dates don't matter then, like FileZilla's trust). A
+certificate that fails the check fails the connection (`ErrKind::UntrustedCert`) with:
+
+```
+The server's security certificate isn't trusted. The server signed it itself. If you know this server, check its certificate and trust it to connect.
+
+cert-untrusted 94:55:1B:…:46:FD
+reason: self-signed, wrong-name
+host: 10.0.0.5
+name: ftp.example.com
+issuer: ftp.example.com
+valid-from: 2026-11-23
+valid-until: 2036-11-20
+tls: invalid peer certificate: …
+```
+
+`reason` lists `self-signed`, `unknown-issuer`, `wrong-name`, `expired`, `not-yet-valid` or
+`other`; `name`, `issuer` and the dates are left out when the certificate doesn't say. On "Trust",
+set `profile.net.certFingerprint` to the fingerprint and save/test again.
+
+When another certificate was trusted (`ErrKind::CertChanged`), the first line is
+`cert-changed <new fp> expected <saved fp>` and the message reads "The server's certificate changed
+since you trusted it. Someone may be intercepting the connection…". The user can still trust the new
+one. Errors without a certificate to trust keep "The server's security certificate isn't trusted.
+If the server uses its own certificate, Kybl can't connect to it securely." (Rust:
+`storage::certtrust`.)
 
 ## SFTP (`kind: "sftp"`)
 

@@ -2,8 +2,9 @@
 //!
 //! Encryption follows `NetConfig::tls`: `none` (plain FTP: the password and files cross the
 //! network readable by anyone on the way; the UI warns), `explicit` (AUTH TLS on port 21) or
-//! `implicit` (TLS from the first byte, port 990). Passive mode, with the usual fix for servers
-//! behind NAT that announce a private address. Names are UTF-8. Listings use MLSD where the server
+//! `implicit` (TLS from the first byte, port 990). A server's own certificate is trusted once the
+//! user has checked it (`NetConfig::cert_fingerprint`, see [`super::certtrust`]). Passive mode,
+//! with the usual fix for servers behind NAT that announce a private address. Names are UTF-8. Listings use MLSD where the server
 //! has it, else LIST.
 //!
 //! An FTP connection does one thing at a time, so a few are kept open and lent out: a read holds
@@ -37,6 +38,7 @@ use tokio::{
 };
 
 use super::{
+    certtrust::{self, Seen},
     net::*,
     sftp::replace::{put_in_place, Renames},
     *,
@@ -108,6 +110,8 @@ pub struct FtpBackend {
     plain_fallback: AtomicBool,
     user: String,
     password: String,
+    /// the server's own certificate, trusted by the user
+    cert_pin: Option<String>,
     base_cfg: String,
     /// the absolute folder keys are under, found at the first sign-in
     base: OnceCell<String>,
@@ -134,6 +138,7 @@ impl FtpBackend {
             plain_fallback: AtomicBool::new(false),
             user: cfg.user.trim().to_string(),
             password: password.unwrap_or_default(),
+            cert_pin: cfg.cert_fingerprint.clone().filter(|f| !f.trim().is_empty()),
             base_cfg: cfg.base_path.trim().to_string(),
             base: OnceCell::new(),
             feats: OnceCell::new(),
@@ -147,8 +152,10 @@ impl FtpBackend {
     async fn connect(&self) -> SResult<Ftp> {
         with_timeout(&self.host, CONNECT_TIMEOUT, async {
             let addr = addr_string(&self.host, self.port);
-            let tls = || AsyncRustlsConnector::from(suppaftp::tokio_rustls::TlsConnector::from(tls_config()));
-            let err = |e: FtpError| ftp_error(e, &self.host);
+            // a fresh TLS setup per connection, so a refused certificate is this connection's
+            let (tls_cfg, seen) = certtrust::client_config(self.cert_pin.as_deref());
+            let tls = || AsyncRustlsConnector::from(suppaftp::tokio_rustls::TlsConnector::from(tls_cfg.clone()));
+            let err = |e: FtpError| cert_refused(&e, &seen).unwrap_or_else(|| ftp_error(e, &self.host));
             let mut ftp = match self.tls {
                 TlsMode::None => Ftp::connect(&addr).await.map_err(err)?,
                 TlsMode::Explicit => Ftp::connect(&addr).await.map_err(err)?.into_secure(tls(), &self.host).await.map_err(|e| match e {
@@ -753,6 +760,15 @@ fn plain_temp_key(key: &str) -> String {
         _ if name.starts_with('.') => format!("{dir}kybl-{id}{name}"),
         _ => format!("{dir}{name}.kybl-{id}"),
     }
+}
+
+/// A handshake the certificate check stopped: the certificate, for the user to check and trust.
+/// (suppaftp keeps only the text of the TLS error, so the verifier leaves it in `seen`.)
+fn cert_refused(e: &FtpError, seen: &Seen) -> Option<StorageError> {
+    if !matches!(e, FtpError::SecureError(_)) {
+        return None;
+    }
+    seen.lock().unwrap().take().map(certtrust::Refusal::into_error)
 }
 
 /// FTP errors, said plainly.

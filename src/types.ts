@@ -49,6 +49,9 @@ export type NetConfig = {
   auth: "password" | "key" | "agent";
   /** SFTP: the server key's SHA-256 fingerprint, trusted on first use. */
   hostKey?: string | null;
+  /** FTPS and WebDAV over https: the SHA-256 fingerprint ("AB:CD:…") of the server's own
+   *  certificate, trusted although it doesn't check out. */
+  certFingerprint?: string | null;
   /** WebDAV: the full address, when given instead of host and port. */
   url?: string | null;
 };

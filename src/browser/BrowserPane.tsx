@@ -44,6 +44,8 @@ export type BrowserPaneProps = {
   dropUpload: boolean;
   /** the sidebar's note for a connection with no bucket open (and whether to offer to reconnect) */
   bucketNote: string | null;
+  /** the whole error behind the note (a server certificate to trust, say) */
+  bucketError?: string | null;
   bucketReconnect: boolean;
   empty: EmptyActions;
   /** drawn next to the list: the details pane in single-pane mode */
@@ -151,11 +153,11 @@ export function BrowserPane(p: BrowserPaneProps) {
       <div className="content" style={p.contentStyle}>
         <div className={`pane ${pane.compact ? "compact" : ""}`}>
           {!profile && <Welcome actions={p.empty} />}
-          {profile && bucket == null && <ChooseBucket profile={profile} note={p.bucketNote} reconnect={p.bucketReconnect} actions={p.empty} />}
+          {profile && bucket == null && <ChooseBucket profile={profile} note={p.bucketNote} error={p.bucketError} reconnect={p.bucketReconnect} actions={p.empty} />}
           {profile && bucket != null && (
             <>
               {listError && entries.length === 0 && !search ? (
-                <ListError profile={profile} error={listError} onRetry={ent.refresh} onReconnect={p.empty.onReconnect} />
+                <ListError profile={profile} error={listError} onRetry={ent.refresh} onReconnect={p.empty.onReconnect} onTrustCert={p.empty.onTrustCert} />
               ) : pane.view === "grid" ? (
                 <GridView
                   key={`${settings.binaryUnits}${settings.absoluteDates}${imageModes}`}

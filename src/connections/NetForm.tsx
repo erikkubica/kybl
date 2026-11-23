@@ -44,6 +44,9 @@ export function NetForm({
   const [hostKey, setHostKeyState] = useState<string | null>(start.hostKey ?? null);
   // read by draft() right after the dialog trusts a key, before the state update has rendered
   const hostKeyRef = useRef(hostKey);
+  // FTPS / WebDAV: the server's own certificate, once trusted (same timing as the host key)
+  const [certFp, setCertFpState] = useState<string | null>(start.certFingerprint ?? null);
+  const certFpRef = useRef(certFp);
   const keyFile = useRef<HTMLInputElement>(null);
   const [keyNote, setKeyNote] = useState<string | null>(null);
   const editing = !!initial;
@@ -58,6 +61,10 @@ export function NetForm({
     hostKeyRef.current = fp;
     setHostKeyState(fp);
   };
+  const setCertFingerprint = (fp: string | null) => {
+    certFpRef.current = fp;
+    setCertFpState(fp);
+  };
   // a trusted key belongs to one server: another address or port must be checked anew (back to
   // the saved address, the saved key holds again)
   const placeChanged = (h: string, p: string) => {
@@ -65,6 +72,18 @@ export function NetForm({
     const portOf = (n: number) => n || defaultPort(kind, tls);
     const same = h.trim().toLowerCase() === start.host.trim().toLowerCase() && portOf(Number(p.trim()) || 0) === portOf(start.port || 0);
     setHostKey(same ? (start.hostKey ?? null) : null);
+    setCertFingerprint(same ? (start.certFingerprint ?? null) : null);
+  };
+  /** WebDAV: the same for its address (another server, another certificate) */
+  const urlChanged = (u: string) => {
+    const hostOf = (s: string) => {
+      try {
+        return new URL(s.trim().replace(/^davs?:|^webdav:/i, "https:")).host.toLowerCase();
+      } catch {
+        return s.trim().toLowerCase();
+      }
+    };
+    setCertFingerprint(hostOf(u) === hostOf(davUrl(start)) ? (start.certFingerprint ?? null) : null);
   };
 
   // the saved key stays unless a new one is pasted; a connection that had none needs one now
@@ -105,6 +124,7 @@ export function NetForm({
         tls: kind === "webdav" ? (davInsecure ? "none" : "implicit") : kind === "sftp" ? "none" : tls,
         auth: kind === "sftp" ? auth : "password",
         hostKey: kind === "sftp" ? hostKeyRef.current : null,
+        certFingerprint: kind === "sftp" ? null : certFpRef.current,
         url: kind === "webdav" ? davHref : null,
       };
       const profile: Profile = { ...baseProfile(initial?.id ?? "", name.trim() || netTitle(kind, net), kind), net };
@@ -116,6 +136,7 @@ export function NetForm({
       return { profile, secret };
     },
     setHostKey,
+    setCertFingerprint,
   }));
 
   const readKeyFile = async (f: File | undefined) => {
@@ -146,7 +167,10 @@ export function NetForm({
           error={show("url")}
           hint="Nextcloud and ownCloud: the server's address is enough. Synology: include the WebDAV port, such as https://nas.local:5006."
         >
-          {(c) => <input {...c} className="mono" value={url} onChange={(e) => edit(setUrl)(e.target.value)} placeholder="https://cloud.example.com" inputMode="url" {...RAW} />}
+          {(c) => <input {...c} className="mono" value={url} onChange={(e) => {
+                edit(setUrl)(e.target.value);
+                urlChanged(e.target.value);
+              }} placeholder="https://cloud.example.com" inputMode="url" {...RAW} />}
         </Field>
       ) : (
         <>
@@ -301,6 +325,27 @@ export function NetForm({
             className="btn btn-sm btn-ghost"
             onClick={() => {
               setHostKey(null);
+              onEdit();
+            }}
+          >
+            Forget
+          </button>
+        </div>
+      )}
+      {kind !== "sftp" && certFp && (
+        <div className="conn-fp span2">
+          <Icon name="check-circle" size={14} />
+          <span>
+            Trusted server certificate
+            <code className="selectable" title={certFp}>
+              {certFp}
+            </code>
+          </span>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={() => {
+              setCertFingerprint(null);
               onEdit();
             }}
           >

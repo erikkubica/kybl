@@ -673,6 +673,14 @@ export function AppShell() {
     onReconnect: (p) => setConnDialog({ profile: p, reconnect: true }),
     onNewBucket: (p) => askNewBucket(p, id),
     onOpenBucketByName: (p) => askBucketName(p, id),
+    // a server's own certificate, trusted from its error: saved on the connection like any edit
+    onTrustCert: async (p, fp, reopen) => {
+      if (!p.net) return;
+      const saved = await api.saveProfile({ ...p, net: { ...p.net, certFingerprint: fp } });
+      forgetCaps(saved.id);
+      conns.upsertProfile(saved);
+      if (reopen) await connectIn(id, saved);
+    },
   });
 
   /** "Mount as drive…" for a bucket ("" = the whole connection) */
@@ -884,6 +892,7 @@ export function AppShell() {
     onTogglePreview: preview.togglePreview,
     dropUpload: dropOver === p.id,
     bucketNote: (p.profile && conns.bucketsBy[p.profile.id]?.note) || null,
+    bucketError: (p.profile && conns.bucketsBy[p.profile.id]?.error) || null,
     bucketReconnect: !!(p.profile && conns.bucketsBy[p.profile.id]?.reconnect),
     empty: emptyFor(p.id),
     // one pane: a click splits it, as the dual pane button always did; more: the panes menu

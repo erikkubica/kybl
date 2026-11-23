@@ -19,6 +19,8 @@ const profiles: Profile[] = [
   { id: "p3", name: "Local MinIO", provider: "custom", endpoint: "http://localhost:9000", region: "us-east-1", accessKeyId: "minio", bucket: null, pathStyle: true },
   // A3: a server (one root, no bucket level) and a cloud drive (a few named roots, from the WP-A2 block)
   { id: "n1", name: "Web server", kind: "sftp", provider: "sftp", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, net: { host: "files.example.com", port: 0, user: "deploy", basePath: "/var/www", tls: "none", auth: "password", hostKey: "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8", url: null } },
+  // an FTPS server with its own certificate (see OWN_CERT below): "Trust this certificate…"
+  { id: "n2", name: "Office NAS", kind: "ftp", provider: "ftp", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, net: { host: "nas.example.com", port: 0, user: "office", basePath: "", tls: "explicit", auth: "password", hostKey: null, certFingerprint: null, url: null } },
   { id: "g1", name: "Google Drive (demo@gmail.com)", kind: "gdrive", provider: "gdrive", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, cloud: { accountEmail: "demo@gmail.com", accountId: "1001", clientId: null, tenant: null, scopes: ["drive"] } },
 ];
 
@@ -384,9 +386,27 @@ function otherCaps(p: Profile): Capabilities {
   };
 }
 const HOST_KEY_UNKNOWN = "Kybl hasn't connected to this server before. Check that the server's fingerprint matches, then trust it to connect.\n\nhost-key-unknown SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8";
-/** What connecting to a non-S3 connection says: host keys, unknown hosts, wrong passwords. */
+/**
+ * A server with its own certificate: FTP and WebDAV hosts named "nas.…" (like Office NAS) answer
+ * with it until it's trusted; hosts with "changed" in the name present another one than the
+ * trusted one. Wording as src-tauri/src/storage/certtrust.rs.
+ */
+const OWN_CERT = { fp: "94:55:1B:95:48:5F:AF:F2:72:2A:C5:BA:1C:1C:6E:2E:CA:AD:A1:C4:BC:20:2E:10:23:52:03:58:07:3B:46:FD", name: "nas.local", issuer: "nas.local", from: "2026-11-23", until: "2036-11-20" };
+function ownCertCheck(host: string, pin: string | null | undefined) {
+  const norm = (s: string) => s.replace(/[^0-9a-f]/gi, "").toUpperCase();
+  if (pin && norm(pin) === norm(OWN_CERT.fp)) return;
+  const name = host.replace(/^\w+:\/\//, "").split(/[/:]/)[0];
+  const detail = (first: string) =>
+    `${first}\nreason: self-signed, wrong-name\nhost: ${name}\nname: ${OWN_CERT.name}\nissuer: ${OWN_CERT.issuer}\nvalid-from: ${OWN_CERT.from}\nvalid-until: ${OWN_CERT.until}\ntls: invalid peer certificate: certificate refused`;
+  if (!pin)
+    throw `The server's security certificate isn't trusted. The server signed it itself. It's made out to ${OWN_CERT.name}, not ${name}. If you know this server, check its certificate and trust it to connect.\n\n${detail(`cert-untrusted ${OWN_CERT.fp}`)}`;
+  throw `The server's certificate changed since you trusted it. Someone may be intercepting the connection, so Kybl didn't connect. If you know it was renewed or replaced, check the new one and trust it.\n\n${detail(`cert-changed ${OWN_CERT.fp} expected ${pin}`)}`;
+}
+
+/** What connecting to a non-S3 connection says: host keys, certificates, unknown hosts, wrong passwords. */
 function otherConnect(p: Profile, secret: string | null) {
   const n = p.net;
+  if ((p.kind === "ftp" || p.kind === "webdav") && n && /(^|\/\/)nas\./.test(n.host || n.url || "")) ownCertCheck(n.host || n.url || "", n.certFingerprint);
   if (p.kind === "sftp" && n) {
     // a host with "changed" in its name pretends to have been reinstalled since it was trusted
     if (/changed/.test(n.host) && n.hostKey && n.hostKey !== "SHA256:Zm9yZ2VkLWtleS1mb3ItdGhlLWNoYW5nZWQtc2VydmVy")

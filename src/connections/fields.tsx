@@ -138,4 +138,6 @@ export type FormApi = {
   draft(): Draft | null;
   /** SFTP: remember a fingerprint the user trusted (or forget it with null). */
   setHostKey?(fp: string | null): void;
+  /** FTPS / WebDAV: remember a server certificate the user trusted (or forget it with null). */
+  setCertFingerprint?(fp: string | null): void;
 };
