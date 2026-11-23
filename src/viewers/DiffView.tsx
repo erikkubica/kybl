@@ -11,6 +11,7 @@ import { formatBytes } from "../format";
 import { decodeText } from "./text";
 import { diffIds, tokenIds, toRows, wordDiff, type Piece, type Row } from "./myers";
 import { DIFF_MAX_BYTES, type DiffSide } from "./diff";
+import { eolDifference, eolOf } from "./eol";
 import { Note, Segmented, ToolButton } from "./ui";
 import "./viewers.css";
 import "./diff.css";
@@ -59,7 +60,6 @@ const splitLines = (t: string) => {
   if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
   return lines;
 };
-const eolOf = (t: string) => (t.includes("\r\n") ? "CRLF" : t.includes("\r") ? "CR" : t.includes("\n") ? "LF" : null);
 
 /** What's drawn: rows, and folded stretches of unchanged rows. */
 type Item = { row: Row; i: number } | { fold: [number, number] };
@@ -109,7 +109,9 @@ export function DiffView({ left, right, title, onClose }: { left: DiffSide; righ
       if (r.t !== "del") added++;
       if (i === 0 || rows[i - 1].t === "same") hunks.push(i);
     });
-    return { a, b, rows, hunks, added, removed, eol: [eolOf(texts[0]), eolOf(texts[1])] as const, sameText: texts[0] === texts[1] };
+    const sameText = texts[0] === texts[1];
+    const eolNote = sameText || hunks.length ? "" : eolDifference(texts[0], texts[1]);
+    return { a, b, rows, hunks, added, removed, eol: [eolOf(texts[0]), eolOf(texts[1])] as const, sameText, eolNote };
   }, [texts?.[0], texts?.[1], prefs.ignoreWs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // folds: unchanged stretches longer than the context on both sides
@@ -268,7 +270,7 @@ export function DiffView({ left, right, title, onClose }: { left: DiffSide; righ
         <p>
           <strong>{diff.sameText ? "The files are identical." : "No differences."}</strong>
         </p>
-        {!diff.sameText && <p>{prefs.ignoreWs ? "They differ only in spaces and tabs." : diff.eol[0] !== diff.eol[1] ? `They differ only in line endings (${diff.eol[0]} and ${diff.eol[1]}).` : "They differ only in how lines end."}</p>}
+        {!diff.sameText && <p>{prefs.ignoreWs ? "They differ only in spaces and tabs." : diff.eolNote}</p>}
       </Note>
     );
   else

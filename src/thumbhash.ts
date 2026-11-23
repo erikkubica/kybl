@@ -252,6 +252,8 @@ async function mayHead(profileId: string, e: Entry): Promise<boolean> {
 // ---------------------------------------------------------------- loading one
 
 const inflight = new Map<string, Promise<string | null | undefined>>();
+/** each caller's "still wanted" check for a request in flight (several tiles can share one) */
+const wanters = new Map<string, Array<() => boolean>>();
 
 /**
  * The placeholder of a photo, from wherever it is known (see the top of this file): a data URL,
@@ -262,7 +264,12 @@ export function loadPlaceholder(profileId: string, bucket: string, e: Entry, sti
   if (now !== undefined) return Promise.resolve(now);
   const k = keyOf(profileId, bucket, e);
   const existing = inflight.get(k);
-  if (existing) return existing;
+  if (existing) {
+    // joining: the request goes ahead while any of its tiles still wants it
+    wanters.get(k)?.push(stillWanted);
+    return existing;
+  }
+  wanters.set(k, [stillWanted]);
   const p = (async () => {
     try {
       if (!localMissed.has(k)) {
@@ -281,7 +288,7 @@ export function loadPlaceholder(profileId: string, bucket: string, e: Entry, sti
       if (!(await mayHead(profileId, e))) return null;
       await headSlot();
       try {
-        if (!stillWanted()) return undefined;
+        if (!wanters.get(k)?.some((f) => f())) return undefined;
         let h: string | null;
         try {
           h = await api.placeholderHead(profileId, bucket, itemOf(e));
@@ -296,6 +303,7 @@ export function loadPlaceholder(profileId: string, bucket: string, e: Entry, sti
       }
     } finally {
       inflight.delete(k);
+      wanters.delete(k);
     }
   })();
   inflight.set(k, p);

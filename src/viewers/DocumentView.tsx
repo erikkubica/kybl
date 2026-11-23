@@ -265,7 +265,8 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
         // ⌘W closes the document (asking about unsaved changes), not the app's window
         e.preventDefault();
         if (!conflict && !asking) void requestClose();
-      } else if (e.key === "Escape" && !e.defaultPrevented && !conflict && !asking) {
+      } else if (e.key === "Escape" && !e.defaultPrevented && !conflict && !asking && !document.querySelector(".modal-backdrop")) {
+        // (a dialog over the editor takes its own Esc)
         e.preventDefault();
         void requestClose();
       }

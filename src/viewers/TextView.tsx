@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { CodeEditor, type CodeEditorApi } from "./CodeEditor";
 import { ToolButton } from "./ui";
 import { compactJson, formatJson } from "./jsonFormat";
+import { describeJsonError } from "./jsonCheck";
 import type { ViewerProps } from "./types";
 
 type JsonState = { ok: true } | { ok: false; message: string } | null;
@@ -17,7 +18,7 @@ function checkJson(text: string, lines: boolean): JsonState {
       try {
         JSON.parse(all[i]);
       } catch (e) {
-        return { ok: false, message: `Line ${i + 1}: ${(e as Error).message}` };
+        return { ok: false, message: describeJsonError(all[i], (e as Error).message, i + 1) };
       }
     }
     return { ok: true };
@@ -26,18 +27,8 @@ function checkJson(text: string, lines: boolean): JsonState {
     JSON.parse(text);
     return { ok: true };
   } catch (e) {
-    return { ok: false, message: lineOf(text, (e as Error).message) };
+    return { ok: false, message: describeJsonError(text, (e as Error).message) };
   }
-}
-
-/** "Unexpected token } in JSON at position 120" → "Line 7: Unexpected token }…". */
-function lineOf(text: string, message: string): string {
-  const m = /position (\d+)/.exec(message) ?? /column (\d+)/.exec(message);
-  const lineCol = /line (\d+)/.exec(message);
-  if (lineCol) return message;
-  if (!m) return message;
-  const line = text.slice(0, Number(m[1])).split("\n").length;
-  return `Line ${line}: ${message.replace(/ in JSON at position \d+.*$/, "")}`;
 }
 
 /** Keeps the file's own indentation width when formatting (2 spaces when it has none). */
@@ -80,7 +71,7 @@ export default function TextView({ kind, name, text, editable, mode, onEdit, onS
         : formatJson(valid(src), indentOf(src)) + (src.endsWith("\n") ? "\n" : "");
       if (out !== src) ed.setText(out);
     } catch (e) {
-      setJson({ ok: false, message: lineOf(src, (e as Error).message) });
+      setJson({ ok: false, message: describeJsonError(src, (e as Error).message) });
     }
   };
 

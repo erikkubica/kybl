@@ -8,11 +8,12 @@ import { listen } from "@tauri-apps/api/event";
 import { api, errMessage } from "../api";
 import type { TransferEvent } from "../types";
 
-type Source = { profileId: string; bucket: string; key: string; name: string; etag?: string | null; size: number };
+type Source = { profileId: string; bucket: string; key: string; name: string; etag?: string | null; size: number; modified?: number | null };
 
 /** Files already fetched this session, so Share after Open in… doesn't download twice. */
 const done = new Map<string, string>();
-const idOf = (s: Source) => `${s.profileId}|${s.bucket}|${s.key}|${s.etag ?? ""}|${s.size}`;
+// with the modified time too: FTP, SFTP and WebDAV often give no etag, and an edit can keep the size
+const idOf = (s: Source) => `${s.profileId}|${s.bucket}|${s.key}|${s.etag ?? ""}|${s.size}|${s.modified ?? ""}`;
 
 export type LocalCopy = {
   /** the local path once it is there */

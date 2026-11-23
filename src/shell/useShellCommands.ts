@@ -46,7 +46,8 @@ export function useShellCommands({
 
   const route = (id: string): boolean => {
     // a menu item (or the mouse's back button) while the editor is up: it closes first, asking
-    // about unsaved changes, and the command runs once it really did
+    // about unsaved changes, and the command runs once it really did. (On macOS a menu item's
+    // accelerator key goes to the editor instead and never gets here: useShortcuts.)
     if (editorOpen()) {
       void closeEditor().then((closed) => closed && route(id));
       return true;

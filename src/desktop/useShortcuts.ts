@@ -6,7 +6,7 @@
  */
 import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { MENU_ACCELERATORS, MENU_OWNS_SHORTCUTS } from "./menus";
+import { MENU_ACCELERATORS, MENU_OWNS_SHORTCUTS, menuKeydown } from "./menus";
 
 export type ShortcutOptions = {
   /** runs a command by id; false when it didn't (a dialog is up, or it doesn't apply) */
@@ -147,7 +147,20 @@ export function useShortcuts(opts: ShortcutOptions) {
       if (t.closest?.("input, textarea, [contenteditable=true]") || window.getSelection()?.toString()) return;
       e.preventDefault();
     };
-    const offs = [listen<string>("menu", (e) => void o.current.route(String(e.payload))), listen("app-resumed", () => o.current.onResume())];
+    const onMenu = (id: string) => {
+      // the full editor or a preview has the keyboard: a menu-bar accelerator (macOS takes those
+      // keys before the page) goes back to it as the key, and never acts behind it
+      const { muted, overlayUp } = o.current;
+      if (MENU_OWNS_SHORTCUTS && id !== "settings" && (muted?.() || overlayUp())) {
+        const init = menuKeydown(id);
+        if (init) {
+          (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", init));
+          return;
+        }
+      }
+      o.current.route(id);
+    };
+    const offs = [listen<string>("menu", (e) => onMenu(String(e.payload))), listen("app-resumed", () => o.current.onResume())];
     // A clicked button doesn't take the keyboard (as in Finder): focus stays on the list, so Space
     // and Enter go on acting on the selected file instead of pressing that button again. Dialogs
     // and menus keep ordinary focus (their buttons are part of a keyboard flow); Tab still reaches
