@@ -17,7 +17,7 @@ use tauri::{
 };
 
 /// Item ids passed to the page as they are.
-const PAGE_ITEMS: [&str; 40] = [
+const PAGE_ITEMS: &[&str] = &[
     "duplicate",
     "edit",
     "new-connection",
