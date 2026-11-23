@@ -8,6 +8,9 @@
 //! are patterns, not hosts, and aren't listed. `Match` blocks are skipped: what they'd apply
 //! depends on things only known when connecting.
 //!
+//! `LocalForward` lines become the connection's SSH tunnels (every one that applies, as ssh adds
+//! them all up); `ProxyJump` and `ProxyCommand` aren't supported and are noted.
+//!
 //! Private keys are never read here: a host's `IdentityFile` is only noted, and the import reads
 //! the key into the vault the way it does for FileZilla's key files.
 
@@ -156,6 +159,38 @@ fn settings_for<'a>(alias: &str, blocks: &'a [Block]) -> HashMap<&'a str, &'a [S
     out
 }
 
+/// Every value of a setting that adds up rather than taking the first (`LocalForward`), in the
+/// order the sections that apply give them.
+fn all_for<'a>(alias: &str, blocks: &'a [Block], key: &str) -> Vec<&'a [String]> {
+    blocks
+        .iter()
+        .filter(|b| b.patterns.as_deref().is_none_or(|p| host_matches(alias, p)))
+        .flat_map(|b| b.settings.iter().filter(|(k, _)| k == key).map(|(_, v)| v.as_slice()))
+        .collect()
+}
+
+/// A host's `LocalForward`s as tunnels (one per local port, the first one winning as in ssh),
+/// with notes on what doesn't carry over.
+fn forwards(alias: &str, blocks: &[Block], s: &mut ImportedSite) {
+    for args in all_for(alias, blocks, "localforward") {
+        match crate::tunnels::parse_local_forward(args) {
+            Ok(f) if s.tunnels.iter().any(|t| t.local_port == f.def.local_port) => {
+                s.notes.push(format!("LocalForward {} repeats local port {}: left out", args.join(" "), f.def.local_port));
+            }
+            Ok(mut f) => {
+                f.def.id = format!("lf{}", f.def.local_port);
+                s.tunnels.push(f.def);
+                s.notes.extend(f.note);
+            }
+            Err(e) => s.notes.push(e),
+        }
+    }
+    if !s.tunnels.is_empty() {
+        let n = s.tunnels.len();
+        s.notes.push(if n == 1 { "1 SSH tunnel (LocalForward)".into() } else { format!("{n} SSH tunnels (LocalForward)") });
+    }
+}
+
 fn site(alias: &str, blocks: &[Block], env: &Env, seen: &mut HashMap<u64, u32>) -> ImportedSite {
     let set = settings_for(alias, blocks);
     let first = |k: &str| set.get(k).and_then(|v| v.first()).map(String::as_str);
@@ -189,6 +224,7 @@ fn site(alias: &str, blocks: &[Block], env: &Env, seen: &mut HashMap<u64, u32>) 
     if set.get("proxycommand").is_some_and(|v| v.first().is_some_and(|c| !c.eq_ignore_ascii_case("none"))) {
         s.notes.push("Uses a ProxyCommand, which Kybl doesn't support: it connects directly".into());
     }
+    forwards(alias, blocks, &mut s);
     s
 }
 
@@ -532,6 +568,50 @@ Host *
         assert!(hints.is_empty());
         // an empty file is fine
         assert!(run("", &[]).0.is_empty());
+    }
+
+    // Synthetic too: LocalForward in its forms, adding up across the sections that apply.
+    const FORWARDS: &str = r#"
+Host bastion
+  HostName gw.example.com
+  LocalForward 5433 db.internal:5432
+  LocalForward 127.0.0.1:8080 localhost:80
+  LocalForward 0.0.0.0:6380 [fd00::7]:6379
+  LocalForward /tmp/pg.sock /var/run/postgresql/.s.PGSQL.5432
+  LocalForward 5433 other.internal:5432
+  LocalForward 9000 not-a-port
+  ProxyJump jump.example.com
+
+Host *.example.com bastion
+  LocalForward 3000 app.internal:3000
+
+Host plain
+"#;
+
+    #[test]
+    fn local_forwards_become_tunnels() {
+        let (sites, _) = run(FORWARDS, &[]);
+        let b = by_name(&sites, "bastion");
+        let routes: Vec<(u16, &str, u16)> = b.tunnels.iter().map(|t| (t.local_port, t.remote_host.as_str(), t.remote_port)).collect();
+        assert_eq!(routes, [(5433, "db.internal", 5432), (8080, "localhost", 80), (6380, "fd00::7", 6379), (3000, "app.internal", 3000)]);
+        assert!(b.tunnels.iter().all(|t| t.id == format!("lf{}", t.local_port) && !t.auto_start && t.name.is_empty()));
+        let has = |part: &str| b.notes.iter().any(|n| n.contains(part));
+        assert!(has("0.0.0.0:6380") && has("127.0.0.1 only"), "{:?}", b.notes);
+        assert!(has("Unix socket"));
+        assert!(has("repeats local port 5433"));
+        assert!(has("9000 not-a-port"));
+        assert!(has("4 SSH tunnels"));
+        // tunnels don't make ProxyJump work: still noted
+        assert!(has("ProxyJump"));
+        assert!(by_name(&sites, "plain").tunnels.is_empty());
+
+        // and they're saved with the connection
+        let (mapped, _) = super::super::plan(&sites, std::slice::from_ref(&b.id), &[]);
+        let net = mapped[0].profile.net.as_ref().unwrap();
+        assert_eq!(net.tunnels, b.tunnels);
+        let mut saved = net.tunnels.clone();
+        crate::tunnels::tidy(&mut saved).unwrap();
+        assert_eq!(saved, b.tunnels, "imported tunnels pass the form's checks as they are");
     }
 
     #[test]

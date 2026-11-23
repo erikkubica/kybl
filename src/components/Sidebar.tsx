@@ -12,6 +12,7 @@ import type { Favorite } from "../settings";
 import type { MountInfo } from "../api";
 import { findMount } from "../mount/useMounts";
 import { driveBadgeTitle } from "../mount/driveMenu";
+import { TunnelBadge } from "../tunnels/TunnelBadge";
 import {
   FILTER_MIN,
   RECENT_MIN,
@@ -818,6 +819,7 @@ function SidebarConnection({
           {p.name}
         </span>
         <DriveBadge m={findMount(mounts, p.id, "", "")} onMenu={onDriveMenu} />
+        {p.kind === "sftp" && <TunnelBadge p={p} />}
         {/* an icon, not a word: the sidebar is narrow and the name must stay readable */}
         {authNeeded && onSignInAgain && (
           <button

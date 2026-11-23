@@ -97,6 +97,7 @@ If the server uses its own certificate, Kybl can't connect to it securely." (Rus
 | `auth` | `"password"`, `"key"` or `"agent"` (computers only: `SSH_AUTH_SOCK` on macOS/Linux, the OpenSSH agent pipe or Pageant on Windows) |
 | `basePath` | starting folder: absolute, or relative to the home folder (empty = home). It must exist |
 | `hostKey` | the trusted server key fingerprint, `SHA256:…` as `ssh-keygen -l` prints it. Empty until the user trusts the server |
+| `tunnels` | SSH tunnels (local port forwards): `[{id, name, localPort, remoteHost, remotePort, autoStart}]`, left out when empty. `save_profile` trims and checks them (and gives new ones an id). Run with `tunnel_start` / `tunnel_stop` / `tunnel_list` (desktop), status in `tunnel-status` events; see `src-tauri/src/tunnels` |
 
 Secrets:
 

@@ -19,7 +19,7 @@ const profiles: Profile[] = [
   { id: "p2", name: "AWS production", provider: "aws", endpoint: "https://s3.eu-central-1.amazonaws.com", region: "eu-central-1", accessKeyId: "DEMOKEY", bucket: null, pathStyle: false },
   { id: "p3", name: "Local MinIO", provider: "custom", endpoint: "http://localhost:9000", region: "us-east-1", accessKeyId: "minio", bucket: null, pathStyle: true },
   // A3: a server (one root, no bucket level) and a cloud drive (a few named roots, from the WP-A2 block)
-  { id: "n1", name: "Web server", kind: "sftp", provider: "sftp", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, group: "Servers", net: { host: "files.example.com", port: 0, user: "deploy", basePath: "/var/www", tls: "none", auth: "password", hostKey: "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8", url: null } },
+  { id: "n1", name: "Web server", kind: "sftp", provider: "sftp", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, group: "Servers", net: { host: "files.example.com", port: 0, user: "deploy", basePath: "/var/www", tls: "none", auth: "password", hostKey: "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8", url: null, tunnels: [{ id: "pg", name: "Postgres", localPort: 5433, remoteHost: "db.internal", remotePort: 5432, autoStart: true }, { id: "admin", name: "Admin panel (flaky)", localPort: 8080, remoteHost: "localhost", remotePort: 80, autoStart: false }, { id: "redis", name: "", localPort: 6380, remoteHost: "10.0.0.7", remotePort: 6379, autoStart: false }] } },
   // an FTPS server with its own certificate (see OWN_CERT below): "Trust this certificate…"
   { id: "n2", name: "Office NAS", kind: "ftp", provider: "ftp", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, group: "Servers", net: { host: "nas.example.com", port: 0, user: "office", basePath: "", tls: "explicit", auth: "password", hostKey: null, certFingerprint: null, url: null } },
   // Mirror: the live site of the web project in ~/Sites/acme
@@ -143,7 +143,7 @@ function mockSshSites(): ImportSite[] {
   return [
     site("web", { host: "files.example.com", user: "deploy", duplicateOf: "Web server", notes: ["Key file id_web"] }),
     site("web-alias", { host: "files.example.com", port: 2222, user: "deploy", notes: ["Key file id_web"] }),
-    site("db", { host: "10.0.0.5", notes: ["Key file id_ed25519", "Goes through bastion.example.com (ProxyJump), which Kybl doesn't support: it connects directly"] }),
+    site("db", { host: "10.0.0.5", notes: ["Key file id_ed25519", "Goes through bastion.example.com (ProxyJump), which Kybl doesn't support: it connects directly", "2 SSH tunnels (LocalForward)"] }),
     site("nas", { host: "nas.home.test", user: "admin", auth: "agent", notes: ["Signs in with the SSH agent"] }),
     site("old-box", { host: "old.example.net", notes: ["Key file not found: choose the key after import"], needsSecret: true }),
     site("build", { host: "build.example.org", user: "ci", notes: ["Key file id_build has a passphrase: enter it after import"], needsSecret: true }),
@@ -718,6 +718,9 @@ async function handle(cmd: string, a: any): Promise<unknown> {
   }
   // terminal panes: a fake shell (src/terminal/devTerminal.ts)
   if (cmd.startsWith("terminal_")) return (await import("./terminal/devTerminal")).handleTerminal(cmd, a, profiles);
+  // SSH tunnels (src/tunnels/devTunnels.ts); opening a connection starts its auto-start ones
+  if (cmd.startsWith("tunnel_")) return (await import("./tunnels/devTunnels")).handleTunnel(cmd, a, profiles);
+  if (cmd === "list_roots") void import("./tunnels/devTunnels").then((m) => m.autostart(a.profileId, profiles));
   if (a?.profileId === LOCAL) {
     const r = await handleLocal(cmd, a);
     if (r !== undefined) return r;
