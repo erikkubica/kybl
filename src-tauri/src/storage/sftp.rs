@@ -444,6 +444,27 @@ impl SftpBackend {
         .await
     }
 
+    /// What a write to `path` replaces, as `cp` treats it: a link (to a file inside this
+    /// connection's folder) is followed, so the file it points at is updated and the link stays a
+    /// link; and the replaced file's permission bits, so a 0600 secret or a 0755 script keeps them.
+    async fn replacing(&self, root: &str, path: &str) -> SResult<(String, Option<u32>)> {
+        let bits = |m: FileAttributes| m.permissions.map(|p| p & 0o7777);
+        // (one LSTAT for the usual cases: nothing there, or a plain file)
+        let Some(own) = self.link_metadata(self.path(path).await?).await? else { return Ok((path.to_string(), None)) };
+        if !own.is_symlink() {
+            return Ok((path.to_string(), if own.is_dir() { None } else { bits(own) }));
+        }
+        let mut key = path.to_string();
+        if let Ok(e) = self.resolve_link(root, path).await
+            && !e.is_dir()
+            && !e.key.is_empty()
+        {
+            key = e.key;
+        }
+        let mode = self.metadata(self.path(&key).await?).await?.filter(|m| !m.is_dir()).and_then(bits);
+        Ok((key, mode))
+    }
+
     /// The attributes of `path` itself, not of what a link there points at.
     async fn link_metadata(&self, path: String) -> SResult<Option<FileAttributes>> {
         let r = self
@@ -801,6 +822,9 @@ impl Storage for SftpBackend {
                 return Ok(WriteOutcome::Conflict(now));
             }
         }
+        let asked = path;
+        let (resolved, old_mode) = self.replacing(root, path).await?;
+        let path = resolved.as_str();
         self.ensure_dir(&parent_key(path)).await?;
         let target = self.path(path).await?;
         // an interrupted upload carries on in its temporary file, from the bytes already there
@@ -846,13 +870,39 @@ impl Storage for SftpBackend {
                     .with_detail(format!("{} bytes on the server instead of {want}", got.unwrap_or(0))));
             }
         }
+        // the new file takes the permissions of the one it replaces
+        if let Some(mode) = old_mode {
+            let t = tmp.clone();
+            let _ = self
+                .with(move |c| {
+                    let p = t.clone();
+                    Box::pin(async move { c.sftp.set_metadata(p, FileAttributes { permissions: Some(mode), ..FileAttributes::empty() }).await })
+                })
+                .await;
+        }
+        // "only if nothing is there" holds to the end: a plain rename refuses a file that turned
+        // up during the upload
+        if opts.precondition == Precondition::IfNoneMatch {
+            if let Err(e) = self.rename_over(tmp.clone(), target, false).await {
+                self.remove_quietly(tmp).await;
+                return match self.stat(root, path).await? {
+                    Some(now) => Ok(WriteOutcome::Conflict(Some(now))),
+                    None => Err(e.error),
+                };
+            }
+            self.pages.forget(path);
+            self.pages.forget(asked);
+            let entry = self.stat(root, asked).await?.unwrap_or_else(|| Entry { key: asked.to_string(), size: len.unwrap_or(0) as i64, ..Default::default() });
+            return Ok(WriteOutcome::Done(entry));
+        }
         // the temporary file is kept when it can't go in place: it may be all there is of the
         // new version, and the old one is never deleted before the new one is there
         if let Err(e) = self.rename_over(tmp.clone(), target, true).await {
             return Err(e.explain(Some(file_name(&tmp))));
         }
         self.pages.forget(path);
-        let entry = self.stat(root, path).await?.unwrap_or_else(|| Entry { key: path.to_string(), size: len.unwrap_or(0) as i64, ..Default::default() });
+        self.pages.forget(asked);
+        let entry = self.stat(root, asked).await?.unwrap_or_else(|| Entry { key: asked.to_string(), size: len.unwrap_or(0) as i64, ..Default::default() });
         Ok(WriteOutcome::Done(entry))
     }
 

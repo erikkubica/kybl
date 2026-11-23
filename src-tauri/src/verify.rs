@@ -256,22 +256,41 @@ async fn remote(app: &AppHandle, conn: &Conn, profile_id: &str, bucket: &str, ke
     }
 }
 
+/// Why a check didn't pass: only a `Mismatch` says the copy is different; `Unverified` means the
+/// check itself couldn't run (network, a refused HEAD, the local file unreadable), so the copy
+/// may well be fine and must not be thrown away.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CheckErr {
+    Unverified(String),
+    Mismatch(String),
+}
+
+impl std::fmt::Display for CheckErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CheckErr::Unverified(e) => write!(f, "Couldn't check the copy: {e}"),
+            CheckErr::Mismatch(e) => f.write_str(e),
+        }
+    }
+}
+
 /// Checks a transferred file as the settings ask. Ok(None): not checked (verify is off).
-pub async fn check(app: &AppHandle, conn: &Conn, profile_id: &str, bucket: &str, key: &str, local: &Path, part_size: Option<u64>) -> Result<Option<Checked>, String> {
+pub async fn check(app: &AppHandle, conn: &Conn, profile_id: &str, bucket: &str, key: &str, local: &Path, part_size: Option<u64>) -> Result<Option<Checked>, CheckErr> {
     let mode = crate::tuning::verify_mode();
     if mode == VerifyMode::Off {
         return Ok(None);
     }
     let checksum = mode == VerifyMode::Checksum;
-    let local_size = tokio::fs::metadata(local).await.map_err(|e| e.to_string())?.len();
-    let r = remote(app, conn, profile_id, bucket, key, checksum, part_size).await.map_err(|e| format!("Couldn't check the copy: {e}"))?;
+    let unverified = |e: String| CheckErr::Unverified(e);
+    let local_size = tokio::fs::metadata(local).await.map_err(|e| unverified(e.to_string()))?.len();
+    let r = remote(app, conn, profile_id, bucket, key, checksum, part_size).await.map_err(unverified)?;
     let l = if checksum {
         let (path, rr) = (local.to_path_buf(), r.clone());
-        tokio::task::spawn_blocking(move || hash_file(&path, &rr)).await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?
+        tokio::task::spawn_blocking(move || hash_file(&path, &rr)).await.map_err(|e| unverified(e.to_string()))?.map_err(|e| unverified(e.to_string()))?
     } else {
         Local::default()
     };
-    judge(&r, &l, local_size).map(Some)
+    judge(&r, &l, local_size).map(Some).map_err(CheckErr::Mismatch)
 }
 
 #[cfg(test)]

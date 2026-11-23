@@ -72,12 +72,18 @@ pub fn http() -> reqwest::Client {
 /// An HTTP client with the usual settings and the given TLS setup (WebDAV: its own, which may
 /// trust the server's certificate).
 pub fn http_with(tls: &rustls::ClientConfig) -> reqwest::Client {
+    http_waiting(tls, Duration::from_secs(120))
+}
+
+/// The same, waiting up to `read` for the server to say anything (WebDAV MOVE/COPY and chunk
+/// assembly can be silent for minutes while the server works).
+pub fn http_waiting(tls: &rustls::ClientConfig, read: Duration) -> reqwest::Client {
     reqwest::Client::builder()
         .tls_backend_preconfigured(tls.clone())
         .user_agent(concat!("Kybl/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(CONNECT_TIMEOUT)
         // no whole-request timeout: uploads of big files take as long as they take
-        .read_timeout(Duration::from_secs(120))
+        .read_timeout(read)
         // some servers drop idle connections without a word; don't reuse stale ones
         .pool_idle_timeout(Duration::from_secs(30))
         .tcp_keepalive(Duration::from_secs(30))
@@ -295,12 +301,11 @@ impl PageCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = SResult<(Vec<String>, Vec<Entry>, Vec<Entry>)>>,
     {
-        let kept = if token.is_some() {
+        let kept = {
+            // expired listings go on every call, not only on paged ones
             let mut m = self.inner.lock().unwrap();
             m.retain(|_, (at, _)| at.elapsed() < Self::KEEP);
-            m.get(dir).map(|(_, l)| l.clone())
-        } else {
-            None
+            if token.is_some() { m.get(dir).map(|(_, l)| l.clone()) } else { None }
         };
         let listing = match kept {
             Some(l) => l,

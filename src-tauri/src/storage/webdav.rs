@@ -30,6 +30,8 @@ const PART: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'.').remove(b'_')
 /// Nextcloud and ownCloud take bigger uploads in chunks; smaller ones go in one PUT.
 const CHUNKED_ABOVE: u64 = 64 * 1024 * 1024;
 const CHUNK_SIZE: usize = 16 * 1024 * 1024;
+/// How long a MOVE or COPY may stay silent while the server works (a big copy, chunk assembly).
+const PATIENT: Duration = Duration::from_secs(30 * 60);
 
 const PROPS: &str = r#"<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/><d:getetag/><d:getcontenttype/></d:prop></d:propfind>"#;
 const QUOTA_PROPS: &str = r#"<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:quota-available-bytes/><d:quota-used-bytes/></d:prop></d:propfind>"#;
@@ -51,6 +53,8 @@ pub fn webdav_caps() -> Capabilities {
 
 pub struct WebdavBackend {
     client: reqwest::Client,
+    /// for MOVE and COPY, which the server may answer only once it has done the work
+    patient: reqwest::Client,
     /// addresses to try, best first, until one answers as a WebDAV folder
     candidates: Vec<Url>,
     /// the one that did, ending with `/`
@@ -90,8 +94,10 @@ impl WebdavBackend {
         };
         // its own client: it may trust the server's own certificate (see `certtrust`)
         let pin = cfg.cert_fingerprint.as_deref().filter(|f| !f.trim().is_empty());
+        let tls = certtrust::client_config(pin).0;
         Ok(Self {
-            client: http_with(&certtrust::client_config(pin).0),
+            client: http_with(&tls),
+            patient: http_waiting(&tls, PATIENT),
             candidates,
             base: OnceCell::new(),
             user: cfg.user.trim().to_string(),
@@ -104,7 +110,16 @@ impl WebdavBackend {
     }
 
     fn req(&self, method: Method, url: Url) -> RequestBuilder {
-        let r = self.client.request(method, url);
+        self.req_on(&self.client, method, url)
+    }
+
+    /// A MOVE or COPY: waits as long as the server takes to move or put a big file together.
+    fn moving(&self, method: &[u8], url: Url) -> RequestBuilder {
+        self.req_on(&self.patient, Method::from_bytes(method).expect("method"), url)
+    }
+
+    fn req_on(&self, client: &reqwest::Client, method: Method, url: Url) -> RequestBuilder {
+        let r = client.request(method, url);
         if self.user.is_empty() { r } else { r.basic_auth(&self.user, self.password.as_deref()) }
     }
 
@@ -191,6 +206,15 @@ impl WebdavBackend {
         } else {
             Self::entry(k.to_string(), &i)
         }))
+    }
+
+    /// A file never replaces a folder: with `Overwrite: T` the server would delete the whole
+    /// collection (RFC 4918 9.9.3) to make room for it.
+    async fn refuse_folder_at(&self, key: &str) -> SResult<()> {
+        match self.stat_url(key.trim_end_matches('/')).await? {
+            Some(e) if e.is_dir() => Err(StorageError::new(ErrKind::Exists, "A folder with this name is already there.")),
+            _ => Ok(()),
+        }
     }
 
     fn remember_dir(&self, key: &str) {
@@ -299,6 +323,8 @@ impl WebdavBackend {
     ) -> SResult<Response> {
         let dir = uploads.join(&format!("kybl-{}/", uuid::Uuid::new_v4().simple())).map_err(|e| StorageError::other(e.to_string()))?;
         let dest_s = dest.to_string();
+        // the final MOVE timed out: the server may still be putting the file together
+        let mut assembling = false;
         let resp = self
             .req(Method::from_bytes(b"MKCOL").expect("method"), dir.clone())
             .header("Destination", &dest_s)
@@ -356,17 +382,21 @@ impl WebdavBackend {
             meter.finish();
             headers.insert("OC-Total-Length", total.into());
             let file = dir.join(".file").map_err(|e| StorageError::other(e.to_string()))?;
-            self.req(Method::from_bytes(b"MOVE").expect("method"), file)
+            self.moving(b"MOVE", file)
                 .headers(headers)
                 .header("Destination", &dest_s)
                 .header("Overwrite", "T")
                 .send()
                 .await
-                .map_err(http_error)
+                .map_err(|e| {
+                    assembling = e.is_timeout();
+                    http_error(e)
+                })
         }
         .await;
         let ok = matches!(&result, Ok(r) if r.status().is_success());
-        if !ok {
+        // (left to the server then: deleting the parts could break the file it is making)
+        if !ok && !assembling {
             let _ = self.req(Method::DELETE, dir).send().await;
         }
         result.map_err(|e| or_cancelled(e, cancel))
@@ -384,8 +414,11 @@ impl WebdavBackend {
             return Err(StorageError::other("Cannot copy a folder into itself"));
         }
         self.ensure_dir(&parent_key(&dst)).await?;
+        if !is_dir {
+            self.refuse_folder_at(&dst).await?;
+        }
         let mut req = self
-            .req(Method::from_bytes(method).expect("method"), self.url(&src).await?)
+            .moving(method, self.url(&src).await?)
             .header("Destination", self.url(&dst).await?.to_string())
             // a file replaces what is there (like S3); a folder never silently replaces another
             .header("Overwrite", if is_dir { "F" } else { "T" });
@@ -399,7 +432,7 @@ impl WebdavBackend {
             self.known_dirs.lock().unwrap().retain(|d| !d.starts_with(&src));
         }
         match resp.status() {
-            s if s.is_success() => Ok(()),
+            s if s.is_success() => whole_success(resp, if method == b"MOVE" { "move" } else { "copy" }).await,
             StatusCode::PRECONDITION_FAILED => Err(StorageError::exists()),
             _ => Err(status_error(resp, if method == b"MOVE" { "move" } else { "copy" }).await),
         }
@@ -566,6 +599,7 @@ impl Storage for WebdavBackend {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(WriteOutcome::Cancelled);
         }
+        self.refuse_folder_at(path).await?;
         let (body, len) = source_stream(src).await?;
         let url = self.url(path).await?;
         let base = self.base().await?.clone();
@@ -600,7 +634,7 @@ impl Storage for WebdavBackend {
             s if s.is_success() => {
                 if let Some(t) = &tmp {
                     let moved = self
-                        .req(Method::from_bytes(b"MOVE").expect("method"), self.url(t).await?)
+                        .moving(b"MOVE", self.url(t).await?)
                         .header("Destination", url.to_string())
                         .header("Overwrite", "T")
                         .send()
@@ -650,7 +684,9 @@ impl Storage for WebdavBackend {
             if !resp.status().is_success() && resp.status() != StatusCode::NOT_FOUND {
                 return Err(status_error(resp, "delete").await);
             }
+            let partly = whole_success(resp, "delete").await;
             self.pages.forget(&k);
+            partly?;
             if is_dir {
                 self.known_dirs.lock().unwrap().retain(|d| !d.starts_with(&k));
             }
@@ -933,6 +969,48 @@ pub(crate) fn http_error(e: reqwest::Error) -> StorageError {
 }
 
 /// A refused request, said plainly; `what` is the action ("upload", "delete").
+/// A 207 answer to DELETE, MOVE or COPY lists what failed inside the folder (a locked or
+/// read-only member): the first `<status>` that isn't 2xx, with its href. None when all went.
+fn multistatus_failure(xml: &str) -> Option<String> {
+    use quick_xml::{events::Event, Reader};
+    let mut r = Reader::from_str(xml);
+    let (mut href, mut text) = (String::new(), String::new());
+    loop {
+        match r.read_event().ok()? {
+            Event::Start(_) => text.clear(),
+            Event::Text(t) => text.push_str(&t.xml10_content()),
+            Event::End(e) => {
+                match e.local_name().as_ref() {
+                    "href" => href = text.trim().to_string(),
+                    "status" => {
+                        // "HTTP/1.1 423 Locked"
+                        let code = text.split_whitespace().nth(1).and_then(|c| c.parse::<u16>().ok());
+                        if code.is_some_and(|c| !(200..300).contains(&c)) {
+                            return Some(format!("{href}: {}", text.trim()));
+                        }
+                    }
+                    _ => {}
+                }
+                text.clear();
+            }
+            Event::Eof => return None,
+            _ => {}
+        }
+    }
+}
+
+/// Success, or for a 207 the members that failed said as an error.
+async fn whole_success(resp: Response, what: &str) -> SResult<()> {
+    if resp.status() != StatusCode::MULTI_STATUS {
+        return Ok(());
+    }
+    let body = resp.text().await.unwrap_or_default();
+    match multistatus_failure(&body) {
+        None => Ok(()),
+        Some(first) => Err(StorageError::other(format!("The server couldn't {what} everything inside: something there is locked or read-only.")).with_detail(first)),
+    }
+}
+
 async fn status_error(resp: Response, what: &str) -> StorageError {
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
@@ -1017,6 +1095,16 @@ mod tests {
         assert!(items[2].is_dir);
         assert_eq!(items[2].quota_used, Some(5));
         assert_eq!(items[2].quota_available, Some(-3));
+    }
+
+    /// A 207 to DELETE/MOVE/COPY that lists a failed member is a failure, not a success.
+    #[test]
+    fn partial_multistatus_is_a_failure() {
+        let failed = r#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/f/locked.txt</d:href><d:status>HTTP/1.1 423 Locked</d:status></d:response></d:multistatus>"#;
+        assert_eq!(multistatus_failure(failed).as_deref(), Some("/dav/f/locked.txt: HTTP/1.1 423 Locked"));
+        let fine = r#"<?xml version="1.0"?><multistatus xmlns="DAV:"><response><href>/dav/f/</href><status>HTTP/1.1 204 No Content</status></response></multistatus>"#;
+        assert_eq!(multistatus_failure(fine), None);
+        assert_eq!(multistatus_failure(""), None);
     }
 
     #[test]

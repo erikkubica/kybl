@@ -155,6 +155,8 @@ pub(crate) type Hold<'a> = Option<&'a (dyn Fn(u64, u64) + Send + Sync)>;
 /// How many times in a row a download picks up again after the connection drops, waiting a
 /// little longer each time (1 s, 2 s, 4 s … up to 30 s) before it gives up.
 const RESUME_ATTEMPTS: u32 = 8;
+/// A download whose connection sends nothing for this long is taken as dropped and resumed.
+const STALL: Duration = Duration::from_secs(60);
 
 /// The wait before resume attempt `n` (1-based).
 fn resume_delay(n: u32) -> Duration {
@@ -257,7 +259,24 @@ async fn download_to(
     let result: Result<bool, String> = async {
         let mut failures = 0u32;
         loop {
-            match out.body.try_next().await {
+            // the read races Pause/Cancel, and a connection silent for `STALL` (a dead Wi-Fi, a
+            // NAT that dropped the flow) counts as dropped, so the resume below picks it up
+            let deadline = tokio::time::Instant::now() + STALL;
+            let next = loop {
+                tokio::select! {
+                    r = tokio::time::timeout_at(deadline, out.body.try_next()) => break r,
+                    _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                        if cancel.load(Ordering::Relaxed) {
+                            return Ok(false);
+                        }
+                    }
+                }
+            };
+            let next = match next {
+                Ok(r) => r.map_err(err),
+                Err(_) => Err("The connection stopped sending data.".to_string()),
+            };
+            match next {
                 Ok(Some(chunk)) => {
                     if cancel.load(Ordering::Relaxed) {
                         return Ok(false);
@@ -303,7 +322,7 @@ async fn download_to(
                 Err(e) => loop {
                     failures += 1;
                     if failures > RESUME_ATTEMPTS || (total > 0 && got >= total) {
-                        return Err(err(e));
+                        return Err(e);
                     }
                     tokio::time::sleep(resume_delay(failures)).await;
                     if cancel.load(Ordering::Relaxed) {
@@ -319,7 +338,7 @@ async fn download_to(
                             break;
                         }
                         // the server ignored the range and sent the whole file again: can't resume
-                        Ok(_) => return Err(err(e)),
+                        Ok(_) => return Err(e),
                         Err(again) if failures >= RESUME_ATTEMPTS => return Err(sdk_err(again)),
                         Err(_) => continue,
                     }
@@ -774,12 +793,19 @@ async fn spawn_transfer(
         if let (Ok(Outcome::Done), Some(path)) = (&result, &local_done) {
             match crate::verify::check(&app, &conn, &profile_id, &bucket, &key, path, verify_part_size).await {
                 Ok(c) => checked = c,
-                Err(e) => {
+                Err(e @ crate::verify::CheckErr::Mismatch(_)) => {
                     if matches!(kind, Kind::Download { .. }) {
                         // a download that came out different is no use to anyone
                         let _ = tokio::fs::remove_file(path).await;
                     }
                     result = Err(format!("{e} Retry to transfer it again."));
+                }
+                // the check itself couldn't run: nothing says the copy is wrong, so it stays
+                Err(e @ crate::verify::CheckErr::Unverified(_)) => {
+                    result = Err(match kind {
+                        Kind::Download { .. } => format!("{e} The downloaded file was kept; Retry to download and check it again."),
+                        Kind::Upload => format!("{e} Retry to transfer it again."),
+                    });
                 }
             }
         }
@@ -928,12 +954,18 @@ pub async fn start_download(
     }
     let overwrite = overwrite.unwrap_or(false);
     let kept = PENDING_DOWNLOADS.lock().unwrap().remove(&id);
+    // a retry carrying on from its partial file: kept again when it can't even start
+    let mut retried: Option<PendingDownload> = None;
     let (chosen, resume_etag) = match kept {
         // the same download again: same name, carrying on from its partial file (unless another
         // download took the name meanwhile, or a file turned up there)
         Some(p) if p.profile_id == profile_id && p.bucket == bucket && p.key == key && p.requested == dest_path && dest::resume(&p.chosen, &id) => {
             let (chosen, partial) = dest::recheck_retry(p.chosen, &wanted, overwrite);
-            (chosen, if partial { p.etag } else { None })
+            let etag = if partial { p.etag } else { None };
+            if partial {
+                retried = Some(PendingDownload { profile_id: p.profile_id, bucket: p.bucket, key: p.key, requested: p.requested, chosen: chosen.clone(), etag: etag.clone() });
+            }
+            (chosen, etag)
         }
         other => {
             if let Some(p) = other {
@@ -944,9 +976,19 @@ pub async fn start_download(
     };
     let local = chosen.to_string_lossy().into_owned();
     let kind = Kind::Download { resume: resume_etag.is_some() };
-    if let Err(e) = spawn_transfer(app, &state, kind, id, profile_id, bucket, key, local.clone(), dest_path, overwrite, resume_etag, listed).await {
-        dest::release(&chosen);
-        let _ = std::fs::remove_file(dest::part_path(&chosen));
+    if let Err(e) = spawn_transfer(app, &state, kind, id.clone(), profile_id, bucket, key, local.clone(), dest_path, overwrite, resume_etag, listed).await {
+        match retried {
+            // couldn't start (offline, server down, keychain locked): the partial file stays for
+            // the next Retry, as it was
+            Some(p) => {
+                dest::park(&chosen, &id);
+                PENDING_DOWNLOADS.lock().unwrap().insert(id, p);
+            }
+            None => {
+                dest::release(&chosen);
+                let _ = std::fs::remove_file(dest::part_path(&chosen));
+            }
+        }
         return Err(e);
     }
     Ok(local)

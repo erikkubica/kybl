@@ -52,6 +52,8 @@ const MAX_CONNS: usize = 4;
 /// An idle connection older than this is checked with NOOP before it is lent again.
 const IDLE_CHECK: Duration = Duration::from_secs(30);
 const CMD_TIMEOUT: Duration = Duration::from_secs(60);
+/// Starts the version tags `read` makes from SIZE and MDTM (listings make their own).
+const MDTM_TAG: &str = "mdtm:";
 
 pub fn ftp_caps() -> Capabilities {
     Capabilities {
@@ -73,11 +75,15 @@ pub fn ftp_caps() -> Capabilities {
 #[derive(Clone, Copy, Debug, Default)]
 struct Feats {
     mlsd: bool,
+    /// MFMT: a file's modification time can be set
+    mfmt: bool,
 }
 
 struct Pool {
     idle: Mutex<Vec<(Ftp, Instant)>>,
     slots: Arc<Semaphore>,
+    /// streaming reads: one fewer than `slots`
+    readers: Arc<Semaphore>,
 }
 
 /// A lent connection; it goes back to the pool when dropped, unless something went wrong on it.
@@ -86,6 +92,8 @@ struct Lease {
     pool: Arc<Pool>,
     healthy: bool,
     _permit: OwnedSemaphorePermit,
+    /// held by a streaming read until its body is done
+    _reader: Option<OwnedSemaphorePermit>,
 }
 
 impl Lease {
@@ -145,7 +153,7 @@ impl FtpBackend {
             base: OnceCell::new(),
             feats: OnceCell::new(),
             caps: ftp_caps(),
-            pool: Arc::new(Pool { idle: Mutex::default(), slots: Arc::new(Semaphore::new(MAX_CONNS)) }),
+            pool: Arc::new(Pool { idle: Mutex::default(), slots: Arc::new(Semaphore::new(MAX_CONNS)), readers: Arc::new(Semaphore::new(MAX_CONNS - 1)) }),
             pages: PageCache::default(),
             known_dirs: Mutex::default(),
         })
@@ -198,7 +206,7 @@ impl FtpBackend {
             if !self.feats.initialized() {
                 let f = ftp.feat().await.unwrap_or_default();
                 let has = |k: &str| f.keys().any(|x| x.eq_ignore_ascii_case(k));
-                let _ = self.feats.set(Feats { mlsd: has("MLST") || has("MLSD") });
+                let _ = self.feats.set(Feats { mlsd: has("MLST") || has("MLSD"), mfmt: has("MFMT") });
             }
             if !self.base.initialized() {
                 let base = if self.base_cfg.starts_with('/') {
@@ -226,11 +234,11 @@ impl FtpBackend {
             let idle = self.pool.idle.lock().unwrap().pop();
             let Some((mut c, at)) = idle else { break };
             if at.elapsed() < IDLE_CHECK || tokio::time::timeout(Duration::from_secs(10), c.noop()).await.is_ok_and(|r| r.is_ok()) {
-                return Ok(Lease { conn: Some(c), pool: self.pool.clone(), healthy: true, _permit: permit });
+                return Ok(Lease { conn: Some(c), pool: self.pool.clone(), healthy: true, _permit: permit, _reader: None });
             }
         }
         let c = self.connect().await?;
-        Ok(Lease { conn: Some(c), pool: self.pool.clone(), healthy: true, _permit: permit })
+        Ok(Lease { conn: Some(c), pool: self.pool.clone(), healthy: true, _permit: permit, _reader: None })
     }
 
     /// Runs `f` on a connection, with a time limit; a connection that failed isn't reused, and an
@@ -273,7 +281,11 @@ impl FtpBackend {
     /// The folder `dir` (a server path), straight from the server: each name's fields, and the
     /// permissions, owner, group and link target its line gives.
     async fn list_raw(&self, path: &str) -> SResult<Vec<(FtpFile, Entry)>> {
-        let mlsd = self.feats.get().is_some_and(|f| f.mlsd);
+        self.list_raw_as(path, self.feats.get().is_some_and(|f| f.mlsd)).await
+    }
+
+    /// `mlsd`: false lists with LIST, the only listing that always shows links as links.
+    async fn list_raw_as(&self, path: &str, mlsd: bool) -> SResult<Vec<(FtpFile, Entry)>> {
         let path = path.to_string();
         let lines = self
             .run(move |ftp, _| {
@@ -353,10 +365,19 @@ impl FtpBackend {
     /// Deletes a folder and everything in it, depth first.
     fn remove_tree<'a>(&'a self, path: String, cancel: &'a AtomicBool) -> BoxFuture<'a, SResult<()>> {
         Box::pin(async move {
-            for (f, _) in self.list_raw(&path).await? {
+            let items = self.list_raw(&path).await?;
+            // some servers' MLSD calls a link to a folder a folder: LIST tells, so a link is
+            // removed as a link and the folder it points at is never emptied
+            let mlsd = self.feats.get().is_some_and(|f| f.mlsd);
+            let links: HashSet<String> = if mlsd && items.iter().any(|(f, _)| f.is_directory()) {
+                self.list_raw_as(&path, false).await.unwrap_or_default().into_iter().filter(|(f, _)| f.is_symlink()).map(|(f, _)| f.name().to_string()).collect()
+            } else {
+                HashSet::new()
+            };
+            for (f, _) in items {
                 check_cancel(cancel)?;
                 let child = format!("{}/{}", path.trim_end_matches('/'), f.name());
-                if f.is_directory() {
+                if f.is_directory() && !links.contains(f.name()) {
                     self.remove_tree(child, cancel).await?;
                 } else {
                     self.run(move |ftp, _| {
@@ -509,15 +530,21 @@ impl Storage for FtpBackend {
             return Err(StorageError::other("This is a folder, not a file."));
         }
         let mut etag = None;
-        if let Some(t) = if_match {
+        // a version tag this read gave out itself (size and MDTM) is checked on the connection
+        let own = if_match.filter(|t| t.starts_with(MDTM_TAG));
+        if let Some(t) = if_match.filter(|t| !t.starts_with(MDTM_TAG)) {
             let now = self.stat(root, path).await?.ok_or_else(StorageError::not_found)?;
             if now.etag.as_deref() != Some(t) {
                 return Err(StorageError::conflict());
             }
             etag = now.etag;
         }
+        // streaming reads hold their connection until the body is read: they may take all but
+        // one, so a write fed by them (a copy within this server) always gets a connection
+        let reader = self.pool.readers.clone().acquire_owned().await.map_err(|_| dropped())?;
         let full = self.path(path).await?;
         let mut lease = self.lease().await?;
+        lease._reader = Some(reader);
         let total = match tokio::time::timeout(CMD_TIMEOUT, lease.ftp().size(&full)).await {
             Ok(Ok(n)) => Some(n as u64),
             Ok(Err(FtpError::UnexpectedResponse(r))) if matches!(r.status.code(), 550 | 551) => {
@@ -525,6 +552,18 @@ impl Storage for FtpBackend {
             }
             _ => None,
         };
+        // without one asked for, a tag of its own (one MDTM), so a download can resume
+        if etag.is_none()
+            && let Some(n) = total
+            && let Ok(Ok(m)) = tokio::time::timeout(CMD_TIMEOUT, lease.ftp().mdtm(&full)).await
+        {
+            etag = Some(format!("{MDTM_TAG}{n:x}-{m}"));
+        }
+        if let Some(t) = own
+            && etag.as_deref() != Some(t)
+        {
+            return Err(StorageError::conflict());
+        }
         let (start, end) = match &range {
             Some(r) => {
                 let end = total.map_or(r.end, |t| r.end.min(t));
@@ -629,7 +668,7 @@ impl Storage for FtpBackend {
         }
         // and some only take certain names (extensions): write in place as a last resort
         let mut direct = None;
-        if temp_refused(&stored) && offset.is_none() {
+        if name_refused(&stored) && offset.is_none() {
             let existed = self.stat(root, path).await?.is_some();
             direct = Some(existed);
             stored = self.store(&target, &mut body, len, None, progress, cancel).await;
@@ -674,6 +713,19 @@ impl Storage for FtpBackend {
             // deleted before the new one is there
             put_in_place(self, &tmp_key, path, &backup).await.map_err(|e| e.explain(Some(file_name(&tmp_key))))?;
         }
+        // the copy keeps the original's time where the server can set it (MFMT, in UTC)
+        if let Some(ms) = opts.modified
+            && self.feats.get().is_some_and(|f| f.mfmt)
+        {
+            let when: String = super::extras::format_rfc3339(ms).chars().filter(char::is_ascii_digit).collect();
+            let t = target.clone();
+            let _ = self
+                .run(move |ftp, _| {
+                    let cmd = format!("MFMT {when} {t}");
+                    Box::pin(async move { ftp.custom_command(cmd, &[suppaftp::Status::File]).await.map(|_| ()) })
+                })
+                .await;
+        }
         self.pages.forget(path);
         let entry = self.stat(root, path).await?.unwrap_or_else(|| Entry { key: path.to_string(), size: len.unwrap_or(0) as i64, ..Default::default() });
         Ok(WriteOutcome::Done(entry))
@@ -710,11 +762,20 @@ impl Storage for FtpBackend {
                 })
                 .await
             };
+            let k = if is_dir { dir_prefix(key) } else { key.clone() };
             match r {
                 Err(e) if e.kind != ErrKind::NotFound => return Err(e),
-                _ => {}
+                // many servers answer a bare 550 to a refused delete too ("Delete operation
+                // failed", a folder not empty): gone only when it really isn't there any more
+                Err(e) => {
+                    if self.stat(_root, &k).await?.is_some() {
+                        self.pages.forget(&k);
+                        return Err(StorageError::new(ErrKind::Other, "The server didn't delete this. It may not allow it, or something inside couldn't be deleted.")
+                            .with_detail(e.detail.unwrap_or(e.message)));
+                    }
+                }
+                Ok(()) => {}
             }
-            let k = if is_dir { dir_prefix(key) } else { key.clone() };
             self.pages.forget(&k);
             self.known_dirs.lock().unwrap().retain(|d| !d.starts_with(&k));
             done += 1;
@@ -816,6 +877,18 @@ enum Stored {
 /// "no such file" for a hidden name): another name may work, and the body is still unread.
 fn temp_refused(stored: &SResult<Stored>) -> bool {
     matches!(stored, Ok(Stored::Refused(e)) if matches!(e.kind, ErrKind::PermissionDenied | ErrKind::NotFound))
+}
+
+/// Stricter, for the last resort of writing in place (which truncates the old file on open):
+/// only a refusal that is clearly about the name, never one about space or quota.
+fn name_refused(stored: &SResult<Stored>) -> bool {
+    let Ok(Stored::Refused(e)) = stored else { return false };
+    let text = format!("{} {}", e.message, e.detail.as_deref().unwrap_or_default()).to_lowercase();
+    if ["space", "quota", "disk", "full", "exceed", "storage"].iter().any(|w| text.contains(w)) {
+        return false;
+    }
+    let about_name = ["name", "extension", "not allowed", "denied", "permission"].iter().any(|w| text.contains(w));
+    e.kind == ErrKind::PermissionDenied || (e.kind == ErrKind::NotFound && about_name && !text.contains("no such"))
 }
 
 /// Whether what a STOR that didn't finish left is removed (`direct`: written in place, and
@@ -947,6 +1020,23 @@ mod tests {
         assert!(!temp_refused(&refused(ErrKind::Other)), "out of space isn't about the name");
         assert!(!temp_refused(&Err(StorageError::new(ErrKind::PermissionDenied, "x"))), "refused mid-way: the body is spent");
         assert!(!temp_refused(&Ok(Stored::Done)));
+    }
+
+    /// Writing in place truncates the old file, so it only follows a refusal about the name.
+    #[test]
+    fn only_a_name_refusal_writes_in_place() {
+        let refused = |code: Status, text: &str| {
+            let r = suppaftp::types::Response::new(code, text.as_bytes().to_vec());
+            Ok(Stored::Refused(ftp_error(FtpError::UnexpectedResponse(r), "h")))
+        };
+        assert!(name_refused(&refused(Status::BadFilename, "553 Could not create file.")));
+        assert!(name_refused(&refused(Status::FileUnavailable, "550 Permission denied")));
+        assert!(name_refused(&refused(Status::FileUnavailable, "550 Filename not allowed")));
+        assert!(!name_refused(&refused(Status::FileUnavailable, "550 file: No space left on device")), "out of space");
+        assert!(!name_refused(&refused(Status::FileUnavailable, "550 Quota exceeded, permission denied")), "over quota");
+        assert!(!name_refused(&refused(Status::FileUnavailable, "550 Could not open file")), "a bare 550 says nothing about the name");
+        assert!(!name_refused(&refused(Status::FileUnavailable, "550 No such file or directory")));
+        assert!(!name_refused(&Ok(Stored::Done)));
     }
 
     #[test]

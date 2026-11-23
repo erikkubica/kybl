@@ -397,6 +397,8 @@ pub(crate) async fn copy_through(s: &dyn Storage, from: &Loc, to: &Loc, is_dir: 
     }
     s.mkdir(&to.root, &to.path).await?;
     let mut walk = s.walk(&from.root, &from.path);
+    // links this connection can't make (FTP): never left out without a word
+    let mut skipped = Vec::new();
     while let Some(batch) = walk.next().await {
         for e in batch? {
             if cancel.load(Ordering::Relaxed) {
@@ -407,6 +409,11 @@ pub(crate) async fn copy_through(s: &dyn Storage, from: &Loc, to: &Loc, is_dir: 
                 // a link to a folder stays a link (the walk doesn't go into it)
                 if s.caps().links {
                     s.make_link(&to.root, &dst, target).await?;
+                } else if !e.is_dir() {
+                    // a link to a file: what it points at is copied, as a download would get it
+                    copy_file(e.key, dst).await?;
+                } else {
+                    skipped.push(e.key);
                 }
             } else if e.is_dir() {
                 s.mkdir(&to.root, &dst).await?;
@@ -414,6 +421,9 @@ pub(crate) async fn copy_through(s: &dyn Storage, from: &Loc, to: &Loc, is_dir: 
                 copy_file(e.key, dst).await?;
             }
         }
+    }
+    if !skipped.is_empty() {
+        return Err(StorageError::other(format!("Copied, except {} link(s) to folders this connection can't make.", skipped.len())).with_detail(skipped.join("\n")));
     }
     Ok(())
 }

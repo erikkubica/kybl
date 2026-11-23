@@ -384,7 +384,15 @@ impl Storage for S3Backend {
                         return Ok(WriteOutcome::Cancelled);
                     }
                     buf.extend_from_slice(&chunk?);
+                    if buf.len() as u64 > n {
+                        break;
+                    }
                     progress(buf.len() as u64, n);
+                }
+                // a source that ended early (or ran over) without an error isn't uploaded as if whole
+                if buf.len() as u64 != n {
+                    return Err(StorageError::other("The file changed while it was being copied.")
+                        .with_detail(format!("expected {n} bytes, read {}", buf.len())));
                 }
                 if let Some(conflict) = self.put_bytes(root, path, Bytes::from(buf), &opts).await? {
                     return Ok(conflict);

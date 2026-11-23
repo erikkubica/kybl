@@ -123,6 +123,12 @@ fn upload_gone(e: &StorageError) -> bool {
     e.to_string().contains("NoSuchUpload")
 }
 
+/// True when the object is stored with KMS or customer-key encryption, whose ETags aren't MD5s
+/// of the content even though they look like one.
+fn sse_etag(sse: Option<&aws_sdk_s3::types::ServerSideEncryption>, customer_alg: Option<&str>) -> bool {
+    customer_alg.is_some() || sse.is_some_and(|s| s.as_str().starts_with("aws:kms"))
+}
+
 fn damaged() -> StorageError {
     StorageError::other("The copy didn't arrive intact, so it will be sent again.")
 }
@@ -227,7 +233,10 @@ async fn put_single(
         .await
         .map_err(sdk_err)?;
     let etag = out.e_tag().map(bare).unwrap_or_default();
-    if etag_is_md5 && is_md5_hex(&etag) && etag != md5_hex(&digest) {
+    // KMS and customer-key encryption make ETags that aren't the content's MD5 (Content-MD5 above
+    // already had the server check the bytes)
+    let encrypted = sse_etag(out.server_side_encryption(), out.sse_customer_algorithm());
+    if etag_is_md5 && !encrypted && is_md5_hex(&etag) && etag != md5_hex(&digest) {
         return Err(damaged());
     }
     Ok(etag)
@@ -459,6 +468,7 @@ pub async fn upload_stream(
     let etag = out.e_tag().map(bare).unwrap_or_default();
     let etags: Vec<String> = parts.values().map(|p| p.1.clone()).collect();
     if etag_is_md5
+        && !sse_etag(out.server_side_encryption(), None)
         && let Some(expected) = multipart_etag(&etags)
         && etag.contains('-')
         && etag != expected
@@ -654,6 +664,12 @@ async fn send_sequential(
                 // all of it fits in one request
                 drop(permit);
                 let n = data.len() as u64;
+                // ...unless the length was known and the source ended before it
+                if let Some(want) = len
+                    && want != n
+                {
+                    return Err(StorageError::other("The file changed while it was being copied.").with_detail(format!("expected {want} bytes, read {n}")));
+                }
                 let sent = Arc::new(AtomicU64::new(0));
                 let etag = ticking(put_single(client, bucket, key, content_type, data, etag_is_md5, sent.clone()), || {
                     progress(sent.load(Ordering::Relaxed).min(n), n)
@@ -755,6 +771,49 @@ mod tests {
                 assert_eq!(sent.load(Ordering::Relaxed), got as u64);
             }
             assert_eq!(got, data.len());
+        });
+    }
+
+    #[test]
+    fn encrypted_objects_skip_the_etag_md5_check() {
+        use aws_sdk_s3::types::ServerSideEncryption as Sse;
+        assert!(sse_etag(Some(&Sse::AwsKms), None));
+        assert!(sse_etag(Some(&Sse::AwsKmsDsse), None));
+        assert!(sse_etag(None, Some("AES256")), "customer key");
+        assert!(!sse_etag(Some(&Sse::Aes256), None), "SSE-S3 ETags are still MD5s");
+        assert!(!sse_etag(None, None));
+    }
+
+    fn mock_backend(endpoint: &str) -> S3Backend {
+        let p = crate::state::Profile {
+            id: "s3".into(),
+            name: "s3".into(),
+            provider: "custom".into(),
+            endpoint: endpoint.into(),
+            region: "us-east-1".into(),
+            access_key_id: "testkey".into(),
+            path_style: true,
+            ..Default::default()
+        };
+        S3Backend::new(crate::state::build_client(&p, "testsecret"), &p)
+    }
+
+    /// A source that ends early without an error is never uploaded as if it were whole: neither
+    /// a small one (one PUT) nor a big one whose end comes inside its first part.
+    #[test]
+    fn a_source_that_ends_early_is_not_uploaded() {
+        use super::super::{Storage, WriteSource};
+        tauri::async_runtime::block_on(async {
+            let mock = crate::jobs::mock_s3::start().await;
+            let s3 = mock_backend(&mock.endpoint);
+            let never = Arc::new(AtomicBool::new(false));
+            let short = |n: usize| -> ByteStream { Box::pin(futures_util::stream::iter(vec![Ok(Bytes::from(vec![1u8; n]))])) };
+            let small = WriteSource::Stream { len: Some(10), body: short(5), reopen: None };
+            let e = s3.write("testbucket", "small.bin", small, WriteOpts::default(), &|_, _| {}, &never).await.err().expect("refused");
+            assert!(e.message.contains("changed"), "{e}");
+            let e = upload_stream(&s3, "testbucket", "big.bin", Some(100 << 20), short(3 << 20), None, WriteOpts::default(), &|_, _| {}, &never).await.err().expect("refused");
+            assert!(e.message.contains("changed"), "{e}");
+            assert!(mock.state.lock().unwrap().objects.is_empty(), "nothing was stored");
         });
     }
 

@@ -27,7 +27,7 @@ mod run;
 pub mod types;
 
 #[cfg(test)]
-mod mock_s3;
+pub(crate) mod mock_s3;
 #[cfg(test)]
 mod tests;
 

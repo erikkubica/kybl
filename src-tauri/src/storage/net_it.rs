@@ -280,6 +280,19 @@ fn webdav_against_rclone() {
         exercise(&b, &srv.root).await;
         let main = b;
 
+        // a file never replaces a folder of the same name (MOVE/COPY with Overwrite: T would
+        // delete the whole folder)
+        main.mkdir("", "build/").await.unwrap();
+        put(&main, "build/keep.txt", b"keep").await;
+        put(&main, "loose.txt", b"loose").await;
+        let never = Arc::new(AtomicBool::new(false));
+        let e = main.write("", "build", WriteSource::Bytes(Bytes::from_static(b"file")), WriteOpts::default(), &none, &never).await.err().unwrap();
+        assert_eq!(e.kind, ErrKind::Exists);
+        assert_eq!(main.rename(&Loc::new("", "loose.txt"), &Loc::new("", "build"), false).await.unwrap_err().kind, ErrKind::Exists);
+        assert_eq!(main.copy(&Loc::new("", "loose.txt"), &Loc::new("", "build"), false).await.unwrap_err().kind, ErrKind::Exists);
+        assert_eq!(std::fs::read_to_string(srv.root.join("build/keep.txt")).unwrap(), "keep");
+        assert!(temp_files(&srv.root).is_empty());
+
         // a wrong password says so
         let bad = WebdavBackend::new(&net(srv.port), Some("nope".into())).unwrap();
         assert_eq!(bad.roots().await.err().map(|e| e.kind), Some(ErrKind::NeedsAuth));
@@ -699,6 +712,32 @@ fn sftp_permissions_and_links_against_openssh() {
         b.delete("", &[], &["holder/".into()], &AtomicBool::new(false), &none).await.unwrap();
         assert!(!root.join("holder").exists());
         assert!(root.join("dir/inside.txt").exists());
+
+        // replacing a file keeps its mode, and writing to a link updates what it points at
+        std::fs::write(root.join("secret.env"), "old").unwrap();
+        std::fs::set_permissions(root.join("secret.env"), std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(root.join("run.sh"), "old").unwrap();
+        std::fs::set_permissions(root.join("run.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        symlink("dir/inside.txt", root.join("inside-link")).unwrap();
+        for (key, body) in [("secret.env", b"new" as &'static [u8]), ("run.sh", b"echo"), ("inside-link", b"through the link")] {
+            assert_eq!(put(&b, key, body).await.key, key);
+        }
+        let mode = |p: &str| std::fs::metadata(root.join(p)).unwrap().permissions().mode() & 0o7777;
+        assert_eq!((mode("secret.env"), mode("run.sh")), (0o600, 0o755));
+        assert!(std::fs::symlink_metadata(root.join("inside-link")).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_to_string(root.join("dir/inside.txt")).unwrap(), "through the link");
+
+        // "only if nothing is there" holds to the end of the upload
+        let racer = root.join("race.txt");
+        let body: crate::storage::ByteStream = Box::pin(futures_util::stream::once(async move {
+            std::fs::write(&racer, "theirs").unwrap();
+            Ok(Bytes::from_static(b"mine"))
+        }));
+        let pre = WriteOpts { precondition: Precondition::IfNoneMatch, ..Default::default() };
+        let out = b.write("", "race.txt", WriteSource::Stream { len: Some(4), body, reopen: None }, pre, &none, &never).await.unwrap();
+        assert!(matches!(out, WriteOutcome::Conflict(Some(_))), "refused, not replaced");
+        assert_eq!(std::fs::read_to_string(root.join("race.txt")).unwrap(), "theirs");
+        assert!(temp_files(&root).is_empty());
     });
     let _ = child.kill();
     let _ = child.wait();
