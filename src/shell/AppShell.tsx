@@ -4,6 +4,10 @@
  * two side by side) and routes the sidebar, the keyboard and the menu bar to the active one.
  */
 import { MountDialog } from "../mount/MountDialog";
+import { driveItems } from "../mount/driveMenu";
+import { findMount, useMounts } from "../mount/useMounts";
+import type { MountInfo } from "../api";
+import { tidyMenu } from "../desktop/menus";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
@@ -59,6 +63,8 @@ export function AppShell() {
   const conns = useConnections();
   // sign-in connections whose access ended: "Sign in again" in the sidebar
   const authNeeded = useAuthNeeded();
+  // drives ("Mount as drive"): the sidebar marks mounted places, the menus offer Eject
+  const { mounts } = useMounts();
   // the saved connections, then this computer's own folders
   const saved = conns.profiles;
   const profiles = useMemo(() => [...saved, THIS_MAC], [saved]);
@@ -486,6 +492,14 @@ export function AppShell() {
     dialogs.show((close) => (
       <MountDialog profileId={p.id} connection={p.name} bucket={b} prefix="" onClose={close} onToast={(k, t) => toast(k, t)} onOpenSettings={() => openSettings("drives")} />
     ));
+  /** A bucket's (or with "", the whole connection's) drive items: Mount as drive…, or Show in Finder / Eject once it is one. */
+  const driveFor = (p: Profile, b: string) =>
+    driveItems(findMount(mounts, p.id, b, ""), { ask: () => askMount(p, b), toast: (k, t) => toast(k, t), openSettings: () => openSettings("drives") });
+  /** The sidebar's drive badge: the drive's own items. */
+  const driveMenu = (m: MountInfo, x: number, y: number) => {
+    const p = profiles.find((q) => q.id === m.profileId);
+    if (p) dialogs.menu(x, y, tidyMenu(driveFor(p, m.bucket)));
+  };
   /** Right-click on a connection: everything in it (its buckets shown in the sidebar) to another connection. */
   const connectionMenu = (p: Profile, x: number, y: number) => {
     const copyAll = async () => {
@@ -499,17 +513,17 @@ export function AppShell() {
     const own = p.id === THIS_MAC.id;
     // a server's one root has no row of its own: the connection row is the place
     const single = rootsMode(p, peekCaps(p.id)) === "single";
-    dialogs.menu(x, y, [
+    dialogs.menu(x, y, tidyMenu([
       ...(authNeeded.has(p.id) ? [{ type: "item" as const, label: "Sign in again…", icon: "refresh" as const, onClick: () => setConnDialog({ profile: p, reconnect: true }) }] : []),
       single
         ? { type: "item" as const, label: "Open", icon: "folder" as const, onClick: () => (active.openBucket(p, ""), focusListSoon()) }
         : { type: "item" as const, label: conns.expanded.has(p.id) ? "Collapse" : "Expand", icon: "chevron" as const, onClick: () => toggleConnection(p) },
       // all of this computer is too much to copy in one go: its folders have their own menus
       ...(own ? [] : [{ type: "item" as const, label: "Copy everything to…", icon: "copy" as const, onClick: () => void copyAll() }]),
-      ...(own ? [] : [{ type: "item" as const, label: "Mount as drive…", icon: "server" as const, onClick: () => askMount(p, "") }]),
+      ...(own ? [] : driveFor(p, "")),
       ...photoMenuItems(p, dialogs),
       ...(own ? [] : [{ type: "sep" as const }, { type: "item" as const, label: "Edit connection…", icon: "edit" as const, onClick: () => setConnDialog({ profile: p }) }]),
-    ]);
+    ]));
   };
   /** The folded sidebar: a connection's icon lists its buckets (a server's one root just opens). */
   const railPick = async (p: Profile, x: number, y: number) => {
@@ -540,13 +554,13 @@ export function AppShell() {
   /** Right-click on a bucket (or one of this computer's folders) in the sidebar. */
   const bucketMenu = (p: Profile, b: string, x: number, y: number) => {
     const hidden = (conns.hiddenBuckets[p.id] ?? []).includes(b);
-    dialogs.menu(x, y, [
+    dialogs.menu(x, y, tidyMenu([
       { type: "item", label: "Open", icon: p.id === THIS_MAC.id ? "folder" : "bucket", onClick: () => (active.openBucket(p, b), focusListSoon()) },
       { type: "item", label: "Copy everything to…", icon: "copy", onClick: () => migrations.open({ profileId: p.id, root: b, items: [{ path: "", isDir: true }] }, "copy") },
-      ...(p.id === THIS_MAC.id ? [] : [{ type: "item" as const, label: "Mount as drive…", icon: "server" as const, onClick: () => askMount(p, b) }]),
+      ...(p.id === THIS_MAC.id ? [] : driveFor(p, b)),
       { type: "sep" },
       { type: "item", label: hidden ? "Show in the sidebar" : "Hide from the sidebar", icon: hidden ? "eye" : "eye-off", onClick: () => conns.setBucketHidden(p, b, !hidden) },
-    ]);
+    ]));
   };
 
   // ------------------------------------------------------------ commands (keyboard + menu bar)
@@ -697,6 +711,8 @@ export function AppShell() {
             builtIn={(p) => p.id === THIS_MAC.id}
             onConnectionMenu={connectionMenu}
             onBucketMenu={bucketMenu}
+            mounts={mounts}
+            onDriveMenu={driveMenu}
             onHide={toggleSidebar}
             peek={sideHidden}
           />

@@ -70,7 +70,9 @@ From `capabilities(profileId)`; summary:
 Reading the key returns the first export, so a download should be saved as
 `key + "." + native.exports[0].ext`. "Download as PDF" = download `key + ".pdf"` (any export's
 extension works). They can't be overwritten. Google Forms / Sites have `exports: []`: hide
-download for them.
+download for them. `native.webUrl` is where the file opens in the browser (its `webViewLink`, or
+`https://drive.google.com/open?id=…` for a shortcut); a mounted drive shows every such file as a
+`Name.gdoc.html` (`.gsheet`, `.gslides`, `.gform`, …) page that opens it (`mount/link.rs`).
 
 **Duplicate names** (Drive allows several "report.pdf" in one folder) list as "report.pdf",
 "report (2).pdf", … oldest first; the same names work in every command. A "/" inside a Drive name

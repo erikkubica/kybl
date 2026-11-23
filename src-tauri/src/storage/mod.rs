@@ -149,6 +149,10 @@ impl Hashes {
 #[serde(rename_all = "camelCase")]
 pub struct NativeDoc {
     pub exports: Vec<ExportFormat>,
+    /// where the file opens in the browser (it can only be edited there); a mounted drive shows
+    /// the file as a shortcut to this page (`mount::link`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_url: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]

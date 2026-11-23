@@ -13,6 +13,7 @@
 
 pub mod cache;
 pub mod junk;
+pub mod link;
 pub mod os;
 pub mod server;
 pub mod webdav;

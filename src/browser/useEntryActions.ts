@@ -17,6 +17,8 @@ import { parseLocation } from "../desktop/paths";
 import { GoToDialog } from "../desktop/GoToDialog";
 import { SyncThisFolder } from "../desktop/SyncThisFolder";
 import { MountDialog } from "../mount/MountDialog";
+import { driveItems } from "../mount/driveMenu";
+import { findMount, useMounts } from "../mount/useMounts";
 import { MoveDialog } from "../components/MoveDialog";
 import type { MenuItem } from "../components/Dialogs";
 import type { Entry } from "../types";
@@ -34,6 +36,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   const { toast } = dialogs;
   // what this connection can do: actions it can't take stay out of the menus
   const { caps } = pane;
+  // drives: a folder that is one offers Show in Finder / Eject instead of "Mount as drive…"
+  const { mounts } = useMounts();
   const canShare = caps?.share !== "none";
   const isS3 = !profile?.kind || profile.kind === "s3";
   /** this computer's own disk: no folder sync (it is the local side), hidden files to toggle */
@@ -213,6 +217,12 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     dialogs.show((close) => createElement(MountDialog, { profileId: p.id, connection: p.name, bucket: b, prefix: pre, onClose: close, onToast: (k, t) => toast(k, t), onOpenSettings: env.openDriveSettings }));
   };
 
+  /** "Mount as drive…" for a folder, or once it's a drive: Show in Finder, Eject */
+  const driveFor = (pre: string): MenuItem[] =>
+    !profile || bucket == null
+      ? []
+      : driveItems(findMount(mounts, profile.id, bucket, pre), { ask: () => askMount(pre), toast: (k, t) => toast(k, t), openSettings: env.openDriveSettings });
+
   const askSync = (pre: string) => {
     if (!profile || bucket == null) return;
     const [pid, b] = [profile.id, bucket];
@@ -283,7 +293,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
           { type: "item", label: "Calculate folder size", icon: "info", onClick: () => calcSizes([prefix]) },
           !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(prefix) },
           !onDisk && keepItem(prefix),
-          !onDisk && { type: "item", label: "Mount as drive…", icon: "server", onClick: () => askMount(prefix) },
+          ...(onDisk ? [] : driveFor(prefix)),
           !!env.openMigration && { type: "item", label: prefix ? "Copy this folder to another connection…" : "Copy everything to another connection…", icon: "copy", onClick: migrateHere },
           isS3 && { type: "item", label: "Copy S3 URI", icon: "copy", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") },
           onDisk && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: pane.showHidden, onClick: toggleHidden },
@@ -371,7 +381,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       folder && favoriteItem(bucket, e.key),
       folder && !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(e.key) },
       folder && !onDisk && keepItem(e.key),
-      folder && !onDisk && { type: "item", label: "Mount as drive…", icon: "server", onClick: () => askMount(e.key) },
+      ...(folder && !onDisk ? driveFor(e.key) : []),
       { type: "sep" },
       { type: "item", label: one ? "Rename…" : `Rename ${list.length} items…`, icon: "edit", hint: "F2", onClick: () => rename(list) },
       { type: "item", label: list.length > 1 ? `Delete ${list.length} items…` : "Delete…", icon: "trash", hint: "⌘⌫", danger: true, onClick: () => ops.askDelete(list) },

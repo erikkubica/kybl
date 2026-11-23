@@ -212,6 +212,13 @@ const PATHS: Record<string, ReactNode> = {
       <path d="m10 13 4 0m0 0-2-2m2 2-2 2" />
     </>
   ),
+  // a mounted drive (Finder's eject mark)
+  eject: (
+    <>
+      <path d="M12 5.5 5.5 13.5h13z" />
+      <path d="M5.5 18h13" />
+    </>
+  ),
 };
 
 export type IconName = keyof typeof PATHS;

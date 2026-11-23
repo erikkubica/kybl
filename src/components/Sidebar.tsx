@@ -9,6 +9,9 @@ import { providerMeta } from "../providers";
 import type { Profile } from "../types";
 import type { SyncState } from "../sync";
 import type { Favorite } from "../settings";
+import type { MountInfo } from "../api";
+import { findMount } from "../mount/useMounts";
+import { driveBadgeTitle } from "../mount/driveMenu";
 
 const SYNC_LABEL: Record<SyncState, string> = {
   idle: "Synced folders are up to date",
@@ -35,6 +38,30 @@ const onActivate = (fn: () => void) => (e: React.KeyboardEvent) => {
     fn();
   }
 };
+
+/**
+ * A place that is mounted as a drive: a small eject mark at the row's end, like a disk in
+ * Finder's sidebar (a warning while it can't mount). A click opens the drive's menu.
+ */
+function DriveBadge({ m, onMenu }: { m: MountInfo | undefined; onMenu?(m: MountInfo, x: number, y: number): void }) {
+  const title = m && driveBadgeTitle(m);
+  if (!m || !title) return null;
+  return (
+    <button
+      className={`drive-badge ${m.state}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        const r = e.currentTarget.getBoundingClientRect();
+        onMenu?.(m, Math.round(r.left), Math.round(r.bottom + 2));
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+      title={title}
+      aria-label={title}
+    >
+      {m.state === "mounting" ? <span className="spinner" /> : <Icon name={m.state === "error" ? "alert" : "eject"} size={11} />}
+    </button>
+  );
+}
 
 export type BucketList = {
   names: string[];
@@ -71,6 +98,8 @@ export function Sidebar({
   onSignInAgain,
   onConnectionMenu,
   onBucketMenu,
+  mounts,
+  onDriveMenu,
   onHide,
   peek,
 }: {
@@ -110,6 +139,9 @@ export function Sidebar({
   /** right-click on a connection / a bucket (at the pointer) */
   onConnectionMenu?(p: Profile, x: number, y: number): void;
   onBucketMenu?(p: Profile, bucket: string, x: number, y: number): void;
+  /** drives ("Mount as drive"): mounted connections and buckets get a badge that opens `onDriveMenu` */
+  mounts?: MountInfo[];
+  onDriveMenu?(m: MountInfo, x: number, y: number): void;
   /** folds the sidebar away (its button sits by the window controls) */
   onHide?: () => void;
   /** shown over the panes from the folded rail: its button opens it for good */
@@ -202,6 +234,8 @@ export function Sidebar({
             onSignInAgain={onSignInAgain}
             onConnectionMenu={onConnectionMenu}
             onBucketMenu={onBucketMenu}
+            mounts={mounts}
+            onDriveMenu={onDriveMenu}
           />
         ))}
       </div>
@@ -253,6 +287,8 @@ function SidebarConnection({
   onSignInAgain,
   onConnectionMenu,
   onBucketMenu,
+  mounts = [],
+  onDriveMenu,
 }: {
   p: Profile;
   active: boolean;
@@ -275,6 +311,8 @@ function SidebarConnection({
   onSignInAgain?: (p: Profile) => void;
   onConnectionMenu?(p: Profile, x: number, y: number): void;
   onBucketMenu?(p: Profile, bucket: string, x: number, y: number): void;
+  mounts?: MountInfo[];
+  onDriveMenu?(m: MountInfo, x: number, y: number): void;
 }) {
   const caps = useCaps(p.id);
   const mode = rootsMode(p, caps);
@@ -320,6 +358,7 @@ function SidebarConnection({
         <span className="side-label" title={p.cloud?.accountEmail && p.cloud.accountEmail !== p.name ? `${p.name} · ${p.cloud.accountEmail}` : undefined}>
           {p.name}
         </span>
+        <DriveBadge m={findMount(mounts, p.id, "", "")} onMenu={onDriveMenu} />
         {/* an icon, not a word: the sidebar is narrow and the name must stay readable */}
         {authNeeded && onSignInAgain && (
           <button
@@ -383,6 +422,7 @@ function SidebarConnection({
                 <span className="side-label" title={own ? b : undefined}>
                   {rootLabel(p.id, b)}
                 </span>
+                <DriveBadge m={findMount(mounts, p.id, b, "")} onMenu={onDriveMenu} />
                 <button
                   className="icon-btn side-hide"
                   onClick={(e) => {

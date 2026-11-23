@@ -13,7 +13,7 @@ pub const SHORTCUT: &str = "application/vnd.google-apps.shortcut";
 const GOOGLE_APPS: &str = "application/vnd.google-apps.";
 
 /// The fields Kybl reads of a file.
-pub const FILE_FIELDS: &str = "id,name,mimeType,size,modifiedTime,createdTime,md5Checksum,parents,version,thumbnailLink,shortcutDetails";
+pub const FILE_FIELDS: &str = "id,name,mimeType,size,modifiedTime,createdTime,md5Checksum,parents,version,thumbnailLink,shortcutDetails,webViewLink";
 
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -37,6 +37,7 @@ pub struct DFile {
     pub version: Option<String>,
     pub thumbnail_link: Option<String>,
     pub shortcut_details: Option<Shortcut>,
+    pub web_view_link: Option<String>,
 }
 
 impl DFile {
@@ -58,9 +59,18 @@ impl DFile {
     pub fn etag(&self) -> Option<String> {
         self.md5_checksum.clone().or_else(|| self.version.as_ref().map(|v| format!("v{v}")))
     }
+    /// Where the file opens in the browser. A shortcut's own link would open the shortcut, so
+    /// it gets the target's `open?id=` link, which works for every kind of Google file.
+    pub fn web_url(&self) -> String {
+        let (id, _) = self.target();
+        match &self.web_view_link {
+            Some(l) if id == self.id && !l.is_empty() => l.clone(),
+            _ => format!("https://drive.google.com/open?id={}", enc(id)),
+        }
+    }
     pub fn entry(&self, key: String) -> Entry {
         let (_, mime) = self.target();
-        let native = exports_of(mime).map(|ex| NativeDoc { exports: ex.iter().map(|e| e.format()).collect() });
+        let native = exports_of(mime).map(|ex| NativeDoc { exports: ex.iter().map(|e| e.format()).collect(), web_url: Some(self.web_url()) });
         Entry {
             key,
             size: self.size.as_deref().and_then(|s| s.parse().ok()).unwrap_or(0),

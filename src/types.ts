@@ -85,7 +85,7 @@ export type ObjInfo = {
   mime?: string;
   hashes?: { md5?: string; sha1?: string; sha256?: string; quickxor?: string; dropbox?: string };
   /** Google Docs / Sheets / Slides: no bytes of their own, only exports. */
-  native?: { exports: { mime: string; ext: string; label: string }[] };
+  native?: { exports: { mime: string; ext: string; label: string }[]; webUrl?: string };
 };
 
 export type ListResult = {
