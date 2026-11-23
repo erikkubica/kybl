@@ -42,7 +42,9 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
     installAndRestart(() => setBusy(true)).catch((e) => setRestartError(String(e)));
   };
   const pct = st.total > 0 ? Math.min(100, (st.received / st.total) * 100) : 0;
-  const failed = started && !working && st.phase === "" && st.error;
+  // a refused restart drops the phase back (the installer went missing): its reason shows here too
+  const failText = working || st.phase === "ready" ? null : (restartError ?? (started && st.phase === "" ? st.error : null));
+  const failed = !!failText;
 
   return (
     <div className={`update-card ${mobile ? "m" : ""}`} role="status" aria-live="polite">
@@ -76,6 +78,7 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
                 className="btn btn-sm btn-primary"
                 onClick={() => {
                   setRestartError(null);
+                  setStarted(true);
                   // forced only once the user was told transfers are running
                   updatesApi.restart(busy).catch((e) => (String(e) === "busy" ? setBusy(true) : setRestartError(String(e))));
                 }}
@@ -86,8 +89,8 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
           </>
         ) : failed ? (
           <>
-            <b>The update didn't install</b>
-            <small className="update-err">{st.error}</small>
+            <b>{restartError ? "Kybl couldn't restart" : "The update didn't install"}</b>
+            <small className="update-err">{failText}</small>
             <div className="update-actions">
               <button className="btn btn-sm btn-primary" onClick={go}>
                 Try again

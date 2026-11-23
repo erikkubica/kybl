@@ -1,5 +1,8 @@
 import type { Entry } from "./types";
 
+/** "1 folder", "1,204 folders": a count with its noun in the right number. */
+export const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+
 /**
  * A typed speed limit in MB/s ("5", "2,5", "0" for no limit), or what is wrong with it. Above
  * 10 000 MB/s is no real limit, so it is turned down rather than taken as "none".
@@ -11,6 +14,9 @@ export function parseMbps(text: string): number | string {
   if (mb > 10_000) return "At most 10,000 MB/s.";
   return mb;
 }
+
+/** A limit in MB/s as the custom-limit field shows it: precise to 1 KB/s, so it survives a re-save. */
+export const mbpsInput = (mb: number) => String(Math.round(mb * 1000) / 1000);
 
 let binaryUnits = false;
 

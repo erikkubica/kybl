@@ -102,17 +102,28 @@ function Failures({ job }: { job: JobSummary }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // more problems came while a page was loading: once it is in, fetch what it missed
+  const inFlight = useRef(false);
+  const recheck = useRef(false);
   const load = async (offset: number) => {
     setLoading(true);
+    inFlight.current = true;
+    let reached: number | null = null;
     try {
       const page = await migrations.failures(job.id, offset, PAGE);
       setList((cur) => (offset === 0 ? page : [...(cur ?? []), ...page]));
       setEnd(page.length < PAGE);
       setError(null);
+      if (page.length < PAGE) reached = offset + page.length;
     } catch (e) {
       setError(errMessage(e));
     } finally {
       setLoading(false);
+      inFlight.current = false;
+      if (recheck.current) {
+        recheck.current = false;
+        if (reached !== null && reached < seen.current.failed) void load(reached);
+      }
     }
   };
   // follow the number of problems: fewer (a retry) loads afresh; more while running adds the new
@@ -126,6 +137,7 @@ function Failures({ job }: { job: JobSummary }) {
     const before = seen.current;
     seen.current = { id: job.id, failed };
     if (before.id !== job.id || failed < before.failed) void load(0);
+    else if (failed > before.failed && inFlight.current) recheck.current = true;
     else if (failed > before.failed && shown.current.end) void load(shown.current.count);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job.id, job.progress.filesFailed]);
@@ -212,7 +224,8 @@ function JobRow({ job, onOpenDest }: { job: JobSummary; onOpenDest?: (j: JobSumm
               <Icon name="chevron" size={10} className={`jobs-caret ${showFailures ? "open" : ""}`} />
               {files(p.filesFailed)} couldn't be {job.spec.mode === "move" ? "moved" : "copied"}
             </button>
-            {(finished || p.state === "paused") && (
+            {/* a stopped copy can't be retried (the backend refuses): start a new one instead */}
+            {(finished || p.state === "paused") && p.state !== "cancelled" && (
               <button className="btn btn-ghost btn-sm" onClick={run(() => migrations.retryFailed(job.id))}>
                 <Icon name="retry" size={13} /> Try again
               </button>
@@ -277,9 +290,13 @@ export function JobsPanel({
 }) {
   const jobs = useMigrations();
   const active = jobs.filter((j) => !isFinished(j));
-  const done = jobs.filter(isFinished).slice(0, limit);
   // done without problems, or cancelled: failed and partly failed copies stay (Resume, Try again)
-  const clearable = jobs.filter((j) => (j.progress.state === "done" && j.progress.filesFailed === 0) || j.progress.state === "cancelled");
+  const isClearable = (j: JobSummary) => (j.progress.state === "done" && j.progress.filesFailed === 0) || j.progress.state === "cancelled";
+  const clearable = jobs.filter(isClearable);
+  // `limit` only trims clean ones: a failed copy is always listed (the Failed tab leads here)
+  const finished = jobs.filter(isFinished);
+  const keep = new Set(finished.filter(isClearable).slice(0, limit).map((j) => j.id));
+  const done = finished.filter((j) => !isClearable(j) || keep.has(j.id));
 
   if (jobs.length === 0) {
     if (hideWhenEmpty) return null;

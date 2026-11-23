@@ -50,7 +50,7 @@ export function Welcome({ actions }: { actions: EmptyActions }) {
       <div className="welcome-card">
         <KyblMark size={76} className="welcome-mark" />
         <h1>Welcome to Kybl</h1>
-        <p>Browse, upload, download and share files on any S3-compatible storage. Your secret keys stay in the system keychain.</p>
+        <p>Browse, upload, download and share files on any S3-compatible storage. Your secret keys are saved encrypted, with the key in the system keychain.</p>
         <button className="btn btn-primary" onClick={actions.onConnectKybl}>
           <Icon name="cloud" size={15} /> Connect Kybl Storage
         </button>

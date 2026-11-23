@@ -1,10 +1,10 @@
 /** Pure: a custom action's "Extensions" box and the names it takes (no imports, so `node --test` can load it). */
 
-/** "jpg, .PNG, tar.gz" → ["jpg", "png", "tar.gz"] */
+/** "jpg, .PNG, *.tar.gz" → ["jpg", "png", "tar.gz"] (a "*." glob is read as the extension) */
 export const extList = (s: string) =>
   s
     .split(/[\s,;]+/)
-    .map((x) => x.trim().replace(/^\./, "").toLowerCase())
+    .map((x) => x.trim().replace(/^\*?\.?/, "").toLowerCase())
     .filter(Boolean);
 
 /**

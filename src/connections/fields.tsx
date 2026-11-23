@@ -17,10 +17,10 @@ const IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (/Macintosh/.test(n
 export const PHONE = ANDROID || IOS;
 
 /** Where saved secrets live, in words for the "unchanged" placeholder and the footnote. */
-export const SAVED_WHERE = ANDROID ? "Saved on this device" : "Saved in keychain";
+export const SAVED_WHERE = ANDROID ? "Saved on this device" : "Saved encrypted";
 export const SECRET_NOTE = ANDROID
   ? "Passwords and keys stay on this device, in Kybl's private storage, and are left out of backups."
-  : "Passwords and keys are stored in your system keychain, never in a file.";
+  : "Passwords and keys are saved encrypted, with the key in your system keychain.";
 
 /** The fields of a form that need fixing; messages show once Save or Test was tried. */
 export type Problems = Record<string, string | null>;

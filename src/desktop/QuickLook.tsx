@@ -1,3 +1,4 @@
+import { keys } from "../components/osText";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
@@ -187,10 +188,10 @@ export function QuickLook({
         <div className="ql-head">
           {!many && (
             <>
-              <button className="icon-btn" onClick={() => onStep(-1)} disabled={index <= 0} aria-label="Previous" title="Previous (←)">
+              <button className="icon-btn" onClick={() => onStep(-1)} disabled={index <= 0} aria-label="Previous" title={keys("Previous (←)")}>
                 <Icon name="chevron" size={14} className="ql-prev" />
               </button>
-              <button className="icon-btn" onClick={() => onStep(1)} disabled={index >= count - 1} aria-label="Next" title="Next (→)">
+              <button className="icon-btn" onClick={() => onStep(1)} disabled={index >= count - 1} aria-label="Next" title={keys("Next (→)")}>
                 <Icon name="chevron" size={14} />
               </button>
             </>
@@ -221,7 +222,7 @@ export function QuickLook({
                   style={busy?.verb === "copy" ? ({ "--p": `${busy.percent}%` } as React.CSSProperties) : undefined}
                   onClick={() => onCopyFile(entry)}
                   disabled={!!busy}
-                  title="Copy the file, to paste into a chat, a mail or a folder (⌘C)"
+                  title={keys("Copy the file, to paste into a chat, a mail or a folder (⌘C)")}
                 >
                   <Icon name="copy" size={14} /> {busy?.verb === "copy" ? `Copying ${busy.percent}%` : "Copy"}
                 </button>
@@ -239,7 +240,7 @@ export function QuickLook({
               style={busy?.verb === "open" ? ({ "--p": `${busy.percent}%` } as React.CSSProperties) : undefined}
               onClick={() => onOpen(entry)}
               disabled={!!busy}
-              title={entry.kind === "folder" ? "Open the folder (↵)" : "Open in its app (⌘O)"}
+              title={keys(entry.kind === "folder" ? "Open the folder (↵)" : "Open in its app (⌘O)")}
             >
               <Icon name={entry.kind === "folder" ? "folder" : "reveal"} size={14} /> {busy?.verb === "open" ? `Opening ${busy.percent}%` : "Open"}
             </button>
@@ -249,7 +250,7 @@ export function QuickLook({
             onClick={toggleInfo}
             aria-pressed={infoOpen}
             aria-label="Info"
-            title={infoOpen ? "Hide info (⌘I)" : "Show info (⌘I)"}
+            title={keys(infoOpen ? "Hide info (⌘I)" : "Show info (⌘I)")}
           >
             <Icon name="info" />
           </button>

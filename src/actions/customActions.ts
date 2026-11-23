@@ -15,6 +15,7 @@ import { api, errMessage } from "../api";
 import { asExport } from "../connections/native";
 import { joinPath, safeRelPath } from "../desktop/paths";
 import { MENU_ACCELERATORS } from "../desktop/menus";
+import { keyLabel as keyLabelFor } from "../components/shortcutKeys";
 import { registerCommands, type PaletteCommand } from "../palette/commands";
 import { createStore, useStore } from "../store";
 import type { MenuItem } from "../components/Dialogs";
@@ -392,13 +393,13 @@ const RESERVED: Record<string, string> = (() => {
 /** Why `combo` can't be this action's shortcut (taken by the app or another action), or null. */
 export function shortcutProblem(combo: string, selfId: string | null, list = actionsStore.get()): string | null {
   const parts = combo.split("+");
-  if (!parts.includes("Mod") && !/^F\d+$/.test(parts[parts.length - 1])) return "Use ⌘ (Ctrl) with a key, or an F-key.";
+  if (!parts.includes("Mod") && !/^F\d+$/.test(parts[parts.length - 1])) return `Use ${MAC ? "⌘" : "Ctrl"} with a key, or an F-key.`;
   const taken = RESERVED[combo];
   if (taken) return `${comboLabel(combo)} is already ${taken}.`;
   // the menu bar's accelerators (menus.ts) in their own words: "⇧⌘N"
   const label = comboLabel(combo);
-  const menu = Object.entries(MENU_ACCELERATORS).find(([, k]) => k.replace("−", "-") === label);
-  if (menu) return `${label} is already in the menu bar (${menu[0]}).`;
+  const menu = Object.entries(MENU_ACCELERATORS).find(([, k]) => keyLabelFor(k, MAC).replace("−", "-") === label.replace("−", "-"));
+  if (menu) return `${label} is already in the ${MAC ? "menu bar" : "app menu"} (${menu[0]}).`;
   const other = list.find((a) => a.id !== selfId && a.shortcut === combo);
   if (other) return `${label} is already “${other.name}”.`;
   return null;

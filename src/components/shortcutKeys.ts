@@ -37,3 +37,15 @@ export function spellKeys(keys: string[], mac: boolean): string[] {
   if (mods) out.push(keyLabel(mods, false));
   return out;
 }
+
+/**
+ * Shortcuts inside a sentence or tooltip ("Settings (⌘,)", "⌘-click for …", "⌥ to copy") spelled
+ * for this system: each run of modifier glyphs plus the key right after it goes through `keyLabel`.
+ */
+export function keysInText(text: string, mac: boolean): string {
+  if (mac) return text;
+  return text.replace(/[⌃⌘⌥⇧]+(?:[A-Za-z0-9]+\b|[^\sA-Za-z0-9-])?/g, (m) => keyLabel(m, false));
+}
+
+/** Where the app's tray icon lives: the menu bar on a Mac, the system tray elsewhere. */
+export const trayName = (mac: boolean) => (mac ? "menu bar" : "system tray");

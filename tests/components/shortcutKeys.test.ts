@@ -1,7 +1,7 @@
 // Settings › Keyboard shortcuts: Mac glyphs spelled for Windows and Linux. Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { keyLabel, spellKeys } from "../../src/components/shortcutKeys.ts";
+import { keyLabel, keysInText, spellKeys, trayName } from "../../src/components/shortcutKeys.ts";
 
 test("a Mac keeps its glyphs", () => {
   assert.deepEqual(spellKeys(["⇧", "⌘", "N"], true), ["⇧", "⌘", "N"]);
@@ -23,4 +23,19 @@ test("lone modifiers and words", () => {
   assert.deepEqual(spellKeys(["⇧", "click"], false), ["Shift+click"]);
   assert.deepEqual(spellKeys(["drop copies, ⌘ moves"], false), ["drop copies, Ctrl moves"]);
   assert.deepEqual(spellKeys(["F5", "F6"], false), ["F5", "F6"]);
+});
+
+test("shortcuts inside text", () => {
+  assert.equal(keysInText("Settings (⌘,)", false), "Settings (Ctrl+,)");
+  assert.equal(keysInText("Settings (⌘,)", true), "Settings (⌘,)");
+  assert.equal(keysInText("Upload or create (⌘U, ⇧⌘N)", false), "Upload or create (Ctrl+U, Ctrl+Shift+N)");
+  assert.equal(keysInText("right-click or ⌘-click for the enclosing folders", false), "right-click or Ctrl-click for the enclosing folders");
+  assert.equal(keysInText("Move · ⌥ to copy", false), "Move · Alt to copy");
+  assert.equal(keysInText("Enclosing folder (⌘↑)", false), "Enclosing folder (Ctrl+↑)");
+  assert.equal(keysInText("⌘⌫", false), "Ctrl+Backspace");
+  assert.equal(keysInText("⌃Tab", false), "Ctrl+Tab");
+  assert.equal(keysInText("Previous change (⇧F7 or p)", false), "Previous change (Shift+F7 or p)");
+  assert.equal(keysInText("Paste with ⌘V in another folder.", false), "Paste with Ctrl+V in another folder.");
+  assert.equal(trayName(true), "menu bar");
+  assert.equal(trayName(false), "system tray");
 });

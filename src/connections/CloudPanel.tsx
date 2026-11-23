@@ -84,6 +84,9 @@ export function CloudPanel({
       ? { clientId: clientId.trim(), clientSecret: kind === "gdrive" && clientSecret ? clientSecret : null, tenant: kind === "onedrive" && tenant.trim() ? tenant.trim() : null }
       : null;
   const canStart = builtin !== null && (!needsOwn || !!client);
+  // editing: a changed app only takes effect through a new sign-in, so Save signs in again
+  const appChanged =
+    !!initial && ownOpen && (clientId.trim() !== (initial.cloud?.clientId ?? "") || tenant.trim() !== (initial.cloud?.tenant ?? "") || !!clientSecret);
 
   const start = async () => {
     if (!canStart || waiting) return;
@@ -139,7 +142,7 @@ export function CloudPanel({
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
-          if (initial) void saveName();
+          if (initial && !appChanged) void saveName();
           else void start();
         }}
       >
@@ -210,6 +213,7 @@ export function CloudPanel({
                   {(c) => <input {...c} className="mono" value={tenant} onChange={(e) => setTenant(e.target.value)} placeholder="contoso.onmicrosoft.com" disabled={waiting} {...RAW} />}
                 </Field>
               )}
+              {appChanged && <p className="hint span2">Save signs in again with this app.</p>}
             </div>
           )}
         </div>
@@ -235,7 +239,7 @@ export function CloudPanel({
         </div>
         <div className="btn-row">
           {initial && (
-            <button type="submit" form="conn-form" className="btn" disabled={busy !== null || waiting}>
+            <button type="submit" form="conn-form" className="btn" disabled={busy !== null || waiting || (appChanged && !canStart)}>
               {busy === "save" ? "Saving…" : "Save"}
             </button>
           )}
