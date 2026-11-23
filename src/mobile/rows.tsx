@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Icon } from "../Icons";
-import { FileIcon } from "../components/FileIcon";
+import { FileIcon, LinkBadge } from "../components/FileIcon";
 import { formatBytes, formatDate, parentPrefix, entrySize, entryKind } from "../format";
 import { cachedThumb, canListThumb, loadThumb } from "../thumbs";
 import { cachedPlaceholder, canPlaceholder, learnPlaceholder, loadPlaceholder } from "../thumbhash";
@@ -124,6 +124,7 @@ export function Art({ entry, profileId, bucket, className = "" }: { entry: Entry
       {ph && <img className="ph" src={ph} alt="" draggable={false} />}
       {url && <img src={url} alt="" draggable={false} />}
       {!url && !ph && <FileIcon entry={entry} big />}
+      {(url || ph) && entry.link !== undefined && <LinkBadge link={entry.link} />}
       {loading && <span className="shimmer" />}
     </span>
   );

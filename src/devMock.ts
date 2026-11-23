@@ -489,6 +489,7 @@ const linksOf = (pid: string): MockLink[] =>
           { key: "shared-logs/", target: "/var/log/shared", to: null },
           { key: "documents/latest.pdf", target: "contract.pdf", to: "documents/contract.pdf" },
           { key: "broken-link", target: "gone.txt", to: "gone.txt" },
+          { key: "photos/latest.jpg", target: "2026/cover.jpg", to: "photos/2026/cover.jpg" },
         ]
       : []);
 /** A key under a folder link, as the key it really is ("current/x" → "documents/x"). */

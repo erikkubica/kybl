@@ -225,6 +225,14 @@ pub struct Page {
     pub folder_info: Vec<Entry>,
 }
 
+impl Page {
+    /// The target of the folder `key` of this page when it is a symbolic link (SFTP), which
+    /// anything going through folders recursively must not go into: a link back up never ends.
+    pub fn folder_link(&self, key: &str) -> Option<&str> {
+        self.folder_info.iter().find(|e| e.key == key).and_then(|e| e.link.as_deref())
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum RootKind {
@@ -733,6 +741,7 @@ pub trait Storage: Send + Sync + 'static {
     /// Everything below `dir`, however deep, a batch at a time. Folders come as entries whose key
     /// ends with `/` where the store has them (real folders always; prefix stores only marker
     /// objects), before what is inside them. The default walks folder by folder with [`list`].
+    /// Links to folders come as entries with `link` set (keys ending with `/`), never gone into.
     ///
     /// [`list`]: Storage::list
     fn walk<'a>(&'a self, root: &'a str, dir: &'a str) -> BoxStream<'a, SResult<Vec<Entry>>> {
@@ -871,13 +880,21 @@ pub fn walk_by_listing<'a, S: Storage + ?Sized>(s: &'a S, root: &'a str, dir: &'
             None => (st.dirs.pop()?, None),
         };
         match s.list(root, &d, token).await {
-            Ok(page) => {
-                if let Some(next) = page.next_token {
+            Ok(mut page) => {
+                if let Some(next) = page.next_token.take() {
                     st.current = Some((d, Some(next)));
                 }
-                let mut batch: Vec<Entry> = page.folders.iter().map(|f| Entry { key: f.clone(), ..Default::default() }).collect();
+                // a link to a folder comes as itself (its entry, with `link` set) and isn't gone into
+                let mut batch: Vec<Entry> = page
+                    .folders
+                    .iter()
+                    .map(|f| {
+                        let link = page.folder_info.iter().find(|e| e.key == *f && e.link.is_some());
+                        link.cloned().unwrap_or_else(|| Entry { key: f.clone(), ..Default::default() })
+                    })
+                    .collect();
                 // depth first, in name order
-                st.dirs.extend(page.folders.into_iter().rev());
+                st.dirs.extend(page.folders.iter().rev().filter(|f| page.folder_link(f).is_none()).cloned());
                 batch.extend(page.objects);
                 Some((Ok(batch), st))
             }

@@ -175,6 +175,13 @@ Commands:
 Deleting a link (to a folder too) removes only the link, never what it points at, and deleting a
 folder never follows the links inside it.
 
+Nothing that goes through folders recursively goes into a link to a folder (one pointing back up
+would never end): `walk` hands it over as an entry with `link` set (key ending with `/`), so size
+counts, searches and `list_all_under` leave it out, and a copy inside the connection makes it a
+link again. A transfer job lists it among its failures ("Not copied: this is a link to the
+folder…"), and Try again leaves it be. A folder picked by itself is still copied through, even
+when it is a link.
+
 ## Azure Blob Storage (`kind: "azblob"`)
 
 `blob` fields: `account` (storage account name), `container` (required: one container per

@@ -403,7 +403,12 @@ pub(crate) async fn copy_through(s: &dyn Storage, from: &Loc, to: &Loc, is_dir: 
                 return Err(StorageError::cancelled());
             }
             let dst = format!("{}{}", to.path, &e.key[from.path.len()..]);
-            if e.is_dir() {
+            if let Some(target) = &e.link {
+                // a link to a folder stays a link (the walk doesn't go into it)
+                if s.caps().links {
+                    s.make_link(&to.root, &dst, target).await?;
+                }
+            } else if e.is_dir() {
                 s.mkdir(&to.root, &dst).await?;
             } else {
                 copy_file(e.key, dst).await?;

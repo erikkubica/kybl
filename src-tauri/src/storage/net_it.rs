@@ -575,6 +575,36 @@ fn sftp_permissions_and_links_against_openssh() {
         assert_eq!(b.resolve_link("", "broken").await.unwrap_err().kind, ErrKind::NotFound);
         assert!(b.resolve_link("", "outside/").await.unwrap_err().message.contains("outside"));
 
+        // a link back up (tree/deep/up → tree/): everything that goes through folders stops at
+        // it instead of going round forever
+        std::fs::create_dir_all(root.join("tree/deep")).unwrap();
+        std::fs::write(root.join("tree/f.txt"), "f").unwrap();
+        std::fs::write(root.join("tree/deep/g.txt"), "gg").unwrap();
+        symlink("..", root.join("tree/deep/up")).unwrap();
+        // (a walk that went round the link would never end)
+        macro_rules! soon {
+            ($f:expr) => {
+                tokio::time::timeout(Duration::from_secs(30), $f)
+            };
+        }
+        let never = Arc::new(AtomicBool::new(false));
+        let mut all: Vec<String> = soon!(generic_cmds::list_all_under(&b, "", "tree/")).await.expect("the walk ends").unwrap().into_iter().map(|f| f.key).collect();
+        all.sort();
+        assert_eq!(all, ["tree/deep/g.txt", "tree/f.txt"]);
+        let size = soon!(generic_cmds::size_scan(&b, "", "tree/", &never, |_, _| {})).await.expect("the size count ends").unwrap();
+        assert_eq!((size.bytes, size.objects), (3, 2));
+        let found = soon!(generic_cmds::search_scan(&b, "", "tree/", "g.txt", 10_000, 100, &never, |_, _| {})).await.expect("the search ends").unwrap();
+        assert_eq!(found.objects.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(), ["tree/deep/g.txt"]);
+        // a copy inside the connection keeps the link a link
+        soon!(generic_cmds::copy_through(&b, &Loc::new("", "tree/"), &Loc::new("", "copy/"), true, &never)).await.expect("the copy ends").unwrap();
+        assert_eq!(std::fs::read_link(root.join("copy/deep/up")).unwrap(), Path::new(".."));
+        assert_eq!(std::fs::read_to_string(root.join("copy/deep/g.txt")).unwrap(), "gg");
+        assert!(root.join("copy/f.txt").exists());
+        // and deleting the copy removes its link, not what it points at
+        b.delete("", &[], &["copy/".into()], &AtomicBool::new(false), &none).await.unwrap();
+        assert!(!root.join("copy").exists());
+        assert!(root.join("tree/deep/g.txt").exists());
+
         // deleting a link to a folder removes the link, never the folder's files
         b.delete("", &[], &["dirlink/".into()], &AtomicBool::new(false), &none).await.unwrap();
         assert!(std::fs::symlink_metadata(root.join("dirlink")).is_err());

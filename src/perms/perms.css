@@ -42,6 +42,34 @@
   height: 72%;
 }
 
+/* on a thumbnail: in the photo's corner (grid tiles inset it by 8%) */
+.card-thumb > .ico-link,
+.m-art > .ico-link {
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+}
+.card-thumb > .ico-link {
+  left: calc(8% + 4px);
+  bottom: calc(8% + 4px);
+}
+.m-art > .ico-link {
+  left: 3px;
+  bottom: 3px;
+  width: 13px;
+  height: 13px;
+  border-radius: 3.5px;
+}
+.card-thumb > .ico-link svg {
+  width: 12px;
+  height: 12px;
+}
+.m-art > .ico-link svg {
+  width: 10px;
+  height: 10px;
+}
+
 /* the sheet */
 .perm-body {
   padding-bottom: 4px;
