@@ -36,7 +36,7 @@ export function Toolbar({
   onClearSearch,
   onTogglePreview,
   dual = false,
-  onToggleDual,
+  onPanes,
   onGoTo,
   favorite,
   onToggleFavorite,
@@ -79,11 +79,11 @@ export function Toolbar({
   onStopSearch: () => void;
   onClearSearch: () => void;
   onTogglePreview: () => void;
-  /** two panes side by side are on screen */
+  /** more than one pane is on screen */
   dual?: boolean;
-  /** switches between one pane and two (the button shows only with this) */
-  onToggleDual?: () => void;
-  /** dual pane only: this folder into the other pane, swap, compare, synchronized browsing (DualTools) */
+  /** the panes button (shows only with this): one pane splits right, more open the panes menu */
+  onPanes?: (x: number, y: number) => void;
+  /** several panes only: this folder into the other pane, swap, compare, synchronized browsing (DualTools) */
   dualTools?: React.ReactNode;
   /** typing a path into the bar (Go to folder) */
   onGoTo?: (path: string) => void;
@@ -245,13 +245,13 @@ export function Toolbar({
         <button className={`icon-btn ${previewOpen ? "on" : ""}`} onClick={onTogglePreview} title="Toggle details panel (⌘I)" aria-label="Toggle details panel" aria-pressed={previewOpen}>
           <Icon name="panel" />
         </button>
-        {onToggleDual && (
+        {onPanes && (
           <button
             className={`icon-btn ${dual ? "on" : ""}`}
-            onClick={onToggleDual}
-            title={dual ? "Back to one pane (⌘\\)" : "Two panes side by side (⌘\\)"}
-            aria-label="Two panes"
-            aria-pressed={dual}
+            onClick={(e) => onPanes(...anchorOf(e))}
+            title={dual ? "Panes: split or close" : "Split right: two panes side by side (⌘\\)"}
+            aria-label={dual ? "Panes" : "Split right"}
+            aria-haspopup={dual ? "menu" : undefined}
           >
             <Icon name="dual-pane" />
           </button>

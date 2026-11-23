@@ -53,7 +53,10 @@ export type Settings = {
   tileSize: number;
   /** phones: ask for Face ID / fingerprint when Kybl opens or comes back after a minute away */
   appLock: boolean;
-  /** desktop: one browser pane, or two side by side (dual pane, like a commander) */
+  /**
+   * desktop, before split layouts: one browser pane or two side by side. Only read once, to bring
+   * an old dual pane over into the layout tree (shell/paneLayout.ts keeps the layout now).
+   */
   layout: "single" | "dual";
   /** dual pane: opening a subfolder (or going up) in one pane does the same in the other when it can */
   syncBrowsing: boolean;

@@ -17,7 +17,7 @@ use tauri::{
 };
 
 /// Item ids passed to the page as they are.
-const PAGE_ITEMS: [&str; 28] = [
+const PAGE_ITEMS: [&str; 30] = [
     "duplicate",
     "new-connection",
     "new-folder",
@@ -34,7 +34,9 @@ const PAGE_ITEMS: [&str; 28] = [
     "go-to",
     "search",
     "settings",
-    "toggle-dual",
+    "split-right",
+    "split-down",
+    "close-pane",
     "swap-panes",
     "switch-pane",
     "same-folder",
@@ -132,8 +134,11 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &item("tiles-smaller", "Smaller Icons", Some("CmdOrCtrl+Minus"))?,
             &item("toggle-compact", "Compact Layout", None)?,
             &sep()?,
-            // dual pane: F5, F6 and Tab stay with the page (they'd steal keys from text fields)
-            &item("toggle-dual", "Dual Pane", Some("CmdOrCtrl+Backslash"))?,
+            // panes: F5, F6 and Tab stay with the page (they'd steal keys from text fields), and
+            // ⌘W with the window's Close (the page takes it first while several panes are open)
+            &item("split-right", "Split Right", Some("CmdOrCtrl+Backslash"))?,
+            &item("split-down", "Split Down", Some("CmdOrCtrl+Shift+Backslash"))?,
+            &item("close-pane", "Close Pane", None)?,
             &item("switch-pane", "Switch Pane", None)?,
             &item("swap-panes", "Swap Panes", Some("CmdOrCtrl+Shift+S"))?,
             &item("same-folder", "Same Folder in Other Pane", None)?,

@@ -23,15 +23,18 @@ export type BrowserPaneProps = {
   pane: Pane;
   /** the pane the keyboard, menus and sidebar act on */
   active: boolean;
-  /** two panes on screen (the active one is marked) */
+  /** several panes on screen (the active one is marked) */
   dual: boolean;
-  /** dual pane: its buttons in the toolbar (shell/DualPane DualTools) */
+  /** what screen readers call this pane among several ("Pane 2 of 3") */
+  label?: string;
+  /** several panes: its buttons in the toolbar (shell/SplitLayout DualTools) */
   dualTools?: React.ReactNode;
   settings: Settings;
   updateSettings: (patch: Partial<Settings>) => void;
   previewOpen: boolean;
   onTogglePreview: () => void;
-  onToggleDual?: () => void;
+  /** the panes button: split, or the panes menu */
+  onPanes?: (x: number, y: number) => void;
   /** files dragged in from the computer would land here */
   dropUpload: boolean;
   /** the sidebar's note for a connection with no bucket open (and whether to offer to reconnect) */
@@ -76,7 +79,7 @@ export function BrowserPane(p: BrowserPaneProps) {
       data-pane={pane.id}
       data-drop-pane={p.dual ? "" : undefined}
       data-active-pane={active ? "" : undefined}
-      aria-label={p.dual ? (pane.id === "left" ? "Left pane" : "Right pane") : undefined}
+      aria-label={p.dual ? p.label : undefined}
       onMouseDownCapture={p.onActivate}
       onFocusCapture={p.onActivate}
       style={p.style}
@@ -114,7 +117,7 @@ export function BrowserPane(p: BrowserPaneProps) {
         onClearSearch={actions.clearSearch}
         onTogglePreview={p.onTogglePreview}
         dual={p.dual}
-        onToggleDual={p.onToggleDual}
+        onPanes={p.onPanes}
         dualTools={profile && bucket != null ? p.dualTools : undefined}
         onGoTo={profile && bucket != null ? (t) => void actions.goToPath(t) : undefined}
         favorite={actions.isFavorite}

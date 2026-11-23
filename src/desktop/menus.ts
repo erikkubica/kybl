@@ -28,9 +28,10 @@ export const MENU_OWNS_SHORTCUTS = isTauri() && /Mac/i.test(navigator.userAgent)
  * command id. Keep in step with menu.rs. The other menu items (refresh, search, go-up, delete,
  * rename, new-connection) are click-only there, so their keys are always handled here.
  *
- * View menu dual pane items: "toggle-dual", "swap-panes" and "toggle-hidden" have accelerators;
- * "switch-pane", "same-folder", "compare-folders", "pane-copy" and "pane-move" are click-only
- * (Tab, F5 and F6 stay with the page).
+ * View menu pane items: "split-right", "split-down", "swap-panes" and "toggle-hidden" have
+ * accelerators; "close-pane", "switch-pane", "same-folder", "compare-folders", "pane-copy" and
+ * "pane-move" are click-only (⌘W stays with the window's Close, which the page takes first while
+ * several panes are open; Tab, F5 and F6 stay with the page).
  */
 export const MENU_ACCELERATORS: Record<string, string> = {
   "new-folder": "⇧⌘N",
@@ -43,7 +44,8 @@ export const MENU_ACCELERATORS: Record<string, string> = {
   forward: "⌘]",
   "go-to": "⇧⌘G",
   settings: "⌘,",
-  "toggle-dual": "⌘\\",
+  "split-right": "⌘\\",
+  "split-down": "⇧⌘\\",
   "swap-panes": "⇧⌘S",
   "toggle-hidden": "⇧⌘.",
   "toggle-sidebar": "⌥⌘S",
