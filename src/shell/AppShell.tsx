@@ -79,8 +79,9 @@ import {
   type SyncLink,
 } from "./paneLayout";
 import { makeDualActions, paneName, type DualContext } from "./dualActions";
-import { WorkspaceBar, type PaneSwitcher } from "./WorkspaceBar";
+import { WorkspaceBar, wsTabAt, type PaneSwitcher } from "./WorkspaceBar";
 import { usePaneDrag, type DropCheck } from "./usePaneDrag";
+import { useFileDrag } from "./useFileDrag";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import {
   copyLayout,
@@ -103,6 +104,8 @@ import type { HistorySnap } from "../browser/useHistory";
 import { sameLoc } from "../browser/useListing";
 import { PaneContext } from "./PaneContext";
 import { useMigrationHost } from "./useMigrationHost";
+import { usePalette } from "../palette/usePalette";
+import { forgetPlacesOf } from "../palette/recent";
 import {
   allGroups,
   groupLabel,
@@ -378,6 +381,8 @@ export function AppShell() {
   };
   const closeEditor = async () => (editor.current ? editor.current.requestClose() : true);
 
+  /** a press on items starts the shell's drag of them (useFileDrag, further down) */
+  const beginItemDrag = useRef<PaneEnv["beginItemDrag"]>(undefined);
   const envFor = (id: PaneId): PaneEnv => ({
     id,
     storageKey: paneKeys(id).last,
@@ -407,6 +412,7 @@ export function AppShell() {
     },
     // the empty-space menu's Split ▸ (splitItems is defined further down; this runs on a right-click)
     splitItems: () => [{ type: "submenu", label: "Split", icon: "dual-pane", items: () => splitItems(id) }],
+    beginItemDrag: (...a) => beginItemDrag.current?.(...a),
     ...dualPane.envFor(id),
   });
   // one pane per slot, always (hooks can't come and go with the layout); a slot that isn't on
@@ -504,6 +510,7 @@ export function AppShell() {
   /** A connection was deleted: drop it from the sidebar, the history and the screen. */
   const forgetProfile = (id: string) => {
     recents.forget(id);
+    forgetPlacesOf(id);
     clearAuthNeeded(id);
     forgetCaps(id);
     conns.dropProfile(id);
@@ -603,7 +610,7 @@ export function AppShell() {
    * Splits a pane: the new one opens the same place (and view) and becomes the active pane. It
    * goes right of or below the pane, or with `before` left of or above it.
    */
-  const split = (dir: Dir, id: PaneId = activeId, before = false) => {
+  const split = (dir: Dir, id: PaneId = activeId, before = false, fill?: (fresh: PaneId) => void) => {
     const room = splitRoom(dir, id);
     if (room.ok === "no") return toast("info", room.why);
     // the panes need the sidebar's width: it folds to its rail, as a narrow Finder window hides its sidebar
@@ -616,7 +623,9 @@ export function AppShell() {
     const src = slot(id);
     const p = slot(fresh);
     opened.current.add(fresh);
-    if (src.here && src.profile) p.go(src.profile, src.here.bucket, src.here.prefix);
+    // `fill`: the new pane opens somewhere else (the command palette's ⌘↵)
+    if (fill) fill(fresh);
+    else if (src.here && src.profile) p.go(src.profile, src.here.bucket, src.here.prefix);
     else p.showConnection(src.profile?.id ?? null);
     if (p.view !== src.view) p.setView(src.view);
     setTree(splitPane(t, id, dir, fresh, before));
@@ -1138,6 +1147,32 @@ export function AppShell() {
     onEnd: () => (dragFrom.current = null),
   });
 
+  // ------------------------------------------------------------ dragging files
+  // Items dragged from a list (useFileDrag): onto folders and panes, the sidebar, and other
+  // workspaces (their tabs: dropped there, or resting there to open them and drop inside).
+  /** A workspace not on screen: its name and the place of its active pane (where a drop on its tab lands). */
+  const wsDest = (id: string) => {
+    const w = ws.list.find((x) => x.id === id);
+    if (!w) return null;
+    const ls = leaves(w.tree);
+    const act = w.recent.find((x) => ls.includes(x)) ?? ls[0];
+    return { name: w.name, loc: w.panes[act]?.loc ?? null };
+  };
+  const fileDrag = useFileDrag({
+    activeWs: ws.active,
+    slot,
+    profiles,
+    rootLabel: conns.rootLabel,
+    cross: () => dualCtx.current!,
+    transfers,
+    autoShowActivity,
+    toast,
+    wsDest,
+    switchWorkspace,
+    newWorkspaceAt: (loc) => addWorkspace({ ...oneLayout({ loc, view: DEFAULT_VIEW }), id: newId(), name: nextName(ws.list), color: null, start: "restore", saved: null }, undefined, false),
+  });
+  beginItemDrag.current = fileDrag.begin;
+
   // refresh listing once all uploads have finished
   useEffect(
     () =>
@@ -1499,9 +1534,9 @@ export function AppShell() {
     !!docRef.current ||
     dialogs.isOpen() ||
     !!(connDialog || kyblDialog || importOpen || allPanes.current.some((p) => p.quick)) ||
-    !!document.querySelector(".modal-backdrop, .ctx-menu, .ql-backdrop, .ws-pop");
+    !!document.querySelector(".modal-backdrop, .ctx-menu, .ql-backdrop, .ws-pop, .palette-backdrop");
 
-  useShellCommands({
+  const route = useShellCommands({
     active,
     visible: panesRef.current,
     overlayUp,
@@ -1545,8 +1580,68 @@ export function AppShell() {
     closeEditor,
   });
 
+  // ------------------------------------------------------------ command palette (⌘K)
+  const routeRef = useRef(route);
+  routeRef.current = route;
+  /** ⌘↵ in the palette: a new pane to the right, opened at `fill`'s place */
+  const inNewPane = (fill: (fresh: PaneId) => void) => {
+    const why = splitRefusal("row", activeId);
+    if (why) return toast("info", why);
+    split("row", activeId, false, fill);
+  };
+  const palette = usePalette({
+    here: active.here,
+    blocked: overlayUp,
+    host: () => ({
+      profiles,
+      builtIn: (p) => p.id === THIS_MAC.id,
+      recentConnections: recents.recent,
+      rootLabel: conns.rootLabel,
+      favorites: settings.favorites,
+      active,
+      panes: panesRef.current,
+      route: (id) => routeRef.current(id),
+      openConnection: (p, newPane) => (newPane ? inNewPane((fresh) => void connectIn(fresh, p)) : openConnection(p)),
+      openPlace: (loc, newPane, selectKey) => {
+        const p = profiles.find((x) => x.id === loc.profileId);
+        if (!p) return toast("error", "That connection no longer exists.");
+        void conns.loadBuckets(p);
+        if (newPane) return inNewPane((fresh) => slot(fresh).go(p, loc.bucket, loc.prefix, { selectKey }));
+        activeRef.current.go(p, loc.bucket, loc.prefix, { selectKey });
+        focusListSoon();
+      },
+      openFavorite: (f, newPane) => {
+        const p = profiles.find((x) => x.id === f.profileId);
+        if (newPane && p) inNewPane((fresh) => slot(fresh).go(p, f.bucket, f.prefix));
+        else openFavorite(f);
+      },
+      splitRefusal: (dir) => splitRefusal(dir, activeId),
+      closeOtherPanes: () => closeOthers(),
+      equalizePanes: () => setTree((t) => equalize(t)),
+      syncPartners: facing
+        .filter(({ pair: [a, b] }) => a === activeId || b === activeId)
+        .map(({ pair: [a, b] }) => {
+          const id = a === activeId ? b : a;
+          const dir = relation(tree, activeId, id);
+          return { id, name: dir ? `the pane ${dir === "up" ? "above" : dir === "down" ? "below" : `to the ${dir}`}` : nameOf(id), on: isLinked(activeId, id) };
+        }),
+      toggleSync: (id) => toggleSync(activeId, id),
+      workspaces: ws.list.map((w) => ({ id: w.id, name: w.name, active: w.id === ws.active })),
+      switchWorkspace,
+      showActivity: showActivityPanel,
+      openSettings,
+      importConnections: () => setImportOpen(true),
+      undo,
+      settings,
+      updateSettings,
+      settingsOpen,
+      closeSettings: () => setSettingsOpen(false),
+      toast: (k, t) => toast(k, t),
+    }),
+  });
+
   // ------------------------------------------------------------ drag & drop from Finder
-  const dropOver = useFinderDrop({
+  const { over: dropOver, tab: finderTab } = useFinderDrop({
     target: (x, y) => {
       // a dialog owns the screen: nothing lands behind it
       if (overlayUp()) return null;
@@ -1557,6 +1652,26 @@ export function AppShell() {
     },
     onDrop: (id, paths) => void paneById(id).ops.uploadPaths(paths),
     onRefused: () => overlayUp() && toast("info", "Finish what’s open first, then drop the files again."),
+    // over a workspace's tab: resting there opens it; letting go uploads into its active pane's folder
+    tabs: {
+      at: (x, y) => {
+        const id = overlayUp() ? null : wsTabAt(x, y);
+        return id === ws.active ? null : id;
+      },
+      accepts: (id) => {
+        const at = wsDest(id)?.loc;
+        return !!at && profiles.some((p) => p.id === at.profileId);
+      },
+      onSpring: switchWorkspace,
+      onDrop: (id, paths) => {
+        const w = wsDest(id);
+        const at = w?.loc;
+        if (!w || !at) return;
+        void activeRef.current.ops.uploadPaths(paths, at.prefix, at).then((ok) => {
+          if (ok) toast("info", `Uploading to ${at.prefix ? baseName(at.prefix) : conns.rootLabel(at.profileId, at.bucket)} in “${w.name}”`, { label: "Show", run: () => wsShow.current(id) });
+        });
+      },
+    },
   });
 
   // ------------------------------------------------------------ render
@@ -1721,9 +1836,10 @@ export function AppShell() {
           onSettings={(id, anchor) => setWsSettings((cur) => (cur?.id === id ? null : { id, anchor }))}
           onReorder={moveWorkspace}
           switcher={paneSwitcher}
-          drop={paneDrag.tabDrop}
+          drop={paneDrag.tabDrop ?? fileDrag.tabDrop ?? finderTab}
         />
         {paneDrag.view}
+        {fileDrag.view}
         <PaneContext.Provider value={{ panes: panesRef.current, active, other, dual, setActive: setActiveId }}>
           {dual ? (
             <div className="content dual-wrap">
@@ -1893,6 +2009,7 @@ export function AppShell() {
         />
       )}
       {migrations.element}
+      {palette.element}
       {!settingsOpen && <UpdateBanner st={updates} />}
     </div>
   );
