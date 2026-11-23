@@ -58,7 +58,7 @@ export type GroupNode = {
  * connections people add by hand, This Mac last); inside a group they go by name, as a folder of
  * imported sites reads best. Groups go by name, before the connections beside them.
  */
-export function groupTree(profiles: Profile[]): GroupNode {
+export function groupTree(profiles: Profile[], sortTop = false): GroupNode {
   const root: GroupNode = { path: "", name: "", groups: [], items: [], count: 0 };
   const nodes = new Map<string, GroupNode>([["", root]]);
   const node = (path: string): GroupNode => {
@@ -76,9 +76,81 @@ export function groupTree(profiles: Profile[]): GroupNode {
   }
   for (const n of nodes.values()) {
     n.groups.sort((a, b) => byName(a.name, b.name));
-    if (n.path) n.items.sort((a, b) => byName(a.name, b.name));
+    if (n.path || sortTop) n.items.sort((a, b) => byName(a.name, b.name));
   }
   return root;
+}
+
+// ---------------------------------------------------------------- kind sections
+
+/**
+ * Server kinds have no buckets to fold open, so a row each makes a wall: with a few of one kind
+ * they go into a section for that kind ("FTP", "SFTP", "WebDAV") that folds open like a
+ * connection does on its buckets. FTPS is FTP with TLS: one section.
+ */
+export const SECTION_KINDS: { kind: "ftp" | "sftp" | "webdav"; label: string }[] = [
+  { kind: "ftp", label: "FTP" },
+  { kind: "sftp", label: "SFTP" },
+  { kind: "webdav", label: "WebDAV" },
+];
+/** With fewer of a kind they stay plain rows. */
+export const SECTION_MIN = 3;
+
+export type KindSection = {
+  kind: "ftp" | "sftp" | "webdav";
+  label: string;
+  /** its key among the folded-open groups, and the scope of the groups inside it */
+  key: string;
+  tree: GroupNode;
+};
+
+export type SidebarLayout = {
+  /** connections and groups at the top level (everything not in a section) */
+  top: GroupNode;
+  sections: KindSection[];
+};
+
+const sectionKey = (kind: string) => `kind:${kind}`;
+
+/** The kinds that get a section for these connections. */
+function sectionKinds(profiles: Profile[]): Set<string> {
+  const n = new Map<string, number>();
+  for (const p of profiles) n.set(p.kind ?? "s3", (n.get(p.kind ?? "s3") ?? 0) + 1);
+  return new Set(SECTION_KINDS.filter((s) => (n.get(s.kind) ?? 0) >= SECTION_MIN).map((s) => s.kind));
+}
+
+/** The connections as the sidebar lays them out: the top level, and a section per server kind. */
+export function sidebarLayout(profiles: Profile[]): SidebarLayout {
+  const kinds = sectionKinds(profiles);
+  const sections = SECTION_KINDS.filter((s) => kinds.has(s.kind)).map((s) => ({
+    ...s,
+    key: sectionKey(s.kind),
+    tree: groupTree(
+      profiles.filter((p) => p.kind === s.kind),
+      true,
+    ),
+  }));
+  return { top: groupTree(profiles.filter((p) => !kinds.has(p.kind ?? "s3"))), sections };
+}
+
+/** Where a connection sits: the key of its section ("" at the top level). */
+export function scopeOf(profiles: Profile[], p: Profile): string {
+  return sectionKinds(profiles).has(p.kind ?? "s3") ? sectionKey(p.kind!) : "";
+}
+
+/** A group's key among the folded-open ones: its path, inside a section after the section's key. */
+export const openKey = (scope: string, path: string) => (scope ? `${scope}|${path}` : path);
+
+/** What has to be folded open to show `p`: its section, and the groups around it. */
+export function revealKeys(profiles: Profile[], p: Profile): string[] {
+  const scope = scopeOf(profiles, p);
+  return [...(scope ? [scope] : []), ...groupChain(groupOf(p)).map((g) => openKey(scope, g))];
+}
+
+/** The connections a group's menu acts on: those listed with it (its section, or the top level). */
+export function inScope(profiles: Profile[], scope: string): Profile[] {
+  const kinds = sectionKinds(profiles);
+  return profiles.filter((p) => (kinds.has(p.kind ?? "s3") ? sectionKey(p.kind!) : "") === scope);
 }
 
 /** Group changes, by connection id ("" = the top level), for `api.setProfileGroups`. */
@@ -102,13 +174,14 @@ export function ungroup(profiles: Profile[], path: string): GroupChanges {
 }
 
 /** The folded-open groups after a rename: a renamed group (and those inside it) stays open. */
-export function renamedOpen(open: Set<string>, from: string, to: string): Set<string> {
+export function renamedOpen(open: Set<string>, from: string, to: string, scope = ""): Set<string> {
   const dest = normalizeGroup(to);
+  const old = openKey(scope, from);
   const next = new Set<string>();
   for (const g of open) {
-    if (g === from) {
-      if (dest) next.add(dest);
-    } else if (g.startsWith(`${from}/`)) next.add(normalizeGroup(`${dest}/${g.slice(from.length + 1)}`));
+    if (g === old) {
+      if (dest) next.add(openKey(scope, dest));
+    } else if (g.startsWith(`${old}/`)) next.add(openKey(scope, normalizeGroup(`${dest}/${g.slice(old.length + 1)}`)));
     else next.add(g);
   }
   return next;
@@ -147,13 +220,12 @@ export function useOpenGroups() {
       }),
     [update],
   );
-  /** Folds open every group around a connection (the one on screen), keeping the rest as they are. */
+  /** Folds open what shows a connection (the one on screen: `revealKeys`), keeping the rest as they are. */
   const reveal = useCallback(
-    (path: string) =>
+    (keys: string[]) =>
       update((cur) => {
-        const chain = groupChain(path);
-        if (chain.every((g) => cur.has(g))) return cur;
-        return new Set([...cur, ...chain]);
+        if (keys.every((g) => cur.has(g))) return cur;
+        return new Set([...cur, ...keys]);
       }),
     [update],
   );

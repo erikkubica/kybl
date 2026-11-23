@@ -12,7 +12,21 @@ import type { Favorite } from "../settings";
 import type { MountInfo } from "../api";
 import { findMount } from "../mount/useMounts";
 import { driveBadgeTitle } from "../mount/driveMenu";
-import { FILTER_MIN, RECENT_MIN, RECENT_SHOWN, findConnections, groupName, groupOf, groupTree, type Found, type GroupNode, type Range } from "../connections/groups";
+import {
+  FILTER_MIN,
+  RECENT_MIN,
+  RECENT_SHOWN,
+  findConnections,
+  groupName,
+  groupOf,
+  openKey,
+  scopeOf,
+  sidebarLayout,
+  type Found,
+  type GroupNode,
+  type KindSection,
+  type Range,
+} from "../connections/groups";
 
 const SYNC_LABEL: Record<SyncState, string> = {
   idle: "Synced folders are up to date",
@@ -160,15 +174,18 @@ function FindResults({
 
 type GroupCtx = {
   open: Set<string>;
-  /** the group of the connection on screen ("" at the top level) */
-  activeGroup: string;
-  onToggle: (path: string) => void;
-  onMenu?: (path: string, x: number, y: number) => void;
+  /** "" at the top level, a kind section's key inside one: group keys and menus are per scope */
+  scope: string;
+  /** the group of the connection on screen, when it is in this scope ("" at its top; null: elsewhere) */
+  activeGroup: string | null;
+  onToggle: (key: string) => void;
+  onMenu?: (path: string, scope: string, x: number, y: number) => void;
 };
 
 /**
- * A level of the connections list: at the top, the connections there and then the groups; inside
- * a group, its groups first (like folders in a folder) and then its connections.
+ * A level of the connections list: at the top of the list or of a kind section, the connections
+ * there and then the groups; inside a group, its groups first (like folders in a folder) and then
+ * its connections.
  */
 function GroupBody({ node, depth, ctx, renderConnection }: { node: GroupNode; depth: number; ctx: GroupCtx; renderConnection: (p: Profile) => React.ReactNode }) {
   const groups = node.groups.map((g) => <GroupRow key={g.path} node={g} depth={depth} ctx={ctx} renderConnection={renderConnection} />);
@@ -176,27 +193,85 @@ function GroupBody({ node, depth, ctx, renderConnection }: { node: GroupNode; de
   return <>{depth === 0 ? [items, groups] : [groups, items]}</>;
 }
 
+/** Arrow keys fold a row open and shut; Enter and Space toggle it. */
+const foldKeys = (open: boolean, toggle: () => void) => (e: React.KeyboardEvent) => {
+  if (e.target !== e.currentTarget) return;
+  if (e.key === "ArrowRight" && !open) (e.preventDefault(), toggle());
+  else if (e.key === "ArrowLeft" && open) (e.preventDefault(), toggle());
+  else onActivate(toggle)(e);
+};
+
+/**
+ * The servers of one kind ("FTP", "SFTP", "WebDAV"): a row like a connection's that folds open on
+ * its connections instead of buckets, groups and all.
+ */
+function KindSectionRow({
+  section,
+  ctx,
+  onMenu,
+  renderConnection,
+}: {
+  section: KindSection;
+  ctx: GroupCtx;
+  onMenu?: (s: KindSection, x: number, y: number) => void;
+  renderConnection: (p: Profile) => React.ReactNode;
+}) {
+  const open = ctx.open.has(section.key);
+  const holdsActive = !open && ctx.activeGroup !== null;
+  const toggle = () => ctx.onToggle(section.key);
+  const n = section.tree.count;
+  return (
+    <div className="side-group kind-section" role="group" aria-label={section.label}>
+      <div
+        className={`side-item conn kind-row ${open ? "open" : ""} ${holdsActive ? "holds-active" : ""}`}
+        onClick={toggle}
+        onKeyDown={foldKeys(open, toggle)}
+        onContextMenu={
+          onMenu &&
+          ((e) => {
+            e.preventDefault();
+            onMenu(section, e.clientX, e.clientY);
+          })
+        }
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        aria-label={`${section.label}, ${n} connections`}
+        title={holdsActive ? `${section.label}: the connection on screen is in here` : `${n} ${section.label} connections`}
+      >
+        <ProviderBadge provider={section.kind} />
+        <span className="side-label">{section.label}</span>
+        <span className="side-count" aria-hidden="true">
+          {n}
+        </span>
+        <Icon name="chevron" size={13} className="side-caret" />
+      </div>
+      {open && (
+        <div className="kind-body">
+          <GroupBody node={section.tree} depth={0} ctx={ctx} renderConnection={renderConnection} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GroupRow({ node, depth, ctx, renderConnection }: { node: GroupNode; depth: number; ctx: GroupCtx; renderConnection: (p: Profile) => React.ReactNode }) {
-  const open = ctx.open.has(node.path);
+  const key = openKey(ctx.scope, node.path);
+  const open = ctx.open.has(key);
   // folded shut over the connection on screen: the folder says it's in there
-  const holdsActive = !open && (ctx.activeGroup === node.path || ctx.activeGroup.startsWith(`${node.path}/`));
-  const toggle = () => ctx.onToggle(node.path);
+  const holdsActive = !open && ctx.activeGroup !== null && (ctx.activeGroup === node.path || ctx.activeGroup.startsWith(`${node.path}/`));
+  const toggle = () => ctx.onToggle(key);
   return (
     <div className="side-group" role="group" aria-label={node.name}>
       <div
         className={`side-item group-row ${open ? "open" : ""} ${holdsActive ? "holds-active" : ""}`}
         onClick={toggle}
-        onKeyDown={(e) => {
-          if (e.target !== e.currentTarget) return;
-          if (e.key === "ArrowRight" && !open) (e.preventDefault(), toggle());
-          else if (e.key === "ArrowLeft" && open) (e.preventDefault(), toggle());
-          else onActivate(toggle)(e);
-        }}
+        onKeyDown={foldKeys(open, toggle)}
         onContextMenu={
           ctx.onMenu &&
           ((e) => {
             e.preventDefault();
-            ctx.onMenu!(node.path, e.clientX, e.clientY);
+            ctx.onMenu!(node.path, ctx.scope, e.clientX, e.clientY);
           })
         }
         role="button"
@@ -268,6 +343,7 @@ export function Sidebar({
   openGroups,
   onToggleGroup,
   onGroupMenu,
+  onSectionMenu,
   onOpenConnection,
   findSignal = 0,
   findOnMount,
@@ -320,9 +396,12 @@ export function Sidebar({
   recent?: string[];
   /** groups folded open (paths) */
   openGroups?: Set<string>;
-  onToggleGroup?(path: string): void;
-  /** right-click on a group's row (at the pointer) */
-  onGroupMenu?(path: string, x: number, y: number): void;
+  /** folds a group (or kind section) open or shut, by its key (`openKey`) */
+  onToggleGroup?(key: string): void;
+  /** right-click on a group's row (at the pointer); `scope` is its kind section's key, "" at the top level */
+  onGroupMenu?(path: string, scope: string, x: number, y: number): void;
+  /** right-click on a kind section's row */
+  onSectionMenu?(s: KindSection, x: number, y: number): void;
   /** opens a connection in the pane in use (a found or recent connection) */
   onOpenConnection?(p: Profile): void;
   /** goes up by one each time ⌥⌘F asks for the filter field */
@@ -400,10 +479,11 @@ export function Sidebar({
   }, [cursor, query, found]);
 
   // ---- groups and recent
-  const tree = useMemo(() => groupTree(profiles), [profiles]);
-  const activeGroup = useMemo(() => {
+  const layout = useMemo(() => sidebarLayout(profiles), [profiles]);
+  // where the connection on screen sits: its section ("" at the top level) and group
+  const here = useMemo(() => {
     const p = profiles.find((x) => x.id === activeId);
-    return p ? groupOf(p) : "";
+    return p ? { scope: scopeOf(profiles, p), group: groupOf(p) } : null;
   }, [profiles, activeId]);
   const recentProfiles = useMemo(
     () =>
@@ -415,12 +495,14 @@ export function Sidebar({
     [recent, profiles, activeId],
   );
   const showRecent = profiles.length > RECENT_MIN && recentProfiles.length > 0;
-  const groupCtx: GroupCtx = {
+  const ctxFor = (scope: string): GroupCtx => ({
     open: openGroups ?? new Set(),
-    activeGroup,
-    onToggle: (path) => onToggleGroup?.(path),
+    scope,
+    activeGroup: here?.scope === scope ? here.group : null,
+    onToggle: (key) => onToggleGroup?.(key),
     onMenu: onGroupMenu,
-  };
+  });
+  const topCtx = ctxFor("");
 
   // ---- where am I: the connection on screen scrolls into view when it changes (and once its
   // group has folded open), without moving a list that already shows it
@@ -611,7 +693,14 @@ export function Sidebar({
             {many && <span className="side-count">{profiles.length}</span>}
           </div>
         )}
-        <GroupBody node={tree} depth={0} ctx={groupCtx} renderConnection={renderConnection} />
+        {/* the connections with buckets and This Mac, then a section per server kind, then the groups */}
+        {layout.top.items.map(renderConnection)}
+        {layout.sections.map((s) => (
+          <KindSectionRow key={s.key} section={s} ctx={ctxFor(s.key)} onMenu={onSectionMenu} renderConnection={renderConnection} />
+        ))}
+        {layout.top.groups.map((g) => (
+          <GroupRow key={g.path} node={g} depth={0} ctx={topCtx} renderConnection={renderConnection} />
+        ))}
           </>
         )}
       </div>
@@ -885,9 +974,12 @@ export function SidebarRail({
   onHover,
   recent = [],
   onMore,
+  onSection,
 }: {
   profiles: Profile[];
   activeId: string | null;
+  /** a server kind's icon was clicked: its connections in a menu next to it */
+  onSection?: (s: KindSection, x: number, y: number) => void;
   /** connections opened last, newest first (ids): what a long list keeps on the rail */
   recent?: string[];
   /** a long list's "All connections": the whole sidebar over the panes, its filter field ready */
@@ -911,9 +1003,14 @@ export function SidebarRail({
   // a long list doesn't fit as icons: the one on screen and the recent ones stay, the rest is a
   // click (or ⌥⌘F) away in the full sidebar
   const long = profiles.length > RECENT_MIN && !!onMore;
+  // a server kind with a section in the sidebar is one icon here too, its connections in a menu
+  const layout = useMemo(() => sidebarLayout(profiles), [profiles]);
+  const sections = onSection ? layout.sections : [];
+  const inSection = new Set(profiles.filter((p) => sections.some((s) => s.kind === p.kind)).map((p) => p.id));
   const shown = long
     ? [activeId, ...recent.filter((id) => id !== activeId).slice(0, RECENT_SHOWN)].map((id) => profiles.find((p) => p.id === id)).filter((p): p is Profile => !!p)
-    : profiles;
+    : profiles.filter((p) => !inSection.has(p.id));
+  const shownIds = new Set(shown.map((p) => p.id));
   return (
     <aside className="sidebar rail" onContextMenu={(e) => e.preventDefault()}>
       <div className="sidebar-drag" data-tauri-drag-region />
@@ -959,6 +1056,30 @@ export function SidebarRail({
             {authNeeded?.has(p.id) && <span className="rail-dot" title="Sign in again" />}
           </button>
         ))}
+        {sections.length > 0 && shown.length > 0 && <div className="rail-sep" />}
+        {sections.map((s) => {
+          // the connection on screen is in here, and has no icon of its own above
+          const holds = !!activeId && !shownIds.has(activeId) && profiles.some((p) => p.id === activeId && p.kind === s.kind);
+          return (
+            <button
+              key={s.key}
+              type="button"
+              className={`rail-btn rail-kind ${holds ? "active" : ""}`}
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                onSection?.(s, r.right + 6, r.top);
+              }}
+              title={`${s.tree.count} ${s.label} connections`}
+              aria-label={`${s.label}: ${s.tree.count} connections`}
+              aria-haspopup="menu"
+            >
+              <ProviderBadge provider={s.kind} large />
+              <span className="rail-kind-count" aria-hidden="true">
+                {s.tree.count > 99 ? "99+" : s.tree.count}
+              </span>
+            </button>
+          );
+        })}
         {long && (
           <button type="button" className="rail-btn rail-more" onClick={onMore} title={`All ${profiles.length} connections (⌥⌘F)`} aria-label={`All ${profiles.length} connections`}>
             <Icon name="search" size={16} />
