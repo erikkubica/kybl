@@ -7,16 +7,20 @@
  * row needs would leave none of them usable, and scrolling a whole layout sideways is worse.
  * The layout comes back as soon as there is room again.
  *
- * Each divider carries a small round link button at its middle: it switches synchronized browsing
- * on or off for the two panes facing each other there (paneLayout `dividerLink`), so a lit
- * divider shows at a glance which panes move together. Beside a split the button sits on the stretch
- * the two panes share.
+ * Each divider carries a small round link button for every pair of panes facing each other across
+ * it (paneLayout `facingPairs`), at the middle of the stretch the two share: it switches
+ * synchronized browsing on or off for that pair, so a lit button shows at a glance which panes
+ * move together. Between two single panes the whole line lights up too. A stretch too short for
+ * its button gets none (the pane's "…" menu still has that pair).
  */
-import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { PaneId } from "../browser/types";
 import { Icon } from "../Icons";
 import type { MenuItem } from "../components/Dialogs";
-import { DIVIDER, dividerLink, fit, leaves, minSize, type PaneNode } from "./paneLayout";
+import { DIVIDER, dividerPairs, facingPairs, fit, leaves, minSize, sameLink, type PaneNode } from "./paneLayout";
+
+/** the least stretch of a divider a link button needs: its own 22 px and a little air, so two never touch */
+const LINK_ROOM = 32;
 
 export type SplitLayoutProps = {
   tree: PaneNode;
@@ -61,6 +65,7 @@ export function SplitLayout(p: SplitLayoutProps) {
   const need = minSize(p.tree);
   const cramped = !!room && (room.w < need.w || room.h < need.h);
   const ids = leaves(p.tree);
+  const known = useMemo(() => dividerPairs(p.tree), [p.tree]);
 
   return (
     <div className="splits" ref={box}>
@@ -89,13 +94,24 @@ export function SplitLayout(p: SplitLayoutProps) {
           {p.pane(p.activeId, { flex: "1 1 0px" })}
         </div>
       ) : (
-        room && <Node node={fit(p.tree, room.w, room.h)} path={[]} style={{ flex: "1 1 0px" }} {...p} />
+        room && <Node node={fit(p.tree, room.w, room.h)} path={[]} style={{ flex: "1 1 0px" }} w={room.w} h={room.h} known={known} {...p} />
       )}
     </div>
   );
 }
 
-function Node({ node, path, style, ...p }: SplitLayoutProps & { node: PaneNode; path: number[]; style: CSSProperties }) {
+type NodeProps = SplitLayoutProps & {
+  node: PaneNode;
+  path: number[];
+  style: CSSProperties;
+  /** the (sub)tree's room as drawn, px */
+  w: number;
+  h: number;
+  /** the pairs the shell can link (from the saved shares): squeezed to fit, the drawn ones may differ */
+  known: [PaneId, PaneId][];
+};
+
+function Node({ node, path, style, w, h, known, ...p }: NodeProps) {
   const el = useRef<HTMLDivElement>(null);
   if (node.t === "pane") return <>{p.pane(node.id, style)}</>;
   const row = node.dir === "row";
@@ -140,25 +156,26 @@ function Node({ node, path, style, ...p }: SplitLayoutProps & { node: PaneNode; 
     window.addEventListener("mouseup", up);
   };
 
-  // the pairs come from the saved shares, not the ones squeezed to fit: the shell knows the same pairs
-  const saved = path.reduce<PaneNode>((n, i) => (n.t === "split" ? n.kids[i] : n), p.tree);
+  // each child's room as drawn, the way `fit` shared it out
+  const share = Math.max(0, (row ? w : h) - DIVIDER * (node.kids.length - 1));
+  /** a divider's length: a row's dividers run its full height, a column's its full width */
+  const lineLen = row ? h : w;
   const kids: ReactNode[] = [];
   node.kids.forEach((k, i) => {
     if (i > 0) {
       const j = i - 1;
-      const {
-        pair: [a, b],
-        at,
-      } = dividerLink(saved.t === "split" ? saved : node, j);
-      const on = p.linked(a, b);
-      const names = `“${p.nameOf(a)}” and “${p.nameOf(b)}”`;
+      // placed by the shares as drawn; only pairs the shell can link, with room for their button
+      const facing = facingPairs(node, j).filter(
+        (f) => (f.to - f.from) * lineLen >= LINK_ROOM && known.some(([a, b]) => sameLink([a, b], f.pair[0], f.pair[1])),
+      );
       // the whole line lights up only when it runs along just those two panes; beside a split the
-      // button alone says which pair it means
+      // buttons alone say which pairs are linked
       const whole = node.kids[j].t === "pane" && k.t === "pane";
+      const lit = whole && facing.length === 1 && p.linked(...facing[0].pair);
       kids.push(
         <div
           key={`d${i}`}
-          className={`split-divider ${on && whole ? "linked" : ""}`}
+          className={`split-divider ${lit ? "linked" : ""}`}
           role="separator"
           aria-orientation={row ? "vertical" : "horizontal"}
           aria-label="Resize the panes"
@@ -179,24 +196,44 @@ function Node({ node, path, style, ...p }: SplitLayoutProps & { node: PaneNode; 
             p.onSizes(path, place(j, node.sizes[j] + (e.key === back ? -40 : 40) / room, room));
           }}
         >
-          <button
-            type="button"
-            className={`split-link ${on ? "on" : ""}`}
-            style={row ? { top: `${at * 100}%` } : { left: `${at * 100}%` }}
-            aria-pressed={on}
-            aria-label={`Synchronized browsing between ${names}`}
-            title={on ? `Synchronized browsing: on. ${names} follow each other into folders and back up. Click to stop` : `Synchronized browsing: link ${names} so they follow each other`}
-            // the divider under it drags and double-clicks; the button only clicks
-            onMouseDown={(e) => e.stopPropagation()}
-            onDoubleClick={(e) => e.stopPropagation()}
-            onClick={() => p.onToggleLink(a, b)}
-          >
-            <Icon name="link" size={12} />
-          </button>
+          {facing.map(({ pair: [a, b], at }) => {
+            const on = p.linked(a, b);
+            const names = `“${p.nameOf(a)}” and “${p.nameOf(b)}”`;
+            // the active pane's accent line runs along its top: under a horizontal divider it
+            // thickens the line downwards, so the button centres on both together
+            const onAccent = !row && b === p.activeId;
+            return (
+              <button
+                key={`${a}-${b}`}
+                type="button"
+                className={`split-link ${on ? "on" : ""} ${onAccent ? "on-accent" : ""}`}
+                style={row ? { top: `${at * 100}%` } : { left: `${at * 100}%` }}
+                aria-pressed={on}
+                aria-label={`Synchronized browsing between ${names}`}
+                title={
+                  on
+                    ? `Synchronized browsing: on. ${names} follow each other into folders and back up. Click to stop`
+                    : `Synchronized browsing: link ${names} so they follow each other`
+                }
+                // the divider under it drags and double-clicks; the button only clicks
+                onMouseDown={(e) => e.stopPropagation()}
+                onDoubleClick={(e) => e.stopPropagation()}
+                // nor do arrow keys on it nudge the divider
+                onKeyDown={(e) => e.key.startsWith("Arrow") && e.stopPropagation()}
+                onClick={() => p.onToggleLink(a, b)}
+              >
+                <Icon name="link" size={12} />
+              </button>
+            );
+          })}
         </div>,
       );
     }
-    kids.push(<Node key={k.t === "pane" ? k.id : `s${i}`} {...p} node={k} path={[...path, i]} style={{ flex: `${node.sizes[i]} 1 0px` }} />);
+    const kw = row ? node.sizes[i] * share : w;
+    const kh = row ? h : node.sizes[i] * share;
+    kids.push(
+      <Node key={k.t === "pane" ? k.id : `s${i}`} {...p} node={k} path={[...path, i]} style={{ flex: `${node.sizes[i]} 1 0px` }} w={kw} h={kh} known={known} />,
+    );
   });
 
   return (
@@ -208,6 +245,37 @@ function Node({ node, path, style, ...p }: SplitLayoutProps & { node: PaneNode; 
 
 type Toward = "left" | "right" | "up" | "down";
 const towardName = (d: Toward) => ({ left: "the left pane", right: "the right pane", up: "the pane above", down: "the pane below" })[d];
+const DIR_ORDER: (Toward | null)[] = ["left", "up", "right", "down", null];
+
+/**
+ * What to call each pane facing this one: "the right pane", or with several the same way (a pane
+ * beside a stack of two), where along the divider each is: "the top right pane", "the bottom right
+ * pane"; "the pane below on the left". Without a direction, its folder's name.
+ */
+export function syncLabels(syncWith: { id: PaneId; dir: Toward | null; name: string; at: number }[]): Map<PaneId, string> {
+  const out = new Map<PaneId, string>();
+  for (const s of syncWith) {
+    if (!s.dir) {
+      out.set(s.id, `“${s.name}”`);
+      continue;
+    }
+    const same = syncWith.filter((x) => x.dir === s.dir).sort((x, y) => x.at - y.at);
+    if (same.length === 1) {
+      out.set(s.id, towardName(s.dir));
+      continue;
+    }
+    const k = same.indexOf(s);
+    const side = s.dir === "left" || s.dir === "right";
+    if (same.length > 3) {
+      out.set(s.id, `${towardName(s.dir)} ${k + 1} of ${same.length}`);
+      continue;
+    }
+    const spot = same.length === 2 ? (["first", "last"] as const)[k] : (["first", "middle", "last"] as const)[k];
+    if (side) out.set(s.id, `the ${{ first: "top", middle: "middle", last: "bottom" }[spot]} ${s.dir} pane`);
+    else out.set(s.id, `${towardName(s.dir)} ${{ first: "on the left", middle: "in the middle", last: "on the right" }[spot]}`);
+  }
+  return out;
+}
 
 /**
  * A pane's items for working with another pane, at the top of its toolbar's "…": this folder
@@ -227,18 +295,23 @@ export function dualMenuItems({
   onToOther: () => void;
   onSwap: () => void;
   onCompare: () => void;
-  /** the panes across a divider from this one, and whether each is linked */
-  syncWith: { id: PaneId; dir: Toward | null; name: string; on: boolean }[];
+  /**
+   * the panes facing this one across a divider (the pairs with a link button), whether each is
+   * linked, and `at`: where along that divider they meet (0 to 1), to tell apart several panes the
+   * same way
+   */
+  syncWith: { id: PaneId; dir: Toward | null; name: string; on: boolean; at: number }[];
   onToggleSync: (id: PaneId) => void;
 }): MenuItem[] {
   const named = (name: string) => (name ? ` (“${name}”)` : "");
   const where = towardName(toOther.dir) + named(toOther.name);
+  const labels = syncLabels(syncWith);
   const sync: MenuItem[] =
     syncWith.length === 1
       ? [
           {
             type: "item",
-            label: `Synced browsing with ${syncWith[0].dir ? towardName(syncWith[0].dir) : `“${syncWith[0].name}”`}`,
+            label: `Synced browsing with ${labels.get(syncWith[0].id)}`,
             icon: "link",
             checked: syncWith[0].on,
             onClick: () => onToggleSync(syncWith[0].id),
@@ -251,10 +324,12 @@ export function dualMenuItems({
               label: "Synced browsing with",
               icon: "link",
               items: () =>
-                syncWith.map((s) => {
-                  const label = s.dir ? towardName(s.dir) + named(s.name) : `“${s.name}”`;
-                  return { type: "item" as const, label: label[0].toUpperCase() + label.slice(1), checked: s.on, onClick: () => onToggleSync(s.id) };
-                }),
+                [...syncWith]
+                  .sort((x, y) => DIR_ORDER.indexOf(x.dir) - DIR_ORDER.indexOf(y.dir) || x.at - y.at)
+                  .map((s) => {
+                    const label = labels.get(s.id) ?? s.name;
+                    return { type: "item" as const, label: label[0].toUpperCase() + label.slice(1), checked: s.on, onClick: () => onToggleSync(s.id) };
+                  }),
             },
           ]
         : [];

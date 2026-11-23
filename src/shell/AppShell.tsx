@@ -52,8 +52,8 @@ import { useFinderDrop } from "./useFinderDrop";
 import { useShellCommands } from "./useShellCommands";
 import { dualMenuItems, SplitLayout } from "./SplitLayout";
 import {
+  allFacing,
   closePane,
-  dividerPairs,
   equalize,
   freeSlot,
   leaf,
@@ -158,8 +158,8 @@ export function AppShell() {
   // screen is exactly what moves together; a link kept from another layout comes back with it.
   const [links, setLinks] = useState<SyncLink[]>(() => loadLinks(tree, settings.syncBrowsing));
   useEffect(() => saveLinks(links), [links]);
-  const pairs = useMemo(() => dividerPairs(tree), [tree]);
-  const liveLinks = useMemo(() => links.filter((l) => pairs.some(([a, b]) => sameLink(l, a, b))), [links, pairs]);
+  const facing = useMemo(() => allFacing(tree), [tree]);
+  const liveLinks = useMemo(() => links.filter((l) => facing.some(({ pair: [a, b] }) => sameLink(l, a, b))), [links, facing]);
   const isLinked = (a: PaneId, b: PaneId) => liveLinks.some((l) => sameLink(l, a, b));
   const toggleSync = (a: PaneId, b: PaneId) => setLinks((cur) => toggleLink(cur, a, b));
   /** a closed pane's slot opens empty next time: it lets go of its links too */
@@ -862,12 +862,12 @@ export function AppShell() {
         onToOther: () => dualPane.sameFolderInOther(p.id),
         onSwap: dualPane.swap,
         onCompare: dualPane.compare,
-        syncWith: pairs
-          .filter(([a, b]) => a === p.id || b === p.id)
-          .map(([a, b]) => (a === p.id ? b : a))
-          .map((id) => {
+        syncWith: facing
+          .filter(({ pair: [a, b] }) => a === p.id || b === p.id)
+          .map(({ pair: [a, b], at }) => {
+            const id = a === p.id ? b : a;
             const dir = relation(tree, p.id, id);
-            return { id, dir, name: dir ? "" : paneName(slot(id)), on: isLinked(p.id, id) };
+            return { id, dir, name: dir ? "" : paneName(slot(id)), on: isLinked(p.id, id), at };
           }),
         onToggleSync: (id) => toggleSync(p.id, id),
       });
