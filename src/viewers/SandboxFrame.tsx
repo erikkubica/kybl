@@ -104,7 +104,12 @@ export function SandboxFrame({
       ev.preventDefault();
       const href = a.getAttribute("href") ?? "";
       if (href.startsWith("#")) {
-        const id = decodeURIComponent(href.slice(1));
+        let id = href.slice(1);
+        try {
+          id = decodeURIComponent(id);
+        } catch {
+          // a stray "%" in the anchor: look the raw id up instead
+        }
         const d = el.contentDocument;
         (d?.getElementById(id) ?? d?.getElementsByName(id)[0])?.scrollIntoView({ block: "start" });
         return;
@@ -119,9 +124,32 @@ export function SandboxFrame({
       const scale = Math.min(1, (el.clientWidth - 8) / fitWidth);
       d.body.style.setProperty("zoom", scale < 1 ? String(scale) : "");
     };
+    // Keys pressed while the frame has focus fire in the frame's own document and never reach the
+    // app's window listeners (Quick Look's Esc/Space/arrows, the editor's Esc/⌘S/⌘W). Hand each one
+    // on as a copy dispatched on the <iframe> element, so it bubbles through the app like any other
+    // key; if an app handler claims it, the frame does not act on it too (Space would scroll).
+    const onKey = (ev: KeyboardEvent) => {
+      // ⌘C / ⌘A with text selected in the frame are the frame's own (copy that text)
+      const k = ev.key.toLowerCase();
+      if ((ev.metaKey || ev.ctrlKey) && (k === "c" || k === "a") && el.contentWindow?.getSelection()?.toString()) return;
+      const copy = new KeyboardEvent(ev.type, {
+        key: ev.key,
+        code: ev.code,
+        location: ev.location,
+        repeat: ev.repeat,
+        ctrlKey: ev.ctrlKey,
+        shiftKey: ev.shiftKey,
+        altKey: ev.altKey,
+        metaKey: ev.metaKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      if (!el.dispatchEvent(copy)) ev.preventDefault();
+    };
     const onLoad = () => {
       shown.current = latest.current;
       el.contentDocument?.addEventListener("click", onClick);
+      el.contentDocument?.addEventListener("keydown", onKey);
       fit();
     };
     el.addEventListener("load", onLoad);
@@ -130,6 +158,7 @@ export function SandboxFrame({
     return () => {
       el.removeEventListener("load", onLoad);
       el.contentDocument?.removeEventListener("click", onClick);
+      el.contentDocument?.removeEventListener("keydown", onKey);
       ro.disconnect();
     };
   }, [fitWidth]);

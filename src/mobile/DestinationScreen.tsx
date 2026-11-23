@@ -88,11 +88,11 @@ export function DestinationScreen({
                 <ul className="m-group">
                   {buckets[p.id]?.loading && !buckets[p.id]?.names.length && (
                     <li className="m-bucket-note">
-                      <span className="spinner" /> Loading buckets…
+                      <span className="spinner" /> Loading…
                     </li>
                   )}
                   {!buckets[p.id]?.loading && !buckets[p.id]?.names.length && (
-                    <li className="m-bucket-note">{buckets[p.id]?.note ?? "No buckets here yet."}</li>
+                    <li className="m-bucket-note">{buckets[p.id]?.note ?? "Nothing here yet."}</li>
                   )}
                   {(buckets[p.id]?.names ?? []).map((b) => (
                     <li key={b}>

@@ -34,11 +34,9 @@ export function TransfersButton({ onClick }: { onClick: () => void }) {
 
 const ORDER = { running: 0, queued: 1, paused: 2, error: 3, cancelled: 4, done: 5 } as const;
 
-/** Retries every failed or stopped transfer (the queue's own `retryAll` where it has one). */
-export function retryAllFailed(transfers: TransferActions, list: Transfer[]) {
-  const all = (transfers as TransferActions & { retryAll?: () => void }).retryAll;
-  if (all) return all();
-  for (const t of list) if (t.state === "error" || t.state === "cancelled") transfers.retry(t.id);
+/** Retries every failed transfer (not the ones stopped on purpose: those retry with a tap each). */
+export function retryAllFailed(transfers: TransferActions) {
+  transfers.retryAll(true);
 }
 
 export function TransfersScreen({
@@ -61,7 +59,10 @@ export function TransfersScreen({
   const jobActions = useJobs();
   const sorted = useMemo(() => [...list].sort((a, b) => ORDER[a.state] - ORDER[b.state]), [list]);
   const active = list.some((t) => t.state === "queued" || t.state === "running");
-  const failed = list.filter((t) => t.state === "error" || t.state === "cancelled").length;
+  // paused: kept across a restart; they resume, or are stopped (what they kept is dropped)
+  const paused = list.filter((t) => t.state === "paused");
+  const failed = list.filter((t) => t.state === "error").length;
+  const failedJobs = jobs.some((j) => j.state === "error");
   // "Clear finished" takes done and cancelled items; failed ones stay until retried
   const finished = list.some((t) => t.state === "done" || t.state === "cancelled") || jobs.some((j) => j.state === "done" || j.state === "cancelled");
   const copies = useMigrations().length;
@@ -81,8 +82,14 @@ export function TransfersScreen({
         <div className="m-title">
           <h1>Transfers</h1>
         </div>
-        {active && (
-          <button className="m-text-btn danger" onClick={() => transfers.cancelAll()}>
+        {(active || paused.length > 0) && (
+          <button
+            className="m-text-btn danger"
+            onClick={() => {
+              transfers.cancelAll();
+              for (const t of paused) transfers.cancel(t.id);
+            }}
+          >
             Stop all
           </button>
         )}
@@ -98,11 +105,27 @@ export function TransfersScreen({
           )
         ) : (
           <>
-            {(failed > 0 || finished) && (
+            {(failed > 0 || failedJobs || finished || paused.length > 0) && (
               <div className="m-xfer-tools">
+                {paused.length > 0 && (
+                  <button className="m-pill" onClick={() => transfers.resumeAll()}>
+                    <Icon name="play" size={14} /> {paused.length > 1 ? `Resume all ${paused.length}` : "Resume"}
+                  </button>
+                )}
                 {failed > 0 && (
-                  <button className="m-pill" onClick={() => retryAllFailed(transfers, list)}>
+                  <button className="m-pill" onClick={() => retryAllFailed(transfers)}>
                     <Icon name="retry" size={14} /> Retry {failed} failed
+                  </button>
+                )}
+                {(failed > 0 || failedJobs) && (
+                  <button
+                    className="m-pill"
+                    onClick={() => {
+                      transfers.clearFailed();
+                      jobActions.clearFailed();
+                    }}
+                  >
+                    <Icon name="x" size={14} /> Clear failed
                   </button>
                 )}
                 {finished && (
@@ -138,9 +161,16 @@ export function TransfersScreen({
                       <Icon name="x" size={18} />
                     </button>
                   ) : (
-                    <button className="m-icon" onClick={() => jobActions.dismiss(j.id)} aria-label="Dismiss">
-                      <Icon name="x" size={16} />
-                    </button>
+                    <>
+                      {j.state === "error" && j.retry && (
+                        <button className="m-icon" onClick={() => jobActions.retry(j.id)} aria-label={`Retry ${j.title}`}>
+                          <Icon name="retry" size={17} />
+                        </button>
+                      )}
+                      <button className="m-icon" onClick={() => jobActions.dismiss(j.id)} aria-label="Dismiss">
+                        <Icon name="x" size={16} />
+                      </button>
+                    </>
                   )}
                 </li>
               ))}
@@ -211,9 +241,14 @@ const TransferRow = memo(function TransferRow({ t, transfers, onOpenFile }: { t:
           <Icon name="x" size={18} />
         </button>
       ) : t.state === "paused" ? (
-        <button className="m-icon" onClick={() => transfers.resume(t.id)} aria-label={`Resume ${t.name}`}>
-          <Icon name="play" size={17} />
-        </button>
+        <>
+          <button className="m-icon" onClick={() => transfers.resume(t.id)} aria-label={`Resume ${t.name}`}>
+            <Icon name="play" size={17} />
+          </button>
+          <button className="m-icon" onClick={() => transfers.cancel(t.id)} aria-label={`Stop ${t.name}`}>
+            <Icon name="x" size={18} />
+          </button>
+        </>
       ) : t.state === "error" || t.state === "cancelled" ? (
         <button className="m-icon" onClick={() => transfers.retry(t.id)} aria-label={`Retry ${t.name}`}>
           <Icon name="retry" size={17} />

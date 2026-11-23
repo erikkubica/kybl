@@ -23,7 +23,9 @@ export function Presence({ show, children, ms = 220, layer, z }: { show: boolean
   }, [show, ms]);
   if (!show && !mounted) return null;
   return (
-    <div className={`m-presence ${show ? "" : "m-leaving"}`} data-layer={layer} style={lastZ.current == null ? undefined : ({ "--m-z": lastZ.current } as React.CSSProperties)}>
+    // leaving: its buttons still hold the handlers of the open layer, so they must not take input
+    // (a double tap would run an action twice, or go back two levels)
+    <div className={`m-presence ${show ? "" : "m-leaving"}`} inert={!show} aria-hidden={!show || undefined} data-layer={layer} style={lastZ.current == null ? undefined : ({ "--m-z": lastZ.current } as React.CSSProperties)}>
       {show ? children : last.current}
     </div>
   );

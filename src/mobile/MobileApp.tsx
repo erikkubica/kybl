@@ -542,6 +542,9 @@ export default function MobileApp() {
 
   // what the connection on screen can do (null while it loads: S3's usual actions show)
   const caps = useCaps(loc?.profileId);
+  // what the top level of this connection is called: bucket, drive or folder (a server's one root)
+  const locProfile = loc ? listed?.find((p) => p.id === loc.profileId) : undefined;
+  const rootNoun = !locProfile ? "location" : rootsMode(locProfile, caps) === "single" ? "folder" : rootWord(locProfile, caps);
   const ops = useFileOps({
     caps,
     loc,
@@ -877,7 +880,7 @@ export default function MobileApp() {
       { icon: "folder-plus", label: "New folder", run: ops.newFolder },
       { icon: "refresh", label: "Refresh", run: () => void reloadListing({ quiet: true }) },
       isFavorite(loc) ? { icon: "star-fill", label: "Remove from Favorites", run: () => setFavorite(loc, false) } : { icon: "star", label: "Add to Favorites", run: () => setFavorite(loc, true) },
-      { icon: "info", label: loc.prefix ? "Folder info" : "Bucket info", run: () => setFolderInfo({ prefix: loc.prefix, name: title }) },
+      { icon: "info", label: loc.prefix ? "Folder info" : `${rootNoun[0].toUpperCase()}${rootNoun.slice(1)} info`, run: () => setFolderInfo({ prefix: loc.prefix, name: title }) },
       {
         icon: "copy",
         label: loc.prefix ? "Copy to another connection…" : "Copy everything to another connection…",
@@ -1093,7 +1096,7 @@ export default function MobileApp() {
               <div className="m-empty-art warn">
                 <Icon name={isNetworkError(lst.error) ? "cloud" : "alert"} size={30} />
               </div>
-              <h3>{isNetworkError(lst.error) ? "No connection" : `Couldn't open this ${loc.prefix ? "folder" : "bucket"}`}</h3>
+              <h3>{isNetworkError(lst.error) ? "No connection" : `Couldn’t open this ${loc.prefix ? "folder" : rootNoun}`}</h3>
               {/* the plain sentence only: the SDK's debug text helps nobody on a phone */}
               <p className="m-empty-err">{isNetworkError(lst.error) ? "Check your internet connection and try again." : errSummary(lst.error)}</p>
               <button className="btn" onClick={() => void reloadListing({ quiet: false })}>
@@ -1405,8 +1408,8 @@ export default function MobileApp() {
               {browse || (
                 <div className="m-placeholder">
                   <Mascot size={88} />
-                  <h3>{profiles?.length ? "Pick a bucket" : profilesError ? "Couldn't load your connections" : "Welcome to Kybl"}</h3>
-                  <p>{profiles?.length ? "Choose a bucket on the left to browse its files." : profilesError ?? "Add a connection to start browsing your S3 storage."}</p>
+                  <h3>{profiles?.length ? "Pick a place to browse" : profilesError ? "Couldn't load your connections" : "Welcome to Kybl"}</h3>
+                  <p>{profiles?.length ? "Choose a bucket, drive or folder on the left to see its files." : profilesError ?? "Add a connection to start browsing your files."}</p>
                   {!profiles?.length && !profilesError && (
                     <button className="btn btn-primary m-big-btn" onClick={connectKybl}>
                       <Icon name="cloud" size={16} /> Connect Kybl Storage
@@ -1414,7 +1417,7 @@ export default function MobileApp() {
                   )}
                   {!profiles?.length && !profilesError && (
                     <button className="btn btn-ghost m-big-btn m-alt-btn" onClick={() => setConnDialog({ profile: null })}>
-                      <Icon name="plus" size={16} /> Add another S3 connection
+                      <Icon name="plus" size={16} /> Add another connection
                     </button>
                   )}
                 </div>

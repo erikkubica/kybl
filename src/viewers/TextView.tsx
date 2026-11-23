@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CodeEditor, type CodeEditorApi } from "./CodeEditor";
 import { ToolButton } from "./ui";
+import { compactJson, formatJson } from "./jsonFormat";
 import type { ViewerProps } from "./types";
 
 type JsonState = { ok: true } | { ok: false; message: string } | null;
@@ -69,12 +70,14 @@ export default function TextView({ kind, name, text, editable, mode, onEdit, onS
     if (!ed) return;
     const src = ed.view.state.doc.toString();
     try {
+      // validate with JSON.parse, but re-indent the original text so numbers and key order stay as written
+      const valid = (s: string) => (JSON.parse(s), s);
       const out = jsonLines
         ? src
             .split("\n")
-            .map((l) => (l.trim() ? JSON.stringify(JSON.parse(l)) : l))
+            .map((l) => (l.trim() ? compactJson(valid(l)) : l))
             .join("\n")
-        : JSON.stringify(JSON.parse(src), null, indentOf(src)) + (src.endsWith("\n") ? "\n" : "");
+        : formatJson(valid(src), indentOf(src)) + (src.endsWith("\n") ? "\n" : "");
       if (out !== src) ed.setText(out);
     } catch (e) {
       setJson({ ok: false, message: lineOf(src, (e as Error).message) });

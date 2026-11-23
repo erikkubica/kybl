@@ -416,7 +416,7 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
   const media = (cls === "image" && isWebImage(entry.name)) || cls === "video" || cls === "audio";
   // Word, Excel, slides, CSV, Markdown, code… and Google Docs / Sheets / Slides (by their export)
   const docAs = entry.kind === "folder" ? null : entry.native ? asExport(entry) : entry;
-  const viewer = docAs ? viewerFor(docAs.name, null, docAs.size) : null;
+  const viewer = docAs ? viewerFor(docAs.name, docAs.mime ?? null, docAs.size) : null;
   const doc = !!viewer && viewer.kind !== "image";
   // HEIC, RAW and the like: the thumbnail the grid makes (the original can't be drawn here)
   const thumbable = cls === "image" && !isWebImage(entry.name) && canThumb(entry);
@@ -428,6 +428,14 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
   const [url, setUrl] = useState<string | null>(null);
   const [body, setBody] = useState<{ text: string; truncated: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // documents and PDFs read the file as soon as their viewer mounts: hold the viewer back for the
+  // same short delay, so arrowing through a folder of them doesn't start a download per file
+  // (Content is keyed by the file, so this starts over for each one)
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(true), 120);
+    return () => clearTimeout(t);
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -486,6 +494,12 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
         <Icon name="alert" size={26} />
         <p>Couldn’t show this file.</p>
         <ErrorText message={error} />
+      </div>
+    );
+  if ((pdf || doc) && !settled)
+    return (
+      <div className="ql-none">
+        <span className="spinner" />
       </div>
     );
   if (pdf) return <PdfView profileId={profileId} bucket={bucket} objectKey={entry.key} onError={setError} />;

@@ -402,8 +402,9 @@ export function AppShell() {
     // a Google Doc / Sheet / Slides opens as its Office export, read-only (DocumentView)
     const x = e.native ? asExport(e) : e;
     if (!x) return false;
-    const v = viewerFor(x.name, null, x.size);
-    return !!v && v.kind !== "image" && canView(x.name, x.size);
+    // (the stored content type too: "Edit in Kybl" offers files that only it marks as text)
+    const v = viewerFor(x.name, x.mime ?? null, x.size);
+    return !!v && v.kind !== "image" && canView(x.name, x.size, x.mime ?? null);
   };
   const openDocument = (id: PaneId, e: Entry) => {
     if (!canOpenDocument(id, e)) return false;
@@ -1675,8 +1676,9 @@ export function AppShell() {
       "toggle-sidebar": toggleSidebar,
       "filter-connections": findConnection,
       // grid view: ⌘+ / ⌘− (and a pinch) size the tiles, as Finder's icon view
-      "tiles-bigger": () => (active.view === "grid" ? active.setTile(Math.min(TILE_MAX, active.tile + 24)) : false),
-      "tiles-smaller": () => (active.view === "grid" ? active.setTile(Math.max(TILE_MIN, active.tile - 24)) : false),
+      // (a terminal has the keyboard: the menu bar took its ⌘+ / ⌘−, so it gets them back as keys)
+      "tiles-bigger": () => handBackKey("=", "Equal") || (active.view === "grid" ? active.setTile(Math.min(TILE_MAX, active.tile + 24)) : false),
+      "tiles-smaller": () => handBackKey("-", "Minus") || (active.view === "grid" ? active.setTile(Math.max(TILE_MIN, active.tile - 24)) : false),
       "toggle-compact": () => active.setCompact(!active.compact),
       ...dualPane.commands,
       "split-right": () => split("row"),
@@ -2177,6 +2179,19 @@ export function AppShell() {
  * The folded sidebar's overlay: resting on a rail icon brings the whole sidebar in over the
  * panes (nothing moves); it goes once the pointer has left it and no menu from it is up.
  */
+const MAC_KEYS = /Mac/i.test(navigator.platform || navigator.userAgent);
+
+/**
+ * A menu-bar accelerator took a key that a `[data-own-keys]` element (a terminal) handles itself:
+ * hand it back to that element as a keydown, as the palette does for ⌘K. True when handed back.
+ */
+function handBackKey(key: string, code: string): boolean {
+  const el = document.activeElement;
+  if (!el?.closest?.("[data-own-keys]")) return false;
+  el.dispatchEvent(new KeyboardEvent("keydown", { key, code, metaKey: MAC_KEYS, ctrlKey: !MAC_KEYS, shiftKey: !MAC_KEYS, bubbles: true, cancelable: true }));
+  return true;
+}
+
 function useSidePeek(folded: boolean, menuUp: () => boolean) {
   const [open, setOpenState] = useState(false);
   // brought up by ⌥⌘F or the rail's "All connections": the filter field takes the keyboard

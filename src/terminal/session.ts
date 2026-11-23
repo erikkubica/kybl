@@ -101,8 +101,10 @@ class Session {
     this.term.onResize(({ cols, rows }) => {
       if (this.id != null) void invoke("terminal_resize", { id: this.id, cols, rows }).catch(() => {});
     });
-    // the app's own keys: xterm.js leaves them alone (handled on the pane, see TermView)
-    this.term.attachCustomKeyEventHandler((e) => !ownKey(e));
+    // the app's own keys: xterm.js leaves them alone (handled on the pane, see TermView). ⌃Tab /
+    // ⌃⇧Tab switch workspaces: xterm would send a Tab and cancel the event, so it never reached the
+    // app's window listener; returning false lets the event bubble on untouched.
+    this.term.attachCustomKeyEventHandler((e) => !ownKey(e) && !passKey(e));
   }
 
   /** Shows the terminal in `box` (first time: starts the shell, sized to it). */
@@ -144,7 +146,8 @@ class Session {
     };
     const { profileId, bucket, prefix } = this.spec;
     try {
-      const info = await invoke<Info>("terminal_open", { profileId, bucket, prefix, cols: this.term.cols, rows: this.term.rows, onOutput: ch });
+      const { cols, rows } = this.term;
+      const info = await invoke<Info>("terminal_open", { profileId, bucket, prefix, cols, rows, onOutput: ch });
       if (run !== this.run) {
         void invoke("terminal_close", { id: info.id }).catch(() => {});
         return;
@@ -152,6 +155,10 @@ class Session {
       this.id = info.id;
       this.remoteBase = info.remoteBase;
       this.state = "running";
+      // a resize while the shell was starting (onResize skips it without an id) would leave the
+      // PTY at the old size: send what the terminal is now if it moved meanwhile
+      if (this.term.cols !== cols || this.term.rows !== rows)
+        void invoke("terminal_resize", { id: info.id, cols: this.term.cols, rows: this.term.rows }).catch(() => {});
       for (const line of takeStartup(this.spec.sid)) this.send(`${line}\r`);
     } catch (e) {
       if (run !== this.run) return;
@@ -284,12 +291,28 @@ class Session {
 /** ⌃`: back and forth between a terminal and its file pane. */
 export const isToggleKey = (e: KeyboardEvent) => e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.code === "Backquote" || e.key === "`");
 
+/** App shortcuts the shell never gets: ⌃Tab / ⌃⇧Tab (next / previous workspace). */
+const passKey = (e: KeyboardEvent) => e.ctrlKey && !e.metaKey && !e.altKey && e.key === "Tab";
+
+/**
+ * The pane's own key, normalized: Shift changes what - / 0 / = type ("_", ")", "+" on a US
+ * layout), and Ctrl+Shift is the modifier off the Mac, so those three also match by position.
+ */
+export function ownKeyName(e: KeyboardEvent): string {
+  const k = e.key.toLowerCase();
+  if (k === "=" || k === "+" || k === "-" || k === "0") return k;
+  if (e.code === "Minus") return "-";
+  if (e.code === "Digit0") return "0";
+  if (e.code === "Equal") return "=";
+  return k;
+}
+
 /** Keys the pane handles itself, kept from xterm.js: ⌘K, ⌘C with a selection, ⌘+ / ⌘− / ⌘0, ⌃`. */
 export function ownKey(e: KeyboardEvent): boolean {
   const mod = MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && e.shiftKey;
   if (isToggleKey(e)) return true;
   if (!mod || e.altKey) return false;
-  const k = e.key.toLowerCase();
+  const k = ownKeyName(e);
   return k === "k" || k === "=" || k === "+" || k === "-" || k === "0" || (k === "c" && sessionsWithSelection());
 }
 const sessionsWithSelection = () => [...sessions.values()].some((s) => s.term.hasSelection());

@@ -119,16 +119,21 @@ export default function PptxView({ bytes, mode }: ViewerProps) {
   useEffect(() => {
     let live = true;
     let made: Deck | null = null;
+    // the pictures are object URLs: free them with the view
+    const free = (d: Deck) => {
+      for (const u of [d.cover, ...d.slides.map((s) => s.picture)]) if (u) URL.revokeObjectURL(u);
+    };
     readDeck(bytes)
       .then((d) => {
+        // closed (or another file) before the deck was read: nothing will show these
+        if (!live) return free(d);
         made = d;
-        if (live) setDeck(d);
+        setDeck(d);
       })
       .catch(() => live && setError(true));
     return () => {
       live = false;
-      // the pictures are object URLs: free them with the view
-      if (made) for (const u of [made.cover, ...made.slides.map((s) => s.picture)]) if (u) URL.revokeObjectURL(u);
+      if (made) free(made);
     };
   }, [bytes]);
 

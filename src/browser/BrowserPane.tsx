@@ -313,9 +313,10 @@ export function BrowserPane(p: BrowserPaneProps) {
             onCopyLink: actions.copyLink,
             onCopyText: actions.copyText,
             onDownload: pane.caps?.localPaths ? undefined : (list) => void ops.downloadEntries(list, pane.relBase),
-            onRename: (e) => ops.askRename(e),
+            // inside an archive (read-only) these say so, as the keyboard commands do
+            onRename: (e) => (pane.archive.inArchive ? actions.commands.rename() : ops.askRename(e)),
             onMoveTo: (list) => actions.askMove(list),
-            onDelete: pane.deleteFromQuick,
+            onDelete: pane.archive.inArchive ? () => actions.commands.delete() : pane.deleteFromQuick,
             onChanged: ent.refresh,
             folderSize: pane.folderSizes.view,
             onCalcSize: (k) => actions.calcSizes([k]),

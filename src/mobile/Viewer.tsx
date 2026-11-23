@@ -339,7 +339,18 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onInd
         ) : (
           <>
             {thumb && !ready[e.key] && <img className="m-vthumb" src={thumb} alt="" draggable={false} />}
-            {url && <img ref={releaseOnUnmount} className="m-vfull" src={url} alt={e.name} draggable={false} onLoad={() => setReady((m) => ({ ...m, [e.key]: true }))} />}
+            {url && (
+              <img
+                ref={releaseOnUnmount}
+                className="m-vfull"
+                src={url}
+                alt={e.name}
+                draggable={false}
+                onLoad={() => setReady((m) => ({ ...m, [e.key]: true }))}
+                // fetched, but not drawable (damaged, a format the phone can't show, or the link went stale)
+                onError={() => setFailed((m) => ({ ...m, [e.key]: "This photo couldn’t be shown. It may be damaged, or in a format this phone can’t open." }))}
+              />
+            )}
             {!url && !thumb && <span className="spinner m-vspin" />}
           </>
         )}

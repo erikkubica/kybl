@@ -10,8 +10,12 @@ import { SandboxFrame } from "./SandboxFrame";
 import { Segmented, ToolButton } from "./ui";
 import { useNarrow } from "./useNarrow";
 import type { ViewerProps } from "./types";
+import { formatBytes } from "../format";
 
 type Layout = "edit" | "split" | "preview";
+
+/** Above this many characters the preview is drawn on request only (see `big` below). */
+export const RENDER_MAX = 512 * 1024;
 
 export function renderMarkdown(src: string): string {
   const html = marked.parse(src, { gfm: true, async: false }) as string;
@@ -53,7 +57,13 @@ export default function MarkdownView({ name, text, editable, mode, onEdit, onSav
 
   // phones have no room for two panes
   const shown: Layout = narrow && layout === "split" ? "edit" : layout;
-  const html = useMemo(() => renderMarkdown(source), [source]);
+  // Rendering runs on the UI thread: above RENDER_MAX it would freeze the window for seconds on
+  // every pause in typing, so a big file shows as text until "Render preview", and that rendered
+  // copy is only redrawn on "Update preview"
+  const big = source.length > RENDER_MAX;
+  const [snapshot, setSnapshot] = useState<string | null>(null);
+  const toRender = shown === "edit" ? null : big ? snapshot : source;
+  const html = useMemo(() => (toRender == null ? "" : renderMarkdown(toRender)), [toRender]);
 
   const edited = (current: () => string) => {
     onEdit?.(current);
@@ -90,6 +100,9 @@ export default function MarkdownView({ name, text, editable, mode, onEdit, onSav
             />
           )}
           {shown !== "preview" && <ToolButton icon="search" label="Find" onClick={() => editor.current?.find()} title="Find and replace (⌘F)" />}
+          {big && shown !== "edit" && snapshot != null && snapshot !== source && (
+            <ToolButton icon="refresh" label="Update preview" title="Large file: the preview isn't redrawn while you type" onClick={() => setSnapshot(source)} />
+          )}
         </div>
       )}
       <div className={`dv-md-panes ${shown}`}>
@@ -108,7 +121,18 @@ export default function MarkdownView({ name, text, editable, mode, onEdit, onSav
             />
           </div>
         )}
-        {shown !== "edit" && <SandboxFrame className="dv-md-preview" title={`Preview of ${name}`} html={html} css={CSS} remoteImages />}
+        {shown !== "edit" &&
+          (big && snapshot == null ? (
+            <div className="dv-md-big">
+              <div className="dv-md-bigbar">
+                <span>Large file ({formatBytes(source.length)}), shown as text.</span>
+                <ToolButton label="Render preview" title="Draw the formatted page (may take a few seconds)" onClick={() => setSnapshot(source)} />
+              </div>
+              <pre className="dv-md-text selectable">{source}</pre>
+            </div>
+          ) : (
+            <SandboxFrame className="dv-md-preview" title={`Preview of ${name}`} html={html} css={CSS} remoteImages />
+          ))}
       </div>
     </div>
   );

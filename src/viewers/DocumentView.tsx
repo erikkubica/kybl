@@ -95,7 +95,7 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
   const name = native ? given.name : baseName(target);
   // after "Save as copy" the actions act on the copy
   const current: Entry = target === entry.key ? given : { ...entry, key: target, name, size: 0 };
-  const info = useMemo(() => viewerFor(entry.name, null, entry.size), [entry.name, entry.size]);
+  const info = useMemo(() => viewerFor(entry.name, entry.mime ?? null, entry.size), [entry.name, entry.mime, entry.size]);
   const { state, reload, saved } = useDocument(profileId, bucket, source, source === entry.key ? entry.size : 0, info, mode);
 
   const [loadId, setLoadId] = useState(0);
