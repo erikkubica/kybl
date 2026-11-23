@@ -1,13 +1,22 @@
-import { useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useRef, type RefObject } from "react";
 import { Icon, type IconName } from "../Icons";
-import { Breadcrumbs } from "./Breadcrumbs";
+import { PathTitle } from "./PathTitle";
 import { ProviderBadge } from "./Sidebar";
+import type { MenuItem } from "./Dialogs";
 import type { Sort, SortKey } from "./FileTable";
 import { useDialogs } from "../shell/useDialogs";
+import { parentPrefix } from "../format";
 
 export const TILE_MIN = 96;
 export const TILE_MAX = 320;
 
+/**
+ * A desktop pane's header: one row, left to right
+ *   [+ ▾] [↑] [☆] [connection ▾] folder name [⌄]  [⋯]   ……   [view ▾] [details] [search] [panes]
+ * Creating things sits behind +, the pane's less frequent actions behind ⋯ and how the list looks
+ * behind the eye, so a pane at its least width (340px) still fits on one row: the folder's name
+ * gives way first, then (below ~420px) the star and the panes button fold into ⋯.
+ */
 export function Toolbar({
   bucket,
   bucketLabel,
@@ -26,9 +35,14 @@ export function Toolbar({
   onView,
   onCompact,
   onSortChange,
+  tile,
+  onTile,
+  hidden,
+  onToggleHidden,
   onNavigate,
-  onRefresh,
-  onUploadMenu,
+  canUp,
+  onUp,
+  onUpload,
   onMoreMenu,
   onNewFolder,
   onQuery,
@@ -38,17 +52,17 @@ export function Toolbar({
   onTogglePreview,
   dual = false,
   onPanes,
+  panesItems,
   provider,
   onSwitchConnection,
   onGoTo,
   favorite,
   onToggleFavorite,
-  dualTools,
 }: {
   bucket: string | null;
   /** what the root is called on screen (defaults to `bucket`) */
   bucketLabel?: string | null;
-  /** the root's icon in the breadcrumbs (a bucket, a drive, a folder, a server) */
+  /** the root's icon (a bucket, a drive, a folder, a server), in the enclosing folders menu */
   bucketIcon?: IconName;
   prefix: string;
   previewOpen: boolean;
@@ -70,11 +84,19 @@ export function Toolbar({
   onView: (v: "list" | "grid") => void;
   onCompact: (c: boolean) => void;
   onSortChange: (s: Sort) => void;
+  /** grid view's tile size, for the view menu's Bigger / Smaller icons */
+  tile: number;
+  onTile: (px: number) => void;
+  /** this computer's disk only: hidden files are showing (undefined: nothing to toggle) */
+  hidden?: boolean;
+  onToggleHidden?: () => void;
   onNavigate: (prefix: string) => void;
-  onRefresh: () => void;
-  onUploadMenu: (x: number, y: number) => void;
-  /** the "…" button: Go to folder, Sync this folder, Add to favorites… */
-  onMoreMenu: (x: number, y: number) => void;
+  /** there is an enclosing folder to go up to (⌘↑) */
+  canUp: boolean;
+  onUp: () => void;
+  onUpload: (folder: boolean) => void;
+  /** the "⋯" button; `folded` are the header's own items that had no room on the row */
+  onMoreMenu: (x: number, y: number, folded: MenuItem[]) => void;
   onNewFolder: () => void;
   onQuery: (q: string) => void;
   /** Enter: search this folder and everything below it */
@@ -86,12 +108,12 @@ export function Toolbar({
   dual?: boolean;
   /** the panes button (shows only with this): one pane splits right, more open the panes menu */
   onPanes?: (x: number, y: number) => void;
+  /** the panes menu's items, for "⋯" when the panes button had to fold away */
+  panesItems?: () => MenuItem[];
   /** the pane's connection kind, shown as the switcher's badge */
   provider?: string;
-  /** the badge before the path: pick another connection or bucket for this pane */
+  /** the badge before the folder's name: pick another connection or bucket for this pane */
   onSwitchConnection?: (x: number, y: number) => void;
-  /** several panes only: this folder into the other pane, swap, compare, synchronized browsing (DualTools) */
-  dualTools?: React.ReactNode;
   /** typing a path into the bar (Go to folder) */
   onGoTo?: (path: string) => void;
   /** the folder on screen is a favorite; the star toggles it */
@@ -100,66 +122,126 @@ export function Toolbar({
 }) {
   const parts = prefix.split("/").filter(Boolean);
   const dialogs = useDialogs();
-  const bar = useRef<HTMLDivElement>(null);
-  // dual pane: Upload and New folder are always icons (two bars side by side); one pane: labels
-  // while they fit
-  const labelsFit = useLabelsFit(bar, `${view}|${dualTools ? 1 : 0}|${dual ? 1 : 0}`);
-  /** grid view: one icon for the sort, its choices in a menu (as Finder's Sort By) */
-  const sortMenu = (e: React.MouseEvent) => {
-    const [x, y] = anchorOf(e);
+  const star = useRef<HTMLButtonElement>(null);
+  const panes = useRef<HTMLButtonElement>(null);
+  const anchorOf = (e: React.MouseEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    return [r.left, r.bottom + 4] as const;
+  };
+  /** a button the narrow pane's CSS folded away (it has no box then) */
+  const folded = (b: RefObject<HTMLElement | null>) => !!b.current && b.current.offsetParent === null;
+
+  const createMenu = (e: React.MouseEvent) =>
+    dialogs.menu(...anchorOf(e), [
+      { type: "item", label: "Upload files…", icon: "upload", hint: "⌘U", onClick: () => onUpload(false) },
+      { type: "item", label: "Upload folder…", icon: "folder", hint: "⇧⌘U", onClick: () => onUpload(true) },
+      { type: "sep" },
+      { type: "item", label: "New folder…", icon: "folder-plus", hint: "⇧⌘N", onClick: onNewFolder },
+    ]);
+
+  const moreMenu = (e: React.MouseEvent) => {
+    const extra: MenuItem[] = [];
+    if (onToggleFavorite && folded(star))
+      extra.push({ type: "item", label: favorite ? "Remove from favorites" : "Add to favorites", icon: "star", onClick: onToggleFavorite });
+    if (panesItems && folded(panes)) extra.push({ type: "submenu", label: "Panes", icon: "dual-pane", items: panesItems });
+    onMoreMenu(...anchorOf(e), extra);
+  };
+
+  /** How the list looks: list or grid, compact rows, the order, and hidden files where there are any. */
+  const viewMenu = (e: React.MouseEvent) => {
     const keys: [SortKey, string][] = [
       ["name", "Name"],
       ["modified", "Date modified"],
       ["size", "Size"],
       ["kind", "Kind"],
     ];
-    dialogs.menu(x, y, [
+    const items: (MenuItem | false)[] = [
+      { type: "item", label: "As list", icon: "list", checked: view === "list", onClick: () => onView("list") },
+      { type: "item", label: "As grid", icon: "grid", checked: view === "grid", onClick: () => onView("grid") },
+      { type: "item", label: "Compact layout", icon: "density", checked: compact, onClick: () => onCompact(!compact) },
+      view === "grid" && { type: "item", label: "Bigger icons", hint: "⌘+", disabled: tile >= TILE_MAX, onClick: () => onTile(Math.min(TILE_MAX, tile + 24)) },
+      view === "grid" && { type: "item", label: "Smaller icons", hint: "⌘−", disabled: tile <= TILE_MIN, onClick: () => onTile(Math.max(TILE_MIN, tile - 24)) },
+      { type: "sep" },
       { type: "label", label: "Sort by" },
       ...keys.map(([key, label]) => ({ type: "item" as const, label, checked: sort.key === key, onClick: () => onSortChange({ ...sort, key }) })),
       { type: "sep" },
       { type: "item", label: "Ascending", checked: sort.dir === "asc", onClick: () => onSortChange({ ...sort, dir: "asc" }) },
       { type: "item", label: "Descending", checked: sort.dir === "desc", onClick: () => onSortChange({ ...sort, dir: "desc" }) },
-    ]);
+      hidden !== undefined && !!onToggleHidden && { type: "sep" },
+      hidden !== undefined && !!onToggleHidden && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: hidden, onClick: onToggleHidden },
+    ];
+    dialogs.menu(...anchorOf(e), items.filter((x): x is MenuItem => !!x));
   };
-  const anchorOf = (e: React.MouseEvent) => {
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    return [r.left, r.bottom + 4] as const;
-  };
+  const sortName = { name: "name", modified: "date modified", size: "size", kind: "kind" }[sort.key];
+  const searchOpen = !!query || searchActive;
 
   return (
     <header className="chrome">
-      <div className="toolbar" data-tauri-drag-region>
-        {onSwitchConnection && (
-          <button className="icon-btn conn-switch" onClick={(e) => onSwitchConnection(...anchorOf(e))} title="Switch connection or bucket" aria-label="Switch connection or bucket" aria-haspopup="menu">
-            <ProviderBadge provider={provider} />
+      <div className={`toolbar ${searchOpen ? "search-open" : ""}`} data-tauri-drag-region>
+        <button className="icon-btn tb-drop" disabled={disabled} onClick={createMenu} title="Upload or create (⌘U, ⇧⌘N)" aria-label="Upload or create" aria-haspopup="menu">
+          <Icon name="plus" />
+          <Icon name="chevron-down" size={10} className="tb-caret" />
+        </button>
+        <button
+          className="icon-btn"
+          disabled={disabled || !canUp}
+          onClick={onUp}
+          // dropping items on it moves them up a level, as the parent crumb used to
+          data-drop={!disabled && prefix ? parentPrefix(prefix) : undefined}
+          title={canUp ? "Enclosing folder (⌘↑) · drop items here to move them up" : "Enclosing folder (⌘↑)"}
+          aria-label="Enclosing folder"
+        >
+          <Icon name="arrow-up" />
+        </button>
+        {onToggleFavorite && (
+          <button
+            ref={star}
+            className={`icon-btn fav-star tb-fav ${favorite ? "on" : ""}`}
+            onClick={onToggleFavorite}
+            title={favorite ? "Remove from favorites" : "Add to favorites"}
+            aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
+            aria-pressed={!!favorite}
+          >
+            <Icon name="star" size={15} />
           </button>
         )}
-        {/* no ← → ↑ buttons: the path is one click per level, ".." and ⌘↑ go up, ⌘[ ⌘] and the mouse's side buttons go back and forward */}
+        {onSwitchConnection && (
+          <button className="icon-btn conn-switch tb-drop" onClick={(e) => onSwitchConnection(...anchorOf(e))} title="Switch connection or bucket" aria-label="Switch connection or bucket" aria-haspopup="menu">
+            <ProviderBadge provider={provider} />
+            <Icon name="chevron-down" size={10} className="tb-caret" />
+          </button>
+        )}
         {bucket != null ? (
-          <>
-            <Breadcrumbs bucket={bucket} label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} onGoTo={onGoTo} />
-            {onToggleFavorite && (
-              <button
-                className={`icon-btn fav-star ${favorite ? "on" : ""}`}
-                onClick={onToggleFavorite}
-                title={favorite ? "Remove from favorites" : "Add to favorites"}
-                aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
-                aria-pressed={!!favorite}
-              >
-                <Icon name="star" size={15} />
-              </button>
-            )}
-          </>
+          <PathTitle label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} onGoTo={onGoTo} />
         ) : (
-          <nav className="crumbs" aria-label="Path" data-tauri-drag-region>
+          <nav className="crumbs path-title" aria-label="Path" data-tauri-drag-region>
             <span className="crumb muted">No bucket selected</span>
           </nav>
         )}
+        <button className="icon-btn tb-more" onClick={moreMenu} title="More actions" aria-label="More actions" aria-haspopup="menu">
+          <Icon name="more" />
+        </button>
+
+        <div className="spacer" data-tauri-drag-region />
+
+        <button
+          className="icon-btn tb-drop tb-view"
+          onClick={viewMenu}
+          title={`View: ${view === "grid" ? "grid" : "list"}${compact ? ", compact" : ""}, sorted by ${sortName} ${sort.dir === "asc" ? "ascending" : "descending"}`}
+          aria-label="View options"
+          aria-haspopup="menu"
+        >
+          <Icon name="eye" />
+          <Icon name="chevron-down" size={10} className="tb-caret" />
+        </button>
+        <button className={`icon-btn tb-details ${previewOpen ? "on" : ""}`} onClick={onTogglePreview} title="Details panel (⌘I)" aria-label="Details panel" aria-pressed={previewOpen}>
+          <Icon name="panel" />
+        </button>
 
         {/* folded to its icon until clicked (or ⌘F), and while a filter or search is on it stays open */}
         <div
-          className={`search ${!query && !searchActive ? "folded" : ""}`}
-          title={!query && !searchActive ? "Filter, or search subfolders (⌘F)" : undefined}
+          className={`search ${!searchOpen ? "folded" : ""}`}
+          title={!searchOpen ? "Filter, or search subfolders (⌘F)" : undefined}
           onMouseDown={(e) => {
             if (disabled || (e.target as HTMLElement).closest("input, button")) return;
             e.preventDefault();
@@ -194,7 +276,7 @@ export function Toolbar({
             <button className="icon-btn search-stop" onClick={onStopSearch} title="Stop searching" aria-label="Stop searching">
               <span className="spinner" />
             </button>
-          ) : query || searchActive ? (
+          ) : searchOpen ? (
             <button className="icon-btn" onClick={onClearSearch} aria-label="Clear search">
               <Icon name="x" size={12} />
             </button>
@@ -202,64 +284,11 @@ export function Toolbar({
             <kbd>⌘F</kbd>
           )}
         </div>
-      </div>
 
-      <div className={`actionbar ${view === "grid" ? "is-grid" : ""} ${labelsFit && !dual ? "" : "tight"}`} ref={bar}>
-        <button className="btn btn-primary btn-sm btn-upload" disabled={disabled} onClick={(e) => onUploadMenu(...anchorOf(e))} title="Upload files or a folder (⌘U)" aria-label="Upload">
-          <Icon name="upload" size={15} />
-          <span className="btn-label">Upload</span>
-        </button>
-        <div className="tb-group">
-          <button className="tool" disabled={disabled} onClick={onNewFolder} title="New folder (⇧⌘N)">
-            <Icon name="folder-plus" />
-            <span className="btn-label">New folder</span>
-          </button>
-          <button className="icon-btn" disabled={disabled} onClick={onRefresh} title="Refresh (⌘R)" aria-label="Refresh">
-            <Icon name="refresh" />
-          </button>
-          {dualTools}
-          <button className="icon-btn" disabled={disabled} onClick={(e) => onMoreMenu(...anchorOf(e))} title="More" aria-label="More actions">
-            <Icon name="more" />
-          </button>
-        </div>
-
-        <div className="spacer" />
-        {view === "grid" && (
-          <>
-            <button
-              className="icon-btn"
-              onClick={sortMenu}
-              title={`Sort by ${{ name: "name", modified: "date modified", size: "size", kind: "kind" }[sort.key]}, ${sort.dir === "asc" ? "ascending" : "descending"}`}
-              aria-label="Sort"
-              aria-haspopup="menu"
-            >
-              <Icon name="sort" size={15} />
-            </button>
-          </>
-        )}
-        <button
-          className={`icon-btn ${compact ? "on" : ""}`}
-          onClick={() => onCompact(!compact)}
-          title={compact ? "Compact layout: on" : "Compact layout: off"}
-          aria-label="Compact layout"
-          aria-pressed={compact}
-        >
-          <Icon name="density" />
-        </button>
-        <div className="seg" role="group" aria-label="View">
-          <button className={view === "list" ? "on" : ""} onClick={() => onView("list")} title="List view" aria-label="List view" aria-pressed={view === "list"}>
-            <Icon name="list" size={15} />
-          </button>
-          <button className={view === "grid" ? "on" : ""} onClick={() => onView("grid")} title="Grid view" aria-label="Grid view" aria-pressed={view === "grid"}>
-            <Icon name="grid" size={15} />
-          </button>
-        </div>
-        <button className={`icon-btn ${previewOpen ? "on" : ""}`} onClick={onTogglePreview} title="Toggle details panel (⌘I)" aria-label="Toggle details panel" aria-pressed={previewOpen}>
-          <Icon name="panel" />
-        </button>
         {onPanes && (
           <button
-            className={`icon-btn ${dual ? "on" : ""}`}
+            ref={panes}
+            className={`icon-btn tb-panes ${dual ? "on" : ""}`}
             onClick={(e) => onPanes(...anchorOf(e))}
             title={dual ? "Panes: split or close" : "Split right: two panes side by side (⌘\\)"}
             aria-label={dual ? "Panes" : "Split right"}
@@ -272,47 +301,4 @@ export function Toolbar({
       {working && <div className="progress-line" />}
     </header>
   );
-}
-
-/**
- * Whether the action bar has room for its button labels (Upload, New folder). They go when its
- * contents overflow and come back once the bar is as wide as it was with them showing, so the
- * labels stay as long as they fit instead of at a guessed breakpoint.
- */
-function useLabelsFit(bar: RefObject<HTMLDivElement | null>, contents: string): boolean {
-  const [fit, setFit] = useState(true);
-  // other buttons on the bar (grid's Sort, dual pane's): measure afresh with the labels showing
-  const [lastContents, setLastContents] = useState(contents);
-  if (contents !== lastContents) {
-    setLastContents(contents);
-    setFit(true);
-  }
-  const needed = useRef(0);
-  const fitRef = useRef(fit);
-  fitRef.current = fit;
-  useLayoutEffect(() => {
-    const el = bar.current;
-    if (!el) return;
-    const check = () => {
-      if (fitRef.current) {
-        if (el.scrollWidth > el.clientWidth + 1) {
-          needed.current = el.scrollWidth;
-          setFit(false);
-        }
-      } else if (el.clientWidth >= needed.current) setFit(true);
-    };
-    check();
-    const ro = new ResizeObserver(check);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [bar]);
-  // the contents can change too (grid adds Sort, dual pane its buttons): look again after each render
-  useLayoutEffect(() => {
-    const el = bar.current;
-    if (el && fit && el.scrollWidth > el.clientWidth + 1) {
-      needed.current = el.scrollWidth;
-      setFit(false);
-    }
-  });
-  return fit;
 }

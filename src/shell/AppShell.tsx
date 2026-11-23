@@ -50,8 +50,30 @@ import { loadExpanded, useConnections } from "./useConnections";
 import { PreviewAside, usePreviewLayout } from "./PreviewAside";
 import { useFinderDrop } from "./useFinderDrop";
 import { useShellCommands } from "./useShellCommands";
-import { DualTools, SplitLayout } from "./SplitLayout";
-import { closePane, equalize, freeSlot, leaf, leaves, loadLayout, MAX_PANES, minSize, relation, saveLayout, setSizes, splitPane, type Dir, type PaneNode } from "./paneLayout";
+import { dualMenuItems, SplitLayout } from "./SplitLayout";
+import {
+  closePane,
+  dividerPairs,
+  equalize,
+  freeSlot,
+  leaf,
+  leaves,
+  loadLayout,
+  loadLinks,
+  MAX_PANES,
+  minSize,
+  relation,
+  sameLink,
+  saveLayout,
+  saveLinks,
+  setSizes,
+  splitPane,
+  syncedWith,
+  toggleLink,
+  type Dir,
+  type PaneNode,
+  type SyncLink,
+} from "./paneLayout";
 import { makeDualActions, paneName, type DualContext } from "./dualActions";
 import { PaneContext } from "./PaneContext";
 import { useMigrationHost } from "./useMigrationHost";
@@ -131,6 +153,17 @@ export function AppShell() {
     const t = window.setTimeout(() => saveLayout(tree), 200);
     return () => window.clearTimeout(t);
   }, [tree]);
+  // synchronized browsing: pairs of panes that follow each other, switched by the link on the
+  // divider between them. Only pairs facing each other across a divider count, so what is lit on
+  // screen is exactly what moves together; a link kept from another layout comes back with it.
+  const [links, setLinks] = useState<SyncLink[]>(() => loadLinks(tree, settings.syncBrowsing));
+  useEffect(() => saveLinks(links), [links]);
+  const pairs = useMemo(() => dividerPairs(tree), [tree]);
+  const liveLinks = useMemo(() => links.filter((l) => pairs.some(([a, b]) => sameLink(l, a, b))), [links, pairs]);
+  const isLinked = (a: PaneId, b: PaneId) => liveLinks.some((l) => sameLink(l, a, b));
+  const toggleSync = (a: PaneId, b: PaneId) => setLinks((cur) => toggleLink(cur, a, b));
+  /** a closed pane's slot opens empty next time: it lets go of its links too */
+  const unlink = (gone: (id: PaneId) => boolean) => setLinks((cur) => cur.filter(([a, b]) => !gone(a) && !gone(b)));
   // the panes by when they were last active, most recent first: the first on screen is the
   // active one, the next is what "the other pane" means for it (F5 / F6, swap, compare)
   const [recent, setRecent] = useState<PaneId[]>(() => leaves(tree));
@@ -305,6 +338,8 @@ export function AppShell() {
       const names = { connectionName: to?.name ?? "", rootName: conns.rootLabel(dst.profileId, dst.bucket), singleRoot: peekCaps(dst.profileId)?.roots === "single" };
       void sendItems(ops, src, items, mode, { ...dst, ...names }, dest, dualCtx.current!, onStarted);
     },
+    // the empty-space menu's Split ▸ (splitItems is defined further down; this runs on a right-click)
+    splitItems: () => [{ type: "submenu", label: "Split", icon: "dual-pane", items: () => splitItems(id) }],
     ...dualPane.envFor(id),
   });
   // one pane per slot, always (hooks can't come and go with the layout); a slot that isn't on
@@ -341,6 +376,7 @@ export function AppShell() {
     panes: panesRef.current,
     pane: slot,
     otherOf,
+    syncedWith: (id) => syncedWith(liveLinks, id),
     relation: (a, b) => relation(tree, a, b),
     activeId: active.id,
     setActive: setActiveId,
@@ -463,8 +499,11 @@ export function AppShell() {
     if (room && (need.w > room.w || need.h > room.h)) return "There isn’t room for another pane. Make the window bigger, or close a pane.";
     return null;
   };
-  /** Splits a pane: the new one opens the same place (and view) and becomes the active pane. */
-  const split = (dir: Dir, id: PaneId = activeId) => {
+  /**
+   * Splits a pane: the new one opens the same place (and view) and becomes the active pane. It
+   * goes right of or below the pane, or with `before` left of or above it.
+   */
+  const split = (dir: Dir, id: PaneId = activeId, before = false) => {
     const why = splitRefusal(dir, id);
     if (why) return toast("info", why);
     const t = treeRef.current;
@@ -475,9 +514,19 @@ export function AppShell() {
     if (src.here && src.profile) p.go(src.profile, src.here.bucket, src.here.prefix);
     else p.showConnection(src.profile?.id ?? null);
     if (p.view !== src.view) p.setView(src.view);
-    setTree(splitPane(t, id, dir, fresh));
+    setTree(splitPane(t, id, dir, fresh, before));
     setActiveId(fresh);
     focusSoon(fresh);
+  };
+  /** Split right, down, left and up for pane `id`, each greyed out when there's no room (or no slot) for it. */
+  const splitItems = (id: PaneId): MenuItem[] => {
+    const can = { row: !splitRefusal("row", id), col: !splitRefusal("col", id) };
+    return [
+      { type: "item", label: "Right", icon: "arrow-right", hint: "⌘\\", disabled: !can.row, onClick: () => split("row", id) },
+      { type: "item", label: "Down", icon: "arrow-down", hint: "⇧⌘\\", disabled: !can.col, onClick: () => split("col", id) },
+      { type: "item", label: "Left", icon: "arrow-left", disabled: !can.row, onClick: () => split("row", id, true) },
+      { type: "item", label: "Up", icon: "arrow-up", disabled: !can.col, onClick: () => split("col", id, true) },
+    ];
   };
   /** A pane leaves the screen: its slot lets go of its place, so it is empty when used again. */
   const vacate = (id: PaneId) => {
@@ -494,6 +543,7 @@ export function AppShell() {
     if (!next) return false;
     vacate(id);
     setTree(next);
+    unlink((x) => x === id);
     setRecent((cur) => cur.filter((x) => x !== id));
     if (id === activeId) focusSoon(recent.find((x) => x !== id && leaves(next).includes(x)) ?? leaves(next)[0]);
     return true;
@@ -501,6 +551,7 @@ export function AppShell() {
   const closeOthers = (id: PaneId = activeId) => {
     for (const x of ids) if (x !== id) vacate(x);
     setTree(leaf(id));
+    unlink((x) => x !== id);
     setActiveId(id);
     focusSoon(id);
   };
@@ -531,16 +582,20 @@ export function AppShell() {
     focusSoon(best);
     return true;
   };
-  /** The panes button with several panes: split, size and close. */
-  const panesMenu = (id: PaneId, x: number, y: number) =>
-    dialogs.menu(x, y, [
-      { type: "item", label: "Split right", icon: "dual-pane", hint: "⌘\\", disabled: !!splitRefusal("row", id), onClick: () => split("row", id) },
-      { type: "item", label: "Split down", icon: "split-down", hint: "⇧⌘\\", disabled: !!splitRefusal("col", id), onClick: () => split("col", id) },
-      { type: "item", label: "Make panes the same size", onClick: () => setTree((t) => equalize(t)) },
-      { type: "sep" },
-      { type: "item", label: "Close pane", icon: "x", hint: "⌘W", onClick: () => void close(id) },
-      { type: "item", label: "Close other panes", onClick: () => closeOthers(id) },
-    ]);
+  /** The panes menu: split four ways, and with several panes size and close them. */
+  const panesItems = (id: PaneId): MenuItem[] => [
+    ...splitItems(id).map((it) => (it.type === "item" ? { ...it, label: `Split ${it.label.toLowerCase()}` } : it)),
+    ...(leaves(treeRef.current).length > 1
+      ? ([
+          { type: "sep" },
+          { type: "item", label: "Make panes the same size", onClick: () => setTree((t) => equalize(t)) },
+          { type: "sep" },
+          { type: "item", label: "Close pane", icon: "x", hint: "⌘W", onClick: () => void close(id) },
+          { type: "item", label: "Close other panes", onClick: () => closeOthers(id) },
+        ] satisfies MenuItem[])
+      : []),
+  ];
+  const panesMenu = (id: PaneId, x: number, y: number) => dialogs.menu(x, y, panesItems(id));
 
   // refresh listing once all uploads have finished
   useEffect(
@@ -796,27 +851,33 @@ export function AppShell() {
   });
 
   // ------------------------------------------------------------ render
-  /** A pane's buttons for its other pane (several panes only). */
-  const toolsFor = (p: Pane) => {
+  /** A pane's items for its other pane, first in its toolbar's "…" (several panes only). */
+  const dualItemsFor = (p: Pane) => {
     const o = dual ? otherOf(p.id) : null;
-    return o ? (
-      <DualTools
-        // with two panes "the right pane" says it all; with more, the folder tells them apart
-        toOther={{ dir: relation(tree, p.id, o) ?? "right", name: ids.length > 2 ? paneName(slot(o)) : "" }}
-        onToOther={() => dualPane.sameFolderInOther(p.id)}
-        onSwap={dualPane.swap}
-        onCompare={dualPane.compare}
-        syncBrowsing={settings.syncBrowsing}
-        onSyncBrowsing={() => updateSettings({ syncBrowsing: !settings.syncBrowsing })}
-      />
-    ) : undefined;
+    if (!o) return undefined;
+    // "the right pane", "the pane below": the way to it says which (the menu has no room for folder names too)
+    return () =>
+      dualMenuItems({
+        toOther: { dir: relation(tree, p.id, o) ?? "right", name: "" },
+        onToOther: () => dualPane.sameFolderInOther(p.id),
+        onSwap: dualPane.swap,
+        onCompare: dualPane.compare,
+        syncWith: pairs
+          .filter(([a, b]) => a === p.id || b === p.id)
+          .map(([a, b]) => (a === p.id ? b : a))
+          .map((id) => {
+            const dir = relation(tree, p.id, id);
+            return { id, dir, name: dir ? "" : paneName(slot(id)), on: isLinked(p.id, id) };
+          }),
+        onToggleSync: (id) => toggleSync(p.id, id),
+      });
   };
   const paneProps = (p: Pane) => ({
     pane: p,
     active: p === active,
     dual,
     label: `Pane ${ids.indexOf(p.id) + 1} of ${ids.length}`,
-    dualTools: toolsFor(p),
+    dualItems: dualItemsFor(p),
     settings,
     updateSettings,
     previewOpen: preview.previewOpen,
@@ -828,6 +889,7 @@ export function AppShell() {
     // one pane: a click splits it, as the dual pane button always did; more: the panes menu
     onSwitchConnection: (x: number, y: number) => switchMenu(p.id, x, y),
     onPanes: (x: number, y: number) => (dual ? panesMenu(p.id, x, y) : split("row", p.id)),
+    panesItems: () => panesItems(p.id),
     onActivate: () => {
       if (dual && activeId !== p.id) setActiveId(p.id);
     },
@@ -918,6 +980,8 @@ export function AppShell() {
                   setActiveId(id);
                   focusSoon(id);
                 }}
+                linked={isLinked}
+                onToggleLink={toggleSync}
               />
               {aside(active)}
             </div>

@@ -14,7 +14,7 @@ export type PaneNode = { t: "pane"; id: PaneId } | { t: "split"; dir: Dir; sizes
 
 /** more than this and each pane gets too little room to be of use */
 export const MAX_PANES = 6;
-/** below this a pane's two header rows fall apart (the path, the toolbar's buttons) */
+/** below this a pane's header row falls apart (its buttons and the folder's name) */
 export const MIN_W = 340;
 /** below this the list shows hardly a row under the header rows */
 export const MIN_H = 220;
@@ -66,16 +66,17 @@ function tidy(n: PaneNode): PaneNode {
 }
 
 /**
- * Splits pane `id`: `dir` "row" puts `fresh` to its right, "col" below it. The two share what
- * the pane had.
+ * Splits pane `id`: `dir` "row" puts `fresh` to its right, "col" below it; with `before`, to its
+ * left or above it instead. The two share what the pane had.
  */
-export function splitPane(n: PaneNode, id: PaneId, dir: Dir, fresh: PaneId): PaneNode {
+export function splitPane(n: PaneNode, id: PaneId, dir: Dir, fresh: PaneId, before = false): PaneNode {
   const go = (x: PaneNode): PaneNode => {
-    if (x.t === "pane") return x.id === id ? { t: "split", dir, sizes: [0.5, 0.5], kids: [x, leaf(fresh)] } : x;
+    if (x.t === "pane") return x.id === id ? { t: "split", dir, sizes: [0.5, 0.5], kids: before ? [leaf(fresh), x] : [x, leaf(fresh)] } : x;
     const i = x.kids.findIndex((k) => k.t === "pane" && k.id === id);
     if (i >= 0 && x.dir === dir) {
       // a neighbour in the same split: it takes half of this pane's share
-      const kids = [...x.kids.slice(0, i + 1), leaf(fresh), ...x.kids.slice(i + 1)];
+      const at = before ? i : i + 1;
+      const kids = [...x.kids.slice(0, at), leaf(fresh), ...x.kids.slice(at)];
       const half = x.sizes[i] / 2;
       const sizes = [...x.sizes.slice(0, i), half, half, ...x.sizes.slice(i + 1)];
       return { ...x, kids, sizes };
@@ -153,6 +154,114 @@ export function relation(n: PaneNode, a: PaneId, b: PaneId): "left" | "right" | 
   if (ia < 0 || ib < 0) return null;
   if (ia === ib) return relation(n.kids[ia], a, b);
   return n.dir === "row" ? (ib > ia ? "right" : "left") : ib > ia ? "down" : "up";
+}
+
+type Side = "left" | "right" | "top" | "bottom";
+
+/**
+ * The pane of (sub)tree `n` that touches its `side` edge at `at` (0 to 1 along that edge, 0.5 the
+ * middle). A split side by side reaches a left or right edge with only its first or last child; a
+ * split stacked along that edge reaches it with every child, so the share `at` falls in decides.
+ */
+export function paneAtEdge(n: PaneNode, side: Side, at = 0.5): PaneId {
+  return spanAtEdge(n, side, at).id;
+}
+
+/**
+ * paneAtEdge, with the stretch of the edge that pane covers (`from`–`to`, 0 to 1). A point right
+ * on the line between two panes counts for the first of them (the upper or left one).
+ */
+function spanAtEdge(n: PaneNode, side: Side, at: number, from = 0, to = 1): { id: PaneId; from: number; to: number } {
+  if (n.t === "pane") return { id: n.id, from, to };
+  const across = side === "left" || side === "right" ? n.dir === "row" : n.dir === "col";
+  if (across) return spanAtEdge(side === "left" || side === "top" ? n.kids[0] : n.kids[n.kids.length - 1], side, at, from, to);
+  let start = 0;
+  for (let i = 0; i < n.kids.length; i++) {
+    const s = n.sizes[i];
+    if (at <= start + s || i === n.kids.length - 1) {
+      const len = to - from;
+      return spanAtEdge(n.kids[i], side, s > 0 ? Math.min(1, Math.max(0, (at - start) / s)) : 0.5, from + start * len, from + (start + s) * len);
+    }
+    start += s;
+  }
+  return { id: leaves(n)[0], from, to };
+}
+
+/**
+ * The two panes a divider links, and where along the divider (0 to 1) its link button goes: the
+ * panes facing each other across the middle of the divider after child `i` of split `n`, the
+ * button at the middle of the stretch they share. With a single pane on each side that is simply
+ * the two of them and the divider's middle; beside a split, it is the pane of the split that the
+ * divider's midpoint touches.
+ */
+export function dividerLink(n: Extract<PaneNode, { t: "split" }>, i: number): { pair: [PaneId, PaneId]; at: number } {
+  const row = n.dir === "row";
+  const a = spanAtEdge(n.kids[i], row ? "right" : "bottom", 0.5);
+  const b = spanAtEdge(n.kids[i + 1], row ? "left" : "top", 0.5);
+  return { pair: [a.id, b.id], at: (Math.max(a.from, b.from) + Math.min(a.to, b.to)) / 2 };
+}
+
+/** Every divider's pair in the tree: the pairs synchronized browsing can link. */
+export function dividerPairs(n: PaneNode): [PaneId, PaneId][] {
+  if (n.t === "pane") return [];
+  return [...n.kids.slice(1).map((_, i) => dividerLink(n, i).pair), ...n.kids.flatMap(dividerPairs)];
+}
+
+// ---------------------------------------------------------------- synchronized browsing links
+
+/** Two panes that follow each other into subfolders and back up. */
+export type SyncLink = [PaneId, PaneId];
+const LINKS_KEY = "s3b.panes.sync";
+
+export const sameLink = (l: SyncLink, a: PaneId, b: PaneId) => (l[0] === a && l[1] === b) || (l[0] === b && l[1] === a);
+
+/** The links with the one between `a` and `b` switched on or off. */
+export function toggleLink(links: SyncLink[], a: PaneId, b: PaneId): SyncLink[] {
+  return links.some((l) => sameLink(l, a, b)) ? links.filter((l) => !sameLink(l, a, b)) : [...links, [a, b]];
+}
+
+/**
+ * The panes that move with pane `id`: everything linked to it, directly or through another link
+ * (linking 1–2 and 2–3 moves all three together, as the lit dividers suggest).
+ */
+export function syncedWith(links: SyncLink[], id: PaneId): PaneId[] {
+  const seen = new Set<PaneId>([id]);
+  const todo = [id];
+  while (todo.length) {
+    const x = todo.pop()!;
+    for (const [a, b] of links) {
+      const y = a === x ? b : b === x ? a : null;
+      if (y && !seen.has(y)) {
+        seen.add(y);
+        todo.push(y);
+      }
+    }
+  }
+  seen.delete(id);
+  return [...seen];
+}
+
+/**
+ * The links from last time. Before links, synchronized browsing was one switch for "the two
+ * panes": with it on and two panes on screen, those two start out linked.
+ */
+export function loadLinks(tree: PaneNode, oldSwitch: boolean): SyncLink[] {
+  try {
+    const raw = LS.get(LINKS_KEY);
+    if (raw) {
+      const v: unknown = JSON.parse(raw);
+      if (Array.isArray(v))
+        return v.filter((l): l is SyncLink => Array.isArray(l) && l.length === 2 && l.every((x) => PANE_IDS.includes(x)) && l[0] !== l[1]);
+    }
+  } catch {
+    /* unreadable: start over below */
+  }
+  const ids = leaves(tree);
+  return oldSwitch && ids.length === 2 ? [[ids[0], ids[1]]] : [];
+}
+
+export function saveLinks(links: SyncLink[]) {
+  LS.set(LINKS_KEY, JSON.stringify(links));
 }
 
 /** A free slot for a new pane. */

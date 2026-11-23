@@ -328,6 +328,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
         search && { type: "item", label: "Clear search", icon: "x", onClick: clearSearch },
         { type: "sep" },
         ...placeItems(),
+        { type: "sep" },
+        ...(env.splitItems?.() ?? []),
       ]),
     );
   };
@@ -389,14 +391,9 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     dialogs.menu(ev.clientX, ev.clientY, items);
   };
 
-  const onMoreMenu = (x: number, y: number) =>
-    dialogs.menu(x, y, tidyMenu([...placeItems(), { type: "sep" }, { type: "item", label: "Show activity", icon: "transfers", onClick: env.showActivityPanel }]));
-
-  const onUploadMenu = (x: number, y: number) =>
-    dialogs.menu(x, y, [
-      { type: "item", label: "Files…", icon: "file", hint: "⌘U", onClick: () => ops.pickAndUpload(false) },
-      { type: "item", label: "Folder…", icon: "folder", hint: "⇧⌘U", onClick: () => ops.pickAndUpload(true) },
-    ]);
+  /** The toolbar's "…": `lead` is what the toolbar puts first (refresh, the other pane's items). */
+  const onMoreMenu = (x: number, y: number, lead: (MenuItem | false)[] = []) =>
+    dialogs.menu(x, y, tidyMenu([...lead, { type: "sep" }, ...placeItems(), { type: "sep" }, { type: "item", label: "Show activity", icon: "transfers", onClick: env.showActivityPanel }]));
 
   const focusSearch = () => {
     pane.searchInput.current?.focus();
@@ -448,7 +445,6 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     onContext,
     onBackgroundContext,
     onMoreMenu,
-    onUploadMenu,
   };
 }
 

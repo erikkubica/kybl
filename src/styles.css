@@ -361,35 +361,79 @@ code {
   flex: none;
   border-bottom: 1px solid var(--border);  container-type: inline-size;
 }
-/* labels (Upload, New folder) go only when the bar's contents no longer fit: Toolbar measures
-   it and sets .tight (see useLabelsFit) */
-.actionbar.tight .btn-label {
-  display: none;
-}
-.actionbar.tight .tool {
-  padding: 0 6px;
-}
-.actionbar .btn-upload:not(.tight .btn-upload) {
-  gap: 6px;
-  padding: 0 11px 0 9px;
-}
-.actionbar.tight .btn-upload {
-  width: 28px;
-  min-width: 28px;
-  padding: 0;
-}
-/* a narrow pane: the dual pane buttons step aside (they're in the View menu too) */
-@container (max-width: 470px) {
-  .actionbar .dual-btn {
-    display: none;
-  }
-}
+/* the pane's one header row (Toolbar.tsx): nothing wraps and nothing but the folder's name and
+   the search field shrinks; the spacer is the window's drag area */
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   height: 50px;
-  padding: 0 12px 0 10px;
+  padding: 0 8px;
+}
+.toolbar > * {
+  flex: none;
+}
+.toolbar > .spacer {
+  flex: 1 1 0;
+  align-self: stretch;
+  min-width: 4px;
+}
+/* a button that opens a menu: its icon and a small caret */
+.icon-btn.tb-drop {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  width: auto;
+  padding: 0 3px 0 6px;
+}
+.tb-caret {
+  opacity: 0.55;
+}
+.icon-btn.tb-drop:hover .tb-caret {
+  opacity: 0.9;
+}
+.icon-btn.conn-switch.tb-drop {
+  padding: 0 3px 0 4px;
+  margin: 0 0 0 2px;
+}
+/* "…" holds much of what had its own button: its dots as heavy as the other icons' lines */
+.tb-more svg {
+  stroke-width: 3;
+}
+/* just the folder's name: it gives way first (the large shrink factor), down to a sliver */
+.crumbs.path-title {
+  flex: 0 10 auto;
+  min-width: 24px;
+  gap: 0;
+}
+.path-title .path-name {
+  flex: 0 1 auto;
+  max-width: none;
+  min-width: 0;
+  padding: 0 4px 0 6px;
+}
+.path-title .path-parents {
+  width: 18px;
+  height: 24px;
+  color: var(--faint);
+}
+.crumbs.path-title.editing {
+  flex: 1 1 auto;
+  min-width: 140px;
+}
+/* a narrow pane: the star and the panes button fold into "…"; while searching or typing a path
+   the name or the view buttons step aside so the field has room */
+@container (max-width: 420px) {
+  .toolbar > .tb-fav,
+  .toolbar > .tb-panes {
+    display: none;
+  }
+  .toolbar:is(.search-open, :has(.search:focus-within)) > .path-title {
+    display: none;
+  }
+  .toolbar:has(.path-title.editing) > :is(.tb-view, .tb-details, .search) {
+    display: none;
+  }
 }
 .crumbs {
   display: flex;
@@ -561,27 +605,6 @@ kbd {
   display: none;
 }
 
-.actionbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 42px;
-  padding: 0 12px 8px;
-  overflow: hidden;
-}
-.actionbar .spacer {
-  flex: 1;
-}
-/* nothing squeezes: the bar overflows instead, which is how Toolbar notices labels must go */
-.actionbar > :not(.spacer),
-.actionbar .tb-group > * {
-  flex-shrink: 0;
-}
-.tb-group {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
 .tb-sep {
   width: 1px;
   height: 18px;
@@ -619,35 +642,6 @@ kbd {
 .sel-chip button:hover {
   background: var(--accent-soft);
 }
-.tool {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 9px 0 7px;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--dim);
-  font-weight: 500;
-  white-space: nowrap;
-  transition: background 0.12s, color 0.12s;
-}
-.tool:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--text);
-}
-.tool:active:not(:disabled) {
-  background: var(--pressed);
-}
-.tool:disabled {
-  opacity: 0.38;
-}
-.tool.danger:hover:not(:disabled) {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
 /* thin indeterminate line under the chrome while anything is loading */
 .progress-line {
   position: absolute;
@@ -3003,7 +2997,8 @@ body.dragging-items * {
   box-shadow: inset 0 0 0 2px var(--accent-solid);
   border-radius: 8px;
 }
-.crumb.drop-target {
+.crumb.drop-target,
+.icon-btn.drop-target {
   background: var(--accent-soft);
   color: var(--accent);
   box-shadow: inset 0 0 0 1.5px var(--accent-solid);

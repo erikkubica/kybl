@@ -59,6 +59,8 @@ export type PaneEnv = {
   otherPaneTarget?: (pane: PaneId, dest: string | null, items: Entry[]) => { dest: string; label: string } | null;
   /** extra items for the "…" and empty-space menus (dual pane adds its own) */
   extraPlaceItems?: () => MenuItem[];
+  /** the empty-space menu's last item: Split ▸ Right, Down, Left, Up (the shell's) */
+  splitItems?: () => MenuItem[];
   /** extra items for the menu of selected items */
   extraItemItems?: (list: Entry[]) => (MenuItem | false)[];
   /** opens a file in the app's full-window viewer/editor; false when it should open in its own app */

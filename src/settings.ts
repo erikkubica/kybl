@@ -58,7 +58,10 @@ export type Settings = {
    * an old dual pane over into the layout tree (shell/paneLayout.ts keeps the layout now).
    */
   layout: "single" | "dual";
-  /** dual pane: opening a subfolder (or going up) in one pane does the same in the other when it can */
+  /**
+   * before split layouts: one synchronized browsing switch for the two panes. Only read once, to
+   * link those two (synchronized browsing is per pair of panes now: shell/paneLayout.ts links).
+   */
   syncBrowsing: boolean;
   /** files and folders whose name starts with "." show in panes of this computer's disk */
   showHiddenFiles: boolean;
