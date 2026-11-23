@@ -8,6 +8,7 @@ import { errMessage, errSummary } from "../api";
 import { formatBytes, formatDateFull } from "../format";
 import { Icon } from "../Icons";
 import { editApi, putOffConflict, useAsking, type ConflictAnswer, type EditSession } from "./editStore";
+import { canDiff, openDiff } from "../viewers/diff";
 import "./edit.css";
 
 /** "index.php" → "index (edited).php" (what "Keep both" names the upload first). */
@@ -32,6 +33,19 @@ export function EditConflict({ s, onStop }: { s: EditSession; onStop: (s: EditSe
       setError(errSummary(errMessage(e)));
     } finally {
       setBusy(null);
+    }
+  };
+  const compare = async () => {
+    setError(null);
+    try {
+      const mine = await editApi.localText(s.id);
+      await openDiff(
+        { profileId: s.profileId, bucket: s.root, key: s.key, name: s.name, label: "On the server now" },
+        { text: mine, name: s.name, label: "Your version" },
+        { title: s.name },
+      );
+    } catch (e) {
+      setError(errSummary(errMessage(e)));
     }
   };
   const theirs = s.server ? [s.server.modified ? `saved ${formatDateFull(s.server.modified)}` : null, formatBytes(s.server.size)].filter(Boolean).join(", ") : null;
@@ -74,6 +88,11 @@ export function EditConflict({ s, onStop }: { s: EditSession; onStop: (s: EditSe
         )}
       </div>
       <div className="modal-foot">
+        {!gone && canDiff({ name: s.name }) && (
+          <button className="btn btn-ghost" onClick={() => void compare()} disabled={!!busy} style={{ marginRight: "auto" }}>
+            Compare…
+          </button>
+        )}
         <button className="btn" onClick={later} disabled={!!busy}>
           Decide later
         </button>

@@ -333,6 +333,8 @@ pub fn run() {
             edit::edit_retry,
             #[cfg(desktop)]
             edit::edit_resolve,
+            #[cfg(desktop)]
+            edit::edit_local_text,
             // WP-B1: copying and moving between connections
             jobs::job_create,
             jobs::job_list,

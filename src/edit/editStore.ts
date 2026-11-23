@@ -46,6 +46,8 @@ export const editApi = {
   stop: (id: string) => invoke<void>("edit_stop", { id }),
   retry: (id: string) => invoke<void>("edit_retry", { id }),
   resolve: (id: string, action: ConflictAnswer) => invoke<EditSession>("edit_resolve", { id, action }),
+  /** the copy here, as text (for "Compare…") */
+  localText: (id: string) => invoke<string>("edit_local_text", { id }),
 };
 
 // ------------------------------------------------------------ the remembered choice

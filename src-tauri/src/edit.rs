@@ -503,6 +503,22 @@ pub async fn edit_stop(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 /// Tries the last change again (after a failed upload).
+/// The text of the copy being edited on this computer, for "Compare…" in a conflict (8 MB at most).
+#[tauri::command]
+pub async fn edit_local_text(id: String) -> Result<String, String> {
+    let path = find(&id)?.inner.lock().unwrap().info.local.clone();
+    tokio::task::spawn_blocking(move || {
+        let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+        if meta.len() > 8_000_000 {
+            return Err("The file is too large to compare.".to_string());
+        }
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        String::from_utf8(bytes).map_err(|_| "The file isn't text, so it can't be compared.".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub fn edit_retry(id: String) -> Result<(), String> {
     find(&id)?.wake.notify_one();
