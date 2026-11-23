@@ -32,6 +32,8 @@ function jobMeta(j: Job): string {
   return j.total > 1 ? `${j.total.toLocaleString()} objects` : "";
 }
 
+const KIND_LABEL: Record<Transfer["kind"], string> = { upload: "Upload", download: "Download", compress: "Compress", extract: "Extract" };
+const KIND_DONE: Record<Transfer["kind"], string> = { upload: "Uploaded", download: "Downloaded", compress: "Compressed", extract: "Extracted" };
 const STATE_ICON: Record<TransferState, "upload" | "download" | "check-circle" | "alert" | "clock" | "x"> = {
   running: "upload",
   queued: "clock",
@@ -554,8 +556,8 @@ function TransferPanelView({
           ))}
           {list.map((t) => (
             <div key={t.id} className={`tp-row st-${t.state}`}>
-              <span className="tp-icon" title={t.kind === "upload" ? "Upload" : "Download"}>
-                <Icon name={t.state === "running" ? t.kind : STATE_ICON[t.state]} size={15} />
+              <span className="tp-icon" title={KIND_LABEL[t.kind]}>
+                <Icon name={t.state === "running" ? (t.kind === "upload" || t.kind === "download" ? t.kind : "archive") : STATE_ICON[t.state]} size={15} />
               </span>
               <div className="tp-name" title={t.key}>
                 {t.name}
@@ -581,7 +583,7 @@ function TransferPanelView({
                 </div>
               ) : (
                 <div className="tp-state">
-                  {t.state === "done" && (t.kind === "upload" ? "Uploaded" : "Downloaded")}
+                  {t.state === "done" && KIND_DONE[t.kind]}
                   {t.state === "cancelled" && "Cancelled"}
                   {t.state === "error" && "Failed"}
                 </div>

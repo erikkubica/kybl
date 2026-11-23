@@ -665,6 +665,10 @@ impl Storage for SftpBackend {
         &self.caps
     }
 
+    fn as_sftp(&self) -> Option<&SftpBackend> {
+        Some(self)
+    }
+
     /// The server and the folder paths start from (two connections to one server and folder
     /// see the same files, whoever signs in).
     fn place_id(&self) -> Option<String> {

@@ -157,7 +157,8 @@ export type TransferState = "queued" | "running" | "done" | "error" | "cancelled
 
 export type Transfer = {
   id: string;
-  kind: "upload" | "download";
+  /** compress / extract: archive work run by the backend as one row (src/archive) */
+  kind: "upload" | "download" | "compress" | "extract";
   name: string;
   state: TransferState;
   bytes: number;

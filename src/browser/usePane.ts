@@ -25,7 +25,9 @@ import { useLocation } from "./useLocation";
 import { useSelection } from "./useSelection";
 import { useEntryActions } from "./useEntryActions";
 import { useGitStatus } from "./useGitStatus";
-import { LS, paneKeys, type Loc, type PaneId, type PaneView } from "./types";
+import { LS, paneKeys, THIS_MAC, type Loc, type PaneId, type PaneView } from "./types";
+import { archiveProfile, isArchiveName } from "../archive/archive";
+import { makeArchiveOps } from "../archive/archiveOps";
 
 /** What a pane gets from the shell. */
 export type PaneEnv = {
@@ -91,7 +93,8 @@ function usePaneCore(env: PaneEnv) {
 
   const loc = useLocation(env.storageKey);
   const { bucket, prefix } = loc;
-  const profile = useMemo(() => profiles.find((p) => p.id === loc.profileId) ?? null, [profiles, loc.profileId]);
+  // an open archive (src/archive) stands in as a connection of its own
+  const profile = useMemo(() => profiles.find((p) => p.id === loc.profileId) ?? (loc.profileId ? archiveProfile(loc.profileId, profiles, THIS_MAC) : null), [profiles, loc.profileId]);
   const here: Loc | null = useMemo(() => (profile && bucket != null ? { profileId: profile.id, bucket, prefix } : null), [profile, bucket, prefix]);
   const hereRef = useRef(here);
   hereRef.current = here;
@@ -199,7 +202,7 @@ function usePaneCore(env: PaneEnv) {
 
   const historyStep = (delta: number) => {
     const to = loc.history.step(delta);
-    const p = to && profiles.find((x) => x.id === to.profileId);
+    const p = to && (profiles.find((x) => x.id === to.profileId) ?? archiveProfile(to.profileId, profiles, THIS_MAC));
     if (to && p) go(p, to.bucket, to.prefix, { history: false });
   };
 
@@ -276,10 +279,35 @@ function usePaneCore(env: PaneEnv) {
   });
   const opsRef = useRef(ops);
   opsRef.current = ops;
+  const archive = makeArchiveOps({
+    profile,
+    bucket,
+    prefix,
+    searching: !!search,
+    profiles,
+    local: THIS_MAC,
+    ops,
+    transfers: env.transfers,
+    toast,
+    setBusy,
+    resolveConflicts: dialogs.resolveConflicts,
+    reloadIfShowing: env.reloadIfShowing,
+    selectAfterReload: (profileId, b, key) => {
+      pendingSelect.current = key ? { profileId, bucket: b, key } : null;
+    },
+    autoShowActivity: env.autoShowActivity,
+    showActivity: env.showActivity,
+    go,
+    openMigration: env.openMigration,
+  });
+  const archiveRef = useRef(archive);
+  archiveRef.current = archive;
 
   const openEntry = useCallback(
     (e: Entry) => {
       if (e.kind === "folder") navigate(e.key);
+      // .zip, .tar, .tar.gz open like a folder
+      else if (isArchiveName(e.name)) void archiveRef.current.open(e);
       // text, code, Markdown, CSV, JSON and Office files open in the app's editor
       else if (!envRef.current.openDocument?.(e)) void opsRef.current.openInApp(e);
     },
@@ -456,12 +484,15 @@ function usePaneCore(env: PaneEnv) {
     showConnection,
     forgetProfile,
     openEntry,
+    archive,
     /** what the list shows while searching is relative to the search's folder */
     relBase: search ? search.loc.prefix : null,
-    canUp: !search && (!!prefix || !!upRoot),
+    canUp: !search && (!!prefix || !!upRoot || archive.inArchive),
     goUp: () => {
       if (search) return;
       if (prefix) return navigate(parentPrefix(prefix));
+      // the top of an archive goes up to the folder it's in
+      if (archive.upFromTop()) return;
       // this computer's Documents at its top goes on up to Home (or the disk), selecting it there
       if (upRoot && profile && bucket != null) go(profile, upRoot.root, upRoot.prefix, { selectKey: upRoot.prefix + bucket.replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop() + "/" });
     },

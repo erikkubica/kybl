@@ -15,6 +15,7 @@ import type { Entry } from "../types";
 import { EDIT_MAX, viewerFor } from "./registry";
 import { asExport, driveUrl } from "../connections/native";
 import { encodeText } from "./text";
+import { isArchiveId } from "../archive/archive";
 import { useDocument } from "./useDocument";
 import { ConflictDialog, UnsavedDialog } from "./ConflictDialog";
 import { Note } from "./ui";
@@ -124,7 +125,9 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
 
   const ready = state.status === "ready" ? state : null;
   const textDoc = ready?.text ?? null;
-  const editable = full && !native && !!info?.canEdit && !!textDoc && !textDoc.lossy && (ready?.bytes.length ?? 0) <= info.editMaxBytes;
+  // a file inside an opened archive is read-only (the archive opens like a folder)
+  const archived = isArchiveId(profileId);
+  const editable = full && !native && !archived && !!info?.canEdit && !!textDoc && !textDoc.lossy && (ready?.bytes.length ?? 0) <= info.editMaxBytes;
 
   // a fresh load starts clean
   useEffect(() => {
@@ -336,7 +339,8 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
 
   // why a text file is read-only, when it is
   let readOnlyWhy: string | null = null;
-  if (full && ready && native?.exports[0]) {
+  if (full && ready && archived && textDoc) readOnlyWhy = "Inside an archive, so it opens read-only. Extract it to edit.";
+  else if (full && ready && native?.exports[0]) {
     const label = native.exports[0].label;
     readOnlyWhy = `Shown read-only, as ${/^[aeiou]/i.test(label) ? "an" : "a"} ${label}. Edit it in Google Drive.`;
   } else if (full && ready && textDoc && info?.canEdit === false && info.editMaxBytes > 0) readOnlyWhy = `Files over ${formatBytes(EDIT_MAX)} open read-only.`;
