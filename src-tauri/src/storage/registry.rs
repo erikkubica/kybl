@@ -80,6 +80,22 @@ pub async fn build<R: Runtime>(
     }
 }
 
+/// A fresh SFTP backend for connection `profile_id`, not kept: a terminal pane opens its shell
+/// with it (`SftpBackend::open_shell`), signed in with the connection's saved credentials.
+#[cfg(desktop)]
+pub async fn sftp_for<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id: &str) -> Result<SftpBackend, String> {
+    let profile = load_profiles(app)?
+        .into_iter()
+        .find(|p| p.id == profile_id)
+        .ok_or_else(|| "Connection not found".to_string())?;
+    if profile.kind != ConnKind::Sftp {
+        return Err("Terminals open on This Mac and on SFTP connections.".into());
+    }
+    let cfg = net::net_config(profile.net.as_ref())?;
+    let secrets = net_secrets(state, &profile, &cfg, None).await?;
+    Ok(SftpBackend::new(&cfg, secrets)?)
+}
+
 /// What a server connection signs in with. `secret`, when given (testing unsaved settings), is
 /// the password, or for SFTP key sign-in the key (as stored under `{id}#ssh`, see BACKENDS.md).
 /// Saved connections read `{id}` (password) and `{id}#ssh` (key); a key saved as the main

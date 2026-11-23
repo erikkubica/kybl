@@ -44,6 +44,9 @@ mod sync;
 #[cfg(desktop)]
 mod mount;
 mod placeholders;
+// terminal panes: a shell on this computer or over SSH
+#[cfg(desktop)]
+mod terminal;
 mod thumbs;
 mod transfer_notice;
 mod transfers;
@@ -113,6 +116,8 @@ pub fn run() {
                     quit::request(app);
                 }
             }
+            // its terminals' shells end with it
+            WindowEvent::Destroyed => terminal::close_for(window.label()),
             // the page refreshes what it shows when the window comes back to the front after a
             // while away (not on every click between windows)
             WindowEvent::Focused(focused) if window.label() == "main" => {
@@ -121,6 +126,12 @@ pub fn run() {
                 }
             }
             _ => {}
+        })
+        // a page loading anew (a reload) has no terminals yet: the old page's shells end
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                terminal::close_for(webview.label());
+            }
         });
 
     #[cfg(target_os = "macos")]
@@ -237,6 +248,17 @@ pub fn run() {
             transfers::start_download,
             transfers::cancel_transfer,
             transfers::active_transfers,
+            // terminal panes
+            #[cfg(desktop)]
+            terminal::terminal_open,
+            #[cfg(desktop)]
+            terminal::terminal_write,
+            #[cfg(desktop)]
+            terminal::terminal_resize,
+            #[cfg(desktop)]
+            terminal::terminal_ack,
+            #[cfg(desktop)]
+            terminal::terminal_close,
             #[cfg(desktop)]
             sync::sync_list,
             #[cfg(desktop)]
