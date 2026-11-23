@@ -33,3 +33,6 @@ notes/
 
 # Local tool config
 .claude/
+
+# Pre-push review catalog (local only)
+.review/
