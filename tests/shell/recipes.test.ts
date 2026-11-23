@@ -34,7 +34,7 @@ test("a recipe keeps places, views and terminal folders, not sessions or scroll"
   assert.deepEqual(r.panes.left, { loc: site, view, conn: "This Mac" });
   assert.equal(r.panes.right?.view.view, "grid");
   assert.equal(r.panes.right?.conn, "Acme live");
-  assert.deepEqual(r.panes.c?.term, { ...site, from: "left", follow: true });
+  assert.deepEqual(r.panes.c?.term, { ...site, from: "left", follow: true, key: "t-old" });
   assert.equal(r.panes.c?.term?.sid, undefined);
   assert.deepEqual(terminalPanes(r), ["c", "d"]);
   assert.ok(matchesRecipe(layout, r));
@@ -75,6 +75,33 @@ test("a pane whose connection is gone opens empty, named in a note", () => {
   assert.deepEqual(o.layout.panes.right, { loc: null, view: { ...view, view: "grid" } });
   // not known yet (launch): nothing is missing
   assert.deepEqual(openRecipe(r, () => "s", null).missing, {});
+});
+
+test("startup commands follow the terminal, not its slot", () => {
+  const first = captureRecipe(layout, (id) => names[id]);
+  first.panes.c!.startup = ["npm run dev"];
+  // opened again: the live terminals carry the recipe's keys under fresh sessions
+  let n = 0;
+  const o = openRecipe(first, () => `s${++n}`, () => true);
+  assert.equal(o.layout.panes.c?.term?.key, "t-old");
+  assert.deepEqual(captureRecipe(o.layout, (id) => names[id], first).panes.c?.startup, ["npm run dev"]);
+  // that terminal closed and a new one opened in the same slot: nothing inherited
+  const fresh: Layout = { ...o.layout, panes: { ...o.layout.panes, c: { loc: null, view, term: { ...site, sid: "t-new" } } } };
+  const again = captureRecipe(fresh, (id) => names[id], first);
+  assert.equal(again.panes.c?.startup, undefined);
+  assert.equal(again.panes.c?.term?.key, "t-new");
+  // the terminal moved to another slot keeps its commands
+  const tree: Layout["tree"] = { t: "split", dir: "row", sizes: [50, 50], kids: [{ t: "pane", id: "left" }, { t: "pane", id: "right" }] };
+  const moved: Layout = { tree, links: [], recent: ["left", "right"], panes: { left: o.layout.panes.left, right: o.layout.panes.c } };
+  assert.deepEqual(captureRecipe(moved, (id) => names[id], first).panes.right?.startup, ["npm run dev"]);
+});
+
+test("recipes saved before keys: same slot and connection only", () => {
+  const old: Layout = { ...layout, panes: { ...layout.panes, c: { loc: null, view, term: { ...site }, startup: ["make"] } } };
+  const now: Layout = { ...layout, panes: { ...layout.panes, c: { loc: null, view, term: { ...site, prefix: "x/", sid: "t9" } } } };
+  assert.deepEqual(captureRecipe(now, (id) => names[id], old).panes.c?.startup, ["make"]);
+  const elsewhere: Layout = { ...layout, panes: { ...layout.panes, c: { loc: null, view, term: { profileId: "sftp9", bucket: "/", prefix: "", sid: "t9" } } } };
+  assert.equal(captureRecipe(elsewhere, (id) => names[id], old).panes.c?.startup, undefined);
 });
 
 test("startup lines and names", () => {

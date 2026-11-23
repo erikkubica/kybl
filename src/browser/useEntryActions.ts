@@ -488,7 +488,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
 
   /** The toolbar's "…": `lead` is what the toolbar puts first (refresh, the other pane's items). */
   const onMoreMenu = (x: number, y: number, lead: (MenuItem | false)[] = []) =>
-    dialogs.menu(x, y, tidyMenu([...lead, { type: "sep" }, ...placeItems(), { type: "sep" }, { type: "item", label: "Show activity", icon: "transfers", onClick: env.showActivityPanel }]));
+    // (inside an archive, read-only: no Sync, Keep on this device, Copy this folder to…)
+    dialogs.menu(x, y, tidyMenu(ro([...lead, { type: "sep" }, ...placeItems(), { type: "sep" }, { type: "item", label: "Show activity", icon: "transfers", onClick: env.showActivityPanel }])));
 
   const focusSearch = () => {
     pane.searchInput.current?.focus();

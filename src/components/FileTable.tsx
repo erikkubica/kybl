@@ -112,6 +112,7 @@ export function FileTable({
   prefix,
   emptyAction,
   columns,
+  unavailable,
   activeKey,
   autoFocus,
   folderSize,
@@ -146,6 +147,8 @@ export function FileTable({
   emptyAction?: ReactNode;
   /** optional columns in order (settings.columns); without it the choice is kept per window */
   columns?: ColumnId[];
+  /** columns this connection can't fill (storage class off S3): left out of the header's menu */
+  unavailable?: ColumnId[];
   /** the app's keyboard cursor, if it shares it */
   activeKey?: string | null;
   /** take keyboard focus when shown and whenever `prefix` changes */
@@ -420,7 +423,7 @@ export function FileTable({
   const menuItems: MenuItem[] = [
     { type: "label", label: "Columns" },
     { type: "item", label: "Name", checked: true, disabled: true, onClick: () => {} },
-    ...COLS.map((c): MenuItem => ({ type: "item", label: c.label, checked: chosen.includes(c.id), onClick: () => toggleCol(c.id) })),
+    ...COLS.filter((c) => !unavailable?.includes(c.id)).map((c): MenuItem => ({ type: "item", label: c.label, checked: chosen.includes(c.id), onClick: () => toggleCol(c.id) })),
     { type: "sep" },
     {
       type: "item",

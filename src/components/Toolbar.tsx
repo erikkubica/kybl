@@ -42,6 +42,7 @@ export function Toolbar({
   onNavigate,
   onUp,
   onUpload,
+  readOnly,
   onMoreMenu,
   onNewFolder,
   onQuery,
@@ -97,6 +98,8 @@ export function Toolbar({
   /** up a level (the "…" crumb, ⌘↑) */
   onUp: () => void;
   onUpload: (folder: boolean) => void;
+  /** an archive opened like a folder: nothing to upload or create */
+  readOnly?: boolean;
   /** the "⋯" button; `folded` are the header's own items that had no room on the row */
   onMoreMenu: (x: number, y: number, folded: MenuItem[]) => void;
   onNewFolder: () => void;
@@ -272,7 +275,14 @@ export function Toolbar({
           <Icon name="more" />
         </button>
 
-        <button className="icon-btn tb-create" disabled={disabled} onClick={createMenu} title="Upload or create (⌘U, ⇧⌘N)" aria-label="Upload or create" aria-haspopup="menu">
+        <button
+          className="icon-btn tb-create"
+          disabled={disabled || readOnly}
+          onClick={createMenu}
+          title={readOnly ? "Archives open read-only" : "Upload or create (⌘U, ⇧⌘N)"}
+          aria-label="Upload or create"
+          aria-haspopup="menu"
+        >
           <Icon name="plus" />
         </button>
 

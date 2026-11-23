@@ -103,8 +103,8 @@ export function useWorkspaceRecipes() {
         message: (
           <p>
             {n === 1 ? "Its terminal closes" : `Its ${n} terminals close`}
-            {busy ? (busy === 1 && n === 1 ? ", and what runs in it stops" : `, and what runs in ${busy === 1 ? "one of them" : busy === n ? "them" : `${busy} of them`} stops`) : ""}. The recipe’s panes and terminals open
-            again, and its startup commands run.
+            {busy ? (busy === 1 && n === 1 ? ", and what runs in it stops" : `, and what runs in ${busy === 1 ? "one of them" : busy === n ? "them" : `${busy} of them`} stops`) : ""}.{" "}
+            {wsId === h.ws.active ? "The recipe’s panes and terminals open again" : "It opens with the recipe’s panes and terminals"}, and its startup commands run.
           </p>
         ),
       });

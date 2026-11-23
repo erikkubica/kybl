@@ -513,7 +513,15 @@ export default function CommandPalette({
 
   return (
     <div className="palette-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="palette" role="dialog" aria-modal="true" aria-label="Command palette">
+      <div
+        className="palette"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
+        // the field keeps the keyboard (every key of the palette is handled there): a press on a
+        // heading, the footer or the magnifier doesn't take it away
+        onMouseDown={(e) => e.target !== input.current && e.preventDefault()}
+      >
         <div className="palette-field">
           <Icon name="search" size={15} />
           <input

@@ -5,6 +5,7 @@
  * opens, so `disabled` says why one can't run on what is on screen now.
  */
 import type { SortKey } from "../components/FileTable";
+import { TILE_MAX, TILE_MIN } from "../components/Toolbar";
 import type { PaletteCommand } from "./commands";
 import type { PaletteHost } from "./types";
 
@@ -74,8 +75,10 @@ export function shellCommands(h: PaletteHost): PaletteCommand[] {
     sortBy("size", "Size"),
     sortBy("kind", "Kind"),
     { id: "app:sort-reverse", title: "Reverse Sort Order", group: "View", icon: "sort", keywords: "ascending descending", disabled: noFolder, run: () => a.setSort({ ...a.sort, dir: a.sort.dir === "asc" ? "desc" : "asc" }) },
-    r("tiles-bigger", "Bigger Icons", { group: "View", shortcut: "⌘+", disabled: a.view === "grid" ? noFolder : "Only in icon view" }),
-    r("tiles-smaller", "Smaller Icons", { group: "View", shortcut: "⌘−", disabled: a.view === "grid" ? noFolder : "Only in icon view" }),
+    // run here, not through the route: from the palette they're meant for the file pane, never
+    // handed back to a terminal that had the keyboard (as the menu's ⌘+ / ⌘− are)
+    { id: "app:tiles-bigger", title: "Bigger Icons", group: "View", shortcut: "⌘+", disabled: a.view === "grid" ? (noFolder ?? (a.tile >= TILE_MAX ? "Already the biggest" : null)) : "Only in icon view", run: () => a.setTile(Math.min(TILE_MAX, a.tile + 24)) },
+    { id: "app:tiles-smaller", title: "Smaller Icons", group: "View", shortcut: "⌘−", disabled: a.view === "grid" ? (noFolder ?? (a.tile <= TILE_MIN ? "Already the smallest" : null)) : "Only in icon view", run: () => a.setTile(Math.max(TILE_MIN, a.tile - 24)) },
     r("toggle-compact", a.compact ? "Roomy Layout" : "Compact Layout", { group: "View", icon: "density", keywords: "density rows" }),
     { id: "app:activity", title: "Show Activity", group: "View", icon: "transfers", keywords: "transfers uploads downloads jobs progress", run: h.showActivity },
 

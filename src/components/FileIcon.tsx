@@ -100,13 +100,16 @@ export function EmptyState({
         <Icon name={searchMode ? "search" : "folder"} size={26} />
       </div>
       <h3>{searchMode ? "No matches" : "This folder is empty"}</h3>
-      <p>
-        {searchMode
-          ? "Nothing in this folder matches your search. Try a shorter or different term."
-          : standard
-            ? "Drop files here to upload them, or start with one of these."
-            : "Drop files here to upload them, or use the button below."}
-      </p>
+      {/* neither buttons nor an action (a read-only archive): nothing to suggest */}
+      {(searchMode || standard || action) && (
+        <p>
+          {searchMode
+            ? "Nothing in this folder matches your search. Try a shorter or different term."
+            : standard
+              ? "Drop files here to upload them, or start with one of these."
+              : "Drop files here to upload them, or use the button below."}
+        </p>
+      )}
       {!searchMode &&
         (standard ? (
           <div className="empty-actions">

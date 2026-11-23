@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { isMenuKey, menuPointFor } from "./Dialogs";
 import { rowStepBlocked } from "./gridHit";
+import { isContextPress, onScrollbar } from "./pointer";
 import type { Entry } from "../types";
 
 /** Folder size as the app reports it (see useFolderSizes). */
@@ -280,7 +281,9 @@ export function useMarquee({
    */
   const begin = (ev: React.MouseEvent, onClick?: () => void) => {
     const el = scroller.current;
-    if (!el || ev.button !== 0) return;
+    if (!el || ev.button !== 0 || isContextPress(ev)) return;
+    // a press on the scrollbar scrolls; it neither clears the selection nor starts a band
+    if (onScrollbar(ev.clientX, ev.clientY, el.getBoundingClientRect(), el)) return;
     const additive = ev.shiftKey ? "add" : ev.metaKey || ev.ctrlKey ? "toggle" : null;
     const base = additive ? new Set(latest.current.selected) : new Set<string>();
     if (!additive && !onClick) latest.current.onClearSelection();

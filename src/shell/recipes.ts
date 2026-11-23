@@ -14,6 +14,7 @@
 import type { PaneId } from "../browser/types";
 import type { PaneNode } from "./paneLayout";
 import type { Layout, PaneSnap } from "./workspaces";
+import type { TermPlace } from "../terminal/api";
 
 export type Recipe = { id: string; name: string; color: string | null; layout: Layout };
 
@@ -25,22 +26,33 @@ const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 /**
  * The recipe of layout `l`: its splits, its panes' places and views, its terminals' folders, and
  * the connections' names (said if one is gone later). A terminal keeps the startup commands it
- * had in `prev` (the recipe being updated) when its pane was a terminal there too.
+ * had in `prev` (the recipe being updated) when it is the same terminal: matched by its `key`
+ * (given when the recipe opened it, or its session when it was first saved), not by its slot, so
+ * a new terminal in an old one's place doesn't inherit what the old one ran.
  */
 export function captureRecipe(l: Layout, connName: (profileId: string) => string | undefined, prev?: Layout | null): Layout {
   const panes: Layout["panes"] = {};
+  const before = (id: PaneId, t: TermPlace): PaneSnap | undefined => {
+    if (!prev) return undefined;
+    const k = t.key ?? t.sid;
+    if (k) for (const p of Object.values(prev.panes)) if (p?.term?.key === k) return p;
+    // recipes saved before terminals had a key: the same slot and connection, neither keyed
+    const old = prev.panes[id];
+    return !t.key && old?.term && !old.term.key && old.term.profileId === t.profileId && old.term.bucket === t.bucket ? old : undefined;
+  };
   for (const id of ids(l.tree)) {
     const p = l.panes[id];
     if (!p) continue;
     const t = p.term;
     const profileId = t?.profileId ?? p.loc?.profileId;
     const conn = profileId ? connName(profileId) : undefined;
-    const before = prev?.panes[id];
-    const startup = t && before?.term ? before.startup : undefined;
+    const startup = t ? before(id, t)?.startup : undefined;
+    const key = t ? (t.key ?? t.sid) : undefined;
+    const term = t ? { profileId: t.profileId, bucket: t.bucket, prefix: t.prefix, ...(t.from ? { from: t.from } : {}), ...(t.follow ? { follow: true } : {}), ...(key ? { key } : {}) } : null;
     panes[id] = {
       loc: t || !p.loc ? null : { profileId: p.loc.profileId, bucket: p.loc.bucket, prefix: p.loc.prefix },
       view: clone(p.view),
-      ...(t ? { term: { profileId: t.profileId, bucket: t.bucket, prefix: t.prefix, ...(t.from ? { from: t.from } : {}), ...(t.follow ? { follow: true } : {}) } } : {}),
+      ...(term ? { term } : {}),
       ...(startup?.length ? { startup: [...startup] } : {}),
       ...(conn ? { conn } : {}),
     };
