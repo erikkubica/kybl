@@ -182,9 +182,10 @@ fn own_drives(app: &AppHandle) -> bool {
             let ids: Vec<String> = list.iter().map(|c| c.id.clone()).collect();
             *mgr.configs.lock().unwrap() = list;
             if was_other {
-                for id in ids {
-                    emit(app, &id);
+                for id in &ids {
+                    emit(app, id);
                 }
+                take_over(app, ids);
             }
             true
         }
@@ -195,6 +196,23 @@ fn own_drives(app: &AppHandle) -> bool {
         // a file system without locks: no other copy can be told apart, go on as before
         Owner::Unknown => true,
     }
+}
+
+/// The copy that looked after the drives quit: every drive is mounted here now, as a start does,
+/// so their waiting saves upload too (not only the drive whose Retry noticed). Drives a mount was
+/// already tried for in this run (the one being retried) are left to that.
+fn take_over(app: &AppHandle, ids: Vec<String>) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        for id in ids {
+            // after the mount under way (the Retry that took the drives over) is done
+            drop(app.state::<MountManager>().busy.lock().await);
+            let tried = app.state::<MountManager>().live.lock().unwrap().contains_key(&id);
+            if !tried {
+                mount_one(&app, &id).await;
+            }
+        }
+    });
 }
 
 enum Owner {
@@ -483,8 +501,14 @@ pub fn setup(app: &AppHandle) {
             mount_one(&app, &c.id).await;
         }
         // upload progress, once a second while something uploads
+        let mut tick = 0u64;
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
+            tick += 1;
+            // another copy looks after the drives: take them over as soon as it quits
+            if tick % 5 == 0 && !crate::quit::quitting() && app.state::<MountManager>().elsewhere.load(Ordering::SeqCst) {
+                own_drives(&app);
+            }
             let busy: Vec<String> = {
                 let mgr = app.state::<MountManager>();
                 let live = mgr.live.lock().unwrap();

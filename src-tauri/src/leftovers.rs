@@ -24,6 +24,7 @@ use crate::{dest, state::AppState};
 
 /// Each run keeps its ledger in a folder of its own below the data folder (`<RUNS>/<run>/FILE`,
 /// see `instance_dir`), so a second Kybl starting never cleans up what the first is still using.
+/// The same folder holds the run's kept transfers (`resume`), see [`run_dir`].
 /// `FILE` directly in the data folder is the one shared ledger older versions kept.
 const RUNS: &str = "leftovers";
 const FILE: &str = "leftovers.json";
@@ -57,6 +58,9 @@ static LEDGER: Mutex<Ledger> = Mutex::new(Ledger { uploads: Vec::new(), partials
 static WRITING: Mutex<()> = Mutex::new(());
 /// A save is already on its way.
 static SAVING: AtomicBool = AtomicBool::new(false);
+/// This run's folder, and the ledger file in it with what was taken over (until `start` has it).
+static RUN: OnceLock<Option<PathBuf>> = OnceLock::new();
+static TAKEN: Mutex<Option<(PathBuf, Ledger)>> = Mutex::new(None);
 
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -120,6 +124,10 @@ fn merge(into: &mut Ledger, from: Ledger) {
 fn take_over(base: &Path, legacy: Option<&Path>) -> std::io::Result<(PathBuf, Ledger)> {
     let mut found = Ledger::default();
     let dir = crate::instance_dir::claim_adopting(base, |own, gone| {
+        // its kept transfers come along: whoever takes over a run's ledger takes those too
+        if crate::resume::adopt(own, gone).is_err() {
+            return false;
+        }
         let Some(l) = read_ledger(&gone.join(FILE)) else { return true };
         merge(&mut found, l);
         write_ledger(&own.join(FILE), &found).is_ok()
@@ -161,16 +169,31 @@ pub fn partial_ended(part: &Path) {
     change(|l| l.partials.retain(|p| p != part));
 }
 
-/// At start-up: takes over what ended runs left and cleans it up in the background. Also removes
-/// the copies of picked files that ended runs made for uploads (`uploads/`, one folder per run:
-/// another Kybl still running keeps its own).
+/// This run's own folder below the data folder (`<RUNS>/<run>/`), claimed on the first call
+/// (`resume::start`, then [`start`]). It holds this run's ledger and its kept transfers; the
+/// claim takes over both from the runs that ended in one go, so a run's kept transfers and its
+/// ledger always go to the same start, and never to two.
+pub fn run_dir(app: &AppHandle) -> Option<PathBuf> {
+    RUN.get_or_init(|| {
+        let dir = app.path().app_data_dir().ok()?;
+        let (file, found) = take_over(&dir.join(RUNS), Some(&dir.join(FILE))).ok()?;
+        let run = file.parent().map(Path::to_path_buf);
+        *TAKEN.lock().unwrap() = Some((file, found));
+        run
+    })
+    .clone()
+}
+
+/// At start-up, after `resume::start`: takes over what ended runs left and cleans it up in the
+/// background. Also removes the copies of picked files that ended runs made for uploads
+/// (`uploads/`, one folder per run: another Kybl still running keeps its own).
 pub fn start(app: &AppHandle) {
     // before any upload of this run can copy a file there
     if let Ok(cache) = app.path().app_cache_dir() {
         let _ = crate::instance_dir::claim(&cache.join("uploads"));
     }
-    let Ok(dir) = app.path().app_data_dir() else { return };
-    let Ok((path, mut earlier)) = take_over(&dir.join(RUNS), Some(&dir.join(FILE))) else { return };
+    let _ = run_dir(app);
+    let Some((path, mut earlier)) = TAKEN.lock().unwrap().take() else { return };
     // what a paused or interrupted transfer kept to carry on from is the resume store's (`resume`)
     earlier.uploads.retain(|u| !crate::resume::keeps_upload(&u.upload_id));
     earlier.partials.retain(|p| !crate::resume::keeps_partial(p));
@@ -295,6 +318,10 @@ mod tests {
         let dead = std::fs::File::create(base.join("dead.lock")).unwrap();
         dead.set_modified(SystemTime::now() - Duration::from_secs(3600)).unwrap();
         drop(dead);
+        // kept transfers of both: the running one's stay where they are, the ended one's come along
+        let kept = |id: &str| serde_json::to_vec(&serde_json::json!([{ "id": id, "kind": "download", "state": "paused" }])).unwrap();
+        std::fs::write(base.join("live").join("transfers.json"), kept("live")).unwrap();
+        std::fs::write(base.join("dead").join("transfers.json"), kept("dead")).unwrap();
         // the shared file of an older version
         let legacy = data.join(FILE);
         write_ledger(&legacy, &ledger_of("old")).unwrap();
@@ -306,6 +333,12 @@ mod tests {
         assert_eq!(read_ledger(&base.join("live").join(FILE)), Some(ledger_of("live")), "a running instance's ledger is left alone");
         assert!(!base.join("dead").exists() && !legacy.exists(), "taken over, then removed");
         assert_eq!(read_ledger(&own), Some(found), "what was taken over is in this run's own ledger first");
+        let ids = |p: &Path| -> Vec<String> {
+            let v: serde_json::Value = serde_json::from_slice(&std::fs::read(p).unwrap()).unwrap();
+            v.as_array().unwrap().iter().map(|s| s["id"].as_str().unwrap().to_string()).collect()
+        };
+        assert_eq!(ids(&own.with_file_name("transfers.json")), ["dead"], "an ended run's kept transfers move with its ledger");
+        assert_eq!(ids(&base.join("live").join("transfers.json")), ["live"], "a running instance's kept transfers are left alone");
         drop(live);
         let _ = std::fs::remove_dir_all(data);
     }

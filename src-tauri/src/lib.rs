@@ -34,6 +34,7 @@ mod mobile;
 mod multipart;
 // name checks, object headers and tags
 mod objects;
+mod open_copies;
 // open / share / save to Photos / haptics / shared-in files / app lock (phones and desktop)
 mod platform;
 mod prefs;
@@ -78,25 +79,11 @@ use std::sync::atomic::Ordering;
 use tauri::Manager;
 use tauri::RunEvent;
 #[cfg(desktop)]
-use tauri::{Emitter, WindowEvent};
+use tauri::WindowEvent;
 
 /// Passed by the login item: start in the menu bar without opening the window.
 #[cfg(desktop)]
 const HIDDEN_ARG: &str = "--hidden";
-
-/// Tracks the main window's focus. True when it comes back after at least 30 s away, the time
-/// after which what the page shows may be out of date.
-#[cfg(desktop)]
-fn focus_back_after_a_while(focused: bool) -> bool {
-    use std::{sync::Mutex, time::{Duration, Instant}};
-    static LEFT: Mutex<Option<Instant>> = Mutex::new(None);
-    let mut left = LEFT.lock().unwrap();
-    if !focused {
-        left.get_or_insert_with(Instant::now);
-        return false;
-    }
-    left.take().is_some_and(|t| t.elapsed() >= Duration::from_secs(30))
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -134,12 +121,7 @@ pub fn run() {
             // its terminals' shells end with it
             WindowEvent::Destroyed => terminal::close_for(window.label()),
             // the page refreshes what it shows when the window comes back to the front after a
-            // while away (not on every click between windows)
-            WindowEvent::Focused(focused) if window.label() == "main" => {
-                if focus_back_after_a_while(*focused) {
-                    let _ = window.emit("app-resumed", ());
-                }
-            }
+            // while away: `platform::on_event` tells it ("app-resumed"), once
             _ => {}
         })
         // a page loading anew (a reload) has no terminals yet: the old page's shells end

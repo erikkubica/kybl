@@ -1295,9 +1295,15 @@ pub struct LocalFile {
     size: u64,
 }
 
-/// Expands dropped/picked paths: files stay as they are, folders are walked recursively.
+/// Expands dropped/picked paths: files stay as they are, folders are walked recursively. Off the
+/// thread the command arrives on (the window's, for a command that isn't async): a big folder
+/// or a slow volume takes long to walk.
 #[tauri::command]
-pub fn expand_paths(paths: Vec<String>) -> Result<Vec<LocalFile>, String> {
+pub async fn expand_paths(paths: Vec<String>) -> Result<Vec<LocalFile>, String> {
+    tokio::task::spawn_blocking(move || expand(paths)).await.map_err(err)?
+}
+
+fn expand(paths: Vec<String>) -> Result<Vec<LocalFile>, String> {
     let mut out = Vec::new();
     for p in paths {
         let path = std::path::PathBuf::from(&p);

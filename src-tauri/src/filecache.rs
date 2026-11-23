@@ -114,8 +114,15 @@ pub(crate) fn private_dir(p: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(p)
 }
 
+/// Writes `bytes` to the new file `p` (never an existing one, never through a link) only its
+/// owner can read.
+pub(crate) fn write_private(p: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    private_file(p)?.write_all(bytes)
+}
+
 /// A new file only its owner can read.
-fn private_file(p: &Path) -> std::io::Result<std::fs::File> {
+pub(crate) fn private_file(p: &Path) -> std::io::Result<std::fs::File> {
     let mut o = std::fs::OpenOptions::new();
     o.write(true).create_new(true);
     #[cfg(unix)]
@@ -570,10 +577,13 @@ pub async fn cache_usage(app: AppHandle) -> Result<CacheUsage, String> {
         Some(c) => tokio::task::spawn_blocking(|| c.usage()).await.unwrap_or(0),
         None => 0,
     };
+    // copies made for "Open", drag-out and custom actions count with the cached files
+    let files = files + crate::open_copies::usage(&app).await;
     Ok(CacheUsage { thumbnails, files })
 }
 
-/// Clears the thumbnail cache (with the photo placeholders) and the file cache; answers the bytes freed.
+/// Clears the thumbnail cache (with the photo placeholders), the file cache and this run's
+/// copies made for other apps; answers the bytes freed.
 #[tauri::command]
 pub async fn clear_caches(app: AppHandle) -> Result<u64, String> {
     let thumbs = crate::thumbs::clear(&app).await? + crate::placeholders::clear().await;
@@ -581,7 +591,9 @@ pub async fn clear_caches(app: AppHandle) -> Result<u64, String> {
         Some(c) => tokio::task::spawn_blocking(|| c.clear()).await.unwrap_or(0),
         None => 0,
     };
-    Ok(thumbs + files)
+    // copies for other apps, except ones touched in the last hour (still open there, or arriving)
+    let open = crate::open_copies::clear(&app).await;
+    Ok(thumbs + files + open)
 }
 
 /// Drops a connection's cached files (it was deleted, or its settings changed).

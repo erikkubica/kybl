@@ -87,7 +87,8 @@ pub struct BlockCache {
 impl BlockCache {
     /// Opens (and indexes) the cache in `dir`, oldest files first in line to go.
     pub fn open(dir: PathBuf, limit: u64) -> Self {
-        let _ = std::fs::create_dir_all(&dir);
+        // blocks of remote files: this account only
+        let _ = crate::filecache::private_dir(&dir);
         let mut found: Vec<(String, u64, std::time::SystemTime)> = std::fs::read_dir(&dir)
             .into_iter()
             .flatten()
@@ -199,10 +200,11 @@ impl BlockCache {
     /// Writes a block aside and swaps it in (off the async threads), then makes room.
     async fn store(&self, name: &str, bytes: Bytes) {
         let path = self.dir.join(name);
-        let tmp = self.dir.join(format!("{name}.tmp"));
+        // a temporary name of its own (private to this account), renamed into place
+        let tmp = self.dir.join(format!("{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
         let len = bytes.len() as u64;
         let wrote = tokio::task::spawn_blocking(move || {
-            if std::fs::write(&tmp, &bytes).is_err() || std::fs::rename(&tmp, &path).is_err() {
+            if crate::filecache::write_private(&tmp, &bytes).is_err() || std::fs::rename(&tmp, &path).is_err() {
                 let _ = std::fs::remove_file(&tmp);
                 return false;
             }

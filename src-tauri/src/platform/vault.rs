@@ -114,12 +114,10 @@ fn write_plain(dir: &Path, json: &[u8]) -> Result<(), String> {
     }
 }
 
-/// Writes next to the file and renames over it, so a crash never leaves half a file.
+/// Writes next to the file (a temporary name of its own, so two copies of the app saving at once
+/// never mix their bytes) and renames over it, so a crash never leaves half a file.
 fn replace(path: &PathBuf, bytes: &[u8]) -> Result<(), String> {
-    let mut tmp = path.clone().into_os_string();
-    tmp.push(".tmp");
-    std::fs::write(&tmp, bytes).map_err(|e| format!("Could not save the secret key: {e}"))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("Could not save the secret key: {e}"))
+    crate::state::write_atomic(path, bytes).map_err(|e| format!("Could not save the secret key: {e}"))
 }
 
 #[cfg(test)]
