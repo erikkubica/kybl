@@ -14,8 +14,12 @@
 
 /** A file in a listing; `rel` paths are relative to the mirrored folder. */
 export type MFile = { size: number; mtime: number | null; md5?: string | null; key?: string };
-/** One side, listed: files by relative path, folders as relative paths ending with "/". */
-export type Listing = { files: Map<string, MFile>; dirs: Set<string>; excluded: number };
+/**
+ * One side, listed: files by relative path, folders as relative paths ending with "/". `links`:
+ * links met (folders end with "/"), never gone into; neither side's link, nor anything at or
+ * below its name on the other side, is copied or deleted.
+ */
+export type Listing = { files: Map<string, MFile>; dirs: Set<string>; excluded: number; links?: Set<string> };
 
 export type CompareMode = "time" | "size" | "checksum";
 export type PlanOptions = {
@@ -50,6 +54,8 @@ export type MirrorPlan = {
   blocked: Change[];
   /** the same on both sides, skipped */
   unchanged: Change[];
+  /** links on either side, and what the other side has at or below their names: left alone */
+  links: Change[];
   same: number;
   sameBytes: number;
   uploadBytes: number;
@@ -136,10 +142,31 @@ const parentOf = (rel: string) => rel.replace(/\/$/, "").replace(/[^/]*$/, "");
 const depth = (rel: string) => rel.replace(/\/$/, "").split("/").length;
 
 export function planMirror(src: Listing, dst: Listing, o: PlanOptions): MirrorPlan {
-  const out: MirrorPlan = { upload: [], mkdirs: [], remove: [], removeDirs: [], kept: [], blocked: [], unchanged: [], same: 0, sameBytes: 0, uploadBytes: 0, removeBytes: 0, excluded: src.excluded + dst.excluded, offsetMs: 0, checksummed: 0 };
+  const out: MirrorPlan = { upload: [], mkdirs: [], remove: [], removeDirs: [], kept: [], blocked: [], unchanged: [], links: [], same: 0, sameBytes: 0, uploadBytes: 0, removeBytes: 0, excluded: src.excluded + dst.excluded, offsetMs: 0, checksummed: 0 };
 
   const ci = !!o.caseInsensitive;
   const fold = (rel: string) => (ci ? rel.toLowerCase() : rel);
+
+  // links: never followed, so nothing at or below a link's name is copied or deleted on either
+  // side (SFTP resolves a path through a link on the server: deleting "uploads/a.jpg" under a
+  // linked "uploads" would delete the real file wherever the link points)
+  const linkNames = new Map<string, "source" | "destination">();
+  for (const [side, l] of [["source", src.links], ["destination", dst.links]] as const) for (const rel of l ?? []) linkNames.set(fold(rel.replace(/\/$/, "")), side);
+  for (const [name, side] of linkNames) out.links.push({ rel: name, size: 0, why: "kept", note: `a link at the ${side}: left alone` });
+  const linkOf = (rel: string): "source" | "destination" | undefined => {
+    if (!linkNames.size) return undefined;
+    const parts = fold(rel.replace(/\/$/, "")).split("/");
+    for (let i = 1; i <= parts.length; i++) {
+      const side = linkNames.get(parts.slice(0, i).join("/"));
+      if (side) return side;
+    }
+    return undefined;
+  };
+  const underLink = (rel: string, sideOf: MFile | null) => {
+    const side = linkOf(rel);
+    if (side && sideOf) out.links.push({ rel, size: sideOf.size, why: "kept", note: `behind a link at the ${side}: left alone` });
+    return !!side;
+  };
   // the destination's names as it tells them apart
   const dstFiles = new Map<string, MFile>();
   for (const [rel, d] of dst.files) if (!dstFiles.has(fold(rel))) dstFiles.set(fold(rel), d);
@@ -176,7 +203,7 @@ export function planMirror(src: Listing, dst: Listing, o: PlanOptions): MirrorPl
   out.offsetMs = o.compare === "time" && o.toleranceMs < HOUR ? detectOffset(pairs, o.toleranceMs) : 0;
 
   for (const [rel, s] of src.files) {
-    if (isBlocked(rel)) continue;
+    if (isBlocked(rel) || underLink(rel, s)) continue;
     const d = dstFile(rel);
     if (!d) {
       out.upload.push({ rel, size: s.size, why: "new", file: s });
@@ -194,13 +221,14 @@ export function planMirror(src: Listing, dst: Listing, o: PlanOptions): MirrorPl
       out.sameBytes += s.size;
     }
   }
-  for (const dir of src.dirs) if (!dstDirs.has(fold(dir)) && !isBlocked(dir)) out.mkdirs.push(dir);
+  for (const dir of src.dirs) if (!dstDirs.has(fold(dir)) && !isBlocked(dir) && !linkOf(dir)) out.mkdirs.push(dir);
 
   // at the destination only. A name that differs from a source file's only in letter case is
   // kept: where case doesn't count it is the file just copied, and deleting it would lose that
   const folded = new Set([...src.files.keys(), ...src.dirs].map((r) => r.toLowerCase()));
   for (const [rel, d] of dst.files) {
     if (src.files.has(rel) || src.dirs.has(`${rel}/`)) continue;
+    if (underLink(rel, d)) continue;
     if (folded.has(rel.toLowerCase())) {
       out.kept.push({ rel, size: d.size, why: "kept", note: "differs from a source file only in letter case" });
     } else if (o.deleteExtra) {
@@ -208,12 +236,13 @@ export function planMirror(src: Listing, dst: Listing, o: PlanOptions): MirrorPl
       out.removeBytes += d.size;
     } else out.kept.push({ rel, size: d.size, why: "kept" });
   }
-  if (o.deleteExtra) for (const dir of dst.dirs) if (!src.dirs.has(dir) && !src.files.has(dir.slice(0, -1)) && !folded.has(dir.toLowerCase())) out.removeDirs.push(dir);
+  if (o.deleteExtra) for (const dir of dst.dirs) if (!src.dirs.has(dir) && !src.files.has(dir.slice(0, -1)) && !folded.has(dir.toLowerCase()) && !linkOf(dir)) out.removeDirs.push(dir);
 
   out.upload.sort((a, b) => byPath(a.rel, b.rel));
   out.remove.sort((a, b) => byPath(a.rel, b.rel));
   out.kept.sort((a, b) => byPath(a.rel, b.rel));
   out.unchanged.sort((a, b) => byPath(a.rel, b.rel));
+  out.links.sort((a, b) => byPath(a.rel, b.rel));
   out.mkdirs.sort((a, b) => depth(a) - depth(b) || byPath(a, b));
   out.removeDirs.sort((a, b) => depth(b) - depth(a) || byPath(a, b));
   return out;

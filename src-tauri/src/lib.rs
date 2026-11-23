@@ -11,6 +11,8 @@ mod db;
 mod jobs;
 // where downloads land: safe paths and free names
 mod dest;
+// links on this computer met inside a folder: never followed out, never written through
+mod local_links;
 // recently fetched file bytes, shared by the viewers, downloads and "Open"
 mod filecache;
 // WP-D: open and save documents for the in-app viewers and editor

@@ -242,6 +242,14 @@ impl Dropbox {
                 r => r?,
             };
             let end = offset + chunk.len() as u64;
+            // a source that ends before its length (a file truncated while it uploads) would
+            // otherwise send the same empty piece at the same offset forever (B3-2)
+            if let Some(t) = total
+                && chunk.len() as u64 != piece
+                && end < t
+            {
+                return Err(StorageError::other("The file got shorter while it was uploading. Try again."));
+            }
             let last = match total {
                 Some(t) => end >= t,
                 None => (chunk.len() as u64) < piece,
@@ -817,6 +825,32 @@ mod tests {
         let opts = WriteOpts { part_size: Some(1024), precondition: Precondition::IfMatch("old".into()), ..Default::default() };
         let out = d.write("", "big.bin", WriteSource::Bytes(data.clone().into()), opts, &|_, _| {}, &cancel).await.unwrap();
         assert!(matches!(out, WriteOutcome::Conflict(Some(ref e)) if e.etag.as_deref() == Some("cur")));
+    }
+
+    /// B3-2 (round 3): a source that ends before its length fails, instead of sending an empty
+    /// piece at the same offset forever.
+    #[tokio::test]
+    async fn a_source_that_ends_early_fails_instead_of_looping() {
+        let appends = Arc::new(AtomicU64::new(0));
+        let a2 = appends.clone();
+        let mock = Mock::start(move |req| match req.path.as_str() {
+            "/content/files/upload_session/start" => Resp::json(200, &json!({ "session_id": "S" })),
+            "/content/files/upload_session/append_v2" => {
+                a2.fetch_add(1, Ordering::SeqCst);
+                Resp::json(200, &Value::Null)
+            }
+            _ => Resp::status(404),
+        })
+        .await;
+        let d = Dropbox::with_base(api(), format!("{}/rpc", mock.base), format!("{}/content", mock.base));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let body: ByteStream = Box::pin(futures_util::stream::iter([Ok::<Bytes, std::io::Error>(Bytes::from(vec![1u8; 1500]))]));
+        let opts = WriteOpts { part_size: Some(1024), ..Default::default() };
+        let src = WriteSource::Stream { len: Some(5000), body, reopen: None };
+        let out = tokio::time::timeout(std::time::Duration::from_secs(20), d.write("", "short.bin", src, opts, &|_, _| {}, &cancel)).await.expect("it ends");
+        let e = out.err().expect("a short source fails");
+        assert!(e.message.contains("shorter"), "{}", e.message);
+        assert!(appends.load(Ordering::SeqCst) <= 2);
     }
 
     /// B3-5: the finish committed but its answer was lost (a 503 the HTTP layer sends again):

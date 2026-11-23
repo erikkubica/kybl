@@ -145,7 +145,9 @@ export const api = {
     destPath: string,
     overwrite = false,
     listed?: { etag: string; size: number },
-  ) => invoke<string>("start_download", { id, profileId, bucket, key, destPath, overwrite, etag: listed?.etag ?? null, size: listed?.size ?? null }),
+    /** a folder download: the folder picked; nothing below it is written through a link */
+    base?: string,
+  ) => invoke<string>("start_download", { id, profileId, bucket, key, destPath, overwrite, etag: listed?.etag ?? null, size: listed?.size ?? null, base: base ?? null }),
   cancelTransfer: (id: string) => invoke<void>("cancel_transfer", { id }),
   /** Transfers still queued or running, including ones started before this page loaded. */
   activeTransfers: () => invoke<Omit<Transfer, "speed" | "error">[]>("active_transfers"),

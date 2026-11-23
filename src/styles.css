@@ -1838,6 +1838,12 @@ body.resizing-col * {
   font-size: 11px;
   white-space: normal;
 }
+/* a finished transfer's word about what it left out */
+.tp-note {
+  color: var(--dim);
+  font-size: 11px;
+  white-space: normal;
+}
 .tp-meta {
   color: var(--dim);
   font-variant-numeric: tabular-nums;

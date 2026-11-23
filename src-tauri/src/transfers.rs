@@ -1094,7 +1094,9 @@ pub async fn start_upload(
 /// the same id again after it failed or was paused continues its partial file under the same
 /// name (also after a restart). `etag` and `size` are the version the listing showed, if the
 /// page knows it: when the file cache holds that version it is copied without asking the server
-/// (see `filecache::serve_download`).
+/// (see `filecache::serve_download`). `base` is the folder the user picked when the rest of
+/// `dest_path` comes from remote names (a folder download): no part below it may be a link
+/// (`local_links`), so a remote `Documents/x` never lands in a linked `~/Documents`.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn start_download(
@@ -1108,8 +1110,12 @@ pub async fn start_download(
     overwrite: Option<bool>,
     etag: Option<String>,
     size: Option<u64>,
+    base: Option<String>,
 ) -> Result<String, String> {
     let wanted = dest::validate(&dest_path)?;
+    if let Some(base) = base.as_deref().filter(|b| !b.is_empty()) {
+        crate::local_links::safe_write_target(Path::new(base), &wanted)?;
+    }
     let listed = match (etag, size) {
         (Some(e), Some(n)) => Some(crate::filecache::Ident::new(Some(&e), n, None)).filter(|l| l.etag.is_some()),
         _ => None,

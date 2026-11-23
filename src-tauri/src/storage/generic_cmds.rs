@@ -474,7 +474,8 @@ pub async fn list_all_under(s: &dyn Storage, bucket: &str, prefix: &str) -> Resu
     let mut out = Vec::new();
     let mut walk = s.walk(bucket, prefix);
     while let Some(batch) = walk.next().await {
-        out.extend(batch?.into_iter().filter(|e| !e.is_dir()).map(|e| RemoteFile { key: e.key, size: e.size }));
+        // a link on this computer is never followed out of the folder (`local_links`)
+        out.extend(batch?.into_iter().filter(|e| !e.is_dir() && !crate::local_links::skip_listed_link(s.caps(), e)).map(|e| RemoteFile { key: e.key, size: e.size }));
     }
     Ok(out)
 }

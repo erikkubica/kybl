@@ -118,23 +118,8 @@ fn rel_key(p: &Path) -> String {
 /// through it would act outside the synced folder, so sync refuses. A path outside the root
 /// counts as one. Folders that aren't there yet are fine (they are made as plain folders).
 pub fn link_on_the_way(root: &Path, path: &Path) -> Option<PathBuf> {
-    let Ok(rel) = path.strip_prefix(root) else { return Some(path.to_path_buf()) };
-    let mut at = root.to_path_buf();
-    let mut parts = rel.components().peekable();
-    while let Some(part) = parts.next() {
-        if parts.peek().is_none() {
-            break; // the file itself: replaced by a rename, never written through
-        }
-        at.push(part);
-        match std::fs::symlink_metadata(&at) {
-            // on Windows `is_symlink` covers junctions too (name-surrogate reparse points), but
-            // not OneDrive's placeholders, which are ordinary folders here
-            Ok(m) if m.file_type().is_symlink() => return Some(at),
-            Ok(_) => {}
-            Err(_) => break,
-        }
-    }
-    None
+    // the file itself is replaced by a rename, never written through
+    crate::local_links::link_between(root, path, false)
 }
 
 /// [`link_on_the_way`] as an error to show for that file.
@@ -164,6 +149,9 @@ pub struct LocalSnapshot {
     /// paths (NFC, relative; "" for the folder itself) that couldn't be read: whatever is below
     /// them is unknown, not deleted
     pub unreadable: Vec<String>,
+    /// links (and, on Windows, junctions) in the folder (NFC, relative): never followed, and
+    /// left alone, so a synced folder replaced by a link isn't taken for deleted
+    pub links: Vec<String>,
 }
 
 impl LocalSnapshot {
@@ -219,6 +207,12 @@ fn scan_into(root: &Path, start: &Path, gi: &Gitignore, out: &mut LocalSnapshot)
                 continue;
             }
         };
+        if entry.path_is_symlink() && entry.path() != root {
+            if let Ok(rel) = entry.path().strip_prefix(root) {
+                out.links.push(nfc(&rel_key(rel)));
+            }
+            continue;
+        }
         if !entry.file_type().is_file() {
             continue;
         }
@@ -261,6 +255,7 @@ pub fn rescan_dirty(root: &Path, gi: &Gitignore, base: &dyn BaseState, dirty: &H
             continue;
         }
         match std::fs::symlink_metadata(d) {
+            Ok(m) if m.file_type().is_symlink() => out.links.push(rel),
             Ok(m) if m.is_dir() => scan_into(root, d, gi, &mut out),
             Ok(m) if m.is_file() && safe_rel(&rel) => out.insert(rel_key(d.strip_prefix(root).unwrap_or(d)), local_meta(&m)),
             Ok(_) => {}

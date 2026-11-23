@@ -780,8 +780,13 @@ impl Storage for GDrive {
     }
 
     async fn changes(&self, root: &str, cursor: Option<String>) -> SResult<ChangeBatch> {
+        // "Shared with me" has no folder id a changed file's parents could end at: every change
+        // would read as a removal (B3-1). Its syncs list it in full instead, as OneDrive's do.
+        if root == SHARED {
+            return Err(StorageError::unsupported());
+        }
         let drive = match root {
-            MY_DRIVE | SHARED => String::new(),
+            MY_DRIVE => String::new(),
             d => format!("&driveId={}&includeItemsFromAllDrives=true", enc(d)),
         };
         let Some(cursor) = cursor else {

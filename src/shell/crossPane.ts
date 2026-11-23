@@ -143,7 +143,7 @@ async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx
   const out: Parameters<TransferActions["add"]>[0] = [];
   const add = (key: string, size: number, rel: string) => {
     const safe = safeRelPath(rel);
-    if (safe) out.push({ kind: "download", name: safe, profileId, bucket, key, local: joinPath(dir, safe), total: size });
+    if (safe) out.push({ kind: "download", name: safe, profileId, bucket, key, local: joinPath(dir, safe), total: size, base: dir });
   };
   try {
     for (const e of items) {

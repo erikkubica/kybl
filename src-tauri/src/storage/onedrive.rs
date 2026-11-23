@@ -270,10 +270,7 @@ impl OneDrive {
         let total = src.len.unwrap_or(0);
         let piece = opts.part_size.map(|p| (p / QUANTUM).max(1) * QUANTUM).unwrap_or(DEFAULT_PIECE);
         let behavior = if matches!(opts.precondition, Precondition::IfNoneMatch) { "fail" } else { "replace" };
-        let if_match = match &opts.precondition {
-            Precondition::IfMatch(t) => Some(t.clone()),
-            _ => None,
-        };
+        let if_match = if_match_of(&opts.precondition).map(str::to_string);
         let start = || async {
             let url = format!("{item}/createUploadSession");
             let body = json!({ "item": { "@microsoft.graph.conflictBehavior": behavior, "name": name } }).to_string();
@@ -351,7 +348,16 @@ impl OneDrive {
                 Err(e) if e.kind == ErrKind::Network && failures < FAILURES => {
                     failures += 1;
                     tokio::time::sleep(backoff(failures)).await;
-                    offset = status(session.clone()).await?.ok_or_else(|| StorageError::other("OneDrive dropped the upload. Try again."))?;
+                    offset = loop {
+                        // a probe the network drops too counts against the same budget (B3-4)
+                        match status(session.clone()).await {
+                            Err(e) if e.kind == ErrKind::Network && failures < FAILURES => {
+                                failures += 1;
+                                tokio::time::sleep(backoff(failures)).await;
+                            }
+                            r => break r?.ok_or_else(|| StorageError::other("OneDrive dropped the upload. Try again."))?,
+                        }
+                    };
                     continue;
                 }
                 Err(e) => return Err(e),
@@ -390,7 +396,16 @@ impl OneDrive {
                 s if s >= 500 && failures < FAILURES => {
                     failures += 1;
                     tokio::time::sleep(backoff(failures)).await;
-                    offset = status(session.clone()).await?.ok_or_else(|| StorageError::other("OneDrive dropped the upload. Try again."))?;
+                    offset = loop {
+                        // a probe the network drops too counts against the same budget (B3-4)
+                        match status(session.clone()).await {
+                            Err(e) if e.kind == ErrKind::Network && failures < FAILURES => {
+                                failures += 1;
+                                tokio::time::sleep(backoff(failures)).await;
+                            }
+                            r => break r?.ok_or_else(|| StorageError::other("OneDrive dropped the upload. Try again."))?,
+                        }
+                    };
                 }
                 _ => return Err(check(ConnKind::Onedrive, res).await.err().unwrap_or_else(|| unexpected(ConnKind::Onedrive, "upload"))),
             }
@@ -578,9 +593,9 @@ impl Storage for OneDrive {
             let put = || {
                 self.api.send(|c| {
                     let r = c.put(&url).header("content-type", &ctype).body(bytes.clone());
-                    match &opts.precondition {
-                        Precondition::IfMatch(t) => r.header("if-match", t),
-                        _ => r,
+                    match if_match_of(&opts.precondition) {
+                        Some(t) => r.header("if-match", t),
+                        None => r,
                     }
                 })
             };
@@ -797,6 +812,16 @@ impl Storage for OneDrive {
     }
 }
 
+/// The version a write must still find there, sent as `If-Match` so Graph refuses (412) an
+/// edit made between the check and the upload instead of replacing it (B3-5): an explicit
+/// `IfMatch`, or `IfUnchanged` with a known eTag (checked up front too).
+fn if_match_of(pre: &Precondition) -> Option<&str> {
+    match pre {
+        Precondition::IfMatch(t) | Precondition::IfUnchanged { etag: Some(t), .. } => Some(t),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -994,6 +1019,25 @@ mod tests {
         let opts = WriteOpts { precondition: Precondition::IfMatch("\"old\"".into()), ..Default::default() };
         let c = od.write(ME, "a.txt", WriteSource::Bytes("hi".into()), opts, &|_, _| {}, &cancel).await.unwrap();
         assert!(matches!(c, WriteOutcome::Conflict(Some(ref e)) if e.etag.as_deref() == Some("\"cur\"")));
+    }
+
+    /// B3-5: a write checked against a known eTag sends it as If-Match, so an edit made between
+    /// the check and the upload comes back as a conflict instead of being replaced.
+    #[tokio::test]
+    async fn an_unchanged_check_is_sent_along_as_if_match() {
+        let mock = Mock::start(|req| match (req.method.as_str(), req.path.as_str()) {
+            // someone saved a new version after Kybl looked: Graph refuses the stale eTag
+            ("PUT", "/me/drive/root:/a.txt:/content") if req.header("if-match") == Some("\"cur\"") => Resp::json(412, &json!({ "error": { "code": "resourceModified" } })),
+            ("PUT", "/me/drive/root:/a.txt:/content") => Resp::json(200, &json!({ "id": "a", "name": "a.txt", "size": 2, "eTag": "\"v2\"", "file": {} })),
+            ("GET", "/me/drive/root:/a.txt:") => Resp::json(200, &json!({ "id": "a", "name": "a.txt", "size": 9, "eTag": "\"cur\"", "file": {} })),
+            _ => Resp::status(404),
+        })
+        .await;
+        let od = OneDrive::with_base(api(), &mock.base);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let opts = WriteOpts { precondition: Precondition::IfUnchanged { etag: Some("\"cur\"".into()), size: 9, modified: None }, ..Default::default() };
+        let out = od.write(ME, "a.txt", WriteSource::Bytes("hi".into()), opts, &|_, _| {}, &cancel).await.unwrap();
+        assert!(matches!(out, WriteOutcome::Conflict(_)), "a stale eTag is a conflict");
     }
 
     #[tokio::test]

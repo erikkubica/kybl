@@ -17,7 +17,7 @@ use futures_util::{StreamExt, TryStreamExt};
 
 use super::backend::stream_item;
 use super::index::{parent_of, Index, Item};
-use crate::storage::{FolderMode, Precondition, Reopen, SResult, Storage, StorageError, WriteOpts, WriteOutcome, WriteSource};
+use crate::storage::{ErrKind, FolderMode, Precondition, Reopen, SResult, Storage, StorageError, WriteOpts, WriteOutcome, WriteSource};
 
 /// One thing that goes into a zip: `name` is its path inside (folders end with `/`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,12 +29,16 @@ pub struct PackItem {
 }
 
 /// Everything `items` (keys; folders end with `/`) hold, with names relative to the folder the
-/// first one is in. Folders come before what is inside them.
-pub async fn plan_pack(s: &dyn Storage, root: &str, items: &[String]) -> SResult<Vec<PackItem>> {
-    let Some(first) = items.first() else { return Ok(vec![]) };
+/// first one is in. Folders come before what is inside them. Also answers what was left out: links
+/// met inside a folder on this computer (never followed out of it, see `local_links`) and names
+/// no extractor should be handed (`..`, `.`, empty parts, a backslash: a bucket allows the key
+/// `a/../../../.bashrc`, which a careless unzip would write outside its folder).
+pub async fn plan_pack(s: &dyn Storage, root: &str, items: &[String]) -> SResult<(Vec<PackItem>, Vec<String>)> {
+    let Some(first) = items.first() else { return Ok((vec![], vec![])) };
     let base = parent_of(first).to_string();
     let rel = |k: &str| k.strip_prefix(base.as_str()).unwrap_or(k).to_string();
     let mut out = Vec::new();
+    let mut left_out = Vec::new();
     for key in items {
         if key.ends_with('/') {
             out.push(PackItem { name: rel(key), key: key.clone(), size: 0, modified: None });
@@ -42,6 +46,10 @@ pub async fn plan_pack(s: &dyn Storage, root: &str, items: &[String]) -> SResult
             while let Some(batch) = walk.next().await {
                 for e in batch? {
                     if e.key == *key {
+                        continue;
+                    }
+                    if crate::local_links::skip_listed_link(s.caps(), &e) || !zip_name_ok(&rel(&e.key)) {
+                        left_out.push(e.key);
                         continue;
                     }
                     out.push(PackItem { name: rel(&e.key), size: if e.is_dir() { 0 } else { e.size.max(0) as u64 }, modified: e.modified, key: e.key });
@@ -55,7 +63,22 @@ pub async fn plan_pack(s: &dyn Storage, root: &str, items: &[String]) -> SResult
     // a store that lists files of a folder before the folder itself (prefix stores): folders first
     let mut seen = BTreeSet::new();
     out.retain(|i| seen.insert(i.name.clone()));
-    Ok(out)
+    Ok((out, left_out))
+}
+
+/// A name that is safe inside a zip: relative, every part a plain name.
+pub fn zip_name_ok(name: &str) -> bool {
+    let body = name.strip_suffix('/').unwrap_or(name);
+    !body.is_empty() && !name.starts_with('/') && !name.contains(['\\', '\0']) && body.split('/').all(|p| !p.is_empty() && p != "." && p != "..")
+}
+
+/// What a finished compress says about the entries it left out.
+pub fn left_out_note(keys: &[String]) -> String {
+    let n = keys.len();
+    let what = if n == 1 { "1 item was".to_string() } else { format!("{n} items were") };
+    let first: Vec<&str> = keys.iter().take(3).map(String::as_str).collect();
+    let more = if n > 3 { ", …" } else { "" };
+    format!("{what} left out of the zip (links, or names that aren't safe in a zip): {}{more}", first.join(", "))
 }
 
 /// Kinds of files that are compressed already: stored as they are (deflating them only costs time).
@@ -177,6 +200,8 @@ pub async fn pack_to_file(
 #[derive(Debug, Default)]
 pub struct ExtractPlan {
     pub files: Vec<(Item, String)>,
+    /// the destination folder everything lands under ("" or ending with `/`)
+    pub dest_dir: String,
     /// destination folder keys (ending with `/`), parents first
     pub dirs: Vec<String>,
     /// folders with nothing inside (prefix stores need a marker for these only)
@@ -205,7 +230,7 @@ pub fn plan_extract(index: &Index, paths: &[String], base: &str, dest_dir: &str,
         None => dest_dir.to_string(),
     };
     let picked: Vec<String> = if paths.is_empty() { vec![base.clone()] } else { paths.to_vec() };
-    let mut plan = ExtractPlan::default();
+    let mut plan = ExtractPlan { dest_dir: dest_dir.to_string(), ..Default::default() };
     let mut dirs = BTreeSet::new();
     if folder.is_some() {
         dirs.insert(target.clone());
@@ -268,6 +293,7 @@ pub async fn extract(
     progress: &(dyn Fn(u64) + Send + Sync),
     cancel: &Arc<AtomicBool>,
 ) -> SResult<(u64, u64)> {
+    links_on_the_way(&*dst, root, plan)?;
     let real = dst.caps().folders == FolderMode::Real;
     for d in &plan.dirs {
         if real || plan.empty_dirs.contains(d) {
@@ -322,6 +348,20 @@ pub async fn extract(
         .await?;
     let skipped = skipped.load(Ordering::Relaxed);
     Ok((plan.files.len() as u64 - skipped, skipped))
+}
+
+/// On this computer: no folder or file the archive names may be (or be reached through) a link in
+/// the destination folder, which would put the archive's files somewhere else (`Documents ->
+/// ~/Documents`) or write over what a link points at (`local_links`). Checked for all of them
+/// before anything is written.
+fn links_on_the_way(dst: &dyn Storage, root: &str, plan: &ExtractPlan) -> SResult<()> {
+    let Some(base) = dst.local_path(root, plan.dest_dir.trim_end_matches('/')) else { return Ok(()) };
+    for key in plan.dirs.iter().chain(plan.files.iter().map(|(_, k)| k)) {
+        if let Some(p) = dst.local_path(root, key.trim_end_matches('/')) {
+            crate::local_links::safe_write_target(&base, &p).map_err(|why| StorageError::new(ErrKind::PermissionDenied, format!("Nothing was unpacked. {why}")))?;
+        }
+    }
+    Ok(())
 }
 
 /// Copies a file of `s` to `to` on this computer (a remote archive, before it is read).

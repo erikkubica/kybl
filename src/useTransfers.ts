@@ -16,6 +16,11 @@ type NewTransfer = Pick<Transfer, "kind" | "name" | "profileId" | "bucket" | "ke
    */
   etag?: string | null;
   /**
+   * downloads of a folder: the local folder the user picked. The rest of `local` comes from
+   * remote names, and the backend refuses to write it through a link below this folder.
+   */
+  base?: string;
+  /**
    * Work of another kind (compress, extract) shown as one row: started (and retried) by calling
    * this with the row's id; the backend reports on it with the same `transfer` events.
    */
@@ -46,6 +51,8 @@ const overwriteIds = new Set<string>();
 const requested = new Map<string, string>();
 /** The listed version of each download, by id (see `NewTransfer.etag`). */
 const listed = new Map<string, { etag: string; size: number }>();
+/** The picked folder of each folder download, by id (see `NewTransfer.base`). */
+const bases = new Map<string, string>();
 /**
  * Transfers the backend runs on its own, shown here with `track` (uploads of files edited in
  * another app, src/edit): never started, cancelled or retried through the queue. Retry runs
@@ -161,6 +168,7 @@ function forget(id: string) {
   overwriteIds.delete(id);
   requested.delete(id);
   listed.delete(id);
+  bases.delete(id);
   external.delete(id);
   runners.delete(id);
   sent.delete(id);
@@ -272,7 +280,7 @@ async function start(t: Transfer) {
     } else {
       // the backend picks a free name ("photo (1).jpg") unless told to overwrite; keep the path it
       // really writes, so Open and Show in Finder point at the right file
-      const local = await api.startDownload(t.id, t.profileId, t.bucket, t.key, requested.get(t.id) ?? t.local, overwriteIds.has(t.id), listed.get(t.id));
+      const local = await api.startDownload(t.id, t.profileId, t.bucket, t.key, requested.get(t.id) ?? t.local, overwriteIds.has(t.id), listed.get(t.id), bases.get(t.id));
       const cur = byId.get(t.id);
       if (cur && typeof local === "string" && local && local !== cur.local) {
         byId.set(t.id, { ...cur, local });
@@ -386,11 +394,12 @@ function stopOne(id: string, what: "cancel" | "pause", backendDone = false): boo
 const actions = {
   add(items: (NewTransfer & { total?: number })[]): Transfer[] {
     listenOnce();
-    const created: Transfer[] = items.map(({ overwrite, etag, run, ...it }) => {
+    const created: Transfer[] = items.map(({ overwrite, etag, run, base, ...it }) => {
       const id = crypto.randomUUID();
       if (run) runners.set(id, run);
       if (overwrite) overwriteIds.add(id);
       if (it.kind === "download") requested.set(id, it.local);
+      if (it.kind === "download" && base) bases.set(id, base);
       if (it.kind === "download" && etag && it.total != null) listed.set(id, { etag, size: it.total });
       return { ...it, id, state: "queued" as const, bytes: 0, total: it.total ?? 0, speed: 0 };
     });

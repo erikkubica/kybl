@@ -1075,3 +1075,6 @@ mod s3 {
 }
 
 mod safety;
+
+#[cfg(unix)]
+mod links;

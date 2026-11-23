@@ -555,8 +555,12 @@ mod vault {
         pub fn get(&self) -> Option<String> {
             self.0.get_password().ok()
         }
-        pub fn delete(&self) {
-            let _ = self.0.delete_credential();
+        /// Removes the item; "there is none" counts as done.
+        pub fn delete(&self) -> Result<(), String> {
+            match self.0.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                Err(e) => Err(e.to_string()),
+            }
         }
     }
 
@@ -608,7 +612,9 @@ mod vault {
         pub fn get(&self) -> Option<String> {
             None
         }
-        pub fn delete(&self) {}
+        pub fn delete(&self) -> Result<(), String> {
+            Ok(())
+        }
     }
 
     pub fn legacy(_profile_id: &str) -> Option<Legacy> {
@@ -649,7 +655,7 @@ pub async fn get_secret(state: &AppState, profile_id: &str) -> Result<Option<Str
             map.insert(profile_id.to_string(), secret.clone());
             // only drop the old item once the vault really holds the secret
             if vault::write(dir, map).is_ok() {
-                legacy.delete();
+                let _ = legacy.delete();
             }
             Ok(Some(secret))
         }
@@ -666,12 +672,24 @@ pub async fn set_secret(state: &AppState, profile_id: &str, secret: &str) -> Res
     let map = guard.as_mut().expect("vault loaded above");
     map.insert(profile_id.to_string(), secret.to_string());
     vault::write(dir, map)?;
+    // the vault now holds this key, and the vault is read first: a stale old item is harmless
     if !profile_id.contains('#')
         && let Some(legacy) = vault::legacy(profile_id)
     {
-        legacy.delete();
+        let _ = legacy.delete();
     }
     Ok(())
+}
+
+/// Removes the oldest kind of item (one per connection) for a secret removed on purpose. One that
+/// is there and can't be removed (a refused keychain prompt) is an error: `get_secret` would
+/// take it back into the vault on the next read, and send the removed password again (S3-3).
+fn drop_legacy(profile_id: &str) -> Result<(), String> {
+    let Some(legacy) = vault::legacy(profile_id) else { return Ok(()) };
+    if legacy.get().is_none() {
+        return Ok(());
+    }
+    legacy.delete().map_err(|e| format!("Couldn't remove the saved password from the keychain, so it would still be used. Allow Kybl to change it in the keychain, then try again. ({e})"))
 }
 
 /// Forgets only a connection's main secret (a password the server no longer wants); its
@@ -686,10 +704,7 @@ pub async fn remove_main_secret(state: &AppState, profile_id: &str) -> Result<()
     if map.remove(profile_id).is_some() {
         vault::write(dir, map)?;
     }
-    if let Some(legacy) = vault::legacy(profile_id) {
-        legacy.delete();
-    }
-    Ok(())
+    drop_legacy(profile_id)
 }
 
 /// Forgets a connection's secrets: the main one and every `{id}#…` one (sign-in tokens, SSH key).
@@ -706,10 +721,7 @@ pub async fn delete_secret(state: &AppState, profile_id: &str) -> Result<(), Str
     if map.len() != before {
         vault::write(dir, map)?;
     }
-    if let Some(legacy) = vault::legacy(profile_id) {
-        legacy.delete();
-    }
-    Ok(())
+    drop_legacy(profile_id)
 }
 
 /// One HTTPS client (and so one connection pool and TLS setup) shared by every connection.

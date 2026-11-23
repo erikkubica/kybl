@@ -297,7 +297,8 @@ async fn compresses_folders_and_files_into_a_zip_that_reads_back() {
     std::fs::write(src.join("photo.jpg"), [0xffu8, 0xd8, 0xff]).unwrap();
     let st: Arc<dyn Storage> = Arc::new(LocalBackend::with_roots(vec![("src".into(), RootKind::Folder, src.clone())], false));
     let root = src.to_string_lossy().into_owned();
-    let plan = ops::plan_pack(&*st, &root, &["docs/".into(), "photo.jpg".into()]).await.unwrap();
+    let (plan, left_out) = ops::plan_pack(&*st, &root, &["docs/".into(), "photo.jpg".into()]).await.unwrap();
+    assert!(left_out.is_empty());
     let names: Vec<&str> = plan.iter().map(|i| i.name.as_str()).collect();
     assert!(names.contains(&"docs/") && names.contains(&"docs/sub/b.txt") && names.contains(&"docs/empty/") && names.contains(&"photo.jpg"));
     let out = s.0.join("Archive.zip");
@@ -622,4 +623,52 @@ fn server_scripts_run_under_a_csh_login_shell() {
     }
     // a name with a line break is never sent
     assert!(crate::actions::sh_c(&remote::compress_script("/srv", &["a\nb".into()], "A.zip")).is_none());
+}
+
+/// Links on this computer (`local_links`): unpacking never writes through a link in the
+/// destination folder (S2-2), and a zip made here leaves out links met inside the folder and names
+/// a careless unzip would misuse (S2-3, S2-6).
+#[cfg(unix)]
+#[tokio::test]
+async fn links_are_never_followed_in_or_out() {
+    let s = Scratch::new();
+    let p = s.0.join("site.zip");
+    hostile_zip(&p);
+    let ix = Arc::new(Index::open(&p, Format::Zip, &s.0, &no()).unwrap());
+    let out = s.0.join("out");
+    let home = out.join("home");
+    std::fs::create_dir_all(out.join("dl")).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    std::os::unix::fs::symlink(&home, out.join("dl/site")).unwrap();
+    let dst: Arc<dyn Storage> = Arc::new(LocalBackend::with_roots(vec![("out".into(), RootKind::Folder, out.clone())], false));
+    let root = out.to_string_lossy().into_owned();
+    let plan = ops::plan_extract(&ix, &[], "", "dl/", None, &Default::default());
+    let cancel = Arc::new(AtomicBool::new(false));
+    let err = ops::extract(ix.clone(), dst.clone(), &root, &plan, true, &|_| {}, &cancel).await.unwrap_err();
+    assert!(err.to_string().contains("is a link"), "{err}");
+    assert_eq!(std::fs::read_dir(&home).unwrap().count(), 0, "nothing landed behind the link");
+
+    // compressing a folder here: the link to a secret is left out, and said
+    let src = s.0.join("src");
+    std::fs::create_dir_all(src.join("proj")).unwrap();
+    std::fs::write(src.join("proj/readme.md"), "hi").unwrap();
+    std::fs::write(s.0.join("secret"), "key").unwrap();
+    std::os::unix::fs::symlink(s.0.join("secret"), src.join("proj/config.json")).unwrap();
+    let st: Arc<dyn Storage> = Arc::new(LocalBackend::with_roots(vec![("src".into(), RootKind::Folder, src.clone())], false));
+    let sroot = src.to_string_lossy().into_owned();
+    let (plan, left_out) = ops::plan_pack(&*st, &sroot, &["proj/".into()]).await.unwrap();
+    let names: Vec<&str> = plan.iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(names, vec!["proj/", "proj/readme.md"]);
+    assert_eq!(left_out, vec!["proj/config.json".to_string()]);
+    assert!(ops::left_out_note(&left_out).contains("proj/config.json"));
+}
+
+#[test]
+fn zip_names_stay_inside() {
+    for ok in ["a.txt", "a/b/", "a..b", ".env"] {
+        assert!(ops::zip_name_ok(ok), "{ok}");
+    }
+    for bad in ["", "/etc/passwd", "a/../../x", "./a", "a//b", "a\\b", "..", "a/./b"] {
+        assert!(!ops::zip_name_ok(bad), "{bad}");
+    }
 }

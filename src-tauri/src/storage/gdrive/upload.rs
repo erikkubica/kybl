@@ -122,6 +122,21 @@ async fn status(api: &Api, session: &str, total: Option<u64>) -> SResult<Status>
     }
 }
 
+/// [`status`] after a failed piece: a probe the network drops too counts against the same
+/// budget of failures, with the same growing waits, instead of ending the upload at once (a
+/// Wi-Fi roam or VPN reconnect outlasts the HTTP layer's own two quick tries).
+async fn status_retrying(api: &Api, session: &str, total: Option<u64>, failures: &mut u32) -> SResult<Status> {
+    loop {
+        match status(api, session, total).await {
+            Err(e) if e.kind == ErrKind::Network && *failures < FAILURES => {
+                *failures += 1;
+                tokio::time::sleep(backoff(*failures)).await;
+            }
+            r => return r,
+        }
+    }
+}
+
 async fn resumable(api: &Api, base: &str, t: &Target<'_>, mut src: Source, opts: &WriteOpts<'_>, progress: Progress<'_>, cancel: &AtomicBool) -> SResult<Option<DFile>> {
     let total = src.len;
     let piece = opts.part_size.map(|p| (p / QUANTUM).max(1) * QUANTUM).unwrap_or(DEFAULT_PIECE);
@@ -188,7 +203,7 @@ async fn resumable(api: &Api, base: &str, t: &Target<'_>, mut src: Source, opts:
             Err(e) if e.kind == ErrKind::Network && failures < FAILURES => {
                 failures += 1;
                 tokio::time::sleep(backoff(failures)).await;
-                match status(api, &session, total).await? {
+                match status_retrying(api, &session, total, &mut failures).await? {
                     Status::Done(f) => return Ok(Some(*f)),
                     Status::At(o) => offset = o,
                     Status::Gone => return Err(StorageError::other("Google Drive dropped the upload. Try again.")),
@@ -227,7 +242,7 @@ async fn resumable(api: &Api, base: &str, t: &Target<'_>, mut src: Source, opts:
             s if s >= 500 && failures < FAILURES => {
                 failures += 1;
                 tokio::time::sleep(backoff(failures)).await;
-                match status(api, &session, total).await? {
+                match status_retrying(api, &session, total, &mut failures).await? {
                     Status::Done(f) => return Ok(Some(*f)),
                     Status::At(o) => offset = o,
                     Status::Gone => return Err(StorageError::other("Google Drive dropped the upload. Try again.")),
