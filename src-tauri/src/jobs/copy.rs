@@ -24,7 +24,7 @@ use crate::{
         fold_path, s3_stream, ByteStream, Entry, ErrKind, FolderMode, Loc, PartRecord, ReadStream, RenameMode, Reopen, ResumeState, SResult, ServerCopy,
         Storage, StorageError, WriteOpts, WriteOutcome, WriteSource,
     },
-    tuning::LIMITER,
+    tuning::DOWN,
 };
 
 /// Times a file is tried before it is reported as failed.
@@ -402,11 +402,12 @@ fn throttled(body: ByteStream, remote: bool) -> ByteStream {
     if !remote {
         return body;
     }
-    Box::pin(body.then(|chunk| async move {
+    Box::pin(futures_util::stream::unfold((body, DOWN.lane()), |(mut body, mut lane)| async move {
+        let chunk = body.next().await?;
         if let Ok(c) = &chunk {
-            LIMITER.throttle(c.len()).await;
+            lane.throttle(c.len()).await;
         }
-        chunk
+        Some((chunk, (body, lane)))
     }))
 }
 

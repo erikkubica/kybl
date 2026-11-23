@@ -32,7 +32,7 @@ export function TransfersButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-const ORDER = { running: 0, queued: 1, error: 2, cancelled: 3, done: 4 } as const;
+const ORDER = { running: 0, queued: 1, paused: 2, error: 3, cancelled: 4, done: 5 } as const;
 
 /** Retries every failed or stopped transfer (the queue's own `retryAll` where it has one). */
 export function retryAllFailed(transfers: TransferActions, list: Transfer[]) {
@@ -177,11 +177,12 @@ const TransferRow = memo(function TransferRow({ t, transfers, onOpenFile }: { t:
   } else if (t.state === "queued") sub = t.total ? `Waiting · ${formatBytes(t.total)}` : "Waiting";
   else if (t.state === "done") sub = t.kind === "upload" ? `Uploaded · ${formatBytes(t.total)}` : `${renamed ? `Saved as “${savedAs}”` : "Saved"} · ${formatBytes(t.total || t.bytes)} · Tap to open`;
   else if (t.state === "cancelled") sub = "Stopped · Tap to retry";
+  else if (t.state === "paused") sub = `Paused${t.total ? ` · ${formatBytes(t.bytes)} of ${formatBytes(t.total)}` : ""} · Tap to resume`;
   else sub = `${errSummary(t.error ?? "Failed")} · Tap to retry`;
   const tap =
     t.state === "done" && t.kind === "download"
       ? () => onOpenFile(t.local)
-      : t.state === "error" || t.state === "cancelled"
+      : t.state === "error" || t.state === "cancelled" || t.state === "paused"
         ? () => transfers.retry(t.id)
         : null;
   const body = (
@@ -192,7 +193,7 @@ const TransferRow = memo(function TransferRow({ t, transfers, onOpenFile }: { t:
       <span className="m-row-text">
         <span className="m-row-name">{t.name}</span>
         <span className={`m-row-sub ${t.state === "error" ? "danger" : ""}`}>{sub}</span>
-        {(t.state === "running" || t.state === "queued") && <Progress frac={t.state === "queued" ? 0 : frac} />}
+        {(t.state === "running" || t.state === "queued" || t.state === "paused") && <Progress frac={t.state === "queued" ? 0 : frac} />}
       </span>
     </>
   );
@@ -208,6 +209,10 @@ const TransferRow = memo(function TransferRow({ t, transfers, onOpenFile }: { t:
       {t.state === "running" || t.state === "queued" ? (
         <button className="m-icon" onClick={() => transfers.cancel(t.id)} aria-label={`Stop ${t.name}`}>
           <Icon name="x" size={18} />
+        </button>
+      ) : t.state === "paused" ? (
+        <button className="m-icon" onClick={() => transfers.resume(t.id)} aria-label={`Resume ${t.name}`}>
+          <Icon name="play" size={17} />
         </button>
       ) : t.state === "error" || t.state === "cancelled" ? (
         <button className="m-icon" onClick={() => transfers.retry(t.id)} aria-label={`Retry ${t.name}`}>

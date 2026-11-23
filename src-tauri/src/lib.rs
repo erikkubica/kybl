@@ -34,6 +34,8 @@ mod objects;
 // open / share / save to Photos / haptics / shared-in files / app lock (phones and desktop)
 mod platform;
 mod prefs;
+// paused and interrupted transfers kept across a restart
+mod resume;
 // asking before quitting with transfers running
 #[cfg(desktop)]
 mod quit;
@@ -60,6 +62,8 @@ mod transfers;
 mod tray;
 // transfer settings and the bandwidth cap
 mod tuning;
+// checking a file once it was uploaded or downloaded (size, checksums)
+mod verify;
 // update checks and installs from GitHub Releases
 mod updater;
 
@@ -152,6 +156,8 @@ pub fn run() {
                 let _ = handle.state::<state::AppState>().vault_dir.set(dir);
             }
             prefs::load_transfers(&handle);
+            // before leftovers: what a kept transfer left behind is not to be cleaned up
+            resume::start(&handle);
             leftovers::start(&handle);
             // WP-B1: copy/move jobs resume where they stopped
             jobs::setup(&handle);
@@ -260,6 +266,10 @@ pub fn run() {
             transfers::start_upload,
             transfers::start_download,
             transfers::cancel_transfer,
+            transfers::pause_transfer,
+            transfers::pause_all_transfers,
+            transfers::kept_transfers,
+            transfers::move_transfer_to_top,
             actions::custom_action_run,
             actions::custom_action_stop,
             actions::custom_action_preview,

@@ -27,7 +27,7 @@ use crate::{
     dest,
     objects::Existing,
     transfers::Outcome,
-    tuning::LIMITER,
+    tuning::DOWN,
 };
 
 // ---------------------------------------------------------------- new commands
@@ -456,8 +456,23 @@ pub async fn list_all_under(s: &dyn Storage, bucket: &str, prefix: &str) -> Resu
 
 /// Uploads a local file through the backend (`transfers::spawn_transfer` for non-S3 targets).
 pub(crate) async fn upload(s: &dyn Storage, bucket: &str, key: &str, path: &str, cancel: &Arc<AtomicBool>, progress: Progress<'_>) -> Result<Outcome, String> {
+    upload_with(s, bucket, key, path, WriteOpts::default(), cancel, progress).await
+}
+
+/// [`upload`] with options: `resume` and `on_part` make it resumable where the backend allows (a
+/// cloud drive's upload session, an SFTP / FTP server's temporary file). With `on_part` set, a
+/// cancelled or failed upload is left for the caller to carry on or clean up.
+pub(crate) async fn upload_with(
+    s: &dyn Storage,
+    bucket: &str,
+    key: &str,
+    path: &str,
+    opts: WriteOpts<'_>,
+    cancel: &Arc<AtomicBool>,
+    progress: Progress<'_>,
+) -> Result<Outcome, String> {
     let src = WriteSource::Path(path.into());
-    match s.write(bucket, key, src, WriteOpts::default(), progress, cancel).await? {
+    match s.write(bucket, key, src, opts, progress, cancel).await? {
         WriteOutcome::Done(_) => Ok(Outcome::Done),
         WriteOutcome::Cancelled => Ok(Outcome::Cancelled),
         WriteOutcome::Conflict(_) => Err(StorageError::conflict().into()),
@@ -476,32 +491,123 @@ pub(crate) async fn download(
     progress: Progress<'_>,
     hold: crate::transfers::Hold<'_>,
 ) -> Result<Outcome, String> {
+    let mut dl = Dl::default();
+    download_resumable(s, bucket, key, dest, None, false, cancel, progress, hold, &mut dl).await
+}
+
+/// How many times in a row a download picks up again after the connection drops.
+const RESUME_ATTEMPTS: u32 = 6;
+
+/// Where a download of `total` bytes carries on from a partial file of `have` bytes: None to
+/// start over (nothing there, as big as the file or bigger, or no version to ask for).
+pub(crate) fn continue_at(have: u64, total: Option<u64>, version: Option<&str>, ranged: bool) -> Option<u64> {
+    match (version, total) {
+        (Some(_), Some(t)) if ranged && have > 0 && have < t => Some(have),
+        _ => None,
+    }
+}
+
+/// [`download`] that can carry on: with `resume` (the version an earlier attempt fetched), a
+/// partial file it left is continued with a ranged read of the same version, where the backend
+/// reads ranges. A dropped connection mid-file is picked up again the same way. With
+/// `keep_partial`, a failed download keeps its partial file for a later retry; with `dl.pause`
+/// set when it is cancelled, it keeps it too and answers [`crate::multipart::PAUSED`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn download_resumable(
+    s: &dyn Storage,
+    bucket: &str,
+    key: &str,
+    dest: &Path,
+    resume: Option<&str>,
+    keep_partial: bool,
+    cancel: &AtomicBool,
+    progress: Progress<'_>,
+    hold: crate::transfers::Hold<'_>,
+    dl: &mut Dl<'_>,
+) -> Result<Outcome, String> {
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent).await.map_err(|e| e.to_string())?;
     }
     let part = dest::part_path(dest);
-    let throttle = !s.caps().local_paths;
-    let mut r = s.read(bucket, key, None, None).await?;
-    let total = r.total.or(r.len).unwrap_or(0);
-    let etag = r.etag.clone();
+    let mut lane = (!s.caps().local_paths).then(|| DOWN.lane());
+    let ranged = s.caps().range_read;
+    // a partial file of an earlier attempt: the rest of the same version, if the server can
+    let mut resumed = None;
+    if let Some(version) = resume
+        && let Ok(m) = tokio::fs::metadata(&part).await
+        && let Ok(Some(now)) = s.stat(bucket, key).await
+        && let Some(at) = continue_at(m.len(), Some(now.size.max(0) as u64), Some(version), ranged)
+        && let Ok(r) = s.read(bucket, key, Some(at..now.size as u64), Some(version)).await
+        && r.range.as_ref().map(|g| g.start) == Some(at)
+        && let Ok(f) = tokio::fs::OpenOptions::new().append(true).open(&part).await
+    {
+        resumed = Some((r, at, f, now.size as u64));
+    }
+    let (mut r, mut got, mut file, total, etag) = match resumed {
+        Some((r, at, f, total)) => (r, at, f, total, resume.map(str::to_string)),
+        None => {
+            let r = s.read(bucket, key, None, None).await?;
+            let total = r.total.or(r.len).unwrap_or(0);
+            let etag = r.etag.clone();
+            let f = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;
+            crate::leftovers::partial_started(&part);
+            (r, 0, f, total, etag)
+        }
+    };
+    dl.etag.clone_from(&etag);
+    dl.from = got;
+    if let Some(seen) = dl.seen {
+        seen(etag.as_deref());
+    }
+    // only a version that can be asked for again can be carried on
+    let can_resume = ranged && etag.is_some() && total > 0;
     let result: SResult<bool> = async {
-        let mut file = tokio::fs::File::create(&part).await?;
-        crate::leftovers::partial_started(&part);
-        let (mut got, mut last, mut checked_at) = (0u64, Instant::now(), 0u64);
-        progress(0, total);
-        while let Some(chunk) = r.body.next().await {
+        let (mut last, mut checked_at, mut failures) = (Instant::now(), got, 0u32);
+        progress(got, total);
+        loop {
+            let chunk = match r.body.next().await {
+                None => break,
+                Some(Ok(c)) => c,
+                // the connection dropped mid-file: ask for the rest of the same version
+                Some(Err(e)) => {
+                    if !can_resume || got >= total {
+                        return Err(e.into());
+                    }
+                    loop {
+                        failures += 1;
+                        if failures > RESUME_ATTEMPTS {
+                            return Err(StorageError::from(e));
+                        }
+                        tokio::time::sleep(Duration::from_secs((1u64 << (failures - 1).min(4)).min(15))).await;
+                        if cancel.load(Ordering::Relaxed) {
+                            return Ok(false);
+                        }
+                        match s.read(bucket, key, Some(got..total), etag.as_deref()).await {
+                            Ok(rest) if rest.range.as_ref().map(|g| g.start) == Some(got) => {
+                                r = rest;
+                                break;
+                            }
+                            // the file changed, or the server sent something else: can't go on
+                            Ok(_) => return Err(StorageError::from(e)),
+                            Err(again) if again.kind == ErrKind::Conflict => return Err(again),
+                            Err(_) => continue,
+                        }
+                    }
+                    continue;
+                }
+            };
             if cancel.load(Ordering::Relaxed) {
                 return Ok(false);
             }
-            let chunk = chunk?;
             file.write_all(&chunk).await?;
             got += chunk.len() as u64;
+            failures = 0;
             if last.elapsed() > Duration::from_millis(150) {
                 progress(got, total.max(got));
                 last = Instant::now();
             }
-            if throttle {
-                LIMITER.throttle(chunk.len()).await;
+            if let Some(l) = lane.as_mut() {
+                l.throttle(chunk.len()).await;
             }
             // "Wi-Fi only" and the phone moved to mobile data: let go of the connection, keep
             // what arrived, and ask for the rest (of the same version) once back on Wi-Fi
@@ -532,21 +638,44 @@ pub(crate) async fn download(
         Ok(true)
     }
     .await;
+    let _ = file.flush().await;
+    drop(file);
+    let paused = dl.pause.is_some_and(|p| p.load(Ordering::Relaxed));
     match result {
         Ok(true) => {
             tokio::fs::rename(&part, dest).await.map_err(|e| e.to_string())?;
             crate::leftovers::partial_ended(&part);
             Ok(Outcome::Done)
         }
+        // paused: what arrived stays, to carry on from
+        Ok(false) if paused && can_resume => Err(crate::multipart::PAUSED.into()),
         Ok(false) => {
             let _ = tokio::fs::remove_file(&part).await;
             Ok(Outcome::Cancelled)
         }
         Err(e) => {
-            let _ = tokio::fs::remove_file(&part).await;
+            if !(keep_partial && can_resume) {
+                let _ = tokio::fs::remove_file(&part).await;
+            }
             Err(e.into())
         }
     }
+}
+
+/// Told the version a download fetches.
+pub(crate) type Seen = dyn Fn(Option<&str>) + Send + Sync;
+
+/// What a download is told and tells back besides its bytes.
+#[derive(Default)]
+pub(crate) struct Dl<'a> {
+    /// set together with the cancel flag: stop, but keep the partial file to carry on later
+    pub pause: Option<&'a AtomicBool>,
+    /// told the version (ETag) being fetched as soon as it is known
+    pub seen: Option<&'a Seen>,
+    /// the version fetched
+    pub etag: Option<String>,
+    /// the byte it started from (above 0: it carried on a partial file)
+    pub from: u64,
 }
 
 #[cfg(test)]
@@ -695,6 +824,62 @@ mod tests {
 
             assert!(matches!(upload(&b, &root, "up/again.jpg", dest.to_str().unwrap(), &never, &report).await.unwrap(), Outcome::Done));
             assert_eq!(std::fs::read(t.0.join("root/up/again.jpg")).unwrap().len(), 1000);
+        });
+    }
+
+    #[test]
+    fn a_download_carries_on_only_with_a_version_and_a_partial_file_smaller_than_the_whole() {
+        assert_eq!(continue_at(100, Some(1000), Some("v1"), true), Some(100));
+        assert_eq!(continue_at(0, Some(1000), Some("v1"), true), None, "nothing there yet");
+        assert_eq!(continue_at(1000, Some(1000), Some("v1"), true), None, "as big as the file");
+        assert_eq!(continue_at(2000, Some(1000), Some("v1"), true), None, "bigger: the file changed");
+        assert_eq!(continue_at(100, Some(1000), None, true), None, "no version to ask for");
+        assert_eq!(continue_at(100, None, Some("v1"), true), None, "size unknown");
+        assert_eq!(continue_at(100, Some(1000), Some("v1"), false), None, "no ranged reads");
+    }
+
+    #[test]
+    fn downloads_carry_on_from_a_partial_file_and_keep_it_when_paused() {
+        let (t, b, root) = setup();
+        let content: Vec<u8> = (0..2_000_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(t.0.join("root/big.bin"), &content).unwrap();
+        futures_executor_block(async {
+            let etag = b.stat(&root, "big.bin").await.unwrap().unwrap().etag.expect("the local disk tags versions");
+            let never = AtomicBool::new(false);
+            let first = Mutex::new(None::<u64>);
+            let report = |d: u64, _| {
+                first.lock().unwrap().get_or_insert(d);
+            };
+
+            // an earlier attempt left the first 700,000 bytes
+            let dest = t.0.join("down/big.bin");
+            std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+            std::fs::write(dest::part_path(&dest), &content[..700_000]).unwrap();
+            let mut dl = Dl::default();
+            let r = download_resumable(&b, &root, "big.bin", &dest, Some(&etag), true, &never, &report, None, &mut dl).await.unwrap();
+            assert!(matches!(r, Outcome::Done));
+            assert_eq!(dl.from, 700_000);
+            assert_eq!(*first.lock().unwrap(), Some(700_000), "progress starts where it carried on");
+            assert!(std::fs::read(&dest).unwrap() == content, "the whole file, in order");
+            assert!(!dest::part_path(&dest).exists());
+
+            // a stale version starts over instead of mixing two files
+            let dest2 = t.0.join("down/stale.bin");
+            std::fs::write(dest::part_path(&dest2), vec![9u8; 500]).unwrap();
+            let mut dl = Dl::default();
+            let r = download_resumable(&b, &root, "big.bin", &dest2, Some("not-this-one"), true, &never, &|_, _| {}, None, &mut dl).await.unwrap();
+            assert!(matches!(r, Outcome::Done));
+            assert_eq!(dl.from, 0);
+            assert!(std::fs::read(&dest2).unwrap() == content);
+
+            // paused: the partial file stays, and it says so
+            let dest3 = t.0.join("down/paused.bin");
+            let (stop, pause) = (AtomicBool::new(true), AtomicBool::new(true));
+            let mut dl = Dl { pause: Some(&pause), ..Default::default() };
+            let r = download_resumable(&b, &root, "big.bin", &dest3, None, true, &stop, &|_, _| {}, None, &mut dl).await;
+            assert_eq!(r.err().as_deref(), Some(crate::multipart::PAUSED));
+            assert!(dest::part_path(&dest3).exists() && !dest3.exists());
+            assert_eq!(dl.etag.as_deref(), Some(etag.as_str()));
         });
     }
 }

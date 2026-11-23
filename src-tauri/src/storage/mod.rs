@@ -818,6 +818,13 @@ pub trait Storage: Send + Sync + 'static {
         None
     }
 
+    /// A content hash the server works out on request for the file of `size` bytes (SFTP runs
+    /// `sha256sum` over SSH), to check a copy against; None where it can't. Reads the whole file
+    /// on the server: only asked when files are verified by checksum.
+    async fn remote_hash(&self, _root: &str, _path: &str, _size: u64) -> SResult<Option<(HashKind, String)>> {
+        Ok(None)
+    }
+
     fn as_s3(&self) -> Option<&s3::S3Backend> {
         None
     }

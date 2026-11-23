@@ -4,6 +4,7 @@ import { Icon, type IconName } from "../Icons";
 import { SCHEMES, type Palette } from "../schemes";
 import { ACCENTS, DEFAULTS, EXPIRIES, SCALES, isDark, type ColumnId, type FontChoice, type Settings, type Theme } from "../settings";
 import { api, errMessage, type TransferPrefs } from "../api";
+import { MBPS, loadTransferPrefs, saveTransferPrefs, useTransferPrefsStore } from "../transferPrefs";
 import { IMAGE_MODES } from "../imageMode";
 import type { Profile } from "../types";
 import { ProviderBadge } from "./Sidebar";
@@ -261,31 +262,87 @@ const COLUMN_CHOICES: { id: ColumnId; label: string }[] = [
   { id: "etag", label: "ETag" },
 ];
 
-/** 1 MB/s in the KiB/s the backend counts in. */
-const MBPS = 1_000_000 / 1024;
 const LIMITS = [0, 1, 5, 10, 25, 50];
 const COUNTS = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({ value: n, label: String(n) }));
+const VERIFY: { value: TransferPrefs["verify"]; label: string }[] = [
+  { value: "off", label: "Off" },
+  { value: "size", label: "Size" },
+  { value: "checksum", label: "Checksum" },
+];
+
+/** One direction's speed limit: presets, or a number of MB/s of your own. */
+function LimitPicker({ label, kbps, onSet }: { label: string; kbps: number; onSet: (kbps: number) => void }) {
+  const mb = kbps / MBPS;
+  const fits = LIMITS.some((l) => Math.abs(l - mb) < 0.05);
+  const [custom, setCustom] = useState(!fits);
+  const [customText, setCustomText] = useState(fits || kbps === 0 ? "" : String(Math.round(mb * 10) / 10));
+  // changed elsewhere (the Activity panel's speed menu): follow it
+  useEffect(() => {
+    if (fits) setCustom(false);
+    else {
+      setCustom(true);
+      setCustomText(String(Math.round(mb * 10) / 10));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kbps]);
+  const preset = custom ? "custom" : LIMITS.find((l) => Math.abs(l - mb) < 0.05) ?? "custom";
+  const customValue = Number(customText.replace(",", "."));
+  const customBad = custom && customText.trim() !== "" && !(customValue > 0 && customValue <= 10_000);
+  const applyCustom = () => {
+    if (customBad || !customText.trim()) return;
+    onSet(Math.round(customValue * MBPS));
+  };
+  return (
+    <div className="set-limit">
+      <Seg
+        label={label}
+        value={preset}
+        options={[...LIMITS.map((l) => ({ value: l as number | "custom", label: l === 0 ? "Unlimited" : `${l} MB/s` })), { value: "custom" as const, label: "Custom" }]}
+        onChange={(v) => {
+          if (v === "custom") {
+            setCustom(true);
+            setCustomText(mb > 0 ? String(Math.round(mb * 10) / 10) : "");
+          } else {
+            setCustom(false);
+            onSet(Math.round((v as number) * MBPS));
+          }
+        }}
+      />
+      {custom && (
+        <form
+          className="set-inline"
+          onSubmit={(e) => {
+            e.preventDefault();
+            applyCustom();
+          }}
+        >
+          <input
+            inputMode="decimal"
+            aria-label={`${label} in MB/s`}
+            aria-invalid={customBad}
+            value={customText}
+            onChange={(e) => setCustomText(e.target.value)}
+            onBlur={applyCustom}
+            placeholder="e.g. 2.5"
+            autoFocus
+            onFocus={(e) => e.currentTarget.select()}
+          />
+          <span>MB/s</span>
+          {customBad && <em className="pe-err">Enter a number above 0.</em>}
+        </form>
+      )}
+    </div>
+  );
+}
 
 /** Transfer tuning (backend prefs) plus where downloads go (a desktop setting). */
 function TransferRows({ settings, onChange, onToast }: { settings: Settings; onChange: (patch: Partial<Settings>) => void; onToast: (kind: "success" | "error" | "info", text: string) => void }) {
-  const [prefs, setPrefs] = useState<TransferPrefs | null>(null);
+  const prefs = useTransferPrefsStore();
   const [failed, setFailed] = useState<string | null>(null);
   const [folder, setFolder] = useState<string | null>(null);
-  const [custom, setCustom] = useState(false);
-  const [customText, setCustomText] = useState("");
 
   useEffect(() => {
-    api
-      .transferPrefs()
-      .then((p) => {
-        setPrefs(p);
-        const mb = p.bandwidthLimitKbps / MBPS;
-        if (p.bandwidthLimitKbps > 0 && !LIMITS.includes(Math.round(mb))) {
-          setCustom(true);
-          setCustomText(String(Math.round(mb * 10) / 10));
-        }
-      })
-      .catch((e) => setFailed(errMessage(e)));
+    loadTransferPrefs().catch((e) => setFailed(errMessage(e)));
     api
       .downloadFolder()
       .then(setFolder)
@@ -293,23 +350,7 @@ function TransferRows({ settings, onChange, onToast }: { settings: Settings; onC
   }, []);
 
   const change = (p: Partial<TransferPrefs>) => {
-    if (prefs) setPrefs({ ...prefs, ...p });
-    api
-      .setTransferPrefs(p)
-      .then(setPrefs)
-      .catch((e) => {
-        onToast("error", errMessage(e));
-        api.transferPrefs().then(setPrefs).catch(() => {});
-      });
-  };
-
-  const limitMb = prefs ? prefs.bandwidthLimitKbps / MBPS : 0;
-  const preset = custom ? "custom" : LIMITS.find((l) => Math.abs(l - limitMb) < 0.05) ?? "custom";
-  const customValue = Number(customText.replace(",", "."));
-  const customBad = custom && customText.trim() !== "" && !(customValue > 0 && customValue <= 10_000);
-  const applyCustom = () => {
-    if (customBad || !customText.trim()) return;
-    change({ bandwidthLimitKbps: Math.round(customValue * MBPS) });
+    saveTransferPrefs(p).catch((e) => onToast("error", errMessage(e)));
   };
 
   return (
@@ -341,49 +382,35 @@ function TransferRows({ settings, onChange, onToast }: { settings: Settings; onC
             <Row label="Parts per file" hint="Big files move in parts. Sending several parts at once speeds up single large files.">
               <Seg label="Parts per file" value={prefs.partConcurrency} options={COUNTS} onChange={(partConcurrency) => change({ partConcurrency })} />
             </Row>
-            <Row label="Speed limit" hint="Caps uploads and downloads together, so Kybl leaves room for everything else on your network." stack>
-              <div className="set-limit">
-                <Seg
-                  label="Speed limit"
-                  value={preset}
-                  options={[...LIMITS.map((l) => ({ value: l as number | "custom", label: l === 0 ? "Unlimited" : `${l} MB/s` })), { value: "custom" as const, label: "Custom" }]}
-                  onChange={(v) => {
-                    if (v === "custom") {
-                      setCustom(true);
-                      setCustomText(limitMb > 0 ? String(Math.round(limitMb * 10) / 10) : "");
-                    } else {
-                      setCustom(false);
-                      change({ bandwidthLimitKbps: Math.round((v as number) * MBPS) });
-                    }
-                  }}
-                />
-                {custom && (
-                  <form
-                    className="set-inline"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      applyCustom();
-                    }}
-                  >
-                    <input
-                      inputMode="decimal"
-                      aria-label="Custom speed limit in MB/s"
-                      aria-invalid={customBad}
-                      value={customText}
-                      onChange={(e) => setCustomText(e.target.value)}
-                      onBlur={applyCustom}
-                      placeholder="e.g. 2.5"
-                      autoFocus
-                    />
-                    <span>MB/s</span>
-                    {customBad && <em className="pe-err">Enter a number above 0.</em>}
-                  </form>
-                )}
-              </div>
+            <Row label="Download limit" hint="Shared by every download at once, so Kybl leaves room for everything else on your network. Changes apply to running transfers." stack>
+              <LimitPicker label="Download limit" kbps={prefs.downloadLimitKbps} onSet={(downloadLimitKbps) => change({ downloadLimitKbps })} />
+            </Row>
+            <Row label="Upload limit" hint="Shared by every upload at once." stack>
+              <LimitPicker label="Upload limit" kbps={prefs.uploadLimitKbps} onSet={(uploadLimitKbps) => change({ uploadLimitKbps })} />
             </Row>
           </>
         )}
       </div>
+
+      {prefs && (
+        <>
+          <h3 className="set-title">Checking</h3>
+          <div className="set-card">
+            <Row
+              label="Verify files after copying"
+              hint={
+                prefs.verify === "checksum"
+                  ? "Compares checksums where both sides have one (S3, Google Drive, Dropbox, OneDrive, SFTP), else the size. Reads each local file once more. Encrypted connections compare the size only."
+                  : prefs.verify === "size"
+                    ? "Compares the size of each file once it’s copied. A file that doesn’t match is marked failed, with Retry."
+                    : "Trusts the server’s answer that the file arrived."
+              }
+            >
+              <Seg label="Verify files after copying" value={prefs.verify} options={VERIFY} onChange={(verify) => change({ verify })} />
+            </Row>
+          </div>
+        </>
+      )}
     </>
   );
 }

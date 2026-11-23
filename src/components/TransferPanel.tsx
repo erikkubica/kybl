@@ -4,9 +4,12 @@ import { ErrorText } from "./ErrorText";
 import { formatBytes, formatEta, formatSpeed } from "../format";
 import type { Transfer, TransferState } from "../types";
 import { useJobList, type Job, type JobKind } from "../useJobs";
-import { useTransferList } from "../useTransfers";
+import { transferActions, useTransferList } from "../useTransfers";
 import { useSync } from "../sync";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ContextMenu, PromptDialog, type MenuItem } from "./Dialogs";
+import { MBPS, limitLabel, saveTransferPrefs, useTransferPrefsStore } from "../transferPrefs";
+import "./transfers.css";
 import { clearLog, useActivityLog } from "../activityLog";
 import type { JobSummary } from "../api";
 import { JobsPanel, isActive as migrationActive, migrations as migrationStore, useMigrations } from "../jobs";
@@ -32,13 +35,85 @@ function jobMeta(j: Job): string {
   return j.total > 1 ? `${j.total.toLocaleString()} objects` : "";
 }
 
-const STATE_ICON: Record<TransferState, "upload" | "download" | "check-circle" | "alert" | "clock" | "x"> = {
+const STATE_ICON: Record<TransferState, IconName> = {
   running: "upload",
   queued: "clock",
+  paused: "pause",
   done: "check-circle",
   error: "alert",
   cancelled: "x",
 };
+
+const VERIFIED: Record<string, string> = {
+  size: "the size matches",
+  md5: "the MD5 checksum matches",
+  etag: "the checksum (S3 ETag) matches",
+  sha256: "the SHA-256 checksum matches",
+  quickxor: "the OneDrive checksum matches",
+  dropbox: "the Dropbox checksum matches",
+};
+
+const SPEED_PRESETS = [0, 1, 5, 10];
+
+/**
+ * The speed limit at hand: a gauge in the header with presets for both directions (Settings has
+ * one per direction), and "limited to 5 MB/s" beside it while a limit is on.
+ */
+function SpeedMenu() {
+  const prefs = useTransferPrefsStore();
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [custom, setCustom] = useState(false);
+  if (!prefs) return null;
+  const down = prefs.downloadLimitKbps;
+  const up = prefs.uploadLimitKbps;
+  const same = down === up;
+  const set = (kbps: number) => void saveTransferPrefs({ downloadLimitKbps: kbps, uploadLimitKbps: kbps }).catch(() => {});
+  const isPreset = same && SPEED_PRESETS.some((mb) => Math.round(mb * MBPS) === down);
+  const items: MenuItem[] = [
+    { type: "label", label: same ? "Speed limit" : `Speed limit · ↓ ${down ? limitLabel(down) : "none"} · ↑ ${up ? limitLabel(up) : "none"}` },
+    ...SPEED_PRESETS.map(
+      (mb): MenuItem => ({
+        type: "item",
+        label: mb === 0 ? "No limit" : `${mb} MB/s`,
+        checked: same && Math.round(mb * MBPS) === down,
+        onClick: () => set(Math.round(mb * MBPS)),
+      }),
+    ),
+    { type: "item", label: isPreset || (!down && !up) ? "Custom…" : `Custom (${same ? limitLabel(down) : "per direction"})…`, checked: !isPreset && (down > 0 || up > 0), onClick: () => setCustom(true) },
+  ];
+  const text = !down && !up ? null : same ? `limited to ${limitLabel(down)}` : [down && `↓ ${limitLabel(down)}`, up && `↑ ${limitLabel(up)}`].filter(Boolean).join(" ");
+  return (
+    <div className="tp-speed" onClick={(e) => e.stopPropagation()}>
+      <button
+        className={`icon-btn ${text ? "on" : ""}`}
+        title={text ? `Speed ${text}. Change it` : "Limit the speed"}
+        aria-label="Speed limit"
+        aria-haspopup="menu"
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setMenu({ x: r.left, y: r.top });
+        }}
+      >
+        <Icon name="gauge" size={14} />
+      </button>
+      {text && <span className="tp-limit">{text}</span>}
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={items} label="Speed limit" onClose={() => setMenu(null)} />}
+      {custom && (
+        <PromptDialog
+          title="Speed limit"
+          label="MB/s, for uploads and downloads each"
+          initial={down ? String(Math.round((down / MBPS) * 10) / 10) : ""}
+          confirmLabel="Limit"
+          onSubmit={(v) => {
+            const mb = Number(v.replace(",", "."));
+            if (mb > 0 && mb <= 10_000) set(Math.round(mb * MBPS));
+          }}
+          onClose={() => setCustom(false)}
+        />
+      )}
+    </div>
+  );
+}
 
 /** A copy between connections that stopped with an error, needs a new sign-in, or finished with files that failed. */
 const migrationFailed = (m: JobSummary) =>
@@ -202,6 +277,7 @@ function TransferPanelView({
   const queued = transfers.filter((t) => t.state === "queued");
   const failed = transfers.filter((t) => t.state === "error");
   const done = transfers.filter((t) => t.state === "done");
+  const paused = transfers.filter((t) => t.state === "paused");
   const active = running.length + queued.length;
 
   const live = transfers.filter((t) => t.state === "running" || t.state === "queued" || t.state === "done");
@@ -216,6 +292,7 @@ function TransferPanelView({
     ...(show("progress") ? running : []),
     ...(show("failed") ? failed : []),
     ...(show("progress") ? queued.slice(0, 40) : []),
+    ...(show("progress") ? paused.slice(0, 40) : []),
     ...(show("done") ? done.slice(-40).reverse() : []),
     ...(show("done") ? cancelled.slice(-20) : []),
   ];
@@ -226,7 +303,7 @@ function TransferPanelView({
     ? [...(show("progress") ? migrationsActive : []), ...(show("failed") ? migrationsFailed : []), ...(show("done") ? migrationsDone.slice(0, 30) : [])]
     : [];
   const counts = {
-    progress: active + jobsRunning.length + syncs.length + migrationsActive.length,
+    progress: active + paused.length + jobsRunning.length + syncs.length + migrationsActive.length,
     failed: failed.length + jobsFailed.length + migrationsFailed.length,
     done: done.length + cancelled.length + jobsDone.length + jobsCancelled.length + migrationsDone.length,
   };
@@ -238,8 +315,8 @@ function TransferPanelView({
     done: "Nothing has finished yet.",
   };
 
-  const cancelledCount = transfers.length - active - done.length - failed.length + jobsCancelled.length;
-  const activeAll = active + jobsRunning.length + syncs.length + migrationsActive.length;
+  const cancelledCount = transfers.length - active - paused.length - done.length - failed.length + jobsCancelled.length;
+  const activeAll = active + paused.length + jobsRunning.length + syncs.length + migrationsActive.length;
   const doneAll = done.length + jobsDone.length;
   const failedAll = failed.length + jobsFailed.length;
   const finishedAll = done.length + cancelled.length + jobsDone.length + jobsCancelled.length + (onTab ? migrationsDone.length : 0);
@@ -270,10 +347,13 @@ function TransferPanelView({
   const acts = {
     retry: retryCount > 0 && (!onTab || tab === "activity" || tab === "failed"),
     cancel: active > 0 && (!onTab || tab === "activity"),
+    pause: active > 0 && (!onTab || tab === "activity"),
+    resume: paused.length > 0 && (!onTab || tab === "activity"),
     clear: finishedAll > 0 && (!onTab || tab === "done"),
     clearFailed: !!onClearFailed && counts.failed > 0 && !!onTab && tab === "failed",
   };
-  const showActs = !(open && (onJobs || onLog)) && (acts.retry || acts.cancel || acts.clear || acts.clearFailed);
+  const showActs = !(open && (onJobs || onLog)) && (acts.retry || acts.cancel || acts.pause || acts.resume || acts.clear || acts.clearFailed);
+  const firstQueued = queued[0]?.id;
 
   return (
     <section ref={liftToasts} className={`transfers ${open ? "open" : ""}`} aria-label="Activity">
@@ -360,9 +440,25 @@ function TransferPanelView({
             </>
           )}
         </div>
+        {onTab && <SpeedMenu />}
         {/* not on Jobs (its own buttons) or Log; each tab gets what fits it. Narrow: icons with their names as tooltips */}
         {showActs && (
           <div className="tp-actions" onClick={(e) => e.stopPropagation()}>
+            {acts.resume && (
+              <button className="btn btn-ghost btn-sm" onClick={() => transferActions.resumeAll()} title="Carry on with every paused transfer" aria-label="Resume all">
+                <Icon name="play" size={13} /> <span className="tp-lbl">Resume all</span>
+              </button>
+            )}
+            {acts.pause && (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => transferActions.pauseAll()}
+                title="Stop every upload and download, keeping what they did, to carry on later (also after a restart)"
+                aria-label="Pause all"
+              >
+                <Icon name="pause" size={13} /> <span className="tp-lbl">Pause all</span>
+              </button>
+            )}
             {acts.retry && (
               <button
                 className="btn btn-ghost btn-sm"
@@ -573,22 +669,43 @@ function TransferPanelView({
                     {t.speed > 0 && ` · ${formatSpeed(t.speed)}`}
                   </>
                 )}
-                {t.state !== "running" && (t.total || (t.state === "done" ? t.bytes : 0)) > 0 && formatBytes(t.total || t.bytes)}
+                {t.state === "paused" && (t.total > 0 ? `Paused · ${formatBytes(t.bytes)} of ${formatBytes(t.total)}` : "Paused")}
+                {t.state !== "running" && t.state !== "paused" && (t.total || (t.state === "done" ? t.bytes : 0)) > 0 && formatBytes(t.total || t.bytes)}
               </div>
-              {t.state === "running" || t.state === "queued" ? (
+              {t.state === "running" || t.state === "queued" || t.state === "paused" ? (
                 <div className={`bar ${t.state === "running" && !t.total ? "indeterminate" : ""}`}>
                   <div style={{ width: `${t.total > 0 ? Math.min(100, (t.bytes / t.total) * 100) : 0}%` }} />
                 </div>
               ) : (
                 <div className="tp-state">
                   {t.state === "done" && (t.kind === "upload" ? "Uploaded" : "Downloaded")}
+                  {t.state === "done" && t.verified && (
+                    <span className="tp-verified" title={`Verified: ${VERIFIED[t.verified] ?? "it matches"}`} aria-label="Verified">
+                      <Icon name="check" size={11} /> verified
+                    </span>
+                  )}
                   {t.state === "cancelled" && "Cancelled"}
                   {t.state === "error" && "Failed"}
                 </div>
               )}
               <div className="tp-row-actions">
+                {t.state === "queued" && t.id !== firstQueued && (
+                  <button className="icon-btn" onClick={() => transferActions.moveToTop(t.id)} title="Move to top: start this one next" aria-label={`Move ${t.name} to top`}>
+                    <Icon name="to-top" size={13} />
+                  </button>
+                )}
                 {(t.state === "running" || t.state === "queued") && (
-                  <button className="icon-btn" onClick={() => onCancel(t.id)} title="Cancel" aria-label="Cancel">
+                  <button className="icon-btn" onClick={() => transferActions.pause(t.id)} title="Pause, keeping what’s done" aria-label={`Pause ${t.name}`}>
+                    <Icon name="pause" size={13} />
+                  </button>
+                )}
+                {t.state === "paused" && (
+                  <button className="icon-btn" onClick={() => transferActions.resume(t.id)} title="Resume from where it stopped" aria-label={`Resume ${t.name}`}>
+                    <Icon name="play" size={13} />
+                  </button>
+                )}
+                {(t.state === "running" || t.state === "queued" || t.state === "paused") && (
+                  <button className="icon-btn" onClick={() => onCancel(t.id)} title={t.state === "paused" ? "Cancel and drop what was done" : "Cancel"} aria-label="Cancel">
                     <Icon name="x" size={13} />
                   </button>
                 )}

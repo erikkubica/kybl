@@ -186,19 +186,41 @@ impl AppState {
 }
 
 /// Transfer slots for one connection: at most `limit()` run at once, and waiting transfers start
-/// in the order they were queued. Unlike a semaphore the limit can change while transfers wait or
-/// run: a lower limit lets running ones finish and starts no new ones until they fit under it.
+/// in the order they were queued (one can be moved to the front: [`Slots::to_front`]). Unlike a
+/// semaphore the limit can change while transfers wait or run: a lower limit lets running ones
+/// finish and starts no new ones until they fit under it.
 pub struct Slots {
     st: std::sync::Mutex<SlotState>,
     notify: Notify,
     limit: fn() -> usize,
 }
 
+/// Places in line count up from the middle of the range, and moves to the front count down from
+/// there, so either way there is room.
+const MIDDLE: u64 = 1 << 62;
+
 #[derive(Default)]
 struct SlotState {
     running: usize,
-    next_ticket: u64,
-    waiting: BTreeSet<u64>,
+    /// the next place at the back, and the last one given at the front
+    back: u64,
+    front: u64,
+    next_serial: u64,
+    /// (place in line, ticket serial)
+    waiting: BTreeSet<(u64, u64)>,
+    /// ticket serial → its place in line
+    place: HashMap<u64, u64>,
+    /// transfer id → its ticket serial
+    named: HashMap<String, u64>,
+}
+
+impl SlotState {
+    fn leave(&mut self, serial: u64) {
+        if let Some(p) = self.place.remove(&serial) {
+            self.waiting.remove(&(p, serial));
+        }
+        self.named.retain(|_, s| *s != serial);
+    }
 }
 
 /// A running transfer's slot; dropping it lets the next one start.
@@ -214,14 +236,14 @@ impl Drop for SlotGuard {
 /// A place in the queue, given up if the wait is abandoned (a cancelled transfer).
 struct Ticket<'a> {
     slots: &'a Slots,
-    n: u64,
+    serial: u64,
     queued: bool,
 }
 
 impl Drop for Ticket<'_> {
     fn drop(&mut self) {
         if self.queued {
-            self.slots.st.lock().unwrap().waiting.remove(&self.n);
+            self.slots.st.lock().unwrap().leave(self.serial);
             self.slots.notify.notify_waiters();
         }
     }
@@ -232,13 +254,49 @@ impl Slots {
         Self { st: Default::default(), notify: Notify::new(), limit }
     }
 
+    #[allow(dead_code)]
     pub async fn acquire(self: &Arc<Self>) -> SlotGuard {
+        self.wait_in_line(None).await
+    }
+
+    /// [`Slots::acquire`] for the transfer `id`, which [`Slots::to_front`] can move up.
+    pub async fn acquire_as(self: &Arc<Self>, id: &str) -> SlotGuard {
+        self.wait_in_line(Some(id)).await
+    }
+
+    /// Moves the waiting transfer `id` to the front of the line; false when it isn't waiting.
+    pub fn to_front(&self, id: &str) -> bool {
+        let mut st = self.st.lock().unwrap();
+        let Some(&serial) = st.named.get(id) else { return false };
+        let Some(old) = st.place.get(&serial).copied() else { return false };
+        st.waiting.remove(&(old, serial));
+        if st.front == 0 {
+            st.front = MIDDLE;
+        }
+        st.front -= 1;
+        let p = st.front;
+        st.waiting.insert((p, serial));
+        st.place.insert(serial, p);
+        drop(st);
+        self.notify.notify_waiters();
+        true
+    }
+
+    async fn wait_in_line(self: &Arc<Self>, id: Option<&str>) -> SlotGuard {
         let mut ticket = {
             let mut st = self.st.lock().unwrap();
-            let n = st.next_ticket;
-            st.next_ticket += 1;
-            st.waiting.insert(n);
-            Ticket { slots: self, n, queued: true }
+            if st.back == 0 {
+                st.back = MIDDLE;
+            }
+            let (p, serial) = (st.back, st.next_serial);
+            st.back += 1;
+            st.next_serial += 1;
+            st.waiting.insert((p, serial));
+            st.place.insert(serial, p);
+            if let Some(id) = id {
+                st.named.insert(id.to_string(), serial);
+            }
+            Ticket { slots: self, serial, queued: true }
         };
         loop {
             // registered before looking, so a slot freed in between still wakes us
@@ -247,8 +305,8 @@ impl Slots {
             notified.as_mut().enable();
             {
                 let mut st = self.st.lock().unwrap();
-                if st.running < (self.limit)().max(1) && st.waiting.first() == Some(&ticket.n) {
-                    st.waiting.remove(&ticket.n);
+                if st.running < (self.limit)().max(1) && st.waiting.first().map(|w| w.1) == Some(ticket.serial) {
+                    st.leave(ticket.serial);
                     st.running += 1;
                     ticket.queued = false;
                     drop(st);
@@ -688,6 +746,39 @@ mod tests {
             assert_eq!(*started.lock().unwrap(), vec![0, 1, 2]);
             assert_eq!(slots.st.lock().unwrap().running, 0);
             LIMIT.store(2, Relaxed);
+        });
+    }
+
+    #[test]
+    fn a_waiting_transfer_can_move_to_the_front() {
+        fn one() -> usize {
+            1
+        }
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let slots = Arc::new(Slots::new(one));
+            let running = slots.acquire_as("r").await;
+            let started = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+            let mut waiters = Vec::new();
+            for id in ["a", "b", "c"] {
+                let (s, st) = (slots.clone(), started.clone());
+                waiters.push(tokio::spawn(async move {
+                    let g = s.acquire_as(id).await;
+                    st.lock().unwrap().push(id.to_string());
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    drop(g);
+                }));
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            assert!(slots.to_front("c"));
+            assert!(!slots.to_front("r"), "running, not waiting");
+            assert!(!slots.to_front("nope"));
+            drop(running);
+            for w in waiters {
+                w.await.unwrap();
+            }
+            assert_eq!(*started.lock().unwrap(), ["c", "a", "b"]);
+            let st = slots.st.lock().unwrap();
+            assert!(st.waiting.is_empty() && st.place.is_empty() && st.named.is_empty(), "nothing left in line");
         });
     }
 

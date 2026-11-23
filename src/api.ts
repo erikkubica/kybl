@@ -141,6 +141,14 @@ export const api = {
   cancelTransfer: (id: string) => invoke<void>("cancel_transfer", { id }),
   /** Transfers still queued or running, including ones started before this page loaded. */
   activeTransfers: () => invoke<Omit<Transfer, "speed" | "error">[]>("active_transfers"),
+  /** Paused and failed transfers kept across restarts: start them again under the same id to carry on. */
+  keptTransfers: () => invoke<KeptTransfer[]>("kept_transfers"),
+  /** Stops a transfer but keeps what it did (partial file, parts sent), to carry on from later. */
+  pauseTransfer: (id: string) => invoke<void>("pause_transfer", { id }),
+  /** Pauses every queued or running transfer; resolves to how many. */
+  pauseAllTransfers: () => invoke<number>("pause_all_transfers"),
+  /** Moves a transfer still waiting for its turn to the front of its connection's queue. */
+  moveTransferToTop: (id: string) => invoke<boolean>("move_transfer_to_top", { id }),
 
   clearThumbnailCache: () => invoke<number>("clear_thumbnail_cache"),
   /** Bytes in the thumbnail cache and in the cache of recently opened files. */
@@ -280,13 +288,35 @@ export type ObjectProps = {
   metadata?: Record<string, string>;
 };
 
+/** A transfer the backend keeps to carry on (`kept_transfers`). */
+export type KeptTransfer = {
+  id: string;
+  kind: "upload" | "download";
+  name: string;
+  profileId: string;
+  bucket: string;
+  key: string;
+  local: string;
+  /** a download: the path first asked for */
+  requested: string;
+  overwrite: boolean;
+  bytes: number;
+  total: number;
+  state: "paused" | "error";
+  error: string | null;
+};
+
 export type TransferPrefs = {
   /** Files transferred at the same time per connection, 1..8 (default 3). */
   concurrency: number;
   /** Multipart parts in flight per file, 1..8 (default 4). */
   partConcurrency: number;
-  /** Total download+upload cap in KiB/s; 0 = unlimited. */
-  bandwidthLimitKbps: number;
+  /** Download speed cap in KiB/s, shared fairly by every running download; 0 = unlimited. */
+  downloadLimitKbps: number;
+  /** Upload speed cap in KiB/s, shared fairly by every running upload; 0 = unlimited. */
+  uploadLimitKbps: number;
+  /** After each transfer: compare nothing, the size, or a checksum where both sides have one (else the size). */
+  verify: "off" | "size" | "checksum";
   /** Phones: only transfer (and fetch thumbnails) on Wi-Fi / unmetered networks. */
   wifiOnly: boolean;
 };

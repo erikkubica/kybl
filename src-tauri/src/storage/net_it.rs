@@ -380,6 +380,90 @@ fn sftp_against_rclone() {
     let _ = std::fs::remove_dir_all(&keys);
 }
 
+/// An upload stopped part-way (paused: `on_part` set, so its temporary file is kept) and started
+/// again with what `on_part` handed out carries on from the bytes on the server, reading the
+/// local file from there, and the file arrives whole with nothing left behind.
+async fn uploads_carry_on_where_they_stopped(s: &dyn Storage, disk: &Path) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let data: Vec<u8> = (0..3u32 << 20).map(|i| (i % 249) as u8).collect();
+    let local = disk.parent().unwrap().join("resume-src.bin");
+    std::fs::write(&local, &data).unwrap();
+    let kept: Mutex<Option<ResumeState>> = Mutex::new(None);
+    let on_part = |p: PartRecord| *kept.lock().unwrap() = Some(ResumeState { upload_id: p.etag, part_size: p.size, parts: vec![] });
+    // the first attempt: a slow source that pulls the plug after 1 MiB
+    let stop = Arc::new(AtomicBool::new(false));
+    let (src, flag) = (data.clone(), stop.clone());
+    let body: ByteStream = Box::pin(futures_util::stream::unfold(0usize, move |at| {
+        let (src, flag) = (src.clone(), flag.clone());
+        async move {
+            if at >= src.len() {
+                return None;
+            }
+            if at >= 1 << 20 {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            let end = (at + (64 << 10)).min(src.len());
+            Some((Ok(Bytes::copy_from_slice(&src[at..end])), end))
+        }
+    }));
+    let opts = WriteOpts { on_part: Some(&on_part), ..Default::default() };
+    let src = WriteSource::Stream { len: Some(data.len() as u64), body, reopen: None };
+    let r = s.write("", "resume/big.bin", src, opts, &none, &stop).await;
+    assert!(matches!(r, Ok(WriteOutcome::Cancelled)), "{:?}", r.err());
+    let rs = kept.lock().unwrap().clone().expect("the temporary file was announced");
+    let tmp = s.stat("", &rs.upload_id).await.unwrap().expect("the temporary file is kept to carry on");
+    assert!(tmp.size >= 1 << 20, "{} bytes there", tmp.size);
+    assert!(s.stat("", "resume/big.bin").await.unwrap().is_none());
+    // carried on from the local file
+    let first = AtomicU64::new(0);
+    let report = |d: u64, _: u64| {
+        if d > 0 {
+            let _ = first.compare_exchange(0, d, Ordering::Relaxed, Ordering::Relaxed);
+        }
+    };
+    let rs_id = rs.upload_id.clone();
+    let opts = WriteOpts { resume: Some(rs), on_part: Some(&on_part), ..Default::default() };
+    let never = Arc::new(AtomicBool::new(false));
+    let r = s.write("", "resume/big.bin", WriteSource::Path(local.clone()), opts, &report, &never).await.unwrap();
+    assert!(matches!(r, WriteOutcome::Done(_)));
+    assert!(read_all(s, "resume/big.bin", None).await == data, "whole and in order");
+    assert!(first.load(Ordering::Relaxed) >= 1 << 20, "carried on from {} bytes", first.load(Ordering::Relaxed));
+    assert!(s.stat("", &rs_id).await.unwrap().is_none(), "the temporary file went in place");
+    let _ = disk;
+    // a resume state for another file is never taken up: a fresh upload
+    let stray = ResumeState { upload_id: "elsewhere/.x.kybl-000000000000".into(), part_size: 0, parts: vec![] };
+    let opts = WriteOpts { resume: Some(stray), ..Default::default() };
+    s.write("", "resume/big.bin", WriteSource::Path(local.clone()), opts, &none, &never).await.unwrap();
+    assert!(read_all(s, "resume/big.bin", None).await == data);
+    let _ = std::fs::remove_file(local);
+}
+
+#[test]
+fn ftp_uploads_carry_on_against_rclone() {
+    let passive = |port: u16| {
+        let lo = if port < 30000 { 41000 } else { 21000 } + (port % 1000) * 10;
+        vec!["--passive-port".to_string(), format!("{lo}-{}", lo + 9)]
+    };
+    let Some(srv) = serve_with("ftp", &["--vfs-cache-mode", "writes"], passive) else { return };
+    rt().block_on(async {
+        let b = FtpBackend::new(&net(srv.port), Some(PASS.into())).unwrap();
+        uploads_carry_on_where_they_stopped(&b, &srv.root).await;
+    });
+}
+
+#[test]
+fn sftp_uploads_carry_on_against_rclone() {
+    let Some(srv) = serve("sftp", &["--vfs-cache-mode", "writes"]) else { return };
+    rt().block_on(async {
+        let pw = || Secrets { password: Some(PASS.into()), ssh: None };
+        let e = SftpBackend::new(&net(srv.port), pw()).unwrap().roots().await.err().unwrap();
+        let fp = sftp::hostkey::fingerprint_in(&e.to_string()).unwrap().to_string();
+        let b = SftpBackend::new(&NetConfig { host_key: Some(fp), ..net(srv.port) }, pw()).unwrap();
+        uploads_carry_on_where_they_stopped(&b, &srv.root).await;
+    });
+}
+
 /// The shared HTTP client's TLS (rustls on ring, system roots) against public sites. Needs the
 /// internet: `KYBL_TEST_NET=1`.
 #[test]

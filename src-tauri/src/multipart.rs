@@ -28,8 +28,9 @@ use http_body::{Body, Frame, SizeHint};
 
 use crate::{
     state::{err, sdk_err},
+    storage::{PartRecord, ResumeState},
     transfers::{Hold, Outcome, Progress},
-    tuning::LIMITER,
+    tuning::{self, UP},
 };
 
 pub(crate) const SINGLE_PUT_LIMIT: u64 = 16 * 1024 * 1024;
@@ -46,7 +47,7 @@ pub(crate) const CHUNK: usize = 64 * 1024;
 struct Counting<B> {
     inner: B,
     sent: Arc<AtomicU64>,
-    wait: Option<Pin<Box<tokio::time::Sleep>>>,
+    wait: Option<tuning::Wait>,
 }
 
 impl<B: Body<Data = Bytes> + Unpin> Body for Counting<B> {
@@ -65,10 +66,7 @@ impl<B: Body<Data = Bytes> + Unpin> Body for Counting<B> {
             && let Some(data) = frame.data_ref()
         {
             self.sent.fetch_add(data.len() as u64, Ordering::Relaxed);
-            let pause = LIMITER.take(data.len());
-            if !pause.is_zero() {
-                self.wait = Some(Box::pin(tokio::time::sleep(pause)));
-            }
+            self.wait = UP.take_wait(data.len());
         }
         polled
     }
@@ -153,17 +151,70 @@ pub(crate) struct Multipart {
     parts: BTreeMap<i32, String>,
 }
 
-/// The local file as it was when the upload started; a retry only resumes if it still matches.
-#[derive(Clone, PartialEq, Debug)]
-struct FileStamp {
-    size: u64,
-    mtime: Option<SystemTime>,
+impl Multipart {
+    /// As kept across a restart (`resume`).
+    pub(crate) fn to_resume(&self, total: u64) -> ResumeState {
+        let sizes: HashMap<i32, u64> = part_plan(total, self.part_size).into_iter().map(|(n, _, len)| (n, len)).collect();
+        ResumeState {
+            upload_id: self.upload_id.clone(),
+            part_size: self.part_size,
+            parts: self
+                .parts
+                .iter()
+                .map(|(n, etag)| PartRecord { number: *n as u32, size: sizes.get(n).copied().unwrap_or(0), etag: etag.clone() })
+                .collect(),
+        }
+    }
+
+    fn from_resume(rs: &ResumeState) -> Self {
+        Self { upload_id: rs.upload_id.clone(), part_size: rs.part_size, parts: rs.parts.iter().map(|p| (p.number as i32, p.etag.clone())).collect() }
+    }
+
+    pub(crate) fn part_size(&self) -> u64 {
+        self.part_size
+    }
 }
 
-async fn stamp(path: &str) -> Result<FileStamp, String> {
+/// Told the multipart upload's state each time it changes (created, a part landed), so it can be
+/// kept across a restart.
+pub(crate) type OnState<'a> = Option<&'a (dyn Fn(&Multipart) + Send + Sync)>;
+
+/// The local file as it was when the upload started (size, modification time in ms); a retry only
+/// resumes if it still matches.
+pub(crate) type FileStamp = (u64, Option<i64>);
+
+pub(crate) async fn stamp(path: &str) -> Result<FileStamp, String> {
     let m = tokio::fs::metadata(path).await.map_err(err)?;
-    Ok(FileStamp { size: m.len(), mtime: m.modified().ok() })
+    let ms = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64);
+    Ok((m.len(), ms))
 }
+
+/// Takes in an upload kept from an earlier run, so the next start of transfer `id` carries on.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn adopt(id: &str, client: &Client, profile_id: &str, bucket: &str, key: &str, path: &str, stamp: FileStamp, rs: &ResumeState) {
+    let mut pending = PENDING.lock().unwrap();
+    if pending.contains_key(id) {
+        return;
+    }
+    let p = Pending {
+        client: client.clone(),
+        profile_id: profile_id.into(),
+        bucket: bucket.into(),
+        key: key.into(),
+        path: path.into(),
+        stamp,
+        mp: Multipart::from_resume(rs),
+    };
+    pending.insert(id.to_string(), p);
+}
+
+/// The upload kept for transfer `id`, if any.
+pub(crate) fn kept(id: &str) -> Option<Multipart> {
+    PENDING.lock().unwrap().get(id).map(|p| p.mp.clone())
+}
+
+/// What a paused upload hands back instead of finishing: everything it did is kept.
+pub(crate) const PAUSED: &str = "Paused";
 
 /// A failed upload kept for Retry.
 struct Pending {
@@ -223,6 +274,8 @@ pub async fn abort_all(limit: Duration) {
             .drain()
             .map(|(_, p)| (p.client, p.bucket, p.key, p.mp.upload_id)),
     );
+    // paused and interrupted transfers kept for the next start carry on from their parts
+    jobs.retain(|j| !crate::resume::keeps_upload(&j.3));
     let mut set = tokio::task::JoinSet::new();
     for (c, b, k, u) in jobs {
         set.spawn(async move { abort(&c, &b, &k, &u).await });
@@ -255,7 +308,7 @@ pub(crate) async fn upload_file(
     progress: Progress<'_>,
 ) -> Result<Outcome, String> {
     let mut mp = None;
-    let r = upload(client, profile_id, bucket, key, path, cancel, progress, None, &mut mp).await;
+    let r = upload(client, profile_id, bucket, key, path, cancel, progress, None, None, None, &mut mp).await;
     if r.is_err()
         && let Some(m) = mp
     {
@@ -277,6 +330,8 @@ pub(crate) async fn upload_resumable(
     cancel: &Arc<AtomicBool>,
     progress: Progress<'_>,
     hold: Hold<'_>,
+    pause: &AtomicBool,
+    on_state: OnState<'_>,
 ) -> Result<Outcome, String> {
     let now = stamp(path).await?;
     let kept = PENDING.lock().unwrap().remove(id);
@@ -290,13 +345,13 @@ pub(crate) async fn upload_resumable(
         None => None,
     };
     let resumed = mp.is_some();
-    let mut r = upload(client, profile_id, bucket, key, path, cancel, progress, hold, &mut mp).await;
+    let mut r = upload(client, profile_id, bucket, key, path, cancel, progress, hold, Some(pause), on_state, &mut mp).await;
     if resumed && matches!(&r, Err(e) if upload_gone(e)) {
         // the server dropped the old upload (it expires them after a while): start over
         if let Some(m) = mp.take() {
             crate::leftovers::upload_ended(&m.upload_id);
         }
-        r = upload(client, profile_id, bucket, key, path, cancel, progress, hold, &mut mp).await;
+        r = upload(client, profile_id, bucket, key, path, cancel, progress, hold, Some(pause), on_state, &mut mp).await;
     }
     if r.is_err()
         && let Some(m) = mp
@@ -328,6 +383,8 @@ async fn upload(
     cancel: &Arc<AtomicBool>,
     progress: Progress<'_>,
     hold: Hold<'_>,
+    pause: Option<&AtomicBool>,
+    on_state: OnState<'_>,
     mp: &mut Option<Multipart>,
 ) -> Result<Outcome, String> {
     let total = tokio::fs::metadata(path).await.map_err(err)?.len();
@@ -379,12 +436,17 @@ async fn upload(
         // written down until completed or aborted, in case the app ends before either
         crate::leftovers::upload_started(profile_id, bucket, key, &upload_id);
         *mp = Some(Multipart { upload_id, part_size: part_size_for(total), parts: BTreeMap::new() });
+        if let (Some(f), Some(m)) = (on_state, mp.as_ref()) {
+            f(m);
+        }
     }
     let m = mp.as_mut().expect("set above");
     let _open = OpenGuard::new(client, bucket, key, &m.upload_id);
 
-    match send_parts(client, bucket, key, path, total, m, cancel, progress, hold).await {
+    match send_parts(client, bucket, key, path, total, m, cancel, progress, hold, on_state).await {
         Ok(true) => {}
+        // paused: the upload stays open on the server and `mp` keeps its parts, to carry on later
+        Ok(false) if pause.is_some_and(|p| p.load(Ordering::Relaxed)) => return Err(PAUSED.into()),
         Ok(false) => {
             abort(client, bucket, key, &m.upload_id).await;
             *mp = None;
@@ -456,6 +518,7 @@ async fn send_parts(
     cancel: &Arc<AtomicBool>,
     progress: Progress<'_>,
     hold: Hold<'_>,
+    on_state: OnState<'_>,
 ) -> Result<bool, String> {
     let plan = part_plan(total, m.part_size);
     let mut done_bytes: u64 = plan.iter().filter(|p| m.parts.contains_key(&p.0)).map(|p| p.2).sum();
@@ -511,6 +574,9 @@ async fn send_parts(
                     Ok(Some(etag)) => {
                         m.parts.insert(n, etag);
                         done_bytes += len;
+                        if let Some(f) = on_state {
+                            f(m);
+                        }
                     }
                     Ok(None) => {
                         set.abort_all();
@@ -677,7 +743,7 @@ mod tests {
                 if done >= MIN_PART_SIZE && !locked.swap(true, Ordering::SeqCst) {
                     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
                 }
-            }, None)
+            }, None, &AtomicBool::new(false), None)
             .await;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
             crate::tuning::apply(crate::tuning::TransferPrefs::default());
@@ -687,7 +753,7 @@ mod tests {
 
             // Retry: the first progress after the start already counts the kept parts
             let seen = Mutex::new(Vec::<u64>::new());
-            let r = upload_resumable(&client, &id, "t", "testbucket", &key, &p, &cancel, &|done, _| seen.lock().unwrap().push(done), None)
+            let r = upload_resumable(&client, &id, "t", "testbucket", &key, &p, &cancel, &|done, _| seen.lock().unwrap().push(done), None, &AtomicBool::new(false), None)
                 .await
                 .unwrap();
             assert!(matches!(r, Outcome::Done));

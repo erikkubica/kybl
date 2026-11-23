@@ -143,8 +143,12 @@ async fn resumable(api: &Api, base: &str, t: &Target<'_>, mut src: Source, opts:
     };
     let mut restarted = false;
     let mut failures = 0u32;
+    // with `on_part` the caller keeps the session to carry on later (a paused transfer)
+    let keep = opts.on_part.is_some();
     let abort = |session: String| async move {
-        let _ = api.send(|c| c.delete(&session)).await;
+        if !keep {
+            let _ = api.send(|c| c.delete(&session)).await;
+        }
         Ok(None)
     };
     loop {

@@ -374,9 +374,17 @@ impl FtpBackend {
         })
     }
 
-    /// Sends the bytes to `path` with STOR.
-    async fn store(&self, path: &str, body: &mut ByteStream, len: Option<u64>, progress: Progress<'_>, cancel: &AtomicBool) -> SResult<Stored> {
+    /// Sends the bytes to `path` with STOR; with `offset`, the rest of a file from that byte on
+    /// (REST, then STOR).
+    #[allow(clippy::too_many_arguments)]
+    async fn store(&self, path: &str, body: &mut ByteStream, len: Option<u64>, offset: Option<u64>, progress: Progress<'_>, cancel: &AtomicBool) -> SResult<Stored> {
         let mut lease = self.lease().await?;
+        if let Some(at) = offset
+            && let Err(e) = lease.ftp().resume_transfer(at as usize).await
+        {
+            lease.healthy = false;
+            return Err(StorageError::other("This server can't carry on an upload where it stopped, so it will start over.").with_detail(ftp_error(e, &self.host).to_string()));
+        }
         let mut up: Xfer = match lease.ftp().put_with_stream(path).await {
             Ok(x) => x,
             // refused before any byte went: the caller may try another name
@@ -388,7 +396,7 @@ impl FtpBackend {
         };
         // nothing else may run on this connection until the transfer is finished
         lease.healthy = false;
-        let mut meter = Meter::new(len, progress, cancel);
+        let mut meter = Meter::starting_at(offset.unwrap_or(0), len, progress, cancel);
         while let Some(chunk) = body.next().await {
             if meter.cancelled() {
                 return Ok(Stored::Cancelled);
@@ -597,22 +605,34 @@ impl Storage for FtpBackend {
         }
         self.ensure_dir(&parent_key(path)).await?;
         let target = self.path(path).await?;
-        let (mut body, len) = source_stream(src).await?;
-        let mut tmp_key = temp_key(path);
-        let mut stored = self.store(&self.path(&tmp_key).await?, &mut body, len, progress, cancel).await;
-        let mut plain = false;
+        // an interrupted upload carries on in its temporary file, from the bytes already there
+        let resume_tmp = opts.resume.as_ref().filter(|rs| is_temp_for(&rs.upload_id, path)).map(|rs| rs.upload_id.clone());
+        let offset = match &resume_tmp {
+            Some(t) => resume_offset(self.stat(root, t).await?.map(|e| e.size.max(0) as u64), source_len(&src).await),
+            None => None,
+        };
+        // with `on_part` the caller keeps an interrupted upload to carry on: its file stays
+        let keep = opts.on_part.is_some();
+        let (mut body, len) = source_stream_from(src, offset.unwrap_or(0)).await?;
+        let (mut tmp_key, mut plain) = match (&resume_tmp, offset) {
+            (Some(t), Some(_)) => (t.clone(), !file_name(t).starts_with('.')),
+            _ => (temp_key(path), false),
+        };
+        announce_temp(&opts, &tmp_key, offset.unwrap_or(0));
+        let mut stored = self.store(&self.path(&tmp_key).await?, &mut body, len, offset, progress, cancel).await;
         // some servers refuse names starting with a dot: a temporary name like the file's own
-        if temp_refused(&stored) {
+        if temp_refused(&stored) && offset.is_none() {
             plain = true;
             tmp_key = plain_temp_key(path);
-            stored = self.store(&self.path(&tmp_key).await?, &mut body, len, progress, cancel).await;
+            announce_temp(&opts, &tmp_key, 0);
+            stored = self.store(&self.path(&tmp_key).await?, &mut body, len, None, progress, cancel).await;
         }
         // and some only take certain names (extensions): write in place as a last resort
         let mut direct = None;
-        if temp_refused(&stored) {
+        if temp_refused(&stored) && offset.is_none() {
             let existed = self.stat(root, path).await?.is_some();
             direct = Some(existed);
-            stored = self.store(&target, &mut body, len, progress, cancel).await;
+            stored = self.store(&target, &mut body, len, None, progress, cancel).await;
         }
         let written = if direct.is_some() { target.clone() } else { self.path(&tmp_key).await? };
         let failed = match stored {
@@ -622,7 +642,9 @@ impl Storage for FtpBackend {
             Err(e) => Some(Some(e)),
         };
         if let Some(err) = failed {
-            if remove_after_failed_store(direct) {
+            // kept to carry on (unless written in place: that can't be resumed)
+            let resumable = keep && direct.is_none() && !matches!(&err, Some(e) if offset.is_some() && e.message.contains("start over"));
+            if remove_after_failed_store(direct) && !resumable {
                 self.remove_partial(written).await;
             }
             return match err {
@@ -634,6 +656,17 @@ impl Storage for FtpBackend {
                     Err(e)
                 }
             };
+        }
+        // a resumed file goes in place only whole (a server that ignored REST wrote only the rest)
+        if offset.is_some()
+            && let Some(want) = len
+        {
+            let got = self.stat(root, &tmp_key).await?.map(|e| e.size.max(0) as u64);
+            if got != Some(want) {
+                self.remove_partial(written).await;
+                return Err(StorageError::other("The upload couldn't be carried on where it stopped, so it will start over.")
+                    .with_detail(format!("{} bytes on the server instead of {want}", got.unwrap_or(0))));
+            }
         }
         if direct.is_none() {
             let backup = if plain { plain_temp_key(path) } else { temp_key(path) };
