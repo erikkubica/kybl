@@ -15,20 +15,41 @@ export function PaneBanners({ pane }: { pane: Pane }) {
     <>
       {search && (
         <div className="banner">
-          {search.running && !search.stopped ? <span className="spinner" /> : <Icon name="search" size={14} />}
-          <span>
-            <strong>
-              {entries.length.toLocaleString()} {entries.length === 1 ? "result" : "results"}
-            </strong>{" "}
-            for “{search.query}” in <code>/{search.loc.prefix}</code>
-            {search.running && !search.stopped
-              ? ` · searching, ${search.scanned.toLocaleString()} objects checked so far`
-              : search.stopped
-                ? " · stopped early"
-                : search.truncated
-                  ? " · showing the first matches only, refine your search"
-                  : ` · ${search.scanned.toLocaleString()} objects checked`}
-          </span>
+          {search.running && !search.stopped ? <span className="spinner" /> : <Icon name={search.unavailable ? "alert" : "search"} size={14} />}
+          {search.unavailable ? (
+            <span>{search.unavailable}</span>
+          ) : search.mode === "contents" ? (
+            <span>
+              <strong>
+                {entries.length.toLocaleString()} {entries.length === 1 ? "file" : "files"}
+              </strong>
+              {search.matches ? ` · ${search.matches.toLocaleString()} matching ${search.matches === 1 ? "line" : "lines"}` : ""} for “{search.query}” in{" "}
+              <code>/{search.loc.prefix}</code>
+              {search.running && !search.stopped
+                ? " · searching inside files…"
+                : search.stopped
+                  ? " · stopped early"
+                  : search.truncated
+                    ? " · showing the first files only, refine your search"
+                    : search.engine
+                      ? ` · searched with ${search.engine}`
+                      : ""}
+            </span>
+          ) : (
+            <span>
+              <strong>
+                {entries.length.toLocaleString()} {entries.length === 1 ? "result" : "results"}
+              </strong>{" "}
+              for “{search.query}” in <code>/{search.loc.prefix}</code>
+              {search.running && !search.stopped
+                ? ` · searching, ${search.scanned.toLocaleString()} objects checked so far`
+                : search.stopped
+                  ? " · stopped early"
+                  : search.truncated
+                    ? " · showing the first matches only, refine your search"
+                    : ` · ${search.scanned.toLocaleString()} objects checked`}
+            </span>
+          )}
           {search.running && !search.stopped ? (
             <button className="btn btn-sm" onClick={ent.sr.stop}>
               Stop
@@ -52,6 +73,17 @@ export function PaneBanners({ pane }: { pane: Pane }) {
           <button className="btn btn-sm" onClick={() => actions.doSearch(ent.query.trim())}>
             Search subfolders too
           </button>
+          {!pane.contentsOff && (
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => {
+                ent.sr.configure({ mode: "contents" });
+                actions.doSearch(ent.query.trim());
+              }}
+            >
+              Inside files
+            </button>
+          )}
         </div>
       )}
       {listError && entries.length > 0 && (

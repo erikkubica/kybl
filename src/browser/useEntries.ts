@@ -63,7 +63,7 @@ export function useEntries(
   hideDotfilesOf: (profileId: string) => boolean = () => false,
 ) {
   const [query, setQuery] = useState("");
-  const sr = useSearch(onError);
+  const sr = useSearch(onError, (id) => !hideDotfilesOf(id));
   const search = sr.search && sameLoc(sr.search.loc, here) ? sr.search : null;
 
   const needsAll = !search && (sort.key !== "name" || sort.dir !== "asc");
@@ -72,7 +72,8 @@ export function useEntries(
   const fresh = sameLoc(listing.loc, here);
   const stale = !search && !fresh && lst.loading && !!listing.loc && !!here;
 
-  const filter = !search ? query.trim().toLowerCase() : "";
+  // typing filters the folder by name; with "Contents" chosen it waits for Enter instead
+  const filter = !search && sr.mode === "names" ? query.trim().toLowerCase() : "";
   const allEntries: Entry[] = useMemo(() => {
     if (search) {
       // folders whose own name matches: every object below such a folder matched too (the search
@@ -81,7 +82,8 @@ export function useEntries(
       const base = search.loc.prefix;
       const folders = new Set<string>();
       const results = search.results.filter((o) => !isPlaceholderIndex(o.key));
-      for (const o of results) {
+      // inside files: just the files
+      if (search.mode === "names") for (const o of results) {
         const parts = o.key.slice(base.length).split("/");
         let acc = base;
         for (let i = 0; i < parts.length - 1; i++) {

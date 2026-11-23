@@ -3507,6 +3507,7 @@ dependencies = [
  "percent-encoding",
  "qrcode",
  "quick-xml",
+ "regex",
  "reqwest",
  "ring",
  "rusqlite",

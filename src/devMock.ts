@@ -9,6 +9,7 @@ import type { ObjInfo, Profile } from "./types";
 import type { Capabilities, JobSpec, RootInfo } from "./api";
 import type { ImportSite } from "./connections/importApi";
 import { S3_CAPS } from "./useCaps";
+import { mockContentSearch, mockDocOpen, mockGitStatus, repoTree } from "./browser/devDevtools";
 
 const HOUR = 3600_000;
 const now = Date.now();
@@ -471,7 +472,9 @@ const acmeLive: Record<string, { folders: string[]; objects: ObjInfo[] }> = (() 
 const localTree: Record<string, Record<string, { folders: string[]; objects: ObjInfo[] }>> = {
   [HOME]: {
     // dotfiles: panes hide them unless "Show hidden files" is on
-    "": { folders: [".config/", "Desktop/", "Documents/", "Downloads/", "Movies/", "Music/", "Pictures/", "Sites/"], objects: [localObj(".DS_Store", 6_148, 2), localObj(".zshrc", 900, 400), localObj("notes.txt", 1_200, 3)] },
+    "": { folders: [".config/", "Desktop/", "Documents/", "Downloads/", "Movies/", "Music/", "Pictures/", "Projects/", "Sites/"], objects: [localObj(".DS_Store", 6_148, 2), localObj(".zshrc", 900, 400), localObj("notes.txt", 1_200, 3)] },
+    // a git work tree with a change of every kind (src/browser/devDevtools.ts)
+    ...repoTree(localObj),
     // Mirror: a web project to deploy to "Acme live" (FTP, below), with a few differences
     ...acmeProject(),
     "Pictures/": { folders: [], objects: [localObj("Pictures/beach.jpg", 3_400_000, 30), localObj("Pictures/hanoi.jpg", 2_800_000, 50)] },
@@ -690,6 +693,13 @@ async function handleLocal(cmd: string, a: any): Promise<unknown> {
     case "create_folder":
       (dirs[""] ??= { folders: [], objects: [] }).folders.push(a.prefix.endsWith("/") ? a.prefix : `${a.prefix}/`);
       return null;
+    case "git_status":
+      await sleep(60);
+      return mockGitStatus(HOME, a.bucket, a.prefix);
+    case "content_search": {
+      const files = Object.entries(dirs).filter(([k]) => k.startsWith(a.prefix)).flatMap(([, d]) => d.objects);
+      return mockContentSearch(a, files, "ripgrep", () => cancelled.has(a.opId));
+    }
     default:
       return undefined;
   }
@@ -732,6 +742,16 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       return s3Caps(profiles.find((x) => x.id === a.profileId));
     case "local_path":
       return a.profileId === LOCAL ? `${a.bucket.replace(/\/$/, "")}/${a.key}` : null;
+    // git marks: this computer only (handleLocal)
+    case "git_status":
+      return null;
+    // searching inside files: this computer (handleLocal) and SFTP servers
+    case "content_search": {
+      if (kindOf(a.profileId) !== "sftp") return { hits: [], files: 0, matches: 0, truncated: false, engine: "", unavailable: "Searching inside files works on this computer and on SFTP servers." };
+      await sleep(400);
+      const files = Object.entries(remoteTree(a.profileId, a.bucket)).filter(([k]) => k.startsWith(a.prefix)).flatMap(([, d]) => d.objects);
+      return mockContentSearch(a, files, "grep", () => cancelled.has(a.opId));
+    }
     // WP-A4: media of connections without share links plays through the app's media: scheme
     case "media_base":
       return { scheme: "media", base: "" };
@@ -1377,6 +1397,9 @@ function demoPdf(): ArrayBuffer {
   const mocked = internals.invoke;
   internals.invoke = async (cmd, args, options) => {
     if (cmd !== "doc_open" && cmd !== "doc_save") return mocked(cmd, args, options);
+    // the made-up texts content search finds (src/browser/devDevtools.ts)
+    const own = cmd === "doc_open" ? mockDocOpen((args as { path: string }).path) : undefined;
+    if (own) return own;
     const { handleDoc } = await import("./viewers/devSamples");
     return handleDoc(cmd, args, options);
   };

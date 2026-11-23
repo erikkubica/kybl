@@ -1,4 +1,4 @@
-import { useRef, type RefObject } from "react";
+import { useRef, type ReactNode, type RefObject } from "react";
 import { Icon, type IconName } from "../Icons";
 import { PathTitle } from "./PathTitle";
 import { ProviderBadge } from "./Sidebar";
@@ -57,6 +57,9 @@ export function Toolbar({
   onGoTo,
   favorite,
   onToggleFavorite,
+  afterPath,
+  searchExtras,
+  searchPlaceholder,
   onGrip,
 }: {
   bucket: string | null;
@@ -118,6 +121,11 @@ export function Toolbar({
   /** the folder on screen is a favorite; the star toggles it */
   favorite?: boolean;
   onToggleFavorite?: () => void;
+  /** right after the path, on the same row (the git branch chip) */
+  afterPath?: ReactNode;
+  /** inside the search field, before its clear button (Names / Contents) */
+  searchExtras?: ReactNode;
+  searchPlaceholder?: string;
   /**
    * a press on the header's empty part (not a button, the path or the badge): the start of
    * dragging the pane to another place in the layout (shell/usePaneDrag). Absent when there is
@@ -253,6 +261,7 @@ export function Toolbar({
             <span className="crumb muted">No bucket selected</span>
           </nav>
         )}
+        {afterPath}
 
         <div className="spacer" />
 
@@ -305,10 +314,11 @@ export function Toolbar({
                 searchInput.current?.blur();
               }
             }}
-            placeholder="Filter, ↵ to search subfolders"
+            placeholder={searchPlaceholder ?? "Filter, ↵ to search subfolders"}
             aria-label="Filter this folder, or press Return to search its subfolders"
             spellCheck={false}
           />
+          {searchExtras}
           {searchRunning ? (
             <button className="icon-btn search-stop" onClick={onStopSearch} title="Stop searching" aria-label="Stop searching">
               <span className="spinner" />

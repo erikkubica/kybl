@@ -16,6 +16,8 @@ import { asExport } from "../connections/native";
 import { LazyDocumentView, viewerFor } from "../viewers/registry";
 import { releaseOnUnmount } from "../releaseMedia";
 import { useLocalCopy } from "../localCopyProgress";
+import { useRevealHit } from "./revealHit";
+import type { ContentHit } from "../browser/devtoolsApi";
 
 const MAX_TEXT = 50 * 1000 * 1000;
 /** the info column shows by itself (until it is switched off or on) in a window at least this wide */
@@ -65,6 +67,7 @@ export function QuickLook({
   index,
   count,
   startWithInfo,
+  hit,
   infoPref,
   onInfoPref,
   info: act,
@@ -86,6 +89,8 @@ export function QuickLook({
   count: number;
   /** opened by Get Info: the info column shows whatever it was left at */
   startWithInfo?: boolean;
+  /** opened from a search inside files: the preview scrolls to this matching line */
+  hit?: ContentHit;
   /** the info column's setting: on, off, or null for "if the window is wide enough" */
   infoPref: boolean | null;
   onInfoPref(on: boolean): void;
@@ -104,6 +109,8 @@ export function QuickLook({
 }) {
   // a Copy or Open of this file still downloading shows on its button
   const busy = useLocalCopy(profileId, bucket, entry.key);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useRevealHit(bodyRef, entry.key, hit);
   const working = !!busy;
   const many = !!group && group.length > 1;
   const isFile = entry.kind === "file" && !many;
@@ -251,7 +258,7 @@ export function QuickLook({
           </button>
         </div>
         <div className="ql-main">
-          <div className="ql-body">
+          <div className="ql-body" ref={bodyRef}>
             {many ? (
               <GroupSheet profileId={profileId} bucket={bucket} group={group!} onPick={onPick} />
             ) : entry.kind === "folder" ? (

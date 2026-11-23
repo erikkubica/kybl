@@ -24,6 +24,7 @@ import { useEntries } from "./useEntries";
 import { useLocation } from "./useLocation";
 import { useSelection } from "./useSelection";
 import { useEntryActions } from "./useEntryActions";
+import { useGitStatus } from "./useGitStatus";
 import { LS, paneKeys, type Loc, type PaneId, type PaneView } from "./types";
 
 /** What a pane gets from the shell. */
@@ -116,6 +117,15 @@ function usePaneCore(env: PaneEnv) {
   );
   const ent = useEntries(here, sort, settings.foldersFirst, onError, hideDotfilesOf);
   const { lst, sr, search, entries } = ent;
+  // this computer's folders in a git work tree: the branch and the items' status marks
+  const git = useGitStatus(here, !!caps?.localPaths, ent.listing);
+  /** why this connection can't search inside files (null: it can, on this computer and SFTP servers) */
+  const contentsOff = caps?.localPaths || profile?.kind === "sftp" ? null : "Searching inside files works on this computer and on SFTP servers";
+  // another kind of connection opened in the pane: back to names
+  const { mode: searchMode, configure: configureSearch } = sr;
+  useEffect(() => {
+    if (caps && contentsOff && searchMode === "contents") configureSearch({ mode: "names" });
+  }, [caps, contentsOff, searchMode, configureSearch]);
   const sel = useSelection(entries, ent.stale);
   const { setSelected, setCursor } = sel;
 
@@ -421,6 +431,8 @@ function usePaneCore(env: PaneEnv) {
     quickLook,
     folderSizes,
     caps,
+    git,
+    contentsOff,
     rememberAfterListing,
     searchInput,
     view,

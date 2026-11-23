@@ -2,6 +2,8 @@ mod actions;
 mod commands;
 // WP-C: phone backup (camera roll and folders to any connection)
 mod backup;
+// git status marks and searching inside files, with the user's own git / ripgrep / grep
+mod devtools;
 // WP-B1: SQLite open-with-migrations helper, and copy/move jobs between connections
 mod db;
 mod jobs;
@@ -188,6 +190,8 @@ pub fn run() {
             commands::create_bucket,
             commands::list_objects,
             commands::search_objects,
+            devtools::git_status,
+            devtools::content_search,
             commands::head_object,
             commands::get_text_preview,
             commands::get_object_bytes,
