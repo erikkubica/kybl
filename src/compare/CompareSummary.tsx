@@ -4,12 +4,13 @@ import { Icon } from "../Icons";
 import { canDiff, openDiff } from "../viewers/diff";
 import type { Entry } from "../types";
 import type { FolderDiff } from "./compareFolders";
+import { plural } from "../format";
 
 type At = { profileId: string; bucket: string; prefix: string };
 /** Files shown with a Compare button (the rest are only counted). */
 const MAX_COMPARE = 8;
 
-const n = (count: number, one: string, many = `${one}s`) => `${count.toLocaleString()} ${count === 1 ? one : many}`;
+const n = plural;
 
 export function CompareSummary({
   diff,
@@ -48,7 +49,7 @@ export function CompareSummary({
       <div className="modal-body compare-body">
         {nothing ? (
           <p>
-            <strong>Both folders have the same items.</strong> {n(diff.same, "item")} match by name and size.
+            <strong>{diff.same ? "Both folders have the same items." : "Both folders are empty."}</strong> {diff.same ? `${n(diff.same, "item")} ${diff.same === 1 ? "matches" : "match"} by name and size.` : null}
           </p>
         ) : (
           <>
@@ -57,7 +58,7 @@ export function CompareSummary({
               {diff.rightOnly.length > 0 && <li>{n(diff.rightOnly.length, "item")} only in “{rightName}”</li>}
               {diff.leftNewer.length > 0 && <li>{n(diff.leftNewer.length, "file")} newer in “{leftName}”</li>}
               {diff.rightNewer.length > 0 && <li>{n(diff.rightNewer.length, "file")} newer in “{rightName}”</li>}
-              {diff.differ.length > 0 && <li>{n(diff.differ.length, "file")} differ, with no telling which is newer</li>}
+              {diff.differ.length > 0 && <li>{n(diff.differ.length, "file")} {diff.differ.length === 1 ? "differs" : "differ"}, with no telling which is newer</li>}
               <li className="dim">{n(diff.same, "item")} the same</li>
             </ul>
             {leftAt && rightAt && differing.length > 0 && (

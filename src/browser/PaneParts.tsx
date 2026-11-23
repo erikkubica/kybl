@@ -1,5 +1,6 @@
 /** The smaller pieces of a browser pane: banners above the list, the status bar and the drag ghost. */
-import { formatBytes, sumSizes, hasSize } from "../format";
+import { keys } from "../components/osText";
+import { formatBytes, sumSizes, hasSize, plural } from "../format";
 import { rootName } from "../connections/roots";
 import { destLabel } from "../moving";
 import { Icon } from "../Icons";
@@ -42,12 +43,12 @@ export function PaneBanners({ pane }: { pane: Pane }) {
               </strong>{" "}
               for “{search.query}” in <code>/{search.loc.prefix}</code>
               {search.running && !search.stopped
-                ? ` · searching, ${search.scanned.toLocaleString()} objects checked so far`
+                ? ` · searching, ${plural(search.scanned, "object")} checked so far`
                 : search.stopped
                   ? " · stopped early"
                   : search.truncated
                     ? " · showing the first matches only, refine your search"
-                    : ` · ${search.scanned.toLocaleString()} objects checked`}
+                    : ` · ${plural(search.scanned, "object")} checked`}
             </span>
           )}
           {search.running && !search.stopped ? (
@@ -169,9 +170,9 @@ export function DragGhost({ drag, bucket, profileId }: { drag: DragState; bucket
             : drag.dest != null
             ? drag.label != null
               ? // into the other pane: moves (⌥ copies), unless that place only takes copies
-                `${drag.copy ? "Copy" : "Move"} to ${drag.label}${drag.copy || drag.copyOnly ? "" : " · ⌥ to copy"}`
+                `${drag.copy ? "Copy" : "Move"} to ${drag.label}${drag.copy || drag.copyOnly ? "" : keys(" · ⌥ to copy")}`
               : // a drop moves; ⌥ copies
-                `${drag.copy ? "Copy" : "Move"} to ${drag.bucket != null ? rootName(profileId, drag.bucket) : destLabel(drag.dest, bucket ?? "", profileId)}${drag.copy ? "" : " · ⌥ to copy"}`
+                `${drag.copy ? "Copy" : "Move"} to ${drag.bucket != null ? rootName(profileId, drag.bucket) : destLabel(drag.dest, bucket ?? "", profileId)}${drag.copy ? "" : keys(" · ⌥ to copy")}`
             : (drag.note ?? "Drop on a folder or a bucket")}
         </span>
       </span>

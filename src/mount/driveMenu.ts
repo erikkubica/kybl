@@ -20,7 +20,7 @@ export function ejectLabel(): string {
 export function driveBadgeTitle(m: MountInfo): string | null {
   if (m.state === "mounted") return `Mounted as the drive “${m.name}”`;
   if (m.state === "mounting") return `Mounting “${m.name}”…`;
-  if (m.state === "error") return `The drive “${m.name}” couldn't be mounted`;
+  if (m.state === "error") return m.error?.startsWith("Another copy of Kybl") ? `Another copy of Kybl has the drive “${m.name}”` : `The drive “${m.name}” couldn't be mounted`;
   return null;
 }
 
@@ -42,14 +42,17 @@ export const ejectDrive = (m: MountInfo, toast: Toast) =>
     if (r.state === "unmounted") toast("info", `“${m.name}” was ${ejectLabel() === "Eject" ? "ejected" : "unmounted"}`);
   }, toast);
 
-const mountAgain = (m: MountInfo, toast: Toast) =>
-  run(async () => {
-    const r = await mountApi.mountRetry(m.id);
-    if (r.state === "mounted") {
-      toast("success", `“${r.name}” is a drive in ${fileManagerName()} again`);
-      mountApi.mountReveal(r.id).catch(() => {});
-    } else if (r.error) toast("error", r.error.split("\n\n")[0]);
-  }, toast);
+/** Mount a drive that failed once more; a refusal (another Kybl copy has the drives, …) is toasted. */
+export async function retryDrive(id: string, toast: Toast, reveal = false) {
+  const r = await mountApi.mountRetry(id);
+  if (r.state === "mounted") {
+    if (!reveal) return;
+    toast("success", `“${r.name}” is a drive in ${fileManagerName()} again`);
+    mountApi.mountReveal(r.id).catch(() => {});
+  } else if (r.error) toast("error", r.error.split("\n\n")[0]);
+}
+
+const mountAgain = (m: MountInfo, toast: Toast) => run(() => retryDrive(m.id, toast, true), toast);
 
 /**
  * The menu items for a place's drive. `m` is the drive showing exactly this place (`findMount`);

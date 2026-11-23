@@ -1,10 +1,11 @@
+import { keys } from "./osText";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { GitBadge, HitLine } from "./DevMarks";
 import type { GitMark } from "../browser/useGitStatus";
 import type { ContentHit } from "../browser/devtoolsApi";
 import { useMeasured, useWindowed } from "../useWindowed";
 import { Icon } from "../Icons";
-import { formatBytes, formatDate, formatDateFull, entrySize, entryKind, parentPrefix } from "../format";
+import { formatBytes, formatDate, formatDateFull, entrySize, entryKind, parentPrefix, plural } from "../format";
 import { EmptyState, FileIcon, SkeletonRows } from "./FileIcon";
 import { ContextMenu, isMenuKey, menuPointFor, type MenuItem } from "./Dialogs";
 import { useListNav, useMarquee, type Box, type FolderSizeInfo, type SelectKeys } from "./listNav";
@@ -73,7 +74,7 @@ function loadLocalCols(): ColumnId[] {
 function FolderSizeCell({ info, onCalc }: { info: FolderSizeInfo | undefined; onCalc?: () => void }) {
   if (info?.running)
     return (
-      <span className="fsize running" title={`${info.objects.toLocaleString()} objects so far`}>
+      <span className="fsize running" title={`${plural(info.objects, "object")} so far`}>
         <span className="spinner sm" />
         {info.bytes > 0 ? formatBytes(info.bytes) : ""}
       </span>
@@ -491,7 +492,7 @@ export function FileTable({
             className={`row is-folder row-up ${upActive ? "active" : ""}`}
             role="row"
             data-drop={parentPrefix(prefix)}
-            title="Enclosing folder (⌘↑)"
+            title={keys("Enclosing folder (⌘↑)")}
             onMouseDown={(ev) => ev.button === 0 && ev.preventDefault()}
             onDoubleClick={onGoUp}
             onContextMenu={(ev) => ev.preventDefault()}

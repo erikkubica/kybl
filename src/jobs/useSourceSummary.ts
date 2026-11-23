@@ -5,7 +5,7 @@
  */
 import { useEffect, useState } from "react";
 import { api, LOCAL_ID, type RootInfo } from "../api";
-import { baseName, formatBytes } from "../format";
+import { baseName, formatBytes, plural } from "../format";
 import type { Profile } from "../types";
 import { deviceName, locLabel } from "./LocationPicker";
 
@@ -84,12 +84,12 @@ export function useSourceSummary(source: MigrationSource, verb: "copy" | "move")
       ? whole
         ? `everything in ${rootName}`
         : `“${itemName(source.items[0], rootName)}”`
-      : `${source.items.length.toLocaleString()} items`;
+      : plural(source.items.length, "item");
   const count = [
     multi ? `${source.roots!.length} ${source.roots!.length === 1 ? "bucket" : "buckets"}` : "",
     sizes.files > 0 ? `${sizes.files.toLocaleString()} ${sizes.files === 1 ? "file" : "files"}` : "",
     sizes.bytes > 0 || sizes.files > 0 ? `${formatBytes(sizes.bytes)}${sizes.counting ? " so far" : ""}` : "",
-    sizes.uncounted ? `${sizes.files > 0 ? "plus " : ""}${sizes.uncounted.toLocaleString()} folders` : "",
+    sizes.uncounted ? `${sizes.files > 0 ? "plus " : ""}${plural(sizes.uncounted, "folder")}` : "",
   ].filter(Boolean);
   /** " (12 files, 40 MB)" or "" while nothing is known */
   const amount = count.length ? ` (${count.join(", ")})` : "";

@@ -26,6 +26,8 @@ let loading: Promise<void> | null = null;
 let again: Promise<void> | null = null;
 /** The list was read once: a job that first shows up already finished started (and ended) since. */
 let loadedOnce = false;
+/** Jobs removed from the list: a read that began before the delete went through must not bring them back. */
+const removed = new Set<string>();
 
 type Finished = (job: JobSummary) => void;
 const finishedListeners = new Set<Finished>();
@@ -82,6 +84,7 @@ export function refreshJobs(): Promise<void> {
       const before = new Map(jobsStore.get().map((j) => [j.id, j.progress.state]));
       const listedBefore = loadedOnce;
       loadedOnce = true;
+      list = list.filter((j) => !removed.has(j.id));
       jobsStore.set(list);
       notifyEnded(
         list.filter((j) => {
@@ -173,10 +176,12 @@ export const migrations = {
   },
   /** Removes a finished (or paused) job from the list. */
   async remove(id: string) {
+    removed.add(id);
     jobsStore.set((cur) => cur.filter((j) => j.id !== id));
     try {
       await jobsApi.jobDelete(id);
     } catch (e) {
+      removed.delete(id);
       void refreshJobs();
       throw e;
     }

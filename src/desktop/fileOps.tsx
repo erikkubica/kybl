@@ -4,6 +4,7 @@
  * names checks for clashes first, and moves, renames and copies that can be reversed safely leave
  * an Undo behind.
  */
+import { keys } from "../components/osText";
 import { NO_EXPORT, asExport, exportable } from "../connections/native";
 import { peekCaps } from "../useCaps";
 import type { ReactNode } from "react";
@@ -72,7 +73,7 @@ export type OpsContext = {
 /** Undo of a copy deletes the copied objects; past this many it asks first. */
 const UNDO_CONFIRM_OVER = 100;
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+import { plural } from "../format";
 const whatOf = (list: { name: string }[]) => (list.length === 1 ? `“${list[0].name}”` : plural(list.length, "item"));
 
 export function makeFileOps(c: OpsContext) {
@@ -378,7 +379,7 @@ export function makeFileOps(c: OpsContext) {
         const r = await api.deleteObjects(pid, b, files.map((e) => e.key), folders.map((e) => e.key), id);
         jobs.finish(id, r, run);
         if (r.error && r.error !== "Cancelled")
-          toast("error", `Deleting stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`, showAction);
+          toast("error", `Deleting stopped after ${r.done.toLocaleString()} of ${plural(r.total, "object")}. ${r.error}`, showAction);
       } catch (e) {
         jobs.finish(id, { error: errMessage(e) }, run);
         toast("error", errMessage(e), showAction);
@@ -452,7 +453,7 @@ export function makeFileOps(c: OpsContext) {
       try {
         const r = await api.moveMany(pid, srcB, todo, kind !== "copy", id, dstB !== srcB ? dstB : null);
         jobs.finish(id, r, again);
-        if (r.error && r.error !== "Cancelled") toast("error", `Stopped again after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`, showAction);
+        if (r.error && r.error !== "Cancelled") toast("error", `Stopped again after ${r.done.toLocaleString()} of ${plural(r.total, "object")}. ${r.error}`, showAction);
       } catch (e) {
         jobs.finish(id, { error: errMessage(e) }, again);
         toast("error", errMessage(e), showAction);
@@ -484,7 +485,7 @@ export function makeFileOps(c: OpsContext) {
     try {
       const r = await api.moveMany(pid, toBucket, items.map((i) => ({ from: i.to, to: i.from, isPrefix: i.isPrefix })), true, id, toBucket !== fromBucket ? fromBucket : null);
       jobs.finish(id, r, retry);
-      if (r.error && r.error !== "Cancelled") toast("error", `Undo stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`, showAction);
+      if (r.error && r.error !== "Cancelled") toast("error", `Undo stopped after ${r.done.toLocaleString()} of ${plural(r.total, "object")}. ${r.error}`, showAction);
     } catch (e) {
       jobs.finish(id, { error: errMessage(e) }, retry);
       toast("error", errMessage(e), showAction);
@@ -563,7 +564,7 @@ export function makeFileOps(c: OpsContext) {
           const r = await api.moveMany(pid, b, items, true, id);
           jobs.finish(id, r, retry);
           if (r.error && r.error !== "Cancelled")
-            toast("error", `Renaming stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`, showAction);
+            toast("error", `Renaming stopped after ${r.done.toLocaleString()} of ${plural(r.total, "object")}. ${r.error}`, showAction);
           else renamed = !r.error;
         } catch (err) {
           jobs.finish(id, { error: errMessage(err) }, retry);
@@ -823,7 +824,7 @@ export function makeFileOps(c: OpsContext) {
       if (r.error && r.error !== "Cancelled")
         toast(
           "error",
-          `Stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}` +
+          `Stopped after ${r.done.toLocaleString()} of ${plural(r.total, "object")}. ${r.error}` +
             (mode === "move" ? " Everything not moved yet is still in its old place." : ""),
           showAction,
         );
@@ -891,7 +892,7 @@ export function makeFileOps(c: OpsContext) {
     try {
       const r = await api.moveMany(pid, b, items, false, id);
       jobs.finish(id, r, retry);
-      if (r.error && r.error !== "Cancelled") toast("error", `Stopped after ${r.done.toLocaleString()} of ${r.total.toLocaleString()} objects. ${r.error}`, showAction);
+      if (r.error && r.error !== "Cancelled") toast("error", `Stopped after ${r.done.toLocaleString()} of ${plural(r.total, "object")}. ${r.error}`, showAction);
       ok = !r.error;
     } catch (err) {
       jobs.finish(id, { error: errMessage(err) }, retry);
@@ -914,7 +915,7 @@ export function makeFileOps(c: OpsContext) {
         title: `Delete ${plural(keys.length, "copied object")}?`,
         label: "Delete copies",
         danger: true,
-        message: <p>Undoing the {label} deletes the {keys.length.toLocaleString()} objects it made. Anything added there since stays.</p>,
+        message: <p>Undoing the {label} deletes the {plural(keys.length, "object")} it made. Anything added there since stays.</p>,
       });
       if (!go) return;
     }
@@ -939,7 +940,7 @@ export function makeFileOps(c: OpsContext) {
     if (!profile || bucket == null || !list.length) return;
     itemClipboard.set({ mode, profileId: profile.id, bucket, items: list });
     navigator.clipboard?.writeText(list.map((e) => `s3://${bucket}/${e.key}`).join("\n")).catch(() => {});
-    toast("info", `${mode === "cut" ? "Cut" : "Copied"} ${whatOf(list)}. Paste with ⌘V in another folder.`);
+    toast("info", keys(`${mode === "cut" ? "Cut" : "Copied"} ${whatOf(list)}. Paste with ⌘V in another folder.`));
   };
 
   /** ⌘V: copies or moves the clipped items into `dest` of the bucket on screen. */

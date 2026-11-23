@@ -36,7 +36,7 @@ function SourceBadge({ id }: { id: string }) {
   );
 }
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+import { plural } from "../format";
 
 export function ImportDialog({ onClose, onImported, toast }: Props) {
   const [sources, setSources] = useState<ImportSource[] | null>(null);

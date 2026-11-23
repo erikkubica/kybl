@@ -1,7 +1,7 @@
 import { Icon, type IconName } from "../Icons";
 import { errMessage } from "../api";
 import { ErrorText } from "./ErrorText";
-import { formatBytes, formatEta, formatSpeed, parseMbps } from "../format";
+import { formatBytes, formatEta, formatSpeed, mbpsInput, parseMbps, plural } from "../format";
 import type { Transfer, TransferState } from "../types";
 import { useJobList, type Job, type JobKind } from "../useJobs";
 import { runTotals, transferActions, transferControls, useTransferList } from "../useTransfers";
@@ -117,7 +117,8 @@ function SpeedMenu() {
         <PromptDialog
           title="Speed limit"
           label="MB/s, for uploads and downloads each (0: no limit)"
-          initial={down ? String(Math.round((down / MBPS) * 10) / 10) : ""}
+          initial={down ? mbpsInput(down / MBPS) : ""}
+          selectAll
           confirmLabel="Limit"
           check={(v) => {
             const mb = parseMbps(v);
@@ -574,10 +575,10 @@ function TransferPanelView({
                         : p.state === "needsAuth"
                           ? "Sign in again to continue"
                           : p.state === "done" && p.filesFailed > 0
-                            ? `${p.filesFailed.toLocaleString()} of ${p.filesTotal.toLocaleString()} files couldn’t be ${verb}`
+                            ? `${p.filesFailed.toLocaleString()} of ${plural(p.filesTotal, "file")} couldn’t be ${verb}`
                             : p.state === "done"
                               ? `${p.filesTotal.toLocaleString()} ${p.filesTotal === 1 ? "file" : "files"}` + (p.bytesTotal > 0 ? ` · ${formatBytes(p.bytesTotal)}` : "")
-                              : `${(p.filesDone + p.filesSkipped).toLocaleString()} of ${p.filesTotal.toLocaleString()} files` +
+                              : `${(p.filesDone + p.filesSkipped).toLocaleString()} of ${plural(p.filesTotal, "file")}` +
                                 (p.bytesTotal > 0 ? ` · ${formatBytes(p.bytesDone)} of ${formatBytes(p.bytesTotal)}` : "")}
                 </div>
                 {bad ? (
@@ -668,7 +669,7 @@ function TransferPanelView({
               <div className="tp-meta">
                 {sy.state === "scanning"
                   ? "Checking for changes…"
-                  : `${sy.done.toLocaleString()} of ${sy.total.toLocaleString()} files` + (sy.totalBytes > 0 ? ` · ${formatBytes(sy.bytes)} of ${formatBytes(sy.totalBytes)}` : "")}
+                  : `${sy.done.toLocaleString()} of ${plural(sy.total, "file")}` + (sy.totalBytes > 0 ? ` · ${formatBytes(sy.bytes)} of ${formatBytes(sy.totalBytes)}` : "")}
               </div>
               <div className={`bar ${sy.state === "scanning" || !sy.total ? "indeterminate" : ""}`}>
                 <div style={{ width: `${Math.round((sy.totalBytes > 0 ? sy.bytes / sy.totalBytes : sy.total ? sy.done / sy.total : 0) * 100)}%` }} />
@@ -774,7 +775,7 @@ function MessageLog() {
   useEffect(() => {
     // braces: newer engines return a Promise from scrollIntoView, which React would take for a clean-up
     end.current?.scrollIntoView({ block: "end" });
-  }, [log.length]);
+  }, [log[log.length - 1]?.id]);
   if (!log.length)
     return (
       <div className="tp-empty" id="tp-list">

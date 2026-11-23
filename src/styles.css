@@ -4896,6 +4896,7 @@ input[aria-invalid="true"]:focus {
   background: transparent;
   padding: 0 2px;
   letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 .side-find:focus-within .side-find-key {
   visibility: hidden;

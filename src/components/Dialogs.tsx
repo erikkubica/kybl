@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { errDetail, errSummary } from "../api";
 import { Icon, type IconName } from "../Icons";
+import { keys } from "./osText";
 
 /** Elements Tab can reach inside a dialog or menu. */
 const FOCUSABLE =
@@ -202,6 +203,7 @@ export function PromptDialog({
   label,
   initial,
   confirmLabel,
+  selectAll,
   note,
   check,
   onSubmit,
@@ -211,6 +213,8 @@ export function PromptDialog({
   label: string;
   initial: string;
   confirmLabel: string;
+  /** select the whole value (a number), not just the part before an extension */
+  selectAll?: boolean;
   /** a caution under the field (renaming a folder that is copied file by file, say) */
   note?: string;
   /** what's wrong with a value, shown under the field (the dialog stays open); null when fine */
@@ -223,9 +227,9 @@ export function PromptDialog({
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
     input.current?.focus();
-    const dot = initial.lastIndexOf(".");
+    const dot = selectAll ? -1 : initial.lastIndexOf(".");
     input.current?.setSelectionRange(0, dot > 0 ? dot : initial.length);
-  }, [initial]);
+  }, [initial, selectAll]);
   const submit = () => {
     const v = value.trim();
     if (!v) return;
@@ -493,7 +497,7 @@ function PlainRow({ it, onClose, onHover }: { it: Exclude<MenuItem, { type: "sub
     >
       <ItemIcon it={it} />
       <span className="ctx-label">{it.label}</span>
-      {it.hint && <span className="ctx-hint">{it.hint}</span>}
+      {it.hint && <span className="ctx-hint">{keys(it.hint)}</span>}
     </button>
   );
 }

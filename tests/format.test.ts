@@ -1,7 +1,7 @@
 // Sizes, times and kinds (src/format.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatBytes, formatEta, kindLabel, setByteUnits } from "../src/format.ts";
+import { formatBytes, formatEta, kindLabel, mbpsInput, parseMbps, plural, setByteUnits } from "../src/format.ts";
 
 test("sizes pick their unit after rounding", () => {
   setByteUnits(false);
@@ -29,4 +29,21 @@ test("names without an extension and dotfiles are plain files", () => {
   assert.equal(kindLabel("README", false), "File");
   assert.equal(kindLabel(".env", false), "File");
   assert.equal(kindLabel("photos", true), "Folder");
+});
+
+test("counts take the right number", () => {
+  assert.equal(plural(1, "folder"), "1 folder");
+  assert.equal(plural(0, "item"), "0 items");
+  assert.equal(plural(1204, "file"), `${(1204).toLocaleString()} files`);
+  assert.equal(plural(2, "copy", "copies"), "2 copies");
+});
+
+test("a custom speed limit survives being shown and saved again", () => {
+  const MBPS = 1_000_000 / 1024;
+  for (const mb of [0.04, 0.25, 2.5, 0.001, 12]) {
+    const kib = Math.round(mb * MBPS);
+    const again = parseMbps(mbpsInput(kib / MBPS));
+    assert.equal(typeof again, "number");
+    assert.equal(Math.round((again as number) * MBPS), kib);
+  }
 });

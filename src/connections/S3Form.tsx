@@ -5,7 +5,7 @@ import { providerMeta } from "../providers";
 import { ProviderBadge } from "../components/Sidebar";
 import type { Profile } from "../types";
 import { Field, RAW, SecretInput, type FormApi } from "./fields";
-import { endpointAfterRegion } from "./s3Endpoint";
+import { endpointAfterRegion, fieldsAfterProvider } from "./s3Endpoint";
 
 type Preset = {
   id: string;
@@ -96,11 +96,14 @@ export function S3Form({ initial, tried, formApi, onEdit }: { initial: Profile |
     };
 
   const pickProvider = (id: string) => {
+    // the selected tile again is a no-op; otherwise only values the old preset filled in follow the new one
+    if (id === provider) return;
     const p = PRESETS.find((x) => x.id === id) ?? PRESETS[0];
+    const next = fieldsAfterProvider(preset, p, { region, endpoint, pathStyle });
     setProvider(id);
-    setRegion(p.defaultRegion);
-    setEndpoint(p.endpoint(p.defaultRegion));
-    setPathStyle(p.pathStyle);
+    setRegion(next.region);
+    setEndpoint(next.endpoint);
+    setPathStyle(next.pathStyle);
     onEdit();
   };
   const pickRegion = (r: string) => {
@@ -120,7 +123,7 @@ export function S3Form({ initial, tried, formApi, onEdit }: { initial: Profile |
             ? "Start with https:// (or http:// for a local server)."
             : null,
     accessKeyId: accessKeyId.trim() ? null : "Enter the access key ID.",
-    secret: secret || initial ? null : "Enter the secret access key.",
+    secret: secret.trim() || initial ? null : "Enter the secret access key.",
   };
   const show = (k: keyof typeof problems) => (tried ? problems[k] : null);
 

@@ -226,13 +226,13 @@ function KeyedForm({
 
   const hostOf = (p: Profile) => p.net?.host || p.name;
 
-  const run = async (what: "test" | "save", d: Draft, skipCheck = false) => {
+  const run = async (what: "test" | "save", d: Draft, skipCheck = false, verify = false) => {
     setBusy(what);
     setResult(null);
     let checking = false;
     try {
       // an SFTP server nobody trusted yet would fail on first use: meet its key here instead
-      if (what === "test" || (!skipCheck && d.profile.kind === "sftp" && !d.profile.net?.hostKey)) {
+      if (what === "test" || (!skipCheck && d.profile.kind === "sftp" && (verify || !d.profile.net?.hostKey))) {
         checking = true;
         const text = await api.testConnection(d.profile, d.secret, d.clearSecret);
         checking = false;
@@ -278,7 +278,7 @@ function KeyedForm({
     setHostAsk(null);
     form.current?.setHostKey?.(fp);
     const net = d.profile.net ? { ...d.profile.net, hostKey: fp } : d.profile.net;
-    void run(then, { ...d, profile: { ...d.profile, net } });
+    void run(then, { ...d, profile: { ...d.profile, net } }, false, true);
   };
 
   /** "Trust this certificate…": remember it in the form and try again. */

@@ -3,6 +3,7 @@
  * space, the toolbar's "…" menu, share links, Move to…, Go to folder, favorites, and the command
  * ids the keyboard and the menu bar run (see desktop/useShortcuts).
  */
+import { keys } from "../components/osText";
 import { asExport } from "../connections/native";
 import { createElement, useEffect, useRef } from "react";
 import { registerCommands, type PaletteCommand } from "../palette/commands";
@@ -503,7 +504,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     "upload-files": () => void ops.pickAndUpload(false),
     "upload-folder": () => void ops.pickAndUpload(true),
     download: () =>
-      onDisk ? toast("info", "These files are already on this computer. Copy (⌘C) or Copy or move to… puts them somewhere else.") : void ops.downloadEntries(selectedEntries, relBase),
+      onDisk ? toast("info", keys("These files are already on this computer. Copy (⌘C) or Copy or move to… puts them somewhere else.")) : void ops.downloadEntries(selectedEntries, relBase),
     refresh: ent.refresh,
     "go-up": () => void pane.goUp(),
     back: () => pane.historyStep(-1),
