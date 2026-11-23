@@ -23,6 +23,7 @@ import type { TransferActions } from "../useTransfers";
 import type { useJobs } from "../useJobs";
 import type { Entry, Profile, Transfer } from "../types";
 import { OutputSheet } from "./OutputSheet";
+import { extList, hasExt } from "./extMatch";
 
 // ------------------------------------------------------------ the actions
 
@@ -157,24 +158,14 @@ export function addImported(list: CustomAction[]): number {
 
 // ------------------------------------------------------------ which items an action takes
 
-/** "jpg, .PNG" → ["jpg", "png"] */
-export const extList = (s: string) =>
-  s
-    .split(/[\s,;]+/)
-    .map((x) => x.trim().replace(/^\./, "").toLowerCase())
-    .filter(Boolean);
+export { extList };
 
-const extOf = (name: string) => {
-  const dot = name.lastIndexOf(".");
-  return dot > 0 && dot < name.length - 1 ? name.slice(dot + 1).toLowerCase() : "";
-};
-
-/** Whether the action takes this item (kind and extension). */
+/** Whether the action takes this item (kind and extension, "tar.gz" included). */
 export function takes(a: CustomAction, e: Entry): boolean {
   if (e.kind === "folder") return a.appliesTo !== "files";
   if (a.appliesTo === "folders") return false;
   const exts = extList(a.extensions);
-  return !exts.length || exts.includes(extOf(e.name));
+  return !exts.length || hasExt(e.name, exts);
 }
 
 export type ActionContext = {

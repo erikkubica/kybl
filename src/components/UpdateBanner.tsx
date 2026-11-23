@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useTransfersActive } from "../useTransfers";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Icon } from "../Icons";
 import { formatBytes } from "../format";
@@ -13,6 +14,11 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
   const [started, setStarted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [restartError, setRestartError] = useState<string | null>(null);
+  // once the transfers end, the next click is a plain restart again (it asks anew if still busy)
+  const transfersActive = useTransfersActive();
+  useEffect(() => {
+    if (!transfersActive) setBusy(false);
+  }, [transfersActive]);
   const rel = st?.available;
   if (!st || !rel) return null;
   const working = st.phase === "downloading" || st.phase === "installing";

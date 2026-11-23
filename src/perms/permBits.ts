@@ -29,6 +29,20 @@ export const digits = (bits: Bit[]) =>
  * before.
  */
 export function bitsFromText(text: string, initial: Bit[]): Bit[] | null {
-  if (!/^[0-7x]{3}$/i.test(text)) return null;
-  return [...text.toLowerCase()].flatMap((d, t) => (d === "x" ? initial.slice(t * 3, t * 3 + 3) : [0, 1, 2].map((j) => (Number(d) & (4 >> j)) !== 0)));
+  const num = octalDigits(text);
+  if (num === null || num === "special") return null;
+  return [...num.toLowerCase()].flatMap((d, t) => (d === "x" ? initial.slice(t * 3, t * 3 + 3) : [0, 1, 2].map((j) => (Number(d) & (4 >> j)) !== 0)));
+}
+
+/**
+ * The three digits in typed text: "755", or "0755" as chmod is usually written (the leading 0 is
+ * dropped). "special" for another four-digit value (setuid, setgid, sticky), which the sheet can't
+ * set; null for anything else.
+ */
+export function octalDigits(text: string): string | "special" | null {
+  const t = text.trim();
+  if (/^[0-7x]{3}$/i.test(t)) return t;
+  if (/^0[0-7x]{3}$/i.test(t)) return t.slice(1);
+  if (/^[1-7][0-7x]{3}$/i.test(t)) return "special";
+  return null;
 }

@@ -2,9 +2,9 @@ import { useEffect, useState, type ReactNode } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { Icon, type IconName } from "../Icons";
 import { SCHEMES, type Palette } from "../schemes";
-import { ACCENTS, DEFAULTS, EXPIRIES, SCALES, isDark, type ColumnId, type FontChoice, type Settings, type Theme } from "../settings";
+import { ACCENTS, EXPIRIES, SCALES, isDark, resetSettings, type ColumnId, type FontChoice, type Settings, type Theme } from "../settings";
 import { api, errMessage, type TransferPrefs } from "../api";
-import { MBPS, loadTransferPrefs, saveTransferPrefs, useTransferPrefsStore } from "../transferPrefs";
+import { MBPS, TRANSFER_DEFAULTS, loadTransferPrefs, saveTransferPrefs, useTransferPrefsStore } from "../transferPrefs";
 import { IMAGE_MODES } from "../imageMode";
 import type { Profile } from "../types";
 import { ProviderBadge } from "./Sidebar";
@@ -18,6 +18,11 @@ import { syncApi, type AppPrefs } from "../sync";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { actionLabel, ago, installAndRestart, updatesApi, useUpdates } from "../updates";
 import { formatBytes } from "../format";
+import { useTransfersActive } from "../useTransfers";
+import { spellKeys } from "./shortcutKeys";
+
+/** Shortcut keys show Mac glyphs on a Mac, Ctrl, Alt and Shift elsewhere. */
+const MAC = /Mac/i.test(navigator.userAgent);
 
 export type SettingsPageId = "general" | "appearance" | "browsing" | "transfers" | "actions" | "sync" | "drives" | "connections" | "storage" | "shortcuts";
 type Page = SettingsPageId;
@@ -61,14 +66,14 @@ const FONTS: { id: FontChoice; label: string; family: string }[] = [
   { id: "mono", label: "Mono", family: 'ui-monospace, "SF Mono", Menlo, monospace' },
 ];
 
-/** Every shortcut the file browser knows (desktop/useShortcuts.ts, the lists and the menu bar). */
+/** The file browser's shortcuts (desktop/useShortcuts.ts, the lists and the menu bar). */
 const SHORTCUTS: { label: string; keys: string[] }[] = [
   { label: "Command palette: connections, folders, commands, files", keys: ["⌘", "K"] },
   { label: "Command palette: open in a new pane / complete a path", keys: ["⌘↵", "Tab"] },
   { label: "Search this folder", keys: ["⌘", "F"] },
   { label: "Find a connection in the sidebar", keys: ["⌥", "⌘", "F"] },
   { label: "Show or hide the sidebar", keys: ["⌥", "⌘", "S"] },
-  { label: "Go to folder", keys: ["⇧", "⌘", "G"] },
+  { label: "Go to folder", keys: ["⇧⌘G", "⌘L"] },
   { label: "Back / forward", keys: ["⌘[", "⌘]"] },
   { label: "Up one level", keys: ["⌘", "↑"] },
   { label: "Refresh", keys: ["⌘", "R"] },
@@ -86,6 +91,7 @@ const SHORTCUTS: { label: string; keys: string[] }[] = [
   { label: "Get Info (Quick Look with details)", keys: ["⌘", "I"] },
   { label: "Actions menu for the selection", keys: ["⇧", "F10"] },
   { label: "Copy / cut / paste items", keys: ["⌘C", "⌘X", "⌘V"] },
+  { label: "Duplicate", keys: ["⌘", "D"] },
   { label: "Undo the last move, copy or rename", keys: ["⌘", "Z"] },
   { label: "Copy instead of moving while dragging", keys: ["⌥"] },
   { label: "Rename", keys: ["F2"] },
@@ -93,11 +99,15 @@ const SHORTCUTS: { label: string; keys: string[] }[] = [
   { label: "Upload files", keys: ["⌘", "U"] },
   { label: "Upload a folder", keys: ["⇧", "⌘", "U"] },
   { label: "Download selection", keys: ["⇧", "⌘", "D"] },
-  { label: "Delete selection", keys: ["⌘", "⌫"] },
+  { label: "Delete selection", keys: ["⌘⌫", "⌦"] },
   { label: "Clear selection / close dialog", keys: ["Esc"] },
   { label: "Settings", keys: ["⌘", ","] },
   { label: "This Mac: show or hide hidden files", keys: ["⇧", "⌘", "."] },
-  { label: "Two panes side by side", keys: ["⌘", "\\"] },
+  { label: "Grid view: bigger / smaller tiles", keys: ["⌘+", "⌘−"] },
+  { label: "Split the pane right / down", keys: ["⌘\\", "⇧⌘\\"] },
+  { label: "Close the pane", keys: ["⌘", "W"] },
+  { label: "Go to the pane on that side", keys: ["⌥", "⌘", "arrow"] },
+  { label: "Terminal below the pane", keys: ["⌃", "`"] },
   { label: "Two panes: switch pane", keys: ["Tab"] },
   { label: "Two panes: copy / move to the other pane", keys: ["F5", "F6"] },
   { label: "Two panes: quick look, new folder, delete", keys: ["F3", "F7", "F8"] },
@@ -116,6 +126,11 @@ function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info"
   const st = useUpdates();
   // transfers are running: "Restart now" asks once more before it stops them
   const [busyAsk, setBusyAsk] = useState(false);
+  // once the transfers end, the next click is a plain restart again (it asks anew if still busy)
+  const transfersActive = useTransfersActive();
+  useEffect(() => {
+    if (!transfersActive) setBusyAsk(false);
+  }, [transfersActive]);
   if (!st) return null;
   const rel = st.available;
   const working = st.phase === "downloading" || st.phase === "installing";
@@ -171,7 +186,7 @@ function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info"
               disabled={working}
               onClick={() =>
                 rel.how === "install"
-                  ? installAndRestart(() => setBusyAsk(true)).catch(() => {})
+                  ? installAndRestart(() => setBusyAsk(true)).catch((e) => onToast("error", errMessage(e)))
                   : updatesApi.install().catch((e) => onToast("error", String(e)))
               }
             >
@@ -483,6 +498,17 @@ export function SettingsPage({
   useEffect(() => {
     if (initialPage) setPage(initialPage);
   }, [initialPage, pageRequest]);
+  // the red "Reset all" asks again after another page was visited
+  useEffect(() => setConfirmReset(false), [page]);
+  const resetAll = () => {
+    setConfirmReset(false);
+    onChange(resetSettings(settings));
+    onCompact(false);
+    saveTransferPrefs(TRANSFER_DEFAULTS).catch((e) => onToast("error", errMessage(e)));
+    if (prefs && !prefs.closeToTray) changePrefs({ closeToTray: true });
+    updatesApi.settings({ auto: true }).catch(() => {});
+    onToast("success", "Settings are back to the defaults");
+  };
   useEffect(() => {
     syncApi
       .getPrefs()
@@ -587,7 +613,7 @@ export function SettingsPage({
               <>
                 <h3 className="set-title">Theme</h3>
                 <div className="set-card">
-                  <Row label="Mode" hint="System follows your macOS appearance.">
+                  <Row label="Mode" hint="System follows your computer’s light or dark setting.">
                     <Seg label="Mode" value={settings.theme} options={THEMES.map((t) => ({ value: t.id, label: t.label }))} onChange={(theme) => onChange({ theme })} />
                   </Row>
                   <Row label="Colour scheme" hint={`Each scheme has a light and a dark palette. Showing the ${dark ? "dark" : "light"} one.`} stack>
@@ -798,21 +824,16 @@ export function SettingsPage({
 
                 <h3 className="set-title">Reset</h3>
                 <div className="set-card">
-                  <Row label="Reset all settings" hint="Back to the defaults. Connections, their keys and your favorites are not touched.">
+                  <Row
+                    label="Reset all settings"
+                    hint="Back to the defaults, transfer settings included. Connections, favorites, sync, actions, layout and Open at login stay."
+                  >
                     {confirmReset ? (
                       <div className="btn-row">
                         <button className="btn btn-sm" autoFocus onClick={() => setConfirmReset(false)}>
                           Cancel
                         </button>
-                        <button
-                          className="btn btn-sm btn-danger"
-                          onClick={() => {
-                            setConfirmReset(false);
-                            onChange({ ...DEFAULTS, favorites: settings.favorites });
-                            onCompact(false);
-                            onToast("success", "Settings are back to the defaults");
-                          }}
-                        >
+                        <button className="btn btn-sm btn-danger" onClick={resetAll}>
                           Reset all
                         </button>
                       </div>
@@ -835,7 +856,7 @@ export function SettingsPage({
                       <div key={sc.label}>
                         <span>{sc.label}</span>
                         <b>
-                          {sc.keys.map((k) => (
+                          {spellKeys(sc.keys, MAC).map((k) => (
                             <kbd key={k}>{k}</kbd>
                           ))}
                         </b>

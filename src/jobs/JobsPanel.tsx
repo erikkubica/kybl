@@ -2,7 +2,7 @@
  * The list of copies and moves between connections: progress, speed, time left, pause, resume,
  * stop, and the files that couldn't be copied with a way to try them again.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { errMessage, errSummary, type JobFailure, type JobProgress, type JobSummary } from "../api";
 import { Icon, type IconName } from "../Icons";
 import { ErrorText } from "../components/ErrorText";
@@ -115,9 +115,18 @@ function Failures({ job }: { job: JobSummary }) {
       setLoading(false);
     }
   };
-  // reload when the number of problems changes (a retry finished, or more failed)
+  // follow the number of problems: fewer (a retry) loads afresh; more while running adds the new
+  // ones at the end when everything was listed, and otherwise waits for "Show more", so pages
+  // already open stay where they are
+  const seen = useRef({ id: "", failed: 0 });
+  const shown = useRef({ count: 0, end: false });
+  shown.current = { count: list?.length ?? 0, end };
   useEffect(() => {
-    void load(0);
+    const failed = job.progress.filesFailed;
+    const before = seen.current;
+    seen.current = { id: job.id, failed };
+    if (before.id !== job.id || failed < before.failed) void load(0);
+    else if (failed > before.failed && shown.current.end) void load(shown.current.count);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job.id, job.progress.filesFailed]);
 

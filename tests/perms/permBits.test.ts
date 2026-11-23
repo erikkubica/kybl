@@ -31,3 +31,17 @@ test("typing x back restores the selection's own bits, not the last typed ones",
   assert.deepEqual(back, init);
   assert.equal(digits(back), "6x4");
 });
+
+test("0755 (chmod spelling) is 755; other four-digit modes are special, never truncated", async () => {
+  const { octalDigits } = await import("../../src/perms/permBits.ts");
+  const init = startBits([0o644]);
+  assert.equal(octalDigits("0755"), "755");
+  assert.equal(octalDigits("755"), "755");
+  assert.equal(octalDigits("0x44"), "x44");
+  assert.equal(octalDigits("4755"), "special");
+  assert.equal(octalDigits("1777"), "special");
+  assert.equal(octalDigits("75"), null);
+  assert.equal(octalDigits("07555"), null);
+  assert.equal(digits(bitsFromText("0755", init)!), "755");
+  assert.equal(bitsFromText("4755", init), null);
+});
