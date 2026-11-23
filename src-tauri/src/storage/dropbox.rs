@@ -87,6 +87,7 @@ impl Meta {
             mime: None,
             hashes: Hashes { dropbox: self.content_hash.clone(), ..Default::default() },
             native: None,
+            ..Default::default()
         }
     }
     /// The key in Kybl's terms ("a/b.txt", folders "a/b/").

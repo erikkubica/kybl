@@ -14,9 +14,12 @@ import { api, errMessage } from "../api";
 import type { ListResult, ObjInfo } from "../types";
 
 export type Loc = { profileId: string; bucket: string; prefix: string };
-export type Listing = { loc: Loc | null; folders: string[]; objects: ObjInfo[]; next: string | null };
+/** `folderInfo`: what the server said about some folders (permissions, links; servers only). */
+export type Listing = { loc: Loc | null; folders: string[]; objects: ObjInfo[]; next: string | null; folderInfo?: ObjInfo[] };
 
 const EMPTY: Listing = { loc: null, folders: [], objects: [], next: null };
+/** Folder info of two runs of pages together (most connections have none). */
+const moreInfo = (a: ObjInfo[] | undefined, b: ObjInfo[] | undefined) => (b?.length ? (a ?? []).concat(b) : a);
 
 export const sameLoc = (a: Loc | null, b: Loc | null) =>
   !!a && !!b && a.profileId === b.profileId && a.bucket === b.bucket && a.prefix === b.prefix;
@@ -41,7 +44,7 @@ export function useListing(limit: number) {
     try {
       const res = await api.listObjects(loc.profileId, loc.bucket, loc.prefix, null);
       if (id !== reqId.current) return null;
-      setListing({ loc, folders: res.folders, objects: res.objects, next: res.nextToken });
+      setListing({ loc, folders: res.folders, objects: res.objects, next: res.nextToken, folderInfo: res.folderInfo });
       return res;
     } catch (e) {
       if (id !== reqId.current) return null;
@@ -67,6 +70,7 @@ export function useListing(limit: number) {
       const want = Math.min(Math.max(before.folders.length + before.objects.length, 1), limit);
       const folders: string[] = [];
       const objects: ObjInfo[] = [];
+      let folderInfo: ObjInfo[] | undefined;
       let next: string | null = null;
       let first: ListResult | null = null;
       try {
@@ -76,9 +80,10 @@ export function useListing(limit: number) {
           first ??= res;
           folders.push(...res.folders);
           objects.push(...res.objects);
+          folderInfo = moreInfo(folderInfo, res.folderInfo);
           next = res.nextToken;
         } while (next && folders.length + objects.length < want);
-        setListing({ loc, folders, objects, next });
+        setListing({ loc, folders, objects, next, folderInfo });
         return first;
       } catch (e) {
         if (id !== reqId.current) return null;
@@ -103,7 +108,9 @@ export function useListing(limit: number) {
       const res = await api.listObjects(loc.profileId, loc.bucket, loc.prefix, token);
       if (id !== reqId.current) return;
       setListing((prev) =>
-        sameLoc(prev.loc, loc) ? { loc, folders: prev.folders.concat(res.folders), objects: prev.objects.concat(res.objects), next: res.nextToken } : prev,
+        sameLoc(prev.loc, loc)
+          ? { loc, folders: prev.folders.concat(res.folders), objects: prev.objects.concat(res.objects), next: res.nextToken, folderInfo: moreInfo(prev.folderInfo, res.folderInfo) }
+          : prev,
       );
     } catch (e) {
       if (id === reqId.current) setError(errMessage(e));
@@ -127,14 +134,22 @@ export function useListing(limit: number) {
     setError(null);
     let folders: string[] = [];
     let objects: ObjInfo[] = [];
+    let info: ObjInfo[] = [];
     let last = performance.now();
     const commit = () => {
-      const [f, o, n] = [folders, objects, next];
+      const [f, o, n, fi] = [folders, objects, next, info];
       folders = [];
       objects = [];
+      info = [];
       setListing((prev) =>
         sameLoc(prev.loc, loc)
-          ? { loc, folders: f.length ? prev.folders.concat(f) : prev.folders, objects: o.length ? prev.objects.concat(o) : prev.objects, next: n }
+          ? {
+              loc,
+              folders: f.length ? prev.folders.concat(f) : prev.folders,
+              objects: o.length ? prev.objects.concat(o) : prev.objects,
+              next: n,
+              folderInfo: moreInfo(prev.folderInfo, fi),
+            }
           : prev,
       );
       last = performance.now();
@@ -145,6 +160,7 @@ export function useListing(limit: number) {
         if (id !== reqId.current) return;
         folders.push(...res.folders);
         objects.push(...res.objects);
+        if (res.folderInfo?.length) info.push(...res.folderInfo);
         have += res.folders.length + res.objects.length;
         next = res.nextToken;
         if (performance.now() - last > 1000) commit();

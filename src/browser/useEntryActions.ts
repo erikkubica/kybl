@@ -24,6 +24,7 @@ import type { MenuItem } from "../components/Dialogs";
 import type { Entry } from "../types";
 import { itemClipboard } from "../desktop/clipboard";
 import { actionCommandMap, actionsMenu, type ActionContext } from "../actions/customActions";
+import { serverActions } from "../perms/serverActions";
 import type { PaneCore, PaneEnv } from "./usePane";
 
 /** localStorage: the first "Keep on this device" explained what two-way sync means */
@@ -40,6 +41,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   // drives: a folder that is one offers Show in Finder / Eject instead of "Mount as drive…"
   const { mounts } = useMounts();
   const canShare = caps?.share !== "none";
+  // servers: permissions and links (src/perms)
+  const server = serverActions(pane, env);
   const isS3 = !profile?.kind || profile.kind === "s3";
   /** this computer's own disk: no folder sync (it is the local side), hidden files to toggle */
   const onDisk = !!caps?.localPaths;
@@ -364,6 +367,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       one && e.kind === "file" && env.canOpenDocument?.(e) && { type: "item", label: "Open in default app", icon: "external", onClick: () => void ops.openInApp(e) },
       one && e.kind === "file" && { type: "item", label: "Quick Look", icon: "eye", hint: "Space", onClick: () => pane.setQuick(e.key) },
       { type: "item", label: "Get Info", icon: "info", hint: "⌘I", onClick: () => pane.getInfo(e) },
+      ...server.itemsFor(list, e),
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => pane.navigate(entryParent(e), e.key) },
       // Show in Finder, Open with ▸ (desktop/openWith.ts)
       ...(one ? openInItems({ profileId: profile.id, bucket, onDisk, ops, toast }, e) : []),
@@ -465,6 +469,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     onMoreMenu,
     /** custom actions' view of this pane (the palette runs them on its selection) */
     actionCtx,
+    askPermissions: server.askPermissions,
+    showOriginal: server.showOriginal,
   };
 }
 

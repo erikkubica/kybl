@@ -20,6 +20,8 @@ pub mod local;
 pub(crate) mod net;
 // WP-A4: video and audio through media:// or a loopback server
 pub mod media;
+// permissions and symbolic links on servers
+pub mod perms;
 pub mod registry;
 pub mod s3;
 pub mod s3_stream;
@@ -187,6 +189,21 @@ pub struct Entry {
     pub hashes: Hashes,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native: Option<NativeDoc>,
+    /// servers that keep Unix permissions (SFTP, most FTP): the permission bits (`0o644`), with
+    /// setuid, setgid and sticky where the server says
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<u32>,
+    /// the owner and group as the server names them (a user name, or the number when that's all
+    /// it says)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// a symbolic link: what it points at, as the server stores it (relative or absolute). The
+    /// rest of the entry describes what it points at (a link to a folder lists as a folder); a
+    /// broken link lists as an empty file
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
 }
 
 impl Entry {
@@ -202,6 +219,10 @@ pub struct Page {
     pub folders: Vec<String>,
     pub objects: Vec<Entry>,
     pub next_token: Option<String>,
+    /// what the store says about some of this page's `folders` (their permissions, a link's
+    /// target), keyed by the same folder key; most stores have nothing to add
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub folder_info: Vec<Entry>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -505,6 +526,12 @@ pub struct Capabilities {
     /// files are real files on this device: `local_path` resolves them, and they can be opened
     /// and revealed directly
     pub local_paths: bool,
+    /// Unix permissions can be changed ([`Storage::set_mode`]): SFTP, and FTP servers that take
+    /// `SITE CHMOD` (one that doesn't says so when asked)
+    pub permissions: bool,
+    /// symbolic links are told apart, followed, traced to their original
+    /// ([`Storage::resolve_link`]) and made ([`Storage::make_link`])
+    pub links: bool,
 }
 
 impl Default for Capabilities {
@@ -534,6 +561,8 @@ impl Default for Capabilities {
             max_object_size: None,
             background_upload: false,
             local_paths: false,
+            permissions: false,
+            links: false,
         }
     }
 }
@@ -766,6 +795,24 @@ pub trait Storage: Send + Sync + 'static {
         Ok(None)
     }
 
+    /// Sets the permission bits (`0o7777` at most) of the file or folder (`path` ending with `/`)
+    /// at `path`; see `caps().permissions`.
+    async fn set_mode(&self, _root: &str, _path: &str, _mode: u32) -> SResult<()> {
+        unsupported()
+    }
+
+    /// Makes a symbolic link at `path` pointing at `target` (a path relative to the link's folder,
+    /// or absolute on the server); see `caps().links`.
+    async fn make_link(&self, _root: &str, _path: &str, _target: &str) -> SResult<()> {
+        unsupported()
+    }
+
+    /// What the link at `path` finally points at, as an entry of this root (its key ends with `/`
+    /// for a folder). An error says so when the original is gone or outside the connection's folder.
+    async fn resolve_link(&self, _root: &str, _path: &str) -> SResult<Entry> {
+        unsupported()
+    }
+
     /// The real file behind a path, for stores that are this device's own disk.
     fn local_path(&self, _root: &str, _path: &str) -> Option<PathBuf> {
         None
@@ -896,6 +943,12 @@ mod tests {
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["id"], "i");
         assert_eq!(v["hashes"]["md5"], "m");
+        let e = Entry { mode: Some(0o644), owner: Some("www".into()), link: Some("../x".into()), ..e };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!((v["mode"].as_u64(), v["owner"].as_str(), v["link"].as_str()), (Some(0o644), Some("www"), Some("../x")));
+        assert!(v.get("group").is_none());
+        let page = serde_json::to_value(Page::default()).unwrap();
+        assert!(page.get("folderInfo").is_none(), "left out when empty");
     }
 
     #[test]
@@ -906,6 +959,8 @@ mod tests {
         assert_eq!(v["serverCopy"], "none");
         assert_eq!(v["conditionalWrite"], "none");
         assert_eq!(v["localPaths"], false);
+        assert_eq!(v["permissions"], false);
+        assert_eq!(v["links"], false);
         assert_eq!(v["maxObjectSize"], serde_json::Value::Null);
     }
 

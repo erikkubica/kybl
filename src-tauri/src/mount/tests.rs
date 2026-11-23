@@ -478,7 +478,7 @@ impl Storage for SlowStore {
             self.lists.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         tokio::time::sleep(self.list_delay).await;
-        let mut page = crate::storage::Page { folders: vec![], objects: vec![], next_token: None };
+        let mut page = crate::storage::Page::default();
         match (root, dir) {
             ("b", "") => page.folders.push("Videos/".into()),
             ("b", "Videos/") => {

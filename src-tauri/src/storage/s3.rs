@@ -77,6 +77,8 @@ pub fn s3_caps(provider: &str, q: Quirks) -> Capabilities {
         max_object_size: Some(5 * 1024 * 1024 * 1024 * 1024),
         background_upload: true,
         local_paths: false,
+        permissions: false,
+        links: false,
     }
 }
 
@@ -278,6 +280,7 @@ impl Storage for S3Backend {
             folders: out.common_prefixes().iter().filter_map(|p| p.prefix().map(str::to_string)).collect(),
             objects: out.contents().iter().filter(|o| o.key() != Some(dir)).map(obj_info).collect(),
             next_token: if out.is_truncated().unwrap_or(false) { out.next_continuation_token().map(str::to_string) } else { None },
+            folder_info: vec![],
         })
     }
 

@@ -137,6 +137,44 @@ conditional writes by comparing, no server copy. One SSH connection per server c
 everything, with keepalives; a dropped connection is reopened on the next request. Uploads go
 to a temporary name and are renamed over the target. Quota from statvfs (OpenSSH).
 
+## Permissions and symbolic links (SFTP, FTP)
+
+Two capabilities, false everywhere else (S3, the blob stores and the cloud drives never offer
+them):
+
+| capability | SFTP | FTP | meaning |
+|---|---|---|---|
+| `permissions` | yes | yes | Unix permissions can be changed: `set_permissions`. FTP uses `SITE CHMOD`; a server without it answers "This FTP server doesn't let Kybl change permissions (it has no SITE CHMOD)." (kind `Unsupported`) |
+| `links` | yes | no | symbolic links are told apart, followed, traced (`resolve_link`) and made (`make_link`) |
+
+Listings carry what the server says (fields left out when unknown):
+
+- `mode` (the permission bits, `0o7777` at most), `owner`, `group` on files; for folders the same in
+  `folderInfo` (entries keyed like `folders`, only where there is something to say). SFTP v3 gives
+  numeric owners; FTP reads MLSD's `UNIX.mode` / `UNIX.owner` / `UNIX.group` (or `uid`/`gid`)
+  facts, or the `ls -l` columns of a Unix LIST.
+- `link`: a symbolic link's target as stored. The rest of the entry is what it points at, so a
+  link to a folder lists as a folder and opens like one; a broken link lists as an empty file.
+  FTP only sees links in LIST output (`name -> target`) and lists them as files.
+
+Commands:
+
+- `set_permissions(profileId, bucket, items: [{key, isDir, mode?}], set, clear, recurse?, opId?)`
+  → `OpResult`. `set` bits go on and `clear` bits off; bits in neither keep each item's own
+  (an item listed without a mode is asked for it; when even that's unknown, every box must be
+  decided). `recurse`: `"all"`, `"files"` or `"folders"` also changes what is inside the folders
+  among `items` (the picked folders too, unless `"files"`). Links inside aren't followed or
+  changed. Progress as `move-progress` with phase `"permissions"`; `cancel_transfer(opId)` stops.
+- `resolve_link(profileId, bucket, key)` → the entry the link finally leads to (its key ends
+  with `/` for a folder). Errors when it's broken ("The original isn't there any more…",
+  `NotFound`) or outside the connection's folder ("The original is outside this connection's
+  folder: /path").
+- `make_link(profileId, bucket, key, target)`: a link at `key` to `target` (relative to the
+  link's folder, or an absolute server path). `Exists` when something has the name.
+
+Deleting a link (to a folder too) removes only the link, never what it points at, and deleting a
+folder never follows the links inside it.
+
 ## Azure Blob Storage (`kind: "azblob"`)
 
 `blob` fields: `account` (storage account name), `container` (required: one container per

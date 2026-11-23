@@ -504,3 +504,89 @@ fn servers_with_their_own_certificate_connect_once_trusted() {
     });
     let _ = std::fs::remove_dir_all(&keys);
 }
+
+/// Permissions and symbolic links against the system's own OpenSSH server, run as this user on a
+/// free port (rclone's server keeps neither). Needs `sshd` and `ssh-keygen`:
+/// `cargo test --lib sftp_permissions_and_links_against_openssh -- --ignored`
+#[cfg(unix)]
+#[test]
+#[ignore]
+fn sftp_permissions_and_links_against_openssh() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    let Some(sshd) = ["/usr/sbin/sshd", "/usr/bin/sshd"].into_iter().map(PathBuf::from).find(|p| p.exists()) else {
+        eprintln!("skipped: no sshd");
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("kybl-sshd-{}", uuid::Uuid::new_v4().simple()));
+    let root = dir.join("root");
+    std::fs::create_dir_all(root.join("dir")).unwrap();
+    let keygen = |name: &str| Command::new("ssh-keygen").args(["-q", "-t", "ed25519", "-N", "", "-f", dir.join(name).to_str().unwrap()]).status().unwrap().success();
+    assert!(keygen("host") && keygen("user"));
+    std::fs::copy(dir.join("user.pub"), dir.join("authorized_keys")).unwrap();
+    let port = free_port();
+    let conf = format!(
+        "Port {port}\nListenAddress 127.0.0.1\nHostKey {d}/host\nAuthorizedKeysFile {d}/authorized_keys\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nStrictModes no\nPidFile {d}/pid\nSubsystem sftp internal-sftp\n",
+        d = dir.display()
+    );
+    std::fs::write(dir.join("sshd_config"), conf).unwrap();
+    let mut child = Command::new(&sshd).args(["-D", "-e", "-f", dir.join("sshd_config").to_str().unwrap()]).stderr(Stdio::null()).spawn().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    std::fs::write(root.join("a.txt"), "a").unwrap();
+    std::fs::set_permissions(root.join("a.txt"), std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::write(root.join("dir/inside.txt"), "keep me").unwrap();
+    symlink("dir", root.join("dirlink")).unwrap();
+    symlink("nowhere", root.join("broken")).unwrap();
+    symlink("/", root.join("outside")).unwrap();
+
+    let user = std::env::var("USER").unwrap();
+    let key = std::fs::read_to_string(dir.join("user")).unwrap();
+    let secrets = || Secrets { password: None, ssh: Some(SshKey { private_key: key.clone(), passphrase: None }) };
+    let base = std::fs::canonicalize(&root).unwrap().to_string_lossy().into_owned();
+    let cfg = NetConfig { host: "127.0.0.1".into(), port, user, auth: NetAuth::Key, base_path: base, ..Default::default() };
+    rt().block_on(async {
+        let e = SftpBackend::new(&cfg, secrets()).unwrap().roots().await.err().unwrap();
+        let fp = sftp::hostkey::fingerprint_in(&e.to_string()).unwrap_or_else(|| panic!("{e}")).to_string();
+        let b = SftpBackend::new(&NetConfig { host_key: Some(fp), ..cfg.clone() }, secrets()).unwrap();
+
+        let page = b.list("", "", None).await.unwrap();
+        let a = page.objects.iter().find(|e| e.key == "a.txt").unwrap();
+        assert_eq!((a.mode, a.link.as_deref()), (Some(0o644), None));
+        assert!(a.owner.is_some());
+        assert!(page.folders.contains(&"dirlink/".to_string()));
+        let dl = page.folder_info.iter().find(|e| e.key == "dirlink/").unwrap();
+        assert_eq!(dl.link.as_deref(), Some("dir"));
+        let broken = page.objects.iter().find(|e| e.key == "broken").unwrap();
+        assert_eq!((broken.link.as_deref(), broken.size), (Some("nowhere"), 0));
+
+        b.set_mode("", "a.txt", 0o600).await.unwrap();
+        assert_eq!(std::fs::metadata(root.join("a.txt")).unwrap().permissions().mode() & 0o7777, 0o600);
+        assert_eq!(b.list("", "", None).await.unwrap().objects.iter().find(|e| e.key == "a.txt").unwrap().mode, Some(0o600));
+
+        b.make_link("", "made", "a.txt").await.unwrap();
+        assert_eq!(std::fs::read_link(root.join("made")).unwrap(), Path::new("a.txt"));
+        assert_eq!(b.make_link("", "made", "a.txt").await.unwrap_err().kind, ErrKind::Exists);
+
+        assert_eq!(b.resolve_link("", "dirlink/").await.unwrap().key, "dir/");
+        assert_eq!(b.resolve_link("", "made").await.unwrap().key, "a.txt");
+        assert_eq!(b.resolve_link("", "broken").await.unwrap_err().kind, ErrKind::NotFound);
+        assert!(b.resolve_link("", "outside/").await.unwrap_err().message.contains("outside"));
+
+        // deleting a link to a folder removes the link, never the folder's files
+        b.delete("", &[], &["dirlink/".into()], &AtomicBool::new(false), &none).await.unwrap();
+        assert!(std::fs::symlink_metadata(root.join("dirlink")).is_err());
+        assert!(root.join("dir/inside.txt").exists());
+        // and a folder holding a link to another folder goes without emptying that one
+        std::fs::create_dir(root.join("holder")).unwrap();
+        symlink("../dir", root.join("holder/to-dir")).unwrap();
+        b.delete("", &[], &["holder/".into()], &AtomicBool::new(false), &none).await.unwrap();
+        assert!(!root.join("holder").exists());
+        assert!(root.join("dir/inside.txt").exists());
+    });
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+}

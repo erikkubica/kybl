@@ -92,12 +92,25 @@ export type ObjInfo = {
   hashes?: { md5?: string; sha1?: string; sha256?: string; quickxor?: string; dropbox?: string };
   /** Google Docs / Sheets / Slides: no bytes of their own, only exports. */
   native?: { exports: { mime: string; ext: string; label: string }[]; webUrl?: string };
+} & ServerMeta;
+
+/** What servers keeping Unix permissions (SFTP, most FTP) say about a file or folder. */
+export type ServerMeta = {
+  /** the permission bits, e.g. 0o644 (setuid, setgid and sticky included where the server says) */
+  mode?: number;
+  /** the owner and group as the server names them (a name, or a number) */
+  owner?: string;
+  group?: string;
+  /** a symbolic link: what it points at, as stored (the rest describes what it points at) */
+  link?: string;
 };
 
 export type ListResult = {
   folders: string[];
   objects: ObjInfo[];
   nextToken: string | null;
+  /** what the server says about some of `folders` (permissions, link targets), keyed by `key` */
+  folderInfo?: ObjInfo[];
 };
 
 export type SearchResult = {
@@ -138,7 +151,7 @@ export type Entry = {
   mime?: string;
   /** the provider's file id, for providers that address files by id (Drive: "Open in Google Drive") */
   id?: string;
-};
+} & ServerMeta;
 
 export type TransferState = "queued" | "running" | "done" | "error" | "cancelled";
 

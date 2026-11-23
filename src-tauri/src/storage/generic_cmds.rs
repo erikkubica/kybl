@@ -72,7 +72,7 @@ pub async fn create_bucket(s: &dyn Storage, bucket: &str) -> Result<(), String> 
 
 pub async fn list_objects(s: &dyn Storage, bucket: &str, prefix: &str, token: Option<String>) -> Result<ListResult, String> {
     let page = s.list(bucket, prefix, token).await?;
-    Ok(ListResult { folders: page.folders, objects: page.objects, next_token: page.next_token })
+    Ok(ListResult { folders: page.folders, objects: page.objects, next_token: page.next_token, folder_info: page.folder_info })
 }
 
 /// Same limits as the S3 search: 300,000 entries looked at, 500 matches.

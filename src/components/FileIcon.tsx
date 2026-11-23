@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Icon, type IconName } from "../Icons";
 import { classify, extOf } from "../format";
 import type { Entry } from "../types";
+import "../perms/perms.css";
 
 function iconFor(e: Entry): IconName {
   if (e.kind === "folder") return "folder";
@@ -36,6 +37,13 @@ export function FileIcon({ entry, size = 17, big, children }: { entry: Entry; si
         </DocArt>
       ) : (
         <Icon name={iconFor(entry)} size={size} />
+      )}
+      {entry.link !== undefined && (
+        <span className="ico-link" title={entry.link ? `Link to ${entry.link}` : "Link"} aria-label="Link">
+          <svg viewBox="0 0 10 10" aria-hidden="true">
+            <path d="M3 7.2 7.2 3M4.2 3H7.2V6" />
+          </svg>
+        </span>
       )}
       {children}
     </span>
