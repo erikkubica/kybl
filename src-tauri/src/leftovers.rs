@@ -22,6 +22,10 @@ use tauri::{AppHandle, Manager};
 
 use crate::{dest, state::AppState};
 
+/// Each run keeps its ledger in a folder of its own below the data folder (`<RUNS>/<run>/FILE`,
+/// see `instance_dir`), so a second Kybl starting never cleans up what the first is still using.
+/// `FILE` directly in the data folder is the one shared ledger older versions kept.
+const RUNS: &str = "leftovers";
 const FILE: &str = "leftovers.json";
 /// An upload that still can't be aborted after this long (the server unreachable every start)
 /// is let go: by then most servers have dropped it themselves.
@@ -49,6 +53,8 @@ struct Ledger {
 
 static PATH: OnceLock<PathBuf> = OnceLock::new();
 static LEDGER: Mutex<Ledger> = Mutex::new(Ledger { uploads: Vec::new(), partials: Vec::new() });
+/// Held while the ledger is written.
+static WRITING: Mutex<()> = Mutex::new(());
 /// A save is already on its way.
 static SAVING: AtomicBool = AtomicBool::new(false);
 
@@ -69,20 +75,65 @@ fn change(f: impl FnOnce(&mut Ledger)) {
     });
 }
 
-/// Writes the ledger now (next to the file, then renamed over it, so a crash never leaves half
-/// of it). Partial files that are gone meanwhile are dropped from it first.
+/// Writes the ledger now (to a temporary file of its own, flushed to disk and renamed over it, so
+/// a crash never leaves half of it). Partial files that are gone meanwhile are dropped from it
+/// first. One save at a time, each writing what is current then, so an older list never lands
+/// after a newer one.
 pub fn save() {
     let Some(path) = PATH.get() else { return };
+    let _one = WRITING.lock().unwrap();
     let json = {
         let mut l = LEDGER.lock().unwrap();
         l.partials.retain(|p| p.exists());
         serde_json::to_vec(&*l)
     };
     let Ok(json) = json else { return };
-    let tmp = path.with_extension("json.tmp");
-    if std::fs::write(&tmp, json).and_then(|_| std::fs::rename(&tmp, path)).is_err() {
-        let _ = std::fs::remove_file(&tmp);
+    let _ = crate::state::write_atomic(path, &json);
+}
+
+fn read_ledger(path: &Path) -> Option<Ledger> {
+    std::fs::read(path).ok().and_then(|raw| serde_json::from_slice(&raw).ok())
+}
+
+fn write_ledger(path: &Path, l: &Ledger) -> std::io::Result<()> {
+    crate::state::write_atomic(path, &serde_json::to_vec(l).map_err(std::io::Error::other)?)
+}
+
+fn merge(into: &mut Ledger, from: Ledger) {
+    for u in from.uploads {
+        if !into.uploads.iter().any(|x| x.upload_id == u.upload_id) {
+            into.uploads.push(u);
+        }
     }
+    for p in from.partials {
+        if !into.partials.contains(&p) {
+            into.partials.push(p);
+        }
+    }
+}
+
+/// Claims this run's own ledger folder below `base` (see `instance_dir`) and takes over the
+/// ledgers of runs that ended (crashed, killed, quit with something left), plus the one shared
+/// file older versions kept (`legacy`). A ledger of a Kybl that is still running is never read:
+/// its uploads and partial files are still in use. Returns this run's ledger file and what was
+/// taken over, which is written into this run's file before the ended run's folder goes.
+fn take_over(base: &Path, legacy: Option<&Path>) -> std::io::Result<(PathBuf, Ledger)> {
+    let mut found = Ledger::default();
+    let dir = crate::instance_dir::claim_adopting(base, |own, gone| {
+        let Some(l) = read_ledger(&gone.join(FILE)) else { return true };
+        merge(&mut found, l);
+        write_ledger(&own.join(FILE), &found).is_ok()
+    })?;
+    let file = dir.join(FILE);
+    if let Some(legacy) = legacy
+        && let Some(l) = read_ledger(legacy)
+    {
+        merge(&mut found, l);
+        if write_ledger(&file, &found).is_ok() {
+            let _ = std::fs::remove_file(legacy);
+        }
+    }
+    Ok((file, found))
 }
 
 /// A multipart upload was created on the server.
@@ -110,13 +161,16 @@ pub fn partial_ended(part: &Path) {
     change(|l| l.partials.retain(|p| p != part));
 }
 
-/// At start-up: reads what an earlier run left and cleans it up in the background. Also empties
-/// the cache of picked files copied for uploads (`uploads/`), which only a running upload needs.
+/// At start-up: takes over what ended runs left and cleans it up in the background. Also removes
+/// the copies of picked files that ended runs made for uploads (`uploads/`, one folder per run:
+/// another Kybl still running keeps its own).
 pub fn start(app: &AppHandle) {
+    // before any upload of this run can copy a file there
+    if let Ok(cache) = app.path().app_cache_dir() {
+        let _ = crate::instance_dir::claim(&cache.join("uploads"));
+    }
     let Ok(dir) = app.path().app_data_dir() else { return };
-    let _ = std::fs::create_dir_all(&dir);
-    let path = dir.join(FILE);
-    let mut earlier: Ledger = std::fs::read(&path).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default();
+    let Ok((path, mut earlier)) = take_over(&dir.join(RUNS), Some(&dir.join(FILE))) else { return };
     // what a paused or interrupted transfer kept to carry on from is the resume store's (`resume`)
     earlier.uploads.retain(|u| !crate::resume::keeps_upload(&u.upload_id));
     earlier.partials.retain(|p| !crate::resume::keeps_partial(p));
@@ -127,10 +181,6 @@ pub fn start(app: &AppHandle) {
         l.partials.extend(earlier.partials.iter().cloned());
     }
     let _ = PATH.set(path);
-    // before any upload of this run can copy a file there
-    if let Ok(cache) = app.path().app_cache_dir() {
-        let _ = std::fs::remove_dir_all(cache.join("uploads"));
-    }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         for part in &earlier.partials {
@@ -220,6 +270,44 @@ mod tests {
         assert!(busy.exists(), "a download of this run writes there");
         dest::release(&held);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn ledger_of(id: &str) -> Ledger {
+        Ledger {
+            uploads: vec![Upload { profile_id: "p".into(), bucket: "b".into(), key: id.into(), upload_id: id.into(), created: 1 }],
+            partials: vec![PathBuf::from(format!("/d/{id}.s3part"))],
+        }
+    }
+
+    #[test]
+    fn a_start_takes_over_only_what_ended_runs_left() {
+        use std::time::SystemTime;
+        let data = std::env::temp_dir().join(format!("kybl-left-runs-{}", uuid::Uuid::new_v4().simple()));
+        let base = data.join(RUNS);
+        std::fs::create_dir_all(base.join("live")).unwrap();
+        std::fs::create_dir_all(base.join("dead")).unwrap();
+        // a Kybl still running: holds its lock; its uploads are in flight
+        write_ledger(&base.join("live").join(FILE), &ledger_of("live")).unwrap();
+        let live = std::fs::File::create(base.join("live.lock")).unwrap();
+        live.try_lock().unwrap();
+        // a run that crashed: its lock is free
+        write_ledger(&base.join("dead").join(FILE), &ledger_of("dead")).unwrap();
+        let dead = std::fs::File::create(base.join("dead.lock")).unwrap();
+        dead.set_modified(SystemTime::now() - Duration::from_secs(3600)).unwrap();
+        drop(dead);
+        // the shared file of an older version
+        let legacy = data.join(FILE);
+        write_ledger(&legacy, &ledger_of("old")).unwrap();
+
+        let (own, found) = take_over(&base, Some(&legacy)).unwrap();
+        let ids: Vec<&str> = found.uploads.iter().map(|u| u.upload_id.as_str()).collect();
+        assert_eq!(ids, ["dead", "old"], "the running instance's upload must never be aborted");
+        assert_eq!(found.partials.len(), 2);
+        assert_eq!(read_ledger(&base.join("live").join(FILE)), Some(ledger_of("live")), "a running instance's ledger is left alone");
+        assert!(!base.join("dead").exists() && !legacy.exists(), "taken over, then removed");
+        assert_eq!(read_ledger(&own), Some(found), "what was taken over is in this run's own ledger first");
+        drop(live);
+        let _ = std::fs::remove_dir_all(data);
     }
 
     #[test]

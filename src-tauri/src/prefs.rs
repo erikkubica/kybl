@@ -49,15 +49,25 @@ fn read<R: Runtime>(app: &AppHandle<R>) -> Stored {
         .unwrap_or_default()
 }
 
-fn write<R: Runtime>(app: &AppHandle<R>, s: &Stored) -> Result<(), String> {
+/// One change at a time: read, change and written back as one step, so two saves at once (the
+/// settings screen and the transfer settings) never undo each other.
+static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn update<R: Runtime>(app: &AppHandle<R>, f: impl FnOnce(&mut Stored)) -> Result<(), String> {
     let p = path(app).ok_or("No config folder")?;
+    let _one = WRITING.lock().unwrap();
+    let mut s = read(app);
+    f(&mut s);
+    write_to(&p, &s)
+}
+
+fn write_to(p: &std::path::Path, s: &Stored) -> Result<(), String> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(err)?;
     }
-    // written aside and swapped in, so a crash mid-write never leaves a broken file
-    let tmp = p.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec(s).map_err(err)?).map_err(err)?;
-    std::fs::rename(&tmp, &p).map_err(err)
+    // written aside (a temporary name of its own) and swapped in, so a crash mid-write never
+    // leaves a broken file
+    crate::state::write_atomic(p, &serde_json::to_vec(s).map_err(err)?).map_err(err)
 }
 
 /// Reads the saved transfer settings and makes them live. Runs at startup on every platform.
@@ -66,9 +76,7 @@ pub fn load_transfers<R: Runtime>(app: &AppHandle<R>) {
 }
 
 pub fn save_transfers<R: Runtime>(app: &AppHandle<R>, t: TransferPrefs) -> Result<(), String> {
-    let mut s = read(app);
-    s.transfers = t;
-    write(app, &s)
+    update(app, |s| s.transfers = t)
 }
 
 #[cfg(desktop)]
@@ -103,9 +111,7 @@ pub fn set_app_prefs(
 ) -> Result<AppPrefs, String> {
     if let Some(v) = close_to_tray {
         prefs.close_to_tray.store(v, Ordering::Relaxed);
-        let mut s = read(&app);
-        s.close_to_tray = v;
-        write(&app, &s)?;
+        update(&app, |s| s.close_to_tray = v)?;
     }
     if let Some(v) = launch_at_login {
         let al = app.autolaunch();

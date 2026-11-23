@@ -967,3 +967,54 @@ async fn google_doc_shortcuts_are_read_only_and_rename_delete_and_copy_the_doc()
     assert!(!store.has("Budget") && store.has("Budget copy"));
     assert!(!store.done().iter().any(|o| o.starts_with("write")), "{:?}", store.done());
 }
+
+#[test]
+fn only_one_running_kybl_looks_after_the_drives() {
+    let tmp = Tmp(std::env::temp_dir().join(format!("kybl-mount-owner-{}", uuid::Uuid::new_v4().simple())));
+    std::fs::create_dir_all(&tmp.0).unwrap();
+    let path = tmp.0.join("mounts.lock");
+    let open = || std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path).unwrap();
+    let first = match super::try_own(open()) {
+        super::Owner::Mine(f) => f,
+        _ => panic!("the first run takes the drives"),
+    };
+    assert!(matches!(super::try_own(open()), super::Owner::Other), "a second run must leave the first one's drives alone");
+    drop(first);
+    assert!(matches!(super::try_own(open()), super::Owner::Mine(_)), "once the first run ends, the drives can be taken over");
+}
+
+#[test]
+fn saving_the_drives_at_once_never_fails_or_leaves_temp_files() {
+    let tmp = Tmp(std::env::temp_dir().join(format!("kybl-mount-cfg-{}", uuid::Uuid::new_v4().simple())));
+    let path = tmp.0.join("mounts.json");
+    let cfg = |n: usize| super::MountConfig {
+        id: format!("d{n}"),
+        profile_id: "p".into(),
+        bucket: "b".into(),
+        prefix: String::new(),
+        name: format!("Drive {n}"),
+        read_only: false,
+        port: 0,
+        token: "t".into(),
+        cache_limit_mb: None,
+    };
+    let threads: Vec<_> = (0..8)
+        .map(|n| {
+            let path = path.clone();
+            let list: Vec<_> = (0..=n).map(cfg).collect();
+            std::thread::spawn(move || super::write_configs(&path, &list))
+        })
+        .collect();
+    for t in threads {
+        assert_eq!(t.join().unwrap(), Ok(()), "a save at the same moment as another must not fail");
+    }
+    let back: Vec<super::MountConfig> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert!(!back.is_empty());
+    let names: Vec<String> = std::fs::read_dir(&tmp.0).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(names, ["mounts.json"], "no temporary file is left behind");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600, "holds the drives' path tokens");
+    }
+}

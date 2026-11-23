@@ -453,7 +453,8 @@ async fn open_source(app: &AppHandle, local: &str) -> Result<Source, String> {
             return Ok(Source::Path(p.to_string_lossy().into_owned()));
         }
     }
-    let cache = app.path().app_cache_dir().map_err(err)?.join("uploads");
+    // this run's own folder: a start of another Kybl removes only what ended runs left there
+    let cache = crate::instance_dir::claim(&app.path().app_cache_dir().map_err(err)?.join("uploads")).map_err(err)?;
     let app = app.clone();
     let uri = local.to_string();
     tokio::task::spawn_blocking(move || {
@@ -466,7 +467,7 @@ async fn open_source(app: &AppHandle, local: &str) -> Result<Source, String> {
     .map_err(err)?
 }
 
-/// The path to upload from. A picked file is copied into the cache (`uploads/<transfer id>/`)
+/// The path to upload from. A picked file is copied into the cache (`uploads/<run>/<transfer id>/`)
 /// under the object's own name, so its content type still reads right; the second value is the
 /// copy, removed once the upload is done or given up (a failed one keeps it for Retry, which
 /// reuses it while the picked file is the same one, the same size).
