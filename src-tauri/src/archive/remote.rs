@@ -43,7 +43,7 @@ pub fn compress_script(dir: &str, names: &[String], dest: &str) -> String {
     let tmp = format!(".{dest}.kybl-{}.part", tag());
     let list = names.iter().map(|n| q(n)).collect::<Vec<_>>().join(" ");
     format!(
-        "command -v zip >/dev/null 2>&1 || exit {NO_TOOL}; cd {d} || exit 1; T={t}; {stop}; {zip} || {{ rm -f \"$T\"; exit 1; }}; mv -f \"$T\" {f}",
+        "command -v zip >/dev/null 2>&1 || exit {NO_TOOL}; cd {d} || exit 1; T={t}; {stop}; {zip} || {{ rm -f \"$T\"; exit 1; }}; if [ -d {f} ]; then rm -f \"$T\"; echo \"A folder has that name.\" >&2; exit 1; fi; mv -f \"$T\" {f}",
         d = q(dir),
         t = q(&tmp),
         f = q(dest),
@@ -88,7 +88,7 @@ pub fn extract_script(archive: &str, format: Format, dir: &str, folder: &str) ->
     format!(
         "command -v {need} >/dev/null 2>&1 || exit {NO_TOOL}; A={a}; T={t}; D={d}; F={f}; {check}; mkdir -p \"$T\" || exit 1; trap 'rm -rf \"$T\"' EXIT; {stop}; {unpack} || exit 1; \
          S=\"$T\"; if [ \"$(ls -A \"$T\")\" = {fname} ] && [ -d \"$T\"/{fname} ]; then S=\"$T\"/{fname}; fi; \
-         if [ ! -e \"$D\" ]; then mv \"$S\" \"$D\" || exit 1; else cp -R \"$S\"/. \"$D\"/ || exit 1; fi",
+         if [ ! -e \"$D\" ]; then mv \"$S\" \"$D\" || exit 1; else L=$(find \"$D\" -type l 2>/dev/null) || exit {UNSAFE}; [ -z \"$L\" ] || exit {UNSAFE}; cp -R \"$S\"/. \"$D\"/ || exit 1; fi",
         a = q(archive),
         t = q(&tmp),
         d = q(&target),

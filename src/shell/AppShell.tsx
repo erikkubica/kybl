@@ -1401,6 +1401,7 @@ export function AppShell() {
     // the terminal's own Close: asks first when a program runs in it
     close: (id) => void okToEndShells(sidsOf([id]), "Close terminal").then((ok) => ok && paneLater.current.takeFromLive(id)),
     menu: dialogs.menu,
+    confirm: dialogs.confirm,
     toast,
     rootLabel: conns.rootLabel,
   };

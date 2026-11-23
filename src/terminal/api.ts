@@ -97,6 +97,13 @@ export function setTerminalOpener(fn: typeof opener) {
 export function setTerminalPanes(p: Partial<Record<PaneId, TermSpec>>) {
   panes = p;
 }
+/** asks before clipboard text with line breaks goes to a shell that would run each line at once */
+let pasteConfirm: ((text: string) => Promise<boolean>) | null = null;
+export function setPasteConfirm(fn: typeof pasteConfirm) {
+  pasteConfirm = fn;
+}
+/** True when `text` may be pasted (asked first; no one to ask: no). */
+export const confirmPaste = (text: string): Promise<boolean> => pasteConfirm?.(text) ?? Promise.resolve(false);
 export function setStartup(sid: string, lines: string[] | undefined) {
   if (lines?.length) startups.set(sid, lines);
 }

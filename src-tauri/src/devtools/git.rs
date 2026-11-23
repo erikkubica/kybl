@@ -228,13 +228,36 @@ fn git(git: &Path) -> Command {
     c
 }
 
+/// Settings in the repository's own config that the user's filter program of the same name
+/// reads without running anything (git-lfs writes `lfs.repositoryformatversion` into every
+/// repository it touches, and `lfs.<url>.access` after a sign-in).
+const HARMLESS_FILTER_KEYS: [&str; 7] = ["repositoryformatversion", "access", "locksverify", "url", "pushurl", "fetchinclude", "fetchexclude"];
+
+/// Whether `scope` is the repository's own config (or a file it includes): not to be trusted.
+fn repo_scope(scope: &str) -> bool {
+    matches!(scope, "local" | "worktree")
+}
+
 /// The `-c` settings that switch off every program the repository's own config (and the files it
 /// includes) names for git to run: filter drivers (`clean`/`process` run while reading the status
-/// for files whose timestamps changed), diff and merge drivers. The user's own filter drivers are
-/// switched off too: a trusted driver such as git-lfs reads the repository's config itself
-/// (`lfs.extension.*`) and runs what it names. None: a name that can't be overridden safely, so
+/// for files whose timestamps changed), diff and merge drivers.
+///
+/// The user's own (global/system) filter drivers stay on, or every file in an LFS repository whose
+/// timestamp changed would show as modified. A repository can't change what they run, but a
+/// driver program can read the repository's config itself and run what it names there (git-lfs:
+/// `lfs.extension.<name>.clean`). Such a program reads settings under its own name, so a user's
+/// filter `X` is switched off as well when the repository's config sets anything under `X.` (or
+/// under `filter.X.`) beyond [`HARMLESS_FILTER_KEYS`]. (git-lfs's in-tree `.lfsconfig` is limited
+/// to URL and fetch settings by git-lfs itself.) None: a name that can't be overridden safely, so
 /// git is not run there at all.
 fn repo_overrides(names: &[(String, String)]) -> Option<Vec<String>> {
+    // sections the repository's own config sets something risky in, lower case
+    let repo_sections: HashSet<String> = names
+        .iter()
+        .filter(|(scope, _)| repo_scope(scope))
+        .filter(|(_, name)| !name.rsplit('.').next().is_some_and(|k| HARMLESS_FILTER_KEYS.contains(&k.to_ascii_lowercase().as_str())))
+        .filter_map(|(_, name)| name.split_once('.').map(|(s, _)| s.to_ascii_lowercase()))
+        .collect();
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for (scope, name) in names {
@@ -242,9 +265,9 @@ fn repo_overrides(names: &[(String, String)]) -> Option<Vec<String>> {
         let Some((section, rest)) = name.split_once('.') else { continue };
         let Some((sub, _key)) = rest.rsplit_once('.') else { continue };
         let section = section.to_ascii_lowercase();
-        // the user's own (global/system) diff and merge drivers are trusted (status runs neither);
-        // the repository's are not
-        if section != "filter" && !matches!(scope.as_str(), "local" | "worktree") {
+        // the user's own (global/system) drivers are trusted (status runs no diff or merge
+        // driver), unless the repository configures the filter's own program
+        if !repo_scope(scope) && (section != "filter" || !repo_sections.contains(&sub.to_ascii_lowercase())) {
             continue;
         }
         let keys: &[&str] = match section.as_str() {
@@ -503,9 +526,15 @@ u UU N... 100644 100644 100644 100644 a b c conflict.txt\0\
         assert!(o.contains(&"filter.Pwn.required=false".to_string()));
         assert!(o.contains(&"diff.x.y.textconv=".to_string()));
         assert_eq!(o.iter().filter(|x| x.starts_with("filter.Pwn.clean")).count(), 1);
-        // the user's own filters are switched off too (git-lfs runs what the repository names)
-        assert!(o.contains(&"filter.lfs.clean=".to_string()));
-        assert!(o.contains(&"filter.lfs.process=".to_string()));
+        // the user's own filters stay on (or LFS files would all show as modified)...
+        assert!(!o.iter().any(|x| x.starts_with("filter.lfs.")));
+        assert!(repo_overrides(&[n("global", "filter.lfs.process"), n("local", "lfs.repositoryformatversion"), n("local", "lfs.https://h/r.git/info/lfs.access")]).unwrap().is_empty());
+        // ...unless the repository configures their program (git-lfs runs `lfs.extension.*`)
+        for risky in ["lfs.extension.x.clean", "LFS.standalonetransferagent", "filter.lfs.clean"] {
+            let o = repo_overrides(&[n("system", "filter.lfs.process"), n("local", risky)]).unwrap();
+            assert!(o.contains(&"filter.lfs.process=".to_string()) && o.contains(&"filter.lfs.clean=".to_string()), "{risky}");
+        }
+        assert!(repo_overrides(&[n("global", "filter.lfs.process"), n("worktree", "lfs.extension.x.clean")]).unwrap().contains(&"filter.lfs.process=".to_string()));
         // the user's own diff drivers stay
         assert!(repo_overrides(&[n("global", "diff.mine.textconv")]).unwrap().is_empty());
         // a name `-c` can't address: not run at all
@@ -567,6 +596,62 @@ u UU N... 100644 100644 100644 100644 a b c conflict.txt\0\
         assert!(info.changes.is_empty());
         assert!(!flag("eq").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The user's own (global) clean filter keeps working: a re-saved file is not modified. Once
+    /// the repository sets something under the filter program's name, it is switched off.
+    #[cfg(unix)]
+    #[test]
+    fn the_users_own_filter_stays_on() {
+        let Some(bin) = find_tool("git") else { return };
+        let base = std::env::temp_dir().join(format!("kybl-git-filter-{}", uuid::Uuid::new_v4()));
+        let dir = base.join("repo");
+        std::fs::create_dir_all(&dir).unwrap();
+        let global = base.join("gitconfig");
+        let flag = base.join("RAN");
+        // a filter that stores upper case, as LFS stores a pointer instead of the file
+        std::fs::write(&global, format!("[filter \"up\"]\n\tclean = \"touch '{}'; tr a-z A-Z\"\n\tsmudge = cat\n", flag.display())).unwrap();
+        let env = |c: &mut Command| {
+            c.env("GIT_CONFIG_GLOBAL", &global).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t");
+        };
+        let run = |args: &[&str]| {
+            let mut c = git(&bin);
+            c.arg("-C").arg(&dir).args(args);
+            env(&mut c);
+            assert!(c.output().unwrap().status.success(), "git {args:?}");
+        };
+        run(&["init", "-q", "-b", "trunk"]);
+        std::fs::write(dir.join(".gitattributes"), "*.txt filter=up\n").unwrap();
+        std::fs::write(dir.join("f.txt"), "same").unwrap();
+        run(&["add", "."]);
+        run(&["-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", "first"]);
+        let status = || {
+            let mut c = git(&bin);
+            c.arg("-C").arg(&dir).args(["config", "--list", "--name-only", "-z", "--show-scope", "--includes"]);
+            env(&mut c);
+            let out = c.output().unwrap().stdout;
+            let parts: Vec<String> = out.split(|b| *b == 0).filter(|p| !p.is_empty()).map(|p| String::from_utf8_lossy(p).into_owned()).collect();
+            let names: Vec<(String, String)> = parts.chunks(2).map(|p| (p[0].clone(), p[1].clone())).collect();
+            let mut c = git(&bin);
+            for o in repo_overrides(&names).unwrap() {
+                c.arg("-c").arg(o);
+            }
+            c.arg("-C").arg(&dir).args(["status", "--porcelain=v2", "-z", "--untracked-files=no"]);
+            env(&mut c);
+            std::fs::remove_file(&flag).ok();
+            // same bytes, newer timestamp: git has to look at the content, through the filter
+            let later = std::time::SystemTime::now() + Duration::from_secs(5);
+            std::fs::File::options().write(true).open(dir.join("f.txt")).unwrap().set_modified(later).unwrap();
+            parse_porcelain_v2(&c.output().unwrap().stdout)
+        };
+        let p = status();
+        assert!(p.entries.is_empty(), "{:?}", p.entries);
+        assert!(flag.exists());
+        // the repository names something for the filter's program: switched off, nothing runs
+        run(&["config", "up.extension.x.clean", "evil"]);
+        status();
+        assert!(!flag.exists());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// A partial clone whose index needs a missing object (rename detection between a staged

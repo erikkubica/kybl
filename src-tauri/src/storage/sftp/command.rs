@@ -49,20 +49,63 @@ fn hash_command(path: &str) -> Option<String> {
     crate::actions::sh_c(&script)
 }
 
-/// Servers (`user@host:port`) and whether their login shell reads POSIX quoting.
-static SHELLS: LazyLock<Mutex<HashMap<String, bool>>> = LazyLock::new(Default::default);
+/// How a server's login shell reads what [`crate::actions::quote`] writes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Shell {
+    /// sh, bash, zsh, dash, ksh, fish: the quoting holds as it is
+    Posix,
+    /// csh, tcsh: the quoting holds, but `!` is history expansion even inside single quotes
+    /// (`!#` pastes the line's earlier words in raw), so every `!` is sent as `\!` (see [`for_csh`])
+    Csh,
+    /// cmd.exe, PowerShell, nushell, a menu: no commands are sent
+    Other,
+}
 
-/// Asked once per server before any command goes there. POSIX shells, fish and csh all print
-/// [`PROBE_ANSWER`]; cmd.exe and PowerShell (Windows OpenSSH) don't read single quotes that way,
-/// and there a quoted file name would not stay one word (`&`, `|` and `%` are live in cmd.exe).
-const PROBE: &str = r"echo 'kybl'\''sh'";
-const PROBE_ANSWER: &str = "kybl'sh";
+/// Servers (`user@host:port`) and their login shell, once known for sure.
+static SHELLS: LazyLock<Mutex<HashMap<String, Shell>>> = LazyLock::new(Default::default);
 
-fn probe_says_posix(out: &str) -> bool {
-    out.trim_end_matches(['\r', '\n']) == PROBE_ANSWER
+/// Asked once per server before any command goes there. POSIX shells and fish print
+/// [`PROBE_POSIX`]. csh and tcsh expand `!#` (into the line's earlier words) and drop the `\` of
+/// `\!`, so their answer ends in [`PROBE_CSH_END`]. cmd.exe and PowerShell (Windows OpenSSH)
+/// don't read single quotes that way, and there a quoted file name would not stay one word (`&`,
+/// `|` and `%` are live in cmd.exe).
+const PROBE: &str = r"echo 'kybl'\''sh' 'a!#b' 'c\!d'";
+const PROBE_POSIX: &str = r"kybl'sh a!#b c\!d";
+const PROBE_CSH_END: &str = " c!d";
+
+/// What the probe's output says, from its last line (startup files may print before it); None
+/// when there is no answer at all (nothing printed, or the connection dropped): asked again.
+fn read_probe(out: &str, exited: bool) -> Option<Shell> {
+    let last = out.lines().map(|l| l.trim_end_matches('\r')).filter(|l| !l.trim().is_empty()).last();
+    match last {
+        Some(PROBE_POSIX) => Some(Shell::Posix),
+        Some(l) if l.starts_with("kybl'sh ") && l.ends_with(PROBE_CSH_END) && !l.contains(r"\!") => Some(Shell::Csh),
+        Some(_) if exited => Some(Shell::Other),
+        _ => None,
+    }
+}
+
+/// `command` as csh must get it: every `!` written `\!` (csh drops the `\`, also inside single
+/// quotes, and the `!` is then plain), except the `$!` of a POSIX script (the last background
+/// job's pid; `$\!` is an error in csh) when nothing csh would expand follows it.
+fn for_csh(command: &str) -> String {
+    let mut out = String::with_capacity(command.len() + 8);
+    let mut prev = '\0';
+    let mut chars = command.chars().peekable();
+    while let Some(c) = chars.next() {
+        let pid = prev == '$' && chars.peek().is_none_or(|n| n.is_whitespace() || matches!(n, ';' | '"' | '\'' | ')' | '&' | '|'));
+        if c == '!' && !pid {
+            out.push('\\');
+        }
+        out.push(c);
+        prev = c;
+    }
+    out
 }
 
 pub const NOT_POSIX: &str = "Kybl runs commands only on servers with a Unix shell (sh, bash, zsh, fish or csh). This one has another (Windows?) or none.";
+
+const NO_PROBE_ANSWER: &str = "The server didn't say which shell it has. Try again.";
 
 /// What a hash command's output says.
 #[derive(Debug, PartialEq)]
@@ -114,36 +157,35 @@ impl SftpBackend {
     /// stderr). Setting `cancel` sends the command SIGTERM, then closes the channel. Refused on a
     /// server whose login shell isn't a POSIX-like one (see [`PROBE`]).
     pub async fn exec(&self, command: &str, cancel: &AtomicBool, on_data: impl FnMut(bool, &[u8])) -> SResult<ExecEnd> {
-        self.posix_shell().await?;
-        self.exec_raw(command, cancel, on_data).await
+        match self.login_shell().await? {
+            Shell::Posix => self.exec_raw(command, cancel, on_data).await,
+            Shell::Csh => self.exec_raw(&for_csh(command), cancel, on_data).await,
+            Shell::Other => Err(StorageError::other(NOT_POSIX)),
+        }
     }
 
-    /// Whether the account's login shell reads quoting as [`crate::actions::quote`] writes it;
-    /// asked once per server, an error when it doesn't.
-    async fn posix_shell(&self) -> SResult<()> {
+    /// The account's login shell (see [`PROBE`]), asked once per server. Only a clear answer is
+    /// kept: a dropped connection or no output at all is an error, asked again next time.
+    async fn login_shell(&self) -> SResult<Shell> {
         let who = format!("{}@{}:{}", self.user, self.host, self.port);
-        let known = SHELLS.lock().unwrap().get(&who).copied();
-        let ok = match known {
-            Some(ok) => ok,
-            None => {
-                let stop = AtomicBool::new(false);
-                let mut out = Vec::new();
-                let run = self.exec_raw(PROBE, &stop, |err, d| {
-                    if !err && out.len() < 256 {
-                        out.extend_from_slice(d);
-                    }
-                });
-                tokio::time::timeout(Duration::from_secs(20), run).await.map_err(|_| StorageError::other("The server didn't answer in time."))??;
-                let ok = probe_says_posix(&String::from_utf8_lossy(&out));
-                SHELLS.lock().unwrap().insert(who, ok);
-                ok
-            }
-        };
-        if ok {
-            Ok(())
-        } else {
-            Err(StorageError::other(NOT_POSIX))
+        if let Some(sh) = SHELLS.lock().unwrap().get(&who).copied() {
+            return Ok(sh);
         }
+        let stop = AtomicBool::new(false);
+        // the end of what it prints is enough (startup files can print a lot before the answer)
+        let mut out = Vec::new();
+        let run = self.exec_raw(PROBE, &stop, |err, d| {
+            if !err {
+                out.extend_from_slice(d);
+                if out.len() > 4096 {
+                    out.drain(..out.len() - 1024);
+                }
+            }
+        });
+        let end = tokio::time::timeout(Duration::from_secs(20), run).await.map_err(|_| StorageError::other("The server didn't answer in time."))??;
+        let sh = read_probe(&String::from_utf8_lossy(&out), end.code.is_some()).ok_or_else(|| StorageError::new(ErrKind::Network, NO_PROBE_ANSWER))?;
+        SHELLS.lock().unwrap().insert(who, sh);
+        Ok(sh)
     }
 
     async fn exec_raw(&self, command: &str, cancel: &AtomicBool, mut on_data: impl FnMut(bool, &[u8])) -> SResult<ExecEnd> {
@@ -292,19 +334,61 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
-    /// Every shell that reads `quote` right answers the probe; cmd.exe echoes it back as typed.
+    /// Every shell answers the probe as its kind; cmd.exe echoes it back as typed.
     #[cfg(unix)]
     #[test]
-    fn the_shell_probe_tells_posix_shells_apart() {
+    fn the_shell_probe_tells_shells_apart() {
         let shells = ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/dash", "/bin/ksh", "/bin/tcsh", "/bin/csh", "/opt/homebrew/bin/fish", "/usr/local/bin/fish", "/usr/bin/fish"];
         for sh in shells.into_iter().filter(|p| std::path::Path::new(p).exists()) {
             let out = std::process::Command::new(sh).arg("-c").arg(PROBE).output().unwrap();
-            assert!(probe_says_posix(&String::from_utf8_lossy(&out.stdout)), "{sh}");
+            let want = if sh.ends_with("csh") { Shell::Csh } else { Shell::Posix };
+            assert_eq!(read_probe(&String::from_utf8_lossy(&out.stdout), true), Some(want), "{sh}");
         }
-        assert!(probe_says_posix("kybl'sh\r\n"));
+        assert_eq!(read_probe("kybl'sh a!#b c\\!d\r\n", true), Some(Shell::Posix));
+        // startup files that print something first
+        assert_eq!(read_probe("Welcome!\nconda: base\n\nkybl'sh a!#b c\\!d\n\n", true), Some(Shell::Posix));
         // cmd.exe prints the line as it is; PowerShell's echo puts each word on its own line
-        for not in [r"'kybl'\''sh'", "kybl\n\\'sh", "", "This service allows sftp connections only.\n"] {
-            assert!(!probe_says_posix(not), "{not:?}");
+        for not in [r"'kybl'\''sh' 'a!#b' 'c\!d'", "kybl\n\\'sh\na!#b\nc\\!d", "This service allows sftp connections only.\n"] {
+            assert_eq!(read_probe(not, true), Some(Shell::Other), "{not:?}");
         }
+        // no answer (dropped, or nothing came back) is not kept: asked again
+        assert_eq!(read_probe("", true), None);
+        assert_eq!(read_probe("", false), None);
+        assert_eq!(read_probe("kybl", false), None);
+    }
+
+    /// The csh hole: a folder named `;touch pwn1;` and an item named `x!#`, the way a server
+    /// action sends them. As tcsh/csh get it, nothing runs and the names come back.
+    #[cfg(unix)]
+    #[test]
+    fn csh_history_expansion_is_escaped() {
+        use crate::actions::quote;
+        let dir = std::env::temp_dir().join(format!("kybl-csh-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(dir.join(";touch pwn1;")).unwrap();
+        let pwned = || dir.join("pwn1").exists() || dir.join(";touch pwn1;").join("pwn1").exists();
+        for sh in ["/bin/tcsh", "/bin/csh"].into_iter().filter(|p| std::path::Path::new(p).exists()) {
+            // the hole is real without the escaping
+            let raw = format!("cd {} && printf '%s\\n' {}", quote(";touch pwn1;"), quote("x!#"));
+            std::process::Command::new(sh).arg("-f").arg("-c").arg(&raw).current_dir(&dir).output().unwrap();
+            assert!(pwned(), "{sh}: expected the unescaped line to run touch");
+            std::fs::remove_file(dir.join("pwn1")).ok();
+            std::fs::remove_file(dir.join(";touch pwn1;").join("pwn1")).ok();
+            for item in ["x!#", "y!#:0", "z!!", "a$!#", r"b\!#", "c!$", "!.git", "d!-1"] {
+                let line = format!("cd {} && printf '%s\\n' {}", quote(";touch pwn1;"), quote(item));
+                let out = std::process::Command::new(sh).arg("-f").arg("-c").arg(for_csh(&line)).current_dir(&dir).output().unwrap();
+                assert!(!pwned(), "{sh} {item}");
+                // `$!` then `#` is a variable to csh: an error there, never run
+                if !item.contains("$!") {
+                    assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{item}\n"), "{sh} {item}: {}", String::from_utf8_lossy(&out.stderr));
+                }
+            }
+            // a script's `$!` (a background pid) still works
+            let out = std::process::Command::new(sh).arg("-f").arg("-c").arg(for_csh(&crate::actions::sh_c("sleep 0 & P=$!; wait $P; echo ok").unwrap())).output().unwrap();
+            assert_eq!(String::from_utf8_lossy(&out.stdout), "ok\n", "{sh}: {}", String::from_utf8_lossy(&out.stderr));
+            // and ripgrep's `!.git` in a search script reaches sh as written
+            let out = std::process::Command::new(sh).arg("-f").arg("-c").arg(for_csh(&crate::actions::sh_c("printf '%s\\n' '!.git'").unwrap())).output().unwrap();
+            assert_eq!(String::from_utf8_lossy(&out.stdout), "!.git\n", "{sh}");
+        }
+        std::fs::remove_dir_all(dir).ok();
     }
 }

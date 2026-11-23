@@ -348,7 +348,7 @@ fn key_has_passphrase(t: &str) -> bool {
     // "openssh-key-v1" and a zero byte, then the cipher's name as a length-prefixed string
     let Some(rest) = raw.strip_prefix(b"openssh-key-v1\0") else { return false };
     let Some(len) = rest.get(..4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize) else { return false };
-    rest.get(4..4 + len).is_some_and(|name| name != b"none")
+    4usize.checked_add(len).and_then(|end| rest.get(4..end)).is_some_and(|name| name != b"none")
 }
 
 fn read_key_file(p: &Path) -> Option<String> {
