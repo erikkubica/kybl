@@ -6,9 +6,25 @@
 
 use std::path::Path;
 
+use crate::storage::Storage;
+
 /// Marks `path` as downloaded from the internet.
 pub fn mark(path: &Path) {
     imp(path);
+}
+
+/// Marks the file at `key` of `dst` when it is on this computer and came from somewhere else
+/// (`from_elsewhere`): a copy job, a sync download, an unpacked archive. Nothing otherwise.
+pub fn mark_arrival(from_elsewhere: bool, dst: &dyn Storage, root: &str, key: &str) {
+    if from_elsewhere && let Some(p) = dst.local_path(root, key) {
+        mark(&p);
+    }
+}
+
+/// Whether `path` carries the mark (an archive a browser downloaded, say): what is unpacked from
+/// it gets the mark too, as the system's own unarchivers do.
+pub fn is_marked(path: &Path) -> bool {
+    marked(path)
 }
 
 #[cfg(target_os = "macos")]
@@ -33,6 +49,27 @@ fn imp(path: &Path) {
 #[cfg(not(any(target_os = "macos", windows)))]
 fn imp(_path: &Path) {}
 
+#[cfg(target_os = "macos")]
+fn marked(path: &Path) -> bool {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    let Ok(p) = CString::new(path.as_os_str().as_bytes()) else { return false };
+    // SAFETY: a size query (null buffer, length 0) with valid, NUL-terminated strings
+    unsafe { libc::getxattr(p.as_ptr(), c"com.apple.quarantine".as_ptr(), std::ptr::null_mut(), 0, 0, 0) >= 0 }
+}
+
+#[cfg(windows)]
+fn marked(path: &Path) -> bool {
+    let mut ads = path.as_os_str().to_owned();
+    ads.push(":Zone.Identifier");
+    // Internet (3) or Restricted (4) zone
+    std::fs::read_to_string(ads).is_ok_and(|s| s.lines().any(|l| l.trim().strip_prefix("ZoneId=").and_then(|z| z.trim().parse::<u8>().ok()).is_some_and(|z| z >= 3)))
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn marked(_path: &Path) -> bool {
+    false
+}
+
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     #[test]
@@ -45,6 +82,10 @@ mod tests {
         let out = std::process::Command::new("/usr/bin/xattr").arg("-p").arg("com.apple.quarantine").arg(&f).output().unwrap();
         let v = String::from_utf8_lossy(&out.stdout);
         assert!(v.starts_with("0081;") && v.contains(";Kybl;"), "{v}");
+        assert!(super::is_marked(&f));
+        let plain = dir.join("plain.txt");
+        std::fs::write(&plain, b"x").unwrap();
+        assert!(!super::is_marked(&plain));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

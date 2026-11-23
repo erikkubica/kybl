@@ -216,6 +216,9 @@ async fn exec_transfer(job: Job, ctx: &JobCtx, progress: &(dyn Fn(u64, u64) + Se
                 Outcome::Done => {
                     // the remote file's time, so Finder shows when it was made, not downloaded
                     local::set_mtime(&dest, remote.modified);
+                    if ctx.remote.local_path(&ctx.root, &key).is_none() {
+                        crate::platform::quarantine::mark(&dest);
+                    }
                     let meta = std::fs::metadata(&dest).map_err(|e| e.to_string())?;
                     Ok(Done::Synced(BaseEntry::of(&local_meta(&meta), &remote)))
                 }

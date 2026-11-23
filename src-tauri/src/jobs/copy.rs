@@ -378,6 +378,7 @@ async fn copy_file(ctx: &Ctx, item: &Item, inflight: &Arc<AtomicU64>) -> SResult
         let _ = ctx.dst.delete(&spec.dst.root, std::slice::from_ref(&dst_path), &[], &never, &|_, _| {}).await;
         return Err(e);
     }
+    crate::platform::quarantine::mark_arrival(!ctx.src.caps().local_paths, &*ctx.dst, &spec.dst.root, &dst_path);
     if mv {
         // the copy as the destination reports it now: the original is only deleted while the
         // copy is still this

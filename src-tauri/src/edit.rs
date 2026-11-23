@@ -469,6 +469,8 @@ pub async fn edit_start(app: AppHandle, state: State<'_, AppState>, profile_id: 
         remove_session_dir(&dir);
         return Err(format!("Couldn't save the copy to edit: {e}"));
     }
+    // a file from a connection: the system checks it before it runs, as with a download
+    crate::platform::quarantine::mark(&local);
     let session = Arc::new(Session {
         inner: Mutex::new(Inner {
             info: EditInfo {
