@@ -422,3 +422,241 @@
 .prompt-note span {
   min-width: 0;
 }
+
+/* ---------------------------------------------------------------- import connections */
+/* "Import connections…" under the kind picker */
+.kind-import {
+  display: flex;
+  justify-content: center;
+  padding-top: 2px;
+}
+.kind-import .link-btn {
+  margin: 0;
+  font-size: 12px;
+}
+.imp-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 14px;
+}
+.imp-source {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+.imp-source .kind-tile > svg {
+  margin-left: auto;
+  color: var(--faint);
+}
+.imp-source .link-btn {
+  align-self: flex-end;
+}
+.imp-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* the list scrolls, the file line and tools stay */
+  overflow: hidden;
+  min-height: 0;
+}
+.modal-body.imp-body p.hint {
+  margin: 0;
+}
+.imp-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--dim);
+}
+.imp-file .mono {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* a long path keeps its file name in view */
+  direction: rtl;
+  text-align: left;
+}
+.imp-file .link-btn {
+  flex: none;
+}
+.imp-tools {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.imp-tools .link-btn {
+  margin: 0;
+  flex: none;
+}
+.imp-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--field);
+  color: var(--faint);
+}
+.imp-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.imp-search input,
+.imp-search input:focus {
+  flex: 1;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  outline: none;
+}
+/* the box around the field draws the focus ring */
+.imp-search input:focus-visible {
+  outline: none;
+}
+.imp-list {
+  /* gives way only when the window is too short for the whole dialog */
+  flex: 0 1 auto;
+  /* a fixed height, so filtering doesn't make the dialog jump */
+  height: min(52vh, 460px);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.imp-list > p.hint {
+  padding: 14px;
+}
+.imp-folder {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--raised);
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.imp-group + .imp-group .imp-folder {
+  border-top: 1px solid var(--border);
+}
+.imp-folder-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.imp-count {
+  color: var(--faint);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.imp-site {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 7px 12px;
+  cursor: pointer;
+  /* long lists: rows off screen cost nothing to lay out */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 46px;
+}
+.imp-site:hover {
+  background: var(--hover);
+}
+.imp-site > input,
+.imp-folder > input {
+  flex: none;
+  margin: 0;
+}
+.imp-site > input {
+  margin-top: 4px;
+}
+.imp-site.off {
+  cursor: default;
+}
+.imp-site.off .imp-site-top strong,
+.imp-site.off .imp-where {
+  color: var(--faint);
+}
+.imp-site-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.35;
+}
+.imp-site-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.imp-site-top strong {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 550;
+}
+.imp-site-top .pill {
+  flex: none;
+}
+.imp-where {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dim);
+  font-size: 11px;
+}
+.imp-note {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+/* needs a password or key after import */
+.imp-note.warn {
+  color: var(--warn);
+}
+.imp-sum {
+  flex: 1;
+  align-self: center;
+  min-width: 0;
+  padding: 0 8px;
+  color: var(--faint);
+  font-size: 11.5px;
+  text-align: right;
+}
+.imp-result h3 {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dim);
+}
+.imp-result ul {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.imp-result li em {
+  color: var(--faint);
+  font-style: normal;
+}
+.imp-result li em::before {
+  content: "· ";
+}

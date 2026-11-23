@@ -33,6 +33,8 @@ export type ConnectionDialogProps = {
   kyblFirst?: boolean;
   /** Open straight on this kind's form instead of the picker (new connections). */
   startKind?: PickId;
+  /** computers: the picker offers "Import connections…" (from FileZilla and other apps) */
+  onImport?: () => void;
   /** A sign-in connection whose access ended: start signing in again right away. */
   reconnect?: boolean;
   onSaved: (p: Profile) => void;
@@ -50,7 +52,7 @@ export type ConnectionDialogHandle = {
 /** Kinds this version can edit; anything else was saved by a newer Kybl and can only be deleted. */
 const editable = (p: Profile) => p.provider === "kybl" || KINDS.some((k) => k.id === (p.kind ?? "s3"));
 
-export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl, kyblFirst, startKind, reconnect, ref }: ConnectionDialogProps) {
+export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl, kyblFirst, startKind, reconnect, onImport, ref }: ConnectionDialogProps) {
   const [pick, setPick] = useState<PickId | null>(initial ? pickOf(initial) : (startKind ?? null));
   // the keyboard follows the step: the form's first field after a kind is chosen, the first kind
   // again after "All kinds" or a discard (the dialog box can stay the same, so it won't refocus by itself)
@@ -120,7 +122,7 @@ export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl,
   if (!pick) {
     return (
       <Modal title="New connection" onClose={onClose} width={560}>
-        <KindPicker onPick={choose} kybl={!!onKybl} kyblFirst={!!kyblFirst} />
+        <KindPicker onPick={choose} kybl={!!onKybl} kyblFirst={!!kyblFirst} onImport={onImport} />
       </Modal>
     );
   }

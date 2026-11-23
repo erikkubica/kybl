@@ -3,7 +3,18 @@ import { Icon } from "../Icons";
 import { ProviderBadge } from "../components/Sidebar";
 import { GROUPS, KINDS, type PickId } from "./kinds";
 
-export function KindPicker({ onPick, kybl, kyblFirst }: { onPick: (id: PickId) => void; kybl: boolean; kyblFirst: boolean }) {
+export function KindPicker({
+  onPick,
+  kybl,
+  kyblFirst,
+  onImport,
+}: {
+  onPick: (id: PickId) => void;
+  kybl: boolean;
+  kyblFirst: boolean;
+  /** computers: bring saved sites over from another app instead */
+  onImport?: () => void;
+}) {
   return (
     <div className="modal-body kind-pick">
       {kybl && kyblFirst && (
@@ -35,6 +46,13 @@ export function KindPicker({ onPick, kybl, kyblFirst }: { onPick: (id: PickId) =
           </section>
         );
       })}
+      {onImport && (
+        <div className="kind-import">
+          <button type="button" className="link-btn" onClick={onImport}>
+            Import connections…
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -34,6 +34,8 @@ mod quit;
 mod state;
 // one trait for S3, this device's disk and (later) other providers
 mod storage;
+// "Import connections" from other file transfer apps (FileZilla first)
+mod import;
 // WP-A2: Google Drive, OneDrive and Dropbox sign-in and tokens
 mod oauth;
 // folder sync (desktop); its planner (`sync::plan`) is shared with phone backup
@@ -171,6 +173,9 @@ pub fn run() {
             commands::list_profiles,
             commands::save_profile,
             commands::delete_profile,
+            import::import_sources,
+            import::import_preview,
+            import::import_apply,
             commands::test_connection,
             commands::list_buckets,
             commands::create_bucket,
