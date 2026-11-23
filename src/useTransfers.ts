@@ -54,6 +54,15 @@ const listed = new Map<string, { etag: string; size: number }>();
 const external = new Map<string, { retry?: () => void }>();
 /** Rows started by their own command (see `NewTransfer.run`), by id. */
 const runners = new Map<string, (id: string) => Promise<unknown>>();
+/**
+ * The backend only knows a transfer once its start command returns (rows start in groups of 50,
+ * so thousands can wait their turn here). `sending`: its start command is under way; `sent`: the
+ * backend has it. A queued row in neither is stopped or paused here, and `start` skips it.
+ */
+const sending = new Set<string>();
+const sent = new Set<string>();
+/** Cancel or Pause asked while the start command was under way: sent again once it returns. */
+const held = new Map<string, "cancel" | "pause">();
 /** Callers waiting for a transfer to end (see `whenFinished`). */
 const waiters = new Map<string, ((t: Transfer) => void)[]>();
 
@@ -138,14 +147,26 @@ function prune() {
         batchPrunedWhere.set(`${t.profileId}\n${t.bucket}`, { profileId: t.profileId, bucket: t.bucket });
       }
       if (currentRun.delete(id)) runPrunedBytes += t.total;
-      byId.delete(id);
-      overwriteIds.delete(id);
-      requested.delete(id);
-      listed.delete(id);
+      forget(id);
       done--;
     }
   }
 }
+
+/** Takes a row off the list with everything kept about it. */
+function forget(id: string) {
+  byId.delete(id);
+  overwriteIds.delete(id);
+  requested.delete(id);
+  listed.delete(id);
+  external.delete(id);
+  runners.delete(id);
+  sent.delete(id);
+  held.delete(id);
+}
+
+/** A queued row the backend hasn't been given yet (see `sending`). */
+const notStarted = (t: Transfer | undefined): boolean => !!t && t.state === "queued" && !sending.has(t.id) && !sent.has(t.id) && !external.has(t.id);
 
 function markDirty() {
   dirty = true;
@@ -208,6 +229,7 @@ function adoptRunning() {
       for (const t of list) {
         if (byId.has(t.id)) continue;
         byId.set(t.id, { ...t, speed: 0, error: null });
+        sent.add(t.id);
         currentRun.add(t.id);
         if (t.kind === "upload") batch.add(t.id);
       }
@@ -234,6 +256,9 @@ function adoptRunning() {
 }
 
 async function start(t: Transfer) {
+  // stopped or paused while it waited for its group's turn
+  if (!notStarted(byId.get(t.id))) return;
+  sending.add(t.id);
   try {
     const run = runners.get(t.id);
     if (run) await run(t.id);
@@ -249,7 +274,16 @@ async function start(t: Transfer) {
         markDirty();
       }
     }
+    sending.delete(t.id);
+    sent.add(t.id);
+    // Cancel or Pause came while the backend didn't know it yet: now it does
+    const want = held.get(t.id);
+    held.delete(t.id);
+    if (want === "cancel") api.cancelTransfer(t.id).catch(() => {});
+    else if (want === "pause") api.pauseTransfer(t.id).catch(() => {});
   } catch (e) {
+    sending.delete(t.id);
+    held.delete(t.id);
     const failed: Transfer = { ...(byId.get(t.id) ?? t), state: "error", error: errMessage(e) };
     byId.set(t.id, failed);
     settle(failed);
@@ -265,12 +299,8 @@ function clearWhere(pick: (t: Transfer) => boolean) {
     if (!pick(t)) continue;
     // a failed or stopped one can't be retried once it is off the list: let the backend drop
     // what it kept to resume it (a partial download, an open multipart upload)
-    if (t.state !== "done" && !external.delete(id)) api.cancelTransfer(id).catch(() => {});
-    byId.delete(id);
-    overwriteIds.delete(id);
-    requested.delete(id);
-    listed.delete(id);
-    runners.delete(id);
+    if (t.state !== "done" && !external.has(id)) api.cancelTransfer(id).catch(() => {});
+    forget(id);
   }
   dirty = true;
   flush();
@@ -288,9 +318,34 @@ function requeue(id: string): Transfer | null {
   const fresh: Transfer = { ...t, state: "queued", error: null, speed: 0, verified: undefined };
   byId.set(id, fresh);
   lastSample.delete(id);
+  // the backend let go of it when it ended: `start` hands it over again
+  sent.delete(id);
   currentRun.add(id);
   if (t.kind === "upload") batch.add(id);
   return fresh;
+}
+
+/**
+ * Cancel or Pause one row. The backend stops what it runs; a row it doesn't know yet ends (or
+ * pauses) here, so `start` skips it, and one whose start command is under way gets the request
+ * again once it returns. `backendDone`: the caller already asked the backend (Pause all).
+ * Returns whether the list changed here.
+ */
+function stopOne(id: string, what: "cancel" | "pause", backendDone = false): boolean {
+  if (external.has(id)) return false;
+  const t = byId.get(id);
+  if (!backendDone) {
+    // cancelling also drops what an earlier run kept (a partial file, an open multipart upload)
+    if (what === "cancel") api.cancelTransfer(id).catch(() => {});
+    else if (!notStarted(t)) api.pauseTransfer(id).catch(() => {});
+  }
+  if (sending.has(id)) held.set(id, what);
+  // a paused one isn't running, so no event comes back: it ends here (what it kept is dropped)
+  if (!(notStarted(t) || (what === "cancel" && t?.state === "paused"))) return false;
+  const next: Transfer = { ...t!, state: what === "cancel" ? "cancelled" : "paused", speed: 0 };
+  byId.set(id, next);
+  settle(next);
+  return true;
 }
 
 const actions = {
@@ -321,24 +376,27 @@ const actions = {
     return created;
   },
   cancel(id: string) {
-    if (external.has(id)) return;
-    api.cancelTransfer(id).catch(() => {});
-    // a paused one isn't running, so no event comes back: it ends here (what it kept is dropped)
-    const t = byId.get(id);
-    if (t?.state === "paused") {
-      const stopped: Transfer = { ...t, state: "cancelled", speed: 0 };
-      byId.set(id, stopped);
-      settle(stopped);
+    if (stopOne(id, "cancel")) {
       dirty = true;
       flush();
     }
   },
   /** Stops a queued or running transfer but keeps what it did; Resume carries on from there. */
   pause(id: string) {
-    if (!external.has(id)) api.pauseTransfer(id).catch(() => {});
+    if (stopOne(id, "pause")) {
+      dirty = true;
+      flush();
+    }
   },
   pauseAll() {
     api.pauseAllTransfers().catch(() => {});
+    // the backend pauses what it knows; rows still waiting for their turn are paused here
+    let changed = false;
+    for (const t of [...byId.values()]) if (t.state === "queued" && stopOne(t.id, "pause", true)) changed = true;
+    if (changed) {
+      dirty = true;
+      flush();
+    }
   },
   /** Starts a paused (or failed) transfer again under the same id, so it carries on. */
   resume(id: string) {
@@ -379,8 +437,13 @@ const actions = {
     flush();
   },
   cancelAll() {
-    for (const t of byId.values()) {
-      if ((t.state === "queued" || t.state === "running") && !external.has(t.id)) api.cancelTransfer(t.id).catch(() => {});
+    let changed = false;
+    for (const t of [...byId.values()]) {
+      if ((t.state === "queued" || t.state === "running") && stopOne(t.id, "cancel")) changed = true;
+    }
+    if (changed) {
+      dirty = true;
+      flush();
     }
   },
   /**
@@ -499,6 +562,11 @@ export function useTransfers(onError: (msg: string) => void): TransferActions {
 /** The live list, for components that show it. */
 export function useTransferList(): Transfer[] {
   return useStore(transfersStore);
+}
+
+/** Whether any transfer is queued or running; re-renders only when that changes. */
+export function useTransfersActive(): boolean {
+  return useStore(transfersStore, (list) => list.some((t) => t.state === "queued" || t.state === "running"));
 }
 
 /** A transfer's progress in whole percent (null when it isn't in the list); re-renders only when the number changes. */

@@ -200,6 +200,7 @@ export function PromptDialog({
   initial,
   confirmLabel,
   note,
+  check,
   onSubmit,
   onClose,
 }: {
@@ -209,10 +210,13 @@ export function PromptDialog({
   confirmLabel: string;
   /** a caution under the field (renaming a folder that is copied file by file, say) */
   note?: string;
+  /** what's wrong with a value, shown under the field (the dialog stays open); null when fine */
+  check?: (value: string) => string | null;
   onSubmit: (value: string) => void;
   onClose: () => void;
 }) {
   const [value, setValue] = useState(initial);
+  const [problem, setProblem] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
     input.current?.focus();
@@ -222,6 +226,12 @@ export function PromptDialog({
   const submit = () => {
     const v = value.trim();
     if (!v) return;
+    const bad = check?.(v) ?? null;
+    if (bad) {
+      setProblem(bad);
+      input.current?.focus();
+      return;
+    }
     onSubmit(v);
     onClose();
   };
@@ -239,12 +249,17 @@ export function PromptDialog({
             <input
               ref={input}
               value={value}
-              onChange={(e) => setValue(e.target.value)}
+              onChange={(e) => {
+                setValue(e.target.value);
+                setProblem(null);
+              }}
               spellCheck={false}
               autoCorrect="off"
               autoCapitalize="off"
+              aria-invalid={!!problem}
             />
           </label>
+          {problem && <p className="hint error">{problem}</p>}
           {note && (
             <p className="hint warn prompt-note">
               <Icon name="info" size={13} />

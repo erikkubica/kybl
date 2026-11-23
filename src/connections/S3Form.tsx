@@ -138,7 +138,8 @@ export function S3Form({ initial, tried, formApi, onEdit }: { initial: Profile |
         bucket: bucket.trim() || null,
         pathStyle,
       };
-      return { profile, secret: secret || undefined };
+      // S3 secrets never hold whitespace: a pasted trailing space or newline would only break the signature
+      return { profile, secret: secret.trim() || undefined };
     },
   }));
 

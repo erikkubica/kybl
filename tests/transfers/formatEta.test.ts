@@ -1,7 +1,7 @@
 // Time left in the Activity header (src/format.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatEta } from "../../src/format.ts";
+import { formatEta, parseMbps } from "../../src/format.ts";
 
 test("never 60 seconds in a minute", () => {
   assert.equal(formatEta(59.2), "1m 0s");
@@ -21,4 +21,14 @@ test("nothing to say", () => {
   assert.equal(formatEta(-5), "");
   assert.equal(formatEta(Infinity), "");
   assert.equal(formatEta(NaN), "");
+});
+
+test("custom speed limit: numbers, 0 for none, problems for the rest", () => {
+  assert.equal(parseMbps("5"), 5);
+  assert.equal(parseMbps("2,5"), 2.5);
+  assert.equal(parseMbps(" 10 MB/s "), 10);
+  assert.equal(parseMbps("0"), 0);
+  assert.equal(typeof parseMbps("-3"), "string");
+  assert.equal(typeof parseMbps("abc"), "string");
+  assert.equal(typeof parseMbps("20000"), "string");
 });

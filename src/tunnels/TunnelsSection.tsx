@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { Icon } from "../Icons";
 import { RAW } from "../connections/fields";
 import type { TunnelDef } from "../types";
-import { runningTunnel, tunnelApi } from "./tunnels";
+import { tunnelApi, useConnectionTunnels } from "./tunnels";
 import "./tunnels.css";
 
 type RowProblems = { local?: string; host?: string; remote?: string };
@@ -25,7 +25,8 @@ export function tunnelProblems(tunnels: TunnelDef[]): RowProblems[] {
     if (!host) p.host = "Enter the host to reach, as the server sees it (often localhost).";
     else if (/[\s/]/.test(host)) p.host = `“${host}” isn't a host name or address.`;
     // one colon is a pasted "host:port" (an IPv6 address has at least two)
-    else if (host.split(":").length === 2) p.host = "Put the port in the Remote port box.";
+    // so is "[::1]:5432", an IPv6 address in brackets with its port
+    else if (host.split(":").length === 2 || (host.startsWith("[") && !host.endsWith("]"))) p.host = "Put the port in the Remote port box.";
     if (!portOk(t.remotePort)) p.remote = "Remote port: 1 to 65535.";
     return p;
   });
@@ -114,7 +115,9 @@ function TunnelRow({
 }) {
   const taken = usePortTaken(t.localPort, profileId, t.id);
   const err = problems.local ?? problems.host ?? problems.remote;
-  const running = !!(t.id && profileId && runningTunnel(profileId, t.id));
+  // live: a tunnel started or stopped (autostart, a drop) while the form is open shows here
+  const live = useConnectionTunnels(profileId);
+  const running = !!(t.id && profileId && live.some((x) => x.tunnelId === t.id));
   return (
     <div className="tunnel-edit" role="group" aria-label={t.name || "Tunnel"}>
       <div className="tunnel-edit-route">

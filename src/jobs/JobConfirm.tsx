@@ -47,6 +47,8 @@ export function JobConfirm({
   const [dir, setDir] = useState(dest.dir);
   const [opts, setOpts] = useState(loadJobOptions);
   const [starting, setStarting] = useState(false);
+  // jobs created on an earlier try that failed part way (see `startJobs`)
+  const [startedJobs] = useState(() => new Set<string>());
   const [error, setError] = useState<string | null>(null);
   const target: PickedLocation = { ...dest, dir: normalizeDir(dir) };
   const why = blockedReason(source, target);
@@ -66,7 +68,7 @@ export function JobConfirm({
     setStarting(true);
     setError(null);
     try {
-      const { id, spec } = await startJobs(source, mode, target, opts, s.what);
+      const { id, spec } = await startJobs(source, mode, target, opts, s.what, startedJobs);
       onStarted?.(id, spec);
       onClose();
     } catch (e) {

@@ -66,7 +66,8 @@ export function useSourceSummary(source: MigrationSource, verb: "copy" | "move")
     const ops = folders.map(() => `jobs-size-${Math.random().toString(36).slice(2)}`);
     Promise.all(folders.map((f, i) => api.folderSize(source.profileId, f.root, f.path, ops[i])))
       .then((rs) => live && setSizes({ bytes: base.bytes + rs.reduce((s, r) => s + r.bytes, 0), files: base.files + rs.reduce((s, r) => s + r.objects, 0), counting: false }))
-      .catch(() => live && setSizes({ ...base, counting: false }));
+      // the folders couldn't be counted: say so, rather than a total that leaves them out
+      .catch(() => live && setSizes({ ...base, counting: false, uncounted: multi ? 0 : folders.length }));
     return () => {
       live = false;
       for (const op of ops) api.cancelTransfer(op).catch(() => {});

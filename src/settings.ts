@@ -103,7 +103,16 @@ export const DEFAULTS: Settings = {
   quickInfo: null,
 };
 
-export const ACCENTS: { id: Exclude<Accent, "scheme">; label: string; color: string }[] = [
+/**
+ * "Reset all settings": the defaults, but what is layout or kept places rather than a setting
+ * (favorites, sort, tile size, the sidebar, Quick Look's info column) stays as it is.
+ */
+export function resetSettings(s: Settings): Settings {
+  const { favorites, sort, tileSize, sidebarHidden, quickInfo, layout, syncBrowsing } = s;
+  return { ...DEFAULTS, favorites, sort, tileSize, sidebarHidden, quickInfo, layout, syncBrowsing };
+}
+
+export const ACCENTS:{ id: Exclude<Accent, "scheme">; label: string; color: string }[] = [
   { id: "blue", label: "Blue", color: "#2c6bf2" },
   { id: "purple", label: "Purple", color: "#6d4fe0" },
   { id: "pink", label: "Pink", color: "#d93b7a" },

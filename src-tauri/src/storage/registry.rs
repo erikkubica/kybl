@@ -87,6 +87,17 @@ pub async fn build<R: Runtime>(
     }
 }
 
+/// An FTP or WebDAV backend for `profile` that signs in without a password, whatever the vault
+/// holds: testing settings whose saved password is about to be removed.
+pub fn build_without_password(profile: &Profile) -> Result<Arc<dyn Storage>, String> {
+    let cfg = net::net_config(profile.net.as_ref())?;
+    match profile.kind {
+        ConnKind::Webdav => Ok(Arc::new(WebdavBackend::new(&cfg, None)?)),
+        ConnKind::Ftp => Ok(Arc::new(FtpBackend::new(&cfg, None)?)),
+        other => Err(format!("{} connections always sign in with their saved secret.", other.label())),
+    }
+}
+
 /// A fresh SFTP backend for connection `profile_id`, not kept: a terminal pane opens its shell
 /// with it (`SftpBackend::open_shell`), signed in with the connection's saved credentials.
 #[cfg(desktop)]

@@ -75,6 +75,8 @@ export function blockedReason(source: MigrationSource, dest: Loc): string | null
 /**
  * Creates the job(s) for `source` into `dest` and remembers the destination; resolves to the
  * first job's id. A whole connection becomes one job per root, each into a folder of its name.
+ * `started` (kept by the caller across tries) holds the jobs already created: when one fails part
+ * way, the error says how many started, and trying again creates only the rest.
  */
 export async function startJobs(
   source: MigrationSource,
@@ -82,6 +84,7 @@ export async function startJobs(
   dest: PickedLocation,
   opts: JobOptions,
   what: string,
+  started: Set<string> = new Set(),
 ): Promise<{ id: string; spec: JobSpec }> {
   const base = { conflict: opts.conflict, verify: opts.verify, preserveMtime: opts.preserveMtime, ignore: ignoreList(opts) };
   const to = dest.profileId === source.profileId ? locLabel(dest, false) : dest.connectionName;
@@ -102,13 +105,25 @@ export async function startJobs(
           title: jobTitle(what, to),
         },
       ];
+  const keyOf = (spec: JobSpec) => [mode, spec.src.root, spec.dst.profileId, spec.dst.root, spec.dst.dir].join("\n");
   let first: { id: string; spec: JobSpec } | null = null;
   for (const spec of specs) {
-    const id = await migrations.create(spec);
-    first ??= { id, spec };
+    if (started.has(keyOf(spec))) continue;
+    try {
+      const id = await migrations.create(spec);
+      started.add(keyOf(spec));
+      first ??= { id, spec };
+    } catch (e) {
+      const n = specs.filter((s) => started.has(keyOf(s))).length;
+      if (!n) throw e;
+      rememberDest(dest);
+      throw new Error(`${n} of ${specs.length} started (they run in Activity). The rest didn't: ${errMessage(e)}`);
+    }
   }
   rememberDest(dest);
-  return first!;
+  // every one was started on an earlier try
+  if (!first) throw new Error("These were all started already. They run in Activity.");
+  return first;
 }
 
 export function MigrationDialog({
@@ -148,6 +163,8 @@ export function MigrationDialog({
   const [showOptions, setShowOptions] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  // jobs created on an earlier try that failed part way (see `startJobs`)
+  const [startedJobs] = useState(() => new Set<string>());
   const s = useSourceSummary(source, mode);
 
   const set = <K extends keyof JobOptions>(k: K, v: JobOptions[K]) =>
@@ -185,7 +202,7 @@ export function MigrationDialog({
     setStarting(true);
     setError(null);
     try {
-      const { id, spec } = await startJobs(source, mode, dest, opts, s.what);
+      const { id, spec } = await startJobs(source, mode, dest, opts, s.what, startedJobs);
       onStarted?.(id, spec);
       onClose();
     } catch (e) {

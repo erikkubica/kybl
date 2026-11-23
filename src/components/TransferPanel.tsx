@@ -1,7 +1,7 @@
 import { Icon, type IconName } from "../Icons";
-import { api } from "../api";
+import { api, errMessage } from "../api";
 import { ErrorText } from "./ErrorText";
-import { formatBytes, formatEta, formatSpeed } from "../format";
+import { formatBytes, formatEta, formatSpeed, parseMbps } from "../format";
 import type { Transfer, TransferState } from "../types";
 import { useJobList, type Job, type JobKind } from "../useJobs";
 import { runTotals, transferActions, transferControls, useTransferList } from "../useTransfers";
@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ContextMenu, PromptDialog, type MenuItem } from "./Dialogs";
 import { MBPS, limitLabel, saveTransferPrefs, useTransferPrefsStore } from "../transferPrefs";
 import "./transfers.css";
-import { clearLog, useActivityLog } from "../activityLog";
+import { clearLog, logMessage, useActivityLog } from "../activityLog";
 import type { JobSummary } from "../api";
 import { JobsPanel, isActive as migrationActive, migrations as migrationStore, useMigrations } from "../jobs";
 import { useJobs } from "../useJobs";
@@ -57,6 +57,9 @@ const VERIFIED: Record<string, string> = {
 
 const SPEED_PRESETS = [0, 1, 5, 10];
 
+/** Failed rows listed at most; the rest are counted below them (Retry all and Clear failed cover every one). */
+const FAILED_SHOWN = 200;
+
 /** Uploads and downloads can pause and move up the queue; compress and extract run on their own. */
 const pausable = (t: Transfer) => t.kind === "upload" || t.kind === "download";
 
@@ -68,11 +71,18 @@ function SpeedMenu() {
   const prefs = useTransferPrefsStore();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [custom, setCustom] = useState(false);
+  const [failed, setFailed] = useState(false);
   if (!prefs) return null;
   const down = prefs.downloadLimitKbps;
   const up = prefs.uploadLimitKbps;
   const same = down === up;
-  const set = (kbps: number) => void saveTransferPrefs({ downloadLimitKbps: kbps, uploadLimitKbps: kbps }).catch(() => {});
+  const set = (kbps: number) => {
+    setFailed(false);
+    saveTransferPrefs({ downloadLimitKbps: kbps, uploadLimitKbps: kbps }).catch((e) => {
+      setFailed(true);
+      logMessage("error", `The speed limit wasn't saved: ${errMessage(e)}`);
+    });
+  };
   const isPreset = same && SPEED_PRESETS.some((mb) => Math.round(mb * MBPS) === down);
   const items: MenuItem[] = [
     { type: "label", label: same ? "Speed limit" : `Speed limit · ↓ ${down ? limitLabel(down) : "none"} · ↑ ${up ? limitLabel(up) : "none"}` },
@@ -101,17 +111,22 @@ function SpeedMenu() {
       >
         <Icon name="gauge" size={14} />
       </button>
-      {text && <span className="tp-limit">{text}</span>}
+      {failed ? <span className="tp-limit tp-limit-err">limit not saved</span> : text && <span className="tp-limit">{text}</span>}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={items} label="Speed limit" onClose={() => setMenu(null)} />}
       {custom && (
         <PromptDialog
           title="Speed limit"
-          label="MB/s, for uploads and downloads each"
+          label="MB/s, for uploads and downloads each (0: no limit)"
           initial={down ? String(Math.round((down / MBPS) * 10) / 10) : ""}
           confirmLabel="Limit"
+          check={(v) => {
+            const mb = parseMbps(v);
+            return typeof mb === "string" ? mb : null;
+          }}
           onSubmit={(v) => {
-            const mb = Number(v.replace(",", "."));
-            if (mb > 0 && mb <= 10_000) set(Math.round(mb * MBPS));
+            const mb = parseMbps(v);
+            // a tiny limit stays a limit (1 KB/s at least), never "none"
+            if (typeof mb === "number") set(mb === 0 ? 0 : Math.max(1, Math.round(mb * MBPS)));
           }}
           onClose={() => setCustom(false)}
         />
@@ -160,7 +175,7 @@ export function TransferPanel(props: Omit<PanelProps, "transfers" | "jobs" | "sy
       sync.mappings.flatMap((m): SyncActivity[] => {
         const st = sync.status[m.id];
         if (st?.state !== "syncing") return [];
-        const name = m.localPath.split("/").filter(Boolean).pop() ?? m.localPath;
+        const name = m.localPath.split(/[\\/]+/).filter(Boolean).pop() ?? m.localPath;
         return [{ id: m.id, name, direction: m.direction, state: "syncing", done: st.done, total: st.total, current: st.current, bytes: st.bytes ?? 0, totalBytes: st.totalBytes ?? 0 }];
       }),
     [sync],
@@ -302,7 +317,8 @@ function TransferPanelView({
   const cancelled = transfers.filter((t) => t.state === "cancelled");
   const list = [
     ...(show("progress") ? running : []),
-    ...(show("failed") ? failed : []),
+    // capped like the others: tens of thousands of failed rows would freeze the window
+    ...(show("failed") ? failed.slice(0, FAILED_SHOWN) : []),
     ...(show("progress") ? queued.slice(0, 40) : []),
     ...(show("progress") ? paused.slice(0, 40) : []),
     ...(show("done") ? done.slice(-40).reverse() : []),
@@ -742,7 +758,9 @@ function TransferPanelView({
               </div>
             );
           })}
+          {show("failed") && failed.length > FAILED_SHOWN && <div className="tp-more">+ {(failed.length - FAILED_SHOWN).toLocaleString()} more failed</div>}
           {show("progress") && queued.length > 40 && <div className="tp-more">+ {(queued.length - 40).toLocaleString()} more waiting</div>}
+          {show("progress") && paused.length > 40 && <div className="tp-more">+ {(paused.length - 40).toLocaleString()} more paused</div>}
         </div>
       )}
     </section>

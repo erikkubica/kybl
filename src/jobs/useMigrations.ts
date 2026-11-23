@@ -22,6 +22,10 @@ const pending = new Map<string, JobProgress>();
 let timer: ReturnType<typeof setTimeout> | undefined;
 let started = false;
 let loading: Promise<void> | null = null;
+/** A second read asked for while one was in flight (see `refreshJobs`). */
+let again: Promise<void> | null = null;
+/** The list was read once: a job that first shows up already finished started (and ended) since. */
+let loadedOnce = false;
 
 type Finished = (job: JobSummary) => void;
 const finishedListeners = new Set<Finished>();
@@ -60,18 +64,30 @@ function schedule() {
 
 /** Loads the list from the backend again (pending progress for known jobs is kept). */
 export function refreshJobs(): Promise<void> {
-  if (loading) return loading;
+  // the read in flight began before this caller's change (a job just created, paused): read once
+  // more after it, or the caller would get a list without its change
+  if (loading) {
+    again ??= loading.then(() => {
+      again = null;
+      return refreshJobs();
+    });
+    return again;
+  }
   loading = jobsApi
     .jobList()
     .then((list) => {
       // a job can end between two events and the next list (a cancel, or while the page slept):
-      // the list is then the first to say so, and "finished" must still fire once
+      // the list is then the first to say so, and "finished" must still fire once. So must one
+      // that is new to this list and already over (a small copy that ended within a second)
       const before = new Map(jobsStore.get().map((j) => [j.id, j.progress.state]));
+      const listedBefore = loadedOnce;
+      loadedOnce = true;
       jobsStore.set(list);
       notifyEnded(
         list.filter((j) => {
           const was = before.get(j.id);
-          return was !== undefined && !FINISHED_STATES.has(was) && FINISHED_STATES.has(j.progress.state);
+          if (!FINISHED_STATES.has(j.progress.state)) return false;
+          return was === undefined ? listedBefore : !FINISHED_STATES.has(was);
         }),
       );
     })

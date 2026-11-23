@@ -234,7 +234,7 @@ function KeyedForm({
       // an SFTP server nobody trusted yet would fail on first use: meet its key here instead
       if (what === "test" || (!skipCheck && d.profile.kind === "sftp" && !d.profile.net?.hostKey)) {
         checking = true;
-        const text = await api.testConnection(d.profile, d.secret);
+        const text = await api.testConnection(d.profile, d.secret, d.clearSecret);
         checking = false;
         if (what === "test") {
           if (live.current) setResult({ ok: true, text });

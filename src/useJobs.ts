@@ -40,13 +40,16 @@ type Progress = { opId: string; phase: "listing" | "copying" | "deleting"; done:
 
 /** Completed fraction and a smoothed "about N min left" from successive progress reports. */
 function tracker() {
-  const start = Date.now();
+  // the clock starts with the work itself: a long listing isn't copy time
+  let start: number | null = null;
   let smooth: number | null = null;
   return (p: Progress) => {
     const byCount = p.total ? p.done / p.total : 0;
-    // per-object latency and bytes both cost time: weigh them equally
-    const frac = p.totalBytes > 0 ? 0.5 * byCount + 0.5 * (p.bytes / p.totalBytes) : byCount;
-    const elapsed = (Date.now() - start) / 1000;
+    // per-object latency and bytes both cost time: weigh them equally (bytes can overshoot a
+    // little when a file grew since it was listed: never past 100%)
+    const frac = Math.min(1, Math.max(0, p.totalBytes > 0 ? 0.5 * byCount + 0.5 * (p.bytes / p.totalBytes) : byCount));
+    if (p.phase !== "listing") start ??= Date.now();
+    const elapsed = start == null ? 0 : (Date.now() - start) / 1000;
     if (p.phase === "listing" || frac < 0.01 || elapsed < 3 || frac >= 1) return { frac, eta: null };
     const left = (elapsed * (1 - frac)) / frac;
     smooth = smooth == null ? left : smooth * 0.75 + left * 0.25;

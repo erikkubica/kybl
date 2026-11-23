@@ -1,5 +1,17 @@
 import type { Entry } from "./types";
 
+/**
+ * A typed speed limit in MB/s ("5", "2,5", "0" for no limit), or what is wrong with it. Above
+ * 10 000 MB/s is no real limit, so it is turned down rather than taken as "none".
+ */
+export function parseMbps(text: string): number | string {
+  const t = text.trim().replace(/\s*mb\/?s$/i, "").replace(",", ".");
+  const mb = t === "" ? NaN : Number(t);
+  if (!Number.isFinite(mb) || mb < 0) return "Enter a number of MB/s, or 0 for no limit.";
+  if (mb > 10_000) return "At most 10,000 MB/s.";
+  return mb;
+}
+
 let binaryUnits = false;
 
 /** Switches every size in the app between decimal (KB = 1000 B) and binary (KiB = 1024 B). */

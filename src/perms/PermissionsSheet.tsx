@@ -12,7 +12,7 @@ import { Modal } from "../components/Dialogs";
 import { ErrorText } from "../components/ErrorText";
 import type { Entry } from "../types";
 import { permsApi, modeText, type Recurse } from "./permsApi";
-import { bitOf, bitsFromText, digits, startBits, type Bit } from "./permBits";
+import { bitOf, bitsFromText, digits, octalDigits, startBits, type Bit } from "./permBits";
 import "./perms.css";
 
 const WHO = ["Owner", "Group", "Others"] as const;
@@ -77,7 +77,9 @@ export function PermissionsSheet({
     if (b === true) set |= bitOf(i);
     else if (b === false) clear |= bitOf(i);
   });
-  const valid = /^[0-7x]{3}$/i.test(text);
+  const parsed = octalDigits(text);
+  const num = parsed === "special" ? null : parsed;
+  const valid = num !== null;
   const changed = bits.some((b, i) => b !== initial[i]);
   const canApply = valid && (set | clear) !== 0 && (changed || (recurse && folders > 0)) && !busy;
 
@@ -160,7 +162,7 @@ export function PermissionsSheet({
           <input
             className={`mono${valid ? "" : " bad"}`}
             value={text}
-            maxLength={3}
+            maxLength={4}
             spellCheck={false}
             disabled={!!busy}
             onChange={(e) => typed(e.target.value)}
@@ -171,7 +173,13 @@ export function PermissionsSheet({
             aria-describedby="perm-num-hint"
           />
           <em id="perm-num-hint" className="mono">
-            {valid && !text.includes("x") ? modeText(parseInt(text, 8)) : text.includes("x") ? "x: as each item has it" : "three digits, 0–7"}
+            {num !== null
+              ? /x/i.test(num)
+                ? "x: as each item has it"
+                : modeText(parseInt(num, 8))
+              : parsed === "special"
+                ? "setuid, setgid and sticky can't be set here"
+                : "three digits, 0–7"}
           </em>
         </label>
         {folders > 0 && (

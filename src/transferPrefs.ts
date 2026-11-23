@@ -33,6 +33,16 @@ export async function saveTransferPrefs(p: Partial<TransferPrefs>): Promise<void
   }
 }
 
+/** The backend's defaults (src-tauri/src/tuning.rs `TransferPrefs::default`). */
+export const TRANSFER_DEFAULTS: TransferPrefs = {
+  concurrency: 3,
+  partConcurrency: 4,
+  downloadLimitKbps: 0,
+  uploadLimitKbps: 0,
+  verify: "off",
+  wifiOnly: false,
+};
+
 export function useTransferPrefsStore(): TransferPrefs | null {
   useEffect(() => {
     loadTransferPrefs().catch(() => {});

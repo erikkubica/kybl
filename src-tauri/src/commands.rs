@@ -148,16 +148,23 @@ pub async fn delete_profile(
     Ok(())
 }
 
-/// Tries the connection with the given (possibly unsaved) settings.
+/// Tries the connection with the given (possibly unsaved) settings. `clear_secret` (FTP and
+/// WebDAV, "Remove saved password"): sign in without the saved password, as Save will leave it.
 #[tauri::command]
 pub async fn test_connection(
     app: AppHandle,
     state: State<'_, AppState>,
     profile: Profile,
     secret: Option<String>,
+    clear_secret: Option<bool>,
 ) -> Result<String, String> {
     if profile.kind != ConnKind::S3 {
-        let s = registry::build(&app, &state, &profile, secret).await?;
+        let no_password = clear_secret.unwrap_or(false) && matches!(profile.kind, ConnKind::Ftp | ConnKind::Webdav);
+        let s = if no_password && secret.as_deref().is_none_or(str::is_empty) {
+            registry::build_without_password(&profile)?
+        } else {
+            registry::build(&app, &state, &profile, secret).await?
+        };
         s.roots().await?;
         return Ok("Connected.".into());
     }
