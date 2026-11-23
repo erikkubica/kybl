@@ -1362,8 +1362,14 @@ body.resizing-col * {
 body.resizing-col .preview-inner {
   animation: none;
 }
+.content {
+  /* the details pane sizes itself against the room next to it (below) */
+  container-type: inline-size;
+}
 .preview {
-  width: var(--preview-w, 336px);
+  /* the list keeps at least 340px: in a narrow window the details pane gives up width first
+     (down to its 260px minimum), then steps aside altogether */
+  width: min(var(--preview-w, 336px), max(260px, calc(100cqw - 340px)));
   flex: none;
   border-left: 1px solid var(--border);
   background: var(--panel);
@@ -4971,4 +4977,13 @@ input[type="range"]:focus-visible {
   height: 12px;
   border-color: rgba(255, 255, 255, 0.35);
   border-top-color: #fff;
+}
+
+/* No room for a usable list and the details pane side by side: the list wins. The pane comes back
+   by itself once the window (or the sidebar) leaves room; its open/closed setting is untouched. */
+@container (max-width: 599px) {
+  .preview,
+  .content > .pane-resizer {
+    display: none;
+  }
 }
