@@ -383,3 +383,78 @@ async fn roots_are_my_drive_shared_drives_and_shared_with_me() {
     let e = g.write(SHARED, "x.txt", WriteSource::Bytes("x".into()), WriteOpts::default(), &|_, _| {}, &cancel).await.err().unwrap();
     assert_eq!(e.kind, ErrKind::PermissionDenied);
 }
+
+/// A Drive that answers name lookups regardless of case (as Drive's `name =` may), lists the
+/// top of My Drive, and knows the real id of My Drive ("0Real").
+async fn drive_with(all: Vec<Value>) -> Mock {
+    Mock::start(move |req| {
+        if req.path == "/drive/v3/files" {
+            let q = req.q("q").unwrap();
+            if q.contains("name = ") {
+                let names: Vec<String> = names_in(&q).iter().map(|n| n.to_lowercase()).collect();
+                return files(all.iter().filter(|f| names.iter().any(|n| f["name"].as_str().unwrap().to_lowercase() == *n)).cloned().collect(), None);
+            }
+            return files(all.clone(), None);
+        }
+        if req.path == "/drive/v3/files/root" && req.method == "GET" {
+            return Resp::json(200, &json!({ "id": "0Real" }));
+        }
+        if let Some(id) = req.path.strip_prefix("/drive/v3/files/") {
+            if let Some(f) = all.iter().find(|f| f["id"] == id) {
+                return Resp::json(200, f);
+            }
+        }
+        Resp::status(404)
+    })
+    .await
+}
+
+#[tokio::test]
+async fn lookups_only_take_the_exact_name() {
+    let mock = drive_with(vec![file("old", "Report.txt", "text/plain", "2023-01-01T00:00:00Z"), file("new", "report.txt", "text/plain", "2024-01-01T00:00:00Z")]).await;
+    let g = GDrive::with_base(api(fixed("tok")), &mock.base);
+    assert_eq!(g.stat(MY_DRIVE, "report.txt").await.unwrap().unwrap().id.as_deref(), Some("new"));
+    assert_eq!(g.stat(MY_DRIVE, "Report.txt").await.unwrap().unwrap().id.as_deref(), Some("old"));
+    assert_eq!(g.stat(MY_DRIVE, "REPORT.txt").await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn a_big_duplicate_number_asks_drive_little() {
+    let mock = drive_with(vec![file("a1", "x.txt", "text/plain", "2023-01-01T00:00:00Z"), file("a2", "x.txt", "text/plain", "2024-01-01T00:00:00Z")]).await;
+    let g = GDrive::with_base(api(fixed("tok")), &mock.base);
+    assert_eq!(g.stat(MY_DRIVE, "x (4000000000).txt").await.unwrap(), None);
+    let asked = mock.seen("/drive/v3/files").len();
+    assert!(asked <= 6, "{asked} requests");
+    assert_eq!(g.stat(MY_DRIVE, "x (2).txt").await.unwrap().unwrap().id.as_deref(), Some("a2"));
+}
+
+#[tokio::test]
+async fn shortcuts_to_folders_list_as_links_and_walks_stay_out() {
+    let mut link = file("s1", "Up", api::SHORTCUT, "2023-01-01T00:00:00Z");
+    link["shortcutDetails"] = json!({ "targetId": "root", "targetMimeType": api::FOLDER });
+    let mock = drive_with(vec![link, file("f1", "a.txt", "text/plain", "2023-01-01T00:00:00Z")]).await;
+    let g = GDrive::with_base(api(fixed("tok")), &mock.base);
+    let page = g.list(MY_DRIVE, "", None).await.unwrap();
+    assert_eq!(page.folders, vec!["Up/"]);
+    assert_eq!(page.folder_link("Up/"), Some("Up"));
+    // the shortcut points back at the top: a walk must end
+    let mut walk = g.walk(MY_DRIVE, "");
+    let mut keys = vec![];
+    while let Some(batch) = walk.next().await {
+        keys.extend(batch.unwrap().into_iter().map(|e| e.key));
+    }
+    assert_eq!(keys.len(), 2, "{keys:?}");
+}
+
+#[tokio::test]
+async fn renaming_at_the_top_of_my_drive_is_not_a_move() {
+    let mut f = file("f1", "a.txt", "text/plain", "2023-01-01T00:00:00Z");
+    f["parents"] = json!(["0Real"]);
+    let mock = drive_with(vec![f]).await;
+    let g = GDrive::with_base(api(fixed("tok")), &mock.base);
+    let loc = |p: &str| Loc { root: MY_DRIVE.into(), path: p.into() };
+    let _ = g.rename(&loc("a.txt"), &loc("b.txt"), false).await;
+    let patch = mock.seen("/drive/v3/files/f1").into_iter().find(|r| r.method == "PATCH").expect("a PATCH");
+    assert_eq!(patch.q("addParents"), None, "{}", patch.query);
+    assert_eq!(patch.q("removeParents"), None, "{}", patch.query);
+}

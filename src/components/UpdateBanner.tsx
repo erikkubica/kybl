@@ -12,6 +12,8 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
   const [, rerender] = useState(0);
   const [started, setStarted] = useState(false);
   const [busy, setBusy] = useState(false);
+  // why the restart didn't happen (edits not saved yet)
+  const [held, setHeld] = useState<string | null>(null);
   const rel = st?.available;
   if (!st || !rel) return null;
   const working = st.phase === "downloading" || st.phase === "installing";
@@ -26,12 +28,13 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
   const go = () => {
     setStarted(true);
     setBusy(false);
+    setHeld(null);
     if (rel.how !== "install") {
       updatesApi.install().catch(() => {});
       hide();
       return;
     }
-    installAndRestart(() => setBusy(true)).catch(() => {});
+    installAndRestart(() => setBusy(true)).catch((e) => setHeld(String(e)));
   };
   const pct = st.total > 0 ? Math.min(100, (st.received / st.total) * 100) : 0;
   const failed = started && !working && st.phase === "" && st.error;
@@ -60,9 +63,9 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
         ) : st.phase === "ready" ? (
           <>
             <b>Kybl {rel.version} is installed</b>
-            <small>{busy ? "Transfers are still running. Restart when they finish, or now to stop them." : "Restart to start using it."}</small>
+            <small>{held ?? (busy ? "Transfers are still running. Restart when they finish, or now to stop them." : "Restart to start using it.")}</small>
             <div className="update-actions">
-              <button className="btn btn-sm btn-primary" onClick={() => updatesApi.restart(true).catch(() => {})}>
+              <button className="btn btn-sm btn-primary" onClick={() => updatesApi.restart(true).catch((e) => setHeld(String(e)))}>
                 Restart now
               </button>
             </div>

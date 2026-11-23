@@ -127,15 +127,35 @@ pub fn apply_changes(base: &HashMap<String, BaseEntry>, changes: &[Change], pref
     for (k, v) in super::plan::remote_from_base(base) {
         out.files.insert(k, v);
     }
+    // which path each file id is at, for feeds that name files by id (Drive, OneDrive)
+    let mut by_id: HashMap<String, String> = out.files.iter().filter_map(|(k, v)| Some((v.id.clone()?, k.clone()))).collect();
     for c in changes {
-        let Some(rel) = rel_of(&c.key, prefix, gi) else { continue };
+        // the file's old place: a rename or move leaves it, and a removal (or a move out of
+        // the synced folder) that only says which id is gone has no path at all
+        if let Some(old) = c.id.as_ref().and_then(|id| by_id.remove(id)) {
+            out.files.remove(&old);
+            out.raw.remove(&old);
+        }
         match &c.entry {
             Some(e) => {
+                let Some(rel) = rel_of(&c.key, prefix, gi) else { continue };
                 out.files.remove(&nfc(rel));
                 out.insert(rel, remote_meta(e, md5));
+                if let Some(id) = &e.id {
+                    by_id.insert(id.clone(), nfc(rel));
+                }
             }
             None => {
-                out.files.remove(&nfc(rel));
+                // a removed folder takes everything below it, and some feeds (Dropbox) don't
+                // say whether a removed path was a file or a folder
+                let Some(rel) = c.key.strip_prefix(prefix) else { continue };
+                let rel = nfc(rel.trim_end_matches('/'));
+                if rel.is_empty() || !safe_rel(&rel) {
+                    continue;
+                }
+                let below = format!("{rel}/");
+                out.files.retain(|k, _| *k != rel && !k.starts_with(&below));
+                out.raw.retain(|k, _| *k != rel && !k.starts_with(&below));
             }
         }
     }
@@ -206,6 +226,37 @@ mod tests {
         keys.sort();
         assert_eq!(keys, vec!["b", "c"]);
         assert_eq!(snap.files["c"].etag, "3");
+    }
+
+    #[test]
+    fn removals_by_id_moves_and_removed_folders_leave_the_view() {
+        let row = |id: &str| BaseEntry { r_etag: "1".into(), r_size: 1, r_id: Some(id.into()), ..Default::default() };
+        let base = HashMap::from([
+            ("gone.txt".to_string(), row("g")),
+            ("moved.txt".to_string(), row("m")),
+            ("out.txt".to_string(), row("o")),
+            ("dir/a.txt".to_string(), row("d1")),
+            ("dir/sub/b.txt".to_string(), row("d2")),
+            ("dir2.txt".to_string(), row("x")),
+            ("keep.txt".to_string(), row("k")),
+        ]);
+        let entry = |key: &str, id: &str| Some(Entry { key: key.into(), size: 1, etag: Some("2".into()), id: Some(id.into()), ..Default::default() });
+        let changes = vec![
+            // Drive / OneDrive: a removed file has only its id
+            Change { key: String::new(), entry: None, id: Some("g".into()) },
+            // renamed: the new path comes with the same id
+            Change { key: "p/renamed.txt".into(), entry: entry("p/renamed.txt", "m"), id: Some("m".into()) },
+            // moved out of the synced folder
+            Change { key: "elsewhere/out.txt".into(), entry: entry("elsewhere/out.txt", "o"), id: Some("o".into()) },
+            // Dropbox: a removed folder is one path, without a trailing slash
+            Change { key: "p/dir".into(), entry: None, id: None },
+            // an unknown id changes nothing
+            Change { key: String::new(), entry: None, id: Some("nobody".into()) },
+        ];
+        let snap = apply_changes(&base, &changes, "p/", &gi(), false);
+        let mut keys: Vec<_> = snap.files.keys().cloned().collect();
+        keys.sort();
+        assert_eq!(keys, vec!["dir2.txt", "keep.txt", "renamed.txt"]);
     }
 
     #[test]

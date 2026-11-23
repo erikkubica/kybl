@@ -29,7 +29,7 @@ use self::loopback::{listen, Reply};
 use self::token::{Stored, TokenSource, TokenStore};
 use crate::{
     kybl_connect::{self as kc, Flow},
-    state::{get_secret, load_profiles, save_profiles, secret_key, set_secret, AppState, CloudConfig, Profile},
+    state::{get_secret, load_profiles, lock_profiles, save_profiles, secret_key, set_secret, AppState, CloudConfig, Profile},
     storage::{ConnKind, SResult, Storage, StorageError, CANCELLED},
 };
 
@@ -429,6 +429,7 @@ pub async fn oauth_start(
         ));
     }
 
+    let held = lock_profiles().await;
     let mut profiles = load_profiles(&app)?;
     let existing = profiles.iter().position(|x| Some(&x.id) == replace_id.as_ref()).or_else(|| {
         profiles.iter().position(|x| x.kind == kind && x.cloud.as_ref().is_some_and(|c| !account_id.is_empty() && c.account_id == account_id))
@@ -462,7 +463,8 @@ pub async fn oauth_start(
         Some(i) => profiles[i] = profile.clone(),
         None => profiles.push(profile.clone()),
     }
-    save_profiles(&app, &profiles)?;
+    save_profiles(&app, &profiles, &held)?;
+    drop(held);
     crate::storage::registry::forget(&id);
     // a reconnect may be another account: its files are not this one's
     crate::filecache::forget_profile(&app, &id).await;

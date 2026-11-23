@@ -20,7 +20,7 @@ use tauri::{AppHandle, Emitter, State};
 use walkdir::WalkDir;
 
 use crate::state::{
-    build_client, delete_secret, err, get_secret, load_profiles, save_profiles, sdk_err, set_secret,
+    build_client, delete_secret, err, get_secret, load_profiles, lock_profiles, save_profiles, sdk_err, set_secret,
     AppState,
     Profile,
 };
@@ -76,12 +76,14 @@ pub async fn save_profile(
     } else if profile.kind == ConnKind::S3 && get_secret(&state, &profile.id).await?.is_none() {
         return Err("A secret key is required for a new connection".into());
     }
+    let held = lock_profiles().await;
     let mut profiles = load_profiles(&app)?;
     match profiles.iter_mut().find(|p| p.id == profile.id) {
         Some(existing) => *existing = profile.clone(),
         None => profiles.push(profile.clone()),
     }
-    save_profiles(&app, &profiles)?;
+    save_profiles(&app, &profiles, &held)?;
+    drop(held);
     state.clients.lock().await.remove(&profile.id);
     registry::forget(&profile.id);
     #[cfg(desktop)]
@@ -94,10 +96,11 @@ pub async fn save_profile(
 /// Files connections under sidebar groups (`None` or "": the top level), by id. Only the group
 /// changes: unlike `save_profile`, the connections keep their open clients and cached files.
 #[tauri::command]
-pub fn set_profile_groups(app: AppHandle, groups: std::collections::HashMap<String, Option<String>>) -> Result<Vec<Profile>, String> {
+pub async fn set_profile_groups(app: AppHandle, groups: std::collections::HashMap<String, Option<String>>) -> Result<Vec<Profile>, String> {
+    let held = lock_profiles().await;
     let mut profiles = load_profiles(&app)?;
     apply_groups(&mut profiles, &groups);
-    save_profiles(&app, &profiles)?;
+    save_profiles(&app, &profiles, &held)?;
     Ok(profiles)
 }
 
@@ -115,9 +118,14 @@ pub async fn delete_profile(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
+    // its drives first: one with saves that couldn't be moved out keeps the connection too
+    #[cfg(desktop)]
+    crate::mount::forget_profile(&app, &id).await?;
+    let held = lock_profiles().await;
     let mut profiles = load_profiles(&app)?;
     profiles.retain(|p| p.id != id);
-    save_profiles(&app, &profiles)?;
+    save_profiles(&app, &profiles, &held)?;
+    drop(held);
     delete_secret(&state, &id).await?;
     state.clients.lock().await.remove(&id);
     registry::forget(&id);

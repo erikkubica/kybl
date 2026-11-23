@@ -704,9 +704,100 @@ struct Done {
     after: Option<BaseState>,
 }
 
+/// Whether the uploads folder `dir` holds saves Kybl kept aside ([`RECOVERED`], or a record set
+/// aside as `pending.json.bad-*`).
+pub fn has_kept(dir: &Path) -> bool {
+    let recovered = std::fs::read_dir(dir.join(RECOVERED)).is_ok_and(|mut rd| rd.next().is_some());
+    recovered || std::fs::read_dir(dir).into_iter().flatten().flatten().any(|e| e.file_name().to_string_lossy().starts_with("pending.json.bad-"))
+}
+
+/// Moves every save in the uploads folder `dir` that could be the user's only copy into `to`,
+/// before the folder is deleted: saves still waiting to upload under their own path
+/// (`to/<root>/<key>`), files in [`RECOVERED`] and other saves no record names under
+/// `to/recovered/`, and a set-aside record as it is. Answers how many files moved; an error
+/// when one couldn't (then the folder must stay).
+pub fn rescue(dir: &Path, to: &Path) -> Result<usize, String> {
+    let mut moved = 0;
+    let mut put = |from: &Path, rel: &str| -> Result<(), String> {
+        let mut dst = to.to_path_buf();
+        for part in rel.split('/').filter(|p| !p.is_empty() && *p != "." && *p != "..") {
+            dst.push(part.replace(['\\', ':'], "_"));
+        }
+        if dst == to {
+            dst.push("unnamed");
+        }
+        if dst.exists() {
+            let name = dst.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            dst.set_file_name(format!("{name} (kept {})", now_ms()));
+        }
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        // another disk: copy, and only then remove
+        if std::fs::rename(from, &dst).is_err() {
+            std::fs::copy(from, &dst).map_err(|e| format!("{}: {e}", dst.display()))?;
+            let _ = std::fs::remove_file(from);
+        }
+        moved += 1;
+        Ok(())
+    };
+    let pending: Vec<Pending> = std::fs::read(dir.join("pending.json")).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default();
+    let mut named = std::collections::HashSet::new();
+    for p in &pending {
+        let f = dir.join(&p.file);
+        if f.is_file() && named.insert(p.file.clone()) {
+            put(&f, &format!("{}/{}", p.root, p.key))?;
+        }
+    }
+    for e in std::fs::read_dir(dir.join(RECOVERED)).into_iter().flatten().flatten() {
+        if e.file_type().is_ok_and(|t| t.is_file()) {
+            put(&e.path(), &format!("{RECOVERED}/{}", e.file_name().to_string_lossy()))?;
+        }
+    }
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !e.file_type().is_ok_and(|t| t.is_file()) || named.contains(&name) {
+            continue;
+        }
+        if name.starts_with("pending.json.bad-") {
+            put(&e.path(), &name)?;
+        } else if name.ends_with(".bin") {
+            put(&e.path(), &format!("{RECOVERED}/{name}"))?;
+        }
+    }
+    Ok(moved)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kept_saves_move_out_before_the_folder_goes() {
+        let dir = tmp();
+        let to = tmp();
+        {
+            let wb = WriteBack::open(dir.clone());
+            save(&wb, "docs/a.txt", b"waiting");
+        }
+        assert!(!has_kept(&dir));
+        std::fs::create_dir_all(dir.join(RECOVERED)).unwrap();
+        std::fs::write(dir.join(RECOVERED).join("7.bin"), b"recovered").unwrap();
+        std::fs::write(dir.join("pending.json.bad-1"), b"{broken").unwrap();
+        assert!(has_kept(&dir));
+        assert_eq!(rescue(&dir, &to).unwrap(), 3);
+        assert_eq!(std::fs::read(to.join("r/docs/a.txt")).unwrap(), b"waiting");
+        assert_eq!(std::fs::read(to.join(RECOVERED).join("7.bin")).unwrap(), b"recovered");
+        assert!(to.join("pending.json.bad-1").is_file());
+        assert!(!has_kept(&dir));
+        // a second rescue into the same place doesn't overwrite what's there
+        std::fs::write(dir.join(RECOVERED).join("7.bin"), b"again").unwrap();
+        rescue(&dir, &to).unwrap();
+        assert_eq!(std::fs::read(to.join(RECOVERED).join("7.bin")).unwrap(), b"recovered");
+        assert_eq!(std::fs::read_dir(to.join(RECOVERED)).unwrap().count(), 2);
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(to);
+    }
 
     #[test]
     fn conflict_names_keep_the_extension_and_folder() {

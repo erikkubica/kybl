@@ -170,10 +170,14 @@ pub fn number_page_with(items: &[(String, bool)], carry: &Carry, taken: &dyn Fn(
 }
 
 /// Which of the files named `base` (oldest first, 0-based) shows as number `n`, with the same
-/// skipping as [`number_page_with`]; None when `n` is never given out (it is a real name).
-pub fn dup_index(base: &str, folder: bool, n: u32, taken: &dyn Fn(bool, &str) -> bool) -> Option<usize> {
+/// skipping as [`number_page_with`]; None when `n` is never given out (it is a real name) or
+/// would belong to a file past `max_index` (there are only `max_index + 1` files named `base`).
+pub fn dup_index(base: &str, folder: bool, n: u32, max_index: usize, taken: &dyn Fn(bool, &str) -> bool) -> Option<usize> {
     let (mut last, mut index) = (1u32, 0usize);
     while last < n {
+        if index >= max_index {
+            return None;
+        }
         last = next_number(base, folder, last, taken);
         index += 1;
     }
@@ -266,11 +270,22 @@ mod tests {
         unique.dedup();
         assert_eq!(unique.len(), 5, "no two files share a name");
         // and the names map back to the same files
-        assert_eq!(dup_index("a.txt", false, 3, &taken), Some(1));
-        assert_eq!(dup_index("a.txt", false, 5, &taken), Some(2));
-        assert_eq!(dup_index("a.txt", false, 2, &taken), None, "a real name, never a number");
-        assert_eq!(dup_index("a.txt", false, 4, &taken), None);
-        assert_eq!(dup_index("a.txt", true, 2, &taken), Some(1));
+        assert_eq!(dup_index("a.txt", false, 3, 9, &taken), Some(1));
+        assert_eq!(dup_index("a.txt", false, 5, 9, &taken), Some(2));
+        assert_eq!(dup_index("a.txt", false, 2, 9, &taken), None, "a real name, never a number");
+        assert_eq!(dup_index("a.txt", false, 4, 9, &taken), None);
+        assert_eq!(dup_index("a.txt", true, 2, 9, &taken), Some(1));
+        // only as many numbers as there are duplicates: two files named a.txt give out (3) only
+        assert_eq!(dup_index("a.txt", false, 5, 1, &taken), None);
+        assert_eq!(dup_index("a.txt", false, 3, 1, &taken), Some(1));
+        // a huge number asks about at most `max_index` names, not billions
+        let asked = std::cell::Cell::new(0u32);
+        let count = |_: bool, _: &str| {
+            asked.set(asked.get() + 1);
+            false
+        };
+        assert_eq!(dup_index("x.txt", false, 4_000_000_000, 3, &count), None);
+        assert!(asked.get() <= 3, "asked {} names", asked.get());
 
         // a run split over two pages keeps skipping
         let (n1, carry) = number_page_with(&items[..4], &Carry::default(), &taken);

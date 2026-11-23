@@ -527,6 +527,55 @@ pub async fn mount_add(app: AppHandle, profile_id: String, bucket: String, prefi
 
 #[tauri::command]
 pub async fn mount_remove(app: AppHandle, id: String) -> Result<(), String> {
+    remove_drive(&app, &id, false).await
+}
+
+/// Where the saves Kybl kept for a drive go when the drive goes: a folder the user can find,
+/// `Documents/Kybl recovered/<drive> (<id>)`.
+fn kept_folder(app: &AppHandle, c: &MountConfig) -> Result<PathBuf, String> {
+    let base = app.path().document_dir().or_else(|_| app.path().home_dir()).map_err(err)?;
+    let name: String = c.name.chars().map(|ch| if ch.is_control() || r#"/\:*?"<>|"#.contains(ch) { '_' } else { ch }).collect();
+    let name = name.trim().trim_matches('.');
+    let short: String = c.id.chars().take(8).collect();
+    Ok(base.join("Kybl recovered").join(format!("{} ({short})", if name.is_empty() { "Drive" } else { name })))
+}
+
+/// Moves the saves Kybl kept aside for drive `c` (and, with `waiting`, those still waiting to
+/// upload) out of its uploads folder before that folder is deleted, and shows where they went.
+/// An error when they couldn't be moved: then nothing may be deleted.
+async fn rescue_kept(app: &AppHandle, c: &MountConfig, waiting: bool) -> Result<(), String> {
+    let Ok(dir) = uploads_dir(app, &c.id) else { return Ok(()) };
+    if !waiting && !writeback::has_kept(&dir) {
+        return Ok(());
+    }
+    let to = kept_folder(app, c)?;
+    let to2 = to.clone();
+    let moved = tokio::task::spawn_blocking(move || writeback::rescue(&dir, &to2)).await.map_err(err)?;
+    match moved {
+        Ok(0) => Ok(()),
+        Ok(_) => {
+            let _ = tauri_plugin_opener::reveal_item_in_dir(&to);
+            Ok(())
+        }
+        Err(e) => Err(format!("Kybl couldn't move the saved files it kept for “{}” out of the way ({e}), so the drive stays.", c.name)),
+    }
+}
+
+/// A connection was deleted: its drives go too (they could never be opened again, and would be
+/// mounted again on every start). Saves still waiting to upload are moved out, not deleted.
+pub async fn forget_profile(app: &AppHandle, profile_id: &str) -> Result<(), String> {
+    let ids: Vec<String> = app.state::<MountManager>().configs.lock().unwrap().iter().filter(|c| c.profile_id == profile_id).map(|c| c.id.clone()).collect();
+    for id in ids {
+        remove_drive(app, &id, true).await?;
+    }
+    Ok(())
+}
+
+/// Removes a drive and everything Kybl keeps for it. Saves still waiting to upload stop the
+/// removal, unless `connection_gone` (its connection was deleted, so they never would): then
+/// they are moved out with the rest of what Kybl kept, never deleted.
+async fn remove_drive(app: &AppHandle, id: &str, connection_gone: bool) -> Result<(), String> {
+    let id = id.to_string();
     let mgr = app.state::<MountManager>();
     let _one = mgr.busy.lock().await;
     let c = mgr.config(&id).ok_or("This drive isn't there any more.")?;
@@ -539,34 +588,45 @@ pub async fn mount_remove(app: AppHandle, id: String) -> Result<(), String> {
             if n == 1 { "it's" } else { "they're" },
         )
     };
-    if waiting() > 0 {
+    if !connection_gone && waiting() > 0 {
         return Err(still_uploading(waiting()));
     }
-    unmount_one(&app, &id, false, false).await?;
+    // the files kept aside are promised never to be deleted: out of the folder first
+    if !connection_gone {
+        rescue_kept(app, &c, false).await?;
+    }
+    unmount_one(app, &id, connection_gone, false).await?;
     // a save that landed while the drive was unmounting is the user's only copy: keep the drive
     let n = waiting();
-    if n > 0 {
+    if n > 0 && !connection_gone {
         drop(_one);
-        emit(&app, &id);
+        emit(app, &id);
         return Err(still_uploading(n));
     }
     // nothing can be saved any more (unmounted, server stopped): stop the workers, then delete
     let l = mgr.live.lock().unwrap().remove(&id);
     if let Some(l) = l {
         l.fs.0.uploads.stop();
-        if l.fs.0.uploads.stats().0 > 0 {
+        if l.fs.0.uploads.stats().0 > 0 && !connection_gone {
             // committed in the last instant: put it back rather than delete it
             l.fs.0.uploads.rearm();
             l.fs.start_uploads();
             mgr.live.lock().unwrap().insert(id.clone(), l);
             drop(_one);
-            emit(&app, &id);
+            emit(app, &id);
             return Err(still_uploading(1));
         }
         l.fs.0.blocks.clear();
     }
-    let _ = std::fs::remove_dir_all(cache_dir(&app, &id)?);
-    if let Ok(d) = uploads_dir(&app, &id)
+    if connection_gone {
+        // the uploads are stopped: what waited goes out with what was kept, before any delete
+        if let Err(e) = rescue_kept(app, &c, true).await {
+            emit(app, &id);
+            return Err(e);
+        }
+    }
+    let _ = std::fs::remove_dir_all(cache_dir(app, &id)?);
+    if let Ok(d) = uploads_dir(app, &id)
         && let Some(parent) = d.parent()
     {
         let _ = std::fs::remove_dir_all(parent);
@@ -576,9 +636,9 @@ pub async fn mount_remove(app: AppHandle, id: String) -> Result<(), String> {
         list.retain(|x| x.id != id);
         list.clone()
     };
-    save_configs(&app, &list)?;
+    save_configs(app, &list)?;
     let _ = app.emit(STATUS_EVENT, MountInfo { state: "removed", ..mgr.info_of(&c) });
-    crate::tray::refresh_mounts(&app);
+    crate::tray::refresh_mounts(app);
     Ok(())
 }
 

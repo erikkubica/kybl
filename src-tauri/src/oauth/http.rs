@@ -46,7 +46,17 @@ fn tls_config() -> Arc<rustls::ClientConfig> {
 /// One client for every sign-in and cloud drive request: one connection pool, one TLS setup.
 pub fn client() -> Client {
     static HTTP: OnceLock<Client> = OnceLock::new();
-    HTTP.get_or_init(|| {
+    HTTP.get_or_init(|| builder().build().expect("HTTP client")).clone()
+}
+
+/// The same, for the few requests whose redirect is the answer (OneDrive's copy monitor sends
+/// "303: here's the new item" when done; following it unsigned would fail).
+pub fn client_no_redirect() -> Client {
+    static HTTP: OnceLock<Client> = OnceLock::new();
+    HTTP.get_or_init(|| builder().redirect(reqwest::redirect::Policy::none()).build().expect("HTTP client")).clone()
+}
+
+fn builder() -> reqwest::ClientBuilder {
         Client::builder()
             .tls_backend_preconfigured((*tls_config()).clone())
             .user_agent(concat!("Kybl/", env!("CARGO_PKG_VERSION")))
@@ -55,10 +65,6 @@ pub fn client() -> Client {
             .read_timeout(Duration::from_secs(120))
             .pool_idle_timeout(Duration::from_secs(60))
             .tcp_keepalive(Duration::from_secs(30))
-            .build()
-            .expect("HTTP client")
-    })
-    .clone()
 }
 
 // ---------------------------------------------------------------- signed requests

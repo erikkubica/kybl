@@ -28,8 +28,10 @@ use super::{
 };
 use crate::oauth::http::{backoff, check, provider_error, read_json, unexpected, Api};
 
-/// Up to this size a file goes up in one request (Dropbox's limit for that is 150 MiB).
-const SIMPLE_MAX: u64 = 150 * 1024 * 1024;
+/// Up to this size a file goes up in one request, held in memory (Dropbox would take 150 MiB
+/// that way, but several uploads at once would hold hundreds of MB); bigger ones stream through
+/// an upload session in pieces.
+const SIMPLE_MAX: u64 = 8 * 1024 * 1024;
 const DEFAULT_PIECE: u64 = 8 * 1024 * 1024;
 const FAILURES: u32 = 5;
 /// Temporary links last four hours.

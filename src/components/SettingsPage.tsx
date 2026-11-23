@@ -159,7 +159,7 @@ function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info"
               disabled={working}
               onClick={() =>
                 rel.how === "install"
-                  ? installAndRestart(() => onToast("info", "Kybl restarts when you click Restart now, after your transfers finish.")).catch(() => {})
+                  ? installAndRestart(() => onToast("info", "Kybl restarts when you click Restart now, after your transfers finish.")).catch((e) => onToast("error", String(e)))
                   : updatesApi.install().catch((e) => onToast("error", String(e)))
               }
             >
