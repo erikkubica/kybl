@@ -307,7 +307,8 @@ export function Toolbar({
         {onPanes && (
           <button
             ref={panes}
-            className={`icon-btn tb-panes ${dual ? "on" : ""}`}
+            // a menu, not a toggle: no "on" look whatever the number of panes
+            className="icon-btn tb-panes"
             onClick={(e) => onPanes(...anchorOf(e))}
             title={dual ? "Panes: split, size or close" : "Split: add a pane right, below, left or above"}
             aria-label="Panes"
