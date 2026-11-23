@@ -403,6 +403,10 @@ export function AppShell() {
     pane: slot,
     otherOf,
     syncedWith: (id) => syncedWith(liveLinks, id),
+    stopSync: (ids) => {
+      const set = new Set(ids);
+      setLinks((cur) => cur.filter(([a, b]) => !(set.has(a) && set.has(b))));
+    },
     relation: (a, b) => relation(tree, a, b),
     activeId: active.id,
     setActive: setActiveId,

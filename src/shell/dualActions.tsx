@@ -33,6 +33,8 @@ export type DualContext = {
   otherOf: (id: PaneId) => PaneId | null;
   /** the panes synchronized browsing moves along with pane `id` (none when it isn't linked) */
   syncedWith: (id: PaneId) => PaneId[];
+  /** ends synchronized browsing among these panes (the links between them) */
+  stopSync: (ids: PaneId[]) => void;
   /** which way pane `b` is from pane `a` */
   relation: (a: PaneId, b: PaneId) => "left" | "right" | "up" | "down" | null;
   activeId: PaneId;
@@ -63,6 +65,11 @@ export function makeDualActions(get: () => DualContext) {
   };
   // a pane following the other must not make the other follow it back
   let following = false;
+  /**
+   * Linked panes that couldn't follow into a folder: the folder the leading pane was in when they
+   * stayed behind. They wait there, out of step, until it comes back up to that folder.
+   */
+  const behind = new Map<PaneId, string>();
 
   /** Runs a move of a pane without it echoing back through synchronized browsing. */
   const quietly = (fn: () => void) => {
@@ -83,18 +90,46 @@ export function makeDualActions(get: () => DualContext) {
     const c = get();
     if (following || !multi() || !from || from.profileId !== to.profileId || from.bucket !== to.bucket) return;
     const onScreen = new Set(c.panes.map((p) => p.id));
-    for (const oid of c.syncedWith(id)) {
+    const group = c.syncedWith(id);
+    /** linked panes that have no such folder: they stay where they are, and the user hears of it */
+    const stuck: Pane[] = [];
+    for (const oid of group) {
       const o = onScreen.has(oid) ? pane(oid) : null;
       if (!o?.here || o.ent.search) continue;
+      const waitAt = behind.get(oid);
+      if (waitAt !== undefined) {
+        // still down the path it couldn't follow: it waits; back where they parted: in step again
+        if (to.prefix.startsWith(waitAt)) {
+          if (to.prefix === waitAt) behind.delete(oid);
+          continue;
+        }
+        behind.delete(oid);
+      }
       if (to.prefix.startsWith(from.prefix) && to.prefix !== from.prefix) {
         const sub = to.prefix.slice(from.prefix.length);
         const target = o.prefix + sub;
         // only a direct subfolder that the other pane has listed
-        if (sub.indexOf("/") === sub.length - 1 && o.ent.fresh && o.ent.listing.folders.includes(target)) quietly(() => o.navigate(target));
+        if (sub.indexOf("/") !== sub.length - 1 || !o.ent.fresh) continue;
+        if (o.ent.listing.folders.includes(target)) quietly(() => o.navigate(target));
+        else {
+          behind.set(oid, from.prefix);
+          stuck.push(o);
+        }
       } else if (from.prefix.startsWith(to.prefix) && from.prefix !== to.prefix) {
         const gone = from.prefix.slice(to.prefix.length);
         if (gone.indexOf("/") === gone.length - 1 && o.prefix.endsWith(gone)) quietly(() => o.navigate(parentPrefix(o.prefix)));
       }
+    }
+    if (stuck.length) {
+      const name = to.prefix.split("/").filter(Boolean).pop() ?? "";
+      const where = stuck.length === 1 ? placeName(stuck[0]) || "the other pane" : `${stuck.length} linked panes`;
+      c.dialogs.toast("info", `There's no “${name}” in ${where}, so ${stuck.length === 1 ? "it stays" : "they stay"} where ${stuck.length === 1 ? "it is" : "they are"}. Synced browsing goes on when you come back up.`, {
+        label: "Turn off synced browsing",
+        run: () => {
+          for (const x of [id, ...group]) behind.delete(x);
+          c.stopSync([id, ...group]);
+        },
+      });
     }
   };
 
