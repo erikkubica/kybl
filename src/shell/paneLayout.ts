@@ -158,53 +158,63 @@ export function relation(n: PaneNode, a: PaneId, b: PaneId): "left" | "right" | 
 
 type Side = "left" | "right" | "top" | "bottom";
 
-/**
- * The pane of (sub)tree `n` that touches its `side` edge at `at` (0 to 1 along that edge, 0.5 the
- * middle). A split side by side reaches a left or right edge with only its first or last child; a
- * split stacked along that edge reaches it with every child, so the share `at` falls in decides.
- */
-export function paneAtEdge(n: PaneNode, side: Side, at = 0.5): PaneId {
-  return spanAtEdge(n, side, at).id;
-}
+type Span = { id: PaneId; from: number; to: number };
 
 /**
- * paneAtEdge, with the stretch of the edge that pane covers (`from`–`to`, 0 to 1). A point right
- * on the line between two panes counts for the first of them (the upper or left one).
+ * Every pane of (sub)tree `n` that touches its `side` edge, with the stretch of the edge each
+ * covers (`from`–`to`, 0 to 1), in order along the edge. A split side by side reaches a left or
+ * right edge with only its first or last child; a split stacked along that edge reaches it with
+ * every child, each over its share.
  */
-function spanAtEdge(n: PaneNode, side: Side, at: number, from = 0, to = 1): { id: PaneId; from: number; to: number } {
-  if (n.t === "pane") return { id: n.id, from, to };
+export function edgeSpans(n: PaneNode, side: Side, from = 0, to = 1): Span[] {
+  if (n.t === "pane") return [{ id: n.id, from, to }];
   const across = side === "left" || side === "right" ? n.dir === "row" : n.dir === "col";
-  if (across) return spanAtEdge(side === "left" || side === "top" ? n.kids[0] : n.kids[n.kids.length - 1], side, at, from, to);
+  if (across) return edgeSpans(side === "left" || side === "top" ? n.kids[0] : n.kids[n.kids.length - 1], side, from, to);
+  const len = to - from;
   let start = 0;
-  for (let i = 0; i < n.kids.length; i++) {
+  return n.kids.flatMap((k, i) => {
     const s = n.sizes[i];
-    if (at <= start + s || i === n.kids.length - 1) {
-      const len = to - from;
-      return spanAtEdge(n.kids[i], side, s > 0 ? Math.min(1, Math.max(0, (at - start) / s)) : 0.5, from + start * len, from + (start + s) * len);
-    }
+    const r = edgeSpans(k, side, from + start * len, from + (start + s) * len);
     start += s;
-  }
-  return { id: leaves(n)[0], from, to };
+    return r;
+  });
 }
+
+/** Two panes facing each other across a divider over the stretch `from`–`to` of it (0 to 1); `at` is its middle. */
+export type Facing = { pair: [PaneId, PaneId]; from: number; to: number; at: number };
+
+/** stretches shorter than this are rounding: panes meeting only at a corner do not face each other */
+const TOUCH = 1e-4;
 
 /**
- * The two panes a divider links, and where along the divider (0 to 1) its link button goes: the
- * panes facing each other across the middle of the divider after child `i` of split `n`, the
- * button at the middle of the stretch they share. With a single pane on each side that is simply
- * the two of them and the divider's middle; beside a split, it is the pane of the split that the
- * divider's midpoint touches.
+ * The pairs of panes facing each other across the divider after child `i` of split `n`, in order
+ * along it (top to bottom, left to right): each pane before the divider with each pane after it
+ * that shares a stretch of the line with it. With a single pane on each side that is simply the
+ * two of them over the whole divider. Each pair's link button goes at the middle of its stretch.
  */
-export function dividerLink(n: Extract<PaneNode, { t: "split" }>, i: number): { pair: [PaneId, PaneId]; at: number } {
+export function facingPairs(n: Extract<PaneNode, { t: "split" }>, i: number): Facing[] {
   const row = n.dir === "row";
-  const a = spanAtEdge(n.kids[i], row ? "right" : "bottom", 0.5);
-  const b = spanAtEdge(n.kids[i + 1], row ? "left" : "top", 0.5);
-  return { pair: [a.id, b.id], at: (Math.max(a.from, b.from) + Math.min(a.to, b.to)) / 2 };
+  const as = edgeSpans(n.kids[i], row ? "right" : "bottom");
+  const bs = edgeSpans(n.kids[i + 1], row ? "left" : "top");
+  const out: Facing[] = [];
+  for (const a of as)
+    for (const b of bs) {
+      const from = Math.max(a.from, b.from);
+      const to = Math.min(a.to, b.to);
+      if (to - from > TOUCH) out.push({ pair: [a.id, b.id], from, to, at: (from + to) / 2 });
+    }
+  return out;
 }
 
-/** Every divider's pair in the tree: the pairs synchronized browsing can link. */
-export function dividerPairs(n: PaneNode): [PaneId, PaneId][] {
+/** Every facing pair in the tree, across every divider. */
+export function allFacing(n: PaneNode): Facing[] {
   if (n.t === "pane") return [];
-  return [...n.kids.slice(1).map((_, i) => dividerLink(n, i).pair), ...n.kids.flatMap(dividerPairs)];
+  return [...n.kids.slice(1).flatMap((_, i) => facingPairs(n, i)), ...n.kids.flatMap(allFacing)];
+}
+
+/** Every pair of panes facing each other across a divider: the pairs synchronized browsing can link. */
+export function dividerPairs(n: PaneNode): [PaneId, PaneId][] {
+  return allFacing(n).map((f) => f.pair);
 }
 
 // ---------------------------------------------------------------- synchronized browsing links

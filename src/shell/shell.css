@@ -124,9 +124,12 @@
   pointer-events: none;
   z-index: 9;
 }
+/* above the panes' own layers, the active pane's accent line (8) and a drop target's frame (9)
+   included: otherwise the accent line along the top of the pane below a divider paints over the
+   lower half of its link button, cutting the button and making it look as if it sat above the line */
 .split-divider {
   position: relative;
-  z-index: 6;
+  z-index: 10;
   flex: none;
   width: 1px;
   background: var(--border);
@@ -174,6 +177,11 @@
   cursor: pointer;
   transform: translate(-50%, -50%);
   transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+/* below the divider runs the active pane's 3px accent line (its ::before): the 1px line and it read
+   as one 4px band, so the button centres on the band */
+.split-link.on-accent {
+  transform: translate(-50%, calc(-50% + 1.5px));
 }
 .split-link:hover,
 .split-link:focus-visible {
