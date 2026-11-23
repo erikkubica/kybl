@@ -2,7 +2,7 @@
  * "Upload to…": pick a connection, bucket and folder for files shared into Kybl from another
  * app. The place being looked at (`at`) lives with the caller, so the system back walks up.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, errMessage, errSummary } from "../api";
 import { Icon } from "../Icons";
 import { rootIcon, rootName } from "../connections/roots";
@@ -14,6 +14,9 @@ import type { Loc } from "./useListing";
 import { connName } from "./connName";
 
 export type SharedFile = { path: string; name: string; size: number };
+
+/** pages read before asking (each up to 1,000 items, mostly files in a big folder) */
+const FOLDER_PAGES = 10;
 
 export function DestinationScreen({
   files,
@@ -38,20 +41,44 @@ export function DestinationScreen({
   const [made, setMade] = useState<string[]>([]);
   const [naming, setNaming] = useState(false);
   const [newName, setNewName] = useState("");
+  /** where the listing goes on (folders can come on any page, after the files before them) */
+  const [next, setNext] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const gen = useRef(0);
+
+  /** Up to FOLDER_PAGES pages of folders from `token` on ("More folders" reads on). */
+  const readFolders = async (l: Loc, token: string | null) => {
+    const g = gen.current;
+    const first = token === null;
+    setBusy(true);
+    try {
+      let n = 0;
+      do {
+        const r = await api.listObjects(l.profileId, l.bucket, l.prefix, token);
+        if (g !== gen.current) return;
+        token = r.nextToken;
+        const fresh = first && n === 0;
+        setFolders((f) => [...(fresh ? [] : (f ?? [])), ...r.folders]);
+        n++;
+      } while (token && n < FOLDER_PAGES);
+      setNext(token);
+    } catch (e) {
+      if (g === gen.current) setError(errSummary(errMessage(e)));
+    } finally {
+      if (g === gen.current) setBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!at) return;
-    let live = true;
+    gen.current++;
     setFolders(null);
     setError(null);
     setNaming(false);
-    api
-      .listObjects(at.profileId, at.bucket, at.prefix)
-      .then((r) => live && setFolders(r.folders))
-      .catch((e) => live && setError(errSummary(errMessage(e))));
-    return () => {
-      live = false;
-    };
+    setNext(null);
+    void readFolders(at, null);
+    return () => void gen.current++;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [at]);
 
   const total = files.reduce((s, f) => s + f.size, 0);
@@ -138,6 +165,19 @@ export function DestinationScreen({
                 </button>
               </li>
             ))}
+            {folders !== null && (busy || next) && (
+              <li className="m-bucket-note">
+                {busy ? (
+                  <>
+                    <span className="spinner" /> Loading folders…
+                  </>
+                ) : (
+                  <button className="m-text-btn" onClick={() => at && void readFolders(at, next)}>
+                    More folders
+                  </button>
+                )}
+              </li>
+            )}
             <li className="m-row">
               {naming ? (
                 <form

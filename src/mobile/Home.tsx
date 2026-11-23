@@ -476,15 +476,15 @@ export function HomeScreen({
           {firstRun ? (
             <div className="m-welcome">
               <Mascot size={120} className="m-bob" />
-              <h1>Your buckets, in your pocket</h1>
-              <p>Browse, preview, upload and share files on Hetzner, AWS, Cloudflare R2, Backblaze, Wasabi, MinIO or any S3-compatible storage.</p>
+              <h1>Your files, in your pocket</h1>
+              <p>Browse, preview, upload and share files on S3-compatible storage, SFTP, FTP, WebDAV, Google Drive, OneDrive and Dropbox.</p>
               {onKybl && (
                 <button className="btn btn-primary m-big-btn" onClick={onKybl}>
                   <Icon name="cloud" size={16} /> Connect Kybl Storage
                 </button>
               )}
               <button className={`btn m-big-btn ${onKybl ? "btn-ghost m-alt-btn" : "btn-primary"}`} onClick={onAdd}>
-                <Icon name="plus" size={16} /> {onKybl ? "Add another S3 connection" : "Add a connection"}
+                <Icon name="plus" size={16} /> {onKybl ? "Add another connection" : "Add a connection"}
               </button>
               <div className="m-providers">
                 {PROVIDERS.slice(0, 6).map((p) => (

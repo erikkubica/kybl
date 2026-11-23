@@ -111,7 +111,9 @@ export function SandboxFrame({
           // a stray "%" in the anchor: look the raw id up instead
         }
         const d = el.contentDocument;
-        (d?.getElementById(id) ?? d?.getElementsByName(id)[0])?.scrollIntoView({ block: "start" });
+        // Markdown's ids carry GitHub's "user-content-" prefix (see renderMarkdown)
+        const find = (n: string) => d?.getElementById(n) ?? d?.getElementsByName(n)[0];
+        (find(id) ?? find(`user-content-${id}`))?.scrollIntoView({ block: "start" });
         return;
       }
       if (/^(https?:|mailto:)/i.test(href)) {
@@ -129,9 +131,11 @@ export function SandboxFrame({
     // on as a copy dispatched on the <iframe> element, so it bubbles through the app like any other
     // key; if an app handler claims it, the frame does not act on it too (Space would scroll).
     const onKey = (ev: KeyboardEvent) => {
-      // ⌘C / ⌘A with text selected in the frame are the frame's own (copy that text)
+      // ⌘A is always the frame's own (select the page); ⌘C is while text is selected in it
       const k = ev.key.toLowerCase();
-      if ((ev.metaKey || ev.ctrlKey) && (k === "c" || k === "a") && el.contentWindow?.getSelection()?.toString()) return;
+      const mod = ev.metaKey || ev.ctrlKey;
+      if (mod && k === "a" && !ev.shiftKey && !ev.altKey) return;
+      if (mod && k === "c" && el.contentWindow?.getSelection()?.toString()) return;
       const copy = new KeyboardEvent(ev.type, {
         key: ev.key,
         code: ev.code,

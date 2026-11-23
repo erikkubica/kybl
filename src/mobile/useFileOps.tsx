@@ -149,7 +149,7 @@ export function useFileOps(c: FileOpsCtx) {
     const pill = newPill();
     try {
       for (const e of files) {
-        const job = localCopy({ ...l, key: e.key, name: e.name, etag: e.etag, size: e.size }, (f) => {
+        const job = localCopy({ ...l, key: e.key, name: e.name, etag: e.etag, size: e.size, modified: e.modified }, (f) => {
           if (!stop) pill.set({ text: `${doing} ${label}`, frac: f == null || !sized ? null : (before + f * e.size) / total, cancel });
         });
         cancelCur = job.cancel;
@@ -324,7 +324,7 @@ export function useFileOps(c: FileOpsCtx) {
         else if (r.error) c.toast("error", `Deleting stopped after ${r.done} of ${r.total} objects. ${errSummary(r.error)}`);
         else {
           all = true;
-          c.toast("success", `Deleted ${label}`);
+          c.toast("success", c.caps?.trash ? `Moved ${label} to the Trash` : `Deleted ${label}`);
         }
       } catch (e) {
         c.jobs.finish(id, { error: errMessage(e) });
@@ -336,14 +336,21 @@ export function useFileOps(c: FileOpsCtx) {
       else c.changed(pid, b, (rs) => rs.filter((o) => !gone.has(o.key) && !folders.some((f) => o.key.startsWith(f.key))));
     };
     if (!c.settings.confirmDelete) return void run();
+    // drives (Google Drive, OneDrive, Dropbox) keep deleted items in their trash
+    const trash = !!c.caps?.trash;
+    const them = list.length === 1 ? "it" : "them";
     c.setConfirm({
-      title: `Delete ${label}?`,
-      label: "Delete",
-      danger: true,
-      message: (
+      title: trash ? `Move ${label} to the Trash?` : `Delete ${label}?`,
+      label: trash ? "Move to Trash" : "Delete",
+      danger: !trash,
+      message: trash ? (
+        <p>
+          {folders.length > 0 ? "Folders go with everything inside them. " : ""}You can restore {them} from the Trash of this drive.
+        </p>
+      ) : (
         <p>
           {folders.length > 0 ? "Folders are deleted with everything inside them. " : ""}
-          This permanently removes {list.length === 1 ? "it" : "them"} and <strong>cannot be undone</strong>.
+          This permanently removes {them} and <strong>cannot be undone</strong>.
         </p>
       ),
       run,

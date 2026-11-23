@@ -58,3 +58,39 @@ export const MENU_ACCELERATORS: Record<string, string> = {
   "tiles-bigger": "⌘+",
   "tiles-smaller": "⌘−",
 };
+
+/** [key, code, key with Shift] for the accelerators that aren't letters */
+const KEYS: Record<string, [string, string, string]> = {
+  "[": ["[", "BracketLeft", "{"],
+  "]": ["]", "BracketRight", "}"],
+  "\\": ["\\", "Backslash", "|"],
+  ".": [".", "Period", ">"],
+  ",": [",", "Comma", "<"],
+  "+": ["=", "Equal", "+"],
+  "−": ["-", "Minus", "_"],
+};
+
+/**
+ * The keydown a menu item's accelerator stands for (⌘ as metaKey), or null when it has none. The
+ * menu bar takes these keys before the page; this hands one back to whatever has the keyboard
+ * (the full editor, Quick Look) as a synthetic keydown.
+ */
+export function menuKeydown(id: string): KeyboardEventInit | null {
+  const acc = MENU_ACCELERATORS[id];
+  if (!acc) return null;
+  const shiftKey = acc.includes("⇧");
+  const altKey = acc.includes("⌥");
+  const last = acc[acc.length - 1];
+  let key: string;
+  let code: string;
+  if (/^[A-Z]$/.test(last)) {
+    key = shiftKey ? last : last.toLowerCase();
+    code = `Key${last}`;
+  } else {
+    const k = KEYS[last];
+    if (!k) return null;
+    key = shiftKey ? k[2] : k[0];
+    code = k[1];
+  }
+  return { key, code, metaKey: true, shiftKey, altKey, bubbles: true, cancelable: true };
+}

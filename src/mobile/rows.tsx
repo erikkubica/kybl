@@ -3,7 +3,7 @@ import { api } from "../api";
 import { Icon } from "../Icons";
 import { FileIcon, LinkBadge } from "../components/FileIcon";
 import { formatBytes, formatDate, parentPrefix, entrySize, entryKind } from "../format";
-import { cachedThumb, canListThumb, loadThumb } from "../thumbs";
+import { cachedThumb, canListThumb, loadThumb, onThumbRetry } from "../thumbs";
 import { cachedPlaceholder, canPlaceholder, learnPlaceholder, loadPlaceholder } from "../thumbhash";
 import { imageModeFor } from "../imageMode";
 import type { Entry } from "../types";
@@ -89,6 +89,9 @@ function useThumb(entry: Entry, profileId: string, bucket: string) {
   // size) keeps its row, so the old picture must not count as loaded
   const ver = `${entry.etag ?? ""}|${entry.size}`;
   const urlVer = useRef(ver);
+  // failed (offline, say): asked again once the network is back
+  const [retry, setRetry] = useState(0);
+  useEffect(() => (ok && url === null ? onThumbRetry(() => setRetry((n) => n + 1)) : undefined), [ok, url]);
   useEffect(() => {
     if (!ok) {
       // thumbnails turned off (or paused on mobile data): keep one that already loaded
@@ -118,7 +121,7 @@ function useThumb(entry: Entry, profileId: string, bucket: string) {
       stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ok, profileId, bucket, entry.key, ver]);
+  }, [ok, profileId, bucket, entry.key, ver, retry]);
   return { ref, phRef, url, ph, loading: ok && url === undefined && !ph };
 }
 

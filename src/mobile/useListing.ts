@@ -67,9 +67,11 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
     return { folders, objects, next: token, pages: n };
   }, []);
 
-  /** Re-reads the folder on screen, keeping as many pages as are loaded. */
-  const reload = useCallback(
-    async (opts: { quiet?: boolean } = {}) => {
+  /** the refresh in flight: "load more" and "load all" wait for it rather than cancel it */
+  const refreshRun = useRef<Promise<void> | null>(null);
+
+  const reloadNow = useCallback(
+    async (opts: { quiet?: boolean }) => {
       const l = cur.current;
       if (!l) return;
       const id = ++reqId.current;
@@ -104,6 +106,25 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
     },
     [fetchPages, settle, setListing],
   );
+
+  /** Re-reads the folder on screen, keeping as many pages as are loaded. */
+  const reload = useCallback(
+    (opts: { quiet?: boolean } = {}): Promise<void> => {
+      const run = reloadNow(opts);
+      refreshRun.current = run;
+      void run.finally(() => {
+        if (refreshRun.current === run) refreshRun.current = null;
+      });
+      return run;
+    },
+    [reloadNow],
+  );
+
+  /** Waits for a refresh in flight; false when the folder changed meanwhile. */
+  const afterRefresh = useCallback(async (l: Loc) => {
+    while (refreshRun.current) await refreshRun.current;
+    return cur.current === l;
+  }, []);
 
   /**
    * Shows a folder: from the cache when it was visited lately (then refreshed quietly if it is
@@ -142,34 +163,56 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
   );
 
   /** The next page, when the end of the list comes into view. */
+  const more = useRef(false);
   const loadMore = useCallback(async () => {
     const l = cur.current;
-    const had = listingRef.current;
-    if (!l || !had.next || loading) return;
-    const id = ++reqId.current;
-    setLoading(true);
+    if (!l || !listingRef.current.next || loading || more.current) return;
+    more.current = true;
     try {
-      const res = await api.listObjects(l.profileId, l.bucket, l.prefix, had.next);
-      if (id !== reqId.current) return;
-      setListing({
-        folders: [...had.folders, ...res.folders],
-        objects: [...had.objects, ...res.objects],
-        next: res.nextToken,
-        pages: had.pages + 1,
-      });
-    } catch (e) {
-      if (id === reqId.current) setError(errMessage(e));
+      // a refresh in flight (after a delete, an upload) finishes first: cancelling it would leave
+      // the old list on screen with the next page added to it, and its progress bar up
+      if (!(await afterRefresh(l))) return;
+      const had = listingRef.current;
+      if (!had.next) return;
+      const id = ++reqId.current;
+      setLoading(true);
+      try {
+        const res = await api.listObjects(l.profileId, l.bucket, l.prefix, had.next);
+        if (id !== reqId.current) return;
+        setError(null);
+        setListing({
+          folders: [...had.folders, ...res.folders],
+          objects: [...had.objects, ...res.objects],
+          next: res.nextToken,
+          pages: had.pages + 1,
+        });
+      } catch (e) {
+        if (id === reqId.current) setError(errMessage(e));
+      } finally {
+        if (id === reqId.current) setLoading(false);
+      }
     } finally {
-      if (id === reqId.current) setLoading(false);
+      more.current = false;
     }
-  }, [loading, setListing]);
+  }, [loading, afterRefresh, setListing]);
+
+  /** bumped by stopAll, so a "load all" still waiting for a refresh doesn't start */
+  const allToken = useRef(0);
 
   /** Every remaining page, for sorting the whole folder. `stopAll` (or leaving) stops it. */
   const loadAll = useCallback(async () => {
     const l = cur.current;
     if (!l || !listingRef.current.next) return;
-    const id = ++reqId.current;
+    const token = ++allToken.current;
+    setLoadingAll(listingRef.current.folders.length + listingRef.current.objects.length);
+    // after a refresh in flight, from the list it brings (see loadMore)
+    if (!(await afterRefresh(l)) || token !== allToken.current) return;
     let acc = listingRef.current;
+    if (!acc.next) {
+      setLoadingAll(null);
+      return;
+    }
+    const id = ++reqId.current;
     setLoadingAll(acc.folders.length + acc.objects.length);
     try {
       while (acc.next) {
@@ -188,11 +231,14 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
         setLoadingAll(null);
       }
     }
-  }, [setListing]);
+  }, [afterRefresh, setListing]);
 
   const stopAll = useCallback(() => {
-    reqId.current++;
+    allToken.current++;
     setLoadingAll(null);
+    // a refresh in flight runs on (it isn't what Stop is for)
+    if (refreshRun.current) return;
+    reqId.current++;
     setLoading(false);
   }, []);
 

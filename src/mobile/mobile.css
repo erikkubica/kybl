@@ -2545,6 +2545,23 @@ input[type="checkbox"].m-switch:checked {
   font-size: calc(14 * var(--m-u));
 }
 
+/* a refresh that failed, with the old list still shown */
+.m-note-err {
+  color: var(--text);
+}
+
+.m-note-err > svg {
+  flex: none;
+  color: var(--danger);
+}
+
+.m-note-err > span:not(.spinner) {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
 /* filter-as-you-type: the deep search is one tap away */
 .m-deep-search {
   width: calc(100% - 32px);

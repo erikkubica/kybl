@@ -27,7 +27,7 @@ import { FileIcon } from "../components/FileIcon";
 import { useUpdates } from "../updates";
 import { UpdateBanner } from "../components/UpdateBanner";
 import { Breadcrumbs } from "../components/Breadcrumbs";
-import { canThumb, thumbsPaused } from "../thumbs";
+import { canThumb, retryFailedThumbs, thumbsPaused } from "../thumbs";
 import { isPlaceholderIndex, useFolderPlaceholders } from "../thumbhash";
 import { IMAGE_MODES, SHARE_PLACEHOLDERS_TEXT, connImageMode, imageModeFor, imageModeLabel, setConnImageMode, setSharedPlaceholders, sharedPlaceholdersOn, useImageModes } from "../imageMode";
 import type { Entry, ObjInfo, Profile } from "../types";
@@ -477,7 +477,11 @@ export default function MobileApp() {
     for (const p of listed ?? []) if (buckets[p.id]?.note && !buckets[p.id]?.revoked) loadBuckets(p);
     if (profilesError) void startup(false);
   }, [reloadListing, listed, buckets, loadBuckets, profilesError, startup]);
-  const net = useNetwork(() => refreshAll());
+  const net = useNetwork(() => {
+    // thumbnails that failed while offline get another try
+    retryFailedThumbs();
+    refreshAll();
+  });
   const offline = !net.online || (!!lst.error && isNetworkError(lst.error));
   useEffect(() => syncThumbPause(prefs, net), [prefs, net]);
   // rows read the image mode when they mount: bumped when it (or the Wi-Fi pause) changes
@@ -844,7 +848,8 @@ export default function MobileApp() {
   const sentinel = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = sentinel.current;
-    if (!el || !listing.next || search || lst.loadingAll !== null) return;
+    // (not after a failure: "Load more" or the note's Retry try again, instead of a loop)
+    if (!el || !listing.next || search || lst.loadingAll !== null || lst.error) return;
     // rooted at the list's scroller: rooted at the screen, the margin would be clipped away
     const io = new IntersectionObserver(
       (xs) => {
@@ -854,7 +859,7 @@ export default function MobileApp() {
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [listing.next, loadMore, lst.loadingAll, search, scrollEl]);
+  }, [listing.next, loadMore, lst.loadingAll, lst.error, search, scrollEl]);
 
   // ------------------------------------------------------------ photo previews, asked once
   const [askedThumbs, setAskedThumbs] = useState(() => !!LS.get("m.askedThumbs"));
@@ -1059,6 +1064,17 @@ export default function MobileApp() {
                   </button>
                 </>
               )}
+            </div>
+          )}
+
+          {/* a refresh or "load more" failed with the list on screen (no connection: the offline pill says so) */}
+          {!search && lst.error && total > 0 && !isNetworkError(lst.error) && (
+            <div className="m-note m-note-err" role="alert">
+              <Icon name="alert" size={15} />
+              <span>Couldn’t update this list. {errSummary(lst.error)}</span>
+              <button className="m-text-btn" disabled={lst.refreshing} onClick={() => void reloadListing({ quiet: true })}>
+                Retry
+              </button>
             </div>
           )}
 

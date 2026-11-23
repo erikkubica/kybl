@@ -120,28 +120,40 @@ export function makeArchiveOps(c: ArchiveCtx) {
     const { profile, bucket } = c;
     if (!profile || bucket == null || !origin || !list.length) return;
     const dir = origin.key.slice(0, origin.key.lastIndexOf("/") + 1);
-    const base = c.searching ? entryParent(list[0]) : c.prefix;
-    const picked = list.filter((e) => entryParent(e) === base);
-    const decided = await settle(origin.profileId, origin.root, dir, picked.map((e) => ({ name: e.name, folder: e.kind === "folder" })), "Extracting");
-    if (!decided) return;
-    const paths: string[] = [];
-    const renames: Record<string, string> = {};
-    let overwrite = false;
-    for (const e of picked) {
-      const target = `${dir}${e.name}${e.kind === "folder" ? "/" : ""}`;
-      if (!decided.has(target)) paths.push(e.key);
-      else {
-        const to = decided.get(target);
-        if (!to) continue;
-        paths.push(e.key);
-        if (to === target) overwrite = true;
-        else renames[e.key] = baseName(to);
-      }
+    // search results can come from several folders of the archive: one extraction per folder,
+    // all into the same place, so two items with one name can't both go
+    const groups = new Map<string, Entry[]>();
+    for (const e of list) {
+      const base = c.searching ? entryParent(e) : c.prefix;
+      groups.set(base, [...(groups.get(base) ?? []), e]);
     }
-    if (!paths.length) return;
+    const names = list.map((e) => e.name);
+    if (new Set(names).size < names.length) {
+      c.toast("info", "Some of these have the same name. Extract them one folder at a time.");
+      return;
+    }
+    const decided = await settle(origin.profileId, origin.root, dir, list.map((e) => ({ name: e.name, folder: e.kind === "folder" })), "Extracting");
+    if (!decided) return;
     const archiveName = baseName(origin.key);
-    const label = paths.length === 1 ? baseName(paths[0]) : `${plural(paths.length, "item")} from ${archiveName}`;
-    runExtract(label, { srcProfileId: profile.id, srcRoot: bucket, paths, base, renames, destProfileId: origin.profileId, destRoot: origin.root, destDir: dir, overwrite }, paths.length === 1 ? `${dir}${renames[paths[0]] ?? baseName(paths[0])}${paths[0].endsWith("/") ? "/" : ""}` : null);
+    for (const [base, picked] of groups) {
+      const paths: string[] = [];
+      const renames: Record<string, string> = {};
+      let overwrite = false;
+      for (const e of picked) {
+        const target = `${dir}${e.name}${e.kind === "folder" ? "/" : ""}`;
+        if (!decided.has(target)) paths.push(e.key);
+        else {
+          const to = decided.get(target);
+          if (!to) continue;
+          paths.push(e.key);
+          if (to === target) overwrite = true;
+          else renames[e.key] = baseName(to);
+        }
+      }
+      if (!paths.length) continue;
+      const label = paths.length === 1 ? baseName(paths[0]) : `${plural(paths.length, "item")} from ${archiveName}`;
+      runExtract(label, { srcProfileId: profile.id, srcRoot: bucket, paths, base, renames, destProfileId: origin.profileId, destRoot: origin.root, destDir: dir, overwrite }, paths.length === 1 && groups.size === 1 ? `${dir}${renames[paths[0]] ?? baseName(paths[0])}${paths[0].endsWith("/") ? "/" : ""}` : null);
+    }
   };
 
   /** "Extract to…": the copy dialog, with the archive's entries as what's copied. */

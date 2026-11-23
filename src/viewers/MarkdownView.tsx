@@ -3,7 +3,8 @@
  * screens). The rendered HTML is cleaned with DOMPurify and shown only inside SandboxFrame.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { marked } from "marked";
+import { Marked } from "marked";
+import { headingSlugger, htmlText } from "./slug";
 import DOMPurify from "dompurify";
 import { CodeEditor, type CodeEditorApi } from "./CodeEditor";
 import { SandboxFrame } from "./SandboxFrame";
@@ -18,8 +19,22 @@ type Layout = "edit" | "split" | "preview";
 export const RENDER_MAX = 512 * 1024;
 
 export function renderMarkdown(src: string): string {
-  const html = marked.parse(src, { gfm: true, async: false }) as string;
-  return DOMPurify.sanitize(html, { FORCE_BODY: true, FORBID_TAGS: ["form", "input", "button", "textarea", "select"] });
+  // headings get GitHub's ids, so a table of contents' #links work
+  const slug = headingSlugger();
+  const md = new Marked({
+    gfm: true,
+    async: false,
+    renderer: {
+      heading({ tokens, depth }) {
+        const inner = this.parser.parseInline(tokens);
+        return `<h${depth} id="${slug(htmlText(inner))}">${inner}</h${depth}>\n`;
+      },
+    },
+  });
+  const html = md.parse(src) as string;
+  // ids and names come out as "user-content-…" (as on GitHub), so none can stand for a document
+  // property; SandboxFrame looks anchors up with that prefix too
+  return DOMPurify.sanitize(html, { FORCE_BODY: true, SANITIZE_NAMED_PROPS: true, FORBID_TAGS: ["form", "input", "button", "textarea", "select"] });
 }
 
 /** Whether rendered HTML shows an image from the web (an <img> or a srcset with an http(s) address). */

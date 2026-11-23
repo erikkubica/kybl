@@ -49,10 +49,19 @@ const VIEWERS: Record<ViewerKind, Omit<ViewerInfo, "kind">> = {
   image: { canEdit: false, maxBytes: 40 * MB, editMaxBytes: 0, load: () => import("./ImageView") },
 };
 
+/** Dotfiles that are plain text (".env", ".gitignore" and ".editorconfig" match CODE by "extension"). */
+const DOT_NAMES = [
+  "bashrc", "bash_profile", "zshrc", "zprofile", "profile", "inputrc", "vimrc", "gitattributes", "gitmodules",
+  "gitconfig", "dockerignore", "npmrc", "nvmrc", "yarnrc", "npmignore", "prettierrc", "prettierignore", "eslintrc",
+  "eslintignore", "babelrc", "htaccess", "node-version", "python-version", "ruby-version", "tool-versions",
+];
+
 function kindOf(name: string, contentType?: string | null): ViewerKind | null {
-  const lower = name.toLowerCase();
+  const lower = name.toLowerCase().slice(name.lastIndexOf("/") + 1);
   const dot = lower.lastIndexOf(".");
-  const ext = dot > 0 ? lower.slice(dot + 1) : "";
+  // a leading dot counts: ".env" is an "env" file
+  const ext = dot >= 0 ? lower.slice(dot + 1) : "";
+  if (lower.startsWith(".") && (DOT_NAMES.includes(lower.slice(1)) || /^\.env\./.test(lower))) return "text";
   if (ext === "md" || ext === "markdown" || ext === "mdx") return "markdown";
   if (ext === "csv" || ext === "tsv") return "csv";
   if (ext === "json" || ext === "jsonl" || ext === "ndjson" || ext === "geojson" || ext === "webmanifest") return "json";
@@ -61,7 +70,7 @@ function kindOf(name: string, contentType?: string | null): ViewerKind | null {
   if (ext === "pptx") return "pptx";
   if (IMAGES.includes(ext)) return "image";
   if (CODE.includes(ext)) return "text";
-  if (!ext && CODE_NAMES.includes(lower.slice(lower.lastIndexOf("/") + 1))) return "text";
+  if (!ext && CODE_NAMES.includes(lower)) return "text";
   // no telling extension: go by the stored content type
   const ct = (contentType ?? "").toLowerCase().split(";")[0].trim();
   if (ct === "text/markdown") return "markdown";

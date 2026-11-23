@@ -80,6 +80,8 @@ export function onThumbReady(profileId: string, bucket: string, e: Entry, f: (ur
 /** thumbnails being made right now (past the queue), and who wants to know when one starts */
 const started = new Set<string>();
 const startHooks = new Map<string, Array<() => void>>();
+/** each caller's "still wanted" check for a request in flight (several tiles can share one) */
+const wanters = new Map<string, Array<() => boolean>>();
 const waiting: Array<() => void> = [];
 let active = 0;
 
@@ -89,6 +91,21 @@ const keyOf = (profileId: string, bucket: string, e: Entry) =>
 /** The URL the backend answers with the thumbnail JPEG; the fields are unpacked in thumbs.rs. */
 const urlOf = (profileId: string, bucket: string, e: Entry) =>
   convertFileSrc([profileId, bucket, String(e.size), e.etag ?? "", e.key].join("\n"), "thumb");
+
+/** tiles showing an icon because their thumbnail failed, to try again when the network is back */
+const retryHooks = new Set<() => void>();
+
+/** Calls `f` when failed thumbnails may be asked for again (retryFailedThumbs). */
+export function onThumbRetry(f: () => void): () => void {
+  retryHooks.add(f);
+  return () => void retryHooks.delete(f);
+}
+
+/** The network is back (or the app resumed): thumbnails that failed meanwhile are asked for again. */
+export function retryFailedThumbs() {
+  for (const [k, v] of cache) if (typeof v === "number") cache.delete(k);
+  for (const f of [...retryHooks]) f();
+}
 
 /** The thumbnail URL if it already loaded, null if it failed recently, undefined if unknown. */
 export function cachedThumb(profileId: string, bucket: string, e: Entry): string | null | undefined {
@@ -187,15 +204,18 @@ export function loadThumb(
   if (known !== undefined) return Promise.resolve(known);
   const existing = inflight.get(k);
   if (existing) {
+    // joining: the request goes ahead while any of its tiles still wants it
+    wanters.get(k)?.push(stillWanted);
     if (onStart) (startHooks.get(k) ?? startHooks.set(k, []).get(k)!).push(onStart);
     if (started.has(k)) onStart?.();
     return existing;
   }
   if (onStart) startHooks.set(k, [onStart]);
+  wanters.set(k, [stillWanted]);
   const p = (async () => {
     await slot();
     try {
-      if (!stillWanted()) return undefined;
+      if (!wanters.get(k)?.some((f) => f())) return undefined;
       started.add(k);
       for (const f of startHooks.get(k) ?? []) f();
       let url: string;
@@ -213,6 +233,7 @@ export function loadThumb(
     } finally {
       release();
       inflight.delete(k);
+      wanters.delete(k);
       started.delete(k);
       startHooks.delete(k);
     }
