@@ -119,9 +119,18 @@ base64 = "0.22"
 # the same rustls the S3 client uses, to hand the account API client those roots too
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
-# macOS: files put on the clipboard (the pasteboard takes file URLs, see platform.rs)
+# macOS: files put on the clipboard (the pasteboard takes file URLs, see platform.rs), and items
+# dragged out to other apps as files or file promises (platform/drag_out.rs). The AppKit and
+# Foundation bindings and block2 are already in the tree through Tauri.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSObject", "NSOperation", "NSProcessInfo", "NSString", "NSURL", "NSValue"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSApplication", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSEvent", "NSFilePromiseProvider", "NSGraphicsContext", "NSImage", "NSPasteboard", "NSResponder", "NSView", "NSWindow", "NSWorkspace"] }
+
+# Windows, Linux: items dragged out to other apps as files (platform/drag_out.rs)
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+drag = "2"
 
 # iOS: to stop the web view insetting itself for the notch and home bar (the page handles the
 # safe areas itself, see mobile.css)

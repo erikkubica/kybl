@@ -202,6 +202,8 @@ pub fn run() {
             platform::apps::apps_for,
             platform::apps::open_with,
             platform::apps::open_with_chooser,
+            platform::drag_out::start_drag_out,
+            platform::drag_out::drag_out_done,
             platform::temp_folder,
             platform::write_temp_file,
             platform::share_files,

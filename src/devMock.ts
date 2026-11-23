@@ -710,6 +710,11 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       return null;
     case "temp_folder":
       return "/tmp/kybl";
+    // no system drag in a browser: drags stay inside the page
+    case "start_drag_out":
+      throw "Dragging to other apps needs the app";
+    case "drag_out_done":
+      return null;
     case "write_temp_file":
       return `/tmp/kybl/capture-${Date.now()}.jpg`;
     case "open_local":

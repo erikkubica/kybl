@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { PaneId } from "../browser/types";
+import { isDraggingOut } from "../desktop/dragOut";
 
 export function useFinderDrop({
   target,
@@ -27,6 +28,8 @@ export function useFinderDrop({
     getCurrentWebview()
       .onDragDropEvent((e) => {
         const p = e.payload;
+        // our own items dragged out and back in: not an upload into the folder they came from
+        if (isDraggingOut()) return setOver(null);
         // positions come in physical pixels
         const at = "position" in p && p.position ? [p.position.x / devicePixelRatio, p.position.y / devicePixelRatio] : [null, null];
         if (p.type === "enter" || p.type === "over") setOver(cbs.current.target(at[0], at[1]));
