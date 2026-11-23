@@ -1,5 +1,4 @@
 import { Icon, type IconName } from "../Icons";
-import { api } from "../api";
 import { ErrorText } from "./ErrorText";
 import { formatBytes, formatEta, formatSpeed } from "../format";
 import type { Transfer, TransferState } from "../types";
@@ -220,8 +219,8 @@ type PanelProps = {
   /** clears the failed items (the Failed tab) */
   onClearFailed?(): void;
   onReveal: (t: Transfer) => void;
-  /** open a finished download in its default app; defaults to api.openLocal */
-  onOpenLocal?(t: Transfer): void;
+  /** open a finished download in its default app (asking first about a program: `openGuard`) */
+  onOpenLocal(t: Transfer): void;
   /**
    * Show the panel with a short "nothing here" note while there is no activity, for when the
    * user opened it on purpose (an Activity button or menu item). Off: no activity, no panel.
@@ -354,7 +353,7 @@ function TransferPanelView({
     onClear();
     if (onTab) for (const m of migrationsDone) void migrationStore.remove(m.id).catch(() => {});
   };
-  const openLocal = (t: Transfer) => (onOpenLocal ? onOpenLocal(t) : api.openLocal(t.local).catch(() => onReveal(t)));
+  const openLocal = (t: Transfer) => onOpenLocal(t);
   // only what fits the tab on screen (all of it without tabs)
   const acts = {
     retry: retryCount > 0 && (!onTab || tab === "activity" || tab === "failed"),

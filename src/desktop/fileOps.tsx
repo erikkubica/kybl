@@ -24,7 +24,7 @@ import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
 import { localCopies, type LocalCopyVerb } from "../localCopyProgress";
 import { parentOf, renameRounds } from "../batchRename";
 import { BatchRenameDialog } from "./BatchRenameDialog";
-import { runsCode } from "./runnable";
+import { okToRun as askToRun, openIn } from "./openGuard";
 
 export type ToastAction = NonNullable<Toast["action"]>;
 
@@ -307,40 +307,25 @@ export function makeFileOps(c: OpsContext) {
     return null;
   };
 
-  /**
-   * A program, script or installer from a connection (not this computer) runs when it opens:
-   * asked first, since double-clicking a file usually means "show me".
-   */
-  const okToRun = async (picked: Entry): Promise<boolean> => {
-    if (c.localPaths || !runsCode(picked.name)) return true;
-    return c.confirm({
-      title: `Run “${picked.name}”?`,
-      message: (
-        <>
-          <p>This kind of file runs as a program when it opens, with access to this computer.</p>
-          <p className="hint">Open it only if you trust where it came from.</p>
-        </>
-      ),
-      label: "Open anyway",
-      danger: true,
-    });
-  };
+  /** A program, script or installer from a connection (not this computer) is asked about first. */
+  const okToRun = (picked: Entry): Promise<boolean> => (c.localPaths ? Promise.resolve(true) : askToRun(picked.name, c.confirm));
 
   /** Opens a file in its default app (a local copy first, see `localCopy`). */
   const openInApp = async (picked: Entry) => {
     if (!(await okToRun(picked))) return;
     const path = await localCopy(picked, "open");
-    if (path) await api.openLocal(path).catch((err) => toast("error", errMessage(err)));
+    if (path) await openIn(path, undefined).catch((err) => toast("error", errMessage(err)));
   };
 
   /**
    * "Open with ▸ app": like Open, with the app the person chose (an `AppChoice.path`). `app`
-   * null: Windows' own "How do you want to open this file?" window.
+   * null: Windows' own "How do you want to open this file?" window. `asked`: the caller already
+   * asked about running it.
    */
-  const openWith = async (picked: Entry, app: string | null) => {
-    if (!(await okToRun(picked))) return;
+  const openWith = async (picked: Entry, app: string | null, asked = false) => {
+    if (!asked && !(await okToRun(picked))) return;
     const path = await localCopy(picked, "open");
-    if (path) await (app === null ? api.openWithChooser(path) : api.openWith(path, app)).catch((err) => toast("error", errMessage(err)));
+    if (path) await openIn(path, app).catch((err) => toast("error", errMessage(err)));
   };
 
   /** Puts the file itself on the clipboard, to paste into a chat, a mail or a Finder window. */
@@ -957,7 +942,7 @@ export function makeFileOps(c: OpsContext) {
     void relocate(cl.items, dest, mode, { srcBucket: cl.bucket, destBucket: bucket }).then((ok) => ok && usedUp());
   };
 
-  return { uploadPaths, pickAndUpload, downloadEntries, localCopy, openInApp, openWith, copyFile, askDelete, askRename, askBatchRename, askNewFolder, relocate, duplicate, clip, paste };
+  return { uploadPaths, pickAndUpload, downloadEntries, localCopy, okToRun, openInApp, openWith, copyFile, askDelete, askRename, askBatchRename, askNewFolder, relocate, duplicate, clip, paste };
 }
 
 export type FileOps = ReturnType<typeof makeFileOps>;

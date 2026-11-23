@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ErrorText } from "./ErrorText";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { api, errMessage } from "../api";
+import { errMessage } from "../api";
 import { formatBytes, formatSpeed } from "../format";
 import { etaLabel } from "../useJobs";
 import { Icon } from "../Icons";
@@ -9,6 +9,9 @@ import { ago, prettyPath, syncApi, type PendingDelete, type SyncConflict, type S
 import type { Profile } from "../types";
 import { SyncDialog } from "./SyncDialog";
 import "./sync.css";
+import { useDialogs } from "../shell/useDialogs";
+import { okToRun, openIn } from "../desktop/openGuard";
+import { runsCode } from "../desktop/runnable";
 
 const DIR_ICON = { upload: "upload", download: "download", twoway: "sync" } as const;
 const DIR_TITLE = { upload: "Uploads to the remote folder", download: "Mirrors the remote folder", twoway: "Two-way: changes go both ways" };
@@ -181,6 +184,7 @@ function PendingPanel({ m, count, run }: { m: SyncMapping; count: number; run: (
 /** Conflict copies: open both, or keep one. */
 function ConflictsPanel({ m, count, run }: { m: SyncMapping; count: number; run: (fn: () => Promise<unknown>) => Promise<void> }) {
   const [items, setItems] = useState<SyncConflict[] | null>(null);
+  const dialogs = useDialogs();
   useEffect(() => {
     let live = true;
     syncApi
@@ -192,9 +196,12 @@ function ConflictsPanel({ m, count, run }: { m: SyncMapping; count: number; run:
     };
   }, [m.id, count]);
   if (!items || items.length === 0) return null;
-  const open = (c: SyncConflict) => {
-    api.openLocal(c.localPath).catch(() => {});
-    api.openLocal(c.copyLocalPath).catch(() => {});
+  const open = async (c: SyncConflict) => {
+    // both came from the connection at some point: a program is asked about first, once
+    const names = [c.localPath, c.copyLocalPath].map((p) => p.split(/[\\/]/).pop() ?? p);
+    if (!(await okToRun(names.find(runsCode) ?? names[0], dialogs.confirm))) return;
+    openIn(c.localPath, undefined).catch(() => {});
+    openIn(c.copyLocalPath, undefined).catch(() => {});
   };
   return (
     <div className="sync-attn" role="group" aria-label="Conflicts">
@@ -217,7 +224,7 @@ function ConflictsPanel({ m, count, run }: { m: SyncMapping; count: number; run:
               <span className="dim">· {ago(c.createdAt)}</span>
             </div>
             <div className="sync-conflict-actions">
-              <button className="btn btn-sm btn-ghost" onClick={() => open(c)} title="Opens both versions">
+              <button className="btn btn-sm btn-ghost" onClick={() => void open(c)} title="Opens both versions">
                 <Icon name="external" size={12} /> Open both
               </button>
               <button className="btn btn-sm" onClick={() => run(() => syncApi.resolveConflict(m.id, c.copy, "copy"))} title="Your version replaces the other one, on both sides">

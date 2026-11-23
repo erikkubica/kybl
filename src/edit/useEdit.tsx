@@ -9,6 +9,7 @@ import { createElement, useCallback, useEffect, useRef } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, errMessage, errSummary, type AppChoice } from "../api";
 import { appsFor } from "../desktop/openWith";
+import { okToRun, openFromConnection, openIn } from "../desktop/openGuard";
 import { EDIT_MAX } from "../viewers/registry";
 import { editableInKybl } from "./editable";
 import { formatBytes } from "../format";
@@ -81,10 +82,11 @@ export function useEdit({
     [dialogs],
   );
 
-  const openCopy = async (s: EditSession, app: App) => {
-    if (app === undefined) await api.openLocal(s.local);
-    else if (app.path === null) await api.openWithChooser(s.local);
-    else await api.openWith(s.local, app.path);
+  /** The private copy in its app; `asked`: about running it, already (else asked here). */
+  const openCopy = async (s: EditSession, app: App, asked = false) => {
+    const to = app === undefined ? undefined : app.path;
+    if (asked) await openIn(s.local, to);
+    else await openFromConnection(s.local, dialogs.confirm, to, s.name);
   };
 
   /** A remote file in another app: the rule, a private copy, the app, then uploads on save. */
@@ -93,6 +95,8 @@ export function useEdit({
       // already on this computer: it opens where it is, and its app saves it in place
       return app === undefined ? void place.ops.openInApp(e) : void place.ops.openWith(e, app.path);
     }
+    // a program or script opened in its default app runs: asked first, as on Open
+    if (!(await okToRun(e.name, dialogs.confirm))) return;
     const rule = await askRule(e.name, app?.name);
     if (!rule) return;
     const had = findSession(place.profileId, place.bucket, e.key);
@@ -103,7 +107,7 @@ export function useEdit({
       const s = await editApi.start(place.profileId, place.bucket, e.key, rule);
       if (!had) transfers.track({ ...row, local: s.local, state: "done", bytes: e.size });
       appOf.current.set(s.id, app);
-      await openCopy(s, app);
+      await openCopy(s, app, true);
       if (!had) toast("info", `Editing “${e.name}”. ${rule === "auto" ? "Each save uploads it." : "Each save uploads it if the server's copy hasn't changed."}`);
     } catch (err) {
       const msg = errMessage(err);

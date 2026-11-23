@@ -383,13 +383,33 @@ pub async fn archive_extract(app: AppHandle, state: State<'_, AppState>, id: Str
 
         let t = task.clone();
         let b = ensure(&a, &state, &archive_id, job.local.as_deref(), &move |n, total| t.tick(n, total), &task.cancel).await?;
-        let plan = ops::plan_extract(&b.index, &job.paths, &job.base, &job.dest_dir, job.folder.as_deref(), &job.renames);
+        let mut plan = ops::plan_extract(&b.index, &job.paths, &job.base, &job.dest_dir, job.folder.as_deref(), &job.renames);
+        plan.mark = from_elsewhere(&a, &state, &archive_id, &b.index.source).await;
         let total = plan.bytes;
         let t = task.clone();
         ops::extract(b.index.clone(), dst, &job.dest_root, &plan, job.overwrite, &move |n| t.tick(n, total), &task.cancel).await?;
         Ok(total)
     })
     .await
+}
+
+/// Whether archive `id` (read from `source`) came from somewhere other than this computer, or
+/// carries the downloaded-file mark itself: what is unpacked from it is marked too, as the
+/// system's own unarchivers do. An archive inside another goes by the outer one.
+async fn from_elsewhere<R: Runtime>(app: &AppHandle<R>, state: &AppState, id: &str, source: &Path) -> bool {
+    if crate::platform::quarantine::is_marked(source) {
+        return true;
+    }
+    let mut id = id.to_string();
+    while let Some((profile, root, key)) = decode_id(&id) {
+        if profile.starts_with(PREFIX) {
+            id = profile;
+            continue;
+        }
+        let Ok(s) = registry::open(app, state, &profile).await else { return true };
+        return s.local_path(&root, &key).is_none_or(|p| crate::platform::quarantine::is_marked(&p));
+    }
+    true
 }
 
 #[derive(Deserialize, Clone)]

@@ -182,6 +182,9 @@ pub struct ExtractPlan {
     /// folders with nothing inside (prefix stores need a marker for these only)
     pub empty_dirs: BTreeSet<String>,
     pub bytes: u64,
+    /// the archive came from somewhere else (a connection, or it carries the mark itself): files
+    /// written on this computer get the downloaded-file mark (`platform::quarantine`)
+    pub mark: bool,
 }
 
 /// Which files go where. `paths` picks entries (files, or folders ending with `/`; empty: all),
@@ -304,7 +307,10 @@ pub async fn extract(
                 let rest = size.saturating_sub(last.load(Ordering::Relaxed));
                 progress(done.fetch_add(rest, Ordering::Relaxed) + rest);
                 match out {
-                    WriteOutcome::Done(_) => Ok(()),
+                    WriteOutcome::Done(_) => {
+                        crate::platform::quarantine::mark_arrival(plan.mark, &*dst, root, key);
+                        Ok(())
+                    }
                     WriteOutcome::Conflict(_) => {
                         skipped.fetch_add(1, Ordering::Relaxed);
                         Ok(())

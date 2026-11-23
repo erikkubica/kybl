@@ -12,6 +12,7 @@ import type { MenuItem, Toast } from "../components/Dialogs";
 import type { Entry } from "../types";
 import type { FileOps } from "./fileOps";
 import { joinPath } from "./paths";
+import { openIn } from "./openGuard";
 
 const UA = typeof navigator === "undefined" ? "" : navigator.userAgent;
 const OS: "mac" | "win" | "linux" = /Mac/.test(UA) ? "mac" : /Win/.test(UA) ? "win" : "linux";
@@ -71,7 +72,7 @@ export type OpenInContext = {
   bucket: string;
   /** the connection is this computer's own disk (`localPaths`) */
   onDisk: boolean;
-  ops: Pick<FileOps, "openWith">;
+  ops: Pick<FileOps, "openWith" | "okToRun">;
   toast: (kind: Toast["kind"], text: string) => void;
 };
 
@@ -97,17 +98,19 @@ export function openInItems(c: OpenInContext, e: Entry): MenuItem[] {
     try {
       // files of the disk connection: Open's own way finds them in place
       if (!folder && c.onDisk) return void (await c.ops.openWith(e, app));
+      // a synced file came from the connection: a program in it is asked about, as on Open
+      if (!folder && !(await c.ops.okToRun(e))) return;
       const path = await ownPath();
       if (path) {
         try {
-          await (app === null ? api.openWithChooser(path) : api.openWith(path, app));
+          await openIn(path, app);
           return;
         } catch (err) {
           // a synced file not on disk yet (or ignored by the sync): fetch it like any other
           if (folder || c.onDisk) throw err;
         }
       }
-      if (!folder) await c.ops.openWith(e, app);
+      if (!folder) await c.ops.openWith(e, app, true);
     } catch (err) {
       c.toast("error", errMessage(err));
     }

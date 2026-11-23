@@ -15,6 +15,7 @@ import { terminalBusy } from "../terminal/api";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage, errSummary } from "../api";
+import { openFromConnection } from "../desktop/openGuard";
 import { baseName } from "../format";
 import { useTransfers } from "../useTransfers";
 import { useJobs } from "../useJobs";
@@ -2117,7 +2118,7 @@ export function AppShell() {
           onCancelAll={transfers.cancelAll}
           onRetry={transfers.retry}
           onRetryAll={() => void transfers.retryAll(true)}
-          onOpenLocal={(t) => api.openLocal(t.local).catch((e) => toast("error", `Couldn’t open “${t.name}”. ${errMessage(e)}`))}
+          onOpenLocal={(t) => void openFromConnection(t.local, dialogs.confirm, undefined, t.name).catch((e) => toast("error", `Couldn’t open “${t.name}”. ${errMessage(e)}`))}
           onClear={() => {
             transfers.clearFinished();
             jobs.clearFinished();

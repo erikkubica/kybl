@@ -219,6 +219,29 @@ async fn backend_lists_reads_and_stays_read_only() {
     assert!(b.mkdir("site.zip", "x/").await.is_err());
 }
 
+/// Unpacked from an archive that came from elsewhere: the files carry the downloaded-file mark;
+/// from one of this computer's own, they don't.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn files_from_an_archive_of_elsewhere_are_marked() {
+    use crate::platform::quarantine::is_marked;
+    let s = Scratch::new();
+    let p = s.0.join("site.zip");
+    hostile_zip(&p);
+    let ix = Arc::new(Index::open(&p, Format::Zip, &s.0, &no()).unwrap());
+    let cancel = Arc::new(AtomicBool::new(false));
+    for mark in [true, false] {
+        let out = s.0.join(format!("out-{mark}"));
+        std::fs::create_dir_all(&out).unwrap();
+        let dst: Arc<dyn Storage> = Arc::new(LocalBackend::with_roots(vec![("out".into(), RootKind::Folder, out.clone())], false));
+        let root = out.to_string_lossy().into_owned();
+        let mut plan = ops::plan_extract(&ix, &[], "", "", None, &Default::default());
+        plan.mark = mark;
+        ops::extract(ix.clone(), dst, &root, &plan, false, &|_| {}, &cancel).await.unwrap();
+        assert_eq!(is_marked(&out.join("site/notes.txt")), mark);
+    }
+}
+
 #[tokio::test]
 async fn extracts_into_a_new_folder_without_nesting_it_twice() {
     let s = Scratch::new();
