@@ -61,11 +61,75 @@ fn base_name(key: &str) -> &str {
     key.trim_end_matches('/').rsplit('/').next().unwrap_or(key)
 }
 
-/// The archives open this session, by id.
-static OPENED: LazyLock<Mutex<HashMap<String, Arc<ArchiveBackend>>>> = LazyLock::new(Default::default);
+/// An archive open this session.
+struct Opened {
+    backend: Arc<ArchiveBackend>,
+    /// size and modification time of the file it was read from, when it was read
+    stamp: Option<Stamp>,
+}
 
-fn work_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, StorageError> {
+type Stamp = (u64, Option<std::time::SystemTime>);
+
+fn stamp_of(path: &Path) -> Option<Stamp> {
+    std::fs::metadata(path).ok().map(|m| (m.len(), m.modified().ok()))
+}
+
+/// The archives open this session, by id.
+static OPENED: LazyLock<Mutex<HashMap<String, Opened>>> = LazyLock::new(Default::default);
+/// One open (download, unpack, index) per archive at a time: a second one waits and reuses it.
+static OPENING: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = LazyLock::new(Default::default);
+
+/// Downloaded archives and unpacked .tar files beyond this are removed (oldest first), except the
+/// ones open archives read from.
+const CACHE_BUDGET: u64 = 2 << 30;
+
+fn work_base<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, StorageError> {
     Ok(app.path().app_cache_dir().map_err(|e| StorageError::other(e.to_string()))?.join("archives"))
+}
+
+/// `<app cache>/archives/<this run>/`: emptied when Kybl quits, and what an ended run left is
+/// removed by the next start (see `instance_dir`).
+fn work_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, StorageError> {
+    crate::instance_dir::claim(&work_base(app)?).map_err(StorageError::from)
+}
+
+/// Start-up: claims this run's work folder, removing what earlier runs left there.
+pub fn setup<R: Runtime>(app: &AppHandle<R>) {
+    let _ = work_dir(app);
+}
+
+/// Quitting: the downloads and unpacked copies go.
+pub fn shutdown<R: Runtime>(app: &AppHandle<R>) {
+    if let Ok(base) = work_base(app) {
+        crate::instance_dir::clear(&base);
+    }
+}
+
+/// Keeps the work folder under `budget`: whole files, oldest first, never one in `keep` (open
+/// archives read from them) nor an unfinished one (`.part`, a zip being made).
+pub(crate) fn prune(dir: &Path, keep: &[PathBuf], budget: u64) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let m = e.metadata().ok().filter(|m| m.is_file())?;
+            (!name.ends_with(".part") && !name.starts_with("pack-")).then(|| (m.modified().unwrap_or(std::time::UNIX_EPOCH), m.len(), e.path()))
+        })
+        .collect();
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    files.sort();
+    for (_, len, path) in files {
+        if total <= budget {
+            break;
+        }
+        if keep.contains(&path) {
+            continue;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total -= len;
+        }
+    }
 }
 
 /// A file of this computer holding the archive: `local` (a copy the page already made), the
@@ -95,8 +159,18 @@ async fn local_file<R: Runtime>(
     ops::fetch(&*src, root, key, &to, progress, cancel).await
 }
 
-/// The open archive `id`, opened (fetched and indexed) when it isn't yet or when `local` is a
-/// newer copy than the one it was opened from.
+/// The open archive `id` when it can be reused: opened from `local` (if given), and that file is
+/// still the size and age it was when it was read.
+fn reusable(id: &str, local: Option<&str>) -> Option<Arc<ArchiveBackend>> {
+    let all = OPENED.lock().unwrap();
+    let o = all.get(id)?;
+    let src = &o.backend.index.source;
+    (local.is_none_or(|l| src == Path::new(l)) && stamp_of(src) == o.stamp).then(|| o.backend.clone())
+}
+
+/// The open archive `id`, opened (fetched and indexed) when it isn't yet, when `local` is
+/// another copy than the one it was opened from, or when that file changed since (a rebuilt
+/// archive, a newer download to the same place).
 async fn ensure<R: Runtime>(
     app: &AppHandle<R>,
     state: &AppState,
@@ -105,22 +179,55 @@ async fn ensure<R: Runtime>(
     progress: &(dyn Fn(u64, u64) + Send + Sync),
     cancel: &Arc<AtomicBool>,
 ) -> SResult<Arc<ArchiveBackend>> {
-    let open = OPENED.lock().unwrap().get(id).cloned();
-    if let Some(b) = open.filter(|b| local.is_none_or(|l| b.index.source == Path::new(l))) {
+    if let Some(b) = reusable(id, local) {
         return Ok(b);
     }
+    let gate = OPENING.lock().unwrap().entry(id.to_string()).or_default().clone();
+    let res = {
+        let _one = gate.lock().await;
+        match reusable(id, local) {
+            // opened by the open this one waited for
+            Some(b) => Ok(b),
+            None => open_now(app, state, id, local, progress, cancel).await,
+        }
+    };
+    {
+        let mut opening = OPENING.lock().unwrap();
+        if Arc::strong_count(&gate) <= 2 {
+            opening.remove(id);
+        }
+    }
+    res
+}
+
+async fn open_now<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &AppState,
+    id: &str,
+    local: Option<&str>,
+    progress: &(dyn Fn(u64, u64) + Send + Sync),
+    cancel: &Arc<AtomicBool>,
+) -> SResult<Arc<ArchiveBackend>> {
     let (profile, root, key) = decode_id(id).ok_or_else(|| StorageError::other("This archive link is damaged."))?;
     let format = Format::of(&key).ok_or_else(|| StorageError::other("Kybl opens .zip, .tar and .tar.gz archives."))?;
     let path = local_file(app, state, id, (&profile, &root, &key), local, progress, cancel).await?;
     let work = work_dir(app)?;
+    // taken before reading: a change while it is read makes the next open read it again
+    let stamp = stamp_of(&path);
     let c = cancel.clone();
-    let index = tokio::task::spawn_blocking(move || Index::open(&path, format, &work, &c))
+    let w = work.clone();
+    let index = tokio::task::spawn_blocking(move || Index::open(&path, format, &w, &c))
         .await
         .map_err(|e| StorageError::other(e.to_string()))?
         .map_err(|e| if cancel.load(Ordering::Relaxed) { StorageError::cancelled() } else { StorageError::other(e.to_string()) })?;
     let b = Arc::new(ArchiveBackend::new(base_name(&key).to_string(), Arc::new(index)));
-    OPENED.lock().unwrap().insert(id.to_string(), b.clone());
+    let keep: Vec<PathBuf> = {
+        let mut all = OPENED.lock().unwrap();
+        all.insert(id.to_string(), Opened { backend: b.clone(), stamp });
+        all.values().flat_map(|o| [o.backend.index.source.clone(), o.backend.index.data.clone()]).collect()
+    };
     registry::insert(id, b.clone());
+    let _ = tokio::task::spawn_blocking(move || prune(&work, &keep, CACHE_BUDGET)).await;
     Ok(b)
 }
 

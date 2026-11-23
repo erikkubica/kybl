@@ -3,7 +3,7 @@
 //! written to any connection.
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     io::{self, Write},
     path::{Path, PathBuf},
     sync::{
@@ -225,8 +225,17 @@ pub fn plan_extract(index: &Index, paths: &[String], base: &str, dest_dir: &str,
             }
         }
     }
+    // every folder some planned file is in (at any depth), gathered once: checking each folder
+    // against every file is files × folders, far too slow for a node_modules zip
+    let mut filled: HashSet<&str> = HashSet::new();
+    for (_, k) in &plan.files {
+        let mut p = parent_of(k);
+        while !p.is_empty() && filled.insert(p) {
+            p = parent_of(p);
+        }
+    }
     for d in &dirs {
-        if !plan.files.iter().any(|(_, k)| k.starts_with(d.as_str())) {
+        if !filled.contains(d.as_str()) {
             plan.empty_dirs.insert(d.clone());
         }
     }
@@ -315,7 +324,7 @@ pub async fn fetch(s: &dyn Storage, root: &str, key: &str, to: &Path, progress: 
     if let Some(dir) = to.parent() {
         tokio::fs::create_dir_all(dir).await?;
     }
-    let part = to.with_extension("part");
+    let part = super::index::part_path(to);
     let r = s.read(root, key, None, None).await?;
     let total = r.total.or(r.len).unwrap_or(0);
     let mut body = r.body;

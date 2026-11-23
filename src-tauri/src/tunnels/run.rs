@@ -92,12 +92,35 @@ impl Shared {
 pub struct Running {
     profile_id: String,
     def: TunnelDef,
+    /// the server and sign-in it was started with (None: not known, as in tests)
+    server: Option<Server>,
     /// unix milliseconds
     started: u64,
     shared: Arc<Shared>,
     stop: watch::Sender<bool>,
     task: tokio::task::JoinHandle<()>,
 }
+
+/// Where and as whom a tunnel's SSH connection signs in. Another one after the connection was
+/// edited means the running tunnel goes to the wrong place: it is started again.
+#[derive(Clone, Debug, PartialEq)]
+struct Server {
+    host: String,
+    port: u16,
+    user: String,
+    auth: crate::state::NetAuth,
+}
+
+impl Server {
+    fn of(profile: &Profile) -> Option<Server> {
+        let n = profile.net.as_ref()?;
+        Some(Server { host: n.host.clone(), port: n.port, user: n.user.clone(), auth: n.auth })
+    }
+}
+
+/// Builds the connection's backend afresh, from its saved settings and secrets, each time the
+/// tunnel signs in again (a password changed since it started is the one used).
+pub type Rebuild = Arc<dyn Fn() -> crate::storage::BoxFuture<'static, Result<SftpBackend, String>> + Send + Sync>;
 
 /// A running tunnel, for the page.
 #[derive(Serialize, Clone, Debug)]
@@ -212,7 +235,13 @@ fn port_error(port: u16, e: &std::io::Error) -> String {
 
 /// Starts a tunnel over `backend`'s server: binds its port, signs in (an error from either is
 /// returned and nothing is left open), then runs until stopped. `notify` hears of every change.
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn launch(profile_id: &str, def: TunnelDef, backend: SftpBackend, notify: Box<dyn Fn() + Send + Sync>) -> Result<Running, String> {
+    launch_with(profile_id, def, backend, None, notify).await
+}
+
+/// [`launch`], with `rebuild` giving the backend to sign in with again after a drop.
+pub async fn launch_with(profile_id: &str, def: TunnelDef, backend: SftpBackend, rebuild: Option<Rebuild>, notify: Box<dyn Fn() + Send + Sync>) -> Result<Running, String> {
     if let Some(p) = port_problem(def.local_port, None).await {
         return Err(p);
     }
@@ -220,12 +249,12 @@ pub async fn launch(profile_id: &str, def: TunnelDef, backend: SftpBackend, noti
     let handle = backend.sign_in_connection().await.map_err(String::from)?;
     let shared = Arc::new(Shared { counters: Counters::default(), phase: Mutex::new((Phase::Up, None)), notify });
     let (stop, stopped) = watch::channel(false);
-    let task = tokio::spawn(supervise(listener, backend, Arc::new(handle), def.clone(), shared.clone(), stopped));
-    Ok(Running { profile_id: profile_id.to_string(), def, started: now_ms(), shared, stop, task })
+    let task = tokio::spawn(supervise(listener, backend, rebuild, Arc::new(handle), def.clone(), shared.clone(), stopped));
+    Ok(Running { profile_id: profile_id.to_string(), def, server: None, started: now_ms(), shared, stop, task })
 }
 
 /// Accepts connections and keeps the SSH connection up until told to stop; then closes it all.
-async fn supervise(listener: TcpListener, backend: SftpBackend, first: Handle, def: TunnelDef, shared: Arc<Shared>, mut stop: watch::Receiver<bool>) {
+async fn supervise(listener: TcpListener, mut backend: SftpBackend, rebuild: Option<Rebuild>, first: Handle, def: TunnelDef, shared: Arc<Shared>, mut stop: watch::Receiver<bool>) {
     let slot = Arc::new(watch::Sender::new(Some(first)));
     let mut conns = JoinSet::new();
     let mut tick = tokio::time::interval(Duration::from_secs(1));
@@ -256,6 +285,13 @@ async fn supervise(listener: TcpListener, backend: SftpBackend, first: Handle, d
                 }
                 if Instant::now() < next_try {
                     continue;
+                }
+                // the connection's current settings and secrets (edited since it started, say)
+                if let Some(rebuild) = &rebuild {
+                    tokio::select! {
+                        r = rebuild() => if let Ok(b) = r { backend = b },
+                        _ = stop.changed() => break,
+                    }
                 }
                 let attempt = tokio::select! {
                     r = backend.sign_in_connection() => r,
@@ -389,7 +425,14 @@ pub async fn start<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id:
         super::check(&def)?;
         let backend = registry::sftp_for(app, state, profile_id).await?;
         let notify_app = app.clone();
-        launch(profile_id, def, backend, Box::new(move || emit_all(&notify_app))).await
+        let (a, pid) = (app.clone(), profile_id.to_string());
+        let rebuild: Rebuild = Arc::new(move || {
+            let (a, pid) = (a.clone(), pid.clone());
+            Box::pin(async move { registry::sftp_for(&a, &a.state::<AppState>(), &pid).await })
+        });
+        let mut running = launch_with(profile_id, def, backend, Some(rebuild), Box::new(move || emit_all(&notify_app))).await?;
+        running.server = Server::of(&profile);
+        Ok::<_, String>(running)
     }
     .await;
     STARTING.lock().unwrap().remove(&k);
@@ -415,24 +458,67 @@ pub async fn shutdown() {
     futures_util::future::join_all(all.into_iter().map(Running::stop)).await;
 }
 
-/// A connection was saved (`Some`, with its tunnels) or deleted (`None`): running tunnels that are
-/// gone or now go elsewhere stop; renamed ones carry on under the new name.
-pub fn connection_changed<R: Runtime>(app: &AppHandle<R>, profile_id: &str, defs: Option<&[TunnelDef]>) {
-    let mut gone = vec![];
+/// What a running tunnel does after its connection was saved.
+#[derive(Debug, PartialEq)]
+enum AfterSave {
+    /// carries on (a new name is taken over)
+    Keep,
+    /// its definition is gone or goes elsewhere now
+    Stop,
+    /// the connection now signs in elsewhere (another host, port, user or way of signing in):
+    /// it starts again over the new one
+    Restart,
+}
+
+fn after_save(r: &Running, defs: Option<&[TunnelDef]>, server: Option<&Server>) -> AfterSave {
+    match defs.and_then(|d| d.iter().find(|d| d.id == r.def.id)) {
+        Some(d) if d.same_route(&r.def) => {
+            if r.server.is_some() && r.server.as_ref() != server {
+                AfterSave::Restart
+            } else {
+                AfterSave::Keep
+            }
+        }
+        _ => AfterSave::Stop,
+    }
+}
+
+/// A connection was saved (`Some`) or deleted (`None`): running tunnels that are gone or now go
+/// elsewhere stop, ones whose connection now signs in elsewhere start again over it, renamed ones
+/// carry on under the new name.
+pub fn connection_changed<R: Runtime>(app: &AppHandle<R>, profile_id: &str, profile: Option<&Profile>) {
+    let defs = profile.map(|p| p.net.as_ref().map(|n| n.tunnels.as_slice()).unwrap_or_default());
+    let server = profile.and_then(Server::of);
+    let (mut gone, mut again) = (vec![], vec![]);
     {
         let mut all = RUNNING.lock().unwrap();
         for r in all.values_mut().filter(|r| r.profile_id == profile_id) {
-            match defs.and_then(|d| d.iter().find(|d| d.id == r.def.id)) {
-                Some(d) if d.same_route(&r.def) => r.def = d.clone(),
-                _ => gone.push(key(profile_id, &r.def.id)),
+            match after_save(r, defs, server.as_ref()) {
+                AfterSave::Keep => {
+                    if let Some(d) = defs.and_then(|d| d.iter().find(|d| d.id == r.def.id)) {
+                        r.def = d.clone();
+                    }
+                }
+                AfterSave::Stop => gone.push(key(profile_id, &r.def.id)),
+                AfterSave::Restart => {
+                    gone.push(key(profile_id, &r.def.id));
+                    again.push((r.def.id.clone(), r.def.label()));
+                }
             }
         }
         let stopping: Vec<Running> = gone.iter().filter_map(|k| all.remove(k)).collect();
         if !stopping.is_empty() {
             let app = app.clone();
+            let pid = profile_id.to_string();
             tauri::async_runtime::spawn(async move {
                 futures_util::future::join_all(stopping.into_iter().map(Running::stop)).await;
                 emit_all(&app);
+                for (tid, name) in again {
+                    let state = app.state::<AppState>();
+                    if let Err(e) = start(&app, &state, &pid, &tid).await {
+                        let _ = app.emit("tunnel-error", TunnelError { profile_id: pid.clone(), tunnel_id: tid, name, error: e });
+                    }
+                }
             });
         }
     }
@@ -695,6 +781,61 @@ mod tests {
             let e = launch("p", def, backend(ssh_port, &fp, "pw"), Box::new(|| {})).await.err().unwrap();
             assert!(e.contains("already uses port"), "{e}");
             drop(held);
+        });
+    }
+
+    /// After a drop the tunnel signs in with the connection as it is saved now (the server
+    /// moved, the password changed), not with the backend it started with.
+    #[test]
+    fn signing_in_again_uses_the_connection_as_saved_now() {
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let (old_port, fp, old_kill, _old) = ssh_server().await;
+            let (new_port, fp2, _new_kill, _new) = ssh_server().await;
+            let echo = echo_server().await;
+            let local = free_port();
+            let def = TunnelDef { id: "t".into(), local_port: local, remote_host: "127.0.0.1".into(), remote_port: echo, ..Default::default() };
+            let rebuilds = Arc::new(AtomicU32::new(0));
+            let n = rebuilds.clone();
+            let rebuild: Rebuild = Arc::new(move || {
+                n.fetch_add(1, Ordering::Relaxed);
+                let b = backend(new_port, &fp2, "pw");
+                Box::pin(async move { Ok(b) })
+            });
+            let r = launch_with("p", def, backend(old_port, &fp, "pw"), Some(rebuild), Box::new(|| {})).await.unwrap();
+            assert_eq!(round_trip(local, b"one").await, b"one");
+            // the old server goes away for good
+            old_kill.store(true, Ordering::SeqCst);
+            until("the drop to be noticed", || r.info().phase == Phase::Retrying || rebuilds.load(Ordering::Relaxed) > 0).await;
+            until("the tunnel to come back over the new server", || r.info().phase == Phase::Up && rebuilds.load(Ordering::Relaxed) > 0).await;
+            assert_eq!(round_trip(local, b"two").await, b"two");
+            r.stop().await;
+        });
+    }
+
+    #[test]
+    fn a_saved_connection_keeps_stops_or_restarts_its_tunnels() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let server = Server { host: "a.example".into(), port: 22, user: "me".into(), auth: crate::state::NetAuth::Password };
+            let def = TunnelDef { id: "t".into(), local_port: 5433, remote_host: "db".into(), remote_port: 5432, ..Default::default() };
+            let (stop, _) = watch::channel(false);
+            let shared = Arc::new(Shared { counters: Counters::default(), phase: Mutex::new((Phase::Up, None)), notify: Box::new(|| {}) });
+            let r = Running { profile_id: "p".into(), def: def.clone(), server: Some(server.clone()), started: 0, shared, stop, task: tokio::spawn(async {}) };
+            let renamed = [TunnelDef { name: "db".into(), ..def.clone() }];
+            assert_eq!(after_save(&r, Some(&renamed), Some(&server)), AfterSave::Keep);
+            let moved = [TunnelDef { remote_port: 6543, ..def.clone() }];
+            assert_eq!(after_save(&r, Some(&moved), Some(&server)), AfterSave::Stop);
+            assert_eq!(after_save(&r, Some(&[]), Some(&server)), AfterSave::Stop);
+            assert_eq!(after_save(&r, None, None), AfterSave::Stop);
+            for other in [
+                Server { host: "b.example".into(), ..server.clone() },
+                Server { port: 2222, ..server.clone() },
+                Server { user: "deploy".into(), ..server.clone() },
+                Server { auth: crate::state::NetAuth::Key, ..server.clone() },
+            ] {
+                assert_eq!(after_save(&r, Some(&renamed), Some(&other)), AfterSave::Restart, "{other:?}");
+            }
         });
     }
 }

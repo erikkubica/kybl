@@ -192,6 +192,8 @@ pub async fn clean_up(app: &AppHandle) {
     crate::mount::shutdown(app, CLEANUP_LIMIT).await;
     // files edited in another app: stop watching, delete the copies
     crate::edit::shutdown(app).await;
+    // downloaded and unpacked archives
+    crate::archive::shutdown(app);
     // SSH tunnels close their ports
     crate::tunnels::run::shutdown().await;
     // what couldn't be aborted in time stays written down for the next start

@@ -113,7 +113,8 @@ impl Reader {
                 "include" if depth < MAX_DEPTH => {
                     // the included lines belong to the section the Include is in; a Host or Match
                     // in there ends it only until the file is done (as ssh reads it)
-                    let (outer, was_match) = (self.blocks.last().map(|b| b.patterns.clone()), self.in_match);
+                    // no section yet: the global one (an Include on the very first line)
+                    let (outer, was_match) = (self.blocks.last().and_then(|b| b.patterns.clone()), self.in_match);
                     for pattern in &args {
                         for file in expand_include(pattern, env) {
                             if let Some(t) = load(&file) {
@@ -122,10 +123,8 @@ impl Reader {
                         }
                     }
                     self.in_match = was_match;
-                    if let Some(patterns) = outer
-                        && self.blocks.last().map(|b| &b.patterns) != Some(&patterns)
-                    {
-                        self.blocks.push(Block { patterns, settings: vec![] });
+                    if self.blocks.last().map(|b| &b.patterns) != Some(&outer) {
+                        self.blocks.push(Block { patterns: outer, settings: vec![] });
                     }
                 }
                 _ => self.current().settings.push((key, args)),
@@ -521,6 +520,19 @@ Host *
         assert_eq!(by_name(&sites, "outer").user, "after-include");
         assert_eq!(by_name(&sites, "second").user, "fallback");
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// `Include` as the first line (OrbStack, Colima): the global lines after it apply to every
+    /// host, not to the included file's last `Host`.
+    #[test]
+    fn global_lines_after_a_leading_include_stay_global() {
+        let files = [("/nonexistent/.ssh/orbstack", "Host orb\n  HostName 127.0.0.1\n  Port 32222\n")];
+        let (sites, _) = run("Include orbstack\nUser deploy\nPort 2200\n\nHost web\n  HostName web.example.com\n", &files);
+        let web = by_name(&sites, "web");
+        assert_eq!((web.user.as_str(), web.port), ("deploy", 2200));
+        let orb = by_name(&sites, "orb");
+        // its own Port comes first; the global User applies to it as to every host
+        assert_eq!((orb.port, orb.user.as_str()), (32222, "deploy"));
     }
 
     #[test]

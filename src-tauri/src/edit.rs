@@ -1,7 +1,7 @@
 //! "Edit" for a connection's files in another app, FileZilla-style but safer.
 //!
 //! `edit_start` downloads the file into a private folder of its own
-//! (`<app cache>/edit/<connection>/<session>/<name>`), the page opens that copy in the app the
+//! (`<app cache>/edit/<this run>/<connection>/<session>/<name>`), the page opens that copy in the app the
 //! person picked, and a watcher on the session's folder notices every save: in place, or the
 //! "write a temp file and rename it over" way most editors save. A burst of events is settled
 //! for [`DEBOUNCE`] first, and the file's MD5 is compared with the bytes the server is known to
@@ -110,6 +110,9 @@ struct Inner {
 
 struct Session {
     inner: Mutex<Inner>,
+    /// held for a whole look-and-upload (the worker's, or an answer to a conflict), so two
+    /// uploads of one session never run at once
+    busy: tokio::sync::Mutex<()>,
     wake: Notify,
     stop: AtomicBool,
     watcher: Mutex<Option<Debouncer<RecommendedWatcher, RecommendedCache>>>,
@@ -206,8 +209,14 @@ fn now_ms() -> i64 {
 
 // ---------------------------------------------------------------- folders
 
-fn edit_root<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+/// `<app cache>/edit`: each running Kybl works in a folder of its own below it (see
+/// `instance_dir`), so a second copy of the app starting up never deletes the first one's copies.
+fn edit_base<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     Ok(app.path().app_cache_dir().map_err(|e| e.to_string())?.join(DIR))
+}
+
+fn edit_root<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+    crate::instance_dir::claim(&edit_base(app)?).map_err(|e| format!("Couldn't make a private folder for the copy: {e}"))
 }
 
 /// Creates `<root>/<connection>/<session>/` (only this user can look inside) and returns the
@@ -232,8 +241,8 @@ pub(crate) fn remove_session_dir(dir: &Path) {
     }
 }
 
-/// Start-up: whatever an earlier run left behind (it was killed or crashed before cleaning up).
-pub(crate) fn sweep(root: &Path) {
+#[cfg(test)]
+fn sweep(root: &Path) {
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -254,13 +263,20 @@ fn snapshot(s: &Session) -> EditInfo {
     s.inner.lock().unwrap().info.clone()
 }
 
+/// Changes the session and tells the page, unless the session was stopped meanwhile (an upload
+/// that ends after the person stopped editing must not bring its row back).
 fn update<R: Runtime>(app: &AppHandle<R>, s: &Session, f: impl FnOnce(&mut Inner)) -> EditInfo {
-    let info = {
+    let (info, live) = {
         let mut i = s.inner.lock().unwrap();
-        f(&mut i);
-        i.info.clone()
+        let live = !s.stop.load(Ordering::SeqCst);
+        if live {
+            f(&mut i);
+        }
+        (i.info.clone(), live)
     };
-    emit(app, &info.id, Some(info.clone()));
+    if live {
+        emit(app, &info.id, Some(info.clone()));
+    }
     info
 }
 
@@ -315,6 +331,11 @@ async fn read_settled(path: &Path) -> Option<Vec<u8>> {
 }
 
 async fn changed(app: &AppHandle, s: &Arc<Session>) {
+    // an answer to a conflict may be uploading: wait for it, then look at the file as it is now
+    let _busy = s.busy.lock().await;
+    if s.stop.load(Ordering::SeqCst) {
+        return;
+    }
     let local = PathBuf::from(snapshot(s).local);
     let Some(bytes) = read_settled(&local).await else { return };
     if s.stop.load(Ordering::SeqCst) {
@@ -370,7 +391,7 @@ async fn upload(app: &AppHandle, s: &Arc<Session>, to: Option<String>, bytes: Ve
     settle(app, s, outcome(result), hash, to);
 }
 
-fn settle(app: &AppHandle, s: &Session, out: Outcome, hash: [u8; 16], to: Option<String>) {
+fn settle<R: Runtime>(app: &AppHandle<R>, s: &Session, out: Outcome, hash: [u8; 16], to: Option<String>) {
     update(app, s, |i| match out {
         Outcome::Uploaded(meta) => {
             if let Some(k) = to {
@@ -399,9 +420,14 @@ fn settle(app: &AppHandle, s: &Session, out: Outcome, hash: [u8; 16], to: Option
     });
 }
 
-fn end(app: &AppHandle, id: &str) -> Option<PathBuf> {
+fn end<R: Runtime>(app: &AppHandle<R>, id: &str) -> Option<PathBuf> {
     let s = SESSIONS.lock().unwrap().remove(id)?;
-    s.stop.store(true, Ordering::SeqCst);
+    {
+        // under the session's lock: an `update` running now is either sent before the "ended"
+        // below, or sees the stop and leaves the page alone
+        let _i = s.inner.lock().unwrap();
+        s.stop.store(true, Ordering::SeqCst);
+    }
     s.watcher.lock().unwrap().take();
     s.wake.notify_one();
     emit(app, id, None);
@@ -415,15 +441,12 @@ fn end(app: &AppHandle, id: &str) -> Option<PathBuf> {
 /// (with the newly picked rule), so opening it again shows the same copy.
 #[tauri::command]
 pub async fn edit_start(app: AppHandle, state: State<'_, AppState>, profile_id: String, root: String, path: String, rule: Rule) -> Result<EditInfo, String> {
-    let existing = SESSIONS
-        .lock()
-        .unwrap()
-        .values()
-        .find(|s| {
-            let i = &s.inner.lock().unwrap().info;
-            i.profile_id == profile_id && i.root == root && i.key == path
-        })
-        .cloned();
+    let (p, r, k) = (profile_id.clone(), root.clone(), path.clone());
+    let same = move |s: &Arc<Session>| {
+        let i = &s.inner.lock().unwrap().info;
+        i.profile_id == p && i.root == r && i.key == k
+    };
+    let existing = SESSIONS.lock().unwrap().values().find(|s| same(s)).cloned();
     if let Some(s) = existing {
         return Ok(update(&app, &s, |i| i.info.rule = rule));
     }
@@ -467,19 +490,33 @@ pub async fn edit_start(app: AppHandle, state: State<'_, AppState>, profile_id: 
             synced: md5(&bytes),
             known: meta,
         }),
+        busy: tokio::sync::Mutex::new(()),
         wake: Notify::new(),
         stop: AtomicBool::new(false),
         watcher: Mutex::new(None),
         dir: dir.clone(),
     });
+    // a second Edit of the same file that started while this one downloaded: that session it is
+    let raced = {
+        let mut all = SESSIONS.lock().unwrap();
+        let other = all.values().find(|s| same(s)).cloned();
+        if other.is_none() {
+            all.insert(id.clone(), session.clone());
+        }
+        other
+    };
+    if let Some(s) = raced {
+        let _ = tokio::task::spawn_blocking(move || remove_session_dir(&dir)).await;
+        return Ok(update(&app, &s, |i| i.info.rule = rule));
+    }
     match watch(&session) {
         Ok(w) => *session.watcher.lock().unwrap() = Some(w),
         Err(e) => {
+            SESSIONS.lock().unwrap().remove(&id);
             remove_session_dir(&dir);
             return Err(e);
         }
     }
-    SESSIONS.lock().unwrap().insert(id.clone(), session.clone());
     tauri::async_runtime::spawn(run(app.clone(), session.clone()));
     let info = snapshot(&session);
     emit(&app, &id, Some(info.clone()));
@@ -530,7 +567,13 @@ pub fn edit_retry(id: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn edit_resolve(app: AppHandle, state: State<'_, AppState>, id: String, action: String) -> Result<EditInfo, String> {
     let s = find(&id)?;
+    // one upload per session at a time: the worker (or a first click of this answer) goes first
+    let _busy = s.busy.lock().await;
     let info = snapshot(&s);
+    // answered already (a double click), or stopped meanwhile
+    if info.phase != Phase::Conflict || s.stop.load(Ordering::SeqCst) {
+        return Ok(info);
+    }
     let local = PathBuf::from(&info.local);
     match action.as_str() {
         "overwrite" | "keepBoth" => {
@@ -590,9 +633,7 @@ pub async fn edit_resolve(app: AppHandle, state: State<'_, AppState>, id: String
 /// Start-up: removes copies an earlier run left behind. Done before the window can start an
 /// edit (a handful of small files), so it can never take a new session's copy with it.
 pub fn setup<R: Runtime>(app: &AppHandle<R>) {
-    if let Ok(root) = edit_root(app) {
-        sweep(&root);
-    }
+    let _ = edit_root(app);
 }
 
 /// Quitting: stops every session and deletes every copy.
@@ -601,8 +642,8 @@ pub async fn shutdown(app: &AppHandle) {
     for id in ids {
         end(app, &id);
     }
-    if let Ok(root) = edit_root(app) {
-        let _ = tokio::task::spawn_blocking(move || sweep(&root)).await;
+    if let Ok(base) = edit_base(app) {
+        let _ = tokio::task::spawn_blocking(move || crate::instance_dir::clear(&base)).await;
     }
 }
 
@@ -733,6 +774,7 @@ mod tests {
                 known: meta("a", 3),
                 synced: md5(b"one"),
             }),
+            busy: tokio::sync::Mutex::new(()),
             wake: Notify::new(),
             stop: AtomicBool::new(false),
             watcher: Mutex::new(None),
@@ -752,5 +794,55 @@ mod tests {
         assert_eq!(std::fs::read(&file).unwrap(), b"three");
         s.watcher.lock().unwrap().take();
         sweep(&root);
+    }
+
+    /// An upload that finishes after the person stopped editing doesn't bring the row back.
+    #[test]
+    fn an_upload_ending_after_stop_leaves_the_page_alone() {
+        use tauri::{
+            test::{mock_builder, mock_context, noop_assets},
+            Listener,
+        };
+        let app = mock_builder().build(mock_context(noop_assets())).unwrap();
+        let events = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let ev = events.clone();
+        app.listen_any("edit", move |e| ev.lock().unwrap().push(serde_json::from_str(e.payload()).unwrap()));
+        let id = format!("ghost-{}", uuid::Uuid::new_v4());
+        let s = Arc::new(Session {
+            inner: Mutex::new(Inner {
+                info: EditInfo {
+                    id: id.clone(),
+                    profile_id: "c".into(),
+                    root: String::new(),
+                    key: "a.txt".into(),
+                    name: "a.txt".into(),
+                    local: "/nonexistent/a.txt".into(),
+                    rule: Rule::Auto,
+                    phase: Phase::Uploading,
+                    error: None,
+                    server: None,
+                    last_upload: None,
+                    upload_id: None,
+                    upload_size: 0,
+                    pending: true,
+                },
+                known: meta("a", 3),
+                synced: md5(b"one"),
+            }),
+            busy: tokio::sync::Mutex::new(()),
+            wake: Notify::new(),
+            stop: AtomicBool::new(false),
+            watcher: Mutex::new(None),
+            dir: PathBuf::from("/nonexistent"),
+        });
+        SESSIONS.lock().unwrap().insert(id.clone(), s.clone());
+        // the person stops editing while the upload (holding its own `Arc`) is still running
+        assert!(end(app.handle(), &id).is_some());
+        settle(app.handle(), &s, Outcome::Uploaded(meta("b", 3)), md5(b"two"), None);
+        settle(app.handle(), &s, Outcome::Conflict(None), md5(b"two"), None);
+        let got = events.lock().unwrap().clone();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0]["session"].is_null(), "only the end was sent: {got:?}");
+        assert_eq!(s.inner.lock().unwrap().info.phase, Phase::Uploading);
     }
 }

@@ -163,6 +163,8 @@ pub fn parse_str(xml: &str) -> Result<Vec<ImportedSite>, String> {
     let mut path: Vec<String> = Vec::new();
     let mut folders: Vec<String> = Vec::new();
     let mut server: Option<Fields> = None;
+    // how deep the open <Server> is (its fields are one deeper)
+    let mut server_at = 0usize;
     // text right inside <Server> (FileZilla repeats the name there) and inside the current field
     let mut server_text = String::new();
     let mut field: Option<(String, Option<String>)> = None;
@@ -192,11 +194,16 @@ pub fn parse_str(xml: &str) -> Result<Vec<ImportedSite>, String> {
                     saw_root = true;
                 }
                 if server.is_some() {
-                    let enc = e.try_get_attribute("encoding").ok().flatten().map(|a| a.value.into_owned());
-                    field = Some((name.clone(), enc));
-                    text.clear();
+                    // only the server's own fields: what is inside them (a <Bookmark>'s own
+                    // Name and RemoteDir) is not the site's
+                    if path.len() == server_at + 1 {
+                        let enc = e.try_get_attribute("encoding").ok().flatten().map(|a| a.value.into_owned());
+                        field = Some((name.clone(), enc));
+                        text.clear();
+                    }
                 } else if name == "Server" {
                     server = Some(Fields::new());
+                    server_at = path.len();
                     server_text.clear();
                 } else if name == "Folder" {
                     folders.push(String::new());
@@ -205,7 +212,7 @@ pub fn parse_str(xml: &str) -> Result<Vec<ImportedSite>, String> {
             }
             Event::Empty(e) => {
                 let name = e.local_name().as_ref().to_string();
-                if let Some(s) = server.as_mut() {
+                if let Some(s) = server.as_mut().filter(|_| path.len() == server_at + 1) {
                     let enc = e.try_get_attribute("encoding").ok().flatten().map(|a| a.value.into_owned());
                     s.insert(name, (String::new(), enc));
                 }
@@ -219,8 +226,12 @@ pub fn parse_str(xml: &str) -> Result<Vec<ImportedSite>, String> {
             }
             Event::End(_) => {
                 let name = path.pop().unwrap_or_default();
-                if let Some((fname, enc)) = field.take() {
-                    if let Some(s) = server.as_mut() {
+                if server.is_some() && path.len() > server_at {
+                    // a server field ends (something deeper inside one changes nothing)
+                    if path.len() == server_at + 1
+                        && let Some((fname, enc)) = field.take()
+                        && let Some(s) = server.as_mut()
+                    {
                         s.insert(fname, (std::mem::take(&mut text), enc));
                     }
                 } else if name == "Server" {
@@ -486,6 +497,26 @@ mod tests {
         let twice = FIXTURE.replace("<Name>Mirror</Name>", "<Name>Top &amp; level</Name>");
         let s = parse_str(&twice).unwrap();
         assert_eq!(s.iter().map(|x| &x.id).collect::<std::collections::HashSet<_>>().len(), s.len());
+    }
+
+    /// A site's bookmarks (`<Bookmark>` inside `<Server>`) don't replace its own name and folder.
+    #[test]
+    fn bookmarks_leave_the_site_alone() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<FileZilla3><Servers><Server>
+  <Host>files.example.com</Host><Port>22</Port><Protocol>1</Protocol><Type>0</Type>
+  <User>alice</User><Logontype>2</Logontype>
+  <Name>My site</Name>
+  <RemoteDir>1 0 4 home 5 alice</RemoteDir>
+  <Bookmark><Name>logs</Name><LocalDir /><RemoteDir>1 0 3 var 3 log</RemoteDir></Bookmark>
+  <Bookmark><Name>empty</Name><RemoteDir /></Bookmark>
+  My site
+</Server></Servers></FileZilla3>"#;
+        let sites = parse_str(xml).unwrap();
+        assert_eq!(sites.len(), 1);
+        assert_eq!(sites[0].name, "My site");
+        assert_eq!(sites[0].start_dir, "/home/alice");
+        assert_eq!(sites[0].host, "files.example.com");
     }
 
     #[test]

@@ -18,6 +18,7 @@ mod doc;
 // "Edit" in another app: a private copy, watched, uploaded back when saved
 #[cfg(desktop)]
 mod edit;
+mod instance_dir;
 // "Connect Kybl Storage": browser sign-in on computers and phones
 mod kybl_connect;
 // uploads and partial downloads an earlier run left behind (killed, crashed): cleaned at start
@@ -163,6 +164,8 @@ pub fn run() {
             // before leftovers: what a kept transfer left behind is not to be cleaned up
             resume::start(&handle);
             leftovers::start(&handle);
+            // archives downloaded and unpacked by ended runs (before a resumed job opens one)
+            archive::setup(&handle);
             // WP-B1: copy/move jobs resume where they stopped
             jobs::setup(&handle);
             // WP-C: backup.db (background workers may have opened it first)

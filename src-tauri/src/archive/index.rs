@@ -180,6 +180,8 @@ pub struct Index {
     pub source: PathBuf,
     /// where reads come from: the archive, or for .tar.gz its unpacked .tar
     pub file: PosFile,
+    /// the path of `file`
+    pub data: PathBuf,
     /// files, by key
     pub items: Vec<Item>,
     by_key: HashMap<String, usize>,
@@ -224,7 +226,9 @@ impl Index {
             Format::Tar => Self::open_tar(path, file, format),
             Format::TarGz => {
                 let tar = gunzip(path, work, file.len(), cancel)?;
-                Self::open_tar(path, PosFile::open(&tar)?, format)
+                let mut ix = Self::open_tar(path, PosFile::open(&tar)?, format)?;
+                ix.data = tar;
+                Ok(ix)
             }
         }
     }
@@ -450,7 +454,7 @@ impl Builder {
         for (i, it) in items.iter().enumerate() {
             children.entry(parent_of(&it.key).to_string()).or_default().1.push(i);
         }
-        Ok(Index { format, source: source.to_path_buf(), file, items, by_key, dirs: self.dirs, children, skipped: self.skipped, total, zip })
+        Ok(Index { format, source: source.to_path_buf(), data: source.to_path_buf(), file, items, by_key, dirs: self.dirs, children, skipped: self.skipped, total, zip })
     }
 }
 
@@ -477,7 +481,8 @@ fn gunzip(path: &Path, work: &Path, archive_len: u64, cancel: &AtomicBool) -> io
         return Ok(out);
     }
     let limit = MAX_TOTAL.min(BOMB_FLOOR.max(archive_len.saturating_mul(BOMB_RATIO)));
-    let part = out.with_extension("part");
+    // a name of its own: two opens of one archive at once never write into each other's file
+    let part = part_path(&out);
     let res = (|| {
         let mut dec = flate2::read::MultiGzDecoder::new(io::BufReader::new(File::open(path)?));
         let mut w = io::BufWriter::new(File::create(&part)?);
@@ -510,6 +515,15 @@ fn gunzip(path: &Path, work: &Path, archive_len: u64, cancel: &AtomicBool) -> io
             Err(e)
         }
     }
+}
+
+/// A temporary name next to `out` that no other write of this run uses (`<out>.<n>.part`).
+pub fn part_path(out: &Path) -> PathBuf {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    let mut name = out.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{n}.part"));
+    out.with_file_name(name)
 }
 
 pub fn fnv(s: &str) -> u64 {

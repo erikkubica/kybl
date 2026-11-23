@@ -322,3 +322,73 @@ fn server_scripts_quote_everything() {
     let ex = remote::extract_script("/srv/a.tgz", Format::TarGz, "/srv", "a");
     assert!(ex.contains("tar -xzf") && ex.contains("^[lh]"));
 }
+
+/// A rebuilt archive at the same path (a re-zipped file, a newer download to the same place) is
+/// read again instead of listing the old contents.
+#[test]
+fn a_changed_archive_is_not_served_from_the_old_index() {
+    let s = Scratch::new();
+    let p = s.0.join("site.zip");
+    hostile_zip(&p);
+    let ix = Index::open(&p, Format::Zip, &s.0, &no()).unwrap();
+    let id = encode_id("stale-test", "", &p.to_string_lossy());
+    let local = p.to_string_lossy().into_owned();
+    super::OPENED.lock().unwrap().insert(
+        id.clone(),
+        super::Opened { backend: Arc::new(ArchiveBackend::new("site.zip".into(), Arc::new(ix))), stamp: super::stamp_of(&p) },
+    );
+    assert!(super::reusable(&id, Some(&local)).is_some());
+    assert!(super::reusable(&id, None).is_some());
+    // another copy than the one it was read from
+    assert!(super::reusable(&id, Some("/elsewhere/site.zip")).is_none());
+    // rewritten in place
+    let mut z = zip::ZipWriter::new(std::fs::File::create(&p).unwrap());
+    z.start_file("new.txt", zip::write::SimpleFileOptions::default()).unwrap();
+    z.write_all(b"new").unwrap();
+    z.finish().unwrap();
+    assert!(super::reusable(&id, Some(&local)).is_none());
+    assert!(super::reusable(&id, None).is_none());
+    super::OPENED.lock().unwrap().remove(&id);
+}
+
+#[test]
+fn the_work_folder_is_kept_under_its_budget_sparing_open_and_unfinished_files() {
+    let s = Scratch::new();
+    let file = |name: &str, age: u64| {
+        let p = s.0.join(name);
+        std::fs::write(&p, vec![0u8; 100]).unwrap();
+        std::fs::File::options().write(true).open(&p).unwrap().set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age)).unwrap();
+        p
+    };
+    let oldest = file("a.zip", 400);
+    let open = file("b.tar", 300);
+    let part = file("c.zip.3.part", 200);
+    let pack = file("pack-1.zip", 200);
+    let newest = file("d.tgz", 100);
+    super::prune(&s.0, std::slice::from_ref(&open), 250);
+    assert!(!oldest.exists(), "the oldest goes first");
+    assert!(open.exists(), "an open archive's file stays");
+    assert!(part.exists() && pack.exists(), "unfinished files stay");
+    assert!(newest.exists(), "within the budget once the oldest is gone");
+    super::prune(&s.0, &[], 0);
+    assert!(!open.exists() && !newest.exists());
+}
+
+#[test]
+fn temporary_names_never_repeat() {
+    let out = Path::new("/w/abc.tar");
+    let (a, b) = (super::index::part_path(out), super::index::part_path(out));
+    assert_ne!(a, b);
+    assert!(a.to_string_lossy().starts_with("/w/abc.tar.") && a.to_string_lossy().ends_with(".part"));
+}
+
+#[test]
+fn only_folders_without_planned_files_count_as_empty() {
+    let s = Scratch::new();
+    let p = s.0.join("site.zip");
+    hostile_zip(&p);
+    let ix = Index::open(&p, Format::Zip, &s.0, &no()).unwrap();
+    let plan = ops::plan_extract(&ix, &[], "", "out/", Some("x"), &Default::default());
+    let empty: Vec<&str> = plan.empty_dirs.iter().map(String::as_str).collect();
+    assert_eq!(empty, ["out/x/site/empty/"]);
+}
