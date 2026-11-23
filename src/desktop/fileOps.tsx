@@ -22,6 +22,8 @@ import { undoStack, type UndoEntry } from "./undo";
 import { itemClipboard } from "./clipboard";
 import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
 import { localCopies, type LocalCopyVerb } from "../localCopyProgress";
+import { parentOf, renameRounds } from "../batchRename";
+import { BatchRenameDialog } from "./BatchRenameDialog";
 
 export type ToastAction = NonNullable<Toast["action"]>;
 
@@ -43,6 +45,8 @@ export type OpsContext = {
   setBusy: (text: string | null) => void;
   confirm: (o: { title: string; message: ReactNode; label: string; danger?: boolean }) => Promise<boolean>;
   prompt: (o: { title: string; label: string; initial: string; confirmLabel: string; note?: string; run: (v: string) => void }) => void;
+  /** shows a dialog of its own (the Batch rename dialog) */
+  show?: (render: (close: () => void) => ReactNode) => void;
   resolveConflicts: (clashes: Clash[], verb: string, where: string) => Promise<Map<string, Choice> | null>;
   reloadIfShowing: (profileId: string, bucket: string) => boolean;
   /** select this key once the listing on screen has reloaded (if it is still that place) */
@@ -523,6 +527,160 @@ export function makeFileOps(c: OpsContext) {
     });
   };
 
+  // ---------------------------------------------------------------- batch rename
+  /**
+   * Rename… with several items selected: the Batch rename dialog. `view` is the list in its order
+   * on screen (the counter's "As shown"), `all` everything listed (names that are taken).
+   */
+  const askBatchRename = (list: Entry[], view: Entry[], all: Entry[]) => {
+    const { profile, bucket } = c;
+    if (!profile || bucket == null || list.length < 2 || !c.show) return;
+    const pid = profile.id;
+    const b = bucket;
+    const picked = new Set(list.map((e) => e.key));
+    const shown = view.filter((e) => picked.has(e.key));
+    const inView = new Set(shown.map((e) => e.key));
+    const items = [...shown, ...list.filter((e) => !inView.has(e.key))].map((e) => ({ key: e.key, name: e.name, folder: e.kind === "folder", modified: e.modified, size: e.size }));
+    const others = all.filter((e) => !picked.has(e.key)).map((e) => e.key);
+    // folders that are key prefixes (S3, Azure, GCS) have no rename: every file in them is copied
+    const slow = list.some((e) => e.kind === "folder") && peekCaps(pid)?.rename === "copy-delete";
+    c.show((close) => (
+      <BatchRenameDialog
+        items={items}
+        others={others}
+        rootName={b}
+        foldCase={!!c.localPaths}
+        note={slow ? "Renaming a folder here copies every file in it, so it can take a while." : undefined}
+        onRun={(moves) => void runBatchRename(pid, b, moves)}
+        onClose={close}
+      />
+    ));
+  };
+
+  /**
+   * Renames many items as one job (one Activity row, one Stop, one Undo). Never overwrites: every
+   * new name must be free, apart from names the batch itself frees. Swaps and chains (a→b, b→a)
+   * go through temporary names first (batchRename.ts `renameRounds`). `resume` is a retry of
+   * what a stopped batch left: its new names were checked free before, so anything there now is
+   * half of a folder this batch was moving.
+   */
+  const runBatchRename = async (pid: string, b: string, moves: MoveItem[], opts: { undo?: boolean; resume?: boolean } = {}): Promise<void> => {
+    if (!moves.length) return;
+    const what = plural(moves.length, "item");
+    const label = opts.undo ? `Undoing: rename of ${what}` : `Renaming ${what}`;
+    const nameOf = (k: string) => k.replace(/\/$/, "").split("/").pop() ?? k;
+    const fold = (k: string) => (c.localPaths ? k.toLowerCase() : k);
+    if (!opts.resume) {
+      const found = await existing(pid, b, moves.map((m) => ({ key: m.to, folder: m.isPrefix })));
+      if (!found) return;
+      const freed = new Set(moves.map((m) => fold(m.from)));
+      const clash = moves.filter((m) => found.has(m.to) && !freed.has(fold(m.to)));
+      if (clash.length) {
+        const more = clash.length > 1 ? `, and ${(clash.length - 1).toLocaleString()} more` : "";
+        toast(
+          "error",
+          opts.undo
+            ? `Couldn’t undo the rename: “${nameOf(clash[0].to)}” is in the old place again${more}. Move it away and try again.`
+            : `Nothing was renamed: “${nameOf(clash[0].to)}” already exists${more}.`,
+        );
+        return;
+      }
+    }
+    const parents = new Set(moves.map((m) => parentOf(m.from)));
+    const id = jobs.start({ kind: "rename", title: label, dest: parents.size === 1 ? [...parents][0] : undefined, profileId: pid, bucket: b, stoppable: true });
+    c.autoShowActivity();
+    c.deselect(moves.map((m) => m.from));
+    const tag = Math.random().toString(36).slice(2, 8);
+    const { first, second } = renameRounds(moves, (m, i) => `${parentOf(m.from)}.kybl-rename-${tag}-${i}${m.isPrefix ? "/" : ""}`, !!c.localPaths);
+    let r: { done: number; total: number; error: string | null } = { done: 0, total: 0, error: null };
+    try {
+      if (first.length) r = await api.moveMany(pid, b, first, true, id);
+      if (!r.error) r = await api.moveMany(pid, b, second, true, id);
+    } catch (err) {
+      r = { ...r, error: errMessage(err) };
+    }
+
+    // what didn't get to its new name, by looking at where things are now
+    let left: MoveItem[] = [];
+    let stranded = 0;
+    if (r.error) {
+      try {
+        const temps = new Map(first.map((m) => [m.from, m.to]));
+        const still = await findExisting(pid, b, [...moves, ...first.map((m) => ({ from: m.to, to: "", isPrefix: m.isPrefix }))].map((m) => ({ key: m.from, folder: m.isPrefix })));
+        // the original names a stranded item can go back to: not taken by an item that moved there
+        const arrived = (o: MoveItem) => !still.has(o.from) && !still.has(temps.get(o.from) ?? "");
+        const restore: { m: MoveItem; tmp: string }[] = [];
+        for (const m of moves) {
+          const tmp = temps.get(m.from);
+          if (still.has(m.from)) left.push(m);
+          else if (tmp && still.has(tmp)) {
+            if (moves.some((o) => o !== m && o.to === m.from && arrived(o))) {
+              stranded++;
+              left.push({ from: tmp, to: m.to, isPrefix: m.isPrefix });
+            } else restore.push({ m, tmp });
+          }
+        }
+        if (restore.length) {
+          const back = await api.moveMany(pid, b, restore.map(({ m, tmp }) => ({ from: tmp, to: m.from, isPrefix: m.isPrefix })), true, `${id}-restore`).catch((e) => ({ error: errMessage(e) }));
+          // couldn't put them back: the retry starts from the temporary names
+          if (back.error) stranded += restore.length;
+          for (const { m, tmp } of restore) left.push(back.error ? { from: tmp, to: m.to, isPrefix: m.isPrefix } : m);
+        }
+      } catch {
+        // can't tell: offer everything again (a retry only moves what is still in its old place)
+        left = moves;
+      }
+    }
+    const retry = () => void runBatchRename(pid, b, left, { resume: true });
+    jobs.finish(id, r, retry);
+
+    const notDone = new Set(left.map((m) => m.to));
+    const done = moves.filter((m) => !notDone.has(m.to));
+    const doneWhat = plural(done.length, "item");
+    const back = done.map((m) => ({ from: m.to, to: m.from, isPrefix: m.isPrefix }));
+    const undoEntry = () => ({ label: `rename of ${doneWhat}`, run: () => runBatchRename(pid, b, back, { undo: true }) });
+    if (!r.error) {
+      if (opts.undo) toast("success", `Undid the rename of ${what}`);
+      else offerUndo(undoEntry(), `Renamed ${what}`);
+    } else if (r.error === "Cancelled") {
+      const text = `Stopped. Renamed ${done.length.toLocaleString()} of ${what}.`;
+      if (done.length && !opts.undo) offerUndo(undoEntry(), text);
+      else toast("info", text);
+    } else {
+      const err = r.error;
+      const showLeft = async () => {
+        const go = await c.confirm({
+          title: `${plural(left.length, "item")} not renamed`,
+          label: "Try again",
+          message: (
+            <>
+              <p className="hint error">{err.split("\n\n")[0]}</p>
+              <ul className="br-failed">
+                {left.slice(0, 200).map((m) => (
+                  <li key={m.from}>
+                    {nameOf(m.from)} <span>→ {nameOf(m.to)}</span>
+                  </li>
+                ))}
+                {left.length > 200 && <li className="more">and {(left.length - 200).toLocaleString()} more</li>}
+              </ul>
+              {stranded > 0 && <p className="hint">{plural(stranded, "item")} kept a temporary name. Try again to finish.</p>}
+            </>
+          ),
+        });
+        // through the job list, so the failed row goes away as the retry starts
+        if (go && !jobs.retry(id)) retry();
+      };
+      toast("error", `Renamed ${done.length.toLocaleString()}, ${left.length.toLocaleString()} not renamed.`, left.length ? { label: "Show", run: () => void showLeft() } : showAction);
+      if (done.length && !opts.undo) undoStack.push(undoEntry());
+    }
+    const folders = done.filter((m) => m.isPrefix);
+    if (folders.length) {
+      c.clearSizes();
+      c.foldersChanged?.(pid, b, b, folders.map((m) => ({ from: m.from, to: m.to })));
+    }
+    c.reloadIfShowing(pid, b);
+  };
+
   // ---------------------------------------------------------------- new folder
   const askNewFolder = (dest = c.prefix) => {
     const { profile, bucket } = c;
@@ -750,7 +908,7 @@ export function makeFileOps(c: OpsContext) {
     void relocate(cl.items, dest, mode, { srcBucket: cl.bucket, destBucket: bucket }).then((ok) => ok && usedUp());
   };
 
-  return { uploadPaths, pickAndUpload, downloadEntries, openInApp, copyFile, askDelete, askRename, askNewFolder, relocate, duplicate, clip, paste };
+  return { uploadPaths, pickAndUpload, downloadEntries, openInApp, copyFile, askDelete, askRename, askBatchRename, askNewFolder, relocate, duplicate, clip, paste };
 }
 
 export type FileOps = ReturnType<typeof makeFileOps>;

@@ -231,6 +231,7 @@ function usePaneCore(env: PaneEnv) {
     setBusy,
     confirm: dialogs.confirm,
     prompt: dialogs.prompt,
+    show: dialogs.show,
     resolveConflicts: dialogs.resolveConflicts,
     reloadIfShowing: env.reloadIfShowing,
     selectAfterReload: (profileId, b, key) => {

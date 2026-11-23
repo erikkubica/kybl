@@ -501,7 +501,7 @@ function TransferPanelView({
                 </div>
               )}
               <div className="tp-row-actions">
-                {j.state === "running" && j.kind !== "rename" && (
+                {j.state === "running" && (j.kind !== "rename" || j.stoppable) && (
                   <button className="icon-btn" onClick={() => onCancelJob(j.id)} title="Stop. What’s done stays done; nothing is half-moved." aria-label="Stop">
                     <Icon name="x" size={13} />
                   </button>

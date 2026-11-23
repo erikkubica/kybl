@@ -31,6 +31,8 @@ export type Job = {
   finished: number | null;
   /** a failed job: runs what is left of it again (a new job) */
   retry?: () => void;
+  /** a rename that may take long (a batch): gets a Stop button like moves do */
+  stoppable?: boolean;
 };
 
 type Progress = { opId: string; phase: "listing" | "copying" | "deleting"; done: number; total: number; bytes: number; totalBytes: number };
@@ -86,7 +88,7 @@ function listenOnce() {
 }
 
 const actions = {
-  start(j: Pick<Job, "kind" | "title" | "dest" | "profileId" | "bucket">): string {
+  start(j: Pick<Job, "kind" | "title" | "dest" | "profileId" | "bucket" | "stoppable">): string {
     listenOnce();
     const id = `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     trackers.set(id, tracker());

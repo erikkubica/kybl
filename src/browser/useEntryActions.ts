@@ -290,6 +290,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
         ];
 
   const selectAll = () => sel.setSelected(new Set(entries.map((e) => e.key)));
+  /** one item: the plain rename; several: the Batch rename dialog, counting in the list's order */
+  const rename = (list: Entry[]) => (list.length === 1 ? ops.askRename(list[0]) : list.length > 1 && ops.askBatchRename(list, entries, ent.allEntries));
 
   const onBackgroundContext = (ev: React.MouseEvent) => {
     if (!profile || bucket == null) return;
@@ -368,7 +370,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       folder && !onDisk && keepItem(e.key),
       folder && !onDisk && { type: "item", label: "Mount as drive…", icon: "server", onClick: () => askMount(e.key) },
       { type: "sep" },
-      { type: "item", label: "Rename…", icon: "edit", disabled: !one, onClick: () => ops.askRename(e) },
+      { type: "item", label: one ? "Rename…" : `Rename ${list.length} items…`, icon: "edit", hint: "F2", onClick: () => rename(list) },
       { type: "item", label: list.length > 1 ? `Delete ${list.length} items…` : "Delete…", icon: "trash", hint: "⌘⌫", danger: true, onClick: () => ops.askDelete(list) },
     ]);
     dialogs.menu(ev.clientX, ev.clientY, items);
@@ -403,7 +405,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     search: focusSearch,
     "select-all": selectAll,
     delete: () => selectedEntries.length && ops.askDelete(selectedEntries),
-    rename: () => selectedEntries.length === 1 && ops.askRename(selectedEntries[0]),
+    rename: () => rename(selectedEntries),
     open: () => openSelection(),
     "quick-look": pane.quickLook,
     copy: () => ops.clip(selectedEntries, "copy"),
