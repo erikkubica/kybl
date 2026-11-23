@@ -201,10 +201,11 @@ const PATHS: Record<string, ReactNode> = {
       <path d="M14 10.5h4m0 0-1.6-1.6M18 10.5l-1.6 1.6M18 15h-4m0 0 1.6-1.6M14 15l1.6 1.6" />
     </>
   ),
+  // panes in a grid (the panes button, Split): any layout, not just two side by side
   "dual-pane": (
     <>
       <rect x="3" y="4" width="18" height="16" rx="2" />
-      <path d="M12 4v16" />
+      <path d="M12 4v16M3 12h18" />
     </>
   ),
   "split-down": (
