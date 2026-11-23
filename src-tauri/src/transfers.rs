@@ -781,6 +781,12 @@ async fn spawn_transfer(
                         if fetched {
                             crate::filecache::remember_download(&app, conn.clone(), profile_id.clone(), bucket.clone(), key.clone(), dl.etag.clone(), chosen.clone());
                         }
+                        // from somewhere else: the system checks it before it runs, as with a
+                        // browser's downloads (a file of this computer is no download)
+                        let from_here = profile_id == crate::storage::registry::LOCAL_ID || matches!(&conn, Conn::Other(s) if s.local_path(&bucket, &key).is_some());
+                        if !from_here {
+                            crate::platform::quarantine::mark(&chosen);
+                        }
                         local_done = Some(chosen);
                     }
                     r

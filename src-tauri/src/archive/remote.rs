@@ -15,6 +15,12 @@ const NO_TOOL: u32 = 127;
 /// Exit status when the archive has entries the server-side unpack must not touch.
 const UNSAFE: u32 = 125;
 
+/// Whether `folder` is one plain folder name to unpack into: not empty, `.` or `..`, and no
+/// separator or NUL (an archive called `...zip` must not unpack into the parent folder).
+pub fn plain_folder_name(folder: &str) -> bool {
+    !folder.is_empty() && folder != "." && folder != ".." && !folder.contains(['/', '\\', '\0'])
+}
+
 fn tag() -> String {
     uuid::Uuid::new_v4().simple().to_string()[..8].to_string()
 }
@@ -41,12 +47,12 @@ pub fn extract_script(archive: &str, format: Format, dir: &str, folder: &str) ->
         Format::Zip => (
             "unzip",
             // zipinfo: links show as "l" in the mode column; then every name
-            "unzip -Z \"$A\" | grep -q '^l' && exit 125\nunzip -Z1 \"$A\" | grep -Eq '(^/|(^|/)\\.\\.(/|$)|^[A-Za-z]:)' && exit 125",
+            "unzip -Z \"$A\" | grep -q '^l' && exit 125\nunzip -Z1 \"$A\" | grep -Eq '(^/|(^|/)\\.\\.(/|$)|^[A-Za-z]:|\\\\)' && exit 125",
             "unzip -q -o \"$A\" -d \"$T\"",
         ),
         Format::Tar | Format::TarGz => (
             "tar",
-            "tar -tvf \"$A\" | grep -q '^[lh]' && exit 125\ntar -tf \"$A\" | grep -Eq '(^/|(^|/)\\.\\.(/|$))' && exit 125",
+            "tar -tvf \"$A\" | grep -q '^[lh]' && exit 125\ntar -tf \"$A\" | grep -Eq '(^/|(^|/)\\.\\.(/|$)|\\\\)' && exit 125",
             if format == Format::TarGz { "tar -xzf \"$A\" -C \"$T\" --no-same-owner 2>/dev/null || tar -xzf \"$A\" -C \"$T\"" } else { "tar -xf \"$A\" -C \"$T\" --no-same-owner 2>/dev/null || tar -xf \"$A\" -C \"$T\"" },
         ),
     };
@@ -74,7 +80,7 @@ if [ ! -e "$D" ]; then mv "$S" "$D" || exit 1; else cp -R "$S"/. "$D"/ || exit 1
 async fn run(s: &SftpBackend, script: &str, cancel: &AtomicBool) -> SResult<Option<(Option<u32>, String)>> {
     let mut err = Vec::new();
     let end = match s
-        .exec(&format!("sh -c {}", q(script)), cancel, |is_err, d| {
+        .exec(&crate::actions::sh_c(script), cancel, |is_err, d| {
             if is_err && err.len() < 64 * 1024 {
                 err.extend_from_slice(d);
             }
@@ -104,6 +110,9 @@ pub async fn compress(s: &SftpBackend, dir_key: &str, names: &[String], dest_nam
 
 /// Unpacks on the server. Ok(false): it can't here, use the other path.
 pub async fn extract(s: &SftpBackend, archive_key: &str, format: Format, dest_dir_key: &str, folder: &str, cancel: &AtomicBool) -> SResult<bool> {
+    if !plain_folder_name(folder) {
+        return Err(StorageError::other("That folder name can't be used to unpack into."));
+    }
     let archive = s.remote_path(archive_key).await?;
     let dir = s.remote_path(dest_dir_key).await?;
     match run(s, &extract_script(&archive, format, &dir, folder), cancel).await? {

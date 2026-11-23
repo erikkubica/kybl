@@ -103,14 +103,14 @@ pub fn cacheable(conn: &Conn) -> bool {
 }
 
 #[cfg(unix)]
-fn private_dir(p: &Path) -> std::io::Result<()> {
+pub(crate) fn private_dir(p: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
     std::fs::DirBuilder::new().recursive(true).mode(0o700).create(p)?;
     std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o700))
 }
 
 #[cfg(not(unix))]
-fn private_dir(p: &Path) -> std::io::Result<()> {
+pub(crate) fn private_dir(p: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(p)
 }
 

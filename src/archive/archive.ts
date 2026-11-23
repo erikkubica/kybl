@@ -22,11 +22,11 @@ export function archiveFormat(name: string): ArchiveFormat | null {
 export const isArchiveName = (name: string) => archiveFormat(name) !== null;
 export const isArchiveId = (profileId: string | null | undefined) => !!profileId?.startsWith(ARCHIVE_PREFIX);
 
-/** "site-backup.tar.gz" → "site-backup" */
+/** "site-backup.tar.gz" → "site-backup"; a stem that is nothing or only dots (".zip", "...zip": ".." would be the parent folder) → "extracted" */
 export function archiveStem(name: string): string {
   const m = /\.(tar\.gz|tgz|zip|tar)$/i.exec(name);
   const s = m ? name.slice(0, m.index) : name;
-  return s || name;
+  return /^\.*$/.test(s) ? "extracted" : s;
 }
 
 const b64url = (s: string) => {

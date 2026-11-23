@@ -392,3 +392,39 @@ fn only_folders_without_planned_files_count_as_empty() {
     let empty: Vec<&str> = plan.empty_dirs.iter().map(String::as_str).collect();
     assert_eq!(empty, ["out/x/site/empty/"]);
 }
+
+#[test]
+fn extract_folder_must_be_one_plain_name() {
+    for bad in ["", ".", "..", "a/b", "..\\x", "a\0b"] {
+        assert!(!remote::plain_folder_name(bad), "{bad:?}");
+    }
+    for good in ["site", "...", ".hidden", "My Site's"] {
+        assert!(remote::plain_folder_name(good), "{good:?}");
+    }
+}
+
+/// The server-side name checks, run by a real sh on a list of names instead of an archive.
+#[cfg(unix)]
+#[test]
+fn server_name_checks_refuse_unsafe_names() {
+    let checks = |format: Format, list_cmd: &str| -> String {
+        let ex = remote::extract_script("/srv/x", format, "/srv", "x");
+        ex.lines().find(|l| l.starts_with(list_cmd)).unwrap().to_string()
+    };
+    let zip = checks(Format::Zip, "unzip -Z1");
+    let tar = checks(Format::Tar, "tar -tf");
+    let refused = |line: &str, prefix: &str, name: &str| {
+        let script = line.replacen(prefix, "printf '%s\\n' \"$N\"", 1);
+        let st = std::process::Command::new("/bin/sh").arg("-c").arg(&script).env("N", name).status().unwrap();
+        st.code() == Some(125)
+    };
+    for name in ["../x", "a/../../x", "/etc/passwd", "..\\..\\x", "a\\b"] {
+        assert!(refused(&zip, "unzip -Z1 \"$A\"", name), "zip {name:?}");
+        assert!(refused(&tar, "tar -tf \"$A\"", name), "tar {name:?}");
+    }
+    assert!(refused(&zip, "unzip -Z1 \"$A\"", "C:x"));
+    for name in ["a/b.txt", "..x/y", "x.."] {
+        assert!(!refused(&zip, "unzip -Z1 \"$A\"", name), "zip {name:?}");
+        assert!(!refused(&tar, "tar -tf \"$A\"", name), "tar {name:?}");
+    }
+}

@@ -92,6 +92,32 @@
   color: var(--faint);
   font-size: 11.5px;
 }
+.ca-import-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow: auto;
+}
+.ca-import-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+.ca-import-item small {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+.ca-import-item code {
+  padding: 0;
+  background: none;
+  font: 11.5px/1.45 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 .ca-grid {
   display: grid;
   grid-template-columns: 82px 1fr;

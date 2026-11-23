@@ -306,7 +306,7 @@ pub fn remote_script(dir: &str, q: &Query) -> String {
         words("rg", rg_args(q)),
     );
     // the login shell may not be a POSIX one (fish, csh): sh runs the script
-    format!("sh -c {}", shell_quote(&script))
+    crate::actions::sh_c(&script)
 }
 
 const NO_COMMANDS: &str = "This server doesn't let Kybl run commands (an SFTP-only account), so its files can't be searched by content.";

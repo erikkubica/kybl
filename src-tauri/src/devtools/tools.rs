@@ -177,12 +177,13 @@ pub fn run_streaming(mut cmd: Command, cancel: &AtomicBool, deadline: Instant, m
     Ok((end, tail))
 }
 
-/// `s` as one word for a POSIX shell: in single quotes, a quote inside written as '\''.
+/// `s` as one shell word: as it is when plain, else quoted as [`crate::actions::quote`] does
+/// (read back the same by POSIX shells, fish and csh).
 pub fn shell_quote(s: &str) -> String {
     if !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_./=:,+@%".contains(&b)) {
         return s.to_string();
     }
-    format!("'{}'", s.replace('\'', r"'\''"))
+    crate::actions::quote(s)
 }
 
 #[cfg(test)]

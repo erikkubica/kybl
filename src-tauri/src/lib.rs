@@ -157,7 +157,14 @@ pub fn run() {
     let app = builder
         .setup(|app| {
             let handle = app.handle().clone();
+            // the app's own folders hold copies of remote files (opened, previews, archives,
+            // drive caches, pending drive saves): only this account may look inside (on a Linux
+            // box whose home is 0755 they would otherwise be readable by everyone)
+            for dir in [handle.path().app_cache_dir(), handle.path().app_data_dir()].into_iter().flatten() {
+                let _ = filecache::private_dir(&dir);
+            }
             if let Ok(dir) = handle.path().app_data_dir() {
+                storage::ftp::tls_memory::init(dir.join("ftp-tls-seen.json"));
                 let _ = handle.state::<state::AppState>().vault_dir.set(dir);
             }
             prefs::load_transfers(&handle);

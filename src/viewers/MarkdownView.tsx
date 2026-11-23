@@ -22,6 +22,9 @@ export function renderMarkdown(src: string): string {
   return DOMPurify.sanitize(html, { FORCE_BODY: true, FORBID_TAGS: ["form", "input", "button", "textarea", "select"] });
 }
 
+/** Whether rendered HTML shows an image from the web (an <img> or a srcset with an http(s) address). */
+export const hasRemoteImages = (html: string) => /<img\b[^>]*\b(src|srcset)\s*=\s*["']?[^"'>]*https?:/i.test(html);
+
 const CSS = `
 body{padding:20px 24px 40px;font-size:15px;line-height:1.6;max-width:860px;margin:0 auto;word-wrap:break-word}
 h1,h2,h3,h4,h5,h6{line-height:1.25;margin:1.4em 0 .6em;font-weight:650}
@@ -64,6 +67,9 @@ export default function MarkdownView({ name, text, editable, mode, onEdit, onSav
   const [snapshot, setSnapshot] = useState<string | null>(null);
   const toRender = shown === "edit" ? null : big ? snapshot : source;
   const html = useMemo(() => (toRender == null ? "" : renderMarkdown(toRender)), [toRender]);
+  // remote images tell their server the file was opened (and from where): only when asked, per file
+  const [remoteOk, setRemoteOk] = useState(false);
+  const hasRemote = useMemo(() => hasRemoteImages(html), [html]);
 
   const edited = (current: () => string) => {
     onEdit?.(current);
@@ -105,6 +111,14 @@ export default function MarkdownView({ name, text, editable, mode, onEdit, onSav
           )}
         </div>
       )}
+      {hasRemote && !remoteOk && shown !== "edit" && (
+        <div className="dv-banner">
+          <span>Remote images are not loaded, so their servers can’t tell that this file was opened.</span>
+          <button className="btn btn-sm" onClick={() => setRemoteOk(true)}>
+            Load remote images
+          </button>
+        </div>
+      )}
       <div className={`dv-md-panes ${shown}`}>
         {/* the editor stays mounted while hidden, so undo history and cursor survive switching */}
         {full && (
@@ -131,7 +145,7 @@ export default function MarkdownView({ name, text, editable, mode, onEdit, onSav
               <pre className="dv-md-text selectable">{source}</pre>
             </div>
           ) : (
-            <SandboxFrame className="dv-md-preview" title={`Preview of ${name}`} html={html} css={CSS} remoteImages />
+            <SandboxFrame className="dv-md-preview" title={`Preview of ${name}`} html={html} css={CSS} remoteImages={remoteOk} />
           ))}
       </div>
     </div>

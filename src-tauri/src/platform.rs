@@ -16,6 +16,8 @@ pub(crate) mod apps;
 pub(crate) mod drag_out;
 #[cfg(target_os = "ios")]
 pub(crate) mod ios;
+/// Marking downloaded files as such (macOS quarantine, Windows Mark of the Web).
+pub(crate) mod quarantine;
 /// The Android secret-key file, sealed with a Keystore key (generic, so it is tested here).
 #[cfg_attr(not(any(test, target_os = "android")), allow(dead_code))]
 pub mod vault;
@@ -382,10 +384,7 @@ fn temp_file_name(sent: &str, windows: bool) -> String {
     }
     if windows {
         let bad_char = name.chars().any(|c| c.is_control() || matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*'));
-        let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
-        let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
-            || ((stem.starts_with("COM") || stem.starts_with("LPT")) && stem.len() == 4 && stem.as_bytes()[3].is_ascii_digit());
-        if bad_char || device || name.ends_with(['.', ' ']) {
+        if bad_char || crate::dest::windows_unfit(name) {
             // keep the type, which the upload's content type comes from
             return match name.rsplit_once('.').map(|(_, ext)| ext) {
                 Some(ext) if !ext.is_empty() && ext.len() <= 8 && ext.chars().all(|c| c.is_ascii_alphanumeric()) => format!("photo.{ext}"),

@@ -24,6 +24,7 @@ import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
 import { localCopies, type LocalCopyVerb } from "../localCopyProgress";
 import { parentOf, renameRounds } from "../batchRename";
 import { BatchRenameDialog } from "./BatchRenameDialog";
+import { runsCode } from "./runnable";
 
 export type ToastAction = NonNullable<Toast["action"]>;
 
@@ -306,8 +307,28 @@ export function makeFileOps(c: OpsContext) {
     return null;
   };
 
+  /**
+   * A program, script or installer from a connection (not this computer) runs when it opens:
+   * asked first, since double-clicking a file usually means "show me".
+   */
+  const okToRun = async (picked: Entry): Promise<boolean> => {
+    if (c.localPaths || !runsCode(picked.name)) return true;
+    return c.confirm({
+      title: `Run “${picked.name}”?`,
+      message: (
+        <>
+          <p>This kind of file runs as a program when it opens, with access to this computer.</p>
+          <p className="hint">Open it only if you trust where it came from.</p>
+        </>
+      ),
+      label: "Open anyway",
+      danger: true,
+    });
+  };
+
   /** Opens a file in its default app (a local copy first, see `localCopy`). */
   const openInApp = async (picked: Entry) => {
+    if (!(await okToRun(picked))) return;
     const path = await localCopy(picked, "open");
     if (path) await api.openLocal(path).catch((err) => toast("error", errMessage(err)));
   };
@@ -317,6 +338,7 @@ export function makeFileOps(c: OpsContext) {
    * null: Windows' own "How do you want to open this file?" window.
    */
   const openWith = async (picked: Entry, app: string | null) => {
+    if (!(await okToRun(picked))) return;
     const path = await localCopy(picked, "open");
     if (path) await (app === null ? api.openWithChooser(path) : api.openWith(path, app)).catch((err) => toast("error", errMessage(err)));
   };

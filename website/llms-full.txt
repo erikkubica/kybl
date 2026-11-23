@@ -6,7 +6,7 @@ Kybl is a free app for macOS, Windows, Linux, Android and iPhone that works with
 
 Pick a provider preset, paste your access key and you're in. Kybl fills in the endpoint and region, explains each provider's quirks (for example, Hetzner keys cannot list all buckets, so you enter the bucket name) and can test the connection before saving. Path-style addressing is available for MinIO and self-hosted servers.
 
-Secret keys are stored in the operating system keychain: the macOS Keychain, Windows Credential Manager or a Secret Service (GNOME Keyring, KWallet) on Linux. They are never written to a file.
+Secret keys are stored encrypted, with the encryption key in the operating system keychain: the macOS Keychain, Windows Credential Manager or a Secret Service (GNOME Keyring, KWallet) on Linux. They are never written to disk in plain text.
 
 ## Features
 
@@ -58,7 +58,7 @@ Q: Are my files on Kybl Storage encrypted?
 A: Yes, at rest, with a key per bucket (AES-256). The storage provider only sees ciphertext. It is not end-to-end: Kybl's servers encrypt files as they pass through.
 
 Q: Where are my access keys stored?
-A: In the operating system keychain. They are never written to a file, and Kybl talks to your storage directly.
+A: Encrypted, with the encryption key in the operating system keychain. They are never written to disk in plain text, and Kybl talks to your storage directly.
 
 Q: Can Kybl sync a folder with a bucket?
 A: Yes, in either direction, with ignore rules, and it keeps running from the menu bar.

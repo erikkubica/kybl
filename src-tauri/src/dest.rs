@@ -33,10 +33,25 @@ pub fn validate(dest: &str) -> Result<PathBuf, String> {
     if raw_dot || p.components().any(|c| matches!(c, Component::ParentDir | Component::CurDir)) {
         return Err(bad());
     }
+    // Windows: a part named like a device (NUL, CON, COM1, aux.txt …) or ending in a dot or space
+    // is not a file there (the download would vanish into the device)
+    if cfg!(windows) && dest.split(['/', '\\']).skip(1).any(|s| !s.is_empty() && windows_unfit(s)) {
+        return Err(bad());
+    }
     match p.file_name() {
         Some(n) if !n.is_empty() => Ok(p),
         _ => Err(bad()),
     }
+}
+
+/// Whether Windows reads `name` as something other than a plain file name: a device (CON, PRN,
+/// AUX, NUL, COM1-9, LPT1-9, CONIN$, CONOUT$, with any extension) or a name ending in a dot or
+/// space (which Windows trims, so it names another file).
+pub fn windows_unfit(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+    let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || ((stem.starts_with("COM") || stem.starts_with("LPT")) && stem.len() == 4 && stem.as_bytes()[3].is_ascii_digit());
+    device || name.ends_with(['.', ' '])
 }
 
 /// "name.ext" → "name (n).ext"; a name without an extension (or a dotfile) gets " (n)" at the end.
@@ -95,9 +110,17 @@ pub const BUSY: &str = "Already downloading this file. Wait for that download to
 /// on disk nor in use by another download.
 pub fn reserve(dest: &Path, overwrite: bool) -> Result<PathBuf, String> {
     names(|n| {
+        // a partial file lives next to its download under `<name>.s3part`: a download called
+        // that, or one whose partial file would be called like another download, shares a file
+        let partner_busy = |n: &Names, p: &Path| {
+            let in_use = |k: &PathBuf| n.held.contains(k) || n.parked.contains_key(k);
+            let s = p.as_os_str().to_string_lossy();
+            let stem = s.len().checked_sub(PART_SUFFIX.len()).and_then(|i| s.get(i..).filter(|t| t.eq_ignore_ascii_case(PART_SUFFIX)).and(s.get(..i)));
+            in_use(&name_key(&part_path(p))) || stem.is_some_and(|s| in_use(&name_key(Path::new(s))))
+        };
         let chosen = if overwrite {
             let key = name_key(dest);
-            if n.held.contains(&key) {
+            if n.held.contains(&key) || partner_busy(n, dest) {
                 return Err(BUSY.to_string());
             }
             n.parked.remove(&key);
@@ -105,7 +128,7 @@ pub fn reserve(dest: &Path, overwrite: bool) -> Result<PathBuf, String> {
         } else {
             free_name(dest, |p| {
                 let key = name_key(p);
-                n.held.contains(&key) || n.parked.contains_key(&key) || p.exists() || part_path(p).exists()
+                n.held.contains(&key) || n.parked.contains_key(&key) || partner_busy(n, p) || p.exists() || part_path(p).exists()
             })
         };
         n.held.insert(name_key(&chosen));
@@ -239,6 +262,36 @@ mod tests {
         release(&a);
         assert_eq!(reserve(&want, false).unwrap(), a, "a released name is free again");
         for p in [&a, &b, &want] {
+            release(p);
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn windows_device_names_are_spotted() {
+        for n in ["NUL", "nul.txt", "aux.tar.gz", "COM1", "lpt9.log", "con ", "CONIN$", "name.", "name "] {
+            assert!(windows_unfit(n), "{n}");
+        }
+        for n in ["null", "auxiliary.txt", "COM", "COM10", "lpt.txt", "a.con", "name.txt", ".env"] {
+            assert!(!windows_unfit(n), "{n}");
+        }
+    }
+
+    /// `report` and `report.s3part` downloaded together must not share `report.s3part`.
+    #[test]
+    fn a_download_named_like_another_ones_partial_file_gets_its_own_name() {
+        let dir = temp_dir();
+        let a = reserve(&dir.join("report"), false).unwrap();
+        assert_eq!(a, dir.join("report"));
+        let b = reserve(&dir.join("report.s3part"), false).unwrap();
+        assert_ne!(b, part_path(&a));
+        assert!(reserve(&dir.join("report.S3PART"), true).is_err() || cfg!(target_os = "linux"));
+        // the other order: a partial-file name taken first, then the download it would belong to
+        let c = reserve(&dir.join("x.s3part"), false).unwrap();
+        let d = reserve(&dir.join("x"), false).unwrap();
+        assert_ne!(part_path(&d), c);
+        assert_eq!(reserve(&dir.join("x"), true).unwrap_err(), BUSY);
+        for p in [&a, &b, &c, &d] {
             release(p);
         }
         let _ = std::fs::remove_dir_all(dir);

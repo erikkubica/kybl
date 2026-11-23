@@ -136,20 +136,23 @@ export const deleteAction = (id: string) => actionsStore.set((list) => list.filt
 /** The actions as JSON, for Export. */
 export const exportActions = () => JSON.stringify({ kyblActions: 1, actions: actionsStore.get() }, null, 2);
 
-/** Adds the actions in an exported JSON (new ids, shortcuts that clash dropped); how many came in. */
-export function importActions(json: string): number {
+/**
+ * The actions in an exported JSON, for the user to look over before adding them. Commands are
+ * code from somewhere else: they come in switched off, without a shortcut and showing their output,
+ * and each is switched on by hand.
+ */
+export function parseImport(json: string): CustomAction[] {
   const data = JSON.parse(json);
   const list: unknown[] = Array.isArray(data) ? data : Array.isArray(data?.actions) ? data.actions : [];
   const got = list.map(clean).filter((a): a is CustomAction => !!a);
   if (!got.length) throw new Error("No actions in that text.");
-  const added: CustomAction[] = [];
-  for (const a of got) {
-    const taken = [...actionsStore.get(), ...added];
-    const shortcut = a.shortcut && !shortcutProblem(a.shortcut, null, taken) ? a.shortcut : null;
-    added.push({ ...a, id: newId(), shortcut });
-  }
-  actionsStore.set((cur) => [...cur, ...added]);
-  return added.length;
+  return got.map((a) => ({ ...a, id: newId(), enabled: false, shortcut: null, output: "show" }));
+}
+
+/** Adds actions from `parseImport`; how many came in. */
+export function addImported(list: CustomAction[]): number {
+  actionsStore.set((cur) => [...cur, ...list]);
+  return list.length;
 }
 
 // ------------------------------------------------------------ which items an action takes
