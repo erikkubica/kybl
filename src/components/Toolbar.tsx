@@ -12,7 +12,7 @@ export const TILE_MAX = 320;
 
 /**
  * A desktop pane's header: one row, left to right
- *   [connection badge] connection › [↑] folder name [⋯]   ……   [+] [view] [search] [panes]
+ *   [connection badge] connection › … › folder name [⋯]   ……   [+] [view] [search] [panes]
  * Creating things sits behind +, the pane's less frequent actions (favorites among them) behind ⋯
  * and how the list looks behind the eye, so a pane at its least width (340px) still fits on one
  * row: the folder's name gives way first. The right side's buttons never hide.
@@ -39,7 +39,6 @@ export function Toolbar({
   hidden,
   onToggleHidden,
   onNavigate,
-  canUp,
   onUp,
   onUpload,
   onMoreMenu,
@@ -89,8 +88,7 @@ export function Toolbar({
   hidden?: boolean;
   onToggleHidden?: () => void;
   onNavigate: (prefix: string) => void;
-  /** there is an enclosing folder to go up to (⌘↑) */
-  canUp: boolean;
+  /** up a level (the "…" crumb, ⌘↑) */
   onUp: () => void;
   onUpload: (folder: boolean) => void;
   /** the "⋯" button; `folded` are the header's own items that had no room on the row */
@@ -209,19 +207,26 @@ export function Toolbar({
             )}
           </>
         )}
-        {/* up a level sits in the path, just before the folder it leaves (only when there's one to go to) */}
-        {canUp && (
-          <button
-            className="icon-btn tb-up"
-            disabled={disabled}
-            onClick={onUp}
-            // dropping items on it moves them up a level, as the parent crumb used to
-            data-drop={!disabled && prefix ? parentPrefix(prefix) : undefined}
-            title="Enclosing folder (⌘↑) · drop items here to move them up"
-            aria-label="Enclosing folder"
-          >
-            <Icon name="arrow-up" size={14} />
-          </button>
+        {/* the folders between the top and this one fold into "…": a click goes up one, and
+            only shows when the parent is a folder of its own (not the top, which the name covers) */}
+        {parts.length >= 2 && (
+          <>
+            <button
+              type="button"
+              className="crumb-up"
+              disabled={disabled}
+              onClick={onUp}
+              // dropping items on it moves them up a level
+              data-drop={!disabled ? parentPrefix(prefix) : undefined}
+              title={`${parts[parts.length - 2]} (⌘↑)`}
+              aria-label={`Enclosing folder, ${parts[parts.length - 2]}`}
+            >
+              …
+            </button>
+            <span className="conn-sep" aria-hidden>
+              <Icon name="chevron" size={12} />
+            </span>
+          </>
         )}
         {bucket != null ? (
           <PathTitle label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} onGoTo={onGoTo} />

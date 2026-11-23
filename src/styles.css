@@ -425,14 +425,22 @@ code {
   margin: 0 -2px;
   color: var(--faint);
 }
-/* up a level, inside the path: smaller and quieter than the header's buttons */
-.toolbar > .icon-btn.tb-up {
-  width: 24px;
+/* the folders between the top and here, folded into "…" (a click goes up one) */
+.toolbar > .crumb-up {
+  flex: none;
   height: 24px;
-  margin: 0 -2px 0 0;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
   color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 1px;
+  cursor: default;
 }
-.toolbar > .icon-btn.tb-up:hover {
+.toolbar > .crumb-up:not(:disabled):hover {
+  background: var(--hover);
   color: var(--text);
 }
 /* "…" holds much of what had its own button: its dots as heavy as the other icons' lines */

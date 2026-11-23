@@ -118,7 +118,6 @@ export function BrowserPane(p: BrowserPaneProps) {
         hidden={pane.caps?.localPaths ? pane.showHidden : undefined}
         onToggleHidden={actions.commands["toggle-hidden"]}
         onNavigate={pane.navigate}
-        canUp={pane.canUp}
         onUp={() => void pane.goUp()}
         onUpload={(folder) => void ops.pickAndUpload(folder)}
         onMoreMenu={moreMenu}
