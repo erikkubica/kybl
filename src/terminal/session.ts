@@ -12,7 +12,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { LS } from "../browser/types";
-import { setTermImpl, takeStartup, type TermAction, type TermSpec } from "./api";
+import { setTermImpl, takeFocusWhenShown, takeStartup, type TermAction, type TermSpec } from "./api";
 
 const SCROLLBACK = 5000;
 const FONT_KEY = "s3b.term.font";
@@ -107,6 +107,7 @@ class Session {
     }
     this.fitNow();
     if (this.state === "idle") void this.start();
+    if (takeFocusWhenShown(this.spec.sid)) this.term.focus();
   }
 
   detach() {

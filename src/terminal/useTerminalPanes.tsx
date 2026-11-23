@@ -25,6 +25,7 @@ import {
   newSid,
   remotePath,
   setStartup,
+  focusWhenShown,
   setTerminalOpener,
   setTerminalPanes,
   shellQuote,
@@ -105,6 +106,7 @@ export function useTerminalPanes(initial: Layout) {
       made = fresh;
       const sid = newSid();
       setStartup(sid, startup);
+      focusWhenShown(sid);
       h.slot(fresh).showConnection(null);
       setTerms((cur) => ({ ...cur, [fresh]: { ...loc, sid, from: t?.from ?? src } }));
     });

@@ -94,6 +94,10 @@ export function setTerminalPanes(p: Partial<Record<PaneId, TermSpec>>) {
 export function setStartup(sid: string, lines: string[] | undefined) {
   if (lines?.length) startups.set(sid, lines);
 }
+/** sessions just opened by the user: their terminal takes the keyboard once it's on screen */
+const focusOnShow = new Set<string>();
+export const focusWhenShown = (sid: string) => void focusOnShow.add(sid);
+export const takeFocusWhenShown = (sid: string) => focusOnShow.delete(sid);
 /** The startup lines for a session that just started (once). */
 export function takeStartup(sid: string): string[] {
   const l = startups.get(sid) ?? [];
