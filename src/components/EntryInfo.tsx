@@ -161,6 +161,8 @@ export function EntryInfo({
   const canProps = !caps || caps.metadata === "s3";
   const canTags = !caps || caps.tags;
 
+  // an s3:// address only means something on S3 (the one kind with buckets for roots)
+  const isS3 = caps?.roots === "buckets";
   const s3Uri = `s3://${bucket}/${entry.key}`;
   // "Photos / 2026" instead of a raw key; the full key lives under Technical details
   const folderPath = entry.key.slice(0, entry.key.length - entry.name.length - (isFolder ? 1 : 0)).replace(/\/$/, "");
@@ -368,9 +370,11 @@ export function EntryInfo({
               <Prop label="Object key" mono onCopy={() => onCopyText(entry.key, "Object key")}>
                 {entry.key}
               </Prop>
-              <Prop label="S3 URI" mono onCopy={() => onCopyText(s3Uri, "S3 URI")}>
-                {s3Uri}
-              </Prop>
+              {isS3 && (
+                <Prop label="S3 URI" mono onCopy={() => onCopyText(s3Uri, "S3 URI")}>
+                  {s3Uri}
+                </Prop>
+              )}
               {etag && (
                 <Prop label="ETag" mono onCopy={() => onCopyText(etag.replace(/"/g, ""), "ETag")}>
                   {etag.replace(/"/g, "")}

@@ -9,6 +9,7 @@ import { Toolbar } from "../components/Toolbar";
 import { rootIcon, rootsMode } from "../connections/roots";
 import { peekCaps } from "../useCaps";
 import { FileTable, type SortKey } from "../components/FileTable";
+import type { ColumnId } from "../settings";
 import { GridView } from "../components/GridView";
 import { QuickLook } from "../desktop/QuickLook";
 import type { Settings } from "../settings";
@@ -59,6 +60,8 @@ export type BrowserPaneProps = {
   style?: CSSProperties;
 };
 
+const NO_CLASS: ColumnId[] = ["storageClass"];
+
 export function BrowserPane(p: BrowserPaneProps) {
   const { pane, settings, active } = p;
   const { profile, bucket, prefix, ent, sel, actions, ops } = pane;
@@ -80,8 +83,10 @@ export function BrowserPane(p: BrowserPaneProps) {
     sel.setSelected(new Set());
     sel.setCursor(null, true);
   };
-  const uploadFiles = () => void ops.pickAndUpload(false);
-  const newFolder = () => ops.askNewFolder();
+  // inside an archive (read-only) these go through the commands, which say so instead
+  const uploadFiles = () => actions.commands["upload-files"]();
+  const newFolder = () => actions.commands["new-folder"]();
+  const readOnly = pane.archive.inArchive;
   const here = !!profile && bucket != null;
   const { sr } = ent;
   // ⌘K "Search Inside Files": the active pane's search field, set to look inside files
@@ -174,7 +179,8 @@ export function BrowserPane(p: BrowserPaneProps) {
         onToggleHidden={actions.commands["toggle-hidden"]}
         onNavigate={pane.navigate}
         onUp={() => void pane.goUp()}
-        onUpload={(folder) => void ops.pickAndUpload(folder)}
+        onUpload={(folder) => actions.commands[folder ? "upload-folder" : "upload-files"]()}
+        readOnly={readOnly}
         onMoreMenu={moreMenu}
         onNewFolder={newFolder}
         onQuery={(q) => {
@@ -229,8 +235,8 @@ export function BrowserPane(p: BrowserPaneProps) {
                   autoFocus={active}
                   folderSize={pane.folderSizes.view}
                   gitMark={gitMark}
-                  onUpload={uploadFiles}
-                  onNewFolder={newFolder}
+                  onUpload={readOnly ? undefined : uploadFiles}
+                  onNewFolder={readOnly ? undefined : newFolder}
                   activeKey={sel.cursorKey}
                   onSelectKeys={sel.selectKeys}
                   onPress={pane.onPress}
@@ -255,12 +261,13 @@ export function BrowserPane(p: BrowserPaneProps) {
                   // connections without storage classes (servers, drives, this computer) leave that column out;
                   // the setting keeps it for the connections that have them
                   columns={noClass ? settings.columns.filter((c) => c !== "storageClass") : settings.columns}
+                  unavailable={noClass ? NO_CLASS : undefined}
                   onColumnsChange={(columns) =>
                     p.updateSettings({ columns: noClass && settings.columns.includes("storageClass") && !columns.includes("storageClass") ? [...columns, "storageClass"] : columns })
                   }
                   autoFocus={active}
-                  onUpload={uploadFiles}
-                  onNewFolder={newFolder}
+                  onUpload={readOnly ? undefined : uploadFiles}
+                  onNewFolder={readOnly ? undefined : newFolder}
                   onGoUp={pane.canUp && !filter ? () => void pane.goUp() : undefined}
                   activeKey={sel.cursorKey}
                   onSelectKeys={sel.selectKeys}
@@ -282,7 +289,7 @@ export function BrowserPane(p: BrowserPaneProps) {
               <PaneStatusBar pane={pane} />
             </>
           )}
-          {p.dropUpload && (
+          {p.dropUpload && !readOnly && (
             <div className="drop-overlay">
               <div className="drop-card">
                 <Icon name="upload" size={34} />

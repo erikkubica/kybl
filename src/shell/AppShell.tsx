@@ -868,6 +868,21 @@ export function AppShell() {
   const [wsSettings, setWsSettings] = useState<{ id: string; anchor: DOMRect } | null>(null);
   /** the window is too small for every pane: one shows, the bar's pane switcher picks it */
   const [cramped, setCramped] = useState(false);
+  const crampedRef = useRef(false);
+  /** how far down each pane's list was when last scrolled, and where (a cramped window draws only one) */
+  const lastTop = useRef(new Map<PaneId, { loc: Loc | null; top: number }>());
+  const slotRef = useRef(slot);
+  slotRef.current = slot;
+  useEffect(() => {
+    const on = (e: Event) => {
+      const el = e.target as HTMLElement;
+      if (!el.matches?.(".table-body, .grid-scroll")) return;
+      const id = el.closest("[data-pane]")?.getAttribute("data-pane") as PaneId | null;
+      if (id) lastTop.current.set(id, { loc: slotRef.current(id).here, top: el.scrollTop });
+    };
+    document.addEventListener("scroll", on, true);
+    return () => document.removeEventListener("scroll", on, true);
+  }, []);
   const listScroller = (id: PaneId) => document.querySelector<HTMLElement>(`[data-pane="${id}"] .table-body, [data-pane="${id}"] .grid-scroll`);
   const snapOf = (id: PaneId, withScroll: boolean): PaneSnap => {
     const p = slot(id);
@@ -920,9 +935,11 @@ export function AppShell() {
         continue;
       }
       if (!p.ent.fresh) continue;
+      const el = listScroller(id);
+      // not drawn (another pane shows in a cramped window): kept until it is
+      if (!el && s.top && !s.selected) continue;
       pendingScroll.current.delete(id);
       if (s.selected) p.sel.setSelected(new Set(s.selected));
-      const el = listScroller(id);
       if (el && s.top) el.scrollTop = s.top;
     }
   });
@@ -1027,7 +1044,8 @@ export function AppShell() {
   const duplicateWorkspace = (id: string) => {
     const src = ws.list.find((w) => w.id === id);
     if (!src) return;
-    const w: Workspace = { ...src, ...copyLayout(layoutOf(id)), id: newId(), name: copyName(ws.list, src.name) };
+    // a copy of its own: not tied to the source's recipe (updating it there would overwrite the source's)
+    const w: Workspace = { ...src, ...copyLayout(layoutOf(id)), id: newId(), name: copyName(ws.list, src.name), recipe: null, start: "restore" };
     addWorkspace(w, id);
   };
   const patchWorkspace = (id: string, patch: Partial<Pick<Workspace, "name" | "color" | "start" | "recipe">>) =>
@@ -1070,7 +1088,10 @@ export function AppShell() {
       setWs((cur) => ({ list: cur.list.filter((x) => x.id !== id), active: next.id }));
       applyLayout(next, next.id, null);
     } else setWs((cur) => ({ ...cur, list: cur.list.filter((x) => x.id !== id) }));
-    toast("info", `Closed “${w.name}”`, {
+    // its shells end now: Undo brings the panes back with fresh terminals, so say so
+    const terms = leaves(was.tree).filter((p) => was.panes[p]?.term).length;
+    const ended = terms ? (terms === 1 ? "; its terminal ended" : `; its ${terms} terminals ended`) : "";
+    toast("info", `Closed “${w.name}”${ended}`, {
       label: "Undo",
       run: () =>
         setWs((cur) => {
@@ -1179,9 +1200,24 @@ export function AppShell() {
   const keepScrolls = () => {
     for (const id of ids) {
       const here = slot(id).here;
-      const top = listScroller(id)?.scrollTop;
+      const el = listScroller(id);
+      // a pane not drawn now (cramped window): how far down it was when last seen
+      const seen = lastTop.current.get(id);
+      const top = el ? el.scrollTop : seen && sameLoc(seen.loc, here) ? seen.top : 0;
       if (here && top) pendingScroll.current.set(id, { loc: here, top });
     }
+  };
+  /** The window gets too small for every pane, or room again: each list keeps its place. */
+  const onCramped = (on: boolean) => {
+    if (on === crampedRef.current) return;
+    crampedRef.current = on;
+    // the panes were drawn anew already: their places come from the last scroll seen
+    for (const id of ids) {
+      const here = slot(id).here;
+      const seen = lastTop.current.get(id);
+      if (here && seen?.top && sameLoc(seen.loc, here)) pendingScroll.current.set(id, { loc: here, top: seen.top });
+    }
+    setCramped(on);
   };
   /** The panes on screen laid out as `next` (the same panes, moved): `id` is the one that moved and becomes the active one. */
   const rearrange = (id: PaneId, next: PaneNode) => {
@@ -1863,6 +1899,7 @@ export function AppShell() {
   });
 
   // ------------------------------------------------------------ drag & drop from Finder
+  const dropOnArchive = useRef(false);
   const { over: dropOver, tab: finderTab } = useFinderDrop({
     target: (x, y) => {
       // a dialog owns the screen: nothing lands behind it
@@ -1870,11 +1907,21 @@ export function AppShell() {
       // with several panes, the one under the pointer; else (or without a position) the active one
       const under = x != null && y != null ? document.elementFromPoint(x, y)?.closest("[data-pane]")?.getAttribute("data-pane") : null;
       const p = (dualCtx.current?.panes.length ?? 0) > 1 && under ? paneById(under as PaneId) : activeRef.current;
-      return p.profile && p.bucket != null ? p.id : null;
+      // (an archive opens read-only: it takes nothing)
+      dropOnArchive.current = !!p.profile && p.archive.inArchive;
+      return p.profile && p.bucket != null && !p.archive.inArchive ? p.id : null;
     },
     onDrop: (id, paths) => void paneById(id).ops.uploadPaths(paths),
-    // dropped where nothing takes them: behind a dialog, on a pane with no folder open, on a terminal
-    onRefused: () => toast("info", overlayUp() ? "Finish what’s open first, then drop the files again." : "Drop the files on a pane with a folder open to upload them there."),
+    // dropped where nothing takes them: behind a dialog, on a pane with no folder open, on a terminal, in an archive
+    onRefused: () =>
+      toast(
+        "info",
+        overlayUp()
+          ? "Finish what’s open first, then drop the files again."
+          : dropOnArchive.current
+            ? "Archives open read-only. Drop the files on a folder to upload them."
+            : "Drop the files on a pane with a folder open to upload them there.",
+      ),
     // over a workspace's tab: resting there opens it; letting go uploads into its active pane's folder
     tabs: {
       at: (x, y) => {
@@ -1949,7 +1996,9 @@ export function AppShell() {
     term.terms[id] ? (
       term.render(id, { style, active: id === activeId, dual, onGrip: paneDrag.grip?.(id), lifted: paneDrag.dragging === id && !dragAway() })
     ) : (
-      <BrowserPane {...paneProps(slot(id))} style={style} />
+      // keyed by slot: a cramped window draws one pane at a time in the same place, and each
+      // must be its own (its list's scroll, open menus, a name being edited)
+      <BrowserPane key={id} {...paneProps(slot(id))} style={style} />
     );
   const nameOf =(id: PaneId) => term.nameOf(id) || paneName(slot(id)) || slot(id).profile?.name || "Empty pane";
   const paneSwitcher: PaneSwitcher | null =
@@ -1958,6 +2007,7 @@ export function AppShell() {
           items: ids.map((id) => ({ id, name: nameOf(id) })),
           activeId,
           onPick: (id) => {
+            keepScrolls();
             setActiveId(id);
             focusSoon(id);
           },
@@ -2080,7 +2130,7 @@ export function AppShell() {
                 onSizes={(path, sizes) => setTree((t) => setSizes(t, path, sizes))}
                 onEqualize={(path) => setTree((t) => equalize(t, path))}
                 nameOf={nameOf}
-                onCramped={setCramped}
+                onCramped={onCramped}
                 linked={isLinked}
                 onToggleLink={toggleSync}
               />

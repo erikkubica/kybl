@@ -26,6 +26,7 @@ import { useSelection } from "./useSelection";
 import { useEntryActions } from "./useEntryActions";
 import { useGitStatus } from "./useGitStatus";
 import { LS, paneKeys, THIS_MAC, type Loc, type PaneId, type PaneView } from "./types";
+import { isContextPress } from "../components/pointer";
 import { archiveProfile, isArchiveName } from "../archive/archive";
 import { makeArchiveOps } from "../archive/archiveOps";
 
@@ -402,6 +403,11 @@ function usePaneCore(env: PaneEnv) {
     (e: Entry, ev: React.MouseEvent) => {
       const { selected: cur, selectedEntries: curEntries } = selRef.current;
       const mods = { meta: ev.metaKey || ev.ctrlKey, shift: ev.shiftKey };
+      // Ctrl+click on a Mac is a right-click: the context menu, not a toggle (nor a drag)
+      if (isContextPress(ev) && ev.button === 0) {
+        if (!cur.has(e.key)) select(e, { meta: false, shift: false });
+        return;
+      }
       if (ev.button !== 0) {
         if (ev.button === 2 && cur.has(e.key)) return;
         if (ev.button === 2) select(e, mods);

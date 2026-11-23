@@ -61,8 +61,15 @@ export function MoveDialog({
     setFolders(null);
     setError(null);
     setCursor(-1);
+    // the folders made here under `path`: shown with the listed ones until they exist for real
+    const madeHere = [...made.current].filter((f) => f !== path && f.startsWith(path) && !f.slice(path.length, -1).includes("/"));
+    // one made here doesn't exist yet (on disk and servers listing it fails): nothing to list
+    if (made.current.has(path)) {
+      setFolders(madeHere.sort());
+      return;
+    }
     (async () => {
-      const found = new Set<string>();
+      const found = new Set<string>(madeHere);
       let token: string | null = null;
       for (let i = 0; i < MAX_PAGES; i++) {
         const r = await api.listObjects(profileId, target, path, token);

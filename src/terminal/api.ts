@@ -21,7 +21,16 @@ import type { Profile } from "../types";
  * Where a terminal pane opened: a folder of a connection, and the session it shows; `from` is the
  * file pane it opened from, and `follow` has it `cd` wherever that pane goes (while the shell idles).
  */
-export type TermPlace = { profileId: string; bucket: string; prefix: string; sid?: string; from?: PaneId; follow?: boolean };
+export type TermPlace = {
+  profileId: string;
+  bucket: string;
+  prefix: string;
+  sid?: string;
+  from?: PaneId;
+  follow?: boolean;
+  /** which terminal of a recipe it is (recipes.ts): its startup commands follow it, not its slot */
+  key?: string;
+};
 /** A terminal pane on screen: always with its session id. */
 export type TermSpec = TermPlace & { sid: string };
 
@@ -45,6 +54,7 @@ export function parseTermPlace(v: unknown): TermPlace | undefined {
     ...(typeof x.sid === "string" && x.sid ? { sid: x.sid } : {}),
     ...(typeof x.from === "string" ? { from: x.from as PaneId } : {}),
     ...(x.follow === true ? { follow: true } : {}),
+    ...(typeof x.key === "string" && x.key ? { key: x.key.slice(0, 64) } : {}),
   };
 }
 
