@@ -6,7 +6,7 @@
 
 use std::{
     collections::HashMap,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
@@ -26,7 +26,7 @@ use crate::{
     },
     dest,
     objects::Existing,
-    transfers::Outcome,
+    transfers::{race, Outcome, Raced},
     tuning::DOWN,
 };
 
@@ -506,9 +506,9 @@ pub(crate) async fn upload_with(
     }
 }
 
-/// Downloads through the backend into `<dest>.s3part`, renamed onto `dest` once whole. The
-/// bandwidth cap applies unless the source is this device's own disk.
-/// With `hold`, "Wi-Fi only" pauses it on mobile data (see `transfers::Hold`).
+/// Downloads through the backend into `<dest>.s3part`, renamed onto `dest` once whole (replacing
+/// a file there, as sync does). The bandwidth cap applies unless the source is this device's own
+/// disk. With `hold`, "Wi-Fi only" pauses it on mobile data (see `transfers::Hold`).
 pub(crate) async fn download(
     s: &dyn Storage,
     bucket: &str,
@@ -518,7 +518,7 @@ pub(crate) async fn download(
     progress: Progress<'_>,
     hold: crate::transfers::Hold<'_>,
 ) -> Result<Outcome, String> {
-    let mut dl = Dl::default();
+    let mut dl = Dl { replace: true, ..Default::default() };
     download_resumable(s, bucket, key, dest, None, false, cancel, progress, hold, &mut dl).await
 }
 
@@ -559,20 +559,32 @@ pub(crate) async fn download_resumable(
     let mut lane = (!s.caps().local_paths).then(|| DOWN.lane());
     let ranged = s.caps().range_read;
     // a partial file of an earlier attempt: the rest of the same version, if the server can
-    let mut resumed = None;
-    if let Some(version) = resume
-        && let Some((f, have)) = dest::open_part(&part).await
-        && let Ok(Some(now)) = s.stat(bucket, key).await
-        && let Some(at) = continue_at(have, Some(now.size.max(0) as u64), Some(version), ranged)
-        && let Ok(r) = s.read(bucket, key, Some(at..now.size as u64), Some(version)).await
-        && r.range.as_ref().map(|g| g.start) == Some(at)
-    {
-        resumed = Some((r, at, f, now.size as u64));
-    }
+    // (the requests race Pause/Cancel and a server that never answers, as the reads below do)
+    let resumed = match resume {
+        Some(version) => {
+            let carry_on = async {
+                let (f, have) = dest::open_part(&part).await?;
+                let now = s.stat(bucket, key).await.ok()??;
+                let at = continue_at(have, Some(now.size.max(0) as u64), Some(version), ranged)?;
+                let r = s.read(bucket, key, Some(at..now.size as u64), Some(version)).await.ok()?;
+                (r.range.as_ref().map(|g| g.start) == Some(at)).then_some((r, at, f, now.size as u64))
+            };
+            match race(carry_on, cancel).await {
+                Raced::Got(r) => r,
+                Raced::Stopped => return Ok(Outcome::Cancelled),
+                Raced::Stalled => None,
+            }
+        }
+        None => None,
+    };
     let (mut r, mut got, mut file, total, etag) = match resumed {
         Some((r, at, f, total)) => (r, at, f, total, resume.map(str::to_string)),
         None => {
-            let r = s.read(bucket, key, None, None).await?;
+            let r = match race(s.read(bucket, key, None, None), cancel).await {
+                Raced::Got(r) => r?,
+                Raced::Stopped => return Ok(Outcome::Cancelled),
+                Raced::Stalled => return Err(crate::transfers::STALLED.into()),
+            };
             let total = r.total.or(r.len).unwrap_or(0);
             let etag = r.etag.clone();
             let f = dest::create_part(&part).await.map_err(|e| e.to_string())?;
@@ -591,12 +603,27 @@ pub(crate) async fn download_resumable(
         let (mut last, mut checked_at, mut failures) = (Instant::now(), got, 0u32);
         progress(got, total);
         loop {
-            let chunk = match r.body.next().await {
-                None => break,
+            // the read races Pause/Cancel, and a connection silent for `STALL` counts as dropped
+            let next = match race(r.body.next(), cancel).await {
+                Raced::Got(n) => n,
+                Raced::Stopped => return Ok(false),
+                Raced::Stalled => Some(Err(std::io::Error::new(std::io::ErrorKind::TimedOut, crate::transfers::STALLED))),
+            };
+            let chunk = match next {
                 Some(Ok(c)) => c,
-                // the connection dropped mid-file: ask for the rest of the same version
-                Some(Err(e)) => {
-                    if !can_resume || got >= total {
+                // the end, with every byte the server announced (or it announced none)
+                None if total == 0 || got >= total => break,
+                // every byte is in and only the end of the stream went wrong (a reset after the
+                // last byte, a stall waiting for the close): the file is whole
+                Some(Err(_)) if total > 0 && got >= total => break,
+                // the connection dropped mid-file, or ended early without saying why: ask for the
+                // rest of the same version
+                other => {
+                    let e = match other {
+                        Some(Err(e)) => e,
+                        _ => short_read(got, total),
+                    };
+                    if !can_resume {
                         return Err(e.into());
                     }
                     loop {
@@ -604,19 +631,20 @@ pub(crate) async fn download_resumable(
                         if failures > RESUME_ATTEMPTS {
                             return Err(StorageError::from(e));
                         }
-                        tokio::time::sleep(Duration::from_secs((1u64 << (failures - 1).min(4)).min(15))).await;
-                        if cancel.load(Ordering::Relaxed) {
+                        let wait = Duration::from_secs((1u64 << (failures - 1).min(4)).min(15));
+                        if let Raced::Stopped = race(tokio::time::sleep(wait), cancel).await {
                             return Ok(false);
                         }
-                        match s.read(bucket, key, Some(got..total), etag.as_deref()).await {
-                            Ok(rest) if rest.range.as_ref().map(|g| g.start) == Some(got) => {
+                        match race(s.read(bucket, key, Some(got..total), etag.as_deref()), cancel).await {
+                            Raced::Got(Ok(rest)) if rest.range.as_ref().map(|g| g.start) == Some(got) => {
                                 r = rest;
                                 break;
                             }
                             // the file changed, or the server sent something else: can't go on
-                            Ok(_) => return Err(StorageError::from(e)),
-                            Err(again) if again.kind == ErrKind::Conflict => return Err(again),
-                            Err(_) => continue,
+                            Raced::Got(Ok(_)) => return Err(StorageError::from(e)),
+                            Raced::Got(Err(again)) if again.kind == ErrKind::Conflict => return Err(again),
+                            Raced::Got(Err(_)) | Raced::Stalled => continue,
+                            Raced::Stopped => return Ok(false),
                         }
                     }
                     continue;
@@ -649,7 +677,11 @@ pub(crate) async fn download_resumable(
                 if !crate::tuning::wait_for_wifi(cancel).await {
                     return Ok(false);
                 }
-                r = s.read(bucket, key, Some(got..total), etag.as_deref()).await?;
+                r = match race(s.read(bucket, key, Some(got..total), etag.as_deref()), cancel).await {
+                    Raced::Got(r) => r?,
+                    Raced::Stopped => return Ok(false),
+                    Raced::Stalled => return Err(StorageError::new(ErrKind::Network, crate::transfers::STALLED)),
+                };
                 if r.range.as_ref().map(|g| g.start) != Some(got) {
                     return Err(StorageError::other("The server can't carry on this download where it paused. Try again."));
                 }
@@ -669,7 +701,7 @@ pub(crate) async fn download_resumable(
     let paused = dl.pause.is_some_and(|p| p.load(Ordering::Relaxed));
     match result {
         Ok(true) => {
-            tokio::fs::rename(&part, dest).await.map_err(|e| e.to_string())?;
+            dl.finish(&part, dest).map_err(|e| e.to_string())?;
             crate::leftovers::partial_ended(&part);
             Ok(Outcome::Done)
         }
@@ -688,6 +720,12 @@ pub(crate) async fn download_resumable(
     }
 }
 
+/// A body that ended cleanly before the length the server announced: a data connection closed
+/// early (a server-side abort, a NAT, a file cut short on the server), never a whole file.
+pub(crate) fn short_read(got: u64, total: u64) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::UnexpectedEof, format!("The connection ended after {got} of {total} bytes."))
+}
+
 /// Told the version a download fetches.
 pub(crate) type Seen<'a> = dyn Fn(Option<&str>) + Send + Sync + 'a;
 
@@ -702,6 +740,21 @@ pub(crate) struct Dl<'a> {
     pub etag: Option<String>,
     /// the byte it started from (above 0: it carried on a partial file)
     pub from: u64,
+    /// a file at the destination may be replaced; otherwise one that turned up there while it
+    /// ran is kept and the download lands under a free name (see `dest::finish`)
+    pub replace: bool,
+    /// where it landed, when that isn't the destination it was given
+    pub landed: Option<PathBuf>,
+}
+
+impl Dl<'_> {
+    /// Puts the whole download `part` in place at `dest` (see `dest::finish`), noting a name
+    /// other than `dest`.
+    pub fn finish(&mut self, part: &Path, dest: &Path) -> std::io::Result<()> {
+        let at = dest::finish(part, dest, self.replace)?;
+        self.landed = (at != dest).then_some(at);
+        Ok(())
+    }
 }
 
 #[cfg(test)]

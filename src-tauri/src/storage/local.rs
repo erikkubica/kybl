@@ -25,7 +25,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use super::*;
 
-mod fsops;
+pub(crate) mod fsops;
 use fsops::{canon_lossy, check_not_into_itself, copy_tree, remove_copied, rename_noreplace, through_link, Copied};
 
 const CHUNK: usize = 256 * 1024;

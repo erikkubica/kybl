@@ -780,12 +780,15 @@ impl Storage for SftpBackend {
             f.seek(SeekFrom::Start(start)).await.map_err(write_error)?;
         }
         let left = end - start;
-        let body = futures_util::stream::unfold((f, left, c), |(mut f, left, c)| async move {
+        // the size the server gave: an end of file before it is a cut read, never a whole file
+        let known = size.is_some();
+        let body = futures_util::stream::unfold((f, left, c), move |(mut f, left, c)| async move {
             if left == 0 {
                 return None;
             }
             let mut buf = BytesMut::zeroed(CHUNK.min(left.min(usize::MAX as u64) as usize));
             match f.read(&mut buf).await {
+                Ok(0) if known => Some((Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, format!("The file ended {left} bytes short of its size."))), (f, 0, c))),
                 Ok(0) => None,
                 Ok(n) => {
                     buf.truncate(n);

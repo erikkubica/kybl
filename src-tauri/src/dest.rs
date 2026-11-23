@@ -109,12 +109,59 @@ fn name_key(p: &Path) -> PathBuf {
 /// removed, never what it points at). The file is then created exclusively, so no link is
 /// followed and a second writer fails instead of truncating the first one's file.
 pub async fn create_part(part: &Path) -> std::io::Result<tokio::fs::File> {
-    if let Ok(m) = tokio::fs::symlink_metadata(part).await
+    let part = part.to_path_buf();
+    let f = tokio::task::spawn_blocking(move || create_part_blocking(&part)).await.map_err(std::io::Error::other)??;
+    Ok(tokio::fs::File::from_std(f))
+}
+
+/// [`create_part`] for code already on a blocking thread (the copy out of the file cache).
+pub fn create_part_blocking(part: &Path) -> std::io::Result<std::fs::File> {
+    if let Ok(m) = std::fs::symlink_metadata(part)
         && !m.is_dir()
     {
-        tokio::fs::remove_file(part).await?;
+        std::fs::remove_file(part)?;
     }
-    tokio::fs::OpenOptions::new().write(true).create_new(true).open(part).await
+    std::fs::OpenOptions::new().write(true).create_new(true).open(part)
+}
+
+/// Puts a whole download in place: its partial file `part` becomes `dest`. With `replace`, a
+/// file at `dest` is replaced (the user asked to overwrite, or sync updates its own copy).
+/// Otherwise a file that turned up at `dest` while the download ran (the user saved one, another
+/// app did) is kept: the download takes the next free name instead, which is held in place of
+/// `dest` (see [`reserve`]). Answers where the file landed.
+pub fn finish(part: &Path, dest: &Path, replace: bool) -> std::io::Result<PathBuf> {
+    if replace {
+        std::fs::rename(part, dest)?;
+        return Ok(dest.to_path_buf());
+    }
+    let mut target = dest.to_path_buf();
+    // a handful of names taken one after another in that very moment is already absurd
+    for _ in 0..32 {
+        match crate::storage::local::fsops::rename_noreplace(part, &target) {
+            Ok(()) => {
+                if target != dest {
+                    release(dest);
+                }
+                return Ok(target);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                if target != dest {
+                    release(&target);
+                }
+                target = reserve(dest, false).map_err(std::io::Error::other)?;
+            }
+            Err(e) => {
+                if target != dest {
+                    release(&target);
+                }
+                return Err(e);
+            }
+        }
+    }
+    if target != dest {
+        release(&target);
+    }
+    Err(std::io::ErrorKind::AlreadyExists.into())
 }
 
 /// Opens the partial file of an earlier attempt to add to its end, with its length. None unless
@@ -404,6 +451,36 @@ mod tests {
             assert_eq!(open_part(&part).await.map(|(_, n)| n), Some(4));
             let _ = std::fs::remove_dir_all(dir);
         });
+    }
+
+    /// A download that doesn't replace files never replaces one that turned up at its name while
+    /// it ran: it lands under the next free name, which it holds instead.
+    #[test]
+    fn a_file_that_turned_up_while_downloading_is_never_replaced() {
+        let dir = temp_dir();
+        let want = dir.join("report.pdf");
+        let chosen = reserve(&want, false).unwrap();
+        assert_eq!(chosen, want);
+        std::fs::write(part_path(&chosen), b"downloaded").unwrap();
+        std::fs::write(&chosen, b"theirs").unwrap();
+        let landed = finish(&part_path(&chosen), &chosen, false).unwrap();
+        assert_eq!(landed, dir.join("report (1).pdf"));
+        assert_eq!(std::fs::read(&chosen).unwrap(), b"theirs");
+        assert_eq!(std::fs::read(&landed).unwrap(), b"downloaded");
+        assert!(!part_path(&chosen).exists());
+        assert!(unless_in_use(&chosen, || {}), "the first name is let go");
+        assert!(!unless_in_use(&landed, || {}), "the new one is held until the download ends");
+        release(&landed);
+        // nothing in the way: the name it was given
+        let next = reserve(&dir.join("other.txt"), false).unwrap();
+        std::fs::write(part_path(&next), b"x").unwrap();
+        assert_eq!(finish(&part_path(&next), &next, false).unwrap(), next);
+        release(&next);
+        // asked to replace: replaced
+        std::fs::write(part_path(&want), b"new").unwrap();
+        assert_eq!(finish(&part_path(&want), &want, true).unwrap(), want);
+        assert_eq!(std::fs::read(&want).unwrap(), b"new");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

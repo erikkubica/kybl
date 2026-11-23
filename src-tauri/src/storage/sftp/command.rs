@@ -139,6 +139,11 @@ fn failed_run(e: &StorageError) -> HashRun {
     }
 }
 
+/// The command was stopped by us, or the server gave its exit status.
+fn ended_properly(end: &ExecEnd) -> bool {
+    end.stopped || end.code.is_some()
+}
+
 /// How a command on the server ended.
 pub struct ExecEnd {
     /// the exit status, None when the server didn't say (stopped, or the connection dropped)
@@ -254,6 +259,9 @@ impl SftpBackend {
             } => unreachable!(),
         };
         let run = match ran {
+            // the channel closed with no exit status (the connection dropped mid-way, perhaps
+            // after part of the output): this file only, never "no commands here"
+            Ok(end) if !ended_properly(&end) => HashRun::ThisFile,
             Ok(end) if !end.stopped => read_hash_run(&String::from_utf8_lossy(&out)),
             // out of time (a slow disk, a huge file): this file only
             Ok(_) => HashRun::ThisFile,
@@ -310,6 +318,19 @@ mod tests {
         assert_eq!(failed_run(&StorageError::new(ErrKind::Unsupported, "refused")), HashRun::NoCommands);
         assert_eq!(failed_run(&StorageError::other("The server didn't run the command.")), HashRun::ThisFile);
         assert_eq!(failed_run(&StorageError::new(ErrKind::Network, "dropped")), HashRun::ThisFile);
+    }
+
+    /// A channel that closed without an exit status (a dropped connection) is no verdict: the
+    /// shell probe isn't remembered and hashing isn't turned off for the server.
+    #[test]
+    fn a_dropped_channel_is_no_verdict() {
+        let dropped = ExecEnd { code: None, stopped: false };
+        assert!(!ended_properly(&dropped));
+        // the shell probe: no output and no exit status is no answer; an answer that came is read
+        assert_eq!(read_probe("", false), None);
+        let exited = ExecEnd { code: Some(1), stopped: false };
+        assert!(ended_properly(&exited));
+        assert!(ended_properly(&ExecEnd { code: None, stopped: true }));
     }
 
     /// The command as a login shell runs it, on a file with a quote and a space in its name.

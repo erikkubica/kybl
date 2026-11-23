@@ -346,6 +346,10 @@ pub async fn fetch(s: &dyn Storage, root: &str, key: &str, to: &Path, progress: 
             f.write_all(&chunk).await?;
             progress(done, total);
         }
+        // a body that ended early is never taken for the whole archive
+        if total > 0 && done < total {
+            return Err(crate::storage::generic_cmds::short_read(done, total).into());
+        }
         f.flush().await?;
         Ok(())
     }

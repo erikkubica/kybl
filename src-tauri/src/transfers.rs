@@ -43,6 +43,9 @@ struct TransferEvent {
     /// done and checked: what was compared ("size", "md5", "etag", "sha256", "quickxor", "dropbox")
     #[serde(skip_serializing_if = "Option::is_none")]
     verified: Option<&'static str>,
+    /// the download landed under this name instead (a file turned up at its own while it ran)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local: Option<String>,
 }
 
 fn emit(app: &AppHandle, id: &str, state: &'static str, bytes: u64, total: u64, error: Option<String>) {
@@ -163,10 +166,10 @@ fn resume_delay(n: u32) -> Duration {
     Duration::from_secs((1u64 << (n - 1).min(5)).min(30))
 }
 
-const STALLED: &str = "The connection stopped sending data.";
+pub(crate) const STALLED: &str = "The connection stopped sending data.";
 
 /// How a network wait raced against Pause/Cancel and [`STALL`] ended.
-enum Raced<T> {
+pub(crate) enum Raced<T> {
     Got(T),
     /// paused or cancelled meanwhile
     Stopped,
@@ -177,7 +180,7 @@ enum Raced<T> {
 /// Waits for `fut` (a body read, a request), checking Pause/Cancel every 200 ms and giving up
 /// after `STALL`: a server that accepts the connection and then says nothing (a dead Wi-Fi, a
 /// NAT that dropped the flow) neither keeps the download "running" nor ignores Pause/Cancel.
-async fn race<T>(fut: impl std::future::Future<Output = T>, cancel: &AtomicBool) -> Raced<T> {
+pub(crate) async fn race<T>(fut: impl std::future::Future<Output = T>, cancel: &AtomicBool) -> Raced<T> {
     let deadline = tokio::time::Instant::now() + STALL;
     let fut = tokio::time::timeout_at(deadline, fut);
     tokio::pin!(fut);
@@ -187,6 +190,22 @@ async fn race<T>(fut: impl std::future::Future<Output = T>, cancel: &AtomicBool)
             _ = tokio::time::sleep(Duration::from_millis(200)) => {
                 if cancel.load(Ordering::Relaxed) {
                     return Raced::Stopped;
+                }
+            }
+        }
+    }
+}
+
+/// Waits for `fut` while checking Pause/Cancel every 200 ms, with no time limit (for a wait that
+/// may rightly take long, such as a checksum the server works out). None when stopped.
+async fn race_unlimited<T>(fut: impl std::future::Future<Output = T>, cancel: &AtomicBool) -> Option<T> {
+    tokio::pin!(fut);
+    loop {
+        tokio::select! {
+            r = &mut fut => return Some(r),
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                if cancel.load(Ordering::Relaxed) {
+                    return None;
                 }
             }
         }
@@ -203,7 +222,7 @@ pub(crate) async fn download_file(
     cancel: &AtomicBool,
     progress: Progress<'_>,
 ) -> Result<Outcome, String> {
-    let mut dl = Dl::default();
+    let mut dl = Dl { replace: true, ..Default::default() };
     download_to(client, bucket, key, Path::new(dest), None, false, cancel, progress, None, &mut dl).await
 }
 
@@ -255,8 +274,16 @@ async fn download_to(
         tokio::fs::create_dir_all(parent).await.map_err(err)?;
     }
     let part_path = dest::part_path(dest);
+    // the requests before the read loop race Pause/Cancel and a silent server too: a pooled
+    // connection that died without a word (the laptop slept, the Wi-Fi changed) would otherwise
+    // hold the download, and its turn, for as long as the system takes to notice
     let resumed = match resume_etag {
-        Some(tag) => resume_from(client, bucket, key, &part_path, tag).await,
+        Some(tag) => match race(resume_from(client, bucket, key, &part_path, tag), cancel).await {
+            Raced::Got(r) => r,
+            Raced::Stopped => return Ok(Outcome::Cancelled),
+            // the fresh request below tells whether the server is there at all
+            Raced::Stalled => None,
+        },
         None => None,
     };
     let (mut file, mut got, mut out, total, etag) = match resumed {
@@ -265,7 +292,16 @@ async fn download_to(
             (file, have, out, total, resume_etag.map(str::to_string))
         }
         None => {
-            let out = client.get_object().bucket(bucket).key(key).send().await.map_err(sdk_err)?;
+            let mut stalls = 0;
+            let out = loop {
+                match race(client.get_object().bucket(bucket).key(key).send(), cancel).await {
+                    Raced::Got(r) => break r.map_err(sdk_err)?,
+                    Raced::Stopped => return Ok(Outcome::Cancelled),
+                    // once more, on a new connection (the silent one was dropped with the request)
+                    Raced::Stalled if stalls == 0 => stalls += 1,
+                    Raced::Stalled => return Err(STALLED.into()),
+                }
+            };
             let total = out.content_length().unwrap_or(0).max(0) as u64;
             // A resumed request asks for the same version of the object, so a file changed
             // meanwhile fails cleanly instead of being stitched together from two versions.
@@ -382,7 +418,7 @@ async fn download_to(
     let paused = dl.pause.is_some_and(|p| p.load(Ordering::Relaxed));
     match result {
         Ok(true) => {
-            tokio::fs::rename(&part_path, dest).await.map_err(err)?;
+            dl.finish(&part_path, dest).map_err(err)?;
             // (a partial file removed anywhere is dropped from the list when it is next saved)
             crate::leftovers::partial_ended(&part_path);
             Ok(Outcome::Done)
@@ -737,7 +773,11 @@ async fn spawn_transfer(
             let v = v.map(str::to_string);
             resume::update(&id, |s| s.version = v);
         };
-        let mut dl = Dl { pause: Some(&pause), seen: Some(&seen), ..Default::default() };
+        let mut dl = Dl { pause: Some(&pause), seen: Some(&seen), replace: overwrite, ..Default::default() };
+        // where the file is: a download that doesn't replace files lands under a free name when
+        // one turned up at its own while it ran
+        let mut local = local;
+        let mut moved_to: Option<String> = None;
         let result = if permit.is_none() || cancel.load(Ordering::Relaxed) {
             Ok(Outcome::Cancelled)
         } else {
@@ -835,14 +875,14 @@ async fn spawn_transfer(
                     Err(e) => Err(e),
                 },
                 Kind::Download { resume, recheck } => {
-                    let chosen = PathBuf::from(&local);
+                    let mut chosen = PathBuf::from(&local);
                     let tag = if resume { resume_etag.as_deref() } else { None };
                     // the same version opened or downloaded before is copied from the file
                     // cache instead of fetched again (a retry carrying on its partial file isn't);
                     // a file downloaded whole before, whose check couldn't run, is only checked
                     let served = match resume {
                         _ if recheck => Some(Ok(Outcome::Done)),
-                        false => crate::filecache::serve_download(&app, &conn, &profile_id, &bucket, &key, listed.as_ref(), &chosen, &cancel, &report).await,
+                        false => crate::filecache::serve_download(&app, &conn, &profile_id, &bucket, &key, listed.as_ref(), &chosen, &cancel, &report, &mut dl).await,
                         true => None,
                     };
                     let fetched = served.is_none();
@@ -853,6 +893,16 @@ async fn spawn_transfer(
                             Conn::Other(s) => generic_cmds::download_resumable(&**s, &bucket, &key, &chosen, tag, true, &cancel, &report, Some(&paused), &mut dl).await,
                         },
                     };
+                    // a file turned up at its name while it ran and was kept: the download is
+                    // under the next free name now (which it holds instead), and says so
+                    if let Some(at) = dl.landed.take() {
+                        chosen = at;
+                        local = chosen.to_string_lossy().into_owned();
+                        record.local.clone_from(&local);
+                        resume::update(&id, |s| s.local.clone_from(&local));
+                        track(&id, |t| t.local.clone_from(&local));
+                        moved_to = Some(local.clone());
+                    }
                     if let Ok(Outcome::Done) = r {
                         done_bytes = tokio::fs::metadata(&chosen).await.map(|m| m.len()).unwrap_or(0);
                         if recheck {
@@ -876,8 +926,21 @@ async fn spawn_transfer(
         // checked once done, as the settings ask; a copy that doesn't match fails
         let mut result = result;
         if let (Ok(Outcome::Done), Some(path)) = (&result, &local_done) {
-            match crate::verify::check(&app, &conn, &profile_id, &bucket, &key, path, verify_part_size).await {
+            // the check races Cancel (a server that never answers would hold the transfer and its
+            // turn); stopped there, the file stays as one whose check couldn't run
+            let check = match race_unlimited(crate::verify::check(&app, &conn, &profile_id, &bucket, &key, path, verify_part_size), &cancel).await {
+                Some(c) => c,
+                None => Err(crate::verify::CheckErr::Unverified("The check was stopped.".into())),
+            };
+            match check {
                 Ok(c) => checked = c,
+                // a re-check of a file that came in whole earlier: it was checked against the
+                // file on the server as it is now, which may have changed since. That copy is
+                // the user's to keep; Retry downloads the server's file next to it.
+                Err(e @ crate::verify::CheckErr::Mismatch(_)) if matches!(kind, Kind::Download { recheck: true, .. }) => {
+                    unverified = None;
+                    result = Err(format!("{e} The file on the server may have changed since it was downloaded, so the downloaded file was kept. Retry to download the server's file again."));
+                }
                 Err(e @ crate::verify::CheckErr::Mismatch(_)) => {
                     if matches!(kind, Kind::Download { .. }) {
                         // a download that came out different is no use to anyone
@@ -993,6 +1056,7 @@ async fn spawn_transfer(
             resumed_from,
             restarted,
             verified: checked,
+            local: moved_to.clone(),
         };
         let _ = app.emit(
             "transfer",
@@ -1377,6 +1441,43 @@ mod tests {
             let r = download_to(&client, "b", "file.bin", &dest, None, false, &cancel, &|_, _| {}, None, &mut dl).await;
             assert!(matches!(r, Ok(Outcome::Cancelled)), "{:?}", r.err());
             assert!(started.elapsed() < Duration::from_secs(6), "took {:?}", started.elapsed());
+            assert!(!dest::part_path(&dest).exists() && !dest.exists());
+            let _ = std::fs::remove_dir_all(dir);
+        });
+    }
+
+    /// The very first request of a download goes to a server that never answers (a pooled
+    /// connection that died silently): Cancel still ends it at once.
+    #[test]
+    fn cancel_ends_a_download_whose_first_request_hangs() {
+        use tokio::io::AsyncReadExt;
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            tokio::spawn(async move {
+                let mut held = Vec::new();
+                loop {
+                    let (mut sock, _) = listener.accept().await.unwrap();
+                    let mut buf = vec![0u8; 8192];
+                    let _ = sock.read(&mut buf).await;
+                    held.push(sock);
+                }
+            });
+            let p = Profile { id: "t".into(), name: "t".into(), provider: "custom".into(), endpoint, region: "us-east-1".into(), access_key_id: "k".into(), path_style: true, ..Default::default() };
+            let client = build_client(&p, "s");
+            let dir = std::env::temp_dir().join(format!("kybl-hang-{}", uuid::Uuid::new_v4()));
+            let dest = dir.join("file.bin");
+            let cancel = Arc::new(AtomicBool::new(false));
+            let flag = cancel.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                flag.store(true, Ordering::Relaxed);
+            });
+            let started = Instant::now();
+            let mut dl = Dl::default();
+            let r = download_to(&client, "b", "file.bin", &dest, None, false, &cancel, &|_, _| {}, None, &mut dl).await;
+            assert!(matches!(r, Ok(Outcome::Cancelled)), "{:?}", r.err());
+            assert!(started.elapsed() < Duration::from_secs(3), "took {:?}", started.elapsed());
             assert!(!dest::part_path(&dest).exists() && !dest.exists());
             let _ = std::fs::remove_dir_all(dir);
         });

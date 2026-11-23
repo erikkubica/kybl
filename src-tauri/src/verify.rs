@@ -215,7 +215,12 @@ async fn remote(app: &AppHandle, conn: &Conn, profile_id: &str, bucket: &str, ke
     let state = app.state::<AppState>();
     match conn {
         Conn::S3(client) => {
-            let head = client.head_object().bucket(bucket).key(key).send().await.map_err(crate::state::sdk_err)?;
+            // a pooled connection that died without a word would leave this waiting for as long
+            // as the system takes to notice: a HEAD gets a minute
+            let head = tokio::time::timeout(std::time::Duration::from_secs(60), client.head_object().bucket(bucket).key(key).send())
+                .await
+                .map_err(|_| "The server didn't answer in time.".to_string())?
+                .map_err(crate::state::sdk_err)?;
             let mut r = Remote { size: head.content_length().map(|n| n.max(0) as u64), ..Default::default() };
             // KMS and customer-key encryption make ETags that aren't MD5s of the content, and so
             // do providers encrypting at rest (Kybl Storage: its capabilities say no MD5s)
