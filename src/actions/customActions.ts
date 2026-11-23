@@ -6,7 +6,7 @@
  *
  * Wiring: `actionsMenu` (the item context menu's "Actions ▸"), `actionCommandMap` (pane commands,
  * so shortcuts route like the built-in ones), `useActionShortcuts` (the keys) and
- * `customActionCommands` (for a command palette).
+ * `useActionPalette` (the ⌘K palette's "Run …" commands, see `customActionCommands`).
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -15,6 +15,7 @@ import { api, errMessage } from "../api";
 import { asExport } from "../connections/native";
 import { joinPath, safeRelPath } from "../desktop/paths";
 import { MENU_ACCELERATORS } from "../desktop/menus";
+import { registerCommands, type PaletteCommand } from "../palette/commands";
 import { createStore, useStore } from "../store";
 import type { MenuItem } from "../components/Dialogs";
 import type { Dialogs } from "../shell/useDialogs";
@@ -245,21 +246,52 @@ export function actionCommandMap(ctx: ActionContext): Record<string, () => void>
   return out;
 }
 
+/** Why the action can't run on `list` here, or null when it can (the palette's greyed reason). */
+function refusal(a: CustomAction, ctx: ActionContext, list: Entry[]): string | null {
+  if (!ctx.profile || ctx.bucket == null) return "Open a folder first";
+  if (placeProblem(a, ctx) !== undefined) return "Runs on SFTP servers only";
+  if (!list.length) return "Select the items to run it on";
+  const { targets, why } = targetsFor(a, ctx, list);
+  if (targets.length) return null;
+  if (why) return why;
+  const exts = extList(a.extensions);
+  if (a.appliesTo === "folders") return "Select folders";
+  return exts.length ? `Select ${exts.map((x) => `.${x}`).join(", ")} files` : a.appliesTo === "files" ? "Select files" : "Doesn’t apply to the selection";
+}
+
 /**
- * For a command palette: one command per enabled action that applies to this place, run on the
- * selection. `{ id, title, hint, run }`.
+ * The ⌘K palette's commands: "Run “name”" per enabled action, on the active pane's selection, greyed
+ * with the reason when it can't run there.
  */
-export function customActionCommands(ctx: ActionContext): { id: string; title: string; hint?: string; keywords: string; run: () => void }[] {
+export function customActionCommands(ctx: ActionContext): PaletteCommand[] {
+  const list = ctx.selection();
   return actionsStore
     .get()
-    .filter((a) => a.enabled && placeProblem(a, ctx) === undefined)
+    .filter((a) => a.enabled)
     .map((a) => ({
       id: `custom-action:${a.id}`,
       title: `Run “${a.name}”`,
-      hint: a.shortcut ? comboLabel(a.shortcut) : undefined,
-      keywords: `action ${a.command}`,
-      run: () => void runFromCommand(ctx, a),
+      group: "Actions",
+      keywords: `custom action command ${a.command}`,
+      shortcut: a.shortcut ? comboLabel(a.shortcut) : undefined,
+      icon: a.where === "server" ? ("server" as const) : ("laptop" as const),
+      disabled: refusal(a, ctx, list),
+      run: () => void runAction(ctx, a, list),
     }));
+}
+
+/** Registers the custom actions with the ⌘K palette, run on the active pane (`active()` at opening). */
+export function useActionPalette(active: () => ActionContext | null) {
+  const get = useRef(active);
+  get.current = active;
+  useEffect(
+    () =>
+      registerCommands("custom-actions", () => {
+        const ctx = get.current();
+        return ctx ? customActionCommands(ctx) : [];
+      }),
+    [],
+  );
 }
 
 async function runFromCommand(ctx: ActionContext, a: CustomAction) {

@@ -463,6 +463,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     onContext,
     onBackgroundContext,
     onMoreMenu,
+    /** custom actions' view of this pane (the palette runs them on its selection) */
+    actionCtx,
   };
 }
 

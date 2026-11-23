@@ -138,7 +138,7 @@ export function DragGhost({ drag, bucket, profileId }: { drag: DragState; bucket
                 `${drag.copy ? "Copy" : "Move"} to ${drag.label}${drag.copy || drag.copyOnly ? "" : " · ⌥ to copy"}`
               : // a drop moves; ⌥ copies
                 `${drag.copy ? "Copy" : "Move"} to ${drag.bucket != null ? rootName(profileId, drag.bucket) : destLabel(drag.dest, bucket ?? "", profileId)}${drag.copy ? "" : " · ⌥ to copy"}`
-            : "Drop on a folder or a bucket"}
+            : (drag.note ?? "Drop on a folder or a bucket")}
         </span>
       </span>
     </div>

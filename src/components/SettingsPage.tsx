@@ -62,6 +62,8 @@ const FONTS: { id: FontChoice; label: string; family: string }[] = [
 
 /** Every shortcut the file browser knows (desktop/useShortcuts.ts, the lists and the menu bar). */
 const SHORTCUTS: { label: string; keys: string[] }[] = [
+  { label: "Command palette: connections, folders, commands, files", keys: ["⌘", "K"] },
+  { label: "Command palette: open in a new pane / complete a path", keys: ["⌘↵", "Tab"] },
   { label: "Search this folder", keys: ["⌘", "F"] },
   { label: "Find a connection in the sidebar", keys: ["⌥", "⌘", "F"] },
   { label: "Show or hide the sidebar", keys: ["⌥", "⌘", "S"] },
