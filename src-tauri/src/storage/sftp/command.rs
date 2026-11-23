@@ -2,7 +2,7 @@
 //! custom actions with "On the server" use. The server runs it with the user's login shell.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicBool, Ordering},
         LazyLock, Mutex,
@@ -35,8 +35,9 @@ const RAN: &str = "kybl:ran";
 const NO_TOOL: &str = "kybl:no-hash-tool";
 
 /// The hash command for the file at `path` on the server: the first hash tool it has, then a line
-/// saying the script ran at all. Run by `sh`, whatever the login shell is (fish, csh).
-fn hash_command(path: &str) -> String {
+/// saying the script ran at all. Run by `sh`, whatever the login shell is (fish, csh). None for a
+/// path with a line break or another control character (see [`crate::actions::plain_text`]).
+fn hash_command(path: &str) -> Option<String> {
     let q = crate::actions::quote(path);
     let script = format!(
         "if command -v sha256sum >/dev/null 2>&1; then sha256sum -b -- {q}; \
@@ -45,8 +46,23 @@ fn hash_command(path: &str) -> String {
          elif command -v md5 >/dev/null 2>&1; then md5 -q -- {q}; \
          else echo {NO_TOOL}; fi 2>/dev/null; echo {RAN}"
     );
-    format!("sh -c {}", crate::actions::quote(&script))
+    crate::actions::sh_c(&script)
 }
+
+/// Servers (`user@host:port`) and whether their login shell reads POSIX quoting.
+static SHELLS: LazyLock<Mutex<HashMap<String, bool>>> = LazyLock::new(Default::default);
+
+/// Asked once per server before any command goes there. POSIX shells, fish and csh all print
+/// [`PROBE_ANSWER`]; cmd.exe and PowerShell (Windows OpenSSH) don't read single quotes that way,
+/// and there a quoted file name would not stay one word (`&`, `|` and `%` are live in cmd.exe).
+const PROBE: &str = r"echo 'kybl'\''sh'";
+const PROBE_ANSWER: &str = "kybl'sh";
+
+fn probe_says_posix(out: &str) -> bool {
+    out.trim_end_matches(['\r', '\n']) == PROBE_ANSWER
+}
+
+pub const NOT_POSIX: &str = "Kybl runs commands only on servers with a Unix shell (sh, bash, zsh, fish or csh). This one has another (Windows?) or none.";
 
 /// What a hash command's output says.
 #[derive(Debug, PartialEq)]
@@ -84,8 +100,42 @@ impl SftpBackend {
     }
 
     /// Runs `command` on the server and hands its output to `on_data` as it comes (`true` for
-    /// stderr). Setting `cancel` sends the command SIGTERM, then closes the channel.
-    pub async fn exec(&self, command: &str, cancel: &AtomicBool, mut on_data: impl FnMut(bool, &[u8])) -> SResult<ExecEnd> {
+    /// stderr). Setting `cancel` sends the command SIGTERM, then closes the channel. Refused on a
+    /// server whose login shell isn't a POSIX-like one (see [`PROBE`]).
+    pub async fn exec(&self, command: &str, cancel: &AtomicBool, on_data: impl FnMut(bool, &[u8])) -> SResult<ExecEnd> {
+        self.posix_shell().await?;
+        self.exec_raw(command, cancel, on_data).await
+    }
+
+    /// Whether the account's login shell reads quoting as [`crate::actions::quote`] writes it;
+    /// asked once per server, an error when it doesn't.
+    async fn posix_shell(&self) -> SResult<()> {
+        let who = format!("{}@{}:{}", self.user, self.host, self.port);
+        let known = SHELLS.lock().unwrap().get(&who).copied();
+        let ok = match known {
+            Some(ok) => ok,
+            None => {
+                let stop = AtomicBool::new(false);
+                let mut out = Vec::new();
+                let run = self.exec_raw(PROBE, &stop, |err, d| {
+                    if !err && out.len() < 256 {
+                        out.extend_from_slice(d);
+                    }
+                });
+                tokio::time::timeout(Duration::from_secs(20), run).await.map_err(|_| StorageError::other("The server didn't answer in time."))??;
+                let ok = probe_says_posix(&String::from_utf8_lossy(&out));
+                SHELLS.lock().unwrap().insert(who, ok);
+                ok
+            }
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(StorageError::other(NOT_POSIX))
+        }
+    }
+
+    async fn exec_raw(&self, command: &str, cancel: &AtomicBool, mut on_data: impl FnMut(bool, &[u8])) -> SResult<ExecEnd> {
         let c = self.conn().await?;
         let mut ch = c.handle.channel_open_session().await.map_err(|e| ssh_error(e, &self.host))?;
         ch.exec(true, command)
@@ -136,7 +186,8 @@ impl SftpBackend {
         if NO_HASH.lock().unwrap().contains(&who) {
             return Ok(None);
         }
-        let cmd = hash_command(&self.remote_path(key).await?);
+        // a name no shell quoting holds safely: checked by size only
+        let Some(cmd) = hash_command(&self.remote_path(key).await?) else { return Ok(None) };
         let stop = AtomicBool::new(false);
         let mut out = Vec::new();
         let deadline = Duration::from_secs(20) + Duration::from_secs_f64(size as f64 / 50e6);
@@ -213,7 +264,7 @@ mod tests {
         let file = dir.join("it's here.bin");
         std::fs::write(&file, b"").unwrap();
         let run = |path: &std::path::Path| {
-            let out = std::process::Command::new("sh").arg("-c").arg(hash_command(&path.to_string_lossy())).output().unwrap();
+            let out = std::process::Command::new("sh").arg("-c").arg(hash_command(&path.to_string_lossy()).unwrap()).output().unwrap();
             read_hash_run(&String::from_utf8_lossy(&out.stdout))
         };
         match run(&file) {
@@ -221,6 +272,24 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(run(&dir.join("gone")), HashRun::ThisFile);
+        // a newline in the name: nothing is sent (size-only check)
+        assert!(hash_command("/srv/a'\ntouch /tmp/x\n'").is_none());
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// Every shell that reads `quote` right answers the probe; cmd.exe echoes it back as typed.
+    #[cfg(unix)]
+    #[test]
+    fn the_shell_probe_tells_posix_shells_apart() {
+        let shells = ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/dash", "/bin/ksh", "/bin/tcsh", "/bin/csh", "/opt/homebrew/bin/fish", "/usr/local/bin/fish", "/usr/bin/fish"];
+        for sh in shells.into_iter().filter(|p| std::path::Path::new(p).exists()) {
+            let out = std::process::Command::new(sh).arg("-c").arg(PROBE).output().unwrap();
+            assert!(probe_says_posix(&String::from_utf8_lossy(&out.stdout)), "{sh}");
+        }
+        assert!(probe_says_posix("kybl'sh\r\n"));
+        // cmd.exe prints the line as it is; PowerShell's echo puts each word on its own line
+        for not in [r"'kybl'\''sh'", "kybl\n\\'sh", "", "This service allows sftp connections only.\n"] {
+            assert!(!probe_says_posix(not), "{not:?}");
+        }
     }
 }

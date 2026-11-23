@@ -211,12 +211,18 @@ fn git(git: &Path) -> Command {
     // reading the status never takes the index lock away from the user's own git, never asks for
     // anything, and never runs the fsmonitor or a hook a repository names (a folder on screen can
     // be one the user just downloaded: its `.git/config` is not to be trusted)
+    // It never talks to a remote either: a partial clone fetches missing objects from its
+    // "promisor" remote while reading the status, through the repository's own `core.sshCommand`,
+    // credential helper or `ext::` command. No lazy fetch (git 2.44+), and no transport allowed at
+    // all (the env list wins over every `protocol.*.allow` in the repository's config).
     c.env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_ALLOW_PROTOCOL", "kybl-none")
         .arg("--no-optional-locks")
         .arg("--literal-pathspecs");
-    for (k, v) in [("core.fsmonitor", "false"), ("core.hooksPath", NO_HOOKS), ("core.untrackedCache", "false")] {
+    for (k, v) in [("core.fsmonitor", "false"), ("core.hooksPath", NO_HOOKS), ("core.untrackedCache", "false"), ("credential.helper", "")] {
         c.arg("-c").arg(format!("{k}={v}"));
     }
     c
@@ -224,20 +230,23 @@ fn git(git: &Path) -> Command {
 
 /// The `-c` settings that switch off every program the repository's own config (and the files it
 /// includes) names for git to run: filter drivers (`clean`/`process` run while reading the status
-/// for files whose timestamps changed), diff and merge drivers. None: a name that can't be
-/// overridden safely, so git is not run there at all.
+/// for files whose timestamps changed), diff and merge drivers. The user's own filter drivers are
+/// switched off too: a trusted driver such as git-lfs reads the repository's config itself
+/// (`lfs.extension.*`) and runs what it names. None: a name that can't be overridden safely, so
+/// git is not run there at all.
 fn repo_overrides(names: &[(String, String)]) -> Option<Vec<String>> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for (scope, name) in names {
-        // the user's own (global/system) settings are trusted; the repository's are not
-        if !matches!(scope.as_str(), "local" | "worktree") {
-            continue;
-        }
         // git prints the section and key in lower case and the sub-section as written
         let Some((section, rest)) = name.split_once('.') else { continue };
         let Some((sub, _key)) = rest.rsplit_once('.') else { continue };
         let section = section.to_ascii_lowercase();
+        // the user's own (global/system) diff and merge drivers are trusted (status runs neither);
+        // the repository's are not
+        if section != "filter" && !matches!(scope.as_str(), "local" | "worktree") {
+            continue;
+        }
         let keys: &[&str] = match section.as_str() {
             "filter" => &["clean", "smudge", "process"],
             "diff" => &["textconv", "command"],
@@ -494,8 +503,11 @@ u UU N... 100644 100644 100644 100644 a b c conflict.txt\0\
         assert!(o.contains(&"filter.Pwn.required=false".to_string()));
         assert!(o.contains(&"diff.x.y.textconv=".to_string()));
         assert_eq!(o.iter().filter(|x| x.starts_with("filter.Pwn.clean")).count(), 1);
-        // the user's own filters stay
-        assert!(!o.iter().any(|x| x.contains("lfs")));
+        // the user's own filters are switched off too (git-lfs runs what the repository names)
+        assert!(o.contains(&"filter.lfs.clean=".to_string()));
+        assert!(o.contains(&"filter.lfs.process=".to_string()));
+        // the user's own diff drivers stay
+        assert!(repo_overrides(&[n("global", "diff.mine.textconv")]).unwrap().is_empty());
         // a name `-c` can't address: not run at all
         assert!(repo_overrides(&[n("local", "filter.a=b.clean")]).is_none());
         assert!(repo_overrides(&[n("local", "filter.a\nb.clean")]).is_none());
@@ -555,6 +567,62 @@ u UU N... 100644 100644 100644 100644 a b c conflict.txt\0\
         assert!(info.changes.is_empty());
         assert!(!flag("eq").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A partial clone whose index needs a missing object (rename detection between a staged
+    /// delete and add): git would fetch it from the promisor remote through the repository's own
+    /// `core.sshCommand`. Reading the status must not.
+    #[cfg(unix)]
+    #[test]
+    fn a_partial_clone_fetches_nothing() {
+        let Some(bin) = find_tool("git") else { return };
+        let base = std::env::temp_dir().join(format!("kybl-git-lazy-{}", uuid::Uuid::new_v4()));
+        let origin = base.join("origin");
+        let victim = base.join("victim");
+        std::fs::create_dir_all(&origin).unwrap();
+        // set up with a plain git: the app's own refuses every transport, file:// included
+        let run = |dir: &Path, args: &[&str]| {
+            Command::new(&bin)
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        };
+        assert!(run(&origin, &["init", "-q", "-b", "trunk"]));
+        for i in 1..=3 {
+            std::fs::write(origin.join(format!("f{i}.txt")), format!("content number {i} with some text in it\n")).unwrap();
+        }
+        assert!(run(&origin, &["add", "."]));
+        assert!(run(&origin, &["-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", "one"]));
+        assert!(run(&origin, &["config", "uploadpack.allowfilter", "true"]));
+        let url = format!("file://{}", origin.display());
+        if !run(&base, &["clone", "-q", "--no-checkout", "--filter=blob:none", &url, "victim"]) {
+            // a git without partial clone: nothing to test
+            let _ = std::fs::remove_dir_all(&base);
+            return;
+        }
+        assert!(run(&victim, &["read-tree", "HEAD"]));
+        assert!(run(&victim, &["rm", "-q", "--cached", "f1.txt"]));
+        std::fs::write(victim.join("h.txt"), "content number 1 with some text in it, changed\n").unwrap();
+        assert!(run(&victim, &["add", "h.txt"]));
+        let flag = base.join("PWNED");
+        assert!(run(&victim, &["config", "core.sshCommand", &format!("sh -c 'touch \"{}\"; exit 1' --", flag.display())]));
+        assert!(run(&victim, &["config", "protocol.ssh.allow", "always"]));
+        assert!(run(&victim, &["remote", "set-url", "origin", "ssh://example.invalid/repo"]));
+
+        let info = status_of(&victim, true).expect("a work tree");
+        assert_eq!(info.branch.as_deref(), Some("trunk"));
+        assert!(!flag.exists(), "git ran the repository's core.sshCommand");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// The real git, when there is one: a fresh repository with a change of each kind.

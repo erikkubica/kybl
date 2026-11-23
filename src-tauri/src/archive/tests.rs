@@ -403,28 +403,165 @@ fn extract_folder_must_be_one_plain_name() {
     }
 }
 
-/// The server-side name checks, run by a real sh on a list of names instead of an archive.
+/// Stand-ins for the server's `unzip`, `tar` and `zip`, driven by env vars: `N` is the one name
+/// the listing shows, `FAIL` makes the listing fail, `SLOW` makes the (un)packing hang (its pid
+/// goes to `$PIDFILE`). Unpacking otherwise leaves an `ok` file in the target.
+#[cfg(unix)]
+struct FakeServer {
+    s: Scratch,
+}
+
+#[cfg(unix)]
+impl FakeServer {
+    fn new() -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let s = Scratch::new();
+        std::fs::create_dir_all(s.0.join("bin")).unwrap();
+        let slow = r#"[ -n "$SLOW" ] && { echo $$ > "$PIDFILE"; exec sleep 30; }"#;
+        let tools = [
+            ("unzip", format!("case \"$1\" in\n-Z) [ -n \"$FAIL\" ] && exit 9; echo '-rw-r--r--  3.0 unx 2 tx stor 24-Jan-01 00:00 x'; exit 0;;\n-Z1) [ -n \"$FAIL\" ] && exit 9; printf '%s\\n' \"$N\"; exit 0;;\nesac\n{slow}\n: > \"$5/ok\"\n")),
+            ("tar", format!("case \"$1\" in\n-tvf) [ -n \"$FAIL\" ] && exit 9; echo '-rw-r--r--  0 0 0 2 Jan  1  2024 x'; exit 0;;\n-tf) [ -n \"$FAIL\" ] && exit 9; printf '%s\\n' \"$N\"; exit 0;;\nesac\n{slow}\n: > \"$4/ok\"\n")),
+            ("zip", format!(": > \"$4\"\n{slow}\nexit 0\n")),
+        ];
+        for (name, body) in tools {
+            let p = s.0.join("bin").join(name);
+            std::fs::write(&p, format!("#!/bin/sh\n{body}")).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        FakeServer { s }
+    }
+
+    fn dir(&self) -> String {
+        self.s.0.join("srv").to_string_lossy().into_owned()
+    }
+
+    /// `script` started by `sh` (in a process group of its own, like an SSH session).
+    fn start(&self, sh: &str, script: &str, env: &[(&str, &str)]) -> std::process::Child {
+        use std::os::unix::process::CommandExt;
+        std::fs::create_dir_all(self.dir()).unwrap();
+        let mut c = std::process::Command::new(sh);
+        c.arg("-c").arg(script).env("PATH", format!("{}:/usr/bin:/bin", self.s.0.join("bin").display())).env("PIDFILE", self.s.0.join("pid")).process_group(0);
+        c.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        c.spawn().unwrap()
+    }
+
+    fn run(&self, sh: &str, script: &str, env: &[(&str, &str)]) -> Option<i32> {
+        self.start(sh, script, env).wait().unwrap().code()
+    }
+
+    /// Starts `script` with the tool hanging, stops it the way the app does (TERM to the shell),
+    /// and says whether the tool is gone.
+    fn stop_midway(&self, sh: &str, script: &str) -> bool {
+        let _ = std::fs::remove_file(self.s.0.join("pid"));
+        let mut child = self.start(sh, script, &[("SLOW", "1")]);
+        let pid_file = self.s.0.join("pid");
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let tool: i32 = loop {
+            if let Some(p) = std::fs::read_to_string(&pid_file).ok().and_then(|t| t.trim().parse().ok()) {
+                break p;
+            }
+            assert!(std::time::Instant::now() < until, "the tool never started");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        // SAFETY: plain syscalls on processes this test started
+        unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+        let st = child.wait().unwrap();
+        assert_ne!(st.code(), Some(0));
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < until {
+            if unsafe { libc::kill(tool, 0) } != 0 {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        unsafe { libc::kill(tool, libc::SIGKILL) };
+        false
+    }
+
+    /// Hidden temporary files and folders the scripts left in the server folder.
+    fn leftovers(&self) -> Vec<String> {
+        std::fs::read_dir(self.dir()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.contains(".kybl-")).collect()
+    }
+}
+
+#[cfg(unix)]
+fn shells() -> Vec<&'static str> {
+    ["/bin/sh", "/bin/dash", "/bin/bash"].into_iter().filter(|p| Path::new(p).exists()).collect()
+}
+
+/// The server-side name checks, run by a real sh against stand-in tools.
 #[cfg(unix)]
 #[test]
 fn server_name_checks_refuse_unsafe_names() {
-    let checks = |format: Format, list_cmd: &str| -> String {
-        let ex = remote::extract_script("/srv/x", format, "/srv", "x");
-        ex.lines().find(|l| l.starts_with(list_cmd)).unwrap().to_string()
-    };
-    let zip = checks(Format::Zip, "unzip -Z1");
-    let tar = checks(Format::Tar, "tar -tf");
-    let refused = |line: &str, prefix: &str, name: &str| {
-        let script = line.replacen(prefix, "printf '%s\\n' \"$N\"", 1);
-        let st = std::process::Command::new("/bin/sh").arg("-c").arg(&script).env("N", name).status().unwrap();
-        st.code() == Some(125)
-    };
-    for name in ["../x", "a/../../x", "/etc/passwd", "..\\..\\x", "a\\b"] {
-        assert!(refused(&zip, "unzip -Z1 \"$A\"", name), "zip {name:?}");
-        assert!(refused(&tar, "tar -tf \"$A\"", name), "tar {name:?}");
+    let f = FakeServer::new();
+    let script = |format| remote::extract_script(&format!("{}/a", f.dir()), format, &f.dir(), "out");
+    for sh in shells() {
+        for format in [Format::Zip, Format::Tar, Format::TarGz] {
+            for name in ["../x", "a/../../x", "/etc/passwd", "..\\..\\x", "a\\b"] {
+                assert_eq!(f.run(sh, &script(format), &[("N", name)]), Some(125), "{sh} {format:?} {name:?}");
+            }
+            for name in ["a/b.txt", "..x/y", "x.."] {
+                let _ = std::fs::remove_dir_all(format!("{}/out", f.dir()));
+                assert_eq!(f.run(sh, &script(format), &[("N", name)]), Some(0), "{sh} {format:?} {name:?}");
+                assert!(Path::new(&format!("{}/out/ok", f.dir())).exists());
+            }
+        }
+        assert_eq!(f.run(sh, &script(Format::Zip), &[("N", "C:x")]), Some(125));
+        assert!(f.leftovers().is_empty(), "{:?}", f.leftovers());
     }
-    assert!(refused(&zip, "unzip -Z1 \"$A\"", "C:x"));
-    for name in ["a/b.txt", "..x/y", "x.."] {
-        assert!(!refused(&zip, "unzip -Z1 \"$A\"", name), "zip {name:?}");
-        assert!(!refused(&tar, "tar -tf \"$A\"", name), "tar {name:?}");
+}
+
+/// A listing that fails proves nothing: the server-side unpack is not done (the app's own path,
+/// which skips links and unsafe names, takes over).
+#[cfg(unix)]
+#[test]
+fn server_unpack_fails_closed_when_the_archive_cant_be_listed() {
+    let f = FakeServer::new();
+    for sh in shells() {
+        for format in [Format::Zip, Format::Tar] {
+            let _ = std::fs::remove_dir_all(format!("{}/out", f.dir()));
+            let script = remote::extract_script(&format!("{}/a", f.dir()), format, &f.dir(), "out");
+            assert_eq!(f.run(sh, &script, &[("N", "fine.txt"), ("FAIL", "1")]), Some(125), "{sh} {format:?}");
+            assert!(!Path::new(&format!("{}/out", f.dir())).exists());
+        }
     }
+}
+
+/// Stop while the server unzips or zips: the tool is stopped and the temporary folder or
+/// `.part` file removed, whichever sh the server has.
+#[cfg(unix)]
+#[test]
+fn stopping_a_server_side_unpack_or_zip_cleans_up() {
+    let f = FakeServer::new();
+    for sh in shells() {
+        for format in [Format::Zip, Format::TarGz] {
+            let script = remote::extract_script(&format!("{}/a", f.dir()), format, &f.dir(), "out");
+            assert!(f.stop_midway(sh, &script), "{sh} {format:?}: the unpack kept running");
+            assert!(f.leftovers().is_empty(), "{sh} {format:?}: {:?}", f.leftovers());
+        }
+        let script = remote::compress_script(&f.dir(), &["a b".into()], "Archive.zip");
+        assert!(f.stop_midway(sh, &script), "{sh}: zip kept running");
+        assert!(f.leftovers().is_empty(), "{sh}: {:?}", f.leftovers());
+    }
+}
+
+/// The scripts are one line, so a csh login shell passes them to sh whole.
+#[cfg(unix)]
+#[test]
+fn server_scripts_run_under_a_csh_login_shell() {
+    let f = FakeServer::new();
+    for csh in ["/bin/tcsh", "/bin/csh"].into_iter().filter(|p| Path::new(p).exists()) {
+        let _ = std::fs::remove_dir_all(format!("{}/out", f.dir()));
+        let ex = crate::actions::sh_c(&remote::extract_script(&format!("{}/it's a", f.dir()), Format::Zip, &f.dir(), "out")).unwrap();
+        assert_eq!(f.run(csh, &ex, &[("N", "x.txt")]), Some(0), "{csh}");
+        assert!(Path::new(&format!("{}/out/ok", f.dir())).exists());
+        let zip = crate::actions::sh_c(&remote::compress_script(&f.dir(), &["a b".into()], "A.zip")).unwrap();
+        assert_eq!(f.run(csh, &zip, &[]), Some(0), "{csh}");
+        assert!(Path::new(&format!("{}/A.zip", f.dir())).exists());
+    }
+    // a name with a line break is never sent
+    assert!(crate::actions::sh_c(&remote::compress_script("/srv", &["a\nb".into()], "A.zip")).is_none());
 }

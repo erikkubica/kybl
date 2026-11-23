@@ -179,8 +179,18 @@ fn key(profile_id: &str, tunnel_id: &str) -> String {
 }
 
 static RUNNING: LazyLock<Mutex<HashMap<String, Running>>> = LazyLock::new(Default::default);
-/// Being started (signing in): a second Start waits for nothing and is refused.
-static STARTING: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
+/// Being started (signing in): a second Start waits for nothing and is refused. Locked after
+/// [`RUNNING`] when both are, so a tunnel is always in one or the other while it starts.
+static STARTING: LazyLock<Mutex<HashMap<String, Starting>>> = LazyLock::new(Default::default);
+
+/// What happened to a tunnel while it was starting.
+#[derive(Default)]
+struct Starting {
+    /// Stop was pressed: it stops as soon as it's up
+    stop: bool,
+    /// its connection was saved: it starts again from the saved definition
+    changed: bool,
+}
 /// Started on their own in this run ("Start when the connection opens"): once only, so a tunnel
 /// the user stopped stays stopped.
 static AUTOSTARTED: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
@@ -413,13 +423,56 @@ fn find_def(profile: &Profile, tunnel_id: &str) -> Result<TunnelDef, String> {
 /// Starts tunnel `tunnel_id` of connection `profile_id` (already running: as it is).
 pub async fn start<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id: &str, tunnel_id: &str) -> Result<TunnelInfo, String> {
     let k = key(profile_id, tunnel_id);
-    if let Some(r) = RUNNING.lock().unwrap().get(&k) {
-        return Ok(r.info());
+    {
+        let all = RUNNING.lock().unwrap();
+        if let Some(r) = all.get(&k) {
+            return Ok(r.info());
+        }
+        let mut starting = STARTING.lock().unwrap();
+        if starting.contains_key(&k) {
+            return Err("This tunnel is starting.".into());
+        }
+        starting.insert(k.clone(), Starting::default());
     }
-    if !STARTING.lock().unwrap().insert(k.clone()) {
-        return Err("This tunnel is starting.".into());
+    // a save while signing in: up to a few more tries with what was saved
+    for _ in 0..3 {
+        let result = launch_from_profile(app, state, profile_id, tunnel_id).await;
+        let (running, again) = {
+            let mut all = RUNNING.lock().unwrap();
+            let mut starting = STARTING.lock().unwrap();
+            let s = starting.remove(&k).unwrap_or(Starting { stop: true, changed: false });
+            let again = s.changed && !s.stop;
+            if again {
+                starting.insert(k.clone(), Starting::default());
+            }
+            match result {
+                Ok(r) if !s.stop && !again => {
+                    let info = r.info();
+                    all.insert(k.clone(), r);
+                    drop((all, starting));
+                    emit_all(app);
+                    return Ok(info);
+                }
+                Ok(r) => (Some(r), again),
+                Err(_) if again => (None, true),
+                Err(e) => return Err(e),
+            }
+        };
+        if let Some(r) = running {
+            r.stop().await;
+        }
+        if !again {
+            emit_all(app);
+            return Err("Stopped.".into());
+        }
     }
-    let result = async {
+    STARTING.lock().unwrap().remove(&k);
+    Err("The connection kept changing while the tunnel started. Start it again.".into())
+}
+
+/// Signs in and opens the tunnel's port, from the connection as saved now.
+async fn launch_from_profile<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id: &str, tunnel_id: &str) -> Result<Running, String> {
+    async {
         let profile = load_profiles(app)?.into_iter().find(|p| p.id == profile_id).ok_or("Connection not found")?;
         let def = find_def(&profile, tunnel_id)?;
         super::check(&def)?;
@@ -434,19 +487,19 @@ pub async fn start<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id:
         running.server = Server::of(&profile);
         Ok::<_, String>(running)
     }
-    .await;
-    STARTING.lock().unwrap().remove(&k);
-    let running = result?;
-    let info = running.info();
-    RUNNING.lock().unwrap().insert(k, running);
-    emit_all(app);
-    Ok(info)
+    .await
 }
 
-/// Stops a tunnel; false when it wasn't running.
+/// Stops a tunnel (one still starting stops as soon as it's up); false when it wasn't running.
 pub async fn stop<R: Runtime>(app: &AppHandle<R>, profile_id: &str, tunnel_id: &str) -> bool {
-    let r = RUNNING.lock().unwrap().remove(&key(profile_id, tunnel_id));
-    let Some(r) = r else { return false };
+    let k = key(profile_id, tunnel_id);
+    let r = {
+        let mut all = RUNNING.lock().unwrap();
+        match all.remove(&k) {
+            Some(r) => r,
+            None => return STARTING.lock().unwrap().get_mut(&k).map(|s| s.stop = true).is_some(),
+        }
+    };
     r.stop().await;
     emit_all(app);
     true
@@ -505,6 +558,11 @@ pub fn connection_changed<R: Runtime>(app: &AppHandle<R>, profile_id: &str, prof
                     again.push((r.def.id.clone(), r.def.label()));
                 }
             }
+        }
+        // ones still signing in start again from what was saved (or find their definition gone)
+        let prefix = format!("{profile_id}\u{0}");
+        for (_, s) in STARTING.lock().unwrap().iter_mut().filter(|(k, _)| k.starts_with(&prefix)) {
+            s.changed = true;
         }
         let stopping: Vec<Running> = gone.iter().filter_map(|k| all.remove(k)).collect();
         if !stopping.is_empty() {

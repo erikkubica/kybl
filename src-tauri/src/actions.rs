@@ -50,10 +50,26 @@ pub fn quote(s: &str) -> String {
     out
 }
 
-/// A command for an SSH exec channel: `script` (POSIX sh) run by `sh`, whatever the account's
-/// login shell is (fish and csh read the quoting the same way, see [`quote`]).
-pub fn sh_c(script: &str) -> String {
-    format!("sh -c {}", quote(script))
+/// Whether `s` reads back the same through [`quote`] in every shell: no line break or other
+/// control character. csh and tcsh end a command at a newline even inside single quotes, and no
+/// quoting of a newline reads the same there and in POSIX shells, so text that goes to a server's
+/// shell (or to a csh login shell here) must not hold one.
+pub fn plain_text(s: &str) -> bool {
+    !s.chars().any(char::is_control)
+}
+
+/// Put before a server script that `cd`s into a folder others can write to: PATH keeps only
+/// absolute folders, so a `zip` or `rg` there is never the one that runs (a PATH with `.` or an
+/// empty entry would find it).
+const ABSOLUTE_PATH: &str = "set -f; P=; IFS=:; for d in $PATH; do case $d in /*) P=$P${P:+:}$d;; esac; done; unset IFS; set +f; PATH=$P; export PATH; ";
+
+/// A command for an SSH exec channel: `script` (POSIX sh, one line) run by `sh`, whatever the
+/// account's login shell is (fish and csh read the quoting the same way, see [`quote`]), with an
+/// absolute-only PATH. None when the script (a name in it) holds a line break or another control
+/// character (see [`plain_text`]): it isn't sent.
+pub fn sh_c(script: &str) -> Option<String> {
+    let script = format!("{ABSOLUTE_PATH}{script}");
+    plain_text(&script).then(|| format!("sh -c {}", quote(&script)))
 }
 
 /// A path or name as one word that can't be read as an option: one starting with "-" gets "./".
@@ -129,14 +145,28 @@ pub fn check_template(template: &str) -> Result<(), String> {
     }
     let mut stack = vec![Ctx::Plain];
     let b = template.as_bytes();
+    let placeholder_at = |i: usize| PLACEHOLDERS.iter().find(|w| template[i..].starts_with(&format!("{{{w}}}")));
+    // a here-document (`<<`, not bash's `<<<`) seen: its body is read like double quotes
+    let mut heredoc = false;
     let mut i = 0;
     while i < b.len() {
         let ctx = *stack.last().unwrap();
         let c = b[i];
+        // `\{path}`: the backslash would then sit right before the opening quote of the value
+        if c == b'\\' && ctx != Ctx::Single {
+            if let Some(w) = placeholder_at(i + 1) {
+                return Err(format!("{{{w}}} comes right after a backslash. Take the backslash away: it would undo Kybl's quoting of the file name."));
+            }
+        }
+        if matches!(ctx, Ctx::Plain | Ctx::Subst(_)) && b[i..].starts_with(b"<<") && !b[i..].starts_with(b"<<<") && !(i > 0 && b[i - 1] == b'<') {
+            heredoc = true;
+        }
         // a placeholder here (`${word}` is the shell's)
         if c == b'{' && !(i > 0 && b[i - 1] == b'$') {
-            let rest = &template[i + 1..];
-            if let Some(w) = PLACEHOLDERS.iter().find(|w| rest.starts_with(&format!("{w}}}"))) {
+            if let Some(w) = placeholder_at(i) {
+                if heredoc {
+                    return Err(format!("{{{w}}} is in a command with a here-document (<<). Pass it as an argument instead: inside a here-document a file name could run as a command."));
+                }
                 if matches!(ctx, Ctx::Single | Ctx::Double) {
                     return Err(format!("{{{w}}} is inside quotes. Take the quotes away around it: Kybl quotes every placeholder itself, and inside other quotes a file name could run as a command."));
                 }
@@ -347,6 +377,13 @@ pub fn custom_action_preview(template: String, items: Vec<Item>, dir: String) ->
     Ok(expand(&template, &items, &dir))
 }
 
+/// The message for an item (or the folder) whose name can't be passed to a shell on a server or
+/// to csh (see [`plain_text`]); None when every name can.
+fn unquotable(items: &[Item], dir: &str) -> Option<String> {
+    let bad = items.iter().map(|i| i.path.as_str()).chain([dir]).find(|p| !plain_text(p))?;
+    Some(format!("“{}” has a line break or another control character in its name, so it can't be passed to a command.", name_of(bad).escape_debug()))
+}
+
 async fn run<R: Runtime>(app: &AppHandle<R>, state: &AppState, spec: &RunSpec, cancel: &AtomicBool) -> Result<RunEnd, String> {
     let mut sink = Sink::new(app, &spec.run_id);
     check_template(&spec.template)?;
@@ -359,6 +396,9 @@ async fn run<R: Runtime>(app: &AppHandle<R>, state: &AppState, spec: &RunSpec, c
                 items.push(Item { path: sftp.remote_path(&it.path).await?, is_dir: it.is_dir });
             }
             let dir = sftp.remote_path(&spec.dir).await?;
+            if let Some(bad) = unquotable(&items, &dir) {
+                return Err(crate::storage::StorageError::other(bad));
+            }
             let lines = expand(&spec.template, &items, &dir);
             for (i, line) in lines.iter().enumerate() {
                 if cancel.load(Ordering::Relaxed) {
@@ -386,6 +426,11 @@ async fn run<R: Runtime>(app: &AppHandle<R>, state: &AppState, spec: &RunSpec, c
         sftp.disconnect().await;
         r?;
     } else {
+        if local::csh() {
+            if let Some(bad) = unquotable(&spec.items, &spec.dir) {
+                return Err(bad);
+            }
+        }
         let lines = expand(&spec.template, &spec.items, &spec.dir);
         for (i, line) in lines.iter().enumerate() {
             if cancel.load(Ordering::Relaxed) {
@@ -424,10 +469,23 @@ mod local {
 
     use tokio::{io::AsyncReadExt, process::Command};
 
+    #[cfg(unix)]
+    fn user_shell() -> String {
+        std::env::var("SHELL").ok().filter(|s| s.starts_with('/') && Path::new(s).exists()).unwrap_or_else(|| "/bin/sh".into())
+    }
+
+    /// Whether the user's shell is csh or tcsh (see [`super::plain_text`]).
+    pub fn csh() -> bool {
+        #[cfg(unix)]
+        return user_shell().rsplit('/').next().is_some_and(|n| n.ends_with("csh"));
+        #[cfg(not(unix))]
+        false
+    }
+
     /// The user's shell as a login shell (so PATH has Homebrew and the like, as in Terminal).
     #[cfg(unix)]
     fn shell(line: &str) -> Command {
-        let sh = std::env::var("SHELL").ok().filter(|s| s.starts_with('/') && Path::new(s).exists()).unwrap_or_else(|| "/bin/sh".into());
+        let sh = user_shell();
         let mut c = Command::new(sh);
         c.args(["-l", "-c", line]);
         // its own process group, so Stop ends what it started too
@@ -490,15 +548,24 @@ mod local {
         let (mut out_open, mut err_open) = (true, true);
         let mut tick = tokio::time::interval(Duration::from_millis(100));
         let mut stopped_at: Option<tokio::time::Instant> = None;
+        // the shell's exit status once it has ended, and when output last came (or it ended)
+        let mut exited: Option<(std::process::ExitStatus, tokio::time::Instant)> = None;
+        let mut quiet_since = tokio::time::Instant::now();
         while out_open || err_open {
             tokio::select! {
                 r = out.read(&mut ob), if out_open => match r {
                     Ok(0) | Err(_) => out_open = false,
-                    Ok(n) => on_data(false, &ob[..n]),
+                    Ok(n) => {
+                        quiet_since = tokio::time::Instant::now();
+                        on_data(false, &ob[..n]);
+                    }
                 },
                 r = err.read(&mut eb), if err_open => match r {
                     Ok(0) | Err(_) => err_open = false,
-                    Ok(n) => on_data(true, &eb[..n]),
+                    Ok(n) => {
+                        quiet_since = tokio::time::Instant::now();
+                        on_data(true, &eb[..n]);
+                    }
                 },
                 _ = tick.tick() => {
                     check(&mut child, cancel, &mut stopped_at);
@@ -506,14 +573,30 @@ mod local {
                     if stopped_at.is_some_and(|t| t.elapsed() > Duration::from_secs(4)) {
                         break;
                     }
+                    // the shell ended but something it started in the background (`editor {path} &`,
+                    // a daemon) still holds the pipes: done once that has been quiet a moment, or
+                    // two seconds after the shell ended at the latest
+                    if exited.is_none() {
+                        if let Ok(Some(s)) = child.try_wait() {
+                            exited = Some((s, tokio::time::Instant::now()));
+                        }
+                    }
+                    if let Some((_, at)) = exited {
+                        if at.max(quiet_since).elapsed() > Duration::from_millis(300) || at.elapsed() > Duration::from_secs(2) {
+                            break;
+                        }
+                    }
                 }
             }
         }
-        let status = loop {
-            tokio::select! {
-                s = child.wait() => break s.map_err(|e| e.to_string())?,
-                _ = tick.tick() => check(&mut child, cancel, &mut stopped_at),
-            }
+        let status = match exited {
+            Some((s, _)) => s,
+            None => loop {
+                tokio::select! {
+                    s = child.wait() => break s.map_err(|e| e.to_string())?,
+                    _ = tick.tick() => check(&mut child, cancel, &mut stopped_at),
+                }
+            },
         };
         Ok((status.code(), stopped_at.is_some()))
     }
@@ -522,6 +605,10 @@ mod local {
 #[cfg(not(desktop))]
 mod local {
     use std::sync::atomic::AtomicBool;
+
+    pub fn csh() -> bool {
+        false
+    }
 
     pub async fn run(_line: &str, _dir: &str, _cancel: &AtomicBool, _on_data: impl FnMut(bool, &[u8])) -> Result<(Option<i32>, bool), String> {
         Err("Actions run on a computer.".into())
@@ -617,6 +704,58 @@ mod tests {
             assert!(check_template(ok).is_ok(), "{ok}");
         }
         assert!(check_template(r#"x "{path}""#).unwrap_err().starts_with("{path} is inside quotes"));
+    }
+
+    /// A heredoc body expands `$( … )` in the quoted value; `\{path}` leaves the value half quoted.
+    #[test]
+    fn placeholders_in_heredocs_or_after_backslashes_are_refused() {
+        for bad in ["cat <<EOF\n{name}\nEOF", "cat <<-'X'\n{path}\nX", r"echo \{path}", "x $(cat <<E\n{dir}\nE\n)"] {
+            assert!(check_template(bad).is_err(), "{bad:?}");
+        }
+        assert!(check_template(r"echo \{path}").unwrap_err().contains("backslash"));
+        assert!(check_template("cat <<EOF\n{name}\nEOF").unwrap_err().contains("here-document"));
+        for ok in ["cat <<< {path}", "echo '<<' {path}", r"echo \\ {path}"] {
+            assert!(check_template(ok).is_ok(), "{ok}");
+        }
+    }
+
+    /// Server scripts never carry a line break or control character (csh would end the command
+    /// there, see `plain_text`), and run with an absolute-only PATH.
+    #[test]
+    fn server_scripts_refuse_control_characters() {
+        assert!(sh_c("echo ok").is_some());
+        for bad in ["a\nb", "a\rb", "a\u{1b}b", "a\u{85}b", "a\u{7f}b"] {
+            assert!(sh_c(&format!("ls -- {}", quote(bad))).is_none(), "{bad:?}");
+            assert!(!plain_text(bad));
+        }
+        let it = [item("/srv/new\nline.txt")];
+        assert!(unquotable(&it, "/srv").unwrap().contains("line break"));
+        assert!(unquotable(&[item("/srv/ok.txt")], "/srv/x\ny").is_some());
+        assert!(unquotable(&[item("/srv/ok 'it'.txt")], "/srv").is_none());
+    }
+
+    /// csh and tcsh, when installed: every name without a control character reads back as itself
+    /// through `sh_c`, and a newline (which would break out there) never gets that far.
+    #[cfg(unix)]
+    #[test]
+    fn csh_reads_the_quoting_back() {
+        for csh in ["/bin/tcsh", "/bin/csh"].into_iter().filter(|p| std::path::Path::new(p).exists()) {
+            for p in NASTY.iter().copied().filter(|p| plain_text(p)).chain([r"\'; touch /tmp/kybl-csh-pwned; echo \", "a b ~ {x,y} &|;<> $HOME"]) {
+                let cmd = sh_c(&format!("printf %s {}", quote(p))).unwrap();
+                let out = std::process::Command::new(csh).arg("-f").arg("-c").arg(&cmd).output().unwrap();
+                assert_eq!(String::from_utf8_lossy(&out.stdout), p, "{csh}: {p:?} {}", String::from_utf8_lossy(&out.stderr));
+            }
+        }
+        assert!(!std::path::Path::new("/tmp/kybl-csh-pwned").exists());
+    }
+
+    /// The PATH the server scripts run with keeps absolute folders only.
+    #[cfg(unix)]
+    #[test]
+    fn server_scripts_drop_relative_path_entries() {
+        let cmd = sh_c("printf %s \"$PATH\"").unwrap();
+        let out = std::process::Command::new("/bin/sh").arg("-c").arg(&cmd).env("PATH", ":.:/usr/bin:bin:/bin::").output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "/usr/bin:/bin");
     }
 
     #[cfg(unix)]
@@ -721,6 +860,16 @@ mod tests {
             let t = std::time::Instant::now();
             let (code, stopped) = local::run("sleep 30; echo late", "/", &cancel, |_, _| {}).await.unwrap();
             assert!(stopped && code.is_none() && t.elapsed() < std::time::Duration::from_secs(5));
+
+            // something left running in the background holds the pipes: the run still ends with
+            // the shell, output before that included
+            let cancel = AtomicBool::new(false);
+            let t = std::time::Instant::now();
+            let mut out = Vec::new();
+            let (code, stopped) = local::run("printf before; sleep 20 & exit 4", "/", &cancel, |_, b| out.extend_from_slice(b)).await.unwrap();
+            assert_eq!((code, stopped), (Some(4), false));
+            assert_eq!(out, b"before");
+            assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
         });
     }
 }
