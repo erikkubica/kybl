@@ -12,7 +12,7 @@ pub fn hex(d: &[u8]) -> String {
     d.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn is_md5_hex(s: &str) -> bool {
+pub(super) fn is_md5_hex(s: &str) -> bool {
     s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 

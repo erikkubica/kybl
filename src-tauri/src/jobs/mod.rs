@@ -13,6 +13,7 @@
 //!   quit prompt counts them. Phones: a running job keeps the transfer notification (Android's
 //!   foreground service, iOS's background task) like a transfer does.
 //! - Startup resumes jobs that were running; S3 uploads carry on from their confirmed parts.
+//! - A mirror (`mirror.rs`) is a job made with its list of copies and deletions already planned.
 
 mod copy;
 pub mod db;
@@ -20,6 +21,7 @@ mod hash;
 mod host;
 mod ignore;
 mod live;
+pub mod mirror;
 mod plan;
 mod run;
 pub mod types;
@@ -140,6 +142,9 @@ impl JobManager {
     }
 
     pub fn create(&self, mut spec: JobSpec) -> Result<String, String> {
+        if spec.mirror.is_some() {
+            return self.create_mirror(spec);
+        }
         if spec.src.items.is_empty() {
             return Err("Pick something to copy first.".into());
         }

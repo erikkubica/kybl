@@ -23,6 +23,7 @@ import { MoveDialog } from "../components/MoveDialog";
 import type { MenuItem } from "../components/Dialogs";
 import type { Entry } from "../types";
 import { itemClipboard } from "../desktop/clipboard";
+import { mirrorItems, placeEnd } from "../mirror";
 import type { PaneCore, PaneEnv } from "./usePane";
 
 /** localStorage: the first "Keep on this device" explained what two-way sync means */
@@ -256,6 +257,9 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     env.openMigration({ profileId: profile.id, root: bucket, items: [{ path: prefix, isDir: true }] }, "copy");
   };
 
+  /** "Mirror to…" and the saved mirrors from this folder (src/mirror) */
+  const mirrorFor = (dir: string) => mirrorItems(placeEnd(profile, bucket, dir, pane.bucketLabel), dialogs, () => env.showActivity());
+
   // ------------------------------------------------------------ favorites
   const favoriteOf = (pid: string, b: string, pre: string) => settings.favorites.find((f) => f.profileId === pid && f.bucket === b && f.prefix === pre);
   const removeFavorite = (f: Favorite) =>
@@ -295,6 +299,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
           !onDisk && keepItem(prefix),
           ...(onDisk ? [] : driveFor(prefix)),
           !!env.openMigration && { type: "item", label: prefix ? "Copy this folder to another connection…" : "Copy everything to another connection…", icon: "copy", onClick: migrateHere },
+          ...mirrorFor(prefix),
           isS3 && { type: "item", label: "Copy S3 URI", icon: "copy", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") },
           onDisk && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: pane.showHidden, onClick: toggleHidden },
           ...(env.extraPlaceItems?.() ?? []),
@@ -385,6 +390,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       folder && !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(e.key) },
       folder && !onDisk && keepItem(e.key),
       ...(folder && !onDisk ? driveFor(e.key) : []),
+      ...(folder ? mirrorFor(e.key) : []),
       { type: "sep" },
       { type: "item", label: one ? "Rename…" : `Rename ${list.length} items…`, icon: "edit", hint: "F2", onClick: () => rename(list) },
       { type: "item", label: list.length > 1 ? `Delete ${list.length} items…` : "Delete…", icon: "trash", hint: "⌘⌫", danger: true, onClick: () => ops.askDelete(list) },

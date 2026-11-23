@@ -13,6 +13,7 @@ export function jobFinishedToast(j: JobSummary): { kind: "success" | "error"; te
   const verbed = j.spec.mode === "move" ? "moved" : "copied";
   if (p.state === "done" && p.filesFailed > 0)
     return { kind: "error", text: `${j.title}: ${p.filesFailed.toLocaleString()} ${p.filesFailed === 1 ? "file" : "files"} couldn't be ${verbed}` };
+  if (p.state === "done" && j.spec.mirror) return { kind: "success", text: `${j.title}: done` };
   if (p.state === "done") return { kind: "success", text: `${j.spec.mode === "move" ? "Moved" : "Copied"} ${lowerLead(j.title)}` };
   if (p.state === "failed") return { kind: "error", text: `${j.title} stopped: ${errSummary(p.error ?? "something went wrong")}` };
   // cancelled: the user did that themselves

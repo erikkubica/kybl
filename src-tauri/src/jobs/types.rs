@@ -80,6 +80,41 @@ pub struct JobSpec {
     pub ignore: Vec<String>,
     #[serde(default)]
     pub title: String,
+    /// "Mirror": exactly these files, then the deletions (see `mirror.rs`). Planned when the job
+    /// is made; the lists aren't kept in the stored spec, only their counts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<Mirror>,
+}
+
+/// A mirror's plan, worked out (and shown) by the page before the job starts.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Mirror {
+    /// files to copy, and folders to make (ending with `/`), relative to the source folder and
+    /// to `dst.dir` alike
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub copy: Vec<MirrorFile>,
+    /// files, and folders (ending with `/`), to delete at the destination, relative to `dst.dir`
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub delete: Vec<String>,
+    #[serde(default)]
+    pub copies: u64,
+    #[serde(default)]
+    pub deletes: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MirrorFile {
+    pub rel: String,
+    #[serde(default)]
+    pub size: i64,
+    #[serde(default)]
+    pub mtime: Option<i64>,
+    #[serde(default)]
+    pub etag: Option<String>,
+    #[serde(default)]
+    pub md5: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

@@ -72,7 +72,11 @@ export function jobMeta(j: JobSummary): string {
     case "needsAuth":
       return [counts, bytes].filter(Boolean).join(" · ");
     case "done": {
-      const parts = [`${files(p.filesDone)} ${moved}${p.bytesDone > 0 ? ` (${formatBytes(p.bytesDone)})` : ""}`];
+      // a mirror's deletions count as files done too: split them out when they all went
+      const del = j.spec.mirror?.deletes ?? 0;
+      const split = del > 0 && p.filesFailed === 0 && p.filesDone >= del;
+      const parts = [`${files(split ? p.filesDone - del : p.filesDone)} ${moved}${p.bytesDone > 0 ? ` (${formatBytes(p.bytesDone)})` : ""}`];
+      if (split) parts.push(`${n(del)} deleted`);
       if (p.filesSkipped > 0) parts.push(`${n(p.filesSkipped)} already there`);
       return parts.join(" · ");
     }

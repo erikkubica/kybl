@@ -66,6 +66,7 @@ fn file_item(src: &dyn Storage, e: &Entry, dst: String) -> NewItem {
         md5: md5_of(e, src.caps()),
         is_dir: false,
         dst_fold: String::new(),
+        del: false,
     }
 }
 

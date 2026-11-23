@@ -166,6 +166,7 @@ fn spec(src_root: &str, items: &[(&str, bool)], dst_root: &str, dir: &str) -> Jo
         preserve_mtime: false,
         ignore: vec![],
         title: String::new(),
+        mirror: None,
     }
 }
 
@@ -530,6 +531,69 @@ fn failed_files_can_be_retried() {
         assert_eq!((j.progress.files_failed, j.progress.files_done), (0, 2));
         assert!(m.failures(&id, 0, 10).unwrap().is_empty());
     });
+}
+
+// ---------------------------------------------------------------- mirror
+
+fn mf(rel: &str, size: i64) -> MirrorFile {
+    MirrorFile { rel: rel.into(), size, ..Default::default() }
+}
+
+#[test]
+fn a_mirror_copies_its_list_then_deletes_only_what_it_was_given() {
+    tauri::async_runtime::block_on(async {
+        let (s, d) = (tmp(), tmp());
+        write(&s.0, "site/index.html", b"<h1>new</h1>");
+        write(&s.0, "site/css/site.css", b"body{}");
+        write(&s.0, "site/same.txt", b"same");
+        write(&s.0, "site/not-in-plan.txt", b"left out by the preview");
+        write(&d.0, "live/index.html", b"<h1>old</h1>!!");
+        write(&d.0, "live/same.txt", b"same");
+        write(&d.0, "live/old.html", b"gone from the source");
+        write(&d.0, "live/stale/a.txt", b"a");
+        write(&d.0, "live/uploads/user.jpg", b"kept: excluded, so not in the list");
+        write(&d.0, "live/keep-me.txt", b"not in the delete list");
+        std::fs::create_dir_all(d.0.join("live/empty-old")).unwrap();
+        let (src, sr) = local(&s.0);
+        let (dst, dr) = local(&d.0);
+        let m = JobManager::open(None, TestHost::with(vec![("src", src), ("dst", dst)])).unwrap();
+        let mut sp = spec(&sr, &[("site", true)], &dr, "live");
+        sp.conflict = Conflict::Overwrite;
+        sp.mirror = Some(Mirror {
+            copy: vec![mf("css/", 0), mf("css/site.css", 6), mf("index.html", 12)],
+            delete: vec!["old.html".into(), "stale/a.txt".into(), "stale/".into(), "empty-old/".into(), "uploads/".into(), "already-gone.txt".into()],
+            ..Default::default()
+        });
+        let id = m.create(sp).unwrap();
+        let j = finished(&m, &id).await;
+        assert_eq!(j.progress.state, JobState::Done);
+        assert_eq!(j.title, "Mirror site");
+        assert_eq!(j.spec.mirror, Some(Mirror { copies: 2, deletes: 6, ..Default::default() }), "the stored spec keeps counts, not lists");
+        assert_eq!((j.progress.files_failed, j.progress.files_done), (0, 5), "{:?}", m.failures(&id, 0, 9));
+        let got = files(&d.0);
+        assert_eq!(got["live/index.html"], b"<h1>new</h1>");
+        assert_eq!(got["live/css/site.css"], b"body{}");
+        assert!(!got.contains_key("live/not-in-plan.txt"), "only what the preview listed is copied");
+        assert!(!got.contains_key("live/old.html") && !got.contains_key("live/stale/a.txt"));
+        assert!(!d.0.join("live/stale").exists() && !d.0.join("live/empty-old").exists(), "emptied folders go");
+        assert_eq!(got["live/uploads/user.jpg"], b"kept: excluded, so not in the list", "a folder with files left in it stays");
+        assert!(got.contains_key("live/keep-me.txt") && got.contains_key("live/same.txt"));
+    });
+}
+
+#[test]
+fn a_mirror_is_refused_when_its_folders_overlap_or_it_has_nothing_to_do() {
+    let m = JobManager::open(None, TestHost::with(vec![])).unwrap();
+    let mut sp = spec("/r", &[("site/", true)], "/r", "site/live/");
+    sp.dst.profile_id = "src".into();
+    sp.mirror = Some(Mirror { copy: vec![mf("a.txt", 1)], ..Default::default() });
+    assert!(m.create(sp.clone()).unwrap_err().contains("inside the other"));
+    sp.dst = Dest { profile_id: "dst".into(), root: "/q".into(), dir: String::new() };
+    sp.mirror = Some(Mirror::default());
+    assert!(m.create(sp.clone()).unwrap_err().contains("Nothing to do"));
+    sp.mirror = Some(Mirror { delete: vec!["../etc".into()], ..Default::default() });
+    assert!(m.create(sp).is_err());
+    assert!(m.list().unwrap().is_empty(), "no job was recorded");
 }
 
 // ---------------------------------------------------------------- S3 (rclone serve s3)
