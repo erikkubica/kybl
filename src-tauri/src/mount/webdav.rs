@@ -18,6 +18,9 @@
 //!   Until then the drive shows the local copy.
 //! - **Clutter** (`._*`, `.DS_Store`, Spotlight and Trash folders) never reaches the server
 //!   ([`super::junk`]).
+//! - **Web-only files** (Google Docs and the like) show as `Name.gdoc.html` shortcuts that open
+//!   the document in the browser ([`super::link`]). Renaming, moving or deleting one does that
+//!   to the document; writing to one is refused.
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -44,6 +47,7 @@ use unicode_normalization::UnicodeNormalization;
 use super::{
     cache::{BlockCache, FileVersion, BLOCK},
     junk::{is_junk_dir, is_junk_path, JunkStore},
+    link,
     writeback::{BaseState, Event, Listener, WriteBack},
 };
 use crate::storage::{BoxFuture, Entry, ErrKind, Loc, ServerCopy, Storage, StorageError};
@@ -130,6 +134,12 @@ impl Meta {
     }
     fn file(e: &Entry, fallback: SystemTime) -> Self {
         Self { len: e.size.max(0) as u64, modified: ms_to_time(e.modified, fallback), dir: false, etag: e.etag.clone() }
+    }
+    /// A web-only file's shortcut: the size of the page the drive makes (so a client reads all
+    /// of it), and no etag of the store's: the page changes with its name and link, not with
+    /// the document.
+    fn link(e: &Entry, fallback: SystemTime) -> Self {
+        Self { len: link_page(e).len() as u64, modified: ms_to_time(e.modified, fallback), dir: false, etag: None }
     }
 }
 
@@ -226,6 +236,14 @@ struct Listing {
     at: Instant,
     dirs: BTreeSet<String>,
     files: BTreeMap<String, Entry>,
+    /// web-only files by their shortcut's name (`Plan.gdoc.html`); the entry keeps the real key
+    links: BTreeMap<String, Entry>,
+}
+
+/// The page a web-only file's shortcut holds, titled with the file's own name.
+fn link_page(e: &Entry) -> Vec<u8> {
+    let (_, title) = split_key(e.key.trim_end_matches('/'));
+    link::page(title, link::web_url(e).unwrap_or_default())
 }
 
 /// Where a path of the drive points.
@@ -240,6 +258,8 @@ enum Node {
 enum Found {
     Pending(super::writeback::Pending),
     File(Entry),
+    /// a web-only file's shortcut; the entry's key is the real file's
+    Link(Entry),
     Dir,
 }
 
@@ -444,7 +464,8 @@ impl Inner {
     async fn list_now(&self, root: &str, dir: &str, epoch: u64) -> FsResult<Arc<Listing>> {
         let started = Instant::now();
         let s = self.storage().await?;
-        let mut l = Listing { at: Instant::now(), dirs: BTreeSet::new(), files: BTreeMap::new() };
+        let mut l = Listing { at: Instant::now(), dirs: BTreeSet::new(), files: BTreeMap::new(), links: BTreeMap::new() };
+        let mut web_only = Vec::new();
         let mut token = None;
         loop {
             let page = match s.list(root, dir, token).await {
@@ -465,12 +486,29 @@ impl Inner {
                 if name.is_empty() || name.ends_with('/') || name.contains('/') || is_junk_path(&name) {
                     continue;
                 }
+                if link::web_url(&o).is_some() {
+                    web_only.push((name, o));
+                    continue;
+                }
                 l.files.insert(name, o);
             }
             match page.next_token {
                 Some(t) => token = Some(t),
                 None => break,
             }
+        }
+        // named once everything else is known, so a shortcut never hides a real file: a taken
+        // name gets a number ("Plan (2).gdoc.html"), in a stable order
+        web_only.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.key.cmp(&b.1.key)));
+        for (name, o) in web_only {
+            let tag = link::tag(&o);
+            let mut n = 1;
+            let mut link_name = link::name(&name, tag, n);
+            while l.dirs.contains(&link_name) || l.files.contains_key(&link_name) || l.links.contains_key(&link_name) {
+                n += 1;
+                link_name = link::name(&name, tag, n);
+            }
+            l.links.insert(link_name, o);
         }
         super::server::timing(|| format!("list {dir:?}: {} items in {} ms", l.dirs.len() + l.files.len(), started.elapsed().as_millis()));
         let l = Arc::new(l);
@@ -533,15 +571,17 @@ impl Inner {
         let hit = |n: &str| -> Option<Found> {
             if l.dirs.contains(n) {
                 Some(Found::Dir)
+            } else if let Some(e) = l.files.get(n) {
+                Some(Found::File(e.clone()))
             } else {
-                l.files.get(n).map(|e| Found::File(e.clone()))
+                l.links.get(n).map(|e| Found::Link(e.clone()))
             }
         };
         if let Some(f) = hit(name) {
             return Ok(Some((key.to_string(), f)));
         }
         let want = nfc(name);
-        let other = l.dirs.iter().chain(l.files.keys()).find(|n| nfc(n) == want).cloned();
+        let other = l.dirs.iter().chain(l.files.keys()).chain(l.links.keys()).find(|n| nfc(n) == want).cloned();
         Ok(other.and_then(|n| hit(&n).map(|f| (format!("{parent}{n}"), f))))
     }
 
@@ -574,6 +614,7 @@ impl Inner {
         match f {
             Found::Dir => Meta::dir(self.started),
             Found::File(e) => Meta::file(e, self.started),
+            Found::Link(e) => Meta::link(e, self.started),
             Found::Pending(p) => self.pending_meta(p),
         }
     }
@@ -615,6 +656,9 @@ impl Inner {
                 }
                 for (name, e) in &l.files {
                     out.insert(name.clone(), Meta::file(e, self.started));
+                }
+                for (name, e) in &l.links {
+                    out.insert(name.clone(), Meta::link(e, self.started));
                 }
                 for p in self.uploads.in_dir(&root, &dir) {
                     let name = p.key[dir.len()..].to_string();
@@ -675,8 +719,13 @@ impl Inner {
                     let ver = FileVersion { root: root.clone(), key: real, size: e.size.max(0) as u64, version };
                     Ok(Box::new(RemoteRead { fs: self.clone(), storage, ver, meta: Meta::file(&e, self.started), pos: 0, cur: None }))
                 }
+                Some((_, Found::Link(e))) => Ok(Box::new(MemFile { data: Bytes::from(link_page(&e)), pos: 0, meta: Some(Meta::link(&e, self.started)) })),
                 _ => Err(FsError::NotFound),
             };
+        }
+        // the shortcut is made here, from the document's link: there is nothing to save it to
+        if matches!(found, Some((_, Found::Link(_)))) {
+            return Err(FsError::Forbidden);
         }
         if self.read_only(&root).await {
             return Err(FsError::Forbidden);
@@ -779,6 +828,14 @@ impl Inner {
                 self.forget_parent(&root, &real);
                 Ok(())
             }
+            // deleting the shortcut deletes the document, as with Drive for desktop's own
+            // shortcuts (Drive keeps it in its trash)
+            Some((real, Found::Link(e))) => {
+                let s = self.storage().await?;
+                s.delete(&root, std::slice::from_ref(&e.key), &[], &AtomicBool::new(false), &|_, _| {}).await.map_err(fs_err)?;
+                self.forget_parent(&root, &real);
+                Ok(())
+            }
             Some(_) => Err(FsError::Forbidden),
             None if had_pending => Ok(()),
             None => Err(FsError::NotFound),
@@ -830,6 +887,11 @@ impl Inner {
         }
         let (root, key) = self.file_node(&rf).await?;
         let (root2, key2) = self.file_node(&rt).await?;
+        let pending = self.uploads.get(&root, &key);
+        let remote = self.remote(&root, &key).await?;
+        if let (Some((_, Found::Link(e))), None) = (&remote, &pending) {
+            return self.rename_link(&root, &key, e, &root2, &key2).await;
+        }
         if root != root2 {
             // the client copies and deletes instead
             return Err(FsError::IsRemote);
@@ -839,8 +901,6 @@ impl Inner {
         }
         let (parent2, name2) = split_key(&key2);
         let key2 = format!("{parent2}{}", nfc(name2));
-        let pending = self.uploads.get(&root, &key);
-        let remote = self.remote(&root, &key).await?;
         let s = self.storage().await?;
         match (&remote, &pending) {
             (Some((real, Found::Dir)), _) => {
@@ -881,6 +941,31 @@ impl Inner {
         Ok(())
     }
 
+    /// Renames or moves the document behind a shortcut: the shortcut's ending comes off the new
+    /// name ("Plan.gdoc.html" to "Q3.gdoc.html" renames the document "Q3"). Refused across roots,
+    /// where a client would copy the shortcut's page and delete the document.
+    async fn rename_link(&self, root: &str, key: &str, e: &Entry, root2: &str, key2: &str) -> FsResult<()> {
+        if root != root2 || self.read_only(root).await {
+            return Err(FsError::Forbidden);
+        }
+        let (parent2, name2) = split_key(key2);
+        let target = link::target_name(name2, link::tag(e)).ok_or(FsError::Forbidden)?;
+        let to = format!("{parent2}{}", nfc(target));
+        // the store would replace what is there; the client only checked the shortcut's name
+        match self.lookup(root, &to).await? {
+            None => {}
+            Some(_) if to == e.key => {}
+            Some(_) => return Err(FsError::Exists),
+        }
+        if to != e.key {
+            let s = self.storage().await?;
+            s.rename(&Loc::new(root, e.key.clone()), &Loc::new(root, to.clone()), false).await.map_err(fs_err)?;
+        }
+        self.forget_parent(root, key);
+        self.forget_parent(root, &to);
+        Ok(())
+    }
+
     /// What the server has at `key`, as an edit's base.
     async fn remote_base(&self, root: &str, key: &str) -> FsResult<Option<BaseState>> {
         Ok(match self.remote(root, key).await? {
@@ -903,7 +988,14 @@ impl Inner {
         }
         let (parent2, name2) = split_key(&key2);
         let key2 = format!("{parent2}{}", nfc(name2));
-        let seen = self.remote_base(&root2, &key2).await?;
+        let dest = self.remote(&root2, &key2).await?;
+        if matches!(dest, Some((_, Found::Link(_)))) {
+            return Err(FsError::Forbidden);
+        }
+        let seen = match &dest {
+            Some((_, Found::File(e))) => Some(BaseState::of(e)),
+            _ => None,
+        };
         let temp = self.uploads.new_temp().map_err(io_err)?;
         // true: `temp` holds the copy, to upload; false: copied on the server already
         let result: FsResult<bool> = async {
@@ -929,6 +1021,28 @@ impl Inner {
                         return Ok(false);
                     }
                     self.download(&root, &real, &temp).await?;
+                }
+                Some((_, Found::Link(e))) => {
+                    // a copy of the document where the store can copy it, which keeps it live
+                    // (Finder's Duplicate); else a copy of the shortcut's page, which still works
+                    let s = self.storage().await?;
+                    let server_copy = match s.caps().server_copy {
+                        ServerCopy::CrossRoot => true,
+                        ServerCopy::SameRoot => root == root2,
+                        ServerCopy::None => false,
+                    };
+                    let tag = link::tag(&e);
+                    let target = name2.strip_suffix(&format!(".{tag}.html")).filter(|t| !t.is_empty());
+                    if let Some(target) = target.filter(|_| server_copy) {
+                        let to = format!("{parent2}{}", nfc(target));
+                        if self.lookup(&root2, &to).await?.is_some() {
+                            return Err(FsError::Exists);
+                        }
+                        s.copy(&Loc::new(&root, e.key.clone()), &Loc::new(&root2, to.clone()), false).await.map_err(fs_err)?;
+                        self.forget_parent(&root2, &to);
+                        return Ok(false);
+                    }
+                    std::fs::write(&temp, link_page(&e)).map_err(io_err)?;
                 }
                 _ => return Err(FsError::NotFound),
             }
@@ -990,7 +1104,7 @@ impl Inner {
     pub fn age_caches(&self, by: Duration) {
         let older = |at: Instant| at.checked_sub(by).unwrap_or(at);
         for l in self.listings.lock().unwrap().values_mut() {
-            *l = Arc::new(Listing { at: older(l.at), dirs: l.dirs.clone(), files: l.files.clone() });
+            *l = Arc::new(Listing { at: older(l.at), dirs: l.dirs.clone(), files: l.files.clone(), links: l.links.clone() });
         }
         if let Some((at, _)) = &mut *self.roots.lock().unwrap() {
             *at = older(*at);
@@ -1313,17 +1427,20 @@ impl DavFile for WriteFile {
 struct MemFile {
     data: Bytes,
     pos: usize,
+    /// what the file says of itself, when it isn't just "this many bytes, now"
+    meta: Option<Meta>,
 }
 
 impl MemFile {
     fn new(data: Bytes) -> Self {
-        Self { data, pos: 0 }
+        Self { data, pos: 0, meta: None }
     }
 }
 
 impl DavFile for MemFile {
     fn metadata(&mut self) -> FsFuture<'_, Box<dyn DavMetaData>> {
-        let m: Box<dyn DavMetaData> = Box::new(Meta { len: self.data.len() as u64, modified: SystemTime::now(), dir: false, etag: None });
+        let meta = self.meta.clone().unwrap_or_else(|| Meta { len: self.data.len() as u64, modified: SystemTime::now(), dir: false, etag: None });
+        let m: Box<dyn DavMetaData> = Box::new(meta);
         async move { Ok(m) }.boxed()
     }
     fn write_buf(&mut self, _buf: Box<dyn Buf + Send>) -> FsFuture<'_, ()> {

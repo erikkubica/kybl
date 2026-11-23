@@ -757,3 +757,213 @@ async fn real_macos_mount() {
     tokio::task::spawn_blocking(move || super::os::unmount(&m2, "", false)).await.unwrap().expect("unmounted");
     assert!(!super::os::is_mounted(&m));
 }
+
+// ---------------------------------------------------------------- web-only files (Google Docs)
+
+/// A Drive-like store with one root `d`: Google Docs (no bytes, a `native` link) beside one real
+/// file whose name is what a doc's shortcut would be called. Remembers what was done to it.
+struct DocStore {
+    caps: crate::storage::Capabilities,
+    files: std::sync::Mutex<std::collections::BTreeMap<String, crate::storage::Entry>>,
+    done: std::sync::Mutex<Vec<String>>,
+}
+
+impl DocStore {
+    fn new() -> Self {
+        let doc = |key: &str, kind: &str, id: &str| crate::storage::Entry {
+            key: key.into(),
+            size: 0,
+            modified: Some(1_700_000_000_000),
+            etag: Some("v3".into()),
+            id: Some(id.into()),
+            mime: Some(format!("application/vnd.google-apps.{kind}")),
+            native: Some(crate::storage::NativeDoc { exports: vec![], web_url: Some(format!("https://docs.example.test/{id}/edit?a=1&b=2")) }),
+            ..Default::default()
+        };
+        let mut files = std::collections::BTreeMap::new();
+        for e in [
+            doc("Plan", "document", "p1"),
+            doc("Budget", "spreadsheet", "b1"),
+            doc("Survey", "form", "s1"),
+            doc("Report", "document", "r1"),
+            crate::storage::Entry { key: "Report.gdoc.html".into(), size: 5, ..Default::default() },
+            crate::storage::Entry { key: "sub/keep.txt".into(), size: 4, ..Default::default() },
+        ] {
+            files.insert(e.key.clone(), e);
+        }
+        Self {
+            caps: crate::storage::Capabilities { server_copy: crate::storage::ServerCopy::SameRoot, ..Default::default() },
+            files: std::sync::Mutex::new(files),
+            done: Default::default(),
+        }
+    }
+    fn has(&self, key: &str) -> bool {
+        self.files.lock().unwrap().contains_key(key)
+    }
+    fn done(&self) -> Vec<String> {
+        self.done.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl Storage for DocStore {
+    fn kind(&self) -> crate::storage::ConnKind {
+        crate::storage::ConnKind::S3
+    }
+    fn caps(&self) -> &crate::storage::Capabilities {
+        &self.caps
+    }
+    async fn roots(&self) -> crate::storage::SResult<Vec<crate::storage::RootInfo>> {
+        Ok(vec![crate::storage::RootInfo { id: "d".into(), name: "My Drive".into(), kind: RootKind::Drive, created: None, read_only: false }])
+    }
+    async fn list(&self, _: &str, dir: &str, _: Option<String>) -> crate::storage::SResult<crate::storage::Page> {
+        let mut page = crate::storage::Page::default();
+        for (k, e) in self.files.lock().unwrap().iter() {
+            let Some(rest) = k.strip_prefix(dir) else { continue };
+            match rest.split_once('/') {
+                Some((d, _)) => {
+                    let f = format!("{dir}{d}/");
+                    if !page.folders.contains(&f) {
+                        page.folders.push(f);
+                    }
+                }
+                None => page.objects.push(e.clone()),
+            }
+        }
+        Ok(page)
+    }
+    async fn stat(&self, _: &str, path: &str) -> crate::storage::SResult<Option<crate::storage::Entry>> {
+        Ok(self.files.lock().unwrap().get(path).cloned())
+    }
+    async fn read(&self, _: &str, path: &str, _: Option<std::ops::Range<u64>>, _: Option<&str>) -> crate::storage::SResult<crate::storage::ReadStream> {
+        self.done.lock().unwrap().push(format!("read {path}"));
+        let e = self.files.lock().unwrap().get(path).cloned();
+        let Some(e) = e else { return crate::storage::unsupported() };
+        let b = bytes::Bytes::from(vec![b'x'; e.size as usize]);
+        let len = b.len() as u64;
+        Ok(crate::storage::ReadStream { body: Box::pin(futures_util::stream::iter(vec![Ok(b)])), len: Some(len), total: Some(len), range: None, etag: None, content_type: None })
+    }
+    async fn write(
+        &self,
+        _: &str,
+        path: &str,
+        _: crate::storage::WriteSource,
+        _: crate::storage::WriteOpts<'_>,
+        _: crate::storage::Progress<'_>,
+        _: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> crate::storage::SResult<crate::storage::WriteOutcome> {
+        self.done.lock().unwrap().push(format!("write {path}"));
+        crate::storage::unsupported()
+    }
+    async fn mkdir(&self, _: &str, _: &str) -> crate::storage::SResult<()> {
+        Ok(())
+    }
+    async fn delete(&self, _: &str, files: &[String], _: &[String], _: &std::sync::atomic::AtomicBool, _: &(dyn Fn(u64, u64) + Send + Sync)) -> crate::storage::SResult<(u64, u64)> {
+        for f in files {
+            self.done.lock().unwrap().push(format!("delete {f}"));
+            self.files.lock().unwrap().remove(f);
+        }
+        Ok((files.len() as u64, 0))
+    }
+    async fn copy(&self, from: &crate::storage::Loc, to: &crate::storage::Loc, _: bool) -> crate::storage::SResult<()> {
+        self.done.lock().unwrap().push(format!("copy {} -> {}", from.path, to.path));
+        let mut files = self.files.lock().unwrap();
+        let mut e = files.get(&from.path).cloned().expect("copied file exists");
+        e.key = to.path.clone();
+        files.insert(to.path.clone(), e);
+        Ok(())
+    }
+    async fn rename(&self, from: &crate::storage::Loc, to: &crate::storage::Loc, _: bool) -> crate::storage::SResult<()> {
+        self.done.lock().unwrap().push(format!("rename {} -> {}", from.path, to.path));
+        let mut files = self.files.lock().unwrap();
+        let mut e = files.remove(&from.path).expect("renamed file exists");
+        e.key = to.path.clone();
+        files.insert(to.path.clone(), e);
+        Ok(())
+    }
+}
+
+async fn doc_drive() -> (Drive, Arc<DocStore>) {
+    let base = std::env::temp_dir().join(format!("kybl-docs-{}", uuid::Uuid::new_v4()));
+    let store = Arc::new(DocStore::new());
+    let blocks = Arc::new(BlockCache::open(base.join("cache"), 64 * 1024 * 1024));
+    let uploads = Arc::new(WriteBack::open(base.join("uploads")));
+    let fs = KyblFs::new(opener(store.clone()), Spec { bucket: "d".into(), prefix: String::new(), read_only: false }, blocks, uploads);
+    let srv = server::start(fs.clone(), 0, server::random_token(), false).await.unwrap();
+    (Drive { _tmp: Tmp(base.clone()), data: base, fs, srv, http: crate::storage::net::http() }, store)
+}
+
+/// The `getcontentlength` a Depth 1 PROPFIND gives for `name` (already URL-encoded).
+fn listed_len(xml: &str, name: &str) -> Option<u64> {
+    let at = xml.find(&format!("/{name}<"))?;
+    let rest = &xml[at..];
+    let rest = &rest[..rest.find("response>").unwrap_or(rest.len())];
+    let a = rest.find("getcontentlength>")? + "getcontentlength>".len();
+    rest[a..].split('<').next()?.parse().ok()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn google_docs_show_as_shortcuts_that_open_in_the_browser() {
+    let (d, store) = doc_drive().await;
+    let (st, xml) = d.propfind("/").await;
+    assert!(st.is_success(), "{st}");
+    // every web-only kind gets a shortcut named for it; the bare names are gone
+    for name in ["Plan.gdoc.html", "Budget.gsheet.html", "Survey.gform.html"] {
+        assert!(xml.contains(&format!("/{name}<")), "{name} listed: {xml}");
+    }
+    assert!(!xml.contains("/Plan<") && !xml.contains("/Budget<"), "{xml}");
+    // a real file keeps its name; the doc's shortcut gets a number instead
+    assert!(xml.contains("/Report.gdoc.html<") && xml.contains("/Report%20%282%29.gdoc.html<"), "{xml}");
+    assert_eq!(d.get("Report.gdoc.html").await.1, b"xxxxx");
+
+    // the listed size is the page's, so a client reads all of it
+    let (st, body) = d.get("Plan.gdoc.html").await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(listed_len(&xml, "Plan.gdoc.html"), Some(body.len() as u64), "{xml}");
+    let page = String::from_utf8(body).unwrap();
+    assert!(page.contains("http-equiv=\"refresh\"") && page.contains("url=https://docs.example.test/p1/edit?a=1&amp;b=2\""), "{page}");
+    assert!(page.contains("<title>Plan</title>"), "{page}");
+    let (_, survey) = d.get("Survey.gform.html").await;
+    assert!(String::from_utf8(survey).unwrap().contains("https://docs.example.test/s1/edit"));
+    // the store was never asked for a doc's bytes
+    assert!(!store.done().iter().any(|o| o.starts_with("read Plan") || o.starts_with("read Survey")), "{:?}", store.done());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn google_doc_shortcuts_are_read_only_and_rename_delete_and_copy_the_doc() {
+    let (d, store) = doc_drive().await;
+    // writing over a shortcut is refused and reaches nothing
+    let r = d.req("PUT", "Plan.gdoc.html").await.body("nope").send().await.unwrap();
+    assert!(r.status().is_client_error(), "{}", r.status());
+    assert!(d.fs.0.uploads.pending().is_empty());
+    assert!(store.has("Plan"));
+
+    // renaming keeps the shortcut's ending off the doc's name
+    let r = d.req("MOVE", "Plan.gdoc.html").await.header("Destination", d.url("Q3%20plan.gdoc.html")).send().await.unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    assert!(store.has("Q3 plan") && !store.has("Plan"), "{:?}", store.done());
+    let (_, xml) = d.propfind("/").await;
+    assert!(xml.contains("/Q3%20plan.gdoc.html<"), "{xml}");
+    // moving into a folder moves the doc
+    let r = d.req("MOVE", "Q3%20plan.gdoc.html").await.header("Destination", d.url("sub/Q3%20plan.gdoc.html")).send().await.unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    assert!(store.has("sub/Q3 plan"), "{:?}", store.done());
+    // a name that isn't a shortcut's any more is refused
+    let r = d.req("MOVE", "sub/Q3%20plan.gdoc.html").await.header("Destination", d.url("sub/plain")).send().await.unwrap();
+    assert!(r.status().is_client_error(), "{}", r.status());
+    assert!(store.has("sub/Q3 plan"));
+    // and so is one that would land on a real file
+    let r = d.req("MOVE", "Budget.gsheet.html").await.header("Destination", d.url("sub/keep.txt.html")).send().await.unwrap();
+    assert!(!r.status().is_success(), "{}", r.status());
+    assert!(store.has("sub/keep.txt") && store.has("Budget"));
+
+    // Duplicate copies the doc itself (still live), named like its shortcut
+    let r = d.req("COPY", "Budget.gsheet.html").await.header("Destination", d.url("Budget%20copy.gsheet.html")).send().await.unwrap();
+    assert!(r.status().is_success(), "{}", r.status());
+    assert!(store.done().contains(&"copy Budget -> Budget copy".to_string()), "{:?}", store.done());
+
+    // deleting the shortcut deletes the doc
+    assert!(d.req("DELETE", "Budget.gsheet.html").await.send().await.unwrap().status().is_success());
+    assert!(!store.has("Budget") && store.has("Budget copy"));
+    assert!(!store.done().iter().any(|o| o.starts_with("write")), "{:?}", store.done());
+}

@@ -6,6 +6,7 @@ import { Icon } from "../Icons";
 import { prettyPath } from "../sync";
 import type { Profile } from "../types";
 import { fileManagerName, mountWhere, reloadMounts, useMounts } from "./useMounts";
+import { ejectLabel } from "./driveMenu";
 import "./mount.css";
 
 type Toast = (kind: "success" | "error" | "info", text: string) => void;
@@ -137,7 +138,7 @@ export function MountsSection({ profiles, onToast }: { profiles: Profile[]; onTo
                       <Icon name="reveal" size={13} /> Show in {fm}
                     </button>
                     <button className="btn btn-sm" disabled={busy === m.id} onClick={() => run(m.id, () => mountApi.mountEject(m.id))}>
-                      Unmount
+                      {ejectLabel()}
                     </button>
                   </>
                 ) : (

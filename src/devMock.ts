@@ -1185,6 +1185,17 @@ function demoPdf(): ArrayBuffer {
           uploadSent: 9_000_000,
           notice: "“budget.xlsx” changed on the server while you edited it, so your version was saved as “budget (conflict 2026-11-22 19.30).xlsx”.",
         }),
+        // the sidebar's drive marks: a mounted bucket, a mounted one-root server, one that failed
+        base({ id: "m-static", bucket: "static-assets", name: "static-assets", mountPoint: point("static-assets") }),
+        base({ id: "m-site", profileId: "n1", bucket: "", name: "Web server", mountPoint: point("Web server") }),
+        base({
+          id: "m-minio",
+          profileId: "p3",
+          bucket: "",
+          name: "Local MinIO",
+          state: "error",
+          error: "The system couldn't mount the drive.\n\nmount_webdav: exited with 1",
+        }),
       ];
   const changed = (m: Mount) => emit("mount-status", m);
   // the uploading drive finishes in a few seconds

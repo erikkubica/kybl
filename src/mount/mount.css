@@ -47,3 +47,41 @@
   color: var(--dim);
   font-size: 12px;
 }
+
+/* the sidebar's mark on a mounted connection or bucket: Finder's eject glyph, quiet until hovered */
+.drive-badge {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+.drive-badge:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.side-item.sub .drive-badge svg {
+  margin: 0;
+  color: inherit;
+}
+.side-item.sub.selected .drive-badge {
+  color: var(--accent);
+}
+.drive-badge.error {
+  color: var(--warn);
+}
+.drive-badge .spinner {
+  width: 11px;
+  height: 11px;
+  border-width: 1.5px;
+}
+.drive-badge:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
