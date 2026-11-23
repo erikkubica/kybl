@@ -35,7 +35,8 @@ export type WorkspaceBarProps = {
   /** the tab whose settings are open (its cog stays lit) */
   settingsId: string | null;
   onPick: (id: string) => void;
-  onNew: () => void;
+  /** "+" (`anchor`: the button, for a menu of recipes under it) */
+  onNew: (anchor?: DOMRect) => void;
   onEdit: (id: string) => void;
   /** a rename ended: the new name, or null when it was cancelled */
   onEditEnd: (id: string, name: string | null) => void;
@@ -341,7 +342,7 @@ export function WorkspaceBar(p: WorkspaceBarProps) {
           })}
         </div>
       </div>
-      <button type="button" className={`icon-btn ws-new ${p.drop?.id === NEW_WS ? "drop-over springing" : ""}`} onClick={p.onNew} title="New workspace (⌘T)" aria-label="New workspace">
+      <button type="button" className={`icon-btn ws-new ${p.drop?.id === NEW_WS ? "drop-over springing" : ""}`} onClick={(e) => p.onNew(e.currentTarget.getBoundingClientRect())} title="New workspace (⌘T)" aria-label="New workspace">
         <Icon name="plus" size={15} />
       </button>
       <div className="ws-fill" data-tauri-drag-region />

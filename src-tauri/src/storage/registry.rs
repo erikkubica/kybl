@@ -25,12 +25,19 @@ pub async fn open<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id: 
     }
     let s: Arc<dyn Storage> = if profile_id == LOCAL_ID {
         Arc::new(LocalBackend::system(app).await?)
+    } else if profile_id.starts_with(crate::archive::PREFIX) {
+        // an archive opened like a folder (src/archive), after a restart or cache eviction
+        crate::archive::reopen(app, state, profile_id).await?
     } else {
         let profile = load_profiles(app)?
             .into_iter()
             .find(|p| p.id == profile_id)
             .ok_or_else(|| "Connection not found".to_string())?;
-        build(app, state, &profile, None).await?
+        let s = build(app, state, &profile, None).await?;
+        // its "Start when the connection opens" SSH tunnels
+        #[cfg(desktop)]
+        crate::tunnels::run::autostart(app, &profile);
+        s
     };
     OPEN.lock().unwrap().insert(profile_id.to_string(), s.clone());
     Ok(s)
@@ -120,6 +127,11 @@ async fn net_secrets(state: &AppState, profile: &Profile, cfg: &NetConfig, secre
         None => get_secret(state, &profile.id).await?,
     };
     Ok(net::Secrets { password, ssh: None })
+}
+
+/// Keeps a backend made elsewhere under `id` (an archive opened like a folder: src/archive).
+pub fn insert(id: &str, s: Arc<dyn Storage>) {
+    OPEN.lock().unwrap().insert(id.to_string(), s);
 }
 
 /// An SFTP connection of its own (not the shared one that lists and transfers), for running

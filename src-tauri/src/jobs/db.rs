@@ -6,6 +6,8 @@
 //!
 //! A mirror's deletions are rows too (`del = 1`, see `mirror.rs`): the copying passes them by,
 //! and they are deleted at the destination once every copy is done.
+//!
+//! A `failed` row with `skip = 1` was never copyable (a link to a folder): retrying leaves it be.
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
@@ -82,6 +84,8 @@ pub struct NewItem {
     pub dst_fold: String,
     /// a mirror's deletion of `dst_path` at the destination
     pub del: bool,
+    /// why it isn't copied (a link to a folder): recorded as failed with this, never tried
+    pub not_copied: Option<String>,
 }
 
 /// One row of `items`, as the copier needs it.
@@ -188,13 +192,13 @@ pub fn save_page(c: &mut Connection, job_id: &str, items: &[NewItem], cursor_jso
 fn insert_items(tx: &rusqlite::Transaction, job_id: &str, items: &[NewItem]) -> DbResult<()> {
     let mut ins = tx
         .prepare_cached(
-            "INSERT OR IGNORE INTO items(job_id, src_path, dst_path, size, src_etag, src_mtime, src_md5, is_dir, dst_fold, del)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT OR IGNORE INTO items(job_id, src_path, dst_path, size, src_etag, src_mtime, src_md5, is_dir, dst_fold, del, state, skip, error)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, CASE WHEN ?11 IS NULL THEN 'pending' ELSE 'failed' END, ?11 IS NOT NULL, ?11)",
         )
         .map_err(e)?;
     for it in items {
         let fold = if it.dst_fold.is_empty() { &it.dst_path } else { &it.dst_fold };
-        ins.execute(params![job_id, it.src_path, it.dst_path, it.size, it.etag, it.mtime, it.md5, it.is_dir as i64, fold, it.del as i64]).map_err(e)?;
+        ins.execute(params![job_id, it.src_path, it.dst_path, it.size, it.etag, it.mtime, it.md5, it.is_dir as i64, fold, it.del as i64, it.not_copied]).map_err(e)?;
     }
     Ok(())
 }
@@ -342,7 +346,7 @@ pub fn deleted(c: &mut Connection, job_id: &str, srcs: &[String]) -> DbResult<()
 
 pub fn fail(c: &Connection, job_id: &str, src: &str, error: &str) -> DbResult<()> {
     c.execute(
-        "UPDATE items SET state = 'failed', error = ?3, attempts = attempts + 1 WHERE job_id = ?1 AND src_path = ?2",
+        "UPDATE items SET state = 'failed', skip = 0, error = ?3, attempts = attempts + 1 WHERE job_id = ?1 AND src_path = ?2",
         params![job_id, src, error],
     )
     .map_err(e)?;
@@ -472,7 +476,7 @@ pub fn failures(c: &Connection, job_id: &str, offset: u64, limit: u64) -> DbResu
 }
 
 pub fn retry_failed(c: &Connection, job_id: &str) -> DbResult<usize> {
-    c.execute("UPDATE items SET state = 'pending', attempts = 0, error = NULL WHERE job_id = ?1 AND state = 'failed'", [job_id]).map_err(e)
+    c.execute("UPDATE items SET state = 'pending', attempts = 0, error = NULL WHERE job_id = ?1 AND state = 'failed' AND skip = 0", [job_id]).map_err(e)
 }
 
 /// Totals of a job's files (folders aren't counted).

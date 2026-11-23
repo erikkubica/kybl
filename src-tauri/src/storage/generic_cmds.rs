@@ -403,7 +403,12 @@ pub(crate) async fn copy_through(s: &dyn Storage, from: &Loc, to: &Loc, is_dir: 
                 return Err(StorageError::cancelled());
             }
             let dst = format!("{}{}", to.path, &e.key[from.path.len()..]);
-            if e.is_dir() {
+            if let Some(target) = &e.link {
+                // a link to a folder stays a link (the walk doesn't go into it)
+                if s.caps().links {
+                    s.make_link(&to.root, &dst, target).await?;
+                }
+            } else if e.is_dir() {
                 s.mkdir(&to.root, &dst).await?;
             } else {
                 copy_file(e.key, dst).await?;
@@ -663,7 +668,7 @@ pub(crate) async fn download_resumable(
 }
 
 /// Told the version a download fetches.
-pub(crate) type Seen = dyn Fn(Option<&str>) + Send + Sync;
+pub(crate) type Seen<'a> = dyn Fn(Option<&str>) + Send + Sync + 'a;
 
 /// What a download is told and tells back besides its bytes.
 #[derive(Default)]
@@ -671,7 +676,7 @@ pub(crate) struct Dl<'a> {
     /// set together with the cancel flag: stop, but keep the partial file to carry on later
     pub pause: Option<&'a AtomicBool>,
     /// told the version (ETag) being fetched as soon as it is known
-    pub seen: Option<&'a Seen>,
+    pub seen: Option<&'a Seen<'a>>,
     /// the version fetched
     pub etag: Option<String>,
     /// the byte it started from (above 0: it carried on a partial file)

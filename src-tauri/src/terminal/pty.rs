@@ -148,6 +148,13 @@ impl Pty {
         }
     }
 
+    /// Whether a program other than the shell runs in the foreground: the terminal's foreground
+    /// process group isn't the shell's own (the shell leads its session, so its group is its pid).
+    pub fn busy(&self) -> bool {
+        let fg = unsafe { libc::tcgetpgrp(self.master.as_raw_fd()) };
+        fg > 0 && fg != self.pid
+    }
+
     /// Stops reading: what the terminal still holds is left behind.
     pub fn stop_reading(&mut self) {
         if let Some(w) = self.wake.take() {
@@ -253,6 +260,30 @@ mod tests {
         let lines: Vec<&str> = out.lines().map(str::trim).collect();
         assert_eq!(lines, vec!["24 80", "/"]);
         assert_eq!(code, Some(3));
+    }
+
+    #[tokio::test]
+    async fn a_program_in_the_foreground_makes_the_shell_busy() {
+        let args: Vec<&OsStr> = ["-i"].iter().map(OsStr::new).collect();
+        let (pty, mut ev) = Pty::spawn(Path::new("/bin/sh"), &args, Path::new("/"), &[("PS1", "$ ".into()), ("ENV", "/dev/null".into())], 80, 24, 64).unwrap();
+        // drain the output meanwhile, so nothing blocks on a full queue
+        tokio::spawn(async move { while ev.output.recv().await.is_some() {} });
+        let wait_for = |want: bool| {
+            let pty = &pty;
+            async move {
+                for _ in 0..100 {
+                    if pty.busy() == want {
+                        return true;
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                false
+            }
+        };
+        assert!(wait_for(false).await, "an interactive shell at rest isn't busy");
+        pty.write(b"sleep 5\r".to_vec());
+        assert!(wait_for(true).await, "a program in the foreground makes it busy");
+        drop(pty);
     }
 
     #[tokio::test]

@@ -38,14 +38,19 @@ export function FileIcon({ entry, size = 17, big, children }: { entry: Entry; si
       ) : (
         <Icon name={iconFor(entry)} size={size} />
       )}
-      {entry.link !== undefined && (
-        <span className="ico-link" title={entry.link ? `Link to ${entry.link}` : "Link"} aria-label="Link">
-          <svg viewBox="0 0 10 10" aria-hidden="true">
-            <path d="M3 7.2 7.2 3M4.2 3H7.2V6" />
-          </svg>
-        </span>
-      )}
+      {entry.link !== undefined && <LinkBadge link={entry.link} />}
       {children}
+    </span>
+  );
+}
+
+/** The arrow in the corner of a symbolic link's icon (or of its thumbnail, on its own). */
+export function LinkBadge({ link }: { link: string }) {
+  return (
+    <span className="ico-link" title={link ? `Link to ${link}` : "Link"} aria-label="Link">
+      <svg viewBox="0 0 10 10" aria-hidden="true">
+        <path d="M3 7.2 7.2 3M4.2 3H7.2V6" />
+      </svg>
     </span>
   );
 }

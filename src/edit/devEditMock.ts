@@ -143,6 +143,11 @@ export async function handleEdit(cmd: string, a: Record<string, unknown>): Promi
       if (m) void changed(m);
       return null;
     }
+    case "edit_local_text": {
+      const m = sessions.get(String(a.id));
+      if (!m) throw "That file isn't being edited any more.";
+      return m.local;
+    }
     case "edit_resolve": {
       const m = sessions.get(String(a.id));
       if (!m) throw "That file isn't being edited any more.";

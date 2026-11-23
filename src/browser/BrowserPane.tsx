@@ -6,7 +6,8 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import { Icon } from "../Icons";
 import { Toolbar } from "../components/Toolbar";
-import { rootIcon } from "../connections/roots";
+import { rootIcon, rootsMode } from "../connections/roots";
+import { peekCaps } from "../useCaps";
 import { FileTable, type SortKey } from "../components/FileTable";
 import { GridView } from "../components/GridView";
 import { QuickLook } from "../desktop/QuickLook";
@@ -126,6 +127,17 @@ export function BrowserPane(p: BrowserPaneProps) {
       ...(p.dualItems?.() ?? []),
     ]);
 
+  // the path while nothing is open: a server has no buckets, it's connecting or it couldn't
+  const rootsKind = profile ? rootsMode(profile, peekCaps(profile.id)) : null;
+  const emptyLabel = !profile
+    ? "No connection"
+    : rootsKind === "single"
+      ? p.bucketNote || p.bucketError
+        ? "Not connected"
+        : "Connecting…"
+      : rootsKind === "drives"
+        ? "No place selected"
+        : "No bucket selected";
   return (
     <section
       className={`browser-pane ${p.dual ? (active ? "is-active" : "is-inactive") : ""} ${p.lifted ? "lifted" : ""}`}
@@ -142,6 +154,7 @@ export function BrowserPane(p: BrowserPaneProps) {
         bucket={bucket}
         bucketLabel={pane.bucketLabel}
         bucketIcon={pane.profile ? rootIcon(pane.profile.id, bucket ?? "") : undefined}
+        emptyLabel={emptyLabel}
         prefix={prefix}
         searchActive={!!search}
         searchRunning={!!search?.running && !search.stopped}

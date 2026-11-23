@@ -86,6 +86,12 @@ base64 = "0.22"
 unicode-normalization = "0.1"
 filetime = "0.2"
 
+# Archives (src/archive): browse, extract and compress .zip, .tar and .tar.gz. Deflate only (no
+# AES, bzip2, zstd or lzma); flate2 is already in the tree, here on its pure-Rust miniz backend.
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+tar = { version = "0.4", default-features = false }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
 # Desktop only: the menu-bar icon, launch at login and two-way folder sync (a phone has no folders
 # to keep in sync and no menu bar).
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

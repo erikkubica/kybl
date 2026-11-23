@@ -1,6 +1,13 @@
 /** The result of Compare folders: what differs between the two panes, and what got selected. */
 import { Modal } from "../components/Dialogs";
+import { Icon } from "../Icons";
+import { canDiff, openDiff } from "../viewers/diff";
+import type { Entry } from "../types";
 import type { FolderDiff } from "./compareFolders";
+
+type At = { profileId: string; bucket: string; prefix: string };
+/** Files shown with a Compare button (the rest are only counted). */
+const MAX_COMPARE = 8;
 
 const n = (count: number, one: string, many = `${one}s`) => `${count.toLocaleString()} ${count === 1 ? one : many}`;
 
@@ -10,11 +17,16 @@ export function CompareSummary({
   rightName,
   sides = ["left", "right"],
   partial,
+  leftAt,
+  rightAt,
   onClose,
 }: {
   diff: FolderDiff;
   leftName: string;
   rightName: string;
+  /** where the two folders are: files that differ get a Compare button (the text diff) */
+  leftAt?: At | null;
+  rightAt?: At | null;
   /** where the two panes are: side by side, or one above the other */
   sides?: ["left", "right"] | ["top", "bottom"];
   /** a listing was not loaded to the end: only the loaded items were compared */
@@ -24,6 +36,13 @@ export function CompareSummary({
   const leftSel = diff.leftOnly.length + diff.leftNewer.length + diff.differ.length;
   const rightSel = diff.rightOnly.length + diff.rightNewer.length + diff.differ.length;
   const nothing = leftSel + rightSel === 0;
+  // files on both sides that differ, and that are text: one click to see how
+  const differing: Entry[] = [...diff.leftNewer, ...diff.rightNewer, ...diff.differ.map(([a]) => a)].filter((e) => e.kind === "file" && canDiff(e));
+  const compare = (e: Entry) => {
+    if (!leftAt || !rightAt) return;
+    const side = (at: At, where: string) => ({ profileId: at.profileId, bucket: at.bucket, key: at.prefix + e.name, name: e.name, label: `${e.name} · ${where}` });
+    void openDiff(side(leftAt, leftName), side(rightAt, rightName));
+  };
   return (
     <Modal title="Compare folders" onClose={onClose} width={460} dismissOnBackdrop>
       <div className="modal-body compare-body">
@@ -41,6 +60,19 @@ export function CompareSummary({
               {diff.differ.length > 0 && <li>{n(diff.differ.length, "file")} differ, with no telling which is newer</li>}
               <li className="dim">{n(diff.same, "item")} the same</li>
             </ul>
+            {leftAt && rightAt && differing.length > 0 && (
+              <ul className="compare-files">
+                {differing.slice(0, MAX_COMPARE).map((e) => (
+                  <li key={e.key}>
+                    <span title={e.name}>{e.name}</span>
+                    <button type="button" className="btn btn-sm" onClick={() => compare(e)}>
+                      <Icon name="compare" size={12} /> Compare
+                    </button>
+                  </li>
+                ))}
+                {differing.length > MAX_COMPARE && <li className="dim">and {n(differing.length - MAX_COMPARE, "more file")}</li>}
+              </ul>
+            )}
             <p>
               Selected what the other side is missing or has an older copy of: {n(leftSel, "item")} {sides[0] === "left" ? "on the left" : "in the top pane"}, {n(rightSel, "item")}{" "}
               {sides[1] === "right" ? "on the right" : "in the bottom pane"}.{" "}

@@ -144,8 +144,9 @@ impl SftpBackend {
         })
     }
 
-    /// The TCP connection, the server's key checked and signed in.
-    async fn sign_in_connection(&self) -> SResult<client::Handle<HostCheck>> {
+    /// The TCP connection, the server's key checked and signed in (also what an SSH tunnel runs
+    /// over, see `tunnels::run`).
+    pub(crate) async fn sign_in_connection(&self) -> SResult<client::Handle<HostCheck>> {
         let config = Arc::new(client::Config {
             keepalive_interval: Some(Duration::from_secs(20)),
             keepalive_max: 3,
@@ -668,6 +669,10 @@ impl Storage for SftpBackend {
 
     fn caps(&self) -> &Capabilities {
         &self.caps
+    }
+
+    fn as_sftp(&self) -> Option<&SftpBackend> {
+        Some(self)
     }
 
     /// The server and the folder paths start from (two connections to one server and folder

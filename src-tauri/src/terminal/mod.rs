@@ -35,6 +35,8 @@ use crate::storage::registry::{self, LOCAL_ID};
 enum Cmd {
     Write(Vec<u8>),
     Resize(u16, u16),
+    /// whether a program other than the shell has the terminal (a local shell answers; SSH can't)
+    Busy(oneshot::Sender<bool>),
 }
 
 struct Session {
@@ -273,6 +275,9 @@ async fn run_pty(mut pty: pty::Pty, ev: pty::PtyEvents, mut cmds: mpsc::Unbounde
             c = cmds.recv() => match c {
                 Some(Cmd::Write(b)) => pty.write(b),
                 Some(Cmd::Resize(c, r)) => pty.resize(c, r),
+                Some(Cmd::Busy(tx)) => {
+                    let _ = tx.send(pty.busy());
+                }
                 None => return,
             },
             code = &mut ended => {
@@ -332,6 +337,8 @@ async fn run_ssh(
                 Some(Cmd::Resize(c, r)) => {
                     let _ = wr.window_change(c as u32, r as u32, 0, 0).await;
                 }
+                // the server doesn't say what runs in the shell: not known (the page goes by the prompt)
+                Some(Cmd::Busy(_)) => {}
                 None => break,
             },
         }
@@ -361,6 +368,15 @@ pub fn terminal_resize(id: u32, cols: u16, rows: u16) {
 #[tauri::command]
 pub fn terminal_ack(id: u32, bytes: u32) {
     session(id, |s| s.credit.ack(bytes as usize));
+}
+
+/// Whether a program runs in the terminal's foreground (a terminal pane following its folder
+/// types `cd` only into a shell at rest): None over SSH, where it can't be told.
+#[tauri::command]
+pub async fn terminal_busy(id: u32) -> Option<bool> {
+    let (tx, rx) = oneshot::channel();
+    session(id, |s| s.cmds.send(Cmd::Busy(tx)).ok())??;
+    rx.await.ok()
 }
 
 /// The pane closed: the shell ends.

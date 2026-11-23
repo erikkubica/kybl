@@ -59,6 +59,14 @@ pub async fn save_profile(
         profile.id = uuid::Uuid::new_v4().to_string();
     }
     profile.group = profile.group.as_deref().and_then(crate::state::normalize_group);
+    // SSH tunnels: only over SFTP, each checked
+    if let Some(net) = profile.net.as_mut() {
+        if profile.kind == ConnKind::Sftp {
+            crate::tunnels::tidy(&mut net.tunnels)?;
+        } else {
+            net.tunnels.clear();
+        }
+    }
     // reserved for this device's own folders, which are never a saved connection
     if profile.id == registry::LOCAL_ID {
         return Err("This connection can't be changed.".into());
@@ -76,6 +84,8 @@ pub async fn save_profile(
     save_profiles(&app, &profiles)?;
     state.clients.lock().await.remove(&profile.id);
     registry::forget(&profile.id);
+    #[cfg(desktop)]
+    crate::tunnels::run::connection_changed(&app, &profile.id, Some(profile.net.as_ref().map(|n| n.tunnels.as_slice()).unwrap_or_default()));
     // the connection may point somewhere else now (another endpoint or account)
     crate::filecache::forget_profile(&app, &profile.id).await;
     Ok(profile)
@@ -111,6 +121,8 @@ pub async fn delete_profile(
     delete_secret(&state, &id).await?;
     state.clients.lock().await.remove(&id);
     registry::forget(&id);
+    #[cfg(desktop)]
+    crate::tunnels::run::connection_changed(&app, &id, None);
     // files of a deleted connection don't stay on this computer
     crate::filecache::forget_profile(&app, &id).await;
     crate::placeholders::forget_profile(&id);

@@ -1,12 +1,12 @@
 /**
  * The browser mock's terminal backend (dev only, see devMock.ts): a fake shell that echoes what
- * is typed, runs a few commands (pwd, ls, size, echo, clear, exit, yes) and prints a prompt, so
+ * is typed, runs a few commands (pwd, cd, ls, size, echo, clear, sleep, exit, yes) and prints a prompt, so
  * terminal panes can be tried without Tauri. `window.__kyblTerms` lists the live fake sessions.
  */
 import type { Channel } from "@tauri-apps/api/core";
 import type { Profile } from "../types";
 
-type Fake = { out: Channel<unknown>; cwd: string; cols: number; rows: number; line: string; acked: number; sent: number };
+type Fake = { out: Channel<unknown>; cwd: string; cols: number; rows: number; line: string; acked: number; sent: number; busy?: boolean };
 const live = new Map<number, Fake>();
 let next = 1;
 (window as unknown as { __kyblTerms: typeof live }).__kyblTerms = live;
@@ -28,6 +28,22 @@ function run(id: number, f: Fake, cmd: string) {
     case "pwd":
       send(f, `${f.cwd}\r\n`);
       break;
+    case "cd": {
+      // one word, maybe in single quotes (as Kybl types it)
+      const rest = cmd.trim().slice(2).trim();
+      const m = /^'((?:[^']|'\\'')*)'$/.exec(rest);
+      f.cwd = m ? m[1].replace(/'\\''/g, "'") : rest || "~";
+      break;
+    }
+    case "sleep": {
+      // a program holding the terminal: no prompt until it ends (terminal_busy says so meanwhile)
+      f.busy = true;
+      setTimeout(() => {
+        f.busy = false;
+        if (live.get(id) === f) prompt(f);
+      }, Math.min(60, Number(args[0]) || 1) * 1000);
+      return;
+    }
     case "ls":
       send(f, "README.md  index.html  package.json  \x1b[34msrc\x1b[0m\r\n");
       break;
@@ -77,6 +93,8 @@ export async function handleTerminal(cmd: string, a: any, profiles: Profile[]): 
       const f = live.get(a.id);
       if (!f) return null;
       for (const ch of a.data as string) {
+        // a running program (sleep): what is typed goes nowhere
+        if (f.busy) continue;
         if (ch === "\r") {
           send(f, "\r\n");
           const line = f.line;
@@ -105,6 +123,10 @@ export async function handleTerminal(cmd: string, a: any, profiles: Profile[]): 
       const f = live.get(a.id);
       if (f) f.acked += a.bytes;
       return null;
+    }
+    case "terminal_busy": {
+      const f = live.get(a.id);
+      return f ? !!f.busy : null;
     }
     case "terminal_close":
       live.delete(a.id);

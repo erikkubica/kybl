@@ -35,6 +35,8 @@ function jobMeta(j: Job): string {
   return j.total > 1 ? `${j.total.toLocaleString()} objects` : "";
 }
 
+const KIND_LABEL: Record<Transfer["kind"], string> = { upload: "Upload", download: "Download", compress: "Compress", extract: "Extract" };
+const KIND_DONE: Record<Transfer["kind"], string> = { upload: "Uploaded", download: "Downloaded", compress: "Compressed", extract: "Extracted" };
 const STATE_ICON: Record<TransferState, IconName> = {
   running: "upload",
   queued: "clock",
@@ -54,6 +56,9 @@ const VERIFIED: Record<string, string> = {
 };
 
 const SPEED_PRESETS = [0, 1, 5, 10];
+
+/** Uploads and downloads can pause and move up the queue; compress and extract run on their own. */
+const pausable = (t: Transfer) => t.kind === "upload" || t.kind === "download";
 
 /**
  * The speed limit at hand: a gauge in the header with presets for both directions (Settings has
@@ -650,8 +655,8 @@ function TransferPanelView({
           ))}
           {list.map((t) => (
             <div key={t.id} className={`tp-row st-${t.state}`}>
-              <span className="tp-icon" title={t.kind === "upload" ? "Upload" : "Download"}>
-                <Icon name={t.state === "running" ? t.kind : STATE_ICON[t.state]} size={15} />
+              <span className="tp-icon" title={KIND_LABEL[t.kind]}>
+                <Icon name={t.state === "running" ? (t.kind === "upload" || t.kind === "download" ? t.kind : "archive") : STATE_ICON[t.state]} size={15} />
               </span>
               <div className="tp-name" title={t.key}>
                 {t.name}
@@ -678,7 +683,7 @@ function TransferPanelView({
                 </div>
               ) : (
                 <div className="tp-state">
-                  {t.state === "done" && (t.kind === "upload" ? "Uploaded" : "Downloaded")}
+                  {t.state === "done" && KIND_DONE[t.kind]}
                   {t.state === "done" && t.verified && (
                     <span className="tp-verified" title={`Verified: ${VERIFIED[t.verified] ?? "it matches"}`} aria-label="Verified">
                       <Icon name="check" size={11} /> verified
@@ -689,12 +694,12 @@ function TransferPanelView({
                 </div>
               )}
               <div className="tp-row-actions">
-                {t.state === "queued" && t.id !== firstQueued && (
+                {t.state === "queued" && t.id !== firstQueued && pausable(t) && (
                   <button className="icon-btn" onClick={() => transferActions.moveToTop(t.id)} title="Move to top: start this one next" aria-label={`Move ${t.name} to top`}>
                     <Icon name="to-top" size={13} />
                   </button>
                 )}
-                {(t.state === "running" || t.state === "queued") && (
+                {(t.state === "running" || t.state === "queued") && pausable(t) && (
                   <button className="icon-btn" onClick={() => transferActions.pause(t.id)} title="Pause, keeping what’s done" aria-label={`Pause ${t.name}`}>
                     <Icon name="pause" size={13} />
                   </button>

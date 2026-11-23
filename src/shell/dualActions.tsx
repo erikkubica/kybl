@@ -231,6 +231,8 @@ export function makeDualActions(get: () => DualContext) {
         diff,
         leftName: placeName(left),
         rightName: placeName(right),
+        leftAt: left.here,
+        rightAt: right.here,
         sides: across ? ["top", "bottom"] : ["left", "right"],
         partial,
         onClose: () => {

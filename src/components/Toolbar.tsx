@@ -58,6 +58,7 @@ export function Toolbar({
   favorite,
   onToggleFavorite,
   afterPath,
+  emptyLabel,
   searchExtras,
   searchPlaceholder,
   onGrip,
@@ -121,6 +122,8 @@ export function Toolbar({
   /** the folder on screen is a favorite; the star toggles it */
   favorite?: boolean;
   onToggleFavorite?: () => void;
+  /** what the path says while no bucket is open ("No bucket selected", "Not connected") */
+  emptyLabel?: string;
   /** right after the path, on the same row (the git branch chip) */
   afterPath?: ReactNode;
   /** inside the search field, before its clear button (Names / Contents) */
@@ -258,7 +261,7 @@ export function Toolbar({
           <PathTitle label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} onGoTo={onGoTo} />
         ) : (
           <nav className="crumbs path-title" aria-label="Path">
-            <span className="crumb muted">No bucket selected</span>
+            <span className="crumb muted">{emptyLabel ?? "No bucket selected"}</span>
           </nav>
         )}
         {afterPath}

@@ -1,5 +1,7 @@
 mod actions;
 mod commands;
+// .zip / .tar / .tar.gz: browse like a folder, extract, compress
+mod archive;
 // WP-C: phone backup (camera roll and folders to any connection)
 mod backup;
 // git status marks and searching inside files, with the user's own git / ripgrep / grep
@@ -57,6 +59,8 @@ mod placeholders;
 mod terminal;
 mod thumbs;
 mod transfer_notice;
+// SSH tunnels (local port forwards) of SFTP connections
+mod tunnels;
 mod transfers;
 #[cfg(desktop)]
 mod tray;
@@ -255,6 +259,9 @@ pub fn run() {
             filecache::cache_usage,
             filecache::clear_caches,
             // WP0: storage core
+            archive::archive_open,
+            archive::archive_extract,
+            archive::archive_compress,
             storage::generic_cmds::list_roots,
             storage::generic_cmds::connection_capabilities,
             storage::generic_cmds::local_path,
@@ -285,6 +292,17 @@ pub fn run() {
             terminal::terminal_ack,
             #[cfg(desktop)]
             terminal::terminal_close,
+            // SSH tunnels
+            #[cfg(desktop)]
+            tunnels::run::tunnel_list,
+            #[cfg(desktop)]
+            tunnels::run::tunnel_start,
+            #[cfg(desktop)]
+            tunnels::run::tunnel_stop,
+            #[cfg(desktop)]
+            tunnels::run::tunnel_port_check,
+            #[cfg(desktop)]
+            terminal::terminal_busy,
             #[cfg(desktop)]
             sync::sync_list,
             #[cfg(desktop)]
@@ -338,6 +356,8 @@ pub fn run() {
             edit::edit_retry,
             #[cfg(desktop)]
             edit::edit_resolve,
+            #[cfg(desktop)]
+            edit::edit_local_text,
             // WP-B1: copying and moving between connections
             jobs::job_create,
             jobs::job_list,

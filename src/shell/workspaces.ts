@@ -16,7 +16,8 @@ import { LS, PANE_IDS, paneKeys, type Loc, type PaneId, type PaneView } from "..
 import { leaf, leaves, parseLinks, parseTree, type PaneNode, type SyncLink } from "./paneLayout";
 import { parseTermPlace, type TermPlace } from "../terminal/api";
 
-const KEY = "s3b.workspaces";
+export const WS_KEY = "s3b.workspaces";
+const KEY = WS_KEY;
 
 /** One pane of a workspace: where it is and how it shows it. */
 export type PaneSnap = {
@@ -27,6 +28,10 @@ export type PaneSnap = {
   scroll?: number;
   /** a terminal pane (src/terminal) in this folder; `loc` is null then */
   term?: TermPlace;
+  /** in a recipe (recipes.ts): a terminal's startup commands, one per line */
+  startup?: string[];
+  /** in a recipe: the connection's name when it was saved (said when it is gone) */
+  conn?: string;
 };
 
 /** What a workspace shows: the part a switch takes in and gives back. */
@@ -45,9 +50,10 @@ export type Workspace = Layout & {
   name: string;
   /** a dot on its tab (WS_COLORS), or none */
   color: string | null;
-  /** when Kybl opens: where it was left, or always at the folders saved in `saved` */
+  /** when Kybl opens: where it was left, or ("saved") opened anew from its recipe */
   start: StartMode;
-  saved: Layout | null;
+  /** its recipe (recipes.ts): what "Reset to recipe" brings back */
+  recipe: string | null;
 };
 
 export type WorkspaceStore = { list: Workspace[]; active: string };
@@ -137,7 +143,7 @@ function parseView(v: unknown): PaneView {
   };
 }
 
-function parseLayout(v: unknown): Layout | null {
+export function parseLayout(v: unknown): Layout | null {
   if (!v || typeof v !== "object") return null;
   const x = v as Record<string, unknown>;
   const tree = parseTree(x.tree);
@@ -149,7 +155,14 @@ function parseLayout(v: unknown): Layout | null {
     const p = rawPanes[id] as Record<string, unknown> | undefined;
     if (p && typeof p === "object") {
       const term = parseTermPlace(p.term);
-      panes[id] = { loc: isLoc(p.loc) && !term ? p.loc : null, view: parseView(p.view), ...(term ? { term } : {}) };
+      const startup = Array.isArray(p.startup) ? p.startup.filter((l): l is string => typeof l === "string").slice(0, 50) : null;
+      panes[id] = {
+        loc: isLoc(p.loc) && !term ? p.loc : null,
+        view: parseView(p.view),
+        ...(term ? { term } : {}),
+        ...(term && startup?.length ? { startup } : {}),
+        ...(typeof p.conn === "string" && p.conn ? { conn: p.conn.slice(0, 120) } : {}),
+      };
     }
   }
   const recent = Array.isArray(x.recent) ? (x.recent as PaneId[]).filter((id) => ids.includes(id)) : [];
@@ -168,15 +181,20 @@ function parseWorkspace(v: unknown): Workspace | null {
   if (!l) return null;
   const x = v as Record<string, unknown>;
   const name = typeof x.name === "string" && x.name.trim() ? x.name.trim().slice(0, 80) : DEFAULT_NAME;
+  const id = typeof x.id === "string" && x.id ? x.id : newId();
   return {
     ...l,
-    id: typeof x.id === "string" && x.id ? x.id : newId(),
+    id,
     name,
     color: typeof x.color === "string" && WS_COLORS.some((c) => c.id === x.color) ? x.color : null,
     start: x.start === "saved" ? "saved" : "restore",
-    saved: parseLayout(x.saved),
+    // the folders saved by versions before recipes became its recipe (recipes.ts makes it)
+    recipe: typeof x.recipe === "string" && x.recipe ? x.recipe : parseLayout(x.saved) ? legacyRecipeId(id) : null,
   };
 }
+
+/** The recipe made of a workspace's "Always at these folders" from before recipes. */
+export const legacyRecipeId = (wsId: string) => `r-${wsId}`;
 
 /** What a slot shows now, by its own keys (paneKeys): an old layout's panes, on the first launch with workspaces. */
 export function readSlot(id: PaneId): PaneSnap {
@@ -230,7 +248,7 @@ export function loadWorkspaces(old: () => Omit<Layout, "panes">): WorkspaceStore
   const l = old();
   const panes: Layout["panes"] = {};
   for (const id of leaves(l.tree)) panes[id] = readSlot(id);
-  const w: Workspace = { ...l, panes, id: newId(), name: DEFAULT_NAME, color: null, start: "restore", saved: null };
+  const w: Workspace = { ...l, panes, id: newId(), name: DEFAULT_NAME, color: null, start: "restore", recipe: null };
   return { list: [w], active: w.id };
 }
 

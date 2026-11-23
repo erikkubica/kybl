@@ -67,6 +67,18 @@ fn file_item(src: &dyn Storage, e: &Entry, dst: String) -> NewItem {
         is_dir: false,
         dst_fold: String::new(),
         del: false,
+        not_copied: None,
+    }
+}
+
+/// A link to a folder met inside a selected folder: listed in the job's failures with why, so it
+/// isn't missed, and never copied (nor retried).
+fn link_item(key: &str, target: &str, dst: String) -> NewItem {
+    NewItem {
+        src_path: key.trim_end_matches('/').to_string(),
+        dst_path: dst.trim_end_matches('/').to_string(),
+        not_copied: Some(format!("Not copied: this is a link to the folder “{target}”, and Kybl doesn't follow links inside a folder.")),
+        ..Default::default()
     }
 }
 
@@ -170,11 +182,21 @@ pub async fn plan(
                     if rel.is_empty() || ignore.matches(rel, true) {
                         continue;
                     }
+                    if let Some(target) = page.folder_link(f) {
+                        items.push(link_item(f, target, join(&base_dst, rel)));
+                        continue;
+                    }
                     items.push(NewItem { src_path: f.clone(), dst_path: join(&base_dst, rel), is_dir: true, ..Default::default() });
                 }
-                // depth first, in name order
+                // depth first, in name order; links to folders aren't gone into (one pointing
+                // back up would never end)
                 cur.dirs.extend(
-                    page.folders.iter().rev().filter(|f| f.strip_prefix(&base).is_some_and(|rel| !rel.is_empty() && !ignore.matches(rel, true))).cloned(),
+                    page.folders
+                        .iter()
+                        .rev()
+                        .filter(|f| page.folder_link(f).is_none())
+                        .filter(|f| f.strip_prefix(&base).is_some_and(|rel| !rel.is_empty() && !ignore.matches(rel, true)))
+                        .cloned(),
                 );
                 for e in &page.objects {
                     let Some(rel) = e.key.strip_prefix(&base) else { continue };

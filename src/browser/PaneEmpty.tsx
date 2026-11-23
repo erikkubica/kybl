@@ -21,12 +21,27 @@ export type EmptyActions = {
   /** A server's own certificate the user chose to trust: save it on the connection; with
    *  `reopen`, connect again (else the caller retries what failed). */
   onTrustCert: (p: Profile, fp: string, reopen: boolean) => Promise<void>;
+  /** a workspace recipe's pane whose connection isn't on this device: its name (it stays empty) */
+  missing?: string;
 };
 
 /** What the trust sheet calls the server: the name connected to, else the connection's. */
 const serverName = (p: Profile, host: string | null) => host || p.net?.host || p.name;
 
 export function Welcome({ actions }: { actions: EmptyActions }) {
+  if (actions.missing)
+    return (
+      <div className="welcome">
+        <div className="welcome-card welcome-missing">
+          <Icon name="alert" size={22} />
+          <h2>{actions.missing === "A connection" ? "A connection isn’t on this device" : `“${actions.missing}” isn’t on this device`}</h2>
+          <p>This pane of the workspace recipe opened empty. Add the connection, or open another place from the sidebar.</p>
+          <button className="btn btn-sm" onClick={actions.onAddConnection}>
+            <Icon name="plus" size={13} /> Add connection
+          </button>
+        </div>
+      </div>
+    );
   return (
     <div className="welcome">
       <div className="welcome-card">
@@ -71,14 +86,17 @@ export function ChooseBucket({
   const what = mode === "drives" ? "place" : "bucket";
   // a server whose own certificate stopped it before its one root could be listed
   const cert = profile.net && error ? certTrouble(error) : null;
+  // FTP, SFTP, WebDAV…: one root, nothing to choose; it's connecting, or it couldn't
+  const single = mode === "single";
+  const failed = !!(note || error);
   return (
     <div className="welcome">
       <div className="welcome-card">
         <div className="welcome-logo plain">
-          <Icon name="bucket" size={30} />
+          {single && !failed ? <span className="spinner" /> : <Icon name={single ? "server" : "bucket"} size={30} />}
         </div>
-        <h1>Choose a {what}</h1>
-        <p>{note || `Pick a ${what} from the sidebar.`}</p>
+        <h1>{single ? (failed ? `Couldn’t connect to ${profile.name}` : `Connecting to ${profile.name}…`) : `Choose a ${what}`}</h1>
+        <p>{note || (single ? (failed ? "" : "Opening its files.") : `Pick a ${what} from the sidebar.`)}</p>
         {cert ? (
           <div className="cert-actions">
             <TrustCertButton cert={cert} host={serverName(profile, cert.host)} className="btn btn-primary" onTrust={(fp) => actions.onTrustCert(profile, fp, true)} />

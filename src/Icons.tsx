@@ -52,6 +52,8 @@ const PATHS: Record<string, ReactNode> = {
   link: (
     <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
   ),
+  // an SSH tunnel: a tunnel's mouth
+  tunnel: <path d="M2.5 20h19M4.5 20v-8a7.5 7.5 0 0 1 15 0v8M9 20v-7a3 3 0 0 1 6 0v7" />,
   refresh: <path d="M20 11a8 8 0 0 0-14.9-3M4 5v4h4M4 13a8 8 0 0 0 14.9 3M20 19v-4h-4" />,
   search: (
     <>

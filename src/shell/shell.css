@@ -333,54 +333,96 @@
 .ws-swatch.none.on {
   box-shadow: inset 0 0 0 1.5px var(--border-strong), 0 0 0 2px var(--raised), 0 0 0 4px var(--accent-solid);
 }
-.ws-start {
+/* its recipe */
+.ws-recipe {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 8px;
   margin-bottom: 12px;
 }
-.ws-choice {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  width: 100%;
-  padding: 7px 8px;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: none;
-  text-align: left;
-}
-.ws-choice:hover {
-  background: var(--hover);
-}
-.ws-choice b {
-  display: block;
-  font-weight: 500;
-}
-.ws-choice small {
-  display: block;
-  margin-top: 1px;
-  overflow: hidden;
+.ws-recipe-hint {
+  margin: 0;
   font-size: 11.5px;
+  line-height: 1.45;
   color: var(--dim);
+}
+.ws-recipe > .btn {
+  align-self: flex-start;
+}
+.ws-recipe-sum {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--dim);
+}
+.ws-recipe-sum span {
+  overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  max-width: 220px;
 }
-.ws-radio {
+.ws-recipe-term {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ws-recipe-term > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--dim);
+}
+.ws-recipe-term b {
+  overflow: hidden;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ws-recipe-term small {
   flex: none;
-  width: 14px;
-  height: 14px;
-  margin-top: 2px;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 1.5px var(--border-strong);
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--faint);
 }
-.ws-choice.on .ws-radio {
-  box-shadow: inset 0 0 0 4px var(--accent-solid);
+.ws-recipe-term textarea {
+  width: 100%;
+  min-height: 40px;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: 11.5px/1.45 var(--mono);
+  resize: vertical;
 }
-.btn.ws-save-start {
-  align-self: flex-start;
-  margin: 4px 0 0 31px;
+.ws-recipe-term textarea:focus {
+  outline: none;
+  border-color: var(--accent-solid);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.ws-recipe-term textarea::placeholder {
+  color: var(--faint);
+}
+.check.ws-recipe-launch {
+  align-items: center;
+  font-size: 12.5px;
+}
+.ws-recipe-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ws-recipe-del {
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+}
+.ws-recipe-del:hover {
+  color: var(--danger);
 }
 .ws-pop-foot {
   display: flex;
@@ -623,6 +665,36 @@ body.resizing-row * {
 }
 .compare-list .dim {
   color: var(--dim);
+}
+/* files that differ, each with a Compare button (the text diff) */
+.compare-files {
+  margin: 0 0 12px;
+  padding: 4px 0;
+  list-style: none;
+  border-block: 1px solid var(--border);
+  max-height: 220px;
+  overflow: auto;
+}
+.compare-files li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.compare-files li > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.compare-files .dim {
+  color: var(--dim);
+}
+.compare-files .btn {
+  gap: 4px;
 }
 
 /* two toolbars share the width: the search field gives the path more room until it is used */

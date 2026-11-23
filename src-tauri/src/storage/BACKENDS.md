@@ -97,6 +97,7 @@ If the server uses its own certificate, Kybl can't connect to it securely." (Rus
 | `auth` | `"password"`, `"key"` or `"agent"` (computers only: `SSH_AUTH_SOCK` on macOS/Linux, the OpenSSH agent pipe or Pageant on Windows) |
 | `basePath` | starting folder: absolute, or relative to the home folder (empty = home). It must exist |
 | `hostKey` | the trusted server key fingerprint, `SHA256:…` as `ssh-keygen -l` prints it. Empty until the user trusts the server |
+| `tunnels` | SSH tunnels (local port forwards): `[{id, name, localPort, remoteHost, remotePort, autoStart}]`, left out when empty. `save_profile` trims and checks them (and gives new ones an id). Run with `tunnel_start` / `tunnel_stop` / `tunnel_list` (desktop), status in `tunnel-status` events; see `src-tauri/src/tunnels` |
 
 Secrets:
 
@@ -174,6 +175,13 @@ Commands:
 
 Deleting a link (to a folder too) removes only the link, never what it points at, and deleting a
 folder never follows the links inside it.
+
+Nothing that goes through folders recursively goes into a link to a folder (one pointing back up
+would never end): `walk` hands it over as an entry with `link` set (key ending with `/`), so size
+counts, searches and `list_all_under` leave it out, and a copy inside the connection makes it a
+link again. A transfer job lists it among its failures ("Not copied: this is a link to the
+folder…"), and Try again leaves it be. A folder picked by itself is still copied through, even
+when it is a link.
 
 ## Azure Blob Storage (`kind: "azblob"`)
 

@@ -314,6 +314,26 @@ mod tests {
     }
 
     #[test]
+    fn walks_keep_out_of_links_to_folders() {
+        use futures_util::StreamExt;
+        let fake = Fake { set: Mutex::default() };
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        // (the fake panics when listed behind its link)
+        let all: Vec<Entry> = rt.block_on(fake.walk("", "site/").map(|b| b.unwrap()).concat());
+        let keys: Vec<(&str, Option<&str>)> = all.iter().map(|e| (e.key.as_str(), e.link.as_deref())).collect();
+        assert_eq!(
+            keys,
+            [
+                ("site/css/", None),
+                ("site/elsewhere/", Some("/etc")),
+                ("site/index.html", None),
+                ("site/home.html", Some("index.html")),
+                ("site/css/a.css", None)
+            ]
+        );
+    }
+
+    #[test]
     fn a_partial_change_reads_what_isnt_listed() {
         // group write on, for an item listed without a mode: the server is asked (0o700 here)
         let (r, set) = apply(&[PermItem { key: "x.txt".into(), is_dir: false, mode: None }], 0o020, 0, None);

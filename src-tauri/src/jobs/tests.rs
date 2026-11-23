@@ -596,6 +596,94 @@ fn a_mirror_is_refused_when_its_folders_overlap_or_it_has_nothing_to_do() {
     assert!(m.list().unwrap().is_empty(), "no job was recorded");
 }
 
+/// A server folder `r/` whose `r/sub/up/` is a link back to `r/` (SFTP lists such a link as a
+/// folder, with its target): going into it never ends.
+struct Looping {
+    inner: Arc<LocalBackend>,
+}
+
+impl Looping {
+    /// The folder `dir` really is, with every trip through the link taken out.
+    fn real(dir: &str) -> String {
+        let mut d = dir.to_string();
+        while let Some(i) = d.find("sub/up/") {
+            d.replace_range(i..i + "sub/up/".len(), "");
+        }
+        d
+    }
+}
+
+#[async_trait]
+impl Storage for Looping {
+    fn kind(&self) -> ConnKind {
+        ConnKind::Sftp
+    }
+    fn caps(&self) -> &Capabilities {
+        self.inner.caps()
+    }
+    async fn roots(&self) -> SResult<Vec<RootInfo>> {
+        self.inner.roots().await
+    }
+    async fn list(&self, root: &str, dir: &str, token: Option<String>) -> SResult<Page> {
+        let real = Self::real(dir);
+        let mut page = self.inner.list(root, &real, token).await?;
+        let moved = |k: &str| format!("{dir}{}", &k[real.len()..]);
+        page.folders = page.folders.iter().map(|f| moved(f)).collect();
+        for o in &mut page.objects {
+            o.key = moved(&o.key);
+        }
+        page.folder_info = page.folders.iter().filter(|f| f.ends_with("sub/up/")).map(|f| Entry { key: f.clone(), link: Some("..".into()), ..Default::default() }).collect();
+        Ok(page)
+    }
+    async fn stat(&self, root: &str, path: &str) -> SResult<Option<Entry>> {
+        self.inner.stat(root, &Self::real(path)).await
+    }
+    async fn read(&self, root: &str, path: &str, range: Option<Range<u64>>, if_match: Option<&str>) -> SResult<ReadStream> {
+        self.inner.read(root, &Self::real(path), range, if_match).await
+    }
+    async fn write(&self, _: &str, _: &str, _: WriteSource, _: WriteOpts<'_>, _: Progress<'_>, _: &Arc<AtomicBool>) -> SResult<WriteOutcome> {
+        Err(StorageError::other("read only"))
+    }
+    async fn mkdir(&self, _: &str, _: &str) -> SResult<()> {
+        Err(StorageError::other("read only"))
+    }
+    async fn delete(&self, _: &str, _: &[String], _: &[String], _: &AtomicBool, _: &(dyn Fn(u64, u64) + Send + Sync)) -> SResult<(u64, u64)> {
+        Err(StorageError::other("read only"))
+    }
+    async fn rename(&self, _: &Loc, _: &Loc, _: bool) -> SResult<()> {
+        Err(StorageError::other("read only"))
+    }
+}
+
+#[test]
+fn links_to_folders_are_listed_not_followed() {
+    tauri::async_runtime::block_on(async {
+        let (s, d) = (tmp(), tmp());
+        write(&s.0, "r/a.txt", b"a");
+        write(&s.0, "r/sub/b.txt", b"b");
+        std::fs::create_dir_all(s.0.join("r/sub/up")).unwrap();
+        let (inner, sr) = local(&s.0);
+        let (dst, dr) = local(&d.0);
+        let host = TestHost::with(vec![("src", Arc::new(Looping { inner })), ("dst", dst)]);
+        let m = JobManager::open(None, host.clone()).unwrap();
+        let id = m.create(spec(&sr, &[("r/", true)], &dr, "")).unwrap();
+        let j = finished(&m, &id).await;
+        assert_eq!((j.progress.files_done, j.progress.files_failed, j.progress.files_total), (2, 1, 3));
+        let got = files(&d.0);
+        assert_eq!(got.keys().cloned().collect::<std::collections::BTreeSet<_>>(), ["r/a.txt", "r/sub/b.txt"].map(String::from).into());
+        assert!(!d.0.join("r/sub/up").exists());
+        let f = m.failures(&id, 0, 10).unwrap();
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].path, "r/sub/up");
+        assert!(f[0].error.contains("link to the folder “..”"), "{}", f[0].error);
+        // Try again has nothing to try: the link stays listed, nothing is copied through it
+        m.retry_failed(&id).unwrap();
+        let j = finished(&m, &id).await;
+        assert_eq!((j.progress.files_done, j.progress.files_failed), (2, 1));
+        assert!(!d.0.join("r/sub/up").exists());
+    });
+}
+
 // ---------------------------------------------------------------- S3 (rclone serve s3)
 
 /// A throwaway S3 server: `rclone serve s3` over a temporary folder (bucket `testbucket`), or
