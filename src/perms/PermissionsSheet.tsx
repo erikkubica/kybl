@@ -12,27 +12,11 @@ import { Modal } from "../components/Dialogs";
 import { ErrorText } from "../components/ErrorText";
 import type { Entry } from "../types";
 import { permsApi, modeText, type Recurse } from "./permsApi";
+import { bitOf, bitsFromText, digits, startBits, type Bit } from "./permBits";
 import "./perms.css";
 
-/** One box per bit, owner read first; null: mixed in the selection (or not known). */
-type Bit = boolean | null;
 const WHO = ["Owner", "Group", "Others"] as const;
 const WHAT = ["Read", "Write", "Execute"] as const;
-const bitOf = (i: number) => 1 << (8 - i);
-
-function startBits(list: Entry[]): Bit[] {
-  const modes = list.map((e) => e.mode);
-  return Array.from({ length: 9 }, (_, i) => {
-    const on = modes.map((m) => (m === undefined ? null : (m & bitOf(i)) !== 0));
-    if (on.some((v) => v === null)) return null;
-    return on.every(Boolean) ? true : on.some(Boolean) ? null : false;
-  });
-}
-
-/** "644", with an "x" where a triad has a mixed box. */
-const digits = (bits: Bit[]) =>
-  [0, 1, 2].map((t) => (bits.slice(t * 3, t * 3 + 3).some((b) => b === null) ? "x" : String(bits.slice(t * 3, t * 3 + 3).reduce((n, b, j) => n + (b ? 4 >> j : 0), 0)))).join("");
-
 /** The same value, or null when the items differ. */
 const same = (vals: (string | undefined)[]) => (vals.every((v) => v === vals[0]) ? vals[0] : undefined);
 
@@ -50,7 +34,7 @@ export function PermissionsSheet({
   onDone: (changed: number) => void;
   onClose: () => void;
 }) {
-  const initial = useMemo(() => startBits(items), [items]);
+  const initial = useMemo(() => startBits(items.map((e) => e.mode)), [items]);
   const [bits, setBits] = useState<Bit[]>(initial);
   const [text, setText] = useState(() => digits(initial));
   const [recurse, setRecurse] = useState(false);
@@ -83,10 +67,8 @@ export function PermissionsSheet({
   const toggle = (i: number) => update(bits.map((b, j) => (j === i ? !b : b)));
   const typed = (v: string) => {
     setText(v);
-    if (!/^[0-7x]{3}$/i.test(v)) return;
-    setBits(
-      [...v.toLowerCase()].flatMap((d, t) => (d === "x" ? bits.slice(t * 3, t * 3 + 3) : [0, 1, 2].map((j) => (Number(d) & (4 >> j)) !== 0))),
-    );
+    const next = bitsFromText(v, initial);
+    if (next) setBits(next);
   };
 
   let set = 0;
@@ -119,7 +101,8 @@ export function PermissionsSheet({
 
   const title = one ? `Permissions of “${one.name}”` : `Permissions of ${items.length} items`;
   return (
-    <Modal title={title} onClose={onClose} width={400}>
+    // a running change can't be stopped: the sheet stays (with its progress) until it ends
+    <Modal title={title} onClose={busy ? () => {} : onClose} width={400}>
       <div className="modal-body perm-body">
         {(owner || group) && (
           <p className="perm-who">

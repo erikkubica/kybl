@@ -90,14 +90,16 @@ export function TunnelPopover({ p, anchor, onDismiss }: { p: Profile; anchor: DO
       e.stopPropagation();
       dismiss.current();
     };
+    // one handler for add and remove (dismiss.current is replaced on every render)
+    const resize = () => dismiss.current();
     window.addEventListener("pointerdown", down, true);
     window.addEventListener("keydown", key, true);
-    window.addEventListener("resize", dismiss.current);
+    window.addEventListener("resize", resize);
     box.current?.focus({ preventScroll: true });
     return () => {
       window.removeEventListener("pointerdown", down, true);
       window.removeEventListener("keydown", key, true);
-      window.removeEventListener("resize", dismiss.current);
+      window.removeEventListener("resize", resize);
     };
   }, []);
   // the last one stopped and nothing is left to start: nothing to show

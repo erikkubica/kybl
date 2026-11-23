@@ -81,6 +81,7 @@ import {
   type SyncLink,
 } from "./paneLayout";
 import { makeDualActions, paneName, type DualContext } from "./dualActions";
+import { stopOrCancel } from "../actions/customActions";
 import { WorkspaceBar, wsTabAt, type PaneSwitcher } from "./WorkspaceBar";
 import { usePaneDrag, type DropCheck } from "./usePaneDrag";
 import { useFileDrag } from "./useFileDrag";
@@ -124,6 +125,7 @@ import {
   renamedOpen,
   renameGroup,
   revealKeys,
+  scopeOf,
   ungroup,
   useOpenGroups,
   useRecentConnections,
@@ -161,11 +163,12 @@ export function AppShell() {
   const [activityTab, setActivityTab] = useState<ActivityTab>("activity");
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsPage, setSettingsPage] = useState<SettingsPageId | undefined>(undefined);
+  // a counter with the page, so asking again for the same page (tray "Sync settings…") goes back to it
+  const [settingsPage, setSettingsPage] = useState<{ page?: SettingsPageId; n: number }>({ n: 0 });
   const updates = useUpdates();
   const syncState = useSyncOverall();
   const openSettings = useCallback((page?: SettingsPageId) => {
-    setSettingsPage(page);
+    setSettingsPage((r) => ({ page, n: r.n + 1 }));
     setSettingsOpen(true);
   }, []);
   // the menu-bar icon's "Sync settings…": an event while the window exists, or a flag left by the
@@ -1386,13 +1389,15 @@ export function AppShell() {
   // the connection in the pane in use: first in Recent, and its kind section and group fold open
   // in the sidebar
   const activeProfile = active.profile;
+  // (a section appears once there are a few of a kind: when the active one's section comes or
+  // goes, it is revealed again; any other change in the count leaves a group the user shut alone)
+  const activeScope = activeProfile ? scopeOf(profiles, activeProfile) : "";
   useEffect(() => {
     if (!activeProfile) return;
     recents.push(activeProfile.id);
     openGroups.reveal(revealKeys(profiles, activeProfile));
-    // (a section appears once there are a few of a kind: the count matters too)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProfile?.id, activeProfile?.group, profiles.length]);
+  }, [activeProfile?.id, activeProfile?.group, activeScope]);
 
   /** A found or recent connection opens in the pane in use (or just takes the keyboard there, if it's already on screen). */
   const openConnection = (p: Profile) => {
@@ -1995,7 +2000,7 @@ export function AppShell() {
         </PaneContext.Provider>
 
         <TransferPanel
-          onCancelJob={(id) => api.cancelTransfer(id).catch(() => {})}
+          onCancelJob={(id, kind) => (kind === "action" ? stopOrCancel(id) : void api.cancelTransfer(id).catch(() => {}))}
           onDismissJob={jobs.dismiss}
           onOpenJob={(j) => {
             if (j.dest == null) return;
@@ -2059,7 +2064,8 @@ export function AppShell() {
           onNewProfile={() => setConnDialog({ profile: null })}
           onImportProfiles={() => setImportOpen(true)}
           onClose={() => setSettingsOpen(false)}
-          initialPage={settingsPage}
+          initialPage={settingsPage.page}
+          pageRequest={settingsPage.n}
           activeProfileId={active.profile?.id ?? null}
           onToast={toast}
         />

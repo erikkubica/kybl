@@ -67,6 +67,16 @@ function settle(t: Transfer) {
 
 /** Uploads of the current batch: when all of them have finished, `settledListeners` hear about it. */
 const batch = new Set<string>();
+/** Uploads of the batch that finished fine and were already pruned off the list (still counted). */
+let batchPrunedOk = 0;
+const batchPrunedWhere = new Map<string, { profileId: string; bucket: string }>();
+/**
+ * Transfers started (or started again) since the queue was last idle: the header's "X of Y" and
+ * time left count only these, not every finished row still listed from earlier.
+ */
+const currentRun = new Set<string>();
+/** Bytes of the current run's finished transfers that were pruned off the list. */
+let runPrunedBytes = 0;
 /** `where` lists each connection and bucket the batch uploaded into. */
 type Settled = (ok: number, failed: number, where: { profileId: string; bucket: string }[]) => void;
 const settledListeners = new Set<Settled>();
@@ -81,11 +91,13 @@ function flush() {
       break;
     }
   }
+  // every tick, not only once idle: a 100k-file batch would otherwise keep (and copy) every row
+  prune();
   if (batch.size) {
-    let ok = 0;
+    let ok = batchPrunedOk;
     let bad = 0;
     let pending = false;
-    const where = new Map<string, { profileId: string; bucket: string }>();
+    const where = new Map(batchPrunedWhere);
     for (const id of batch) {
       const t = byId.get(id);
       if (!t) continue;
@@ -96,10 +108,15 @@ function flush() {
     }
     if (!pending) {
       batch.clear();
+      batchPrunedOk = 0;
+      batchPrunedWhere.clear();
       for (const l of settledListeners) l(ok, bad, [...where.values()]);
     }
   }
-  if (!anyActive) prune();
+  if (!anyActive) {
+    currentRun.clear();
+    runPrunedBytes = 0;
+  }
   transfersStore.set(Array.from(byId.values()));
   // nothing left to report: stop ticking until the next transfer starts
   if (!anyActive && timer !== undefined) {
@@ -116,6 +133,11 @@ function prune() {
   for (const [id, t] of byId) {
     if (done <= KEEP_DONE) break;
     if (t.state === "done") {
+      if (batch.delete(id)) {
+        batchPrunedOk++;
+        batchPrunedWhere.set(`${t.profileId}\n${t.bucket}`, { profileId: t.profileId, bucket: t.bucket });
+      }
+      if (currentRun.delete(id)) runPrunedBytes += t.total;
       byId.delete(id);
       overwriteIds.delete(id);
       requested.delete(id);
@@ -147,7 +169,9 @@ function listenOnce() {
         const inst = ((ev.bytes - prev.bytes) / (now - prev.t)) * 1000;
         speed = speed ? speed * 0.7 + inst * 0.3 : inst;
         lastSample.set(ev.id, { t: now, bytes: ev.bytes });
-      } else if (!prev) {
+      } else if (!prev || ev.bytes < prev.bytes) {
+        // first sample, or the transfer started over: measure afresh from here
+        if (prev) speed = 0;
         lastSample.set(ev.id, { t: now, bytes: ev.bytes });
       }
     } else {
@@ -184,6 +208,7 @@ function adoptRunning() {
       for (const t of list) {
         if (byId.has(t.id)) continue;
         byId.set(t.id, { ...t, speed: 0, error: null });
+        currentRun.add(t.id);
         if (t.kind === "upload") batch.add(t.id);
       }
       if (list.length) markDirty();
@@ -263,6 +288,7 @@ function requeue(id: string): Transfer | null {
   const fresh: Transfer = { ...t, state: "queued", error: null, speed: 0, verified: undefined };
   byId.set(id, fresh);
   lastSample.delete(id);
+  currentRun.add(id);
   if (t.kind === "upload") batch.add(id);
   return fresh;
 }
@@ -280,6 +306,7 @@ const actions = {
     });
     for (const t of created) {
       byId.set(t.id, t);
+      currentRun.add(t.id);
       if (t.kind === "upload") batch.add(t.id);
     }
     dirty = true;
@@ -365,6 +392,7 @@ const actions = {
     if (hooks || !external.has(t.id)) external.set(t.id, hooks ?? external.get(t.id) ?? {});
     const next: Transfer = { ...t, error: t.error ?? null, speed: 0 };
     byId.set(t.id, next);
+    if (next.state === "queued" || next.state === "running") currentRun.add(t.id);
     settle(next);
     dirty = true;
     flush();
@@ -435,6 +463,28 @@ const actions = {
 };
 
 export type TransferActions = typeof actions;
+
+/**
+ * What the Activity panel may offer for a row: the backend's own transfers (`track`) can't be
+ * paused, cancelled or moved, and Retry only works when their owner gave a hook for it.
+ */
+export function transferControls(id: string): { manage: boolean; retry: boolean } {
+  const ext = external.get(id);
+  return ext ? { manage: false, retry: !!ext.retry } : { manage: true, retry: true };
+}
+
+/** Bytes of the current run (see `currentRun`) for the header: everything, and what is done. */
+export function runTotals(list: Transfer[]): { total: number; done: number } {
+  let total = runPrunedBytes;
+  let done = runPrunedBytes;
+  for (const t of list) {
+    if (!currentRun.has(t.id)) continue;
+    if (t.state !== "running" && t.state !== "queued" && t.state !== "done") continue;
+    total += t.total;
+    done += t.state === "done" ? t.total : t.bytes;
+  }
+  return { total, done };
+}
 
 /** The queue's actions, for components outside the hook (the Activity panel's pause and resume). */
 export const transferActions: TransferActions = actions;

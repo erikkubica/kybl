@@ -1,5 +1,6 @@
 /** Servers: WebDAV (Nextcloud and friends), FTP / FTPS and SFTP. */
-import { useImperativeHandle, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState } from "react";
+import { api } from "../api";
 import { Icon } from "../Icons";
 import type { NetConfig, Profile } from "../types";
 import { baseProfile, defaultPort, emptyNet, netTitle, type NetKind } from "./kinds";
@@ -53,6 +54,21 @@ export function NetForm({
   // SFTP: SSH tunnels through the server (src/tunnels)
   const [tunnels, setTunnels] = useState(start.tunnels ?? []);
   const editing = !!initial;
+  // FTP / WebDAV: a password is optional, so ask the vault whether one is saved (null: not known yet)
+  const [hasSecret, setHasSecret] = useState<boolean | null>(null);
+  const [clearSecret, setClearSecret] = useState(false);
+  useEffect(() => {
+    if (!initial || kind === "sftp") return;
+    let live = true;
+    api
+      .profileHasSecret(initial.id)
+      .then((v) => live && setHasSecret(v))
+      .catch(() => live && setHasSecret(true));
+    return () => {
+      live = false;
+    };
+  }, [initial, kind]);
+  const savedPassword = kind === "sftp" ? editing && initial?.net?.auth === "password" : !!hasSecret && !clearSecret;
 
   const edit =
     <T,>(set: (v: T) => void) =>
@@ -81,7 +97,7 @@ export function NetForm({
   const urlChanged = (u: string) => {
     const hostOf = (s: string) => {
       try {
-        return new URL(s.trim().replace(/^davs?:|^webdav:/i, "https:")).host.toLowerCase();
+        return new URL(s.trim().replace(/^(web)?davs?:/i, "https:")).host.toLowerCase();
       } catch {
         return s.trim().toLowerCase();
       }
@@ -93,10 +109,10 @@ export function NetForm({
   const hadKey = editing && initial?.net?.auth === "key";
   const portNum = port.trim() ? Number(port.trim()) : 0;
   const davHref = url.trim();
-  const davInsecure = kind === "webdav" && /^(http|webdav):\/\//i.test(davHref);
+  const davInsecure = kind === "webdav" && /^(http|dav|webdav):\/\//i.test(davHref);
 
   const problems = {
-    url: kind !== "webdav" ? null : !davHref ? "Enter the server's address." : !/^(https?|davs?|webdav):\/\/[^\s/]+/i.test(davHref) ? "Start with https:// (for example https://cloud.example.com)." : null,
+    url: kind !== "webdav" ? null : !davHref ? "Enter the server's address." : !/^(https?|(web)?davs?):\/\/[^\s/]+/i.test(davHref) ? "Start with https:// (for example https://cloud.example.com)." : null,
     host: kind === "webdav" ? null : host.trim() ? null : "Enter the server's name or address.",
     port: kind === "webdav" || !port.trim() ? null : Number.isInteger(portNum) && portNum > 0 && portNum < 65536 ? null : "Ports are numbers from 1 to 65535.",
     user: kind === "sftp" && !user.trim() ? "Enter your user name on the server." : null,
@@ -138,7 +154,7 @@ export function NetForm({
         const k = privateKey.trim();
         secret = k ? (passphrase ? JSON.stringify({ privateKey: k, passphrase }) : k) : undefined;
       } else if (!(kind === "sftp" && auth === "agent")) secret = password || undefined;
-      return { profile, secret };
+      return { profile, secret, clearSecret: kind !== "sftp" && clearSecret && !password };
     },
     setHostKey,
     setCertFingerprint,
@@ -257,9 +273,26 @@ export function NetForm({
           label="Password"
           optional={kind !== "sftp"}
           error={show("password")}
-          hint={kind === "webdav" ? "Using two-step sign-in? Create an app password in your account's security settings and use it here." : undefined}
+          hint={
+            kind !== "sftp" && hasSecret && !password ? (
+              clearSecret ? (
+                <>
+                  Signs in without a password once saved.{" "}
+                  <button type="button" className="link-btn" onClick={() => edit(setClearSecret)(false)}>
+                    Keep it
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="link-btn" onClick={() => edit(setClearSecret)(true)}>
+                  Remove saved password
+                </button>
+              )
+            ) : kind === "webdav" ? (
+              "Using two-step sign-in? Create an app password in your account's security settings and use it here."
+            ) : undefined
+          }
         >
-          {(c) => <SecretInput control={c} value={password} onChange={edit(setPassword)} editing={editing && initial?.net?.auth === "password"} label="password" />}
+          {(c) => <SecretInput control={c} value={password} onChange={edit(setPassword)} editing={savedPassword} label="password" />}
         </Field>
       )}
 

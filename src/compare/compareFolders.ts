@@ -1,16 +1,26 @@
 /**
  * Compares the listings of two folders (one per pane) by name. Files count as the same when
- * their size matches and, where both sides have one, their ETag too; otherwise the newer one is
- * the one to copy. Folders are matched by name only: their contents are not compared (that needs
+ * their size matches and, where both sides are S3 listings with plain ETags, the ETag too;
+ * otherwise the newer one is the one to copy. Folders are matched by name only: their contents are not compared (that needs
  * a recursive "compare" job, see docs/phase2-architecture.md §6.1).
  */
-import type { Entry } from "../types";
+import type { Entry, Profile } from "../types";
 
 /** S3 ETags of multipart uploads ("…-12") are not content hashes, so they can't be compared. */
 const plainEtag = (e: Entry) => {
   const t = e.etag?.replace(/"/g, "");
   return t && !t.includes("-") ? t : null;
 };
+/**
+ * ETags only say "same content" between two S3 listings: there a single-part upload's ETag is its
+ * MD5. Elsewhere (WebDAV, Dropbox revs, Azure, GCS) it is a version tag, and Kybl Storage encrypts
+ * with SSE-C, whose ETags aren't MD5s either.
+ */
+export function etagsComparable(a: Pick<Profile, "kind" | "provider"> | null | undefined, b: Pick<Profile, "kind" | "provider"> | null | undefined): boolean {
+  const s3 = (p: typeof a) => !!p && (p.kind ?? "s3") === "s3" && p.provider !== "kybl";
+  return s3(a) && s3(b);
+}
+
 /** Clocks and upload times differ a little; closer than this counts as the same time. */
 const SAME_TIME_MS = 2000;
 
@@ -27,7 +37,8 @@ export type FolderDiff = {
   same: number;
 };
 
-export function compareFolders(left: Entry[], right: Entry[]): FolderDiff {
+/** `etags`: the two listings' ETags mean the same thing (see `etagsComparable`) */
+export function compareFolders(left: Entry[], right: Entry[], { etags = false }: { etags?: boolean } = {}): FolderDiff {
   const key = (e: Entry) => `${e.kind}:${e.name}`;
   const byName = new Map(right.map((e) => [key(e), e]));
   const out: FolderDiff = { leftOnly: [], rightOnly: [], leftNewer: [], rightNewer: [], differ: [], same: 0 };
@@ -40,7 +51,7 @@ export function compareFolders(left: Entry[], right: Entry[]): FolderDiff {
       out.leftOnly.push(a);
       continue;
     }
-    if (a.kind === "folder" || sameFile(a, b)) {
+    if (a.kind === "folder" || sameFile(a, b, etags)) {
       out.same++;
       continue;
     }
@@ -52,10 +63,10 @@ export function compareFolders(left: Entry[], right: Entry[]): FolderDiff {
   return out;
 }
 
-function sameFile(a: Entry, b: Entry): boolean {
+function sameFile(a: Entry, b: Entry, etags: boolean): boolean {
   if (a.size !== b.size) return false;
-  const ea = plainEtag(a);
-  const eb = plainEtag(b);
+  const ea = etags ? plainEtag(a) : null;
+  const eb = etags ? plainEtag(b) : null;
   if (ea && eb) return ea === eb;
   // same size and no comparable hash: the same unless the times are far apart
   if (a.modified == null || b.modified == null) return true;

@@ -201,6 +201,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_profiles,
             commands::save_profile,
+            commands::profile_has_secret,
             commands::set_profile_groups,
             commands::delete_profile,
             import::import_sources,

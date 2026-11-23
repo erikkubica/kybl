@@ -4,7 +4,7 @@ import { ErrorText } from "./ErrorText";
 import { formatBytes, formatEta, formatSpeed } from "../format";
 import type { Transfer, TransferState } from "../types";
 import { useJobList, type Job, type JobKind } from "../useJobs";
-import { transferActions, useTransferList } from "../useTransfers";
+import { runTotals, transferActions, transferControls, useTransferList } from "../useTransfers";
 import { useSync } from "../sync";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ContextMenu, PromptDialog, type MenuItem } from "./Dialogs";
@@ -166,7 +166,8 @@ export function TransferPanel(props: Omit<PanelProps, "transfers" | "jobs" | "sy
     [sync],
   );
   const migs = useMigrations();
-  const migsActive = useMemo(() => migs.filter(migrationActive), [migs]);
+  // a paused copy still holds work: listed (and counted) with what is in progress
+  const migsActive = useMemo(() => migs.filter((m) => migrationActive(m) || m.progress.state === "paused"), [migs]);
   const migsFailed = useMemo(() => migs.filter(migrationFailed), [migs]);
   const migsDone = useMemo(() => migs.filter((m) => (m.progress.state === "done" && !migrationFailed(m)) || m.progress.state === "cancelled"), [migs]);
   return (
@@ -202,7 +203,8 @@ type PanelProps = {
   onTab?(tab: ActivityTab): void;
   /** a finished copy's "Show where it went" */
   onOpenMigrationDest?(job: JobSummary): void;
-  onCancelJob: (id: string) => void;
+  /** a job's Stop; `kind` lets custom actions stop their own way (still downloading their files) */
+  onCancelJob: (id: string, kind: JobKind) => void;
   onDismissJob: (id: string) => void;
   onOpenJob: (j: Job) => void;
   onOpenSync: () => void;
@@ -276,7 +278,9 @@ function TransferPanelView({
   const jobsFailed = jobs.filter((j) => j.state === "error");
   const jobsDone = jobs.filter((j) => j.state === "done");
   const jobsCancelled = jobs.filter((j) => j.state === "cancelled");
-  const jobList = [...jobsRunning, ...[...jobs].filter((j) => j.state !== "running").sort((a, b) => (b.finished ?? 0) - (a.finished ?? 0)).slice(0, 30)];
+  // every running and failed job (the Failed tab counts them all), and the 30 latest finished
+  const byFinished = (a: Job, b: Job) => (b.finished ?? 0) - (a.finished ?? 0);
+  const jobList = [...jobsRunning, ...[...jobsFailed].sort(byFinished), ...[...jobsDone, ...jobsCancelled].sort(byFinished).slice(0, 30)];
 
   const running = transfers.filter((t) => t.state === "running");
   const queued = transfers.filter((t) => t.state === "queued");
@@ -284,10 +288,13 @@ function TransferPanelView({
   const done = transfers.filter((t) => t.state === "done");
   const paused = transfers.filter((t) => t.state === "paused");
   const active = running.length + queued.length;
+  // the backend's own transfers (edited files saving back) can't be paused or cancelled from here
+  const manageable = (t: Transfer) => transferControls(t.id).manage;
+  const activeManaged = running.filter(manageable).length + queued.filter(manageable).length;
+  const retryable = failed.filter((t) => transferControls(t.id).retry);
 
-  const live = transfers.filter((t) => t.state === "running" || t.state === "queued" || t.state === "done");
-  const totalBytes = live.reduce((s, t) => s + t.total, 0);
-  const doneBytes = live.reduce((s, t) => s + (t.state === "done" ? t.total : t.bytes), 0);
+  // this run only: rows finished in an earlier batch don't count in "X of Y" and the time left
+  const { total: totalBytes, done: doneBytes } = runTotals(transfers);
   const speed = running.reduce((s, t) => s + t.speed, 0);
   const pct = totalBytes > 0 ? Math.min(100, (doneBytes / totalBytes) * 100) : 0;
   const eta = speed > 0 ? (totalBytes - doneBytes) / speed : 0;
@@ -328,7 +335,7 @@ function TransferPanelView({
   // with no transfers running, the header summarises the first running job, then the first copy
   // between connections
   const leadJob = active === 0 ? jobsRunning[0] : undefined;
-  const leadMig = active === 0 && !leadJob ? migrationsActive[0] : undefined;
+  const leadMig = active === 0 && !leadJob ? migrationsActive.find((m) => m.progress.state !== "paused") : undefined;
   const leadMigFrac = leadMig && leadMig.progress.state !== "planning" && leadMig.progress.bytesTotal > 0 ? leadMig.progress.bytesDone / leadMig.progress.bytesTotal : null;
   // "Retry all": failed transfers, failed moves / copies / deletes, and copies between connections
   const retryJobs = jobsFailed.filter((j) => j.retry);
@@ -336,10 +343,10 @@ function TransferPanelView({
     const r = migrationRetry(m);
     return r ? [r] : [];
   });
-  const retryCount = failed.length + retryJobs.length + retryMigs.length;
+  const retryCount = retryable.length + retryJobs.length + retryMigs.length;
   const retryAll = () => {
     if (onRetryAll) onRetryAll();
-    else failed.forEach((t) => onRetry(t.id));
+    else retryable.forEach((t) => onRetry(t.id));
     for (const j of retryJobs) jobActions.retry(j.id);
     for (const r of retryMigs) void r().catch(() => {});
   };
@@ -351,8 +358,8 @@ function TransferPanelView({
   // only what fits the tab on screen (all of it without tabs)
   const acts = {
     retry: retryCount > 0 && (!onTab || tab === "activity" || tab === "failed"),
-    cancel: active > 0 && (!onTab || tab === "activity"),
-    pause: active > 0 && (!onTab || tab === "activity"),
+    cancel: activeManaged > 0 && (!onTab || tab === "activity"),
+    pause: activeManaged > 0 && (!onTab || tab === "activity"),
     resume: paused.length > 0 && (!onTab || tab === "activity"),
     clear: finishedAll > 0 && (!onTab || tab === "done"),
     clearFailed: !!onClearFailed && counts.failed > 0 && !!onTab && tab === "failed",
@@ -611,7 +618,7 @@ function TransferPanelView({
               )}
               <div className="tp-row-actions">
                 {j.state === "running" && (j.kind !== "rename" || j.stoppable) && (
-                  <button className="icon-btn" onClick={() => onCancelJob(j.id)} title="Stop. What’s done stays done; nothing is half-moved." aria-label="Stop">
+                  <button className="icon-btn" onClick={() => onCancelJob(j.id, j.kind)} title="Stop. What’s done stays done; nothing is half-moved." aria-label="Stop">
                     <Icon name="x" size={13} />
                   </button>
                 )}
@@ -653,85 +660,88 @@ function TransferPanelView({
               <div className="tp-row-actions" />
             </div>
           ))}
-          {list.map((t) => (
-            <div key={t.id} className={`tp-row st-${t.state}`}>
-              <span className="tp-icon" title={KIND_LABEL[t.kind]}>
-                <Icon name={t.state === "running" ? (t.kind === "upload" || t.kind === "download" ? t.kind : "archive") : STATE_ICON[t.state]} size={15} />
-              </span>
-              <div className="tp-name" title={t.key}>
-                {t.name}
-                {t.state === "error" && t.error && (
-                  <div className="tp-err">
-                    <ErrorText message={t.error} />
+          {list.map((t) => {
+            const ctl = transferControls(t.id);
+            return (
+              <div key={t.id} className={`tp-row st-${t.state}`}>
+                <span className="tp-icon" title={KIND_LABEL[t.kind]}>
+                  <Icon name={t.state === "running" ? (t.kind === "upload" || t.kind === "download" ? t.kind : "archive") : STATE_ICON[t.state]} size={15} />
+                </span>
+                <div className="tp-name" title={t.key}>
+                  {t.name}
+                  {t.state === "error" && t.error && (
+                    <div className="tp-err">
+                      <ErrorText message={t.error} />
+                    </div>
+                  )}
+                </div>
+                <div className="tp-meta">
+                  {t.state === "running" && (
+                    <>
+                      {/* total 0: a Google Docs export, whose size isn't known until it's done */}
+                      {t.total > 0 ? `${formatBytes(t.bytes)} of ${formatBytes(t.total)}` : formatBytes(t.bytes)}
+                      {t.speed > 0 && ` · ${formatSpeed(t.speed)}`}
+                    </>
+                  )}
+                  {t.state === "paused" && (t.total > 0 ? `Paused · ${formatBytes(t.bytes)} of ${formatBytes(t.total)}` : "Paused")}
+                  {t.state !== "running" && t.state !== "paused" && (t.total || (t.state === "done" ? t.bytes : 0)) > 0 && formatBytes(t.total || t.bytes)}
+                </div>
+                {t.state === "running" || t.state === "queued" || t.state === "paused" ? (
+                  <div className={`bar ${t.state === "running" && !t.total ? "indeterminate" : ""}`}>
+                    <div style={{ width: `${t.total > 0 ? Math.min(100, (t.bytes / t.total) * 100) : 0}%` }} />
+                  </div>
+                ) : (
+                  <div className="tp-state">
+                    {t.state === "done" && KIND_DONE[t.kind]}
+                    {t.state === "done" && t.verified && (
+                      <span className="tp-verified" title={`Verified: ${VERIFIED[t.verified] ?? "it matches"}`} aria-label="Verified">
+                        <Icon name="check" size={11} /> verified
+                      </span>
+                    )}
+                    {t.state === "cancelled" && "Cancelled"}
+                    {t.state === "error" && "Failed"}
                   </div>
                 )}
-              </div>
-              <div className="tp-meta">
-                {t.state === "running" && (
-                  <>
-                    {/* total 0: a Google Docs export, whose size isn't known until it's done */}
-                    {t.total > 0 ? `${formatBytes(t.bytes)} of ${formatBytes(t.total)}` : formatBytes(t.bytes)}
-                    {t.speed > 0 && ` · ${formatSpeed(t.speed)}`}
-                  </>
-                )}
-                {t.state === "paused" && (t.total > 0 ? `Paused · ${formatBytes(t.bytes)} of ${formatBytes(t.total)}` : "Paused")}
-                {t.state !== "running" && t.state !== "paused" && (t.total || (t.state === "done" ? t.bytes : 0)) > 0 && formatBytes(t.total || t.bytes)}
-              </div>
-              {t.state === "running" || t.state === "queued" || t.state === "paused" ? (
-                <div className={`bar ${t.state === "running" && !t.total ? "indeterminate" : ""}`}>
-                  <div style={{ width: `${t.total > 0 ? Math.min(100, (t.bytes / t.total) * 100) : 0}%` }} />
-                </div>
-              ) : (
-                <div className="tp-state">
-                  {t.state === "done" && KIND_DONE[t.kind]}
-                  {t.state === "done" && t.verified && (
-                    <span className="tp-verified" title={`Verified: ${VERIFIED[t.verified] ?? "it matches"}`} aria-label="Verified">
-                      <Icon name="check" size={11} /> verified
-                    </span>
+                <div className="tp-row-actions">
+                  {t.state === "queued" && t.id !== firstQueued && ctl.manage && pausable(t) && (
+                    <button className="icon-btn" onClick={() => transferActions.moveToTop(t.id)} title="Move to top: start this one next" aria-label={`Move ${t.name} to top`}>
+                      <Icon name="to-top" size={13} />
+                    </button>
                   )}
-                  {t.state === "cancelled" && "Cancelled"}
-                  {t.state === "error" && "Failed"}
+                  {(t.state === "running" || t.state === "queued") && ctl.manage && pausable(t) && (
+                    <button className="icon-btn" onClick={() => transferActions.pause(t.id)} title="Pause, keeping what’s done" aria-label={`Pause ${t.name}`}>
+                      <Icon name="pause" size={13} />
+                    </button>
+                  )}
+                  {t.state === "paused" && (
+                    <button className="icon-btn" onClick={() => transferActions.resume(t.id)} title="Resume from where it stopped" aria-label={`Resume ${t.name}`}>
+                      <Icon name="play" size={13} />
+                    </button>
+                  )}
+                  {(t.state === "running" || t.state === "queued" || t.state === "paused") && ctl.manage && (
+                    <button className="icon-btn" onClick={() => onCancel(t.id)} title={t.state === "paused" ? "Cancel and drop what was done" : "Cancel"} aria-label="Cancel">
+                      <Icon name="x" size={13} />
+                    </button>
+                  )}
+                  {(t.state === "error" || t.state === "cancelled") && ctl.retry && (
+                    <button className="icon-btn" onClick={() => onRetry(t.id)} title="Retry" aria-label="Retry">
+                      <Icon name="retry" size={13} />
+                    </button>
+                  )}
+                  {t.state === "done" && t.kind === "download" && t.local && (
+                    <>
+                      <button className="icon-btn" onClick={() => openLocal(t)} title="Open" aria-label={`Open ${t.name}`}>
+                        <Icon name="external" size={13} />
+                      </button>
+                      <button className="icon-btn" onClick={() => onReveal(t)} title="Show in Finder" aria-label={`Show ${t.name} in Finder`}>
+                        <Icon name="reveal" size={13} />
+                      </button>
+                    </>
+                  )}
                 </div>
-              )}
-              <div className="tp-row-actions">
-                {t.state === "queued" && t.id !== firstQueued && pausable(t) && (
-                  <button className="icon-btn" onClick={() => transferActions.moveToTop(t.id)} title="Move to top: start this one next" aria-label={`Move ${t.name} to top`}>
-                    <Icon name="to-top" size={13} />
-                  </button>
-                )}
-                {(t.state === "running" || t.state === "queued") && pausable(t) && (
-                  <button className="icon-btn" onClick={() => transferActions.pause(t.id)} title="Pause, keeping what’s done" aria-label={`Pause ${t.name}`}>
-                    <Icon name="pause" size={13} />
-                  </button>
-                )}
-                {t.state === "paused" && (
-                  <button className="icon-btn" onClick={() => transferActions.resume(t.id)} title="Resume from where it stopped" aria-label={`Resume ${t.name}`}>
-                    <Icon name="play" size={13} />
-                  </button>
-                )}
-                {(t.state === "running" || t.state === "queued" || t.state === "paused") && (
-                  <button className="icon-btn" onClick={() => onCancel(t.id)} title={t.state === "paused" ? "Cancel and drop what was done" : "Cancel"} aria-label="Cancel">
-                    <Icon name="x" size={13} />
-                  </button>
-                )}
-                {(t.state === "error" || t.state === "cancelled") && (
-                  <button className="icon-btn" onClick={() => onRetry(t.id)} title="Retry" aria-label="Retry">
-                    <Icon name="retry" size={13} />
-                  </button>
-                )}
-                {t.state === "done" && t.kind === "download" && t.local && (
-                  <>
-                    <button className="icon-btn" onClick={() => openLocal(t)} title="Open" aria-label={`Open ${t.name}`}>
-                      <Icon name="external" size={13} />
-                    </button>
-                    <button className="icon-btn" onClick={() => onReveal(t)} title="Show in Finder" aria-label={`Show ${t.name} in Finder`}>
-                      <Icon name="reveal" size={13} />
-                    </button>
-                  </>
-                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
           {show("progress") && queued.length > 40 && <div className="tp-more">+ {(queued.length - 40).toLocaleString()} more waiting</div>}
         </div>
       )}

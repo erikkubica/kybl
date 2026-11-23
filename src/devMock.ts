@@ -15,6 +15,8 @@ import { installArchiveMock } from "./archive/devArchive";
 const HOUR = 3600_000;
 const now = Date.now();
 
+/** connections saved with (true) or without (false) a password; the seeded ones have one */
+const mockSecrets = new Map<string, boolean>();
 const profiles: Profile[] = [
   { id: "p1", name: "Hetzner · media", provider: "hetzner", endpoint: "https://nbg1.your-objectstorage.com", region: "nbg1", accessKeyId: "DEMOKEY", bucket: "media-prod", pathStyle: false },
   { id: "p2", name: "AWS production", provider: "aws", endpoint: "https://s3.eu-central-1.amazonaws.com", region: "eu-central-1", accessKeyId: "DEMOKEY", bucket: null, pathStyle: false },
@@ -787,8 +789,12 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       return { scheme: "media", base: "" };
     case "list_profiles":
       return profiles;
+    case "profile_has_secret":
+      return mockSecrets.get(a.id) ?? true;
     case "save_profile": {
       const p = { ...a.profile, id: a.profile.id || `p${Date.now()}` };
+      if (a.secret) mockSecrets.set(p.id, true);
+      else if (a.clearSecret || !a.profile.id) mockSecrets.set(p.id, false);
       const i = profiles.findIndex((x) => x.id === p.id);
       if (i >= 0) profiles[i] = p;
       else profiles.push(p);

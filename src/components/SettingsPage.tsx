@@ -114,6 +114,8 @@ const SHORTCUTS: { label: string; keys: string[] }[] = [
 /** Automatic checks, "Check now", and installing what a check found. */
 function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info", text: string) => void }) {
   const st = useUpdates();
+  // transfers are running: "Restart now" asks once more before it stops them
+  const [busyAsk, setBusyAsk] = useState(false);
   if (!st) return null;
   const rel = st.available;
   const working = st.phase === "downloading" || st.phase === "installing";
@@ -124,7 +126,9 @@ function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info"
       : st.phase === "installing"
         ? `Installing Kybl ${rel?.version}…`
         : st.phase === "ready"
-          ? `Kybl ${rel?.version} is installed. Restart to use it.`
+          ? busyAsk
+            ? "Transfers are still running. Restarting now stops them."
+            : `Kybl ${rel?.version} is installed. Restart to use it.`
           : st.error
             ? st.error
             : rel
@@ -150,8 +154,16 @@ function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info"
             </button>
           )}
           {st.phase === "ready" ? (
-            <button className="btn btn-sm btn-primary" onClick={() => updatesApi.restart(true).catch((e) => onToast("error", String(e)))}>
-              Restart now
+            <button
+              className={`btn btn-sm ${busyAsk ? "btn-danger" : "btn-primary"}`}
+              onClick={() =>
+                updatesApi.restart(busyAsk).catch((e) => {
+                  if (String(e) === "busy") setBusyAsk(true);
+                  else onToast("error", String(e));
+                })
+              }
+            >
+              {busyAsk ? "Restart anyway" : "Restart now"}
             </button>
           ) : rel ? (
             <button
@@ -159,7 +171,7 @@ function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info"
               disabled={working}
               onClick={() =>
                 rel.how === "install"
-                  ? installAndRestart(() => onToast("info", "Kybl restarts when you click Restart now, after your transfers finish.")).catch(() => {})
+                  ? installAndRestart(() => setBusyAsk(true)).catch(() => {})
                   : updatesApi.install().catch((e) => onToast("error", String(e)))
               }
             >
@@ -445,6 +457,7 @@ export function SettingsPage({
   onImportProfiles,
   onClose,
   initialPage,
+  pageRequest,
   activeProfileId,
   onToast,
 }: {
@@ -459,14 +472,17 @@ export function SettingsPage({
   onImportProfiles?: () => void;
   onClose: () => void;
   initialPage?: SettingsPageId;
+  /** changes on every request to open a page, even the same one again */
+  pageRequest?: number;
   activeProfileId: string | null;
   onToast: (kind: "success" | "error" | "info", text: string) => void;
 }) {
   const [page, setPage] = useState<Page>(initialPage ?? "general");
+  const [confirmReset, setConfirmReset] = useState(false);
   const [prefs, setPrefs] = useState<AppPrefs | null>(null);
   useEffect(() => {
     if (initialPage) setPage(initialPage);
-  }, [initialPage]);
+  }, [initialPage, pageRequest]);
   useEffect(() => {
     syncApi
       .getPrefs()
@@ -783,9 +799,28 @@ export function SettingsPage({
                 <h3 className="set-title">Reset</h3>
                 <div className="set-card">
                   <Row label="Reset all settings" hint="Back to the defaults. Connections, their keys and your favorites are not touched.">
-                    <button className="btn btn-sm btn-danger-ghost" onClick={() => onChange({ ...DEFAULTS, favorites: settings.favorites })}>
-                      Reset
-                    </button>
+                    {confirmReset ? (
+                      <div className="btn-row">
+                        <button className="btn btn-sm" autoFocus onClick={() => setConfirmReset(false)}>
+                          Cancel
+                        </button>
+                        <button
+                          className="btn btn-sm btn-danger"
+                          onClick={() => {
+                            setConfirmReset(false);
+                            onChange({ ...DEFAULTS, favorites: settings.favorites });
+                            onCompact(false);
+                            onToast("success", "Settings are back to the defaults");
+                          }}
+                        >
+                          Reset all
+                        </button>
+                      </div>
+                    ) : (
+                      <button className="btn btn-sm btn-danger-ghost" onClick={() => setConfirmReset(true)}>
+                        Reset
+                      </button>
+                    )}
                   </Row>
                 </div>
               </>
