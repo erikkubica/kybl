@@ -71,7 +71,46 @@ pub fn is_ignored(gi: &Gitignore, rel: &str) -> bool {
 
 /// Rejects keys that would escape the local folder or can't be a file name.
 pub fn safe_rel(rel: &str) -> bool {
-    !rel.is_empty() && !rel.contains('\0') && !rel.contains('\\') && rel.split('/').all(|p| !p.is_empty() && p != "." && p != "..")
+    safe_rel_on(rel, cfg!(windows))
+}
+
+/// [`safe_rel`] for Windows or elsewhere. On Windows a name with `:` is a drive (`C:` replaces the
+/// folder it is joined to) or an alternate stream, and a device name (`NUL`, `COM1.txt`) isn't a
+/// file: neither may come from a remote key.
+fn safe_rel_on(rel: &str, windows: bool) -> bool {
+    let device = |p: &str| {
+        let stem = p.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+        matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+            || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit())
+    };
+    !rel.is_empty()
+        && !rel.contains('\0')
+        && !rel.contains('\\')
+        && rel.split('/').all(|p| !p.is_empty() && p != "." && p != ".." && !(windows && (p.contains(':') || device(p))))
+}
+
+/// `a` and `b` name one file only by letter case: the same file on a disk that ignores case (so
+/// renaming one to the other just changes its capitals). Two names of one file that differ by
+/// more (hard links) don't count.
+pub fn same_entry(a: &Path, b: &Path) -> bool {
+    if a.to_string_lossy().to_lowercase() != b.to_string_lossy().to_lowercase() {
+        return false;
+    }
+    match (std::fs::symlink_metadata(a), std::fs::symlink_metadata(b)) {
+        (Ok(x), Ok(y)) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                x.dev() == y.dev() && x.ino() == y.ino()
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = (x, y);
+                matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(p), Ok(q)) if p == q)
+            }
+        }
+        _ => false,
+    }
 }
 
 fn rel_key(p: &Path) -> String {
@@ -393,6 +432,21 @@ pub fn make_watcher(path: &str, tx: mpsc::Sender<bool>, dirty: Arc<Mutex<Dirty>>
 mod tests {
     use super::*;
     use crate::sync::plan::BaseEntry;
+
+    #[test]
+    fn remote_keys_that_would_leave_the_folder_on_windows_are_refused() {
+        for bad in ["C:/Users/x/evil.txt", "a/C:", "a/b:c.txt", "NUL", "dir/com1.txt", "Lpt9", "aux.tar.gz", "CON "] {
+            assert!(!safe_rel_on(bad, true), "{bad:?}");
+        }
+        for ok in ["a/b.txt", "console.txt", "com.txt", "COM10", "nul-ish/x", "LPTX"] {
+            assert!(safe_rel_on(ok, true), "{ok:?}");
+        }
+        // elsewhere a colon is an ordinary character
+        assert!(safe_rel_on("12:30 notes.txt", false) && safe_rel_on("NUL", false));
+        for bad in ["", "../x", "a//b", "a\\b", "./a"] {
+            assert!(!safe_rel_on(bad, false) && !safe_rel_on(bad, true), "{bad:?}");
+        }
+    }
 
     #[test]
     fn dates_and_names() {

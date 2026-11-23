@@ -219,7 +219,42 @@ fn renames_stay_renames_on_both_sides() {
         assert_eq!(r.summary, "1 renamed");
         assert_eq!(files(&p.local), vec!["moved.txt", "new/name.txt"]);
         assert_eq!(p.twoway().await.summary, "");
+
+        // only the capitals changed there: here too, also where the disk ignores case (the
+        // new name "exists" there, as the same file)
+        fs::rename(p.r("moved.txt"), p.r("Moved.txt")).unwrap();
+        let r = p.twoway().await;
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert_eq!(r.summary, "1 renamed");
+        assert_eq!(files(&p.local), vec!["Moved.txt", "new/name.txt"]);
+        assert_eq!(p.twoway().await.summary, "");
     });
+}
+
+#[test]
+fn a_push_only_replaces_the_remote_file_the_plan_saw() {
+    let r = |etag: &str, modified: i64| RemoteMeta { size: 7, etag: etag.into(), modified, id: None, md5: None };
+    assert_eq!(push_precondition(None), Precondition::IfNoneMatch);
+    assert_eq!(push_precondition(Some(&r("e1", 5))), Precondition::IfMatch("e1".into()));
+    // no ETag: never an unconditional overwrite
+    assert_eq!(push_precondition(Some(&r("", 5000))), Precondition::IfUnchanged { etag: None, size: 7, modified: Some(5000) });
+    assert_eq!(push_precondition(Some(&r("", 0))), Precondition::IfUnchanged { etag: None, size: 7, modified: None });
+}
+
+#[test]
+fn a_rename_never_lands_on_another_file() {
+    let d = tmp("same");
+    write(&d.join("a.txt"), "a");
+    write(&d.join("b.txt"), "b");
+    assert!(!local::same_entry(&d.join("a.txt"), &d.join("b.txt")));
+    assert!(local::same_entry(&d.join("a.txt"), &d.join("a.txt")));
+    // a second name for one file (a hard link) is another name, not a change of capitals
+    fs::hard_link(d.join("a.txt"), d.join("link.txt")).unwrap();
+    assert!(!local::same_entry(&d.join("a.txt"), &d.join("link.txt")));
+    if fs::metadata(d.join("A.TXT")).is_ok() {
+        assert!(local::same_entry(&d.join("a.txt"), &d.join("A.TXT")), "where case doesn't count");
+    }
+    let _ = fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -389,6 +424,23 @@ fn one_way_modes_run_over_any_connection() {
 fn set_mode(p: &Path, mode: u32) {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(p, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_run_with_problems_doesnt_mark_the_other_side_handled() {
+    run(async {
+        let p = pair().await;
+        write(&p.l("locked/a.txt"), "a");
+        set_mode(&p.l("locked"), 0o000);
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(true, None).await.unwrap();
+        set_mode(&p.l("locked"), 0o755);
+        assert!(!r.errors.is_empty());
+        assert_eq!(p.db.cursor("m").unwrap().last_full_scan, None, "the next quick run doesn't start from this listing");
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(true, None).await.unwrap();
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(p.db.cursor("m").unwrap().last_full_scan.is_some());
+    });
 }
 
 #[cfg(unix)]

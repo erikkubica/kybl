@@ -1,7 +1,7 @@
 // Mirror's plan (src/mirror/plan.ts): new, changed, gone, excluded, FTP times. Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compareFiles, defaultTolerance, detectOffset, groupByFolder, planIsEmpty, planMirror, type Listing, type MFile, type PlanOptions } from "../../src/mirror/plan.ts";
+import { caseInsensitiveKind, compareFiles, defaultTolerance, detectOffset, groupByFolder, planIsEmpty, planMirror, type Listing, type MFile, type PlanOptions } from "../../src/mirror/plan.ts";
 
 const T = Date.UTC(2026, 10, 20, 12, 0, 0);
 const MIN = 60_000;
@@ -96,6 +96,31 @@ test("a file and a folder of one name block each other; letter case never delete
   assert.ok(!rels(p.remove).includes("Logo.png"), "where case doesn't count, Logo.png is the file just copied");
   assert.deepEqual(rels(p.kept), ["Logo.png"]);
   assert.deepEqual(p.removeDirs, [], "the blocked folder isn't deleted");
+});
+
+test("a destination that ignores letter case: matched in any case, nothing it holds is deleted, clashing source names are refused", () => {
+  const src = listing({ "photo.jpg": f(3), "docs/a.txt": f(1), "A.txt": f(2), "a.txt": f(5), "new.txt": f(4) }, ["docs/", "img/"]);
+  const dst = listing({ "Photo.jpg": f(3), "Docs/a.txt": f(1), "Docs/old.txt": f(6), "gone.txt": f(7) }, ["Docs/", "IMG/", "Stale/"]);
+  const p = planMirror(src, dst, opts({ deleteExtra: true, caseInsensitive: true }));
+  assert.deepEqual(rels(p.upload), ["A.txt", "new.txt"], "Photo.jpg and Docs/a.txt are the same files");
+  assert.deepEqual(rels(p.unchanged), ["docs/a.txt", "photo.jpg"]);
+  assert.deepEqual(p.mkdirs, [], "Docs/ and IMG/ are already there");
+  assert.deepEqual(rels(p.blocked), ["a.txt"], "a.txt would land on A.txt");
+  assert.deepEqual(rels(p.remove), ["Docs/old.txt", "gone.txt"]);
+  assert.deepEqual(p.removeDirs, ["Stale/"], "Docs/ and IMG/ are the source's folders");
+  assert.ok(!rels(p.remove).some((r) => ["Photo.jpg", "Docs/a.txt", "A.txt", "a.txt"].includes(r)));
+
+  // where case counts both names are mirrored, and a case variant still isn't deleted
+  const cs = planMirror(src, dst, opts({ deleteExtra: true }));
+  assert.deepEqual(rels(cs.blocked), []);
+  assert.ok(rels(cs.upload).includes("a.txt") && rels(cs.upload).includes("photo.jpg"));
+  assert.ok(!rels(cs.remove).includes("Photo.jpg") && !cs.removeDirs.includes("Docs/"));
+
+  assert.ok(caseInsensitiveKind("local", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"));
+  assert.ok(caseInsensitiveKind("local", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"));
+  assert.ok(!caseInsensitiveKind("local", "Mozilla/5.0 (X11; Linux x86_64)"));
+  assert.ok(caseInsensitiveKind("dropbox", "Linux") && caseInsensitiveKind("box", "") && caseInsensitiveKind("onedrive", ""));
+  assert.ok(!caseInsensitiveKind("s3", "Macintosh") && !caseInsensitiveKind("gdrive", "Windows"));
 });
 
 test("excluded counts come through, and changes group by folder", () => {

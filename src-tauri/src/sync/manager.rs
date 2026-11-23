@@ -237,13 +237,42 @@ pub async fn run_twoway<R: Runtime>(app: &AppHandle<R>, m: &SyncMapping, full: b
     with_engine(app, m, cancel, async |e| e.twoway(full, dirty).await).await
 }
 
-/// Runs one sync of a mapping and reports the outcome. Returns false when it failed.
-async fn run_and_report<R: Runtime>(app: &AppHandle<R>, m: &SyncMapping, full: bool, dirty: Option<HashSet<PathBuf>>, cancel: &Arc<AtomicBool>) -> bool {
+/// How a run ended, for when the next one is due.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RunEnd {
+    Ok,
+    /// its only problem is deletions held for the user (confirming them starts a run)
+    Waiting,
+    Failed,
+}
+
+impl RunEnd {
+    fn of(r: &RunResult) -> Self {
+        match r.errors.len() {
+            0 => RunEnd::Ok,
+            1 if r.pending > 0 => RunEnd::Waiting,
+            _ => RunEnd::Failed,
+        }
+    }
+}
+
+/// When the next timed (full) run is due: the mapping's interval, or sooner after a failure,
+/// waiting twice as long after each failure in a row so a problem that stays doesn't list
+/// everything every minute.
+fn next_wait(end: RunEnd, fails_in_a_row: u32, interval: Duration) -> Duration {
+    match end {
+        RunEnd::Ok | RunEnd::Waiting => interval,
+        RunEnd::Failed => RETRY_AFTER.saturating_mul(1 << fails_in_a_row.saturating_sub(1).min(16)).min(interval),
+    }
+}
+
+/// Runs one sync of a mapping and reports the outcome.
+async fn run_and_report<R: Runtime>(app: &AppHandle<R>, m: &SyncMapping, full: bool, dirty: Option<HashSet<PathBuf>>, cancel: &Arc<AtomicBool>) -> RunEnd {
     let mgr = app.state::<SyncManager>();
     let lock = mgr.run_lock(&m.id);
     let _guard = lock.lock().await;
     if cancel.load(Ordering::Relaxed) {
-        return true;
+        return RunEnd::Ok;
     }
     mgr.update(app, &m.id, |s| {
         s.state = "scanning".into();
@@ -257,10 +286,11 @@ async fn run_and_report<R: Runtime>(app: &AppHandle<R>, m: &SyncMapping, full: b
         Direction::Twoway => run_twoway(app, m, full, dirty, cancel).await,
     };
     if cancel.load(Ordering::Relaxed) {
-        return true;
+        return RunEnd::Ok;
     }
     match result {
         Ok(r) => {
+            let end = RunEnd::of(&r);
             let failed = !r.errors.is_empty();
             let error = match r.errors.len() {
                 0 => None,
@@ -283,7 +313,7 @@ async fn run_and_report<R: Runtime>(app: &AppHandle<R>, m: &SyncMapping, full: b
                     s.summary = Some(r.summary);
                 }
             });
-            !failed
+            end
         }
         Err(e) => {
             mgr.update(app, &m.id, |s| {
@@ -295,7 +325,7 @@ async fn run_and_report<R: Runtime>(app: &AppHandle<R>, m: &SyncMapping, full: b
                 s.bytes = 0;
                 s.total_bytes = 0;
             });
-            false
+            RunEnd::Failed
         }
     }
 }
@@ -313,6 +343,7 @@ fn spawn_worker<R: Runtime>(app: AppHandle<R>, m: SyncMapping) -> Worker {
         let interval = Duration::from_secs(u64::from(m.interval_mins.max(1)) * 60);
         tokio::time::sleep(Duration::from_secs(2)).await;
         let mut wait: Option<Duration> = None; // None = run right away (first pass)
+        let mut fails = 0u32;
         loop {
             if c.load(Ordering::Relaxed) {
                 break;
@@ -332,9 +363,17 @@ fn spawn_worker<R: Runtime>(app: AppHandle<R>, m: SyncMapping) -> Worker {
                 break;
             }
             // a full run scans everything anyway; a quick one only what the watcher saw
-            let seen = dirty.lock().unwrap().take();
-            let ok = run_and_report(&app, &m, full, if full { None } else { seen }, &c).await;
-            wait = Some(if ok { interval } else { RETRY_AFTER.min(interval) });
+            let taken = dirty.lock().unwrap().take();
+            let seen = if full { None } else { taken };
+            let end = run_and_report(&app, &m, full, seen.clone(), &c).await;
+            if end != RunEnd::Ok
+                && let Some(paths) = seen
+            {
+                // not handled: the next quick run looks at them again
+                dirty.lock().unwrap().paths.extend(paths);
+            }
+            fails = if end == RunEnd::Failed { fails.saturating_add(1) } else { 0 };
+            wait = Some(next_wait(end, fails, interval));
         }
     });
     Worker { cancel, tx, _watcher: watcher }
@@ -689,6 +728,22 @@ pub async fn sync_keep_offline(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_runs_back_off_and_held_deletions_wait_for_the_user() {
+        let r = |errors: &[&str], pending: usize| RunResult { errors: errors.iter().map(|e| e.to_string()).collect(), pending, ..Default::default() };
+        assert_eq!(RunEnd::of(&r(&[], 0)), RunEnd::Ok);
+        assert_eq!(RunEnd::of(&r(&["waiting for you to confirm"], 3)), RunEnd::Waiting);
+        assert_eq!(RunEnd::of(&r(&["waiting", "a.txt: denied"], 3)), RunEnd::Failed);
+        assert_eq!(RunEnd::of(&r(&["a.txt: denied"], 0)), RunEnd::Failed);
+        let day = Duration::from_secs(24 * 3600);
+        assert_eq!(next_wait(RunEnd::Waiting, 0, day), day, "no re-listing every minute while the user decides");
+        assert_eq!(next_wait(RunEnd::Ok, 0, day), day);
+        let waits: Vec<u64> = (1..=6).map(|n| next_wait(RunEnd::Failed, n, day).as_secs()).collect();
+        assert_eq!(waits, [60, 120, 240, 480, 960, 1920]);
+        assert_eq!(next_wait(RunEnd::Failed, 40, day), day, "never past the interval");
+        assert_eq!(next_wait(RunEnd::Failed, 1, Duration::from_secs(30)), Duration::from_secs(30));
+    }
 
     #[test]
     fn offline_folders_get_plain_names() {

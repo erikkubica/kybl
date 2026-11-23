@@ -88,12 +88,16 @@ struct Wrapped {
     delay: Duration,
     /// drop the last byte of every file written
     truncate: bool,
+    /// the kind it says it is (its case rules)
+    kind: ConnKind,
+    /// runs once, right before the first server-side copy
+    before_copy: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 #[async_trait]
 impl Storage for Wrapped {
     fn kind(&self) -> ConnKind {
-        ConnKind::Local
+        self.kind
     }
     fn caps(&self) -> &Capabilities {
         self.inner.caps()
@@ -140,6 +144,10 @@ impl Storage for Wrapped {
         self.inner.delete(root, files, dirs, cancel, on_progress).await
     }
     async fn copy(&self, from: &Loc, to: &Loc, is_dir: bool) -> SResult<()> {
+        let hook = self.before_copy.lock().unwrap().take();
+        if let Some(f) = hook {
+            f();
+        }
         self.inner.copy(from, to, is_dir).await
     }
     async fn rename(&self, from: &Loc, to: &Loc, is_dir: bool) -> SResult<()> {
@@ -150,9 +158,14 @@ impl Storage for Wrapped {
     }
 }
 
+fn wrapped_as(dir: &Path, kind: ConnKind, before_copy: Option<Box<dyn FnOnce() + Send>>) -> (Arc<dyn Storage>, String) {
+    let (b, root) = local(dir);
+    (Arc::new(Wrapped { inner: b, delay: Duration::ZERO, truncate: false, kind, before_copy: Mutex::new(before_copy) }), root)
+}
+
 fn wrapped(dir: &Path, delay_ms: u64, truncate: bool) -> (Arc<dyn Storage>, String) {
     let (b, root) = local(dir);
-    (Arc::new(Wrapped { inner: b, delay: Duration::from_millis(delay_ms), truncate }), root)
+    (Arc::new(Wrapped { inner: b, delay: Duration::from_millis(delay_ms), truncate, kind: ConnKind::Local, before_copy: Mutex::new(None) }), root)
 }
 
 fn spec(src_root: &str, items: &[(&str, bool)], dst_root: &str, dir: &str) -> JobSpec {
@@ -594,6 +607,115 @@ fn a_mirror_is_refused_when_its_folders_overlap_or_it_has_nothing_to_do() {
     sp.mirror = Some(Mirror { delete: vec!["../etc".into()], ..Default::default() });
     assert!(m.create(sp).is_err());
     assert!(m.list().unwrap().is_empty(), "no job was recorded");
+}
+
+#[test]
+fn a_mirror_never_deletes_what_it_copies_where_case_does_not_count() {
+    tauri::async_runtime::block_on(async {
+        let (s, d) = (tmp(), tmp());
+        write(&s.0, "site/photo.jpg", b"new photo");
+        write(&s.0, "site/B.txt", b"upper");
+        write(&s.0, "site/docs/a.txt", b"doc");
+        write(&d.0, "live/Photo.jpg", b"old");
+        write(&d.0, "live/Docs/a.txt", b"old doc");
+        let (src, sr) = local(&s.0);
+        // a destination that doesn't tell case apart, whatever this disk does
+        let (dst, dr) = wrapped_as(&d.0, ConnKind::Dropbox, None);
+        let m = JobManager::open(None, TestHost::with(vec![("src", src), ("dst", dst)])).unwrap();
+        let mut sp = spec(&sr, &[("site", true)], &dr, "live");
+        sp.conflict = Conflict::Overwrite;
+        // what a page comparing exact names would send
+        sp.mirror = Some(Mirror {
+            copy: vec![mf("docs/", 0), mf("docs/a.txt", 3), mf("photo.jpg", 9), mf("B.txt", 5), mf("b.txt", 5)],
+            delete: vec!["Photo.jpg".into(), "Docs/a.txt".into(), "Docs/".into()],
+            ..Default::default()
+        });
+        let id = m.create(sp).unwrap();
+        let j = finished(&m, &id).await;
+        assert_eq!(j.progress.state, JobState::Done);
+        let f = m.failures(&id, 0, 10).unwrap();
+        assert_eq!(f.len(), 1, "{f:?}");
+        assert_eq!((f[0].path.as_str(), f[0].error.as_str()), ("site/b.txt", db::MIRROR_CLASH), "b.txt would land on B.txt");
+        assert_eq!(std::fs::read(d.0.join("live/photo.jpg")).unwrap(), b"new photo", "the copy is still there");
+        assert_eq!(std::fs::read(d.0.join("live/docs/a.txt")).unwrap(), b"doc");
+        assert_eq!(std::fs::read(d.0.join("live/B.txt")).unwrap(), b"upper");
+        assert!(d.0.join("live/Photo.jpg").exists() && d.0.join("live/Docs").exists(), "case variants of copies are never deleted");
+        // Try again doesn't bring the clash back
+        m.retry_failed(&id).unwrap();
+        let j = finished(&m, &id).await;
+        assert_eq!(j.progress.files_failed, 1);
+    });
+}
+
+#[test]
+fn the_runner_fails_the_job_when_the_database_refuses_the_next_batch() {
+    tauri::async_runtime::block_on(async {
+        let (s, d) = (tmp(), tmp());
+        write(&s.0, "a.txt", b"a");
+        let (src, sr) = local(&s.0);
+        let (dst, dr) = local(&d.0);
+        let m = JobManager::open(None, TestHost::with(vec![("src", src), ("dst", dst)])).unwrap();
+        // taking items (marking them running) fails, as on a full disk
+        m.inner
+            .db
+            .lock()
+            .unwrap()
+            .execute_batch("CREATE TRIGGER no_take BEFORE UPDATE OF state ON items WHEN NEW.state = 'running' BEGIN SELECT RAISE(ABORT, 'disk full'); END;")
+            .unwrap();
+        let id = m.create(spec(&sr, &[("a.txt", false)], &dr, "")).unwrap();
+        // polled without blocking: a runner stuck holding the database must fail this, not hang it
+        let start = Instant::now();
+        loop {
+            if let Ok(c) = m.inner.db.try_lock()
+                && db::job(&c, &id).unwrap().is_some_and(|j| j.state == JobState::Failed)
+            {
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(20), "the runner never failed the job");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let j = finished(&m, &id).await;
+        assert!(j.progress.error.unwrap_or_default().contains("disk full"));
+    });
+}
+
+#[test]
+fn a_failed_folder_counts_as_a_failure() {
+    tauri::async_runtime::block_on(async {
+        let (s, d) = (tmp(), tmp());
+        std::fs::create_dir_all(s.0.join("r/empty")).unwrap();
+        write(&s.0, "r/a.txt", b"a");
+        // a file where the folder has to go
+        write(&d.0, "r/empty", b"in the way");
+        let (src, sr) = local(&s.0);
+        let (dst, dr) = local(&d.0);
+        let m = JobManager::open(None, TestHost::with(vec![("src", src), ("dst", dst)])).unwrap();
+        let id = m.create(spec(&sr, &[("r/", true)], &dr, "")).unwrap();
+        let j = finished(&m, &id).await;
+        assert_eq!(j.progress.state, JobState::Done);
+        assert_eq!((j.progress.files_done, j.progress.files_failed), (1, 1), "{:?}", m.failures(&id, 0, 9));
+        assert_eq!(m.failures(&id, 0, 9).unwrap()[0].path, "r/empty/");
+    });
+}
+
+#[test]
+fn a_server_copy_of_a_file_that_changed_since_planning_copies_it_as_it_is_now() {
+    tauri::async_runtime::block_on(async {
+        let s = tmp();
+        write(&s.0, "a.txt", b"planned");
+        write(&s.0, "out/a.txt", b"the older copy");
+        let path = s.0.join("a.txt");
+        // the file grows between planning and the copy on the server
+        let (conn, root) = wrapped_as(&s.0, ConnKind::Local, Some(Box::new(move || std::fs::write(path, b"edited, and longer now").unwrap())));
+        let m = JobManager::open(None, TestHost::with(vec![("src", conn)])).unwrap();
+        let mut sp = spec(&root, &[("a.txt", false)], &root, "out");
+        sp.dst.profile_id = "src".into();
+        sp.conflict = Conflict::Overwrite;
+        let id = m.create(sp).unwrap();
+        let j = finished(&m, &id).await;
+        assert_eq!((j.progress.state, j.progress.files_failed), (JobState::Done, 0), "{:?}", m.failures(&id, 0, 9));
+        assert_eq!(std::fs::read(s.0.join("out/a.txt")).unwrap(), b"edited, and longer now", "the copy is kept, not deleted");
+    });
 }
 
 /// A server folder `r/` whose `r/sub/up/` is a link back to `r/` (SFTP lists such a link as a

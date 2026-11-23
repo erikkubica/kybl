@@ -347,7 +347,13 @@ async fn copy_file(ctx: &Ctx, item: &Item, inflight: &Arc<AtomicU64>) -> SResult
         return Ok(Outcome::Ended(End::Done));
     }
 
-    let (entry, read_md5) = if server_copy_ok(ctx) {
+    let server = server_copy_ok(ctx);
+    let (entry, read_md5) = if server {
+        // the server copies the file as it is now, so it has to still be the one planned (the
+        // copy is then checked against the planned size)
+        if let Some(o) = source_changed(ctx, item).await? {
+            return Ok(o);
+        }
         ctx.src.copy(&from, &to, false).await?;
         inflight.store(size, Ordering::Relaxed);
         let e = ctx.dst.stat(&spec.dst.root, &dst_path).await?.ok_or_else(|| StorageError::other("The copy isn't at the destination."))?;
@@ -359,6 +365,14 @@ async fn copy_file(ctx: &Ctx, item: &Item, inflight: &Arc<AtomicU64>) -> SResult
         }
     };
     if let Err(e) = verify(ctx, item, &dst_path, &entry, read_md5).await {
+        // a server's copy is whole: one that differs because the source changed meanwhile is
+        // that newer file (and what it replaced is gone), so it stays and is copied again
+        if server
+            && let Ok(Some(now)) = ctx.src.stat(&spec.src.root, &item.src_path).await
+            && !unchanged(item, &now)
+        {
+            return Err(changed(now.size.max(0) as u64, size));
+        }
         // don't leave a bad copy behind (it would look like a finished one)
         let never = AtomicBool::new(false);
         let _ = ctx.dst.delete(&spec.dst.root, std::slice::from_ref(&dst_path), &[], &never, &|_, _| {}).await;
