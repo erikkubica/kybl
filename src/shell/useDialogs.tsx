@@ -10,8 +10,10 @@ import { ConfirmDialog, ContextMenu, PromptDialog, Toasts, type MenuItem, type T
 import { useConflictPrompt } from "../components/ConflictDialog";
 import type { ToastAction } from "../desktop/fileOps";
 import type { Choice, Clash } from "../desktop/conflicts";
+import type { IconName } from "../Icons";
 
-export type ConfirmOptions = { title: string; message: ReactNode; label: string; danger?: boolean };
+/** `danger`: red button, focus starts on Cancel; `icon`: the title's icon (a danger confirm shows the trash unless given). */
+export type ConfirmOptions = { title: string; message: ReactNode; label: string; danger?: boolean; icon?: IconName };
 export type PromptOptions = { title: string; label: string; initial: string; confirmLabel: string; note?: string; run: (v: string) => void };
 
 export type Dialogs = {
@@ -55,7 +57,18 @@ export function DialogsProvider({ children }: { children: ReactNode }) {
     logMessage(kind, text);
     setToasts((t) => [...t.slice(-3), { id, kind, text, action }]);
   }, []);
-  const confirmAsync = useCallback((o: ConfirmOptions) => new Promise<boolean>((resolve) => setConfirm({ ...o, resolve })), []);
+  // one confirm at a time: a newer question cancels an older one still up (its promise says false)
+  const current = useRef<ConfirmState | null>(null);
+  const confirmAsync = useCallback(
+    (o: ConfirmOptions) =>
+      new Promise<boolean>((resolve) => {
+        current.current?.resolve(false);
+        const next = { ...o, resolve };
+        current.current = next;
+        setConfirm(next);
+      }),
+    [],
+  );
   const showMenu = useCallback((x: number, y: number, items: MenuItem[]) => setMenu({ x, y, items }), []);
   const show = useCallback((render: (close: () => void) => ReactNode) => {
     const id = ++modalSeq;
@@ -77,11 +90,13 @@ export function DialogsProvider({ children }: { children: ReactNode }) {
           message={confirm.message}
           confirmLabel={confirm.label}
           danger={!!confirm.danger}
+          icon={confirm.icon}
           onConfirm={() => confirm.resolve(true)}
           onClose={() => {
             // after a confirm this is a no-op: the promise already settled
             confirm.resolve(false);
-            setConfirm(null);
+            if (current.current === confirm) current.current = null;
+            setConfirm((c) => (c === confirm ? null : c));
           }}
         />
       )}

@@ -178,18 +178,28 @@ pub(crate) fn edited_key(key: &str, n: u32) -> String {
     format!("{}{stem} ({tag}){ext}", &key[..slash])
 }
 
-/// A name that is safe as one path segment on every OS.
+/// Longest segment `safe_segment` makes, in characters.
+const SEGMENT_MAX: usize = 120;
+
+/// A name that is safe as one path segment on every OS. A long one is shortened in the middle, so
+/// it keeps its extension: the app that opens it (and the open guard, which checks this name) sees
+/// the same type as the remote name has (`AAAA….exe.txt` stays a `.txt`).
 pub(crate) fn safe_segment(s: &str, fallback: &str) -> String {
     let cleaned: String = s
         .chars()
         .map(|c| if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
         .collect();
-    let trimmed = cleaned.trim().trim_matches('.').to_string();
+    let trimmed = cleaned.trim_matches(|c: char| c == '.' || c.is_whitespace());
     if trimmed.is_empty() {
-        fallback.to_string()
-    } else {
-        trimmed.chars().take(120).collect()
+        return fallback.to_string();
     }
+    if trimmed.chars().count() <= SEGMENT_MAX {
+        return trimmed.to_string();
+    }
+    // the extension (when it has a short one) stays; the stem gives way
+    let ext = trimmed.rfind('.').filter(|&i| i > 0).map(|i| &trimmed[i..]).filter(|e| e.chars().count() <= 24).unwrap_or("");
+    let stem: String = trimmed[..trimmed.len() - ext.len()].chars().take(SEGMENT_MAX - ext.chars().count()).collect();
+    format!("{}{}", stem.trim_end(), ext)
 }
 
 fn base_name(key: &str) -> String {
@@ -713,6 +723,30 @@ mod tests {
         assert_eq!(safe_segment("", "file"), "file");
         assert_eq!(safe_segment("..", "file"), "file");
         assert_eq!(safe_segment("notes.md", "f"), "notes.md");
+    }
+
+    /// The copy keeps the type of the remote name, so the open guard's verdict holds for it.
+    #[test]
+    fn segments_keep_the_extension() {
+        // a long name is shortened before its extension, not through it
+        let long = format!("{}.exe.txt", "A".repeat(116));
+        let got = safe_segment(&long, "f");
+        assert!(got.ends_with(".txt"), "{got}");
+        assert_eq!(got.chars().count(), SEGMENT_MAX);
+        let long = format!("{}.terminal.txt", "A".repeat(111));
+        assert!(safe_segment(&long, "f").ends_with(".txt"));
+        let long = format!("{}.sh", "é".repeat(300));
+        let got = safe_segment(&long, "f");
+        assert!(got.ends_with(".sh") && got.chars().count() == SEGMENT_MAX, "{got}");
+        // a "extension" too long to be one is cut like the rest
+        let long = format!("x.{}", "b".repeat(200));
+        assert_eq!(safe_segment(&long, "f").chars().count(), SEGMENT_MAX);
+        // separators, dots and spaces at the end can't change the type
+        assert_eq!(safe_segment("payload.exe\\", "f"), "payload.exe_");
+        assert_eq!(safe_segment("x.exe\\..", "f"), "x.exe_");
+        assert_eq!(safe_segment("setup.exe. . ", "f"), "setup.exe");
+        assert_eq!(safe_segment("invoice\u{202E}txt.exe", "f"), "invoice\u{202E}txt.exe");
+        assert_eq!(safe_segment("Run.EXE", "f"), "Run.EXE");
     }
 
     #[test]

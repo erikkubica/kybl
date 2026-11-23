@@ -7,6 +7,7 @@
 import { NO_EXPORT, asExport, exportable } from "../connections/native";
 import { peekCaps } from "../useCaps";
 import type { ReactNode } from "react";
+import type { ConfirmOptions } from "../shell/useDialogs";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { api, errMessage } from "../api";
 import { formatBytes, parentPrefix, sumSizes } from "../format";
@@ -24,7 +25,7 @@ import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
 import { localCopies, type LocalCopyVerb } from "../localCopyProgress";
 import { parentOf, renameRounds } from "../batchRename";
 import { BatchRenameDialog } from "./BatchRenameDialog";
-import { okToRun as askToRun, openIn } from "./openGuard";
+import { okToRun as askToRun, openFromConnection, openOwnFile, type OpenApp } from "./openGuard";
 
 export type ToastAction = NonNullable<Toast["action"]>;
 
@@ -44,7 +45,7 @@ export type OpsContext = {
   showActivity: () => void;
   showFailed?: () => void;
   setBusy: (text: string | null) => void;
-  confirm: (o: { title: string; message: ReactNode; label: string; danger?: boolean }) => Promise<boolean>;
+  confirm: (o: ConfirmOptions) => Promise<boolean>;
   prompt: (o: { title: string; label: string; initial: string; confirmLabel: string; note?: string; run: (v: string) => void }) => void;
   /** shows a dialog of its own (the Batch rename dialog) */
   show?: (render: (close: () => void) => ReactNode) => void;
@@ -307,25 +308,45 @@ export function makeFileOps(c: OpsContext) {
     return null;
   };
 
-  /** A program, script or installer from a connection (not this computer) is asked about first. */
-  const okToRun = (picked: Entry): Promise<boolean> => (c.localPaths ? Promise.resolve(true) : askToRun(picked.name, c.confirm));
+  /** The name a file opens under (a Google Doc: what it exports as). */
+  const openName = (e: Entry) => asExport(e)?.name ?? e.name;
 
-  /** Opens a file in its default app (a local copy first, see `localCopy`). */
-  const openInApp = async (picked: Entry) => {
-    if (!(await okToRun(picked))) return;
-    const path = await localCopy(picked, "open");
-    if (path) await openIn(path, undefined).catch((err) => toast("error", errMessage(err)));
+  /**
+   * Programs, scripts or installers from a connection (not this computer) about to open in `app`
+   * are asked about first, all in one question. True when they may open.
+   */
+  const okToRun = (picked: Entry | Entry[], app: OpenApp = undefined): Promise<boolean> =>
+    c.localPaths ? Promise.resolve(true) : askToRun((Array.isArray(picked) ? picked : [picked]).map(openName), c.confirm, app);
+
+  /**
+   * Opens `path`, `picked`'s copy on this computer, in `app`: the one way this pane opens a file
+   * in another app (a connection's file goes through the open guard). `asked`: `okToRun` said yes.
+   */
+  const openPath = async (path: string, app: OpenApp, picked: Entry, asked: boolean) => {
+    if (c.localPaths) await openOwnFile(path, app);
+    else await openFromConnection(path, c.confirm, app, openName(picked), asked);
   };
 
   /**
-   * "Open with ▸ app": like Open, with the app the person chose (an `AppChoice.path`). `app`
-   * null: Windows' own "How do you want to open this file?" window. `asked`: the caller already
-   * asked about running it.
+   * "Open with ▸ app": opens a file in `app` (an `AppChoice.path`; undefined the default app, null
+   * Windows' own "How do you want to open this file?" window), a local copy first (`localCopy`).
+   * `asked`: the caller already asked about running it.
    */
-  const openWith = async (picked: Entry, app: string | null, asked = false) => {
-    if (!asked && !(await okToRun(picked))) return;
+  const openWith = async (picked: Entry, app: OpenApp, asked = false) => {
+    if (!asked && !(await okToRun(picked, app))) return;
     const path = await localCopy(picked, "open");
-    if (path) await openIn(path, app).catch((err) => toast("error", errMessage(err)));
+    if (path) await openPath(path, app, picked, true).catch((err) => toast("error", errMessage(err)));
+  };
+
+  /** Opens a file in its default app. */
+  const openInApp = (picked: Entry) => openWith(picked, undefined);
+
+  /** Opens several files in their default apps: one question about the programs among them, for all. */
+  const openFiles = async (list: Entry[]) => {
+    if (list.length === 1) return openWith(list[0], undefined);
+    if (!(await okToRun(list))) return;
+    const paths = await Promise.all(list.map((e) => localCopy(e, "open")));
+    for (const [i, path] of paths.entries()) if (path) await openPath(path, undefined, list[i], true).catch((err) => toast("error", errMessage(err)));
   };
 
   /** Puts the file itself on the clipboard, to paste into a chat, a mail or a Finder window. */
@@ -527,6 +548,7 @@ export function makeFileOps(c: OpsContext) {
             title: `Replace “${name}”?`,
             label: "Replace",
             danger: true,
+            icon: "alert",
             message: <p>A file with this name already exists here. Renaming “{e.name}” will overwrite it, and that can’t be undone.</p>,
           });
           if (!ok) return;
@@ -942,7 +964,7 @@ export function makeFileOps(c: OpsContext) {
     void relocate(cl.items, dest, mode, { srcBucket: cl.bucket, destBucket: bucket }).then((ok) => ok && usedUp());
   };
 
-  return { uploadPaths, pickAndUpload, downloadEntries, localCopy, okToRun, openInApp, openWith, copyFile, askDelete, askRename, askBatchRename, askNewFolder, relocate, duplicate, clip, paste };
+  return { uploadPaths, pickAndUpload, downloadEntries, localCopy, okToRun, openPath, openInApp, openFiles, openWith, copyFile, askDelete, askRename, askBatchRename, askNewFolder, relocate, duplicate, clip, paste };
 }
 
 export type FileOps = ReturnType<typeof makeFileOps>;

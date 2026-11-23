@@ -148,6 +148,7 @@ export function ConfirmDialog({
   message,
   confirmLabel,
   danger,
+  icon = danger ? "trash" : undefined,
   onConfirm,
   onClose,
 }: {
@@ -155,6 +156,8 @@ export function ConfirmDialog({
   message: ReactNode;
   confirmLabel: string;
   danger?: boolean;
+  /** the title's icon; a danger confirm shows the trash unless another is given */
+  icon?: IconName;
   onConfirm: () => void;
   onClose: () => void;
 }) {
@@ -166,9 +169,9 @@ export function ConfirmDialog({
       // nothing typed here to lose, so a click outside may cancel
       dismissOnBackdrop
       icon={
-        danger ? (
-          <div className="confirm-icon">
-            <Icon name="trash" size={19} />
+        icon ? (
+          <div className={icon === "alert" ? "confirm-icon warn" : "confirm-icon"}>
+            <Icon name={icon} size={19} />
           </div>
         ) : undefined
       }

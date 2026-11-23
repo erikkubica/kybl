@@ -6,51 +6,20 @@
  */
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, errMessage, type AppChoice } from "../api";
+import { appsFor } from "./appsFor";
 import { asExport } from "../connections/native";
 import { peekSyncMappings } from "../sync";
 import type { MenuItem, Toast } from "../components/Dialogs";
 import type { Entry } from "../types";
 import type { FileOps } from "./fileOps";
 import { joinPath } from "./paths";
-import { openIn } from "./openGuard";
+import { openOwnFile } from "./openGuard";
 
 const UA = typeof navigator === "undefined" ? "" : navigator.userAgent;
 const OS: "mac" | "win" | "linux" = /Mac/.test(UA) ? "mac" : /Win/.test(UA) ? "win" : "linux";
 
 /** What the system's file manager is called here. */
 export const SHOW_IN_FILES = OS === "mac" ? "Show in Finder" : OS === "win" ? "Show in Explorer" : "Show in Files";
-
-// ------------------------------------------------------------ the apps, once per type
-
-/**
- * Apps by type ("/" for folders, else the extension) for this session, so the submenu opens at
- * once the second time. A request still under way is shared; a failed one is asked again.
- */
-const appCache = new Map<string, AppChoice[] | Promise<AppChoice[]>>();
-
-const typeKey = (name: string, folder: boolean) => {
-  if (folder) return "/";
-  const dot = name.lastIndexOf(".");
-  return dot > 0 && dot < name.length - 1 ? name.slice(dot + 1).toLowerCase() : "";
-};
-
-export function appsFor(name: string, folder: boolean): AppChoice[] | Promise<AppChoice[]> {
-  const k = typeKey(name, folder);
-  const have = appCache.get(k);
-  if (have) return have;
-  const p = api.appsFor(name, folder).then(
-    (list) => {
-      appCache.set(k, list);
-      return list;
-    },
-    (err) => {
-      appCache.delete(k);
-      throw err;
-    },
-  );
-  appCache.set(k, p);
-  return p;
-}
 
 // ------------------------------------------------------------ where the item is on this computer
 
@@ -72,7 +41,7 @@ export type OpenInContext = {
   bucket: string;
   /** the connection is this computer's own disk (`localPaths`) */
   onDisk: boolean;
-  ops: Pick<FileOps, "openWith" | "okToRun">;
+  ops: Pick<FileOps, "openWith" | "okToRun" | "openPath">;
   toast: (kind: Toast["kind"], text: string) => void;
 };
 
@@ -99,11 +68,13 @@ export function openInItems(c: OpenInContext, e: Entry): MenuItem[] {
       // files of the disk connection: Open's own way finds them in place
       if (!folder && c.onDisk) return void (await c.ops.openWith(e, app));
       // a synced file came from the connection: a program in it is asked about, as on Open
-      if (!folder && !(await c.ops.okToRun(e))) return;
+      if (!folder && !(await c.ops.okToRun(e, app))) return;
       const path = await ownPath();
       if (path) {
         try {
-          await openIn(path, app);
+          // a synced folder opens as a folder (exec bits aren't synced, so an `x.app` can't launch)
+          if (folder) await openOwnFile(path, app);
+          else await c.ops.openPath(path, app, e, true);
           return;
         } catch (err) {
           // a synced file not on disk yet (or ignored by the sync): fetch it like any other
