@@ -61,8 +61,9 @@ pub fn parse_rfc3339(s: &str) -> Option<i64> {
     }
     let offset_min = match rest {
         "" | "Z" | "z" => 0,
-        o if o.len() == 6 && (o.starts_with('+') || o.starts_with('-')) => {
-            let v = o[1..3].parse::<i64>().ok()? * 60 + o[4..6].parse::<i64>().ok()?;
+        // byte offsets checked with `get`: a multi-byte character there must not panic
+        o if o.len() == 6 && (o.starts_with('+') || o.starts_with('-')) && o.as_bytes()[3] == b':' => {
+            let v = o.get(1..3)?.parse::<i64>().ok()? * 60 + o.get(4..6)?.parse::<i64>().ok()?;
             if o.starts_with('-') { -v } else { v }
         }
         _ => return None,
@@ -387,6 +388,10 @@ mod tests {
         assert_eq!(parse_rfc3339("2015-05-12T15:50:38.123456Z"), Some(1_431_445_838_123));
         assert_eq!(parse_rfc3339("2015-05-12T17:50:38+02:00"), Some(1_431_445_838_000));
         assert_eq!(parse_rfc3339("nonsense"), None);
+        // a multi-byte character in the offset is refused, never a panic
+        assert_eq!(parse_rfc3339("2015-05-12T17:50:38+aéxx"), None);
+        assert_eq!(parse_rfc3339("2015-05-12T17:50:38+0é:0"), None);
+        assert_eq!(parse_rfc3339("2015-05-12T17:50:38+02-00"), None);
         assert_eq!(format_rfc3339(1_431_445_838_999), "2015-05-12T15:50:38Z");
         assert_eq!(format_rfc3339(951_782_400_000), "2000-02-29T00:00:00Z");
         assert_eq!(parse_http_date("Wed, 21 Oct 2015 07:28:00 GMT"), parse_rfc3339("2015-10-21T07:28:00Z"));

@@ -151,6 +151,25 @@ fn confine(root: &Path, p: &Path, follow_last: bool) -> SResult<()> {
     }
 }
 
+/// True when both paths reach the same file (links followed), judged by the file, not the name.
+fn same_file(a: &Path, b: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (std::fs::metadata(a), std::fs::metadata(b)) {
+            (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+            (Ok(x), Ok(y)) => x.to_string_lossy().to_lowercase() == y.to_string_lossy().to_lowercase(),
+            _ => false,
+        }
+    }
+}
+
 /// A move to another disk: copy, then remove the originals of exactly what was copied. Never
 /// the whole folder: something left out, or added meanwhile, would go with it.
 fn move_across(src: &Path, dst: &Path) -> SResult<()> {
@@ -538,6 +557,23 @@ impl Storage for LocalBackend {
         if let Some(conflict) = self.precondition_fails(root, path, &opts.precondition).await? {
             return Ok(conflict);
         }
+        // as `cp` does: a link (already confined to the root above) is written through, so the
+        // file it points at changes and the link stays; the new file keeps the old one's mode
+        let (target, old_perm) = {
+            let t = target;
+            blocking(move || {
+                let real = match std::fs::symlink_metadata(&t) {
+                    Ok(l) if l.file_type().is_symlink() => match std::fs::canonicalize(&t) {
+                        Ok(r) if r.is_file() => r,
+                        _ => t,
+                    },
+                    _ => t,
+                };
+                let perm = std::fs::metadata(&real).ok().filter(|m| m.is_file()).map(|m| m.permissions());
+                Ok((real, perm))
+            })
+            .await?
+        };
         let parent = target.parent().ok_or_else(outside)?.to_path_buf();
         tokio::fs::create_dir_all(&parent).await?;
         let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -586,10 +622,17 @@ impl Storage for LocalBackend {
             out.flush().await?;
             let out = out.into_std().await;
             let when = opts.modified.map(|ms| UNIX_EPOCH + Duration::from_millis(ms.max(0) as u64));
+            let perm = old_perm.clone();
             blocking(move || {
                 if let Some(t) = when {
                     let _ = out.set_modified(t);
                 }
+                #[cfg(unix)]
+                if let Some(p) = perm {
+                    let _ = out.set_permissions(p);
+                }
+                #[cfg(not(unix))]
+                let _ = perm;
                 out.sync_all()?;
                 Ok(())
             })
@@ -666,6 +709,11 @@ impl Storage for LocalBackend {
             return Err(StorageError::other("Source and destination are the same"));
         }
         blocking(move || {
+            // the same file under another name (through a linked folder, or a hard link): copying
+            // would empty it before reading it
+            if same_file(&src, &dst) {
+                return Err(StorageError::other("Source and destination are the same"));
+            }
             if is_dir && check_not_into_itself(&src, &dst)? {
                 return Err(StorageError::other("Cannot copy a folder into itself"));
             }
@@ -1006,6 +1054,54 @@ mod tests {
             let left: Vec<_> = std::fs::read_dir(t.0.join("root")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().contains(".kybl-")).collect();
             assert!(left.is_empty());
         });
+    }
+
+    /// Replacing a file keeps its mode, and writing to a link updates the file it points at.
+    #[cfg(unix)]
+    #[test]
+    fn replacing_keeps_the_mode_and_the_link() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let (t, b, root) = setup();
+        let dir = t.0.join("root");
+        std::fs::write(dir.join("secret.env"), b"old").unwrap();
+        std::fs::set_permissions(dir.join("secret.env"), std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(dir.join("run.sh"), b"old").unwrap();
+        std::fs::set_permissions(dir.join("run.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        symlink("docs/b.md", dir.join("link.md")).unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        rt().block_on(async {
+            for (key, body) in [("secret.env", "new secret"), ("run.sh", "echo hi"), ("link.md", "# new b")] {
+                let out = b.write(&root, key, WriteSource::Bytes(Bytes::from(body)), WriteOpts { preserve_meta: true, ..Default::default() }, &no_progress, &cancel).await.unwrap();
+                assert!(matches!(out, WriteOutcome::Done(ref e) if e.key == key), "{key}");
+            }
+        });
+        let mode = |p: &str| std::fs::metadata(dir.join(p)).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode("secret.env"), 0o600);
+        assert_eq!(mode("run.sh"), 0o755);
+        assert_eq!(std::fs::read(dir.join("secret.env")).unwrap(), b"new secret");
+        assert!(std::fs::symlink_metadata(dir.join("link.md")).unwrap().file_type().is_symlink(), "the link stays a link");
+        assert_eq!(std::fs::read(dir.join("docs/b.md")).unwrap(), b"# new b");
+        let left: Vec<_> = walkdir::WalkDir::new(&dir).into_iter().flatten().filter(|e| e.file_name().to_string_lossy().contains(".kybl-")).collect();
+        assert!(left.is_empty());
+    }
+
+    /// A copy onto the same file under another name (a linked folder, a hard link) is refused,
+    /// never emptying the file.
+    #[cfg(unix)]
+    #[test]
+    fn copy_onto_itself_by_another_name_is_refused() {
+        let (t, b, root) = setup();
+        let dir = t.0.join("root");
+        std::os::unix::fs::symlink("docs", dir.join("docs-link")).unwrap();
+        std::fs::hard_link(dir.join("a.txt"), dir.join("a-hard.txt")).unwrap();
+        rt().block_on(async {
+            let e = b.copy(&Loc::new(&root, "docs/b.md"), &Loc::new(&root, "docs-link/b.md"), false).await.unwrap_err();
+            assert!(e.message.contains("same"), "{e}");
+            let e = b.copy(&Loc::new(&root, "a.txt"), &Loc::new(&root, "a-hard.txt"), false).await.unwrap_err();
+            assert!(e.message.contains("same"), "{e}");
+        });
+        assert_eq!(std::fs::read(dir.join("docs/b.md")).unwrap(), b"# b");
+        assert_eq!(std::fs::read(dir.join("a.txt")).unwrap(), b"hello world");
     }
 
     /// Runs `f` on a thread, failing instead of hanging the suite when it blocks.
