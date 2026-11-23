@@ -8,8 +8,8 @@ import { Icon } from "../Icons";
 import type { Profile } from "../types";
 import { useCaps } from "../useCaps";
 import { rootsMode } from "../connections/roots";
-import { certTrouble, isCloudKind } from "../connections/kinds";
-import { TrustCertButton } from "../connections/CertTrustSheet";
+import { certTrouble, isCloudKind, plainFtpUnconfirmed } from "../connections/kinds";
+import { AllowPlainFtpButton, TrustCertButton } from "../connections/CertTrustSheet";
 
 /** The shell's ways out of an empty pane. */
 export type EmptyActions = {
@@ -21,6 +21,9 @@ export type EmptyActions = {
   /** A server's own certificate the user chose to trust: save it on the connection; with
    *  `reopen`, connect again (else the caller retries what failed). */
   onTrustCert: (p: Profile, fp: string, reopen: boolean) => Promise<void>;
+  /** "Connect without encryption" for an FTP server that offered none: let it use plain FTP;
+   *  with `reopen`, connect again (else the caller retries what failed). */
+  onAllowPlainFtp: (p: Profile, reopen: boolean) => Promise<void>;
   /** a workspace recipe's pane whose connection isn't on this device: its name (it stays empty) */
   missing?: string;
 };
@@ -86,6 +89,8 @@ export function ChooseBucket({
   const what = mode === "drives" ? "place" : "bucket";
   // a server whose own certificate stopped it before its one root could be listed
   const cert = profile.net && error ? certTrouble(error) : null;
+  // an "encrypt if available" FTP server that offered no encryption: nothing sent yet
+  const plain = !!(profile.net && error && plainFtpUnconfirmed(error));
   // FTP, SFTP, WebDAV…: one root, nothing to choose; it's connecting, or it couldn't
   const single = mode === "single";
   const failed = !!(note || error);
@@ -100,6 +105,10 @@ export function ChooseBucket({
         {cert ? (
           <div className="cert-actions">
             <TrustCertButton cert={cert} host={serverName(profile, cert.host)} className="btn btn-primary" onTrust={(fp) => actions.onTrustCert(profile, fp, true)} />
+          </div>
+        ) : plain ? (
+          <div className="cert-actions">
+            <AllowPlainFtpButton className="btn" onAllow={() => actions.onAllowPlainFtp(profile, true)} />
           </div>
         ) : reconnect ? (
           <button className="btn btn-primary" onClick={() => actions.onReconnect(profile)}>
@@ -123,18 +132,22 @@ export function ListError({
   onRetry,
   onReconnect,
   onTrustCert,
+  onAllowPlainFtp,
 }: {
   profile: Profile;
   error: string;
   onRetry: () => void;
   onReconnect: (p: Profile) => void;
   onTrustCert: EmptyActions["onTrustCert"];
+  onAllowPlainFtp: EmptyActions["onAllowPlainFtp"];
 }) {
   const revoked = profile.provider === KYBL && isRevokedKey(error);
   // a Google Drive / OneDrive / Dropbox sign-in that ended: sign in again, then it loads
   const signIn = isCloudKind(profile.kind) && /sign in again|no longer signed in|invalid_grant|expired or revoked/i.test(error);
   // FTPS / WebDAV with the server's own certificate: trust it, then list again
   const cert = profile.net ? certTrouble(error) : null;
+  // an "encrypt if available" FTP server that offered no encryption: agree, then list again
+  const plain = !!profile.net && plainFtpUnconfirmed(error);
   return (
     <div className="empty error-state">
       <div className="empty-art">
@@ -153,6 +166,18 @@ export function ListError({
             className="btn btn-primary btn-sm"
             onTrust={async (fp) => {
               await onTrustCert(profile, fp, false);
+              onRetry();
+            }}
+          />
+          <button className="btn btn-sm" onClick={onRetry}>
+            <Icon name="retry" size={13} /> Try again
+          </button>
+        </div>
+      ) : plain ? (
+        <div className="cert-actions">
+          <AllowPlainFtpButton
+            onAllow={async () => {
+              await onAllowPlainFtp(profile, false);
               onRetry();
             }}
           />

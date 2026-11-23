@@ -14,7 +14,7 @@ import { Icon } from "../Icons";
 import { Modal } from "../components/Dialogs";
 import { ErrorText } from "../components/ErrorText";
 import type { Profile } from "../types";
-import { KINDS, certTrouble, hostKeyChanged, hostKeyUnknown, isCloudKind, kindInfo, pickOf, type BlobKind, type NetKind, type PickId } from "./kinds";
+import { KINDS, certTrouble, hostKeyChanged, hostKeyUnknown, isCloudKind, kindInfo, pickOf, plainFtpUnconfirmed, type BlobKind, type NetKind, type PickId } from "./kinds";
 import { Field, RAW, SECRET_NOTE, Segmented, type Draft, type FormApi } from "./fields";
 import { normalizeGroup } from "./groups";
 import { KindPicker } from "./KindPicker";
@@ -24,7 +24,7 @@ import { BlobForm } from "./BlobForm";
 import { CloudPanel } from "./CloudPanel";
 import { DeleteControl } from "./DeleteControl";
 import { HostKeySheet, type HostKeyAsk } from "./HostKeySheet";
-import { TrustCertButton } from "./CertTrustSheet";
+import { AllowPlainFtpButton, TrustCertButton } from "./CertTrustSheet";
 import "./connections.css";
 import { appImageMode, connImageMode, IMAGE_MODES, imageModeLabel, setConnImageMode, setSharedPlaceholders, SHARE_PLACEHOLDERS_TEXT, sharedPlaceholdersOn, type ImageMode } from "../imageMode";
 
@@ -291,6 +291,15 @@ function KeyedForm({
     await run(then, { ...d, profile: { ...d.profile, net } });
   };
   const cert = result && !result.ok && result.draft?.profile.net ? certTrouble(result.text) : null;
+  // an "encrypt if available" FTP server that offered no encryption: nothing was sent in clear
+  const plain = !!(result && !result.ok && result.draft?.profile.net && plainFtpUnconfirmed(result.text));
+  /** "Connect without encryption": the user agrees to plain FTP for this server, then try again. */
+  const allowPlain = async () => {
+    if (!result?.draft?.profile.net || !result.then) return;
+    const { then, draft: d } = result;
+    await api.ftpAllowPlain(d.profile.net!);
+    await run(then, d);
+  };
 
   const onEdit = () => {
     setResult(null);
@@ -389,6 +398,11 @@ function KeyedForm({
               {cert && result.draft && (
                 <div className="cert-actions">
                   <TrustCertButton cert={cert} host={cert.host || hostOf(result.draft.profile)} onTrust={trustCert} />
+                </div>
+              )}
+              {plain && result.then && (
+                <div className="cert-actions">
+                  <AllowPlainFtpButton onAllow={allowPlain} />
                 </div>
               )}
               {!cert && result.unchecked && result.draft && (

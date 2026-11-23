@@ -19,6 +19,7 @@ async function read<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
 import type {
   ListResult,
   LocalFile,
+  NetConfig,
   ObjectDetails,
   Profile,
   RemoteFile,
@@ -46,6 +47,9 @@ export const api = {
   /** `clearSecret`: test without the saved password, as Save with `clearSecret` would leave it */
   testConnection: (profile: Profile, secret?: string, clearSecret?: boolean) =>
     invoke<string>("test_connection", { profile, secret: secret || null, clearSecret: !!clearSecret }),
+  /** "Connect without encryption": this "encrypt if available" FTP server may be used over plain
+   *  FTP when it offers no encryption (asked once per server, after an `ftp-plain-unconfirmed` error). */
+  ftpAllowPlain: (net: NetConfig) => invoke<void>("ftp_allow_plain", { net }),
 
   listBuckets: (profileId: string) =>
     read<{ name: string; created: number | null }[]>("list_buckets", { profileId }),

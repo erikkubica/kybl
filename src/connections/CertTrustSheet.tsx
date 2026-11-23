@@ -182,3 +182,37 @@ export function TrustCertButton({
     </>
   );
 }
+
+/**
+ * FTP "encrypt if available" whose server offered no encryption: nothing was sent in clear, and
+ * the error says why. This is the deliberate click that lets this server be used over plain FTP
+ * (remembered per server; one that encrypted before is still never used unencrypted).
+ */
+export function AllowPlainFtpButton({ onAllow, className = "btn btn-sm" }: { onAllow: () => Promise<void> | void; className?: string }) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const allow = async () => {
+    setBusy(true);
+    setFailed(null);
+    try {
+      await onAllow();
+    } catch (e) {
+      setFailed(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <button type="button" className={className} onClick={() => void allow()} disabled={busy}>
+        {busy ? <span className="spinner" /> : <Icon name="alert" size={13} />}
+        Connect without encryption
+      </button>
+      {failed && (
+        <span className="cert-failed" role="alert">
+          {failed}
+        </span>
+      )}
+    </>
+  );
+}

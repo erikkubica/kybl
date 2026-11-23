@@ -92,13 +92,45 @@ fn names<T>(f: impl FnOnce(&mut Names) -> T) -> T {
 }
 
 /// How a path is compared with the names in use. The file systems of macOS, Windows, iOS and
-/// Android's shared storage ignore case, so there "Report.pdf" and "report.pdf" are one file.
+/// Android's shared storage ignore case, so there "Report.pdf" and "report.pdf" are one file;
+/// those of macOS and iOS also ignore Unicode normalization, so "résumé" written with a composed
+/// "é" and with "e" plus a combining accent is one file too (compared composed, NFC).
 fn name_key(p: &Path) -> PathBuf {
+    use unicode_normalization::UnicodeNormalization;
     if cfg!(target_os = "linux") {
         p.to_path_buf()
     } else {
-        PathBuf::from(p.to_string_lossy().to_lowercase())
+        PathBuf::from(p.to_string_lossy().nfc().collect::<String>().to_lowercase())
     }
+}
+
+/// Opens a new, empty partial file at `part`. Whatever is there already goes first: a partial
+/// file of an earlier attempt, or a link someone planted in a shared folder (the link itself is
+/// removed, never what it points at). The file is then created exclusively, so no link is
+/// followed and a second writer fails instead of truncating the first one's file.
+pub async fn create_part(part: &Path) -> std::io::Result<tokio::fs::File> {
+    if let Ok(m) = tokio::fs::symlink_metadata(part).await
+        && !m.is_dir()
+    {
+        tokio::fs::remove_file(part).await?;
+    }
+    tokio::fs::OpenOptions::new().write(true).create_new(true).open(part).await
+}
+
+/// Opens the partial file of an earlier attempt to add to its end, with its length. None unless
+/// it is a plain file (a link there is never followed).
+pub async fn open_part(part: &Path) -> Option<(tokio::fs::File, u64)> {
+    let m = tokio::fs::symlink_metadata(part).await.ok()?;
+    if !m.file_type().is_file() {
+        return None;
+    }
+    let mut o = tokio::fs::OpenOptions::new();
+    o.append(true);
+    #[cfg(unix)]
+    o.custom_flags(libc::O_NOFOLLOW);
+    let f = o.open(part).await.ok()?;
+    let len = f.metadata().await.ok()?.len();
+    Some((f, len))
 }
 
 /// What a download that replaces a file hears while another download writes to that name.
@@ -321,6 +353,57 @@ mod tests {
         release(&a);
         release(&b);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// "résumé.pdf" with a composed é and with e + combining accent is one file on macOS: two
+    /// downloads of them at once must not share one name (and one `.s3part`).
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn names_differing_only_in_unicode_normalization_are_one_file() {
+        let dir = temp_dir();
+        let composed = dir.join("r\u{e9}sum\u{e9}.pdf");
+        let decomposed = dir.join("re\u{301}sume\u{301}.pdf");
+        let a = reserve(&composed, false).unwrap();
+        let b = reserve(&decomposed, false).unwrap();
+        assert_eq!(a, composed);
+        assert_ne!(name_key(&b), name_key(&a));
+        assert_eq!(b.file_name().unwrap().to_string_lossy(), "re\u{301}sume\u{301} (1).pdf");
+        assert_eq!(reserve(&decomposed, true), Err(BUSY.to_string()));
+        release(&a);
+        release(&b);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A link planted at the partial file's name (in a folder others can write to) is never
+    /// followed: the file it points at stays as it was.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_at_the_partial_files_name_is_not_followed() {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            use tokio::io::AsyncWriteExt;
+            let dir = temp_dir();
+            let victim = dir.join("victim.txt");
+            std::fs::write(&victim, b"precious").unwrap();
+            let part = part_path(&dir.join("report.pdf"));
+            std::os::unix::fs::symlink(&victim, &part).unwrap();
+            assert!(open_part(&part).await.is_none(), "a link is no partial file to carry on");
+            let mut f = create_part(&part).await.unwrap();
+            f.write_all(b"downloaded").await.unwrap();
+            drop(f);
+            assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+            assert!(std::fs::symlink_metadata(&part).unwrap().file_type().is_file());
+            assert_eq!(std::fs::read(&part).unwrap(), b"downloaded");
+            // a dangling link too
+            std::fs::remove_file(&part).unwrap();
+            let nowhere = dir.join("not-yet");
+            std::os::unix::fs::symlink(&nowhere, &part).unwrap();
+            create_part(&part).await.unwrap();
+            assert!(!nowhere.exists());
+            // a plain partial file of an earlier attempt is carried on
+            std::fs::write(&part, b"half").unwrap();
+            assert_eq!(open_part(&part).await.map(|(_, n)| n), Some(4));
+            let _ = std::fs::remove_dir_all(dir);
+        });
     }
 
     #[test]

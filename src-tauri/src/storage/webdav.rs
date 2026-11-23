@@ -970,13 +970,16 @@ pub(crate) fn http_error(e: reqwest::Error) -> StorageError {
 
 /// A refused request, said plainly; `what` is the action ("upload", "delete").
 /// A 207 answer to DELETE, MOVE or COPY lists what failed inside the folder (a locked or
-/// read-only member): the first `<status>` that isn't 2xx, with its href. None when all went.
-fn multistatus_failure(xml: &str) -> Option<String> {
+/// read-only member): the first `<status>` that isn't 2xx, with its href. Ok(None) when all
+/// went; Err when the answer can't be read whole (cut off, not XML, empty): nothing then says
+/// that everything went.
+fn multistatus_failure(xml: &str) -> Result<Option<String>, String> {
     use quick_xml::{events::Event, Reader};
     let mut r = Reader::from_str(xml);
     let (mut href, mut text) = (String::new(), String::new());
+    let mut whole = false;
     loop {
-        match r.read_event().ok()? {
+        match r.read_event().map_err(|e| e.to_string())? {
             Event::Start(_) => text.clear(),
             Event::Text(t) => text.push_str(&t.xml10_content()),
             Event::End(e) => {
@@ -986,28 +989,35 @@ fn multistatus_failure(xml: &str) -> Option<String> {
                         // "HTTP/1.1 423 Locked"
                         let code = text.split_whitespace().nth(1).and_then(|c| c.parse::<u16>().ok());
                         if code.is_some_and(|c| !(200..300).contains(&c)) {
-                            return Some(format!("{href}: {}", text.trim()));
+                            return Ok(Some(format!("{href}: {}", text.trim())));
                         }
                     }
+                    "multistatus" => whole = true,
                     _ => {}
                 }
                 text.clear();
             }
-            Event::Eof => return None,
+            Event::Eof if whole => return Ok(None),
+            Event::Eof => return Err("the answer ended before </multistatus>".into()),
             _ => {}
         }
     }
 }
 
-/// Success, or for a 207 the members that failed said as an error.
+/// Success, or for a 207 the members that failed said as an error. A 207 whose list can't be
+/// read is no proof that everything went, so it fails too.
 async fn whole_success(resp: Response, what: &str) -> SResult<()> {
     if resp.status() != StatusCode::MULTI_STATUS {
         return Ok(());
     }
-    let body = resp.text().await.unwrap_or_default();
+    let unsure = |detail: String| {
+        StorageError::other(format!("The server's answer was cut off, so Kybl can't tell whether it could {what} everything inside. Look at the folder, then try again.")).with_detail(detail)
+    };
+    let body = resp.text().await.map_err(|e| unsure(e.to_string()))?;
     match multistatus_failure(&body) {
-        None => Ok(()),
-        Some(first) => Err(StorageError::other(format!("The server couldn't {what} everything inside: something there is locked or read-only.")).with_detail(first)),
+        Ok(None) => Ok(()),
+        Ok(Some(first)) => Err(StorageError::other(format!("The server couldn't {what} everything inside: something there is locked or read-only.")).with_detail(first)),
+        Err(e) => Err(unsure(format!("HTTP 207: {e}"))),
     }
 }
 
@@ -1101,10 +1111,14 @@ mod tests {
     #[test]
     fn partial_multistatus_is_a_failure() {
         let failed = r#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/f/locked.txt</d:href><d:status>HTTP/1.1 423 Locked</d:status></d:response></d:multistatus>"#;
-        assert_eq!(multistatus_failure(failed).as_deref(), Some("/dav/f/locked.txt: HTTP/1.1 423 Locked"));
+        assert_eq!(multistatus_failure(failed).unwrap().as_deref(), Some("/dav/f/locked.txt: HTTP/1.1 423 Locked"));
         let fine = r#"<?xml version="1.0"?><multistatus xmlns="DAV:"><response><href>/dav/f/</href><status>HTTP/1.1 204 No Content</status></response></multistatus>"#;
-        assert_eq!(multistatus_failure(fine), None);
-        assert_eq!(multistatus_failure(""), None);
+        assert_eq!(multistatus_failure(fine), Ok(None));
+        // an answer that can't be read whole is no proof that everything went
+        assert!(multistatus_failure("").is_err(), "empty");
+        assert!(multistatus_failure(&fine[..fine.len() - 30]).is_err(), "cut off");
+        assert!(multistatus_failure("<html><body>Bad gateway</body></html>").is_err(), "not a multistatus");
+        assert!(multistatus_failure("<multistatus><response></multistatus>").is_err(), "not XML");
     }
 
     #[test]

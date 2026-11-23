@@ -163,6 +163,36 @@ fn resume_delay(n: u32) -> Duration {
     Duration::from_secs((1u64 << (n - 1).min(5)).min(30))
 }
 
+const STALLED: &str = "The connection stopped sending data.";
+
+/// How a network wait raced against Pause/Cancel and [`STALL`] ended.
+enum Raced<T> {
+    Got(T),
+    /// paused or cancelled meanwhile
+    Stopped,
+    /// nothing came for `STALL`
+    Stalled,
+}
+
+/// Waits for `fut` (a body read, a request), checking Pause/Cancel every 200 ms and giving up
+/// after `STALL`: a server that accepts the connection and then says nothing (a dead Wi-Fi, a
+/// NAT that dropped the flow) neither keeps the download "running" nor ignores Pause/Cancel.
+async fn race<T>(fut: impl std::future::Future<Output = T>, cancel: &AtomicBool) -> Raced<T> {
+    let deadline = tokio::time::Instant::now() + STALL;
+    let fut = tokio::time::timeout_at(deadline, fut);
+    tokio::pin!(fut);
+    loop {
+        tokio::select! {
+            r = &mut fut => return r.map_or(Raced::Stalled, Raced::Got),
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                if cancel.load(Ordering::Relaxed) {
+                    return Raced::Stopped;
+                }
+            }
+        }
+    }
+}
+
 /// Downloads to `dest`, replacing a file already there, as sync does. Nothing is kept if it fails.
 #[cfg_attr(mobile, allow(dead_code))]
 pub(crate) async fn download_file(
@@ -187,7 +217,7 @@ async fn resume_from(
     part: &Path,
     etag: &str,
 ) -> Option<(tokio::fs::File, u64, aws_sdk_s3::operation::get_object::GetObjectOutput)> {
-    let have = tokio::fs::metadata(part).await.ok()?.len();
+    let (file, have) = dest::open_part(part).await?;
     if have == 0 {
         return None;
     }
@@ -201,7 +231,6 @@ async fn resume_from(
         .await
         .ok()?;
     out.content_range()?;
-    let file = tokio::fs::OpenOptions::new().append(true).open(part).await.ok()?;
     Some((file, have, out))
 }
 
@@ -241,7 +270,7 @@ async fn download_to(
             // A resumed request asks for the same version of the object, so a file changed
             // meanwhile fails cleanly instead of being stitched together from two versions.
             let etag = out.e_tag().map(str::to_string);
-            let file = tokio::fs::File::create(&part_path).await.map_err(err)?;
+            let file = dest::create_part(&part_path).await.map_err(err)?;
             crate::leftovers::partial_started(&part_path);
             (file, 0, out, total, etag)
         }
@@ -258,23 +287,13 @@ async fn download_to(
     let mut lane = DOWN.lane();
     let result: Result<bool, String> = async {
         let mut failures = 0u32;
-        loop {
-            // the read races Pause/Cancel, and a connection silent for `STALL` (a dead Wi-Fi, a
-            // NAT that dropped the flow) counts as dropped, so the resume below picks it up
-            let deadline = tokio::time::Instant::now() + STALL;
-            let next = loop {
-                tokio::select! {
-                    r = tokio::time::timeout_at(deadline, out.body.try_next()) => break r,
-                    _ = tokio::time::sleep(Duration::from_millis(200)) => {
-                        if cancel.load(Ordering::Relaxed) {
-                            return Ok(false);
-                        }
-                    }
-                }
-            };
-            let next = match next {
-                Ok(r) => r.map_err(err),
-                Err(_) => Err("The connection stopped sending data.".to_string()),
+        'read: loop {
+            // the read races Pause/Cancel, and a connection silent for `STALL` counts as dropped,
+            // so the resume below picks it up
+            let next = match race(out.body.try_next(), cancel).await {
+                Raced::Got(r) => r.map_err(err),
+                Raced::Stopped => return Ok(false),
+                Raced::Stalled => Err(STALLED.to_string()),
             };
             match next {
                 Ok(Some(chunk)) => {
@@ -307,40 +326,47 @@ async fn download_to(
                             if let Some(tag) = &etag {
                                 req = req.if_match(tag);
                             }
-                            match req.send().await {
-                                Ok(rest) if rest.content_range().is_some() => out = rest,
-                                Ok(_) => return Err("The server can't carry on this download where it paused. Try again.".into()),
-                                Err(e) => return Err(sdk_err(e)),
+                            match race(req.send(), cancel).await {
+                                Raced::Got(Ok(rest)) if rest.content_range().is_some() => out = rest,
+                                Raced::Got(Ok(_)) => return Err("The server can't carry on this download where it paused. Try again.".into()),
+                                Raced::Got(Err(e)) => return Err(sdk_err(e)),
+                                Raced::Stopped => return Ok(false),
+                                Raced::Stalled => return Err(STALLED.into()),
                             }
                             progress(got, total);
                         }
                     }
                 }
                 Ok(None) => break,
+                // every byte is in and only the end of the stream went wrong (a reset after the
+                // last byte, a stall waiting for the close): the file is whole
+                Err(_) if total > 0 && got >= total => break 'read,
                 // The connection dropped mid-file: the phone went to the background, the network
                 // changed, the server hung up. Ask for the rest of the file and carry on.
                 Err(e) => loop {
                     failures += 1;
-                    if failures > RESUME_ATTEMPTS || (total > 0 && got >= total) {
+                    if failures > RESUME_ATTEMPTS {
                         return Err(e);
                     }
-                    tokio::time::sleep(resume_delay(failures)).await;
-                    if cancel.load(Ordering::Relaxed) {
+                    if let Raced::Stopped = race(tokio::time::sleep(resume_delay(failures)), cancel).await {
                         return Ok(false);
                     }
                     let mut req = client.get_object().bucket(bucket).key(key).range(format!("bytes={got}-"));
                     if let Some(tag) = &etag {
                         req = req.if_match(tag);
                     }
-                    match req.send().await {
-                        Ok(rest) if rest.content_range().is_some() || got == 0 => {
+                    // the request races Pause/Cancel too, and one left unanswered counts as failed
+                    match race(req.send(), cancel).await {
+                        Raced::Got(Ok(rest)) if rest.content_range().is_some() || got == 0 => {
                             out = rest;
                             break;
                         }
                         // the server ignored the range and sent the whole file again: can't resume
-                        Ok(_) => return Err(e),
-                        Err(again) if failures >= RESUME_ATTEMPTS => return Err(sdk_err(again)),
-                        Err(_) => continue,
+                        Raced::Got(Ok(_)) => return Err(e),
+                        Raced::Got(Err(again)) if failures >= RESUME_ATTEMPTS => return Err(sdk_err(again)),
+                        Raced::Stalled if failures >= RESUME_ATTEMPTS => return Err(STALLED.into()),
+                        Raced::Got(Err(_)) | Raced::Stalled => continue,
+                        Raced::Stopped => return Ok(false),
                     }
                 },
             }
@@ -387,6 +413,40 @@ struct PendingDownload {
     /// the path actually written (a free name unless overwriting)
     chosen: PathBuf,
     etag: Option<String>,
+    /// it came in whole, but its check couldn't run: its file at `chosen` as it was then
+    finished: Option<multipart::FileStamp>,
+}
+
+/// A local file's size and modified time (ms), to tell whether it changed since.
+fn stamp_of(p: &Path) -> Option<multipart::FileStamp> {
+    let m = std::fs::metadata(p).ok().filter(|m| m.is_file())?;
+    let ms = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64);
+    Some((m.len(), ms))
+}
+
+/// How Retry of a kept download goes on (see [`retry_kept`]).
+struct RetryPlan {
+    chosen: PathBuf,
+    /// carry on the partial file of this version
+    etag: Option<String>,
+    /// only check the file it downloaded whole before
+    recheck: bool,
+    /// kept again if the retry can't even start
+    kept: Option<PendingDownload>,
+}
+
+/// Retry of the kept download `p`, which holds its name again (`dest::resume`). One that came in
+/// whole and only couldn't be checked has that same file checked again; a file changed there
+/// since is somebody's file now and is left alone, as is any file that turned up meanwhile
+/// (`dest::recheck_retry`); otherwise its partial file is carried on.
+fn retry_kept(p: PendingDownload, wanted: &Path, overwrite: bool) -> RetryPlan {
+    if p.finished.is_some() && stamp_of(&p.chosen) == p.finished {
+        return RetryPlan { chosen: p.chosen.clone(), etag: None, recheck: true, kept: Some(p) };
+    }
+    let (chosen, partial) = dest::recheck_retry(p.chosen, wanted, overwrite);
+    let etag = if partial { p.etag } else { None };
+    let kept = partial.then(|| PendingDownload { profile_id: p.profile_id, bucket: p.bucket, key: p.key, requested: p.requested, chosen: chosen.clone(), etag: etag.clone(), finished: None });
+    RetryPlan { chosen, etag, recheck: false, kept }
 }
 
 static PENDING_DOWNLOADS: LazyLock<Mutex<HashMap<String, PendingDownload>>> = LazyLock::new(Default::default);
@@ -399,7 +459,7 @@ pub fn adopt(s: &Saved) {
     }
     let chosen = PathBuf::from(&s.local);
     dest::park(&chosen, &s.id);
-    let kept = PendingDownload { profile_id: s.profile_id.clone(), bucket: s.bucket.clone(), key: s.key.clone(), requested: s.requested.clone(), chosen, etag: s.version.clone() };
+    let kept = PendingDownload { profile_id: s.profile_id.clone(), bucket: s.bucket.clone(), key: s.key.clone(), requested: s.requested.clone(), chosen, etag: s.version.clone(), finished: s.stamp };
     PENDING_DOWNLOADS.lock().unwrap().insert(s.id.clone(), kept);
 }
 
@@ -512,8 +572,9 @@ async fn local_source(source: Source, key: &str, id: &str) -> Result<(String, Op
 #[derive(Clone, Copy)]
 enum Kind {
     Upload,
-    /// `resume`: continue the partial file of an earlier attempt
-    Download { resume: bool },
+    /// `resume`: continue the partial file of an earlier attempt; `recheck`: the file came in
+    /// whole before and only its check couldn't run, so it is only checked again
+    Download { resume: bool, recheck: bool },
 }
 
 /// What the transfer reports as it ends: carried on from where it stopped, or started over.
@@ -538,8 +599,9 @@ fn resume_note(prior: u64, kept: u64, first: u64) -> (Option<u64>, bool) {
 /// cloud drive's upload session. 0 otherwise (a server's temporary file: `prior` stands in).
 fn kept_bytes(kind: Kind, local: &str, kept: Option<&Saved>) -> u64 {
     match kind {
-        Kind::Download { resume: true } => std::fs::metadata(dest::part_path(Path::new(local))).map_or(0, |m| m.len()),
-        Kind::Download { resume: false } => 0,
+        Kind::Download { recheck: true, .. } => std::fs::metadata(local).map_or(0, |m| m.len()),
+        Kind::Download { resume: true, .. } => std::fs::metadata(dest::part_path(Path::new(local))).map_or(0, |m| m.len()),
+        Kind::Download { resume: false, .. } => 0,
         Kind::Upload => match kept.and_then(|k| k.upload.as_ref().map(|u| (k.via.as_str(), u))) {
             Some(("s3" | "drive", u)) => u.parts.iter().map(|p| p.size).sum(),
             _ => 0,
@@ -653,6 +715,18 @@ async fn spawn_transfer(
         record.overwrite = overwrite;
         record.state = "running".into();
         record.error = None;
+        // a download whose file came in whole but couldn't be checked: that file as it was then
+        // (size, modified), so Retry checks it again rather than downloading it once more. A
+        // run that only re-checks it keeps it until the check has an answer.
+        let mut unverified = match kind {
+            Kind::Download { recheck: true, .. } => kept.as_ref().and_then(|k| k.stamp),
+            _ => None,
+        };
+        if let Kind::Download { .. } = kind {
+            record.stamp = unverified;
+        }
+        // a download fetched (not copied from the file cache) goes into the cache once checked
+        let mut to_cache = false;
         let mut done_bytes = 0u64;
         let first = AtomicU64::new(0);
         let mut verify_part_size: Option<u64> = None;
@@ -760,12 +834,14 @@ async fn spawn_transfer(
                     }
                     Err(e) => Err(e),
                 },
-                Kind::Download { resume } => {
+                Kind::Download { resume, recheck } => {
                     let chosen = PathBuf::from(&local);
                     let tag = if resume { resume_etag.as_deref() } else { None };
                     // the same version opened or downloaded before is copied from the file
-                    // cache instead of fetched again (a retry carrying on its partial file isn't)
+                    // cache instead of fetched again (a retry carrying on its partial file isn't);
+                    // a file downloaded whole before, whose check couldn't run, is only checked
                     let served = match resume {
+                        _ if recheck => Some(Ok(Outcome::Done)),
                         false => crate::filecache::serve_download(&app, &conn, &profile_id, &bucket, &key, listed.as_ref(), &chosen, &cancel, &report).await,
                         true => None,
                     };
@@ -779,9 +855,11 @@ async fn spawn_transfer(
                     };
                     if let Ok(Outcome::Done) = r {
                         done_bytes = tokio::fs::metadata(&chosen).await.map(|m| m.len()).unwrap_or(0);
-                        if fetched {
-                            crate::filecache::remember_download(&app, conn.clone(), profile_id.clone(), bucket.clone(), key.clone(), dl.etag.clone(), chosen.clone());
+                        if recheck {
+                            report(done_bytes, done_bytes);
                         }
+                        // into the file cache once its check passed (below)
+                        to_cache = fetched;
                         // from somewhere else: the system checks it before it runs, as with a
                         // browser's downloads (a file of this computer is no download)
                         let from_here = profile_id == crate::storage::registry::LOCAL_ID || matches!(&conn, Conn::Other(s) if s.local_path(&bucket, &key).is_some());
@@ -804,17 +882,28 @@ async fn spawn_transfer(
                     if matches!(kind, Kind::Download { .. }) {
                         // a download that came out different is no use to anyone
                         let _ = tokio::fs::remove_file(path).await;
+                        unverified = None;
                     }
                     result = Err(format!("{e} Retry to transfer it again."));
                 }
-                // the check itself couldn't run: nothing says the copy is wrong, so it stays
+                // the check itself couldn't run: nothing says the copy is wrong, so it stays, and
+                // Retry checks that file again (as it is now) instead of downloading it once more
                 Err(e @ crate::verify::CheckErr::Unverified(_)) => {
                     result = Err(match kind {
-                        Kind::Download { .. } => format!("{e} The downloaded file was kept; Retry to download and check it again."),
+                        Kind::Download { .. } => {
+                            unverified = stamp_of(path);
+                            format!("{e} The downloaded file was kept; Retry to check it again.")
+                        }
                         Kind::Upload => format!("{e} Retry to transfer it again."),
                     });
                 }
             }
+        }
+        // only a copy that passed its check (or wasn't asked to be checked) goes into the cache
+        if to_cache
+            && let (Ok(Outcome::Done), Some(path)) = (&result, &local_done)
+        {
+            crate::filecache::remember_download(&app, conn.clone(), profile_id.clone(), bucket.clone(), key.clone(), dl.etag.clone(), path.clone());
         }
         drop(permit);
         let last = ACTIVE.lock().unwrap().get(&id).map(|t| (t.bytes, t.total)).unwrap_or((0, 0));
@@ -832,7 +921,7 @@ async fn spawn_transfer(
                 match r {
                     _ if keep => {
                         let etag = dl.etag.clone().or_else(|| kept.as_ref().and_then(|k| k.version.clone()));
-                        let kept = PendingDownload { profile_id: profile_id.clone(), bucket: bucket.clone(), key: key.clone(), requested, chosen, etag };
+                        let kept = PendingDownload { profile_id: profile_id.clone(), bucket: bucket.clone(), key: key.clone(), requested, chosen, etag, finished: unverified };
                         PENDING_DOWNLOADS.lock().unwrap().insert(id.clone(), kept);
                     }
                     // stopped before its turn came: a partial file from an earlier attempt goes too
@@ -863,6 +952,7 @@ async fn spawn_transfer(
                 let e = e.clone();
                 // it went through but didn't match: nothing of it is left to carry on from
                 let finished = local_done.is_some();
+                let download = matches!(kind, Kind::Download { .. });
                 resume::update_or_put(&id, record.clone(), |s| {
                     s.state = "error".into();
                     (s.bytes, s.total) = last;
@@ -870,6 +960,10 @@ async fn spawn_transfer(
                     if finished {
                         s.upload = None;
                         s.version = None;
+                    }
+                    // a download kept whole but unchecked: what its file was like, for Retry
+                    if download {
+                        s.stamp = unverified;
                     }
                 })
             }
@@ -963,16 +1057,14 @@ pub async fn start_download(
     let kept = PENDING_DOWNLOADS.lock().unwrap().remove(&id);
     // a retry carrying on from its partial file: kept again when it can't even start
     let mut retried: Option<PendingDownload> = None;
+    let mut recheck = false;
     let (chosen, resume_etag) = match kept {
         // the same download again: same name, carrying on from its partial file (unless another
         // download took the name meanwhile, or a file turned up there)
         Some(p) if p.profile_id == profile_id && p.bucket == bucket && p.key == key && p.requested == dest_path && dest::resume(&p.chosen, &id) => {
-            let (chosen, partial) = dest::recheck_retry(p.chosen, &wanted, overwrite);
-            let etag = if partial { p.etag } else { None };
-            if partial {
-                retried = Some(PendingDownload { profile_id: p.profile_id, bucket: p.bucket, key: p.key, requested: p.requested, chosen: chosen.clone(), etag: etag.clone() });
-            }
-            (chosen, etag)
+            let r = retry_kept(p, &wanted, overwrite);
+            (recheck, retried) = (r.recheck, r.kept);
+            (r.chosen, r.etag)
         }
         other => {
             if let Some(p) = other {
@@ -982,7 +1074,7 @@ pub async fn start_download(
         }
     };
     let local = chosen.to_string_lossy().into_owned();
-    let kind = Kind::Download { resume: resume_etag.is_some() };
+    let kind = Kind::Download { resume: resume_etag.is_some(), recheck };
     if let Err(e) = spawn_transfer(app, &state, kind, id.clone(), profile_id, bucket, key, local.clone(), dest_path, overwrite, resume_etag, listed).await {
         match retried {
             // couldn't start (offline, server down, keychain locked): the partial file stays for
@@ -1241,5 +1333,98 @@ mod tests {
             assert!(reqs[0].contains("if-match: \"v1\""), "{}", reqs[0]);
             let _ = std::fs::remove_dir_all(dir);
         });
+    }
+
+    /// The connection drops halfway and the server then accepts the reconnect but never answers:
+    /// Cancel still ends the download promptly, instead of it hanging on the request.
+    #[test]
+    fn cancel_ends_a_download_stuck_on_its_reconnect() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            tokio::spawn(async move {
+                let mut held = Vec::new();
+                for n in 0.. {
+                    let (mut sock, _) = listener.accept().await.unwrap();
+                    let mut buf = vec![0u8; 8192];
+                    let _ = sock.read(&mut buf).await;
+                    if n == 0 {
+                        let head = "HTTP/1.1 200 OK\r\ncontent-length: 100000\r\netag: \"v1\"\r\nconnection: close\r\n\r\n";
+                        sock.write_all(head.as_bytes()).await.unwrap();
+                        sock.write_all(&[7u8; 40_000]).await.unwrap();
+                        let _ = sock.shutdown().await;
+                    } else {
+                        // read the request, never answer
+                        held.push(sock);
+                    }
+                }
+            });
+            let p = Profile { id: "t".into(), name: "t".into(), provider: "custom".into(), endpoint, region: "us-east-1".into(), access_key_id: "k".into(), path_style: true, ..Default::default() };
+            let client = build_client(&p, "s");
+            let dir = std::env::temp_dir().join(format!("kybl-stuck-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let dest = dir.join("file.bin");
+            let cancel = Arc::new(AtomicBool::new(false));
+            let flag = cancel.clone();
+            tokio::spawn(async move {
+                // after the 1 s resume wait, while the reconnect waits for its answer
+                tokio::time::sleep(Duration::from_millis(2500)).await;
+                flag.store(true, Ordering::Relaxed);
+            });
+            let started = Instant::now();
+            let mut dl = Dl::default();
+            let r = download_to(&client, "b", "file.bin", &dest, None, false, &cancel, &|_, _| {}, None, &mut dl).await;
+            assert!(matches!(r, Ok(Outcome::Cancelled)), "{:?}", r.err());
+            assert!(started.elapsed() < Duration::from_secs(6), "took {:?}", started.elapsed());
+            assert!(!dest::part_path(&dest).exists() && !dest.exists());
+            let _ = std::fs::remove_dir_all(dir);
+        });
+    }
+
+    #[test]
+    fn a_wait_races_cancel_and_the_stall_limit() {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            assert!(matches!(race(async { 5 }, &AtomicBool::new(false)).await, Raced::Got(5)));
+            let started = Instant::now();
+            assert!(matches!(race(std::future::pending::<()>(), &AtomicBool::new(true)).await, Raced::Stopped));
+            assert!(started.elapsed() < Duration::from_secs(1));
+        });
+    }
+
+    /// "Couldn't check the copy" keeps the finished file: Retry checks that same file again
+    /// instead of downloading a second copy under "name (1)". A file changed since is left alone.
+    #[test]
+    fn retry_of_an_unchecked_download_checks_the_same_file() {
+        let dir = std::env::temp_dir().join(format!("kybl-recheck-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wanted = dir.join("report.pdf");
+        let chosen = dest::reserve(&wanted, false).unwrap();
+        std::fs::write(&chosen, b"whole file").unwrap();
+        dest::park(&chosen, "t1");
+        let pending = |finished| PendingDownload {
+            profile_id: "p".into(),
+            bucket: "b".into(),
+            key: "report.pdf".into(),
+            requested: wanted.to_string_lossy().into_owned(),
+            chosen: chosen.clone(),
+            etag: Some("\"v1\"".into()),
+            finished,
+        };
+        assert!(dest::resume(&chosen, "t1"));
+        let plan = retry_kept(pending(stamp_of(&chosen)), &wanted, false);
+        assert!(plan.recheck);
+        assert_eq!(plan.chosen, chosen, "the same file, no \"report (1).pdf\"");
+        assert!(plan.etag.is_none() && plan.kept.is_some_and(|k| k.finished.is_some()));
+        assert_eq!(std::fs::read(&chosen).unwrap(), b"whole file");
+        // the user changed the file meanwhile: it's theirs now, and the download goes elsewhere
+        let before = stamp_of(&chosen);
+        std::fs::write(&chosen, b"edited by the user").unwrap();
+        let plan = retry_kept(pending(before), &wanted, false);
+        assert!(!plan.recheck);
+        assert_eq!(plan.chosen, dir.join("report (1).pdf"));
+        assert_eq!(std::fs::read(&chosen).unwrap(), b"edited by the user");
+        dest::release(&plan.chosen);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

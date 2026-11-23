@@ -23,23 +23,34 @@ pub async fn open<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id: 
     if let Some(s) = OPEN.lock().unwrap().get(profile_id) {
         return Ok(s.clone());
     }
-    let s: Arc<dyn Storage> = if profile_id == LOCAL_ID {
-        Arc::new(LocalBackend::system(app).await?)
+    let (s, profile): (Arc<dyn Storage>, Option<Profile>) = if profile_id == LOCAL_ID {
+        (Arc::new(LocalBackend::system(app).await?), None)
     } else if profile_id.starts_with(crate::archive::PREFIX) {
         // an archive opened like a folder (src/archive), after a restart or cache eviction
-        crate::archive::reopen(app, state, profile_id).await?
+        (crate::archive::reopen(app, state, profile_id).await?, None)
     } else {
         let profile = load_profiles(app)?
             .into_iter()
             .find(|p| p.id == profile_id)
             .ok_or_else(|| "Connection not found".to_string())?;
-        let s = build(app, state, &profile, None).await?;
-        // its "Start when the connection opens" SSH tunnels
-        #[cfg(desktop)]
-        crate::tunnels::run::autostart(app, &profile);
-        s
+        (build(app, state, &profile, None).await?, Some(profile))
     };
-    OPEN.lock().unwrap().insert(profile_id.to_string(), s.clone());
+    {
+        // two first opens at once (a listing and a transfer): the one kept first is everyone's,
+        // so a server never gets two pools of connections, page caches or trust states
+        let mut open = OPEN.lock().unwrap();
+        if let Some(first) = open.get(profile_id) {
+            return Ok(first.clone());
+        }
+        open.insert(profile_id.to_string(), s.clone());
+    }
+    // its "Start when the connection opens" SSH tunnels
+    #[cfg(desktop)]
+    if let Some(profile) = &profile {
+        crate::tunnels::run::autostart(app, profile);
+    }
+    #[cfg(not(desktop))]
+    let _ = profile;
     Ok(s)
 }
 

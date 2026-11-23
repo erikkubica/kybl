@@ -577,7 +577,8 @@ impl Storage for LocalBackend {
         let parent = target.parent().ok_or_else(outside)?.to_path_buf();
         tokio::fs::create_dir_all(&parent).await?;
         let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let tmp = parent.join(format!(".{name}.kybl-{}", uuid::Uuid::new_v4()));
+        // "." + ".kybl-" + a 36-byte id: a long name is cut short to leave room for them
+        let tmp = parent.join(format!(".{}.kybl-{}", super::net::fit_name(&name, 43), uuid::Uuid::new_v4()));
 
         let result: SResult<bool> = async {
             let mut out = tokio::fs::File::create(&tmp).await?;

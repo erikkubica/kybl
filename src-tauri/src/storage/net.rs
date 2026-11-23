@@ -242,7 +242,27 @@ pub fn dir_prefix(dir: &str) -> String {
 /// A sibling name to write to before renaming over the target, so a half-written file never
 /// takes the real name.
 pub fn temp_key(key: &str) -> String {
-    format!("{}.{}.kybl-{}", parent_key(key), file_name(key), &uuid::Uuid::new_v4().simple().to_string()[..12])
+    let tag = &uuid::Uuid::new_v4().simple().to_string()[..12];
+    // "." + ".kybl-" + the tag
+    format!("{}.{}.kybl-{tag}", parent_key(key), fit_name(file_name(key), 7 + tag.len()))
+}
+
+/// The longest file name most file systems and servers take, in bytes.
+const NAME_MAX: usize = 255;
+
+/// `name` cut short (at a character boundary) so that, with `extra` bytes added, it still makes
+/// a valid file name. A temporary name is only a handle: a long name (CJK takes 3 bytes a
+/// character) mustn't make the temporary file impossible when the real name fits.
+pub fn fit_name(name: &str, extra: usize) -> &str {
+    let room = NAME_MAX.saturating_sub(extra);
+    if name.len() <= room {
+        return name;
+    }
+    let mut end = room;
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    &name[..end]
 }
 
 pub fn root_info(name: String) -> RootInfo {
@@ -449,7 +469,9 @@ pub fn source_len(src: &WriteSource) -> impl std::future::Future<Output = Option
 /// `.kybl-` in its name): only such a file is ever carried on with or removed for a resume.
 pub fn is_temp_for(tmp: &str, path: &str) -> bool {
     let (dir, name) = (parent_key(tmp), file_name(tmp));
-    dir == parent_key(path) && !name.contains('/') && name.contains(".kybl-") && name.contains(file_name(path).split('.').next().unwrap_or_default())
+    // a long name's temporary file holds the start of it (see `fit_name`)
+    let cut = name.strip_prefix('.').and_then(|n| n.rsplit_once(".kybl-")).is_some_and(|(n, _)| !n.is_empty() && file_name(path).starts_with(n));
+    dir == parent_key(path) && !name.contains('/') && name.contains(".kybl-") && (cut || name.contains(file_name(path).split('.').next().unwrap_or_default()))
 }
 
 /// Where an interrupted upload to a server's temporary file (SFTP, FTP) carries on: the bytes
@@ -632,6 +654,16 @@ mod tests {
         assert!(!is_temp_for("a/c/.report.kybl-1f2e.tmp", "a/b/report.pdf"), "another folder");
         assert!(!is_temp_for("a/b/report.pdf", "a/b/report.pdf"), "the file itself");
         assert!(!is_temp_for("a/b/.other.kybl-1f2e.tmp", "a/b/report.pdf"), "another file's");
+        // a name too long for its temporary file's extra bytes is cut short, and still found
+        let long = format!("a/b/{}.pdf", "\u{6587}".repeat(84));
+        let tmp = temp_key(&long);
+        assert!(file_name(&tmp).len() <= 255, "{}", file_name(&tmp).len());
+        assert!(is_temp_for(&tmp, &long));
+        assert!(!is_temp_for(&tmp, "a/b/other.pdf"));
+        assert_eq!(temp_key("a/report.pdf").len(), "a/.report.pdf.kybl-".len() + 12, "a short name stays whole");
+        assert_eq!(fit_name("\u{e9}\u{e9}", 254), "", "never splits a character");
+        assert_eq!(fit_name("abc", 252), "abc");
+        assert_eq!(fit_name("abcd", 252), "abc");
         assert_eq!(resume_offset(Some(100), Some(1000)), Some(100));
         assert_eq!(resume_offset(Some(1000), Some(1000)), Some(1000), "all there: just the rename left");
         assert_eq!(resume_offset(Some(1001), Some(1000)), None, "more than the source: start over");

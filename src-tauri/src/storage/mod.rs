@@ -602,6 +602,9 @@ pub enum ErrKind {
     UntrustedCert,
     /// FTPS / WebDAV: the certificate isn't the one trusted earlier
     CertChanged,
+    /// FTP "encrypt if available": the server offers no encryption and the user hasn't agreed
+    /// to plain FTP for it yet; the detail starts with `ftp-plain-unconfirmed` (see BACKENDS.md)
+    Unencrypted,
     Other,
 }
 
