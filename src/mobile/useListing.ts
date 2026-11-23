@@ -89,7 +89,12 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
         settle(l, false);
         setError(errMessage(e));
         // a failed quiet refresh keeps what is on screen; the banner says what went wrong
-        if (!quiet) setListing(EMPTY);
+        // and a failed first load shows nothing, but is not remembered as an empty folder
+        if (!quiet) {
+          listingRef.current = EMPTY;
+          setListingState(EMPTY);
+          cache.current.delete(locKey(l));
+        }
       } finally {
         if (id === reqId.current) {
           setLoading(false);
@@ -118,7 +123,8 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
         return 0;
       }
       const hit = cache.current.get(locKey(l));
-      if (hit) {
+      // (a listing with no page read is nothing to show: load it)
+      if (hit && hit.listing.pages > 0) {
         listingRef.current = hit.listing;
         setListingState(hit.listing);
         reqId.current++;

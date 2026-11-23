@@ -41,9 +41,11 @@ async function load(s: DiffSide): Promise<Loaded> {
   if ("text" in s) return { text: s.text, size: s.text.length };
   try {
     const { bytes, meta } = await docOpen(s.profileId, s.bucket, s.key, DIFF_MAX_BYTES);
-    // a NUL byte early on: not text
-    if (bytes.subarray(0, 8192).includes(0)) return { error: "This file isn’t text, so there’s nothing to compare line by line." };
-    return { text: decodeText(bytes).text, size: meta.size >= 0 ? meta.size : bytes.length };
+    const doc = decodeText(bytes);
+    // a NUL byte early on: not text (UTF-16 with a byte order mark is full of them, and is text)
+    if (!doc.encoding.startsWith("utf-16") && bytes.subarray(0, 8192).includes(0))
+      return { error: "This file isn’t text, so there’s nothing to compare line by line." };
+    return { text: doc.text, size: meta.size >= 0 ? meta.size : bytes.length };
   } catch (e) {
     const m = errMessage(e);
     if (/too large/i.test(m)) return { error: `This file is too large to compare here. Files up to ${formatBytes(DIFF_MAX_BYTES)} can be compared.` };
@@ -137,7 +139,14 @@ export function DiffView({ left, right, title, onClose }: { left: DiffSide; righ
   }, [diff, open]);
 
   const words = useRef(new Map<number, [Piece[], Piece[]]>());
-  useEffect(() => words.current.clear(), [diff]);
+  useEffect(() => {
+    words.current.clear();
+    // a new diff (Ignore whitespace switched): the current change and the opened folds were
+    // row indexes into the old one
+    setAt(-1);
+    setOpen(new Set());
+    setAll(false);
+  }, [diff]);
   const pieces = (i: number, a: string, b: string) => {
     let w = words.current.get(i);
     if (!w) words.current.set(i, (w = wordDiff(a, b)));

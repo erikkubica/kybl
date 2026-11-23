@@ -315,17 +315,25 @@ export function useFileOps(c: FileOpsCtx) {
       c.closeDetail();
       void api.haptic("warning");
       const id = c.jobs.start({ kind: "delete", title: `Deleting ${label}` });
+      let all = false;
       try {
         const r = await api.deleteObjects(pid, b, files.map((e) => e.key), folders.map((e) => e.key), id);
         c.jobs.finish(id, r);
-        if (r.error && r.error !== "Cancelled") c.toast("error", `Deleting stopped after ${r.done} of ${r.total} objects. ${errSummary(r.error)}`);
-        else c.toast("success", `Deleted ${label}`);
+        // stopped from Transfers: part of it is still there
+        if (r.error === "Cancelled") c.toast("info", `Stopped deleting after ${r.done} of ${r.total} objects`);
+        else if (r.error) c.toast("error", `Deleting stopped after ${r.done} of ${r.total} objects. ${errSummary(r.error)}`);
+        else {
+          all = true;
+          c.toast("success", `Deleted ${label}`);
+        }
       } catch (e) {
         c.jobs.finish(id, { error: errMessage(e) });
         toastErr(e);
       }
       const gone = new Set(files.map((e) => e.key));
-      c.changed(pid, b, (rs) => rs.filter((o) => !gone.has(o.key) && !folders.some((f) => o.key.startsWith(f.key))));
+      // (not everything went: re-read rather than take it all out of the search results)
+      if (!all) c.changed(pid, b);
+      else c.changed(pid, b, (rs) => rs.filter((o) => !gone.has(o.key) && !folders.some((f) => o.key.startsWith(f.key))));
     };
     if (!c.settings.confirmDelete) return void run();
     c.setConfirm({
@@ -335,7 +343,7 @@ export function useFileOps(c: FileOpsCtx) {
       message: (
         <p>
           {folders.length > 0 ? "Folders are deleted with everything inside them. " : ""}
-          This permanently removes {list.length === 1 ? "it" : "them"} from the bucket and <strong>cannot be undone</strong>.
+          This permanently removes {list.length === 1 ? "it" : "them"} and <strong>cannot be undone</strong>.
         </p>
       ),
       run,

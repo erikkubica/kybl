@@ -6,7 +6,7 @@
  */
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef } from "react";
-import { isToggleKey, ownKey, sessionFor } from "./session";
+import { isToggleKey, ownKey, ownKeyName, sessionFor } from "./session";
 import type { TermSpec } from "./api";
 
 export default function TermView({ spec, onToggle }: { spec: TermSpec; onToggle: () => void }) {
@@ -29,7 +29,7 @@ export default function TermView({ spec, onToggle }: { spec: TermSpec; onToggle:
       if (!ownKey(e)) return;
       e.preventDefault();
       e.stopPropagation();
-      const k = e.key.toLowerCase();
+      const k = ownKeyName(e);
       if (isToggleKey(e)) toggle.current();
       else if (k === "k") s.action("clear");
       else if (k === "c") s.action("copy");

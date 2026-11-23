@@ -76,6 +76,12 @@ body {
   display: contents;
 }
 
+/* a layer animating out is only a picture: a second tap goes to what's underneath */
+.m-presence.m-leaving,
+.m-presence.m-leaving * {
+  pointer-events: none !important;
+}
+
 /* ------------------------------------------------------------ screens */
 .m-screen {
   position: absolute;

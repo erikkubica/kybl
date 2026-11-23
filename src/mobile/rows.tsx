@@ -85,18 +85,25 @@ function useThumb(entry: Entry, profileId: string, bucket: string) {
   }, [phOk, profileId, bucket, entry.key, entry.etag, entry.size]);
   const [url, setUrl] = useState<string | null | undefined>(() => (ok ? cachedThumb(profileId, bucket, entry) : null));
   const ref = useRef<HTMLSpanElement>(null);
+  // the file version the thumbnail on show belongs to: a replaced photo (same key, new etag or
+  // size) keeps its row, so the old picture must not count as loaded
+  const ver = `${entry.etag ?? ""}|${entry.size}`;
+  const urlVer = useRef(ver);
   useEffect(() => {
     if (!ok) {
       // thumbnails turned off (or paused on mobile data): keep one that already loaded
       setUrl((u) => u ?? cachedThumb(profileId, bucket, entry) ?? null);
       return;
     }
-    if (url !== undefined && url !== null) return;
+    const stale = urlVer.current !== ver;
+    urlVer.current = ver;
+    if (!stale && url !== undefined && url !== null) return;
     const known = cachedThumb(profileId, bucket, entry);
     if (known !== undefined) {
       setUrl(known);
       return;
     }
+    if (stale) setUrl(undefined);
     if (!ref.current) return;
     let live = true;
     const stop = whenNear(ref.current, () => {
@@ -111,7 +118,7 @@ function useThumb(entry: Entry, profileId: string, bucket: string) {
       stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ok, profileId, bucket, entry.key, entry.etag]);
+  }, [ok, profileId, bucket, entry.key, ver]);
   return { ref, phRef, url, ph, loading: ok && url === undefined && !ph };
 }
 
