@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Icon, type IconName } from "../Icons";
 import { Breadcrumbs } from "./Breadcrumbs";
+import { ProviderBadge } from "./Sidebar";
 import type { Sort, SortKey } from "./FileTable";
 import { useDialogs } from "../shell/useDialogs";
 
@@ -37,6 +38,8 @@ export function Toolbar({
   onTogglePreview,
   dual = false,
   onPanes,
+  provider,
+  onSwitchConnection,
   onGoTo,
   favorite,
   onToggleFavorite,
@@ -83,6 +86,10 @@ export function Toolbar({
   dual?: boolean;
   /** the panes button (shows only with this): one pane splits right, more open the panes menu */
   onPanes?: (x: number, y: number) => void;
+  /** the pane's connection kind, shown as the switcher's badge */
+  provider?: string;
+  /** the badge before the path: pick another connection or bucket for this pane */
+  onSwitchConnection?: (x: number, y: number) => void;
   /** several panes only: this folder into the other pane, swap, compare, synchronized browsing (DualTools) */
   dualTools?: React.ReactNode;
   /** typing a path into the bar (Go to folder) */
@@ -122,6 +129,11 @@ export function Toolbar({
   return (
     <header className="chrome">
       <div className="toolbar" data-tauri-drag-region>
+        {onSwitchConnection && (
+          <button className="icon-btn conn-switch" onClick={(e) => onSwitchConnection(...anchorOf(e))} title="Switch connection or bucket" aria-label="Switch connection or bucket" aria-haspopup="menu">
+            <ProviderBadge provider={provider} />
+          </button>
+        )}
         {/* no ← → ↑ buttons: the path is one click per level, ".." and ⌘↑ go up, ⌘[ ⌘] and the mouse's side buttons go back and forward */}
         {bucket != null ? (
           <>

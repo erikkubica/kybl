@@ -43,6 +43,7 @@ import type { DocumentHandle } from "../viewers/DocumentView";
 import type { Entry } from "../types";
 import type { Profile } from "../types";
 import { useDialogs } from "./useDialogs";
+import type { MenuItem } from "../components/Dialogs";
 import { photoMenuItems } from "./photoMenu";
 import { loadExpanded, useConnections } from "./useConnections";
 import { PreviewAside, usePreviewLayout } from "./PreviewAside";
@@ -681,6 +682,39 @@ export function AppShell() {
       ...(own ? [] : [{ type: "sep" as const }, { type: "item" as const, label: "Open bucket by name…", icon: "plus" as const, onClick: () => askBucketName(p) }]),
     ]);
   };
+  /** The badge before a pane's path: every connection, each with its buckets, opened in that pane. */
+  const switchMenu = (id: PaneId, x: number, y: number) => {
+    const pane = paneById(id);
+    const open = (p: Profile, b: string) => {
+      setActiveId(id);
+      pane.openBucket(p, b);
+      focusSoon(id);
+    };
+    dialogs.menu(x, y, [
+      ...profiles.map((p): MenuItem => {
+        const own = p.id === THIS_MAC.id;
+        const current = pane.profile?.id === p.id;
+        if (rootsMode(p, peekCaps(p.id)) === "single") return { type: "item", label: p.name, checked: current || undefined, onClick: () => open(p, "") };
+        return {
+          type: "submenu",
+          label: current ? `${p.name} ✓` : p.name,
+          items: async () => {
+            const names = conns.bucketsBy[p.id]?.names?.length ? conns.bucketsBy[p.id].names : await conns.loadBuckets(p).catch(() => [] as string[]);
+            const hidden = new Set(conns.hiddenBuckets[p.id] ?? []);
+            const shown = names.filter((b) => !hidden.has(b));
+            const here = current ? pane.bucket : null;
+            return [
+              ...shown.map((b): MenuItem => ({ type: "item", label: conns.rootLabel(p.id, b), icon: own ? "folder" : "bucket", checked: b === here || undefined, onClick: () => open(p, b) })),
+              ...(!shown.length ? [{ type: "item" as const, label: conns.bucketsBy[p.id]?.note ?? "No buckets yet", disabled: true, onClick: () => {} }] : []),
+              ...(own ? [] : [{ type: "sep" as const }, { type: "item" as const, label: "Open bucket by name…", icon: "plus" as const, onClick: () => askBucketName(p, id) }]),
+            ];
+          },
+        };
+      }),
+      { type: "sep" },
+      { type: "item", label: "New connection…", icon: "plus", onClick: () => setConnDialog({ profile: null }) },
+    ]);
+  };
   /** Right-click on a bucket (or one of this computer's folders) in the sidebar. */
   const bucketMenu = (p: Profile, b: string, x: number, y: number) => {
     const hidden = (conns.hiddenBuckets[p.id] ?? []).includes(b);
@@ -790,6 +824,7 @@ export function AppShell() {
     bucketReconnect: !!(p.profile && conns.bucketsBy[p.profile.id]?.reconnect),
     empty: emptyFor(p.id),
     // one pane: a click splits it, as the dual pane button always did; more: the panes menu
+    onSwitchConnection: (x: number, y: number) => switchMenu(p.id, x, y),
     onPanes: (x: number, y: number) => (dual ? panesMenu(p.id, x, y) : split("row", p.id)),
     onActivate: () => {
       if (dual && activeId !== p.id) setActiveId(p.id);

@@ -3884,7 +3884,7 @@ body.dragging-items * {
 }
 /* folded: an icon rail as wide as the window controls need, like a code editor's activity bar */
 .app.side-hidden {
-  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-columns: 82px minmax(0, 1fr);
 }
 .sidebar.rail {
   align-items: center;
@@ -4986,4 +4986,17 @@ input[type="range"]:focus-visible {
   .content > .pane-resizer {
     display: none;
   }
+}
+
+/* the pane's connection badge before its path: picks another connection or bucket for the pane */
+.conn-switch {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  margin-right: 2px;
+  border-radius: 8px;
+}
+.conn-switch .pbadge {
+  pointer-events: none;
 }

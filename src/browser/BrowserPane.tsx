@@ -35,6 +35,8 @@ export type BrowserPaneProps = {
   onTogglePreview: () => void;
   /** the panes button: split, or the panes menu */
   onPanes?: (x: number, y: number) => void;
+  /** the badge before the path: another connection or bucket in this pane */
+  onSwitchConnection?: (x: number, y: number) => void;
   /** files dragged in from the computer would land here */
   dropUpload: boolean;
   /** the sidebar's note for a connection with no bucket open (and whether to offer to reconnect) */
@@ -118,6 +120,8 @@ export function BrowserPane(p: BrowserPaneProps) {
         onTogglePreview={p.onTogglePreview}
         dual={p.dual}
         onPanes={p.onPanes}
+        provider={pane.profile?.provider}
+        onSwitchConnection={p.onSwitchConnection}
         dualTools={profile && bucket != null ? p.dualTools : undefined}
         onGoTo={profile && bucket != null ? (t) => void actions.goToPath(t) : undefined}
         favorite={actions.isFavorite}
