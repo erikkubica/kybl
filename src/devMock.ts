@@ -716,6 +716,8 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     const r = await (await import("./actions/devActions")).handleAction(cmd, a);
     if (cmd !== "cancel_transfer") return r;
   }
+  // terminal panes: a fake shell (src/terminal/devTerminal.ts)
+  if (cmd.startsWith("terminal_")) return (await import("./terminal/devTerminal")).handleTerminal(cmd, a, profiles);
   if (a?.profileId === LOCAL) {
     const r = await handleLocal(cmd, a);
     if (r !== undefined) return r;

@@ -319,6 +319,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
           ...mirrorFor(prefix),
           isS3 && { type: "item", label: "Copy S3 URI", icon: "copy", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") },
           onDisk && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: pane.showHidden, onClick: toggleHidden },
+          ...(env.terminalItems?.(prefix) ?? []),
           ...(env.extraPlaceItems?.() ?? []),
         ];
 
@@ -374,6 +375,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       { type: "item", label: "Get Info", icon: "info", hint: "⌘I", onClick: () => pane.getInfo(e) },
       ...server.itemsFor(list, e),
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => pane.navigate(entryParent(e), e.key) },
+      ...(folder ? (env.terminalItems?.(e.key, "Open in terminal") ?? []) : []),
       // Show in Finder, Open with ▸ (desktop/openWith.ts)
       ...(one ? openInItems({ profileId: profile.id, bucket, onDisk, ops, toast }, e) : []),
       ...actionsMenu(actionCtx, list),

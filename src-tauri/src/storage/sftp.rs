@@ -303,6 +303,39 @@ impl SftpBackend {
         Err(StorageError::new(ErrKind::NeedsAuth, "The server didn't accept any key in the SSH agent for this user."))
     }
 
+    /// An interactive shell for a terminal pane (src/terminal): a connection of its own, signed in
+    /// like this one, with a pseudo-terminal of `cols` × `rows` and the user's login shell on it.
+    #[cfg_attr(mobile, allow(dead_code))]
+    pub(crate) async fn open_shell(&self, cols: u32, rows: u32, lang: Option<&str>) -> SResult<(client::Handle<HostCheck>, russh::Channel<client::Msg>)> {
+        let handle = self.sign_in_connection().await?;
+        let err = |e: russh::Error| ssh_error(e, &self.host);
+        let opening = async {
+            let ch = handle.channel_open_session().await.map_err(err)?;
+            ch.request_pty(false, "xterm-256color", cols, rows, 0, 0, &[]).await.map_err(err)?;
+            // servers pass LANG on only when they accept it (AcceptEnv); a refusal changes nothing
+            if let Some(l) = lang {
+                let _ = ch.set_env(false, "LANG", l).await;
+            }
+            ch.request_shell(false).await.map_err(err)?;
+            Ok(ch)
+        };
+        let ch = with_timeout(&self.host, self.session_timeout, opening).await?;
+        Ok((handle, ch))
+    }
+
+    /// Where folder `key` of this connection is on the server, for a shell: an absolute path, or
+    /// one below the user's home folder ("~", "~/www/site") when the connection's folder is given
+    /// relative to it.
+    #[cfg_attr(mobile, allow(dead_code))]
+    pub(crate) fn shell_dir(&self, key: &str) -> SResult<String> {
+        let parts = key_parts(key)?;
+        if self.base_cfg.starts_with('/') {
+            return join(&clean_base(&self.base_cfg), key);
+        }
+        let rel: Vec<&str> = self.base_cfg.split('/').filter(|p| !p.is_empty() && *p != ".").chain(parts).collect();
+        Ok(if rel.is_empty() { "~".into() } else { format!("~/{}", rel.join("/")) })
+    }
+
     /// The live connection, opened (again) when there is none or it dropped.
     /// Every step has a time limit, so the lock is never held for good; a connection that signed
     /// in but then stopped answering is dropped and opened once more.
@@ -1016,6 +1049,21 @@ mod tests {
         assert_eq!(b.name, "example.com");
         assert!(SftpBackend::new(&NetConfig { user: "me".into(), ..Default::default() }, Secrets::default()).is_err());
         assert!(SftpBackend::new(&NetConfig { host: "h".into(), ..Default::default() }, Secrets::default()).is_err());
+    }
+
+    #[test]
+    fn a_shell_goes_to_the_folder_absolute_or_below_home() {
+        let at = |base: &str, key: &str| {
+            let cfg = NetConfig { host: "h".into(), user: "me".into(), base_path: base.into(), ..Default::default() };
+            SftpBackend::new(&cfg, Secrets::default()).unwrap().shell_dir(key).unwrap()
+        };
+        assert_eq!(at("/var/www/", "site/img/"), "/var/www/site/img");
+        assert_eq!(at("/", ""), "/");
+        assert_eq!(at("", ""), "~");
+        assert_eq!(at("", "docs/"), "~/docs");
+        assert_eq!(at("./www", "a b/"), "~/www/a b");
+        let cfg = NetConfig { host: "h".into(), user: "me".into(), ..Default::default() };
+        assert!(SftpBackend::new(&cfg, Secrets::default()).unwrap().shell_dir("../etc").is_err());
     }
 
     #[test]

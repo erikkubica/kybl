@@ -1,0 +1,259 @@
+/**
+ * The shell's side of terminal panes: which pane slots show a terminal (and in which folder), the
+ * ways to open one (⌃`, the pane's ⋯ and folder menus, the command palette, `openTerminal`),
+ * files dropped on one, and ending the shells of panes no workspace has any more.
+ *
+ * A terminal takes a pane slot like a file pane: the layout (paneLayout.ts) splits, drags, docks
+ * and moves it the same way. Its slot's file pane sits idle, showing nothing, meanwhile.
+ */
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { api } from "../api";
+import { baseName } from "../format";
+import { LOCAL_PROFILE, type Loc, type PaneId } from "../browser/types";
+import type { Pane } from "../browser/usePane";
+import type { MenuItem } from "../components/Dialogs";
+import type { Dialogs } from "../shell/useDialogs";
+import type { Place } from "../shell/crossPane";
+import { leaves } from "../shell/paneLayout";
+import type { Layout, WorkspaceStore } from "../shell/workspaces";
+import { registerCommands } from "../palette/commands";
+import type { Entry, Profile } from "../types";
+import { TerminalSlot } from "./TerminalSlot";
+import {
+  canTerminal,
+  gcTerminals,
+  newSid,
+  remotePath,
+  setStartup,
+  setTerminalOpener,
+  setTerminalPanes,
+  shellQuote,
+  terminalRemoteBase,
+  writeToTerminal,
+  type TermPlace,
+  type TermSpec,
+} from "./api";
+
+export type Terms = Partial<Record<PaneId, TermSpec>>;
+
+/** What the hook needs from the shell, as of the latest render. */
+export type TermHost = {
+  profiles: Profile[];
+  slot: (id: PaneId) => Pane;
+  /** the panes on screen, and the one with the keyboard (maybe a terminal) */
+  ids: PaneId[];
+  activeId: PaneId;
+  /** the file pane used last, on screen */
+  fileId: PaneId | null;
+  /** splits pane `src` downwards; `fill` gets the new slot (nothing when there's no room: the shell says why) */
+  splitBelow: (src: PaneId, fill: (fresh: PaneId) => void) => void;
+  setActive: (id: PaneId) => void;
+  focus: (id: PaneId) => void;
+  close: (id: PaneId) => void;
+  menu: Dialogs["menu"];
+  toast: Dialogs["toast"];
+  rootLabel: (profileId: string, root: string) => string;
+};
+
+/** The terminals of a layout, each with a session id (a pane saved without one starts a shell of its own). */
+export function termsOf(l: Layout): Terms {
+  const out: Terms = {};
+  for (const id of leaves(l.tree)) {
+    const t = l.panes[id]?.term;
+    if (t) out[id] = { ...t, sid: t.sid ?? newSid() };
+  }
+  return out;
+}
+
+export function useTerminalPanes(initial: Layout) {
+  const [terms, setTerms] = useState<Terms>(() => termsOf(initial));
+  const host = useRef<TermHost | null>(null);
+  const termsRef = useRef(terms);
+  termsRef.current = terms;
+  useEffect(() => setTerminalPanes(terms), [terms]);
+
+  /** Slot `id` shows terminal `place` (a pane brought back by a workspace), or files (undefined). */
+  const assign = (id: PaneId, place: TermPlace | undefined) =>
+    setTerms((cur) => {
+      if (!place) {
+        if (!cur[id]) return cur;
+        const next = { ...cur };
+        delete next[id];
+        return next;
+      }
+      return { ...cur, [id]: { ...place, sid: place.sid ?? newSid() } };
+    });
+
+  const profileOf = (id: string) => host.current?.profiles.find((p) => p.id === id) ?? null;
+
+  /** A terminal below pane `src` at `at` (default: the folder `src` shows); its slot, or null when it couldn't. */
+  const open = (src: PaneId, at?: Loc | null, startup?: string[]): PaneId | null => {
+    const h = host.current;
+    if (!h) return null;
+    const t = termsRef.current[src];
+    const loc = at ?? (t ? { profileId: t.profileId, bucket: t.bucket, prefix: t.prefix } : h.slot(src).here);
+    if (!loc) {
+      h.toast("info", "Open a folder first, then a terminal in it.");
+      return null;
+    }
+    if (!canTerminal(profileOf(loc.profileId))) {
+      h.toast("info", "Terminals open on This Mac and on SFTP connections.");
+      return null;
+    }
+    let made: PaneId | null = null;
+    h.splitBelow(src, (fresh) => {
+      made = fresh;
+      const sid = newSid();
+      setStartup(sid, startup);
+      h.slot(fresh).showConnection(null);
+      setTerms((cur) => ({ ...cur, [fresh]: { ...loc, sid, from: t?.from ?? src } }));
+    });
+    return made;
+  };
+
+  /** ⌃`: from a file pane to its terminal (opening one below it the first time), from a terminal back to its file pane. */
+  const toggle = () => {
+    const h = host.current;
+    if (!h) return;
+    const ts = termsRef.current;
+    const on = h.ids.filter((id) => ts[id]);
+    const cur = ts[h.activeId];
+    if (cur) {
+      const back = cur.from && h.ids.includes(cur.from) && !ts[cur.from] ? cur.from : h.fileId;
+      if (back) {
+        h.setActive(back);
+        h.focus(back);
+      }
+      return;
+    }
+    const mine = on.find((id) => ts[id]!.from === h.activeId);
+    if (mine) {
+      h.setActive(mine);
+      h.focus(mine);
+    } else open(h.activeId);
+  };
+
+  /** "Open terminal here" / "Open in terminal" for folder `key` of file pane `id`'s root; none where a terminal can't open. */
+  const items = (id: PaneId, key: string, label = "Open terminal here"): MenuItem[] => {
+    const p = host.current?.slot(id);
+    if (!p?.here || !canTerminal(p.profile)) return [];
+    const at = { ...p.here, prefix: key };
+    return [{ type: "item", label, icon: "terminal", hint: label === "Open terminal here" ? "⌃`" : undefined, onClick: () => void open(id, at) }];
+  };
+
+  /** Files dropped on terminal pane `pane`: what it does (undefined: not a terminal; null: these can't go there). */
+  const dropTarget = (pane: PaneId, from: Place, items: Entry[]): string | null | undefined => {
+    const t = termsRef.current[pane];
+    if (!t) return undefined;
+    if (from.profileId !== t.profileId) return null;
+    if (t.profileId !== LOCAL_PROFILE && terminalRemoteBase(t.sid) == null) return null;
+    return items.length === 1 ? "Paste its path in the terminal" : `Paste ${items.length} paths in the terminal`;
+  };
+  /** Types the dropped items' paths into the terminal, quoted for the shell. */
+  const drop = async (pane: PaneId, from: Place, items: Entry[]) => {
+    const t = termsRef.current[pane];
+    if (!t) return;
+    let paths: string[];
+    if (t.profileId === LOCAL_PROFILE) {
+      const got = await Promise.all(items.map((e) => api.localPath(from.profileId, from.bucket, e.key.replace(/\/+$/, "")).catch(() => null)));
+      paths = got.filter((p): p is string => !!p).map(shellQuote);
+    } else {
+      const base = terminalRemoteBase(t.sid);
+      if (base == null) return;
+      paths = items.map((e) => remotePath(base, e.key));
+    }
+    if (paths.length && writeToTerminal(pane, `${paths.join(" ")} `)) {
+      host.current?.setActive(pane);
+      host.current?.focus(pane);
+    }
+  };
+
+  /** What a terminal pane is called (the drag ghost, the pane switcher). */
+  const nameOf = (id: PaneId): string | null => {
+    const t = termsRef.current[id];
+    if (!t) return null;
+    return `Terminal · ${t.prefix ? baseName(t.prefix) : profileOf(t.profileId)?.name || "Terminal"}`;
+  };
+
+  /** Ends the shells of terminal panes no workspace has any more (closed, or their workspace closed). */
+  const gc = (ws: WorkspaceStore) => {
+    const keep = new Set<string>();
+    for (const t of Object.values(termsRef.current)) if (t) keep.add(t.sid);
+    for (const w of ws.list) if (w.id !== ws.active) for (const p of Object.values(w.panes)) if (p?.term?.sid) keep.add(p.term.sid);
+    gcTerminals(keep);
+  };
+
+  /** Draws terminal pane `id`. */
+  const render = (id: PaneId, o: { style?: CSSProperties; active: boolean; dual: boolean; lifted?: boolean; onGrip?: (e: React.PointerEvent<HTMLElement>) => void }) => {
+    const t = termsRef.current[id]!;
+    const h = host.current!;
+    const prof = profileOf(t.profileId);
+    const sub = t.prefix.replace(/\/+$/, "");
+    // this computer: the real folder (a root's id is its path); a server: its folder as the sidebar names it
+    const path =
+      t.profileId === LOCAL_PROFILE
+        ? [t.bucket.replace(/\/+$/, ""), sub].filter(Boolean).join("/") || "/"
+        : [h.rootLabel(t.profileId, t.bucket) || t.bucket, sub].filter(Boolean).join("/") || "/";
+    return (
+      <TerminalSlot
+        key={t.sid}
+        id={id}
+        spec={t}
+        connName={prof?.name ?? "Terminal"}
+        path={path}
+        active={o.active}
+        dual={o.dual}
+        lifted={o.lifted}
+        style={o.style}
+        onGrip={o.onGrip}
+        onActivate={() => {
+          if (host.current?.activeId !== id) host.current?.setActive(id);
+        }}
+        onClose={() => host.current?.close(id)}
+        onToggle={toggle}
+        menu={h.menu}
+      />
+    );
+  };
+
+  // the hooks for later features (api.ts) and the command palette
+  const latest = useRef({ open, toggle });
+  latest.current = { open, toggle };
+  useEffect(() => {
+    setTerminalOpener(({ paneId, profileId, cwd, bucket, startup }) => {
+      const p = host.current?.slot(paneId);
+      const root = bucket ?? (p?.here?.profileId === profileId ? p.here.bucket : "");
+      return latest.current.open(paneId, { profileId, bucket: root, prefix: cwd }, startup);
+    });
+    const off = registerCommands("terminal", () => {
+      const h = host.current;
+      if (!h) return [];
+      const src = h.fileId ? h.slot(h.fileId) : null;
+      const why = !src?.here ? "Open a folder first" : !canTerminal(src.profile) ? "Terminals open on This Mac and on SFTP connections" : null;
+      const mac = profileOf(LOCAL_PROFILE) ?? { id: LOCAL_PROFILE, kind: "local" as const };
+      return [
+        { id: "terminal:here", title: "Open Terminal Here", group: "Terminal", icon: "terminal", keywords: "shell console command line ssh", disabled: why, run: () => void (h.fileId && latest.current.open(h.fileId)) },
+        { id: "terminal:toggle", title: "Toggle Terminal", group: "Terminal", icon: "terminal", shortcut: "⌃`", keywords: "shell console focus", run: () => latest.current.toggle() },
+        {
+          id: "terminal:new-local",
+          title: "New Terminal on This Mac",
+          group: "Terminal",
+          icon: "terminal",
+          keywords: "shell console home",
+          hidden: !canTerminal(mac),
+          run: async () => {
+            const home = (await api.listRoots(LOCAL_PROFILE).catch(() => []))[0]?.id;
+            if (home != null) latest.current.open(host.current?.activeId ?? h.activeId, { profileId: LOCAL_PROFILE, bucket: home, prefix: "" });
+          },
+        },
+      ];
+    });
+    return () => {
+      off();
+      setTerminalOpener(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return { terms, setTerms, assign, host, open, toggle, items, dropTarget, drop, nameOf, gc, render };
+}
