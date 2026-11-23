@@ -57,6 +57,7 @@ export function Toolbar({
   connName,
   onSwitchConnection,
   onGoTo,
+  goTo,
   favorite,
   onToggleFavorite,
   afterPath,
@@ -123,6 +124,8 @@ export function Toolbar({
   onSwitchConnection?: (x: number, y: number) => void;
   /** typing a path into the bar (Go to folder) */
   onGoTo?: (path: string) => void;
+  /** what typing a path starts with, and its example */
+  goTo?: { initial: string; placeholder: string };
   /** the folder on screen is a favorite; the star toggles it */
   favorite?: boolean;
   onToggleFavorite?: () => void;
@@ -262,7 +265,7 @@ export function Toolbar({
           </>
         )}
         {bucket != null ? (
-          <PathTitle label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} onGoTo={onGoTo} />
+          <PathTitle label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} onGoTo={onGoTo} goTo={goTo} />
         ) : (
           <nav className="crumbs path-title" aria-label="Path">
             <span className="crumb muted">{emptyLabel ?? "No bucket selected"}</span>

@@ -44,6 +44,8 @@ export type SplitLayoutProps = {
   linked: (a: PaneId, b: PaneId) => boolean;
   /** the link button on a divider: switches synchronized browsing for that pair */
   onToggleLink: (a: PaneId, b: PaneId) => void;
+  /** whether two panes can browse together at all (a terminal can't: no link button there) */
+  canLink?: (a: PaneId, b: PaneId) => boolean;
 };
 
 export function SplitLayout(p: SplitLayoutProps) {
@@ -162,7 +164,7 @@ function Node({ node, path, style, w, h, known, ...p }: NodeProps) {
       const j = i - 1;
       // placed by the shares as drawn; only pairs the shell can link, with room for their button
       const facing = facingPairs(node, j).filter(
-        (f) => (f.to - f.from) * lineLen >= LINK_ROOM && known.some(([a, b]) => sameLink([a, b], f.pair[0], f.pair[1])),
+        (f) => (f.to - f.from) * lineLen >= LINK_ROOM && known.some(([a, b]) => sameLink([a, b], f.pair[0], f.pair[1])) && (p.canLink?.(...f.pair) ?? true),
       );
       // the whole line lights up only when it runs along just those two panes; beside a split the
       // buttons alone say which pairs are linked

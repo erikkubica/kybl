@@ -16,7 +16,7 @@ import { joinPath } from "./paths";
 import { openOwnFile } from "./openGuard";
 
 const UA = typeof navigator === "undefined" ? "" : navigator.userAgent;
-const OS: "mac" | "win" | "linux" = /Mac/.test(UA) ? "mac" : /Win/.test(UA) ? "win" : "linux";
+export const OS: "mac" | "win" | "linux" = /Mac/.test(UA) ? "mac" : /Win/.test(UA) ? "win" : "linux";
 
 /** What the system's file manager is called here. */
 export const SHOW_IN_FILES = OS === "mac" ? "Show in Finder" : OS === "win" ? "Show in Explorer" : "Show in Files";

@@ -97,6 +97,8 @@ export type EntryInfoProps = SizeProps & {
   onDownload?: () => void;
   onRename: () => void;
   onMoveTo: () => void;
+  /** what the move button says; inside an archive (read-only) it extracts: "Extract to…" */
+  moveLabel?: string;
   onDelete: () => void;
   /** properties or tags were saved (or the file turned out to be gone): reload the list */
   onChanged?(): void;
@@ -131,6 +133,7 @@ export function EntryInfo({
   onDownload,
   onRename,
   onMoveTo,
+  moveLabel = "Move or copy to…",
   onDelete,
   onChanged,
   folderSize,
@@ -268,7 +271,7 @@ export function EntryInfo({
             {busy?.verb === "copy" ? <span className="btn-pct">{busy.percent}%</span> : <Icon name="copy" size={15} />}
           </button>
         )}
-        <button className="btn" onClick={onMoveTo} title="Move or copy to…" aria-label="Move or copy to another folder">
+        <button className="btn" onClick={onMoveTo} title={moveLabel} aria-label={moveLabel}>
           <Icon name="move" size={15} />
         </button>
         <button className="btn" onClick={onRename} title="Rename" aria-label="Rename">
@@ -323,6 +326,10 @@ export function EntryInfo({
             name={entry.name}
             details={details}
             onCancel={() => setEditing(false)}
+            onHeadersSaved={(d) => {
+              setDetails(d);
+              onChanged?.();
+            }}
             onSaved={(d) => {
               setDetails(d);
               setTags(null);
@@ -412,11 +419,13 @@ export function SelectionInfo({
   onCalcSize,
   onDownload,
   onMoveTo,
+  moveLabel = "Move to…",
   onDelete,
 }: SizeProps & {
   selection: Entry[];
   onDownload?: () => void;
   onMoveTo: () => void;
+  moveLabel?: string;
   onDelete: () => void;
 }) {
   // folders count once their size is known (worked out from the menu or the Size column)
@@ -464,7 +473,7 @@ export function SelectionInfo({
           </button>
         )}
         <button className="btn" onClick={onMoveTo}>
-          <Icon name="move" size={15} /> Move to…
+          <Icon name="move" size={15} /> {moveLabel}
         </button>
         <button className="btn btn-danger-ghost" onClick={onDelete}>
           <Icon name="trash" size={15} /> Delete

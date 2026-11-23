@@ -269,7 +269,7 @@ function FileDetails({
             <p>
               <strong>This file was deleted or moved</strong>
               <br />
-              It’s no longer at this place in the bucket.
+              It’s no longer at this place.
             </p>
             {onChanged && (
               <button className="btn btn-sm" onClick={onChanged}>

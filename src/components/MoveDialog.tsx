@@ -98,9 +98,11 @@ export function MoveDialog({
   const what = items.length === 1 ? `“${items[0].name}”` : `${items.length} items`;
   const verb = mode === "move" ? "Move" : "Copy";
 
+  /** a "new" folder that is already in the list is just opened (it has folders of its own to list) */
+  const exists = (f: string) => !!folders?.includes(f);
   const createFolder = () => {
     if (dest === path) return;
-    made.current.add(dest);
+    if (!exists(dest)) made.current.add(dest);
     setCreating(false);
     setNewName("");
     setPath(dest);
@@ -267,7 +269,7 @@ export function MoveDialog({
             onClick={() => {
               // S3 has no real folders: without a marker object a new folder would vanish again
               // the moment its last file is moved out. Best effort, the move itself doesn't need it.
-              if (dest !== path) made.current.add(dest);
+              if (dest !== path && !exists(dest)) made.current.add(dest);
               for (const f of made.current) {
                 if (dest.startsWith(f)) api.createFolder(profileId, target, f).catch(() => {});
               }

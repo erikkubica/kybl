@@ -78,11 +78,14 @@ export function useWorkspaceRecipes() {
     const connName = (id: string) => h.profiles.find((p) => p.id === id)?.name;
     const r = recipeOf(w);
     const layout = captureRecipe(h.layoutOf(wsId), connName, r?.layout);
-    if (r) setRecipes((cur) => cur.map((x) => (x.id === r.id ? { ...x, layout } : x)));
-    else {
+    if (r) {
+      setRecipes((cur) => cur.map((x) => (x.id === r.id ? { ...x, layout } : x)));
+      h.toast("success", `Updated the recipe “${r.name}”`);
+    } else {
       const id = recipeId();
       setRecipes((cur) => [...cur, { id, name: w.name, color: w.color, layout }]);
       h.patch(wsId, { recipe: id });
+      h.toast("success", `Saved “${w.name}” as a recipe`);
     }
   };
 
@@ -114,6 +117,16 @@ export function useWorkspaceRecipes() {
     arm(o);
     host.current!.show(wsId, o.layout, emptyOf(o));
     setNotes(o.missing);
+    // without terminals nothing was asked: Undo brings the layout back as it was (ended shells can't come back)
+    const undo = terms.length
+      ? undefined
+      : {
+          label: "Undo",
+          run: () => {
+            if (host.current?.ws.list.some((x) => x.id === wsId)) host.current.show(wsId, now, new Set());
+          },
+        };
+    h.toast("info", `Reset “${w.name}” to its recipe`, undo);
   };
 
   /** A new workspace from recipe `r`, its terminals running their startup commands. */
@@ -237,6 +250,7 @@ export function useWorkspaceRecipes() {
             group: "Workspaces",
             icon: "columns" as const,
             keywords: "recipe template layout startup",
+            disabled: mine && now && h && matchesRecipe(h.layoutOf(now.id), mine.layout) ? "The recipe already matches this layout" : null,
             run: () => void (now && keep(now.id)),
           },
         ];

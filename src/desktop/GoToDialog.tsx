@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Modal } from "../components/Dialogs";
 
-/** Go to folder (⇧⌘G / ⌘L): type or paste a path or an s3:// address. */
-export function GoToDialog({ bucket, prefix, onGo, onClose }: { bucket: string; prefix: string; onGo: (value: string) => void; onClose: () => void }) {
-  const [value, setValue] = useState(`/${prefix}`);
+/** Go to folder (⇧⌘G / ⌘L): type or paste a path (or an s3:// address); the words come from `goToText`. */
+export function GoToDialog({ initial, placeholder, hint, onGo, onClose }: { initial: string; placeholder: string; hint: string; onGo: (value: string) => void; onClose: () => void }) {
+  const [value, setValue] = useState(initial);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
     input.current?.focus();
@@ -24,15 +24,13 @@ export function GoToDialog({ bucket, prefix, onGo, onClose }: { bucket: string; 
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && submit()}
-            placeholder="/photos/2026 or s3://bucket/photos"
+            placeholder={placeholder}
             spellCheck={false}
             autoCorrect="off"
             autoCapitalize="off"
           />
         </label>
-        <p className="hint">
-          Start with “/” for a path in {bucket}, or paste an S3 address like s3://bucket/folder. A bucket name at the start switches to that bucket.
-        </p>
+        <p className="hint">{hint}</p>
       </div>
       <div className="modal-foot">
         <button className="btn" onClick={onClose}>

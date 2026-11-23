@@ -36,6 +36,8 @@ export type QuickInfoActions = SizeProps & {
   onDownload?(list: Entry[]): void;
   onRename(e: Entry): void;
   onMoveTo(list: Entry[]): void;
+  /** what the move button says (inside an archive: "Extract to…") */
+  moveLabel?: string;
   onDelete(list: Entry[]): void;
   /** properties saved, or the file turned out to be gone: list the folder again */
   onChanged?(): void;
@@ -277,6 +279,7 @@ export function QuickLook({
                   onCalcSize={act.onCalcSize}
                   onDownload={act.onDownload && (() => act.onDownload!(group!))}
                   onMoveTo={() => moveTo(group!)}
+                  moveLabel={act.moveLabel}
                   onDelete={() => act.onDelete(group!)}
                 />
               ) : (
@@ -350,6 +353,7 @@ function QuickInfo({
         onDownload={act.onDownload && (() => act.onDownload!([entry]))}
         onRename={() => onRename(entry)}
         onMoveTo={() => onMoveTo([entry])}
+        moveLabel={act.moveLabel}
         onDelete={() => act.onDelete([entry])}
         onChanged={act.onChanged}
         folderSize={act.folderSize}
