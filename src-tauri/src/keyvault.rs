@@ -131,11 +131,25 @@ pub fn read(dir: &Path, kc: &impl Keychain) -> Result<Map, String> {
     let Some(raw) = legacy else { return Ok(map) };
     // a damaged old item is left alone, as it always was, in case it can still be rescued
     let Ok(old) = serde_json::from_str::<Map>(&raw) else { return Ok(map) };
-    // the old item only exists before the first move, or when an older Kybl wrote it since:
-    // either way its keys are the newer ones
-    map.extend(old);
+    if imported_already(dir, kc, &raw) {
+        // this very item was moved before and only its removal failed (a denied keychain
+        // prompt): the vault's keys are newer, so the old ones only fill in what's missing
+        let missing: Map = old.into_iter().filter(|(k, _)| !map.contains_key(k)).collect();
+        if missing.is_empty() {
+            if let Err(e) = kc.delete(LEGACY_ACCOUNT) {
+                eprintln!("old keychain item not removed: {e}");
+            }
+            return Ok(map);
+        }
+        map.extend(missing);
+    } else {
+        // the old item only exists before the first move, or when an older Kybl wrote it since:
+        // either way its keys are the newer ones
+        map.extend(old);
+    }
     match write(dir, kc, &map).and_then(|()| verify(dir, kc, &map)) {
         Ok(()) => {
+            mark_imported(dir, kc, &raw);
             if let Err(e) = kc.delete(LEGACY_ACCOUNT) {
                 eprintln!("old keychain item not removed: {e}");
             }
@@ -144,6 +158,27 @@ pub fn read(dir: &Path, kc: &impl Keychain) -> Result<Map, String> {
         Err(e) => eprintln!("secret keys not moved to the vault yet: {e}"),
     }
     Ok(map)
+}
+
+/// Remembers which old item was moved: a fingerprint of it (HMAC with the vault key, so the file
+/// says nothing about the secrets) next to the vault.
+const IMPORTED: &str = "vault.legacy-imported";
+
+fn fingerprint(key: &[u8; 32], legacy: &str) -> String {
+    hex(ring::hmac::sign(&ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key), legacy.as_bytes()).as_ref())
+}
+
+fn imported_already(dir: &Path, kc: &impl Keychain, legacy: &str) -> bool {
+    let Ok(Some(key)) = read_key(kc) else { return false };
+    std::fs::read_to_string(dir.join(IMPORTED)).is_ok_and(|f| f.trim() == fingerprint(&key, legacy))
+}
+
+fn mark_imported(dir: &Path, kc: &impl Keychain, legacy: &str) {
+    if let Ok(Some(key)) = read_key(kc) {
+        if let Err(e) = replace(&dir.join(IMPORTED), fingerprint(&key, legacy).as_bytes()) {
+            eprintln!("couldn't note the old keychain item as moved: {e}");
+        }
+    }
 }
 
 /// Reads the vault back from scratch (keychain and file) and checks it holds exactly `map`.
@@ -202,6 +237,8 @@ mod tests {
         refuse_key_save: bool,
         /// saving the key "works" but stores something else
         garble_key: bool,
+        /// removing an item is refused (a denied prompt)
+        refuse_delete: bool,
     }
 
     impl Keychain for Mem {
@@ -220,6 +257,9 @@ mod tests {
             Ok(())
         }
         fn delete(&self, account: &str) -> Result<(), String> {
+            if self.refuse_delete {
+                return Err("user denied access".into());
+            }
             self.items.lock().unwrap().remove(account);
             Ok(())
         }
@@ -338,6 +378,30 @@ mod tests {
         assert_eq!(m.get("p3").map(String::as_str), Some("secret-3"));
         assert_eq!(m.get("p2#oauth"), keys().get("p2#oauth"));
         assert!(!kc.has(LEGACY_ACCOUNT));
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn an_old_item_that_wont_go_doesnt_overwrite_newer_keys() {
+        let d = dir();
+        let kc = Mem { refuse_delete: true, ..Mem::with_legacy(&keys()) };
+        assert_eq!(read(&d, &kc).unwrap(), keys());
+        assert!(kc.has(LEGACY_ACCOUNT), "the removal was refused");
+        // the user changes a password and deletes a connection since
+        let mut now = keys();
+        now.insert("p1".into(), "changed".into());
+        write(&d, &kc, &now).unwrap();
+        let m = read(&d, &kc).unwrap();
+        assert_eq!(m.get("p1").map(String::as_str), Some("changed"), "the stale old value doesn't win");
+        // a key only the old item has still comes in (a vault set aside, say)
+        let mut fewer = now.clone();
+        fewer.remove("p2#oauth");
+        write(&d, &kc, &fewer).unwrap();
+        assert_eq!(read(&d, &kc).unwrap(), now);
+        // and an older Kybl writing the old item again still counts
+        let older = HashMap::from([("p1".to_string(), "from-older".to_string())]);
+        kc.items.lock().unwrap().insert(LEGACY_ACCOUNT.into(), serde_json::to_string(&older).unwrap());
+        assert_eq!(read(&d, &kc).unwrap().get("p1").map(String::as_str), Some("from-older"));
         let _ = std::fs::remove_dir_all(d);
     }
 

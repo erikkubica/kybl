@@ -159,7 +159,8 @@ impl GDrive {
             let q = format!("{scope} and name = {} and trashed = false", quote(&name));
             async move {
                 let list = self.d().list(&q, self.corpus(root), "createdTime", None, 100).await?;
-                let mut same: Vec<DFile> = list.files.into_iter().filter(|f| f.is_folder() == folder).collect();
+                // Drive may match names regardless of case: only the exact name is this file
+                let mut same: Vec<DFile> = list.files.into_iter().filter(|f| f.is_folder() == folder && f.name == name).collect();
                 oldest_first(&mut same);
                 Ok::<_, StorageError>(same)
             }
@@ -170,8 +171,16 @@ impl GDrive {
         }
         let Some((base, n)) = parse_dup(display, folder) else { return Ok(None) };
         let base = drive_name(&base);
-        let Some(i) = self.with_taken(root, &scope, HashMap::new(), |taken| dup_index(&base, folder, n, taken)).await? else { return Ok(None) };
-        Ok(find(base).await?.into_iter().nth(i))
+        // a number is only given out to as many duplicates as there are files named `base`, so
+        // the search for it stops there (a name like "x (4000000).txt" must not ask Drive about
+        // millions of numbered names)
+        let mut same = find(base.clone()).await?;
+        if same.len() < 2 {
+            return Ok(None);
+        }
+        let max = same.len() - 1;
+        let Some(i) = self.with_taken(root, &scope, HashMap::new(), |taken| dup_index(&base, folder, n, max, taken)).await? else { return Ok(None) };
+        Ok((i < same.len()).then(|| same.swap_remove(i)))
     }
 
     /// Which of `names` ((folder, Drive name)) are real files or folders in `scope`.
@@ -345,7 +354,8 @@ impl GDrive {
         let top = if root == MY_DRIVE { self.my_root_id().await? } else { root.to_string() };
         let mut parts = vec![paths::display_name(&f.name)];
         let mut cur = f.parents.first().cloned();
-        for _ in 0..64 {
+        // Drive folders nest at most 100 deep
+        for _ in 0..128 {
             let Some(id) = cur else { return Ok(None) };
             if id == top {
                 parts.reverse();
@@ -399,6 +409,11 @@ impl GDrive {
             loop {
                 let page = self.d().list(&q, Corpus::All, ORDER, token.as_deref(), PAGE).await?;
                 for child in page.files {
+                    // shortcuts to folders aren't followed (one to a folder above would copy
+                    // forever), as walks don't go into them either
+                    if child.mime_type == api::SHORTCUT && child.is_folder() {
+                        continue;
+                    }
                     let n = child.name.clone();
                     self.copy_tree(child, made.id.clone(), n).await?;
                 }
@@ -503,6 +518,11 @@ impl Storage for GDrive {
             let key = format!("{dir}{name}{}", if folder { "/" } else { "" });
             self.cache.put(root, &key, f.node());
             if folder {
+                // a shortcut to a folder is a link: walks (search, sync, folder size, copies)
+                // must not go into it, as one pointing back up would never end
+                if f.mime_type == api::SHORTCUT {
+                    page.folder_info.push(Entry { link: Some(f.name.clone()), ..f.entry(key.clone()) });
+                }
                 page.folders.push(key);
             } else {
                 page.objects.push(f.entry(key));
@@ -690,7 +710,12 @@ impl Storage for GDrive {
         self.clear_target(&to.root, &dst_key, is_dir).await?;
         let parent = self.ensure_dir(&to.root, dir).await?;
         let old_parent = src.parents.first().cloned();
-        let moving = old_parent.as_deref() != Some(parent.as_str());
+        // the top of My Drive is "root" here but its real id in `parents`: a rename there isn't a
+        // move (adding and removing the same parent could leave the file with none)
+        let mut moving = old_parent.as_deref() != Some(parent.as_str());
+        if moving && parent == MY_DRIVE && to.root == MY_DRIVE && old_parent.is_some() {
+            moving = old_parent.as_deref() != Some(self.my_root_id().await?.as_str());
+        }
         let new_name = drive_name(name);
         let meta = if new_name != src.name { json!({ "name": new_name }) } else { json!({}) };
         self.d()
@@ -749,8 +774,10 @@ impl Storage for GDrive {
                 continue;
             }
             let Ok(f) = serde_json::from_value::<DFile>(c["file"].clone()) else { continue };
-            if let Some(key) = self.path_in_root(root, &f, &mut names).await? {
-                changes.push(Change { entry: Some(f.entry(key.clone())), key, id });
+            match self.path_in_root(root, &f, &mut names).await? {
+                Some(key) => changes.push(Change { entry: Some(f.entry(key.clone())), key, id }),
+                // not (or no longer) in this drive: gone from it, as far as anyone here knows
+                None => changes.push(Change { key: String::new(), entry: None, id }),
             }
         }
         if !changes.is_empty() {

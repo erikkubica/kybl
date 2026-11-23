@@ -57,6 +57,11 @@ fn page_gen(label: &str) -> u64 {
     PAGE_GEN.lock().unwrap().get(label).copied().unwrap_or(0)
 }
 
+/// How many terminals web view `label` has open (a window hidden to the tray keeps them).
+pub fn count_for(label: &str) -> usize {
+    SESSIONS.lock().unwrap().values().filter(|s| s.label == label).count()
+}
+
 /// Ends every terminal of web view `label`: its page is loading anew, or it is gone.
 pub fn close_for(label: &str) {
     *PAGE_GEN.lock().unwrap().entry(label.to_string()).or_default() += 1;

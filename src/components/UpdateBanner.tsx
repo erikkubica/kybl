@@ -27,12 +27,13 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
   const go = () => {
     setStarted(true);
     setBusy(false);
+    setRestartError(null);
     if (rel.how !== "install") {
       updatesApi.install().catch(() => {});
       hide();
       return;
     }
-    installAndRestart(() => setBusy(true)).catch(() => {});
+    installAndRestart(() => setBusy(true)).catch((e) => setRestartError(String(e)));
   };
   const pct = st.total > 0 ? Math.min(100, (st.received / st.total) * 100) : 0;
   const failed = started && !working && st.phase === "" && st.error;

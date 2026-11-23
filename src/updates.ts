@@ -35,7 +35,7 @@ export const updatesApi = {
   check: () => invoke<UpdateStatus>("update_check"),
   settings: (p: { auto?: boolean; skip?: string }) => invoke<UpdateStatus>("update_settings", { auto: p.auto ?? null, skip: p.skip ?? null }),
   install: () => invoke<UpdateStatus>("update_install"),
-  /** rejects with "busy" while transfers run, unless forced */
+  /** rejects with "busy" while transfers run, unless forced; with a sentence to show while edits aren't saved (even forced) */
   restart: (force = false) => invoke<void>("update_restart", { force }),
 };
 

@@ -41,7 +41,7 @@ use tokio::{
 #[cfg(mobile)]
 use tauri::Manager;
 
-use crate::state::{err, load_profiles, save_profiles, set_secret, AppState, Profile};
+use crate::state::{err, load_profiles, lock_profiles, save_profiles, set_secret, AppState, Profile};
 
 /// Production account site. Debug builds talk to a local kybl-cloud instead.
 const PRODUCTION_APP_URL: &str = "https://app.kybl.app";
@@ -68,10 +68,29 @@ pub fn kybl_default_app_url() -> String {
 fn base_url(app_url: Option<String>) -> Result<String, String> {
     let u = app_url.map(|u| u.trim().trim_end_matches('/').to_string()).filter(|u| !u.is_empty());
     let u = u.unwrap_or_else(kybl_default_app_url);
-    if !(u.starts_with("https://") || u.starts_with("http://")) {
+    // plain http only to this computer (a test server): the secret key comes back over it
+    if !(u.starts_with("https://") || u.strip_prefix("http://").is_some_and(is_loopback)) {
         return Err("The Kybl Storage address must start with https://".into());
     }
     Ok(u)
+}
+
+/// An answer that says "not now" rather than "no": a proxy's 5xx or a 429.
+fn transient(status: u16) -> bool {
+    status >= 500 || status == 429
+}
+
+/// "127.0.0.1:8080/x", "localhost", "[::1]:80": an address part that names this computer.
+fn is_loopback(rest: &str) -> bool {
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.contains('@') {
+        return false;
+    }
+    let host = match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or_default(),
+        None => authority.split(':').next().unwrap_or_default(),
+    };
+    matches!(host.to_ascii_lowercase().as_str(), "127.0.0.1" | "localhost" | "::1")
 }
 
 // ---------------------------------------------------------------- cancelling
@@ -264,6 +283,7 @@ struct TokenResponse {
 async fn finish(app: &AppHandle, state: &AppState, tok: TokenResponse, replace_id: Option<String>) -> Result<Profile, String> {
     let who = if !tok.email.is_empty() { tok.email.clone() } else { tok.account_name.clone() };
     let label = if who.is_empty() { "Kybl Storage".to_string() } else { format!("Kybl Storage ({who})") };
+    let held = lock_profiles().await;
     let mut profiles = load_profiles(app)?;
     let existing = profiles
         .iter()
@@ -287,7 +307,8 @@ async fn finish(app: &AppHandle, state: &AppState, tok: TokenResponse, replace_i
         Some(i) => profiles[i] = profile.clone(),
         None => profiles.push(profile.clone()),
     }
-    save_profiles(app, &profiles)?;
+    save_profiles(app, &profiles, &held)?;
+    drop(held);
     state.clients.lock().await.remove(&profile.id);
     crate::storage::registry::forget(&profile.id);
     // a reconnect may be another account: its files are not this one's
@@ -554,6 +575,12 @@ pub async fn kybl_device_wait(
             return finish(&app, &state, tok, replace_id).await;
         }
         match body.get("error").and_then(Value::as_str) {
+            // a proxy's brief outage or "too many requests" (no JSON error): keep polling
+            None if transient(status) && Instant::now() < deadline => {
+                if status == 429 {
+                    interval += Duration::from_secs(5);
+                }
+            }
             Some("authorization_pending") if Instant::now() < deadline => {}
             Some("authorization_pending") => return Err(api_error(400, &json!({ "error": "expired_token" }))),
             Some("slow_down") => interval += Duration::from_secs(5),
@@ -593,6 +620,20 @@ pub(crate) mod native {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plain_http_only_to_this_computer() {
+        let ok = |u: &str| base_url(Some(u.into()));
+        assert_eq!(ok("https://kybl.example/").unwrap(), "https://kybl.example");
+        assert!(ok("http://127.0.0.1:8080").is_ok());
+        assert!(ok("http://localhost/x").is_ok());
+        assert!(ok("http://[::1]:9000").is_ok());
+        assert!(ok("http://kybl.example").is_err());
+        assert!(ok("http://127.0.0.1.evil.example").is_err());
+        assert!(ok("http://127.0.0.1@evil.example").is_err());
+        assert!(ok("ftp://x").is_err());
+        assert!(transient(502) && transient(429) && !transient(400) && !transient(403));
+    }
 
     #[test]
     fn pkce_matches_python() {

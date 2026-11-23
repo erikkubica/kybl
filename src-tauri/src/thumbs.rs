@@ -265,9 +265,13 @@ async fn make_thumbnail<R: Runtime>(
     if !etag.is_empty()
         && (0..=MAX_FULL_DOWNLOAD).contains(&size)
         && let Some(cache) = crate::filecache::get(app)
+        && cache.has_any(profile_id, bucket, key)
     {
         let id = crate::filecache::Ident::new(Some(etag), size as u64, None);
         let (p, b, k) = (profile_id.to_string(), bucket.to_string(), key.to_string());
+        // a full decode like any other (a grid of photos opened before asks for all at once):
+        // one of the few decode places, taken before the photo is even read into memory
+        let _decode = decode_slots().acquire_owned().await.map_err(err)?;
         if let Ok(Some(bytes)) = tokio::task::spawn_blocking(move || cache.read(&p, &b, &k, &id)).await
             && let Ok(Ok(jpeg)) = tokio::task::spawn_blocking(move || thumb_from_image_bytes(&bytes)).await
         {

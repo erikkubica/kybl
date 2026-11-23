@@ -7,7 +7,7 @@
 //! "anyone with the link" link with an expiry.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ops::Range,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -158,9 +158,18 @@ impl OneDrive {
 
     /// The top of "Shared with me" (names numbered like Drive's duplicates).
     async fn list_shared(&self) -> SResult<Page> {
-        let url = format!("{}/me/drive/sharedWithMe", self.base);
-        let v: Value = self.api.json(|c| c.get(&url)).await?;
-        let items: Vec<Item> = serde_json::from_value(v["value"].clone()).unwrap_or_default();
+        // every page: names are numbered over the whole list, and a missing item's path 404s
+        let mut url = format!("{}/me/drive/sharedWithMe", self.base);
+        let mut items: Vec<Item> = Vec::new();
+        let mut seen = HashSet::new();
+        for _ in 0..100 {
+            let v: Value = self.api.json(|c| c.get(&url)).await?;
+            items.extend(serde_json::from_value::<Vec<Item>>(v["value"].clone()).unwrap_or_default());
+            match v["@odata.nextLink"].as_str() {
+                Some(next) if next.starts_with(&self.base) && seen.insert(next.to_string()) => url = next.to_string(),
+                _ => break,
+            }
+        }
         let names: Vec<(String, bool)> = items.iter().map(|i| (i.name.clone(), i.is_folder())).collect();
         let (shown, _) = number_page(&names, &Default::default());
         let mut page = Page::default();
@@ -176,6 +185,22 @@ impl OneDrive {
             }
         }
         Ok(page)
+    }
+
+    /// The key of the folder with this id in the user's drive ("" for the top, "a/b/" below);
+    /// None when it no longer exists or isn't in the drive.
+    async fn folder_key(&self, id: &str) -> SResult<Option<String>> {
+        let url = format!("{}/me/drive/items/{}?$select={}", self.base, enc(id), enc("id,name,parentReference,root"));
+        let res = self.api.send(|c| c.get(&url)).await?;
+        if res.status().as_u16() == 404 {
+            return Ok(None);
+        }
+        let v: Value = read_json(ConnKind::Onedrive, check(ConnKind::Onedrive, res).await?).await?;
+        if !v["root"].is_null() {
+            return Ok(Some(String::new()));
+        }
+        let (Some(path), Some(name)) = (v["parentReference"]["path"].as_str(), v["name"].as_str()) else { return Ok(None) };
+        Ok(key_from_parent(path, name, true))
     }
 
     async fn get_item(&self, root: &str, path: &str) -> SResult<Option<Item>> {
@@ -374,8 +399,10 @@ impl OneDrive {
 
     /// Waits for a server-side copy (Graph answers with a monitor address).
     async fn wait_copy(&self, monitor: &str) -> SResult<()> {
+        // a redirect is the "done" answer, so it must be seen rather than followed
+        let api = Api { http: crate::oauth::http::client_no_redirect(), ..self.api.clone() };
         for i in 0..600u32 {
-            let res = self.api.send_unsigned(|c| c.get(monitor)).await?;
+            let res = api.send_unsigned(|c| c.get(monitor)).await?;
             // done: the monitor sends us to the new item (or answers with it)
             if res.status().is_redirection() || res.status().as_u16() == 200 && res.headers().get("location").is_some() {
                 return Ok(());
@@ -712,14 +739,47 @@ impl Storage for OneDrive {
         };
         let mut changes = Vec::new();
         let v: Value = self.api.json(|c| c.get(&url)).await?;
+        // delta answers leave out `parentReference.path` ("track items by id"): a changed item's
+        // folder is found by the parent's id, asked once per folder (None: not in the drive)
+        let mut dirs: HashMap<String, Option<String>> = HashMap::new();
         for raw in v["value"].as_array().into_iter().flatten() {
             let Ok(it) = serde_json::from_value::<Item>(raw.clone()) else { continue };
+            if !raw["root"].is_null() {
+                if let Some(id) = raw["id"].as_str() {
+                    dirs.insert(id.to_string(), Some(String::new()));
+                }
+                continue;
+            }
             let parent = it.parent_reference.as_ref().and_then(|p| p["path"].as_str()).map(str::to_string);
-            let key = parent.and_then(|p| key_from_parent(&p, &it.name, it.is_folder())).unwrap_or_default();
+            let mut key = parent.and_then(|p| key_from_parent(&p, &it.name, it.is_folder()));
             if it.deleted.is_some() {
-                changes.push(Change { key, entry: None, id: Some(it.id) });
-            } else if raw["root"].is_null() {
-                changes.push(Change { entry: Some(it.entry(key.clone())), key, id: Some(it.id.clone()) });
+                // a removed item can't be looked up; the sync finds it by id
+                changes.push(Change { key: key.unwrap_or_default(), entry: None, id: Some(it.id) });
+                continue;
+            }
+            if key.is_none() {
+                if let Some(pid) = it.parent_reference.as_ref().and_then(|p| p["id"].as_str()) {
+                    let dir = match dirs.get(pid) {
+                        Some(d) => d.clone(),
+                        None => {
+                            let d = self.folder_key(pid).await?;
+                            dirs.insert(pid.to_string(), d.clone());
+                            d
+                        }
+                    };
+                    key = dir.map(|d| format!("{d}{}{}", it.name, if it.is_folder() { "/" } else { "" }));
+                }
+            }
+            match key {
+                Some(key) => {
+                    if it.is_folder() {
+                        dirs.insert(it.id.clone(), Some(key.clone()));
+                    }
+                    changes.push(Change { entry: Some(it.entry(key.clone())), key, id: Some(it.id.clone()) });
+                }
+                // a folder that is gone meanwhile (its removal comes in the feed too): nothing to
+                // say from here, and guessing "removed" could delete a synced copy
+                None => {}
             }
         }
         let (cursor, has_more) = match (v["@odata.nextLink"].as_str(), v["@odata.deltaLink"].as_str()) {
@@ -758,6 +818,75 @@ mod tests {
         assert_eq!(key_from_parent("/drive/root:", "a.txt", false).unwrap(), "a.txt");
         assert_eq!(key_from_parent("/drive/root:/My%20Docs/x", "b", true).unwrap(), "My Docs/x/b/");
         assert_eq!(key_from_parent("/drives/abc/items/1", "b", true), None);
+    }
+
+    /// "Shared with me" over two pages; a copy whose monitor answers "303: done".
+    #[tokio::test]
+    async fn shared_pages_and_a_copy_monitor_redirect() {
+        let base = Arc::new(Mutex::new(String::new()));
+        let b2 = base.clone();
+        let remote = |id: &str| json!({ "id": id, "parentReference": { "driveId": "d" }, "file": {} });
+        let mock = Mock::start(move |req| {
+            let base = b2.lock().unwrap().clone();
+            match (req.method.as_str(), req.path.as_str()) {
+                ("GET", "/me/drive/sharedWithMe") if req.q("$skiptoken").is_none() => Resp::json(
+                    200,
+                    &json!({ "value": [{ "id": "s1", "name": "a.txt", "file": {}, "remoteItem": remote("r1") }], "@odata.nextLink": format!("{base}/me/drive/sharedWithMe?$skiptoken=2") }),
+                ),
+                ("GET", "/me/drive/sharedWithMe") => Resp::json(200, &json!({ "value": [{ "id": "s2", "name": "b.txt", "file": {}, "remoteItem": remote("r2") }] })),
+                ("GET", "/me/drive/root:/a.txt:") => Resp::json(200, &json!({ "id": "1", "name": "a.txt", "file": {} })),
+                ("GET", "/me/drive/root") | ("GET", "/me/drive/root:/dir:") => Resp::json(200, &json!({ "id": "D", "name": "dir", "folder": {}, "parentReference": { "driveId": "d" } })),
+                ("POST", "/me/drive/root:/a.txt:/copy") => Resp::status(202).header("location", &format!("{base}/monitor")),
+                ("GET", "/monitor") => Resp::status(303).header("location", &format!("{base}/drives/d/items/new")),
+                _ => Resp::status(404),
+            }
+        })
+        .await;
+        *base.lock().unwrap() = mock.base.clone();
+        let od = OneDrive::with_base(api(), &mock.base);
+        let page = od.list(SHARED, "", None).await.unwrap();
+        assert_eq!(page.objects.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(), vec!["a.txt", "b.txt"]);
+        let loc = |p: &str| Loc { root: ME.into(), path: p.into() };
+        od.copy(&loc("a.txt"), &loc("dir/a.txt"), false).await.unwrap();
+        assert!(mock.seen("/drives/d/items/new").is_empty(), "the redirect is the answer, not followed");
+    }
+
+    /// Delta answers carry no `parentReference.path`: changed items are placed by their parent's
+    /// id (asked once per folder), removed ones keep their id.
+    #[tokio::test]
+    async fn delta_items_are_placed_by_their_parent_id() {
+        let mock = Mock::start(|req| match req.path.as_str() {
+            "/me/drive/root/delta" => Resp::json(200, &json!({
+                "value": [
+                    { "id": "R", "name": "root", "root": {}, "folder": {} },
+                    { "id": "1", "name": "a.txt", "size": 1, "file": {}, "parentReference": { "id": "D" } },
+                    { "id": "2", "name": "b.txt", "size": 2, "file": {}, "parentReference": { "id": "D" } },
+                    { "id": "3", "name": "top.txt", "size": 3, "file": {}, "parentReference": { "id": "R" } },
+                    { "id": "4", "name": "new", "folder": {}, "parentReference": { "id": "R" } },
+                    { "id": "5", "name": "c.txt", "size": 3, "file": {}, "parentReference": { "id": "4" } },
+                    { "id": "6", "name": "x.txt", "deleted": {}, "parentReference": { "id": "D" } }
+                ],
+                "@odata.deltaLink": "BASE/next"
+            })),
+            "/me/drive/items/D" => Resp::json(200, &json!({ "id": "D", "name": "My Docs", "parentReference": { "path": "/drive/root:/work" } })),
+            _ => Resp::status(404),
+        })
+        .await;
+        let od = OneDrive::with_base(api(), &mock.base);
+        let batch = od.changes(ME, Some(format!("{}/me/drive/root/delta?token=t", mock.base))).await.unwrap();
+        let got: Vec<(&str, bool, Option<&str>)> = batch.changes.iter().map(|c| (c.key.as_str(), c.entry.is_some(), c.id.as_deref())).collect();
+        assert_eq!(
+            got,
+            vec![
+                ("work/My Docs/a.txt", true, Some("1")),
+                ("work/My Docs/b.txt", true, Some("2")),
+                ("top.txt", true, Some("3")),
+                ("new/", true, Some("4")),
+                ("new/c.txt", true, Some("5")),
+                ("", false, Some("6")),
+            ]
+        );
+        assert_eq!(mock.seen("/me/drive/items/").len(), 1, "one lookup per unknown folder");
     }
 
     #[tokio::test]

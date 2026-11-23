@@ -321,6 +321,10 @@ pub fn hide_main(app: &AppHandle) {
             if crate::quit::unsaved() > 0 {
                 continue;
             }
+            // nor terminals: closing the page ends their shells and what runs in them
+            if crate::terminal::count_for("main") > 0 {
+                continue;
+            }
             REAPING.store(true, Ordering::SeqCst);
             let _ = w.destroy();
             break;

@@ -441,13 +441,91 @@ pub fn load_profiles_from(path: &std::path::Path) -> Result<Vec<Profile>, String
         return Ok(vec![]);
     }
     let raw = std::fs::read_to_string(path).map_err(err)?;
-    serde_json::from_str(&raw).map_err(err)
+    let list: Vec<serde_json::Value> = serde_json::from_str(&raw).map_err(err)?;
+    // one a newer Kybl wrote that this one can't read (a new setting's value) is left out here,
+    // not the whole list, and kept as it is by the next save
+    Ok(list.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect())
 }
 
-pub fn save_profiles<R: Runtime>(app: &AppHandle<R>, profiles: &[Profile]) -> Result<(), String> {
+/// What `profiles.json` becomes: `profiles`, plus what this version can't read of the list it
+/// replaces (`old`), kept as it was. A connection of a kind a newer Kybl made (`Unknown`) keeps
+/// its saved form, with only the name and group changed here; entries this version can't read
+/// at all stay as they are.
+fn profiles_to_save(old: Option<Vec<serde_json::Value>>, profiles: &[Profile]) -> Result<Vec<serde_json::Value>, String> {
+    let old = old.unwrap_or_default();
+    let id_of = |v: &serde_json::Value| v.get("id").and_then(|i| i.as_str()).map(str::to_string);
+    let mut out = Vec::with_capacity(profiles.len());
+    for p in profiles {
+        let mine = serde_json::to_value(p).map_err(err)?;
+        let saved = (p.kind == ConnKind::Unknown).then(|| old.iter().find(|v| id_of(v).as_deref() == Some(p.id.as_str()))).flatten();
+        match saved {
+            Some(serde_json::Value::Object(saved)) => {
+                let mut keep = saved.clone();
+                for k in ["name", "group"] {
+                    match mine.get(k) {
+                        Some(v) => keep.insert(k.to_string(), v.clone()),
+                        None => keep.remove(k),
+                    };
+                }
+                out.push(serde_json::Value::Object(keep));
+            }
+            _ => out.push(mine),
+        }
+    }
+    let ids: std::collections::HashSet<&str> = profiles.iter().map(|p| p.id.as_str()).collect();
+    for v in old {
+        if serde_json::from_value::<Profile>(v.clone()).is_err() && id_of(&v).is_none_or(|i| !ids.contains(i.as_str())) {
+            out.push(v);
+        }
+    }
+    Ok(out)
+}
+
+/// Held from loading the connections to saving them, so two changes can't each save the list
+/// they loaded and lose the other's ([`lock_profiles`]).
+pub struct ProfilesLock(#[allow(dead_code)] tokio::sync::MutexGuard<'static, ()>);
+
+/// Every change to `profiles.json` holds this from its load to its save.
+pub async fn lock_profiles() -> ProfilesLock {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    ProfilesLock(LOCK.get_or_init(Default::default).lock().await)
+}
+
+/// Saves the connections (under [`lock_profiles`]): a new file next to the old one, flushed to
+/// disk, then renamed over it, so a crash or a full disk never leaves the list empty or cut off.
+pub fn save_profiles<R: Runtime>(app: &AppHandle<R>, profiles: &[Profile], _held: &ProfilesLock) -> Result<(), String> {
     let path = profiles_path(app)?;
-    let raw = serde_json::to_string_pretty(profiles).map_err(err)?;
-    std::fs::write(path, raw).map_err(err)
+    let old = std::fs::read(&path).ok().and_then(|raw| serde_json::from_slice::<Vec<serde_json::Value>>(&raw).ok());
+    let raw = serde_json::to_string_pretty(&profiles_to_save(old, profiles)?).map_err(err)?;
+    write_atomic(&path, raw.as_bytes()).map_err(|e| format!("Couldn't save the connections: {e}"))
+}
+
+/// Writes `bytes` to `path` through a temporary file in the same folder and a rename.
+pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = path.with_file_name(format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
+    let res = (|| {
+        let mut f = std::fs::File::create(&tmp)?;
+        // keep the permissions the file had
+        if let Ok(meta) = std::fs::metadata(path) {
+            let _ = f.set_permissions(meta.permissions());
+        }
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, path)?;
+        // the rename itself, on disk
+        #[cfg(unix)]
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::File::open(dir).and_then(|d| d.sync_all());
+        }
+        Ok(())
+    })();
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    res
 }
 
 /// Computers and iOS: vault v2 (see `keyvault`), an encrypted file whose key is the one keychain
@@ -713,6 +791,51 @@ mod tests {
         assert!(json.contains(r#""group":"Clients/Acme""#), "{json}");
         let back: Profile = serde_json::from_str(&json).unwrap();
         assert_eq!(back.group.as_deref(), Some("Clients/Acme"));
+    }
+
+    #[test]
+    fn profiles_from_a_newer_kybl_survive_a_save() {
+        let file = r#"[
+            {"id":"a","name":"A","kind":"s3","provider":"aws","endpoint":"","region":"","accessKeyId":"K","pathStyle":false},
+            {"id":"n","name":"New","kind":"quantum","quantum":{"qubits":3}},
+            {"id":"t","name":"T","kind":"ftp","net":{"host":"h","tls":"quic"}}
+        ]"#;
+        let dir = std::env::temp_dir().join(format!("kybl-profiles-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("profiles.json");
+        std::fs::write(&path, file).unwrap();
+        // the list loads; the one it can't read at all is left out, not the whole list
+        let mut list = load_profiles_from(&path).unwrap();
+        assert_eq!(list.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), vec!["a", "n"]);
+        assert_eq!(list[1].kind, ConnKind::Unknown);
+        list[1].group = Some("Later".into());
+        list[0].name = "A2".into();
+        let old: Vec<serde_json::Value> = serde_json::from_str(file).unwrap();
+        let saved = profiles_to_save(Some(old), &list).unwrap();
+        write_atomic(&path, serde_json::to_string(&saved).unwrap().as_bytes()).unwrap();
+        let back: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(back[0]["name"], "A2");
+        assert_eq!(back[1]["kind"], "quantum", "the newer kind stays");
+        assert_eq!(back[1]["quantum"]["qubits"], 3, "and its settings");
+        assert_eq!(back[1]["group"], "Later");
+        assert_eq!(back[2]["net"]["tls"], "quic", "an unreadable one is kept as it was");
+        // deleting a readable one really deletes it
+        let saved = profiles_to_save(Some(back), &list[1..]).unwrap();
+        assert_eq!(saved.iter().map(|v| v["id"].as_str().unwrap()).collect::<Vec<_>>(), vec!["n", "t"]);
+        // nothing left next to it
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn profile_changes_wait_for_each_other() {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let first = lock_profiles().await;
+            let waited = tokio::time::timeout(std::time::Duration::from_millis(50), lock_profiles()).await;
+            assert!(waited.is_err(), "a second change waits while the first holds the list");
+            drop(first);
+            let _second = tokio::time::timeout(std::time::Duration::from_secs(1), lock_profiles()).await.expect("and goes once it's done");
+        });
     }
 
     #[test]

@@ -525,6 +525,8 @@ pub async fn import_apply(app: AppHandle, state: State<'_, AppState>, source: St
     let path = resolve_path(src, path)?;
     // read again here, so the passwords come from the file and never from the page
     let sites = tauri::async_runtime::spawn_blocking(move || src.parse(&path)).await.map_err(|e| e.to_string())??;
+    // the list stays this one until it is saved (another change waits)
+    let held = crate::state::lock_profiles().await;
     let mut profiles = load_profiles(&app)?;
     let (mapped, mut skipped) = plan(&sites, &ids, &profiles);
     let mut imported = Vec::new();
@@ -545,7 +547,7 @@ pub async fn import_apply(app: AppHandle, state: State<'_, AppState>, source: St
         imported.push(m.profile);
     }
     if !imported.is_empty() {
-        save_profiles(&app, &profiles)?;
+        save_profiles(&app, &profiles, &held)?;
     }
     Ok(ImportOutcome { imported, skipped, needs_secret })
 }

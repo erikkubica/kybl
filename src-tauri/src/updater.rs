@@ -37,6 +37,9 @@ const FIRST_CHECK: Duration = Duration::from_secs(10);
 #[cfg(desktop)]
 const RECHECK: Duration = Duration::from_secs(6 * 3600);
 const TIMEOUT: Duration = Duration::from_secs(30);
+/// What `update_restart` answers while edits aren't saved or uploaded yet.
+#[cfg(desktop)]
+const UNSAVED: &str = "Save or close the files you're editing first (and let edits made in other apps finish uploading), then restart.";
 
 // ---------------------------------------------------------------- state
 
@@ -610,6 +613,13 @@ pub async fn update_restart(app: AppHandle, force: Option<bool>) -> Result<(), S
     }
     if !force.unwrap_or(false) && !app.state::<crate::state::AppState>().cancels.lock().await.is_empty() {
         return Err("busy".into());
+    }
+    // unsaved edits (in the editor, or saved in another app but not uploaded yet) would be lost:
+    // the clean-up below deletes the edit copies. Quit asks about them; a restart waits for them,
+    // even when forced (forcing stops transfers, which can be done again; edits can't)
+    #[cfg(desktop)]
+    if crate::quit::unsaved() > 0 {
+        return Err(UNSAVED.into());
     }
     // Stop transfers and abort their uploads first, the way quitting does: the exit the restart
     // makes then neither asks "Quit anyway?" again nor races the installer with the cleanup.
