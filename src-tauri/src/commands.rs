@@ -58,6 +58,7 @@ pub async fn save_profile(
     if profile.id.is_empty() {
         profile.id = uuid::Uuid::new_v4().to_string();
     }
+    profile.group = profile.group.as_deref().and_then(crate::state::normalize_group);
     // reserved for this device's own folders, which are never a saved connection
     if profile.id == registry::LOCAL_ID {
         return Err("This connection can't be changed.".into());
@@ -78,6 +79,24 @@ pub async fn save_profile(
     // the connection may point somewhere else now (another endpoint or account)
     crate::filecache::forget_profile(&app, &profile.id).await;
     Ok(profile)
+}
+
+/// Files connections under sidebar groups (`None` or "": the top level), by id. Only the group
+/// changes: unlike `save_profile`, the connections keep their open clients and cached files.
+#[tauri::command]
+pub fn set_profile_groups(app: AppHandle, groups: std::collections::HashMap<String, Option<String>>) -> Result<Vec<Profile>, String> {
+    let mut profiles = load_profiles(&app)?;
+    apply_groups(&mut profiles, &groups);
+    save_profiles(&app, &profiles)?;
+    Ok(profiles)
+}
+
+fn apply_groups(profiles: &mut [Profile], groups: &std::collections::HashMap<String, Option<String>>) {
+    for p in profiles.iter_mut() {
+        if let Some(g) = groups.get(&p.id) {
+            p.group = g.as_deref().and_then(crate::state::normalize_group);
+        }
+    }
 }
 
 #[tauri::command]
@@ -1305,6 +1324,19 @@ pub async fn list_all_under(
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn groups_change_only_the_named_connections() {
+        let p = |id: &str, g: Option<&str>| Profile { id: id.into(), name: id.into(), group: g.map(Into::into), ..Default::default() };
+        let mut list = vec![p("a", None), p("b", Some("Old")), p("c", Some("Keep"))];
+        let groups = std::collections::HashMap::from([("a".to_string(), Some(" Clients / Acme ".to_string())), ("b".to_string(), None), ("gone".to_string(), Some("X".to_string()))]);
+        apply_groups(&mut list, &groups);
+        let got: Vec<Option<&str>> = list.iter().map(|p| p.group.as_deref()).collect();
+        assert_eq!(got, [Some("Clients/Acme"), None, Some("Keep")]);
+        // "" is the top level too
+        apply_groups(&mut list, &std::collections::HashMap::from([("a".to_string(), Some(" / ".to_string()))]));
+        assert_eq!(list[0].group, None);
+    }
     use tauri::{test::{mock_builder, mock_context, noop_assets}, Listener};
 
     #[test]

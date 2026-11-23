@@ -49,6 +49,7 @@ export const MENU_ACCELERATORS: Record<string, string> = {
   "swap-panes": "⇧⌘S",
   "toggle-hidden": "⇧⌘.",
   "toggle-sidebar": "⌥⌘S",
+  "filter-connections": "⌥⌘F",
   "tiles-bigger": "⌘+",
   "tiles-smaller": "⌘−",
 };

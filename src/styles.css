@@ -4703,6 +4703,233 @@ input[aria-invalid="true"]:focus {
 .side-item.fav-row[aria-disabled="true"] {
   cursor: default;
 }
+
+/* ---------------------------------------------------------------- sidebar: finding, groups, recent, where am I */
+/* the filter field: pinned above the list, so 500 connections are never more than a few keys away */
+.side-find {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin: -6px 10px 8px;
+  padding: 0 5px 0 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: var(--hover);
+  color: var(--faint);
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+.side-find:hover {
+  background: var(--pressed, var(--hover));
+}
+.side-find:focus-within {
+  border-color: var(--accent);
+  background: var(--field, var(--bg));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  color: var(--dim);
+}
+.side-find input,
+.side-find input:focus,
+.side-find input:focus-visible {
+  outline: none;
+  flex: 1;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12.5px;
+}
+.side-find-key {
+  border: 0;
+  background: transparent;
+  padding: 0 2px;
+  letter-spacing: 0.04em;
+}
+.side-find:focus-within .side-find-key {
+  visibility: hidden;
+}
+.side-find .side-find-clear {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--faint) 55%, transparent);
+  color: var(--sidebar);
+}
+.side-find .side-find-clear:hover {
+  background: var(--dim);
+}
+.side-find mark,
+.find-row mark {
+  background: none;
+}
+.side-head .side-count {
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.side-count {
+  flex: none;
+  min-width: 18px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--faint);
+}
+
+/* results: two lines, the name with the typed words marked and its group (or the matching host) */
+.side-item.find-row {
+  height: auto;
+  min-height: 40px;
+  padding: 5px 8px 5px 6px;
+}
+.find-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.find-name,
+.find-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.find-name {
+  font-weight: 500;
+}
+.find-detail {
+  font-size: 11px;
+  color: var(--faint);
+}
+.find-row mark {
+  color: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
+.side-item.find-row.cursor {
+  background: var(--accent-solid);
+  color: #fff;
+}
+.side-item.find-row.cursor .find-detail {
+  color: rgba(255, 255, 255, 0.78);
+}
+.side-item.find-row.cursor .pbadge {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+.side-item.find-row.cursor mark {
+  text-decoration-color: rgba(255, 255, 255, 0.75);
+}
+.find-row.active:not(.cursor) .find-name {
+  color: var(--accent);
+}
+.find-none {
+  margin: 8px 10px;
+}
+
+/* recent: the last few connections, one click from anywhere in a long list */
+.recent-list {
+  margin-bottom: 6px;
+}
+.side-item.recent-row {
+  height: 30px;
+  padding-left: 6px;
+}
+.side-aside {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* groups: a folder row, its connections a step in */
+.side-item.group-row {
+  height: 30px;
+  padding-left: 6px;
+  color: var(--text);
+}
+.group-ico {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  color: var(--faint);
+}
+.group-row.open .group-ico {
+  color: var(--dim);
+}
+.side-item.group-row .side-caret {
+  margin-left: 2px;
+}
+.side-item.group-row.open .side-caret {
+  transform: rotate(90deg);
+}
+/* a group row keeps its caret on hover (there is no edit button to make room for) */
+.side-item.group-row:hover .side-caret,
+.side-item.group-row:focus-within .side-caret {
+  display: inline-block;
+}
+.group-row.holds-active .side-label,
+.group-row.holds-active .group-ico {
+  color: var(--accent);
+}
+.group-row.holds-active .side-label {
+  font-weight: 600;
+}
+/* a step in per level, no tree lines (as Finder); a little air where an open group ends */
+.group-body {
+  padding-left: 12px;
+  margin-bottom: 4px;
+}
+
+/* where am I: the connection in the pane in use. A server (one root) is the place itself; a
+   connection with buckets shows the bucket selected beneath and the name in the accent colour */
+.side-item.conn.active .side-label {
+  color: var(--accent);
+}
+.side-item.conn.selected {
+  background: var(--accent-soft);
+}
+.side-item.conn.selected:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* the folded rail: a long list keeps the one on screen and the recent ones; this opens the rest */
+.rail-btn.rail-more {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 46px;
+  margin-top: 2px;
+  border: 1px dashed var(--border);
+  color: var(--dim);
+}
+.rail-btn.rail-more:hover {
+  border-color: transparent;
+}
+.rail-more-count {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+.rail-more:hover .rail-more-count {
+  color: var(--dim);
+}
 body.dragging-items .bucket-row.drop-target {
   background: var(--accent-soft);
   color: var(--accent);

@@ -16,6 +16,8 @@ export type Profile = {
   cloud?: CloudConfig | null;
   /** Azure Blob Storage, Google Cloud Storage */
   blob?: BlobConfig | null;
+  /** The sidebar group it is filed under, slash-separated ("Clients/Acme"); none = the top level. */
+  group?: string | null;
 };
 
 // WP0: connection kinds beyond S3 (capabilities and roots are in api.ts)

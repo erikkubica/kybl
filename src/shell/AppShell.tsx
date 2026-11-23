@@ -77,6 +77,7 @@ import {
 import { makeDualActions, paneName, type DualContext } from "./dualActions";
 import { PaneContext } from "./PaneContext";
 import { useMigrationHost } from "./useMigrationHost";
+import { allGroups, groupLabel, groupOf, normalizeGroup, parentGroup, renamedOpen, renameGroup, ungroup, useOpenGroups, useRecentConnections, type GroupChanges } from "../connections/groups";
 
 /** Gives a pane's file list keyboard focus (after a sidebar click the arrows should move in it). */
 export function focusPaneList(id: PaneId) {
@@ -143,6 +144,11 @@ export function AppShell() {
     [],
   );
   const sidePeek = useSidePeek(sideHidden, () => dialogs.isOpen());
+  // the sidebar's groups folded open, and the connections opened last (both kept per device)
+  const openGroups = useOpenGroups();
+  const recents = useRecentConnections();
+  // ⌥⌘F: the sidebar's filter field takes the keyboard (each press bumps this)
+  const [findSignal, setFindSignal] = useState(0);
   // the panes on screen as a tree of splits, kept between launches (an old dual pane becomes a
   // split of two on the first launch)
   const [tree, setTree] = useState<PaneNode>(() => loadLayout(settings.layout));
@@ -432,6 +438,7 @@ export function AppShell() {
 
   /** A connection was deleted: drop it from the sidebar, the history and the screen. */
   const forgetProfile = (id: string) => {
+    recents.forget(id);
     clearAuthNeeded(id);
     forgetCaps(id);
     conns.dropProfile(id);
@@ -683,6 +690,106 @@ export function AppShell() {
     },
   });
 
+  // the connection in the pane in use: first in Recent, and its group folds open in the sidebar
+  const activeProfile = active.profile;
+  useEffect(() => {
+    if (!activeProfile) return;
+    recents.push(activeProfile.id);
+    openGroups.reveal(groupOf(activeProfile));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProfile?.id, activeProfile?.group]);
+
+  /** A found or recent connection opens in the pane in use (or just takes the keyboard there, if it's already on screen). */
+  const openConnection = (p: Profile) => {
+    if (sideHidden) sidePeek.close();
+    if (active.profile?.id !== p.id || active.bucket == null) void connectIn(active.id, p);
+    // (two frames: the overlay holding the field that had the keyboard goes first)
+    focusSoon(active.id);
+  };
+  /** ⌥⌘F: the filter field atop the sidebar (with it folded away, the sidebar comes in over the panes). */
+  const findConnection = () => {
+    if (sideHidden) sidePeek.show();
+    setFindSignal((n) => n + 1);
+  };
+
+  /** Files connections under groups (saved at once; only the group changes). */
+  const applyGroups = async (changes: GroupChanges) => {
+    if (!Object.keys(changes).length) return;
+    try {
+      conns.setProfiles(await api.setProfileGroups(changes));
+    } catch (e) {
+      toast("error", `Couldn’t change the group. ${errMessage(e)}`);
+    }
+  };
+  const moveToGroup = (p: Profile, raw: string) => {
+    const g = normalizeGroup(raw);
+    if (g === groupOf(p)) return;
+    void applyGroups({ [p.id]: g });
+    // follow it there, so it's plain where it went
+    openGroups.reveal(g);
+  };
+  /** A connection's "Move to group" submenu: every group, the top level, or a new one. */
+  const groupItems = (p: Profile): MenuItem[] => {
+    const cur = groupOf(p);
+    const groups = allGroups(saved);
+    // the new group and the top level first: a long list of groups can't push them out of reach
+    return tidyMenu([
+      {
+        type: "item",
+        label: "New group…",
+        icon: "folder-plus",
+        onClick: () =>
+          dialogs.prompt({
+            title: "New group",
+            label: `Group for ${p.name}`,
+            initial: "",
+            confirmLabel: "Move",
+            note: "Use / for a group inside a group, like Clients/Acme.",
+            run: (v) => moveToGroup(p, v),
+          }),
+      },
+      !!cur && { type: "item", label: "No group (top level)", icon: "arrow-up", onClick: () => moveToGroup(p, "") },
+      { type: "sep" },
+      ...groups.map((g): MenuItem => ({ type: "item", label: groupLabel(g), icon: "folder", checked: g === cur || undefined, onClick: () => moveToGroup(p, g) })),
+    ]);
+  };
+  /** Right-click on a group's row in the sidebar. */
+  const groupMenu = (path: string, x: number, y: number) => {
+    dialogs.menu(x, y, [
+      {
+        type: "item",
+        label: "Rename group…",
+        icon: "edit",
+        onClick: () =>
+          dialogs.prompt({
+            title: "Rename group",
+            label: "Group name",
+            initial: path,
+            confirmLabel: "Rename",
+            note: "Use / to put it inside another group. A name that's already a group joins the two.",
+            run: (v) => {
+              const to = normalizeGroup(v);
+              if (!to || to === path) return;
+              if (to.startsWith(`${path}/`)) return toast("info", "A group can’t go inside itself.");
+              void applyGroups(renameGroup(saved, path, to));
+              openGroups.update((cur) => renamedOpen(cur, path, to));
+            },
+          }),
+      },
+      {
+        type: "item",
+        label: parentGroup(path) ? `Ungroup (move into ${groupLabel(parentGroup(path))})` : "Ungroup",
+        icon: "arrow-up",
+        onClick: () => {
+          void applyGroups(ungroup(saved, path));
+          openGroups.update((cur) => renamedOpen(cur, path, parentGroup(path)));
+        },
+      },
+      { type: "sep" },
+      { type: "item", label: "Collapse all groups", icon: "chevron", disabled: !openGroups.open.size, onClick: openGroups.collapseAll },
+    ]);
+  };
+
   /** "Mount as drive…" for a bucket ("" = the whole connection) */
   const askMount = (p: Profile, b: string) =>
     dialogs.show((close) => (
@@ -718,7 +825,14 @@ export function AppShell() {
       ...(own ? [] : [{ type: "item" as const, label: "Copy everything to…", icon: "copy" as const, onClick: () => void copyAll() }]),
       ...(own ? [] : driveFor(p, "")),
       ...photoMenuItems(p, dialogs),
-      ...(own ? [] : [{ type: "sep" as const }, { type: "item" as const, label: "Edit connection…", icon: "edit" as const, onClick: () => setConnDialog({ profile: p }) }]),
+      // This Mac is built in, not saved: it stays where it is
+      ...(own
+        ? []
+        : [
+            { type: "sep" as const },
+            { type: "submenu" as const, label: "Move to group", icon: "folder" as const, items: () => groupItems(p) },
+            { type: "item" as const, label: "Edit connection…", icon: "edit" as const, onClick: () => setConnDialog({ profile: p }) },
+          ]),
     ]));
   };
   /** The folded sidebar: a connection's icon lists its buckets (a server's one root just opens). */
@@ -824,6 +938,7 @@ export function AppShell() {
     free: {
       "new-connection": () => setConnDialog({ profile: null }),
       "toggle-sidebar": toggleSidebar,
+      "filter-connections": findConnection,
       // grid view: ⌘+ / ⌘− (and a pinch) size the tiles, as Finder's icon view
       "tiles-bigger": () => (active.view === "grid" ? active.setTile(Math.min(TILE_MAX, active.tile + 24)) : false),
       "tiles-smaller": () => (active.view === "grid" ? active.setTile(Math.max(TILE_MIN, active.tile - 24)) : false),
@@ -924,6 +1039,8 @@ export function AppShell() {
           onOpenSettings={() => openSettings()}
           onConnectionMenu={connectionMenu}
           onHover={sidePeek.hover}
+          recent={recents.recent}
+          onMore={findConnection}
         />
       )}
       {(!sideHidden || sidePeek.open) && (
@@ -970,6 +1087,17 @@ export function AppShell() {
             onDriveMenu={driveMenu}
             onHide={toggleSidebar}
             peek={sideHidden}
+            recent={recents.recent}
+            openGroups={openGroups.open}
+            onToggleGroup={openGroups.toggle}
+            onGroupMenu={groupMenu}
+            onOpenConnection={openConnection}
+            findSignal={findSignal}
+            findOnMount={sideHidden && sidePeek.byFind}
+            onFindDone={() => {
+              if (sideHidden) sidePeek.close();
+              focusSoon(activeRef.current.id);
+            }}
           />
         </div>
       )}
@@ -1079,6 +1207,7 @@ export function AppShell() {
             setKyblDialog({ existing: null });
           }}
           kyblFirst={!saved.some((p) => p.provider === KYBL)}
+          groups={allGroups(saved)}
           onImport={() => {
             setConnDialog(null);
             setImportOpen(true);
@@ -1133,31 +1262,54 @@ export function AppShell() {
  * panes (nothing moves); it goes once the pointer has left it and no menu from it is up.
  */
 function useSidePeek(folded: boolean, menuUp: () => boolean) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpenState] = useState(false);
+  // brought up by ⌥⌘F or the rail's "All connections": the filter field takes the keyboard
+  const [byFind, setByFind] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const timer = useRef<number>(undefined);
+  const setOpen = useCallback((on: boolean, find = false) => {
+    setOpenState(on);
+    setByFind(on && find);
+  }, []);
   useEffect(() => {
     if (!folded) setOpen(false);
     return () => window.clearTimeout(timer.current);
-  }, [folded]);
+  }, [folded, setOpen]);
+  // put away while the pointer rests on the rail (its "All connections", say): it doesn't come
+  // straight back until the pointer has moved off that icon
+  const resting = useRef(false);
   const hover = useCallback((on: boolean) => {
     window.clearTimeout(timer.current);
-    if (on) timer.current = window.setTimeout(() => setOpen(true), 280);
+    if (!on) resting.current = false;
+    else if (!resting.current) timer.current = window.setTimeout(() => setOpenState(true), 280);
   }, []);
+  // it stays while the pointer is on it, a menu from it is up, or something in it has the
+  // keyboard (typing in its filter field with the pointer elsewhere)
+  const check = useCallback(() => {
+    const keep = menuUp() || ref.current?.matches(":hover") || ref.current?.contains(document.activeElement);
+    if (keep) timer.current = window.setTimeout(check, 300);
+    else setOpen(false);
+  }, [menuUp, setOpen]);
   const leave = useCallback(() => {
     window.clearTimeout(timer.current);
-    const check = () => {
-      if (menuUp() || ref.current?.matches(":hover")) timer.current = window.setTimeout(check, 300);
-      else setOpen(false);
-    };
     timer.current = window.setTimeout(check, 220);
-  }, [menuUp]);
-  const clicked = useCallback((e: React.MouseEvent) => {
-    const t = e.target as Element;
-    if (t.closest(".side-item.sub, .fav-row, .side-item.conn.single, .side-toggle")) {
-      window.clearTimeout(timer.current);
-      setOpen(false);
-    }
-  }, []);
-  return { open, ref, hover, leave, clicked };
+  }, [check]);
+  const show = useCallback(() => {
+    window.clearTimeout(timer.current);
+    setOpen(true, true);
+    timer.current = window.setTimeout(check, 600);
+  }, [check, setOpen]);
+  const close = useCallback(() => {
+    window.clearTimeout(timer.current);
+    resting.current = !!ref.current?.matches(":hover");
+    setOpen(false);
+  }, [setOpen]);
+  const clicked = useCallback(
+    (e: React.MouseEvent) => {
+      const t = e.target as Element;
+      if (t.closest(".side-item.sub, .fav-row, .side-item.conn.single, .side-toggle, .recent-row, .find-row")) close();
+    },
+    [close],
+  );
+  return { open, byFind, ref, hover, leave, clicked, show, close };
 }
