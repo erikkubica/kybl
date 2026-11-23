@@ -15,6 +15,7 @@ import { ChooseBucket, ListError, Welcome, type EmptyActions } from "./PaneEmpty
 import { DragGhost, PaneBanners, PaneStatusBar } from "./PaneParts";
 import type { Pane } from "./usePane";
 import { useImageModes } from "../imageMode";
+import type { MenuItem } from "../components/Dialogs";
 
 /** the clipboard takes files on macOS only for now (see platform.rs) */
 const IS_MAC = /Mac/.test(navigator.platform || navigator.userAgent);
@@ -27,14 +28,16 @@ export type BrowserPaneProps = {
   dual: boolean;
   /** what screen readers call this pane among several ("Pane 2 of 3") */
   label?: string;
-  /** several panes: its buttons in the toolbar (shell/SplitLayout DualTools) */
-  dualTools?: React.ReactNode;
+  /** several panes: the items for the other pane at the top of the toolbar's "…" (shell/SplitLayout dualMenuItems) */
+  dualItems?: () => MenuItem[];
   settings: Settings;
   updateSettings: (patch: Partial<Settings>) => void;
   previewOpen: boolean;
   onTogglePreview: () => void;
   /** the panes button: split, or the panes menu */
   onPanes?: (x: number, y: number) => void;
+  /** the panes menu's items, for "…" when a narrow pane has no room for the panes button */
+  panesItems?: () => MenuItem[];
   /** the badge before the path: another connection or bucket in this pane */
   onSwitchConnection?: (x: number, y: number) => void;
   /** files dragged in from the computer would land here */
@@ -74,6 +77,16 @@ export function BrowserPane(p: BrowserPaneProps) {
   };
   const uploadFiles = () => void ops.pickAndUpload(false);
   const newFolder = () => ops.askNewFolder();
+  const here = !!profile && bucket != null;
+  /** The toolbar's "…": refresh and Go to folder, the other pane's items, then the folder's own. */
+  const moreMenu = (x: number, y: number, folded: MenuItem[]) =>
+    actions.onMoreMenu(x, y, [
+      { type: "item", label: search ? "Search again" : "Refresh", icon: "refresh", hint: "⌘R", disabled: !here, onClick: ent.refresh },
+      here && { type: "item", label: "Go to folder…", icon: "edit", hint: "⇧⌘G", onClick: actions.askGoTo },
+      ...folded,
+      { type: "sep" },
+      ...(p.dualItems?.() ?? []),
+    ]);
 
   return (
     <section
@@ -104,10 +117,15 @@ export function BrowserPane(p: BrowserPaneProps) {
         onView={pane.setView}
         onCompact={pane.setCompact}
         onSortChange={setSort}
+        tile={pane.tile}
+        onTile={pane.setTile}
+        hidden={pane.caps?.localPaths ? pane.showHidden : undefined}
+        onToggleHidden={actions.commands["toggle-hidden"]}
         onNavigate={pane.navigate}
-        onRefresh={ent.refresh}
-        onUploadMenu={actions.onUploadMenu}
-        onMoreMenu={actions.onMoreMenu}
+        canUp={pane.canUp}
+        onUp={() => void pane.goUp()}
+        onUpload={(folder) => void ops.pickAndUpload(folder)}
+        onMoreMenu={moreMenu}
         onNewFolder={newFolder}
         onQuery={(q) => {
           ent.setQuery(q);
@@ -120,12 +138,12 @@ export function BrowserPane(p: BrowserPaneProps) {
         onTogglePreview={p.onTogglePreview}
         dual={p.dual}
         onPanes={p.onPanes}
+        panesItems={p.panesItems}
         provider={pane.profile?.provider}
         onSwitchConnection={p.onSwitchConnection}
-        dualTools={profile && bucket != null ? p.dualTools : undefined}
-        onGoTo={profile && bucket != null ? (t) => void actions.goToPath(t) : undefined}
+        onGoTo={here ? (t) => void actions.goToPath(t) : undefined}
         favorite={actions.isFavorite}
-        onToggleFavorite={profile && bucket != null ? () => actions.toggleFavorite(bucket, prefix) : undefined}
+        onToggleFavorite={here ? () => actions.toggleFavorite(bucket!, prefix) : undefined}
       />
 
       <PaneBanners pane={pane} />

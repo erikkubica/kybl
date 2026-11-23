@@ -6,6 +6,8 @@
  *
  * "The other pane" is the one the shell pairs with each pane (`otherOf`): with two panes simply
  * the other one, with more the one used most recently before it. Dragging works between any two.
+ * Synchronized browsing is not tied to "the other pane": it links the two panes either side of a
+ * divider (the link button on it), so it reads the shell's links through `syncedWith`.
  */
 import { createElement } from "react";
 import { parentPrefix } from "../format";
@@ -29,6 +31,8 @@ export type DualContext = {
   pane: (id: PaneId) => Pane;
   /** the pane `id` pairs with: F5 / F6 go there, swap and compare use it */
   otherOf: (id: PaneId) => PaneId | null;
+  /** the panes synchronized browsing moves along with pane `id` (none when it isn't linked) */
+  syncedWith: (id: PaneId) => PaneId[];
   /** which way pane `b` is from pane `a` */
   relation: (a: PaneId, b: PaneId) => "left" | "right" | "up" | "down" | null;
   activeId: PaneId;
@@ -74,20 +78,23 @@ export function makeDualActions(get: () => DualContext) {
     if (prof) p.go(prof, to.bucket, to.prefix);
   };
 
-  /** Synchronized browsing: into a subfolder, or up a level, when the other pane can do the same. */
+  /** Synchronized browsing: into a subfolder, or up a level, in each linked pane that can do the same. */
   const follow = (id: PaneId, from: Loc | null, to: Loc) => {
     const c = get();
-    if (following || !multi() || !c.settings.syncBrowsing || !from || from.profileId !== to.profileId || from.bucket !== to.bucket) return;
-    const o = otherPane(id);
-    if (!o?.here || o.ent.search) return;
-    if (to.prefix.startsWith(from.prefix) && to.prefix !== from.prefix) {
-      const sub = to.prefix.slice(from.prefix.length);
-      const target = o.prefix + sub;
-      // only a direct subfolder that the other pane has listed
-      if (sub.indexOf("/") === sub.length - 1 && o.ent.fresh && o.ent.listing.folders.includes(target)) quietly(() => o.navigate(target));
-    } else if (from.prefix.startsWith(to.prefix) && from.prefix !== to.prefix) {
-      const gone = from.prefix.slice(to.prefix.length);
-      if (gone.indexOf("/") === gone.length - 1 && o.prefix.endsWith(gone)) quietly(() => o.navigate(parentPrefix(o.prefix)));
+    if (following || !multi() || !from || from.profileId !== to.profileId || from.bucket !== to.bucket) return;
+    const onScreen = new Set(c.panes.map((p) => p.id));
+    for (const oid of c.syncedWith(id)) {
+      const o = onScreen.has(oid) ? pane(oid) : null;
+      if (!o?.here || o.ent.search) continue;
+      if (to.prefix.startsWith(from.prefix) && to.prefix !== from.prefix) {
+        const sub = to.prefix.slice(from.prefix.length);
+        const target = o.prefix + sub;
+        // only a direct subfolder that the other pane has listed
+        if (sub.indexOf("/") === sub.length - 1 && o.ent.fresh && o.ent.listing.folders.includes(target)) quietly(() => o.navigate(target));
+      } else if (from.prefix.startsWith(to.prefix) && from.prefix !== to.prefix) {
+        const gone = from.prefix.slice(to.prefix.length);
+        if (gone.indexOf("/") === gone.length - 1 && o.prefix.endsWith(gone)) quietly(() => o.navigate(parentPrefix(o.prefix)));
+      }
     }
   };
 
@@ -222,8 +229,8 @@ export function makeDualActions(get: () => DualContext) {
       if (dst.here.profileId === src.here.profileId && dst.bucket === src.bucket && !isValidDest(items, d)) return null;
       return { dest: d, label: d && dst.profile ? destLabel(d, dst.bucket ?? "", dst.profile.id) : (dst.bucketLabel ?? ""), copyOnly: crossesDisk(src, dst) };
     },
-    // swap, compare, "this folder in the other pane" and synchronized browsing: on the divider
-    // between the panes and in the View menu, not in the folder menus
+    // swap, compare, "this folder in the other pane" and synchronized browsing: in the toolbar's
+    // "…" (the shell adds them there) and the link on the divider, not in the folder menus
     extraPlaceItems: (): MenuItem[] => [],
     extraItemItems: (list: Entry[]): (MenuItem | false)[] => {
       const dst = otherPane(id);
