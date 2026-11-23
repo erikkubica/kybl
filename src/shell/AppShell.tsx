@@ -79,8 +79,9 @@ import {
   type SyncLink,
 } from "./paneLayout";
 import { makeDualActions, paneName, type DualContext } from "./dualActions";
-import { WorkspaceBar, type PaneSwitcher } from "./WorkspaceBar";
+import { WorkspaceBar, wsTabAt, type PaneSwitcher } from "./WorkspaceBar";
 import { usePaneDrag, type DropCheck } from "./usePaneDrag";
+import { useFileDrag } from "./useFileDrag";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import {
   copyLayout,
@@ -378,6 +379,8 @@ export function AppShell() {
   };
   const closeEditor = async () => (editor.current ? editor.current.requestClose() : true);
 
+  /** a press on items starts the shell's drag of them (useFileDrag, further down) */
+  const beginItemDrag = useRef<PaneEnv["beginItemDrag"]>(undefined);
   const envFor = (id: PaneId): PaneEnv => ({
     id,
     storageKey: paneKeys(id).last,
@@ -407,6 +410,7 @@ export function AppShell() {
     },
     // the empty-space menu's Split ▸ (splitItems is defined further down; this runs on a right-click)
     splitItems: () => [{ type: "submenu", label: "Split", icon: "dual-pane", items: () => splitItems(id) }],
+    beginItemDrag: (...a) => beginItemDrag.current?.(...a),
     ...dualPane.envFor(id),
   });
   // one pane per slot, always (hooks can't come and go with the layout); a slot that isn't on
@@ -1138,6 +1142,32 @@ export function AppShell() {
     onEnd: () => (dragFrom.current = null),
   });
 
+  // ------------------------------------------------------------ dragging files
+  // Items dragged from a list (useFileDrag): onto folders and panes, the sidebar, and other
+  // workspaces (their tabs: dropped there, or resting there to open them and drop inside).
+  /** A workspace not on screen: its name and the place of its active pane (where a drop on its tab lands). */
+  const wsDest = (id: string) => {
+    const w = ws.list.find((x) => x.id === id);
+    if (!w) return null;
+    const ls = leaves(w.tree);
+    const act = w.recent.find((x) => ls.includes(x)) ?? ls[0];
+    return { name: w.name, loc: w.panes[act]?.loc ?? null };
+  };
+  const fileDrag = useFileDrag({
+    activeWs: ws.active,
+    slot,
+    profiles,
+    rootLabel: conns.rootLabel,
+    cross: () => dualCtx.current!,
+    transfers,
+    autoShowActivity,
+    toast,
+    wsDest,
+    switchWorkspace,
+    newWorkspaceAt: (loc) => addWorkspace({ ...oneLayout({ loc, view: DEFAULT_VIEW }), id: newId(), name: nextName(ws.list), color: null, start: "restore", saved: null }, undefined, false),
+  });
+  beginItemDrag.current = fileDrag.begin;
+
   // refresh listing once all uploads have finished
   useEffect(
     () =>
@@ -1546,7 +1576,7 @@ export function AppShell() {
   });
 
   // ------------------------------------------------------------ drag & drop from Finder
-  const dropOver = useFinderDrop({
+  const { over: dropOver, tab: finderTab } = useFinderDrop({
     target: (x, y) => {
       // a dialog owns the screen: nothing lands behind it
       if (overlayUp()) return null;
@@ -1557,6 +1587,26 @@ export function AppShell() {
     },
     onDrop: (id, paths) => void paneById(id).ops.uploadPaths(paths),
     onRefused: () => overlayUp() && toast("info", "Finish what’s open first, then drop the files again."),
+    // over a workspace's tab: resting there opens it; letting go uploads into its active pane's folder
+    tabs: {
+      at: (x, y) => {
+        const id = overlayUp() ? null : wsTabAt(x, y);
+        return id === ws.active ? null : id;
+      },
+      accepts: (id) => {
+        const at = wsDest(id)?.loc;
+        return !!at && profiles.some((p) => p.id === at.profileId);
+      },
+      onSpring: switchWorkspace,
+      onDrop: (id, paths) => {
+        const w = wsDest(id);
+        const at = w?.loc;
+        if (!w || !at) return;
+        void activeRef.current.ops.uploadPaths(paths, at.prefix, at).then((ok) => {
+          if (ok) toast("info", `Uploading to ${at.prefix ? baseName(at.prefix) : conns.rootLabel(at.profileId, at.bucket)} in “${w.name}”`, { label: "Show", run: () => wsShow.current(id) });
+        });
+      },
+    },
   });
 
   // ------------------------------------------------------------ render
@@ -1721,9 +1771,10 @@ export function AppShell() {
           onSettings={(id, anchor) => setWsSettings((cur) => (cur?.id === id ? null : { id, anchor }))}
           onReorder={moveWorkspace}
           switcher={paneSwitcher}
-          drop={paneDrag.tabDrop}
+          drop={paneDrag.tabDrop ?? fileDrag.tabDrop ?? finderTab}
         />
         {paneDrag.view}
+        {fileDrag.view}
         <PaneContext.Provider value={{ panes: panesRef.current, active, other, dual, setActive: setActiveId }}>
           {dual ? (
             <div className="content dual-wrap">
