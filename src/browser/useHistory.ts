@@ -4,6 +4,8 @@ import { sameLoc, type Loc } from "./useListing";
 
 const MAX = 100;
 
+export type HistorySnap = { stack: Loc[]; index: number };
+
 export function useHistory() {
   const stack = useRef<Loc[]>([]);
   const index = useRef(-1);
@@ -36,10 +38,26 @@ export function useHistory() {
     bump((n) => n + 1);
   }, []);
 
+  /** The places as they are (a workspace keeps its panes' Back / Forward while another is on screen). */
+  const save = useCallback((): HistorySnap => ({ stack: stack.current, index: index.current }), []);
+  /** Takes saved places back (none: just `here`). */
+  const load = useCallback((s: HistorySnap | null, here: Loc | null) => {
+    if (s && s.stack.length && s.index >= 0 && s.index < s.stack.length) {
+      stack.current = s.stack;
+      index.current = s.index;
+    } else {
+      stack.current = here ? [here] : [];
+      index.current = stack.current.length - 1;
+    }
+    bump((n) => n + 1);
+  }, []);
+
   return {
     push,
     step,
     forget,
+    save,
+    load,
     canBack: index.current > 0,
     canForward: index.current < stack.current.length - 1,
   };

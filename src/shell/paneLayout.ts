@@ -318,6 +318,19 @@ export function loadLayout(oldLayout: "single" | "dual"): PaneNode {
   return { t: "split", dir: "row", sizes: [ratio, 1 - ratio], kids: [leaf("left"), leaf("right")] };
 }
 
+/** A tree read back from storage (a saved workspace), or null when it doesn't hold together. */
+export function parseTree(raw: unknown): PaneNode | null {
+  const t = valid(raw, new Set());
+  return t && leaves(t).length <= MAX_PANES ? t : null;
+}
+
+/** Links read back from storage: known slots, two different ones each. */
+export function parseLinks(raw: unknown): SyncLink[] {
+  return Array.isArray(raw)
+    ? raw.filter((l): l is SyncLink => Array.isArray(l) && l.length === 2 && l.every((x) => PANE_IDS.includes(x)) && l[0] !== l[1])
+    : [];
+}
+
 export function saveLayout(n: PaneNode) {
   LS.set(KEY, JSON.stringify(n));
 }

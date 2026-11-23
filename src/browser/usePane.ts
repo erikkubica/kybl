@@ -26,7 +26,7 @@ import { useEntries } from "./useEntries";
 import { useLocation } from "./useLocation";
 import { useSelection } from "./useSelection";
 import { useEntryActions } from "./useEntryActions";
-import { LS, type Loc, type PaneId } from "./types";
+import { LS, paneKeys, type Loc, type PaneId, type PaneView } from "./types";
 
 /** What a pane gets from the shell. */
 export type PaneEnv = {
@@ -95,10 +95,11 @@ function usePaneCore(env: PaneEnv) {
 
   // the pane's own view choices (sort, hidden files, compact rows, tile size): what one pane does
   // leaves the other alone. Until a pane is given its own, it follows the app's setting.
-  const [sortOwn, setSortOwn] = usePanePref<Settings["sort"]>(`s3b.sort.${env.id}`);
-  const [hiddenOwn, setShowHidden] = usePanePref<boolean>(`s3b.hidden.${env.id}`);
-  const [compactOwn, setCompact] = usePanePref<boolean>(`s3b.compact.${env.id}`);
-  const [tileOwn, setTile] = usePanePref<number>(`s3b.tile.${env.id}`);
+  const keys = paneKeys(env.id);
+  const [sortOwn, setSortOwn] = usePanePref<Settings["sort"]>(keys.sort);
+  const [hiddenOwn, setShowHidden] = usePanePref<boolean>(keys.hidden);
+  const [compactOwn, setCompact] = usePanePref<boolean>(keys.compact);
+  const [tileOwn, setTile] = usePanePref<number>(keys.tile);
   const sortSetting = sortOwn ?? settings.sort;
   const showHidden = hiddenOwn ?? settings.showHiddenFiles;
   const compact = compactOwn ?? LS.get("s3b.compact") === "1";
@@ -123,11 +124,21 @@ function usePaneCore(env: PaneEnv) {
   const searchInput = useRef<HTMLInputElement>(null);
   /** a key to select once it shows up in the listing of that connection and bucket */
   const pendingSelect = useRef<{ profileId: string; bucket: string; key: string } | null>(null);
-  const viewKey = env.id === "left" ? "s3b.view" : `s3b.view.${env.id}`;
+  const viewKey = keys.view;
   const [view, setViewState] = useState<"list" | "grid">(LS.get(viewKey) === "grid" ? "grid" : "list");
   const setView = (v: "list" | "grid") => {
     setViewState(v);
     LS.set(viewKey, v);
+  };
+  /** The pane's own view choices as they are (null: following the app's setting), for a workspace to keep. */
+  const viewState = (): PaneView => ({ view, sort: sortOwn, hidden: hiddenOwn, compact: compactOwn, tile: tileOwn });
+  /** Takes a workspace's view choices back. */
+  const applyView = (v: PaneView) => {
+    if (v.view !== view) setView(v.view);
+    setSortOwn(v.sort);
+    setShowHidden(v.hidden);
+    setCompact(v.compact);
+    setTile(v.tile);
   };
 
   const folderSizes = useFolderSizes(profile?.id ?? null, bucket, (pre, msg) =>
@@ -381,6 +392,8 @@ function usePaneCore(env: PaneEnv) {
     searchInput,
     view,
     setView,
+    viewState,
+    applyView,
     setSort,
     showHidden,
     setShowHidden,

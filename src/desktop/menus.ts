@@ -32,6 +32,10 @@ export const MENU_OWNS_SHORTCUTS = isTauri() && /Mac/i.test(navigator.userAgent)
  * accelerators; "close-pane", "switch-pane", "same-folder", "compare-folders", "pane-copy" and
  * "pane-move" are click-only (⌘W stays with the window's Close, which the page takes first while
  * several panes are open; Tab, F5 and F6 stay with the page).
+ *
+ * Window menu workspace items: "new-workspace" (⌘T), "prev-workspace" (⇧⌘[) and "next-workspace"
+ * (⇧⌘]) have accelerators but are left out here on purpose: the page handles those keys too, so
+ * if the menu can't match a shifted bracket the press still lands (useShortcuts.ts).
  */
 export const MENU_ACCELERATORS: Record<string, string> = {
   "new-folder": "⇧⌘N",

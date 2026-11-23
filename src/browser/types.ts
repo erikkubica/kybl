@@ -6,6 +6,7 @@
  */
 import { LOCAL_ID } from "../api";
 import type { Profile } from "../types";
+import type { Settings } from "../settings";
 
 export type { Loc } from "./useListing";
 
@@ -16,6 +17,31 @@ export type { Loc } from "./useListing";
  */
 export const PANE_IDS = ["left", "right", "p3", "p4", "p5", "p6"] as const;
 export type PaneId = (typeof PANE_IDS)[number];
+
+/**
+ * Where a slot keeps its last place and its own view choices in localStorage. They always hold
+ * what the slot shows in the workspace on screen (shell/workspaces.ts copies a workspace's in
+ * when it comes up), so a launch reopens it from them.
+ */
+/** A pane's own view choices; null where it follows the app's setting. */
+export type PaneView = {
+  view: "list" | "grid";
+  sort: Settings["sort"] | null;
+  hidden: boolean | null;
+  compact: boolean | null;
+  tile: number | null;
+};
+
+export function paneKeys(id: PaneId) {
+  return {
+    last: id === "left" ? "s3b.last" : `s3b.last.${id}`,
+    view: id === "left" ? "s3b.view" : `s3b.view.${id}`,
+    sort: `s3b.sort.${id}`,
+    hidden: `s3b.hidden.${id}`,
+    compact: `s3b.compact.${id}`,
+    tile: `s3b.tile.${id}`,
+  };
+}
 
 /**
  * The reserved profile id of this computer's own disk (the Local provider, WP0). Its roots are

@@ -28,7 +28,12 @@ export function usePreviewLayout(openKey: string, openByDefault = true) {
       LS.set(openKey, o ? "0" : "1");
       return !o;
     });
-  return { previewOpen, setPreviewOpen, togglePreview, previewWidth, setPreviewWidth };
+  /** Opens or closes it for good (a workspace coming up with its own choice). */
+  const setOpen = (on: boolean) => {
+    LS.set(openKey, on ? "1" : "0");
+    setPreviewOpen(on);
+  };
+  return { previewOpen, setPreviewOpen, setOpen, togglePreview, previewWidth, setPreviewWidth };
 }
 
 export type PreviewLayout = ReturnType<typeof usePreviewLayout>;

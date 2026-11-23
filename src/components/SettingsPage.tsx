@@ -97,6 +97,12 @@ const SHORTCUTS: { label: string; keys: string[] }[] = [
   { label: "Two panes: quick look, new folder, delete", keys: ["F3", "F7", "F8"] },
   { label: "Two panes: swap them", keys: ["⇧", "⌘", "S"] },
   { label: "Two panes: copy instead of moving while dragging across", keys: ["drop copies, ⌘ moves"] },
+  { label: "New workspace", keys: ["⌘", "T"] },
+  { label: "Next / previous workspace", keys: ["⌃Tab", "⌃⇧Tab"] },
+  { label: "Next / previous workspace (also)", keys: ["⇧⌘]", "⇧⌘["] },
+  { label: "Go to workspace 1–8 / the last one", keys: ["⌥⌘1…8", "⌥⌘9"] },
+  { label: "Move the workspace left / right", keys: ["⌥⇧⌘[", "⌥⇧⌘]"] },
+  { label: "Rename a workspace", keys: ["double-click its tab"] },
 ];
 
 /** Automatic checks, "Check now", and installing what a check found. */

@@ -33,7 +33,7 @@ import { undoStack } from "../desktop/undo";
 import { usePane, type Pane, type PaneEnv } from "../browser/usePane";
 import { BrowserPane } from "../browser/BrowserPane";
 import type { EmptyActions } from "../browser/PaneEmpty";
-import { PANE_IDS, THIS_MAC, type PaneId } from "../browser/types";
+import { LS, PANE_IDS, paneKeys, THIS_MAC, type Loc, type PaneId, type PaneView } from "../browser/types";
 import { forgetCaps, peekCaps } from "../useCaps";
 import { sendItems } from "./crossPane";
 import { clearAuthNeeded, useAuthNeeded } from "../connections/authNeeded";
@@ -76,6 +76,27 @@ import {
   type SyncLink,
 } from "./paneLayout";
 import { makeDualActions, paneName, type DualContext } from "./dualActions";
+import { WorkspaceBar, type PaneSwitcher } from "./WorkspaceBar";
+import { WorkspaceSettings } from "./WorkspaceSettings";
+import {
+  copyLayout,
+  copyName,
+  loadWorkspaces,
+  newId,
+  nextName,
+  oneLayout,
+  paneCount,
+  reorder,
+  saveWorkspaces,
+  writeSlot,
+  type Layout,
+  type PaneSnap,
+  type StartMode,
+  type Workspace,
+  type WorkspaceStore,
+} from "./workspaces";
+import type { HistorySnap } from "../browser/useHistory";
+import { sameLoc } from "../browser/useListing";
 import { PaneContext } from "./PaneContext";
 import { useMigrationHost } from "./useMigrationHost";
 import {
@@ -169,9 +190,31 @@ export function AppShell() {
   const recents = useRecentConnections();
   // ⌥⌘F: the sidebar's filter field takes the keyboard (each press bumps this)
   const [findSignal, setFindSignal] = useState(0);
-  // the panes on screen as a tree of splits, kept between launches (an old dual pane becomes a
-  // split of two on the first launch)
-  const [tree, setTree] = useState<PaneNode>(() => loadLayout(settings.layout));
+  // workspaces (workspaces.ts): named layouts the window switches between. The one on screen lives
+  // in the pane slots and the state below; the others are snapshots. The first launch with them
+  // makes "Default workspace" of the layout as it was.
+  const [ws, setWs] = useState<WorkspaceStore>(() => {
+    const s = loadWorkspaces(() => {
+      const t = loadLayout(settings.layout);
+      return { tree: t, links: loadLinks(t, settings.syncBrowsing), recent: leaves(t), details: { one: LS.get("s3b.preview") !== "0", many: LS.get("s3b.preview.dual") === "1" } };
+    });
+    const i = s.list.findIndex((w) => w.id === s.active);
+    const w = s.list[i];
+    // one that always opens at its saved folders starts there
+    const start: Workspace = w.start === "saved" && w.saved ? { ...w, ...copyLayout(w.saved) } : w;
+    // its panes into their slots' keys, where the slots read where to open and how to show it
+    for (const id of leaves(start.tree)) writeSlot(id, start.panes[id]);
+    LS.set("s3b.preview", start.details.one ? "1" : "0");
+    LS.set("s3b.preview.dual", start.details.many ? "1" : "0");
+    const list = [...s.list];
+    list[i] = start;
+    return { ...s, list };
+  });
+  const wsNow = ws.list.find((w) => w.id === ws.active) ?? ws.list[0];
+  /** the workspace on screen at launch opens at its saved folders even with "reopen where I was" off */
+  const startSaved = useRef(wsNow.start === "saved");
+  // the panes on screen as a tree of splits (the workspace's)
+  const [tree, setTree] = useState<PaneNode>(() => wsNow.tree);
   const ids = useMemo(() => leaves(tree), [tree]);
   const dual = ids.length > 1;
   useEffect(() => {
@@ -182,7 +225,7 @@ export function AppShell() {
   // synchronized browsing: pairs of panes that follow each other, switched by the link on the
   // divider between them. Only pairs facing each other across a divider count, so what is lit on
   // screen is exactly what moves together; a link kept from another layout comes back with it.
-  const [links, setLinks] = useState<SyncLink[]>(() => loadLinks(tree, settings.syncBrowsing));
+  const [links, setLinks] = useState<SyncLink[]>(() => wsNow.links);
   useEffect(() => saveLinks(links), [links]);
   const facing = useMemo(() => allFacing(tree), [tree]);
   const liveLinks = useMemo(() => links.filter((l) => facing.some(({ pair: [a, b] }) => sameLink(l, a, b))), [links, facing]);
@@ -192,7 +235,7 @@ export function AppShell() {
   const unlink = (gone: (id: PaneId) => boolean) => setLinks((cur) => cur.filter(([a, b]) => !gone(a) && !gone(b)));
   // the panes by when they were last active, most recent first: the first on screen is the
   // active one, the next is what "the other pane" means for it (F5 / F6, swap, compare)
-  const [recent, setRecent] = useState<PaneId[]>(() => leaves(tree));
+  const [recent, setRecent] = useState<PaneId[]>(() => wsNow.recent);
   const setActiveId = useCallback((id: PaneId) => setRecent((cur) => (cur[0] === id ? cur : [id, ...cur.filter((x) => x !== id)])), []);
   const activeId = recent.find((id) => ids.includes(id)) ?? ids[0];
   // two lists side by side leave little room: the details pane has its own switch there, off at first
@@ -339,7 +382,7 @@ export function AppShell() {
 
   const envFor = (id: PaneId): PaneEnv => ({
     id,
-    storageKey: id === "left" ? "s3b.last" : `s3b.last.${id}`,
+    storageKey: paneKeys(id).last,
     profiles,
     conns,
     settings,
@@ -477,7 +520,7 @@ export function AppShell() {
         conns.setProfiles(list);
         // the first pane on screen opens like the one pane always did; the others follow below
         const firstId = ids[0];
-        const last = settings.restoreLast ? slot(firstId).savedLocation() : null;
+        const last = settings.restoreLast || startSaved.current ? slot(firstId).savedLocation() : null;
         const all = [...list, THIS_MAC];
         // where it was last time (This Mac too); else the first saved connection
         const start = all.find((p) => p.id === last?.profileId) ?? list[0];
@@ -500,7 +543,7 @@ export function AppShell() {
       opened.current.add(id);
       const p = slot(id);
       if (p.profile) continue;
-      const saved = settings.restoreLast ? p.savedLocation() : null;
+      const saved = settings.restoreLast || startSaved.current ? p.savedLocation() : null;
       const prof = saved && profiles.find((x) => x.id === saved.profileId);
       if (prof && saved) p.go(prof, saved.bucket, saved.prefix);
       else p.go(first.profile, first.here.bucket, first.here.prefix);
@@ -527,9 +570,9 @@ export function AppShell() {
   }, [sideHidden]);
   /** After panes close: a sidebar a split folded comes back once the panes left fit beside it. */
   const unfoldIfRoom = (next: PaneNode) => {
-    const box = document.querySelector<HTMLElement>(".splits");
-    if (!autoFold.current || !sideHidden || !box) return;
-    if (minSize(next).w <= box.clientWidth - autoFold.current) toggleSidebar();
+    const room = paneRoom();
+    if (!autoFold.current || !sideHidden || !room) return;
+    if (minSize(next).w <= room.w - autoFold.current) toggleSidebar();
   };
   /** The folded sidebar's rail (styles.css, `.app.side-hidden`). */
   const SIDE_RAIL_W = 82;
@@ -662,6 +705,276 @@ export function AppShell() {
       : []),
   ];
   const panesMenu = (id: PaneId, x: number, y: number) => dialogs.menu(x, y, panesItems(id));
+
+  // ------------------------------------------------------------ workspaces
+  /** a workspace's panes' Back / Forward while another is on screen (this session only) */
+  const histories = useRef(new Map<string, Partial<Record<PaneId, HistorySnap>>>());
+  /** how far down a pane's list was, given back once that list is there again */
+  const pendingScroll = useRef(new Map<PaneId, { loc: Loc; top: number }>());
+  /** the workspace being renamed in its tab, and the one whose settings are open */
+  const [wsEditing, setWsEditing] = useState<string | null>(null);
+  const [wsSettings, setWsSettings] = useState<{ id: string; anchor: DOMRect } | null>(null);
+  /** the window is too small for every pane: one shows, the bar's pane switcher picks it */
+  const [cramped, setCramped] = useState(false);
+  const listScroller = (id: PaneId) => document.querySelector<HTMLElement>(`[data-pane="${id}"] .table-body, [data-pane="${id}"] .grid-scroll`);
+  const snapOf = (id: PaneId, withScroll: boolean): PaneSnap => {
+    const p = slot(id);
+    const top = withScroll ? listScroller(id)?.scrollTop : undefined;
+    return { loc: p.here, view: p.viewState(), ...(top ? { scroll: top } : {}) };
+  };
+  /** What the workspace on screen shows now. */
+  const liveLayout = (withScroll = false): Layout => ({
+    tree,
+    // all of them: a link kept from another arrangement of these panes comes back with it
+    links,
+    recent: [activeId, ...recent.filter((x) => x !== activeId && ids.includes(x))],
+    panes: Object.fromEntries(ids.map((id) => [id, snapOf(id, withScroll)])),
+    details: { one: singlePreview.previewOpen, many: dualPreview.previewOpen },
+  });
+  const live = liveLayout();
+  /** A workspace's layout: the one on screen as it is now, another as it was left. */
+  const layoutOf = (id: string): Layout => (id === ws.active ? live : (ws.list.find((w) => w.id === id) ?? wsNow));
+  /** The store with the workspace on screen as it is now. */
+  const withLive = (s: WorkspaceStore, l: Layout = live) => ({ ...s, list: s.list.map((w) => (w.id === s.active ? { ...w, ...l } : w)) });
+  // kept as it changes (dragging a divider changes it on every mouse move: written once it settles),
+  // and on the way out
+  const liveKey = JSON.stringify(live);
+  const flush = useRef(() => {});
+  flush.current = () => saveWorkspaces(withLive(ws));
+  useEffect(() => {
+    const t = window.setTimeout(() => flush.current(), 250);
+    return () => window.clearTimeout(t);
+  }, [liveKey, ws]);
+  useEffect(() => {
+    const out = () => flush.current();
+    window.addEventListener("pagehide", out);
+    window.addEventListener("beforeunload", out);
+    return () => {
+      window.removeEventListener("pagehide", out);
+      window.removeEventListener("beforeunload", out);
+    };
+  }, []);
+  // a list's place in a workspace that came back: once it is listed again
+  useEffect(() => {
+    for (const [id, s] of pendingScroll.current) {
+      const p = slot(id);
+      if (!sameLoc(p.here, s.loc)) {
+        if (p.here) pendingScroll.current.delete(id);
+        continue;
+      }
+      if (!p.ent.fresh) continue;
+      pendingScroll.current.delete(id);
+      const el = listScroller(id);
+      if (el) el.scrollTop = s.top;
+    }
+  });
+
+  const DEFAULT_VIEW: PaneView = { view: "list", sort: null, hidden: null, compact: null, tile: null };
+  /**
+   * Points the slots at a workspace's panes (`fallback`: where a pane without a place of its own
+   * opens; without one, This Mac), and takes its layout, links and details panel. Synchronized
+   * browsing doesn't follow these moves, and a pane waiting out of step forgets it.
+   */
+  const applyLayout = (l: Layout, wsId: string, fallback: Loc | null, focus = true) => {
+    const nextIds = leaves(l.tree);
+    const hist = histories.current.get(wsId) ?? {};
+    pendingScroll.current.clear();
+    dualPane.quietly(() => {
+      for (const id of PANE_IDS) {
+        const p = slot(id);
+        if (!nextIds.includes(id)) {
+          if (ids.includes(id)) vacate(id);
+          continue;
+        }
+        const s = l.panes[id];
+        p.closeQuick();
+        p.ent.setQuery("");
+        p.applyView(s?.view ?? DEFAULT_VIEW);
+        opened.current.add(id);
+        const at = s?.loc ?? fallback;
+        const prof = at ? profiles.find((x) => x.id === at.profileId) : null;
+        if (at && prof) {
+          p.go(prof, at.bucket, at.prefix, { history: false });
+          p.history.load(hist[id] ?? null, at);
+          void conns.loadBuckets(prof);
+          if (s?.scroll && s.loc) pendingScroll.current.set(id, { loc: s.loc, top: s.scroll });
+        } else {
+          p.showConnection(null);
+          p.history.load(null, null);
+          void connectIn(id, THIS_MAC);
+        }
+      }
+    });
+    dualPane.forgetBehind();
+    setTree(l.tree);
+    setLinks(l.links);
+    setRecent([...l.recent.filter((x) => nextIds.includes(x)), ...nextIds.filter((x) => !l.recent.includes(x))]);
+    singlePreview.setOpen(l.details.one);
+    dualPreview.setOpen(l.details.many);
+    // the sidebar folds to its rail when that is what it takes to show every pane, as a split
+    // does, and comes back when a split had folded it and the panes fit beside it
+    const room = paneRoom();
+    const need = minSize(l.tree);
+    if (room && sideHidden) unfoldIfRoom(l.tree);
+    else if (room && need.w > room.w && need.w <= room.w + sideSpare()) {
+      autoFold.current = sideSpare();
+      toggleSidebar();
+    }
+    if (focus) focusSoon(l.recent.find((x) => nextIds.includes(x)) ?? nextIds[0]);
+  };
+  /** Keeps the Back / Forward of the panes on screen for when this workspace comes back. */
+  const keepHistories = () => histories.current.set(ws.active, Object.fromEntries(ids.map((id) => [id, slot(id).history.save()])));
+  /** Shows workspace `id` (the one on screen is kept as it is). */
+  const switchWorkspace = (id: string) => {
+    const target = ws.list.find((w) => w.id === id);
+    if (!target || id === ws.active) return;
+    const now = liveLayout(true);
+    keepHistories();
+    setWsSettings(null);
+    setWs((cur) => ({ ...withLive(cur, now), active: id }));
+    applyLayout(target, id, active.here);
+  };
+  /** Adds a workspace (after the others, or after `after`) and shows it. */
+  const addWorkspace = (w: Workspace, after?: string, focus = true) => {
+    const now = liveLayout(true);
+    keepHistories();
+    setWsSettings(null);
+    setWs((cur) => {
+      const list = withLive(cur, now).list;
+      const at = after ? list.findIndex((x) => x.id === after) + 1 : list.length;
+      return { list: [...list.slice(0, at), w, ...list.slice(at)], active: w.id };
+    });
+    applyLayout(w, w.id, active.here, focus);
+  };
+  /** "+": one pane where the active pane is (or This Mac), its name ready to type over. */
+  const newWorkspace = () => {
+    const snap = active.here ? { loc: active.here, view: active.viewState() } : null;
+    const w: Workspace = { ...oneLayout(snap, live.details), id: newId(), name: nextName(ws.list), color: null, start: "restore", saved: null };
+    addWorkspace(w, undefined, false);
+    setWsEditing(w.id);
+  };
+  const duplicateWorkspace = (id: string) => {
+    const src = ws.list.find((w) => w.id === id);
+    if (!src) return;
+    const w: Workspace = { ...src, ...copyLayout(layoutOf(id)), saved: src.saved && copyLayout(src.saved), id: newId(), name: copyName(ws.list, src.name) };
+    addWorkspace(w, id);
+  };
+  const patchWorkspace = (id: string, patch: Partial<Pick<Workspace, "name" | "color" | "start" | "saved">>) =>
+    setWs((cur) => ({ ...cur, list: cur.list.map((w) => (w.id === id ? { ...w, ...patch } : w)) }));
+  const renameWorkspace = (id: string, name: string) => {
+    const n = name.trim().slice(0, 80);
+    if (n) patchWorkspace(id, { name: n });
+  };
+  const setStart = (id: string, start: StartMode) => {
+    const w = ws.list.find((x) => x.id === id);
+    patchWorkspace(id, { start, ...(start === "saved" && !w?.saved ? { saved: copyLayout(layoutOf(id)) } : {}) });
+  };
+  const moveWorkspace = (from: number, to: number) => setWs((cur) => ({ ...cur, list: reorder(cur.list, from, to) }));
+  /** The latest of the steps that run after a confirm (by then this render's values are old). */
+  const wsLater = useRef({ close: (_id: string) => {}, closeOthers: (_id: string) => {} });
+  wsLater.current.close = (id) => {
+    const i = ws.list.findIndex((w) => w.id === id);
+    const w = ws.list[i];
+    if (!w || ws.list.length < 2) return;
+    const was = { ...w, ...layoutOf(id) };
+    setWsSettings(null);
+    histories.current.delete(id);
+    if (id === ws.active) {
+      const next = ws.list[i + 1] ?? ws.list[i - 1];
+      setWs((cur) => ({ list: cur.list.filter((x) => x.id !== id), active: next.id }));
+      applyLayout(next, next.id, null);
+    } else setWs((cur) => ({ ...cur, list: cur.list.filter((x) => x.id !== id) }));
+    toast("info", `Closed “${w.name}”`, {
+      label: "Undo",
+      run: () =>
+        setWs((cur) => {
+          if (cur.list.some((x) => x.id === was.id)) return cur;
+          const list = [...cur.list];
+          list.splice(Math.min(i, list.length), 0, was);
+          return { ...cur, list };
+        }),
+    });
+  };
+  wsLater.current.closeOthers = (id) => {
+    if (id !== ws.active) switchWorkspace(id);
+    for (const w of ws.list) if (w.id !== id) histories.current.delete(w.id);
+    setWs((cur) => ({ ...cur, list: cur.list.filter((x) => x.id === id), active: id }));
+  };
+  /** Closes a workspace, asking first when it holds several panes. Never the last one. */
+  const closeWorkspace = async (id: string) => {
+    const w = ws.list.find((x) => x.id === id);
+    if (!w || ws.list.length < 2) return;
+    const n = paneCount(layoutOf(id));
+    if (n > 1) {
+      const ok = await dialogs.confirm({
+        title: `Close “${w.name}”?`,
+        label: "Close workspace",
+        message: <p>Its {n} panes and the folders they show close with it. No files are touched.</p>,
+      });
+      if (!ok) return;
+    }
+    wsLater.current.close(id);
+  };
+  const closeOtherWorkspaces = async (id: string) => {
+    const others = ws.list.filter((x) => x.id !== id);
+    if (!others.length) return;
+    if (others.some((x) => paneCount(layoutOf(x.id)) > 1)) {
+      const ok = await dialogs.confirm({
+        title: others.length === 1 ? `Close “${others[0].name}”?` : `Close ${others.length} other workspaces?`,
+        label: others.length === 1 ? "Close workspace" : "Close workspaces",
+        message: (
+          <p>
+            {others.length <= 3 ? `${others.map((x) => `“${x.name}”`).join(", ")} and the folders they show close.` : "They close with the folders they show."} Only “
+            {ws.list.find((x) => x.id === id)?.name}” stays. No files are touched.
+          </p>
+        ),
+      });
+      if (!ok) return;
+    }
+    wsLater.current.closeOthers(id);
+  };
+  const stepWorkspace = (d: number) => {
+    const n = ws.list.length;
+    if (n < 2) return false;
+    const i = ws.list.findIndex((w) => w.id === ws.active);
+    switchWorkspace(ws.list[(i + d + n) % n].id);
+  };
+  /** ⌥⌘1–8: that workspace; ⌥⌘9: the last, as browsers do with tabs. */
+  const jumpWorkspace = (n: number) => {
+    const w = n === 9 ? ws.list[ws.list.length - 1] : ws.list[n - 1];
+    if (w) switchWorkspace(w.id);
+  };
+  const moveActiveWorkspace = (d: number) => {
+    const i = ws.list.findIndex((w) => w.id === ws.active);
+    if (i + d >= 0 && i + d < ws.list.length) moveWorkspace(i, i + d);
+  };
+  /** after a menu closes it puts the keyboard back where it was: what opens from it waits a moment */
+  const afterMenu = (fn: () => void) => () => window.setTimeout(fn, 40);
+  const openWsSettings = (id: string) => {
+    const el = document.querySelector<HTMLElement>(`.ws-tab[data-ws="${CSS.escape(id)}"]`);
+    if (el) setWsSettings({ id, anchor: el.getBoundingClientRect() });
+  };
+  const workspaceMenu = (id: string, x: number, y: number) =>
+    dialogs.menu(x, y, [
+      { type: "item", label: "Rename", icon: "edit", hint: "F2", onClick: afterMenu(() => setWsEditing(id)) },
+      { type: "item", label: "Settings…", icon: "settings", onClick: afterMenu(() => openWsSettings(id)) },
+      { type: "item", label: "Duplicate", icon: "copy", onClick: () => duplicateWorkspace(id) },
+      { type: "sep" },
+      { type: "item", label: "Close workspace", icon: "x", disabled: ws.list.length < 2, onClick: () => void closeWorkspace(id) },
+      { type: "item", label: "Close other workspaces", disabled: ws.list.length < 2, onClick: () => void closeOtherWorkspaces(id) },
+    ]);
+  /** "2 panes · Photos, Downloads": what a layout opens, in a few words. */
+  const describe = (l: Layout) => {
+    const ls = leaves(l.tree);
+    const names = ls.map((id) => {
+      const at = l.panes[id]?.loc;
+      if (!at) return "empty";
+      return at.prefix ? baseName(at.prefix) : conns.rootLabel(at.profileId, at.bucket) || profiles.find((x) => x.id === at.profileId)?.name || at.bucket;
+    });
+    return `${ls.length === 1 ? "1 pane" : `${ls.length} panes`} · ${names.join(", ")}`;
+  };
+  /** the parts of a layout that "Use the folders open now" would change */
+  const placeKey = (l: Layout) => JSON.stringify([l.tree, l.links, leaves(l.tree).map((id) => [l.panes[id]?.loc ?? null, l.panes[id]?.view ?? null])]);
 
   // refresh listing once all uploads have finished
   useEffect(
@@ -1024,7 +1337,7 @@ export function AppShell() {
     !!docRef.current ||
     dialogs.isOpen() ||
     !!(connDialog || kyblDialog || importOpen || allPanes.current.some((p) => p.quick)) ||
-    !!document.querySelector(".modal-backdrop, .ctx-menu, .ql-backdrop");
+    !!document.querySelector(".modal-backdrop, .ctx-menu, .ql-backdrop, .ws-pop");
 
   useShellCommands({
     active,
@@ -1055,6 +1368,16 @@ export function AppShell() {
       "focus-right": () => focusToward("right"),
       "focus-up": () => focusToward("up"),
       "focus-down": () => focusToward("down"),
+      // workspaces
+      "new-workspace": newWorkspace,
+      "next-workspace": () => stepWorkspace(1),
+      "prev-workspace": () => stepWorkspace(-1),
+      "move-workspace-left": () => moveActiveWorkspace(-1),
+      "move-workspace-right": () => moveActiveWorkspace(1),
+      "rename-workspace": () => setWsEditing(ws.active),
+      "workspace-settings": () => openWsSettings(ws.active),
+      "close-workspace": () => (ws.list.length > 1 ? void closeWorkspace(ws.active) : false),
+      ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [`workspace-${n}`, () => jumpWorkspace(n)])),
     },
     dual,
     editorOpen: () => !!docRef.current,
@@ -1121,6 +1444,19 @@ export function AppShell() {
     },
   });
   const previewStyle = { "--preview-w": `${preview.previewWidth}px` } as React.CSSProperties;
+  const nameOf = (id: PaneId) => paneName(slot(id)) || slot(id).profile?.name || "Empty pane";
+  const paneSwitcher: PaneSwitcher | null =
+    dual && cramped
+      ? {
+          items: ids.map((id) => ({ id, name: nameOf(id) })),
+          activeId,
+          onPick: (id) => {
+            setActiveId(id);
+            focusSoon(id);
+          },
+        }
+      : null;
+  const wsOpen = wsSettings ? ws.list.find((w) => w.id === wsSettings.id) : null;
   const aside = (p: Pane) => preview.previewOpen && <PreviewAside pane={p} layout={preview} settings={settings} reloadIfShowing={reloadIfShowing} onOpenFull={(e) => openDocument(p.id, e)} />;
 
   return (
@@ -1207,6 +1543,24 @@ export function AppShell() {
       )}
 
       <main className="main">
+        <WorkspaceBar
+          tabs={ws.list.map((w) => ({ id: w.id, name: w.name, color: w.color, panes: paneCount(w.id === ws.active ? live : w) }))}
+          activeId={ws.active}
+          editingId={wsEditing}
+          settingsId={wsSettings?.id ?? null}
+          onPick={switchWorkspace}
+          onNew={newWorkspace}
+          onEdit={setWsEditing}
+          onEditEnd={(id, name) => {
+            setWsEditing(null);
+            if (name != null) renameWorkspace(id, name);
+            if (id === ws.active) focusSoon(activeId);
+          }}
+          onMenu={workspaceMenu}
+          onSettings={(id, anchor) => setWsSettings((cur) => (cur?.id === id ? null : { id, anchor }))}
+          onReorder={moveWorkspace}
+          switcher={paneSwitcher}
+        />
         <PaneContext.Provider value={{ panes: panesRef.current, active, other, dual, setActive: setActiveId }}>
           {dual ? (
             <div className="content dual-wrap" style={previewStyle}>
@@ -1216,11 +1570,8 @@ export function AppShell() {
                 pane={(id, style) => <BrowserPane {...paneProps(slot(id))} style={style} />}
                 onSizes={(path, sizes) => setTree((t) => setSizes(t, path, sizes))}
                 onEqualize={(path) => setTree((t) => equalize(t, path))}
-                nameOf={(id) => paneName(slot(id)) || slot(id).profile?.name || "Empty pane"}
-                onPick={(id) => {
-                  setActiveId(id);
-                  focusSoon(id);
-                }}
+                nameOf={nameOf}
+                onCramped={setCramped}
                 linked={isLinked}
                 onToggleLink={toggleSync}
               />
@@ -1355,6 +1706,29 @@ export function AppShell() {
             onOpenExternal={(e) => void paneById(doc.pane).ops.openInApp(e)}
           />
         </Suspense>
+      )}
+      {wsSettings && wsOpen && (
+        <WorkspaceSettings
+          key={wsOpen.id}
+          name={wsOpen.name}
+          color={wsOpen.color}
+          start={wsOpen.start}
+          savedSummary={wsOpen.saved ? describe(wsOpen.saved) : null}
+          nowSummary={describe(layoutOf(wsOpen.id))}
+          savedIsNow={!!wsOpen.saved && placeKey(wsOpen.saved) === placeKey(layoutOf(wsOpen.id))}
+          canClose={ws.list.length > 1}
+          anchor={wsSettings.anchor}
+          onRename={(n) => renameWorkspace(wsOpen.id, n)}
+          onColor={(color) => patchWorkspace(wsOpen.id, { color })}
+          onStart={(mode) => setStart(wsOpen.id, mode)}
+          onSaveStart={() => patchWorkspace(wsOpen.id, { saved: copyLayout(layoutOf(wsOpen.id)) })}
+          onDuplicate={() => duplicateWorkspace(wsOpen.id)}
+          onClose={() => {
+            setWsSettings(null);
+            void closeWorkspace(wsOpen.id);
+          }}
+          onDismiss={() => setWsSettings(null)}
+        />
       )}
       {migrations.element}
       {!settingsOpen && <UpdateBanner st={updates} />}
