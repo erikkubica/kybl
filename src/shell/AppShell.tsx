@@ -110,6 +110,7 @@ import { useEdit, type EditPlace } from "../edit/useEdit";
 import { EditorSheet } from "../edit/EditorSheet";
 import { LazyEditConflictHost, LazyEditingChip } from "../edit/lazy";
 import { useEditCount, type SaveRule } from "../edit/editStore";
+import { mirrorToPane } from "../mirror";
 import {
   allGroups,
   groupLabel,
@@ -737,6 +738,7 @@ export function AppShell() {
           { type: "sep" },
           { type: "item", label: "Make panes the same size", onClick: () => setTree((t) => equalize(t)) },
           { type: "submenu", label: "Move pane", icon: "move", items: () => moveItems(id) },
+          mirrorToPane(slot(id), otherOf(id) ? slot(otherOf(id)!) : null, dialogs, showJobs),
           { type: "sep" },
           { type: "item", label: "Close pane", icon: "x", hint: "⌘W", onClick: () => void close(id) },
           { type: "item", label: "Close other panes", onClick: () => closeOthers(id) },
@@ -1725,7 +1727,7 @@ export function AppShell() {
             return { id, dir, name: dir ? "" : paneName(slot(id)), on: isLinked(p.id, id), at };
           }),
         onToggleSync: (id) => toggleSync(p.id, id),
-      });
+      }).concat(mirrorToPane(p, slot(o), dialogs, showJobs));
   };
   const paneProps = (p: Pane) => ({
     pane: p,

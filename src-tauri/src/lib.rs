@@ -311,6 +311,7 @@ pub fn run() {
             jobs::job_delete,
             jobs::job_failures,
             jobs::job_retry_failed,
+            jobs::mirror::mirror_md5,
             // WP-A2: cloud drive sign-in
             oauth::oauth_start,
             oauth::oauth_cancel,

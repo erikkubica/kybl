@@ -503,6 +503,17 @@ export type JobSpec = {
   ignore: string[];
   /** shown in the jobs list, e.g. "Photos to Kybl Storage"; the backend makes one when empty */
   title?: string;
+  /**
+   * Mirror (src/mirror): exactly these copies (paths relative to the one source folder and to
+   * `dst.dir`; folders end with "/"), then these deletions at the destination. Listed jobs keep
+   * only the counts.
+   */
+  mirror?: {
+    copy?: { rel: string; size?: number; mtime?: number | null; md5?: string | null }[];
+    delete?: string[];
+    copies?: number;
+    deletes?: number;
+  };
 };
 
 export type JobState = "planning" | "running" | "paused" | "waitingNetwork" | "needsAuth" | "done" | "failed" | "cancelled";

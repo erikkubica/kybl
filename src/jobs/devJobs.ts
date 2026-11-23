@@ -182,7 +182,17 @@ export async function handleJob(cmd: string, a: any): Promise<unknown> {
         failures: [],
         planLeft: 8,
       };
-      if (spec.src.items.length > 0 && spec.src.items.every((i) => !i.isDir)) {
+      if (spec.mirror) {
+        // a mirror: exactly its copies and deletions (the backend keeps only their counts)
+        const copies = (spec.mirror.copy ?? []).filter((c) => !c.rel.endsWith("/")).length;
+        const deletes = spec.mirror.delete?.length ?? 0;
+        const bytes = (window as unknown as { __kyblMockMirrorBytes?: (s: JobSpec) => number }).__kyblMockMirrorBytes?.(spec) ?? 0;
+        Object.assign(j, { exact: true, failAt: new Set(), planLeft: 1, avg: bytes / Math.max(1, copies + deletes) });
+        j.title = spec.title || "Mirror";
+        j.progress.filesTotal = Math.max(1, copies + deletes);
+        j.progress.bytesTotal = bytes;
+        j.spec = { ...j.spec, mirror: { ...spec.mirror, copies, deletes } };
+      } else if (spec.src.items.length > 0 && spec.src.items.every((i) => !i.isDir)) {
         Object.assign(j, { exact: true, failAt: new Set(), planLeft: 1 });
         j.progress.filesTotal = spec.src.items.length;
         const bytes = (window as unknown as { __kyblMockBytes?: (s: JobSpec) => number }).__kyblMockBytes?.(spec) ?? 0;

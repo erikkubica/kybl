@@ -175,6 +175,11 @@ async fn work(r: &mut Runner<'_>, spec: &Arc<JobSpec>, ctl: &Arc<Ctl>) -> JobSta
 
     // 1. plan
     let planned = db::job(&inner.db.lock().unwrap(), &id).ok().flatten().is_some_and(|j| j.planned);
+    if !planned && spec.mirror.is_some() {
+        // a mirror is recorded planned with its job; walking its source would copy everything
+        r.set(JobState::Failed, Phase::Finished, Some("This mirror wasn't set up completely. Run it again.".into()));
+        return JobState::Failed;
+    }
     if !planned {
         r.set(JobState::Planning, Phase::Planning, None);
         let mut backoff = Duration::from_secs(5);
@@ -352,6 +357,14 @@ async fn work(r: &mut Runner<'_>, spec: &Arc<JobSpec>, ctl: &Arc<Ctl>) -> JobSta
         return stopped(r, ctl, &ctx).await;
     }
 
+    // 3. a mirror deletes, at the destination, what is gone from its source
+    if spec.mirror.is_some() {
+        r.set(JobState::Running, Phase::Deleting, None);
+        if let Err(state) = delete_extras(r, &ctx, ctl).await {
+            return state;
+        }
+    }
+
     // 3. a move deletes the originals it copied (each one verified)
     if spec.mode == JobMode::Move {
         r.set(JobState::Running, Phase::Deleting, None);
@@ -431,6 +444,89 @@ async fn delete_originals(r: &mut Runner<'_>, ctx: &Ctx, ctl: &Arc<Ctl>) -> Resu
     }
     let _ = db::deleted(&mut inner.db.lock().unwrap(), &ctx.job_id, &dirs);
     Ok(())
+}
+
+/// A mirror's deletions at the destination: files in batches (one at a time when a batch is
+/// refused, so one file can't fail the rest), then folders, deepest first, only once nothing is
+/// left in them (excluded files keep theirs). A file already gone counts as deleted.
+async fn delete_extras(r: &mut Runner<'_>, ctx: &Ctx, ctl: &Arc<Ctl>) -> Result<(), JobState> {
+    let inner = r.inner;
+    let root = ctx.spec.dst.root.as_str();
+    let dst = &*ctx.dst;
+    loop {
+        if ctl.stop.load(Ordering::Relaxed) {
+            return Err(stopped(r, ctl, ctx).await);
+        }
+        let batch = db::take_deletes(&mut inner.db.lock().unwrap(), &ctx.job_id, DELETE_BATCH).unwrap_or_default();
+        if batch.is_empty() {
+            break;
+        }
+        let (dirs, files): (Vec<db::Item>, Vec<db::Item>) = batch.into_iter().partition(|i| i.is_dir);
+        let mut ended: Vec<(String, Result<db::End, String>)> = Vec::new();
+        if !files.is_empty() {
+            let paths: Vec<String> = files.iter().map(|f| f.dst_path.clone()).collect();
+            match dst.delete(root, &paths, &[], &ctl.stop, &|_, _| {}).await {
+                Ok(_) => ended.extend(files.iter().map(|f| (f.src_path.clone(), Ok(db::End::Done)))),
+                Err(e) if ctl.stop.load(Ordering::Relaxed) || e.is_cancelled() => {
+                    requeue_all(inner, &ctx.job_id, files.iter().chain(&dirs));
+                    return Err(stopped(r, ctl, ctx).await);
+                }
+                Err(_) => {
+                    for f in &files {
+                        let one = std::slice::from_ref(&f.dst_path);
+                        let end = match dst.delete(root, one, &[], &ctl.stop, &|_, _| {}).await {
+                            Ok(_) => Ok(db::End::Done),
+                            Err(e) => match dst.stat(root, &f.dst_path).await {
+                                Ok(None) => Ok(db::End::Done),
+                                _ => Err(format!("Couldn't delete this at the destination: {e}")),
+                            },
+                        };
+                        ended.push((f.src_path.clone(), end));
+                    }
+                }
+            }
+        }
+        for d in &dirs {
+            if ctl.stop.load(Ordering::Relaxed) {
+                break;
+            }
+            let end = match dst.list(root, &d.dst_path, None).await {
+                Ok(page) if page.folders.is_empty() && page.objects.iter().all(|o| o.key == d.dst_path) => {
+                    match dst.delete(root, &[], std::slice::from_ref(&d.dst_path), &ctl.stop, &|_, _| {}).await {
+                        Ok(_) => Ok(db::End::Done),
+                        Err(e) => Err(format!("Couldn't delete this folder at the destination: {e}")),
+                    }
+                }
+                // files the mirror leaves alone (excluded ones) are still in it
+                Ok(_) => Ok(db::End::Skipped),
+                Err(e) if e.kind == ErrKind::NotFound => Ok(db::End::Done),
+                Err(e) => Err(format!("Couldn't delete this folder at the destination: {e}")),
+            };
+            ended.push((d.src_path.clone(), end));
+        }
+        {
+            let c = inner.db.lock().unwrap();
+            for (src, end) in &ended {
+                let _ = match end {
+                    Ok(end) => db::finish(&c, &ctx.job_id, src, *end, None),
+                    Err(why) => db::fail(&c, &ctx.job_id, src, why),
+                };
+            }
+        }
+        // stopped between folders: those not reached go back in line
+        let done: std::collections::HashSet<&str> = ended.iter().map(|(s, _)| s.as_str()).collect();
+        requeue_all(inner, &ctx.job_id, dirs.iter().filter(|d| !done.contains(d.src_path.as_str())));
+        r.reload();
+        r.emit(false);
+    }
+    Ok(())
+}
+
+fn requeue_all<'a>(inner: &Inner, job_id: &str, items: impl Iterator<Item = &'a db::Item>) {
+    let c = inner.db.lock().unwrap();
+    for i in items {
+        let _ = db::requeue(&c, job_id, &i.src_path, false, None);
+    }
 }
 
 /// Why the original of a copied file must stay (None: it may be deleted). The copy is stat'ed

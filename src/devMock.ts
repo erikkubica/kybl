@@ -21,6 +21,8 @@ const profiles: Profile[] = [
   { id: "n1", name: "Web server", kind: "sftp", provider: "sftp", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, group: "Servers", net: { host: "files.example.com", port: 0, user: "deploy", basePath: "/var/www", tls: "none", auth: "password", hostKey: "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8", url: null } },
   // an FTPS server with its own certificate (see OWN_CERT below): "Trust this certificate…"
   { id: "n2", name: "Office NAS", kind: "ftp", provider: "ftp", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, group: "Servers", net: { host: "nas.example.com", port: 0, user: "office", basePath: "", tls: "explicit", auth: "password", hostKey: null, certFingerprint: null, url: null } },
+  // Mirror: the live site of the web project in ~/Sites/acme
+  { id: "f1", name: "Acme live", kind: "ftp", provider: "ftp", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, group: "Servers", net: { host: "ftp.acme.test", port: 0, user: "acme", basePath: "/public_html", tls: "explicit", auth: "password", hostKey: null, certFingerprint: null, url: null } },
   { id: "g1", name: "Google Drive (demo@gmail.com)", kind: "gdrive", provider: "gdrive", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, cloud: { accountEmail: "demo@gmail.com", accountId: "1001", clientId: null, tenant: null, scopes: ["drive"] } },
   ...(new URLSearchParams(location.search).has("many") ? manyProfiles() : []),
 ];
@@ -215,6 +217,7 @@ let cloudTree: ((profileId: string, bucket: string) => Record<string, { folders:
 function remoteTree(profileId: string, bucket: string) {
   const cloud = cloudTree?.(profileId, bucket);
   if (cloud) return cloud;
+  if (profileId === "f1") return acmeLive;
   if (bucket === "media-prod" || (isOther(profileId) && bucket !== "shared")) return tree;
   if (bucket === "shared") return new Proxy(SHARED_TREE, { get: (t, k: string) => t[k] ?? tree[k] });
   return (otherTrees[`${profileId}\u0000${bucket}`] ??= { "": { folders: [], objects: [] } });
@@ -224,6 +227,7 @@ function remoteDir(profileId: string, bucket: string, prefix: string) {
 }
 // a finished mock copy job (src/jobs/devJobs.ts, files only): the files show up where they went
 (window as unknown as { __kyblMockJobDone?: (s: JobSpec) => void }).__kyblMockJobDone = (spec) => {
+  if (spec.mirror) return mirrorLanded(spec);
   const src = remoteTree(spec.src.profileId, spec.src.root);
   const dst = remoteTree(spec.dst.profileId, spec.dst.root);
   const into = (dst[spec.dst.dir] ??= { folders: [], objects: [] });
@@ -237,6 +241,48 @@ function remoteDir(profileId: string, bucket: string, prefix: string) {
     if (spec.mode === "move" && from && from !== into) from.objects = from.objects.filter((x) => x !== o);
   }
 };
+
+type MockTree = Record<string, { folders: string[]; objects: ObjInfo[] }>;
+const mockTree = (profileId: string, root: string): MockTree => (profileId === LOCAL ? (localTree[root] ??= { "": { folders: [], objects: [] } }) : remoteTree(profileId, root));
+const parentKey = (key: string) => key.replace(/[^/]+\/?$/, "");
+function mockDir(t: MockTree, dir: string): MockTree[string] {
+  if (dir && !t[dir]) {
+    const up = mockDir(t, parentKey(dir));
+    if (!up.folders.includes(dir)) up.folders.push(dir);
+  }
+  return (t[dir] ??= { folders: [], objects: [] });
+}
+/** A finished mock mirror job: its copies land (times kept on this device, upload time on servers) and its deletions go. */
+function mirrorLanded(spec: JobSpec) {
+  const src = mockTree(spec.src.profileId, spec.src.root);
+  const dst = mockTree(spec.dst.profileId, spec.dst.root);
+  const from = spec.src.items[0]?.path ?? "";
+  const to = spec.dst.dir;
+  for (const c of spec.mirror?.copy ?? []) {
+    if (c.rel.endsWith("/")) {
+      mockDir(dst, to + c.rel);
+      continue;
+    }
+    const o = src[parentKey(from + c.rel)]?.objects.find((x) => x.key === from + c.rel);
+    if (!o) continue;
+    const node = mockDir(dst, parentKey(to + c.rel));
+    const key = to + c.rel;
+    node.objects = node.objects.filter((x) => x.key !== key).concat({ ...o, key, modified: spec.dst.profileId === LOCAL ? o.modified : Date.now(), etag: null });
+  }
+  for (const rel of spec.mirror?.delete ?? []) {
+    const key = to + rel;
+    const node = dst[parentKey(key)];
+    if (!node) continue;
+    if (rel.endsWith("/")) {
+      const inside = dst[key];
+      if (inside && (inside.folders.length || inside.objects.length)) continue;
+      node.folders = node.folders.filter((f) => f !== key);
+      delete dst[key];
+    } else node.objects = node.objects.filter((x) => x.key !== key);
+  }
+}
+/** what a mock mirror job copies, in bytes */
+(window as unknown as { __kyblMockMirrorBytes?: (s: JobSpec) => number }).__kyblMockMirrorBytes = (spec) => (spec.mirror?.copy ?? []).reduce((n, c) => n + (c.size ?? 0), 0);
 
 // the real size of the files a mock copy job takes (src/jobs/devJobs.ts), so it reports what was picked
 (window as unknown as { __kyblMockBytes?: (s: JobSpec) => number }).__kyblMockBytes = (spec) => {
@@ -381,11 +427,53 @@ const localRoots: RootInfo[] = [
   { id: "/", name: "Macintosh HD", kind: "volume", created: null, readOnly: false },
 ];
 const localObj = (key: string, size: number, ageHours: number): ObjInfo => ({ ...obj(key, size, ageHours), etag: `${size.toString(16)}-local`, storageClass: null });
+/** ~/Sites/acme: a small web project, with .git, node_modules and a .gitignore to leave out. */
+function acmeProject(): Record<string, { folders: string[]; objects: ObjInfo[] }> {
+  const b = "Sites/acme/";
+  const o = (rel: string, size: number, age: number) => localObj(b + rel, size, age);
+  return {
+    "Sites/": { folders: [b], objects: [] },
+    [b]: {
+      folders: [`${b}.git/`, `${b}node_modules/`, `${b}css/`, `${b}js/`, `${b}img/`, `${b}dist/`],
+      objects: [o(".gitignore", 38, 400), o(".DS_Store", 6_148, 1), o(".env", 220, 300), o("index.html", 4_210, 1), o("about.html", 2_980, 0.5), o("contact.html", 1_900, 300), o("README.md", 2_000, 50), o("debug.log", 18_000, 0.1)],
+    },
+    [`${b}.git/`]: { folders: [`${b}.git/objects/`], objects: [o(".git/HEAD", 23, 1), o(".git/config", 310, 400)] },
+    [`${b}.git/objects/`]: { folders: [], objects: [o(".git/objects/pack-1.pack", 1_400_000, 2), o(".git/objects/pack-1.idx", 40_000, 2)] },
+    [`${b}node_modules/`]: { folders: [`${b}node_modules/react/`], objects: [] },
+    [`${b}node_modules/react/`]: { folders: [], objects: [o("node_modules/react/index.js", 190, 600), o("node_modules/react/package.json", 1_200, 600)] },
+    [`${b}css/`]: { folders: [], objects: [o("css/site.css", 18_400, 2), o("css/reset.css", 1_200, 900)] },
+    [`${b}js/`]: { folders: [], objects: [o("js/app.js", 42_000, 0.2), o("js/vendor.js", 88_000, 900)] },
+    [`${b}img/`]: { folders: [`${b}img/team/`], objects: [o("img/logo.svg", 3_100, 900), o("img/hero.jpg", 240_000, 3)] },
+    [`${b}img/team/`]: { folders: [], objects: [o("img/team/alice.jpg", 120_000, 5), o("img/team/bob.jpg", 118_000, 5)] },
+    [`${b}dist/`]: { folders: [], objects: [o("dist/bundle.js", 310_000, 0.2)] },
+  };
+}
+const ACME_GITIGNORE = "# build output\ndist/\n*.log\n.env.local\n";
+
+/** "Acme live": the FTP site the project deploys to (minute-precision times, as FTP lists them). */
+const acmeLive: Record<string, { folders: string[]; objects: ObjInfo[] }> = (() => {
+  const o = (key: string, size: number, age: number): ObjInfo => ({ key, size, modified: Math.floor((now - age * HOUR) / 60_000) * 60_000, etag: null, storageClass: null });
+  return {
+    "": {
+      folders: ["css/", "js/", "img/", "uploads/", "legacy/"],
+      objects: [o(".htaccess", 640, 4000), o(".env", 310, 4000), o("index.html", 4_210, 0.9), o("about.html", 2_870, 30), o("contact.html", 1_900, 200), o("old-page.html", 5_400, 3000)],
+    },
+    "css/": { folders: [], objects: [o("css/site.css", 18_400, 48), o("css/reset.css", 1_200, 800)] },
+    "js/": { folders: [], objects: [o("js/app.js", 40_500, 30), o("js/vendor.js", 88_000, 800)] },
+    "img/": { folders: [], objects: [o("img/logo.svg", 3_100, 800), o("img/old-banner.jpg", 310_000, 2000)] },
+    "uploads/": { folders: ["uploads/2025/"], objects: [] },
+    "uploads/2025/": { folders: [], objects: [o("uploads/2025/photo-1.jpg", 1_200_000, 900), o("uploads/2025/photo-2.jpg", 980_000, 880)] },
+    "legacy/": { folders: [], objects: [] },
+  };
+})();
+
 /** root id -> prefix -> listing */
 const localTree: Record<string, Record<string, { folders: string[]; objects: ObjInfo[] }>> = {
   [HOME]: {
     // dotfiles: panes hide them unless "Show hidden files" is on
-    "": { folders: [".config/", "Desktop/", "Documents/", "Downloads/", "Movies/", "Music/", "Pictures/"], objects: [localObj(".DS_Store", 6_148, 2), localObj(".zshrc", 900, 400), localObj("notes.txt", 1_200, 3)] },
+    "": { folders: [".config/", "Desktop/", "Documents/", "Downloads/", "Movies/", "Music/", "Pictures/", "Sites/"], objects: [localObj(".DS_Store", 6_148, 2), localObj(".zshrc", 900, 400), localObj("notes.txt", 1_200, 3)] },
+    // Mirror: a web project to deploy to "Acme live" (FTP, below), with a few differences
+    ...acmeProject(),
     "Pictures/": { folders: [], objects: [localObj("Pictures/beach.jpg", 3_400_000, 30), localObj("Pictures/hanoi.jpg", 2_800_000, 50)] },
     "Movies/": { folders: [], objects: [localObj("Movies/holiday.mp4", 84_000_000, 40)] },
     "Music/": { folders: [], objects: [localObj("Music/tone.wav", 88_244, 60)] },
@@ -587,6 +675,14 @@ async function handleLocal(cmd: string, a: any): Promise<unknown> {
     case "get_object_tags":
     case "put_object_tags":
       throw "This connection doesn't support that.";
+    case "get_text_preview": {
+      const o = Object.values(dirs).flatMap((d) => d.objects).find((x) => x.key === a.key);
+      if (!o) throw "This file or folder isn't there any more. It may have been moved or deleted.";
+      return a.key.endsWith(".gitignore") ? { text: ACME_GITIGNORE, truncated: false } : undefined;
+    }
+    case "mirror_md5":
+      // a made-up MD5 that stays the same for the same file
+      return Math.abs(hash(`${a.key}`)).toString(16).padStart(8, "0").repeat(4);
     case "folder_size": {
       const keys = Object.entries(dirs).filter(([k]) => k.startsWith(a.prefix)).flatMap(([, n]) => n.objects);
       return { bytes: keys.reduce((s, o) => s + o.size, 0), objects: keys.length, children: [] };

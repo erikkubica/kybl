@@ -3,6 +3,9 @@
 //! Item states: `pending` → `running` → `done` (or `copied` first for a move, until the original
 //! is deleted), `skipped` or `failed`. `skip = 1` marks a file that was already at the
 //! destination (it counts as skipped even when a move then deletes its original).
+//!
+//! A mirror's deletions are rows too (`del = 1`, see `mirror.rs`): the copying passes them by,
+//! and they are deleted at the destination once every copy is done.
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
@@ -50,6 +53,9 @@ ALTER TABLE items ADD COLUMN dst_mtime INTEGER;
 -- files that would land on one can't both be copied there
 ALTER TABLE items ADD COLUMN dst_fold TEXT;
 CREATE INDEX items_dst ON items(job_id, dst_fold);
+"#, r#"
+-- a mirror's file or folder to delete at the destination (dst_path), not a copy
+ALTER TABLE items ADD COLUMN del INTEGER NOT NULL DEFAULT 0;
 "#];
 
 pub fn now_ms() -> i64 {
@@ -74,6 +80,8 @@ pub struct NewItem {
     pub is_dir: bool,
     /// `dst_path` folded (see `storage::fold_path`); empty: the same as `dst_path`
     pub dst_fold: String,
+    /// a mirror's deletion of `dst_path` at the destination
+    pub del: bool,
 }
 
 /// One row of `items`, as the copier needs it.
@@ -172,19 +180,36 @@ pub fn delete_job(c: &mut Connection, id: &str) -> DbResult<()> {
 /// re-lists at most one page, and `INSERT OR IGNORE` drops what was already recorded.
 pub fn save_page(c: &mut Connection, job_id: &str, items: &[NewItem], cursor_json: Option<&str>) -> DbResult<()> {
     let tx = c.transaction().map_err(e)?;
-    {
-        let mut ins = tx
-            .prepare_cached(
-                "INSERT OR IGNORE INTO items(job_id, src_path, dst_path, size, src_etag, src_mtime, src_md5, is_dir, dst_fold)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            )
-            .map_err(e)?;
-        for it in items {
-            let fold = if it.dst_fold.is_empty() { &it.dst_path } else { &it.dst_fold };
-            ins.execute(params![job_id, it.src_path, it.dst_path, it.size, it.etag, it.mtime, it.md5, it.is_dir as i64, fold]).map_err(e)?;
-        }
-    }
+    insert_items(&tx, job_id, items)?;
     tx.execute("UPDATE jobs SET list_cursor_json = ?2, updated = ?3 WHERE id = ?1", params![job_id, cursor_json, now_ms()]).map_err(e)?;
+    tx.commit().map_err(e)
+}
+
+fn insert_items(tx: &rusqlite::Transaction, job_id: &str, items: &[NewItem]) -> DbResult<()> {
+    let mut ins = tx
+        .prepare_cached(
+            "INSERT OR IGNORE INTO items(job_id, src_path, dst_path, size, src_etag, src_mtime, src_md5, is_dir, dst_fold, del)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        )
+        .map_err(e)?;
+    for it in items {
+        let fold = if it.dst_fold.is_empty() { &it.dst_path } else { &it.dst_fold };
+        ins.execute(params![job_id, it.src_path, it.dst_path, it.size, it.etag, it.mtime, it.md5, it.is_dir as i64, fold, it.del as i64]).map_err(e)?;
+    }
+    Ok(())
+}
+
+/// A job whose items are known up front (a mirror), recorded already planned and all at once:
+/// it never starts walking its source the way a copy does.
+pub fn insert_planned_job(c: &mut Connection, id: &str, spec_json: &str, items: &[NewItem]) -> DbResult<()> {
+    let tx = c.transaction().map_err(e)?;
+    let now = now_ms();
+    tx.execute(
+        "INSERT INTO jobs(id, spec_json, state, created, updated, planned) VALUES (?1, ?2, ?3, ?4, ?4, 1)",
+        params![id, spec_json, JobState::Running.as_str(), now],
+    )
+    .map_err(e)?;
+    insert_items(&tx, id, items)?;
     tx.commit().map_err(e)
 }
 
@@ -203,14 +228,23 @@ pub fn reset_running(c: &Connection, job_id: Option<&str>) -> DbResult<()> {
     Ok(())
 }
 
-/// Takes up to `limit` pending items (folders first, then in path order) and marks them running.
+/// Takes up to `limit` pending items to copy (folders first, then in path order) and marks them
+/// running. A mirror's deletions wait for [`take_deletes`].
 pub fn take_pending(c: &mut Connection, job_id: &str, limit: usize) -> DbResult<Vec<Item>> {
+    take(c, job_id, limit, "del = 0 ORDER BY is_dir DESC, src_path")
+}
+
+/// Takes up to `limit` pending deletions of a mirror (files first, then folders deepest first)
+/// and marks them running.
+pub fn take_deletes(c: &mut Connection, job_id: &str, limit: usize) -> DbResult<Vec<Item>> {
+    take(c, job_id, limit, "del = 1 ORDER BY is_dir, length(dst_path) DESC, dst_path")
+}
+
+fn take(c: &mut Connection, job_id: &str, limit: usize, filter_order: &str) -> DbResult<Vec<Item>> {
     let tx = c.transaction().map_err(e)?;
     let items = {
         let mut st = tx
-            .prepare_cached(&format!(
-                "SELECT {ITEM_COLS} FROM items WHERE job_id = ?1 AND state = 'pending' ORDER BY is_dir DESC, src_path LIMIT ?2"
-            ))
+            .prepare_cached(&format!("SELECT {ITEM_COLS} FROM items WHERE job_id = ?1 AND state = 'pending' AND {filter_order} LIMIT ?2"))
             .map_err(e)?;
         st.query_map(params![job_id, limit as i64], item_of).map_err(e)?.collect::<Result<Vec<_>, _>>().map_err(e)?
     };
@@ -427,7 +461,7 @@ pub fn has_children(c: &Connection, job_id: &str, dir: &str) -> DbResult<bool> {
 
 pub fn failures(c: &Connection, job_id: &str, offset: u64, limit: u64) -> DbResult<Vec<Failure>> {
     let mut st = c
-        .prepare("SELECT src_path, COALESCE(error, '') FROM items WHERE job_id = ?1 AND state = 'failed' ORDER BY src_path LIMIT ?2 OFFSET ?3")
+        .prepare("SELECT CASE del WHEN 1 THEN dst_path ELSE src_path END, COALESCE(error, '') FROM items WHERE job_id = ?1 AND state = 'failed' ORDER BY src_path LIMIT ?2 OFFSET ?3")
         .map_err(e)?;
     let rows = st
         .query_map(params![job_id, limit as i64, offset as i64], |r| Ok(Failure { path: r.get(0)?, error: r.get(1)? }))
