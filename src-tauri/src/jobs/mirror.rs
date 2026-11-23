@@ -66,10 +66,31 @@ pub fn overlaps(spec: &JobSpec, src_dir: &str) -> bool {
     }
     let inside = |a: &str, b: &str| a.starts_with(b) || b.starts_with(a);
     if spec.src.profile_id == registry::LOCAL_ID {
-        let full = |root: &str, dir: &str| format!("{}/{dir}", root.trim_end_matches(['/', '\\']));
-        return inside(&full(&spec.src.root, src_dir), &full(&spec.dst.root, &spec.dst.dir));
+        let fold = crate::storage::case_insensitive(crate::storage::ConnKind::Local) || windows_style(&spec.src.root) || windows_style(&spec.dst.root);
+        return inside(&local_folder(&spec.src.root, src_dir, fold), &local_folder(&spec.dst.root, &spec.dst.dir, fold));
     }
     spec.src.root == spec.dst.root && inside(src_dir, &spec.dst.dir)
+}
+
+/// A root that is a Windows path (`C:\…`, `\\server\share`): its disk ignores letter case.
+fn windows_style(root: &str) -> bool {
+    root.contains('\\') || root.as_bytes().get(1) == Some(&b':')
+}
+
+/// A folder on this device as one comparable string: `/` as the only separator (Windows roots
+/// come with `\`, the folder below them with `/`), no doubled separators, always ending in `/` so
+/// `a/b/` isn't taken as inside `a/bc/`, and lowercased where the disk ignores letter case.
+fn local_folder(root: &str, dir: &str, fold_case: bool) -> String {
+    let joined = format!("{root}/{dir}").replace('\\', "/");
+    let mut out = String::from(if joined.starts_with('/') { "/" } else { "" });
+    for part in joined.split('/').filter(|p| !p.is_empty()) {
+        out.push_str(part);
+        out.push('/');
+    }
+    if fold_case {
+        out = out.to_lowercase();
+    }
+    out
 }
 
 impl JobManager {
@@ -183,5 +204,13 @@ mod tests {
         assert!(overlaps(&sp("local", "/home/me", "local", "/home/me/Sites", "acme/"), "Sites/"));
         assert!(!overlaps(&sp("local", "/home/me", "local", "/home/me/Sites", "acme-live/"), "Sites/acme/"));
         assert!(!overlaps(&sp("local", "/home/me/Sites", "local", "/home/me/Sites2", ""), ""));
+        // Windows roots come with backslashes, the folders below them with slashes (B4-1)
+        assert!(overlaps(&sp("local", r"C:\Users\me", "local", r"C:\Users\me\Sites", "out/"), "Sites/"));
+        assert!(overlaps(&sp("local", r"C:\Users\me\Sites", "local", r"C:\Users\me", "Sites/out/"), ""));
+        assert!(overlaps(&sp("local", r"C:\Users\me", "local", r"c:\users\ME\sites", ""), "Sites/"), "letter case doesn't count");
+        assert!(overlaps(&sp("local", r"\\nas\share", "local", r"\\nas\share\a", ""), "a/"));
+        assert!(overlaps(&sp("local", r"C:\", "local", r"C:\Data", ""), ""), "a drive root");
+        assert!(!overlaps(&sp("local", r"C:\Users\me", "local", r"C:\Users\me\Sites2", ""), "Sites/"));
+        assert!(!overlaps(&sp("local", r"C:\Users\me", "local", r"D:\Users\me", ""), ""));
     }
 }

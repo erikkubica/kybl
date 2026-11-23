@@ -117,10 +117,15 @@ fn replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
 pub fn read(dir: &Path, kc: &impl Keychain) -> Result<Map, String> {
     let path = dir.join(FILE);
     let mut map = Map::new();
+    // the vault file was there and opened: it is the record of what exists, deletions included
+    let mut opened = false;
     if let Some(key) = read_key(kc)? {
         match std::fs::read(&path) {
             Ok(raw) => match open(&key, &raw) {
-                Some(m) => map = m,
+                Some(m) => {
+                    map = m;
+                    opened = true;
+                }
                 None => set_aside(&path),
             },
             Err(e) if e.kind() == ErrorKind::NotFound => {}
@@ -133,14 +138,17 @@ pub fn read(dir: &Path, kc: &impl Keychain) -> Result<Map, String> {
     let Ok(old) = serde_json::from_str::<Map>(&raw) else { return Ok(map) };
     if imported_already(dir, kc, &raw) {
         // this very item was moved before and only its removal failed (a denied keychain
-        // prompt): the vault's keys are newer, so the old ones only fill in what's missing
-        let missing: Map = old.into_iter().filter(|(k, _)| !map.contains_key(k)).collect();
-        if missing.is_empty() {
+        // prompt). A vault that opened is newer in every way: a key it lacks was deleted on
+        // purpose (a removed connection, a forgotten password) and must not come back from the
+        // stale copy, so the old item is only removed (again). Only a vault that is gone or was
+        // just set aside unread takes the old keys back, since they are all that is left.
+        if opened {
             if let Err(e) = kc.delete(LEGACY_ACCOUNT) {
                 eprintln!("old keychain item not removed: {e}");
             }
             return Ok(map);
         }
+        let missing: Map = old.into_iter().filter(|(k, _)| !map.contains_key(k)).collect();
         map.extend(missing);
     } else {
         // the old item only exists before the first move, or when an older Kybl wrote it since:
@@ -393,11 +401,20 @@ mod tests {
         write(&d, &kc, &now).unwrap();
         let m = read(&d, &kc).unwrap();
         assert_eq!(m.get("p1").map(String::as_str), Some("changed"), "the stale old value doesn't win");
-        // a key only the old item has still comes in (a vault set aside, say)
+        // a connection deleted since stays deleted: the vault opened, so the old item is stale
+        // and its copy of the key doesn't come back (B3-2 / S3-3)
         let mut fewer = now.clone();
         fewer.remove("p2#oauth");
         write(&d, &kc, &fewer).unwrap();
-        assert_eq!(read(&d, &kc).unwrap(), now);
+        assert_eq!(read(&d, &kc).unwrap(), fewer);
+        assert_eq!(read(&d, &kc).unwrap(), fewer, "nor on any later start");
+        // but when the vault is lost, the old item's keys are all there is: they come back
+        std::fs::remove_file(d.join(FILE)).unwrap();
+        assert_eq!(read(&d, &kc).unwrap(), keys());
+        write(&d, &kc, &now).unwrap();
+        // and the same for a vault the key can't open (set aside, then filled from the old item)
+        std::fs::write(d.join(FILE), b"KYV2 damaged").unwrap();
+        assert_eq!(read(&d, &kc).unwrap(), keys());
         // and an older Kybl writing the old item again still counts
         let older = HashMap::from([("p1".to_string(), "from-older".to_string())]);
         kc.items.lock().unwrap().insert(LEGACY_ACCOUNT.into(), serde_json::to_string(&older).unwrap());

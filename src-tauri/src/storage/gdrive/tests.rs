@@ -446,6 +446,53 @@ async fn shortcuts_to_folders_list_as_links_and_walks_stay_out() {
     assert_eq!(keys.len(), 2, "{keys:?}");
 }
 
+/// B3-1: a shortcut to a file has no size or MD5 of its own; it lists with its target's, which
+/// is what reading it gives (a copy planned from the listing expects those bytes).
+#[tokio::test]
+async fn shortcuts_to_files_list_with_their_targets_size() {
+    let mut link = json!({ "id": "s2", "name": "Report.pdf", "mimeType": api::SHORTCUT, "version": "3", "parents": ["root"], "modifiedTime": "2023-01-01T00:00:00Z" });
+    link["shortcutDetails"] = json!({ "targetId": "t1", "targetMimeType": "application/pdf" });
+    let mut target = file("t1", "Elsewhere.pdf", "application/pdf", "2024-05-01T00:00:00Z");
+    target["size"] = json!("42");
+    target["parents"] = json!(["other"]);
+    let mock = drive_with(vec![link, target]).await;
+    let g = GDrive::with_base(api(fixed("tok")), &mock.base);
+    let page = g.list(MY_DRIVE, "", None).await.unwrap();
+    let e = page.objects.iter().find(|e| e.key == "Report.pdf").expect("the shortcut");
+    assert_eq!(e.size, 42);
+    assert_eq!(e.hashes.md5.as_deref(), Some("md5-t1"));
+    assert_eq!(e.etag.as_deref(), Some("md5-t1"));
+    assert_eq!(e.id.as_deref(), Some("s2"), "still the shortcut");
+    let fresh = GDrive::with_base(api(fixed("tok")), &mock.base);
+    assert_eq!(fresh.stat(MY_DRIVE, "Report.pdf").await.unwrap().unwrap().size, 42);
+}
+
+/// B3-3: a changed file under a parent this account can't read is "not here", not a failed
+/// batch, and My Drive's feed doesn't walk up shared drives' files.
+#[tokio::test]
+async fn drive_changes_skip_unreadable_parents_and_shared_drives() {
+    let mock = Mock::start(|req| match req.path.as_str() {
+        "/drive/v3/changes" => Resp::json(
+            200,
+            &json!({ "newStartPageToken": "C2", "changes": [
+                { "fileId": "f1", "file": { "id": "f1", "name": "a.txt", "mimeType": "text/plain", "parents": ["hidden"] } },
+                { "fileId": "f2", "file": { "id": "f2", "name": "b.txt", "mimeType": "text/plain", "parents": ["sd"], "driveId": "SD1" } },
+                { "fileId": "f3", "file": { "id": "f3", "name": "c.txt", "mimeType": "text/plain", "parents": ["0Real"], "size": "3" } },
+            ] }),
+        ),
+        "/drive/v3/files/root" => Resp::json(200, &json!({ "id": "0Real" })),
+        "/drive/v3/files/hidden" => Resp::status(403),
+        _ => Resp::status(500),
+    })
+    .await;
+    let g = GDrive::with_base(api(fixed("tok")), &mock.base);
+    let b = g.changes(MY_DRIVE, Some("C1".into())).await.unwrap();
+    assert_eq!(b.cursor, "C2");
+    let seen: Vec<(Option<&str>, &str, bool)> = b.changes.iter().map(|c| (c.id.as_deref(), c.key.as_str(), c.entry.is_some())).collect();
+    assert_eq!(seen, vec![(Some("f1"), "", false), (Some("f2"), "", false), (Some("f3"), "c.txt", true)]);
+    assert!(mock.seen("/drive/v3/files/sd").is_empty(), "no walk up a shared drive");
+}
+
 #[tokio::test]
 async fn renaming_at_the_top_of_my_drive_is_not_a_move() {
     let mut f = file("f1", "a.txt", "text/plain", "2023-01-01T00:00:00Z");

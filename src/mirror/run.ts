@@ -11,7 +11,7 @@ import { api, errMessage, jobsApi, type Capabilities, type JobSpec } from "../ap
 import { capsFor } from "../useCaps";
 import { refreshJobs, startMigrations } from "../jobs/useMigrations";
 import { makeMatcher } from "./ignore";
-import { caseInsensitiveKind, defaultTolerance, planIsEmpty, planMirror, type Listing, type MirrorPlan } from "./plan";
+import { caseInsensitiveKind, defaultTolerance, foldersOverlap, planIsEmpty, planMirror, type Listing, type MirrorPlan } from "./plan";
 import { getMirror, markRun, type MirrorConfig } from "./store";
 import { Cancelled, walk, type Place } from "./walk";
 
@@ -58,9 +58,7 @@ export const canChecksum = (a: Capabilities | null, b: Capabilities | null) =>
 /** Why these two folders can't be mirrored, or null. */
 export function mirrorBlocked(src: Place, dst: Place): string | null {
   if (src.profileId !== dst.profileId) return null;
-  const inside = (a: string, b: string) => a.startsWith(b) || b.startsWith(a);
-  const full = (p: Place) => `${p.root.replace(/[/\\]+$/, "")}/${p.dir}`;
-  if (src.profileId === "local" ? inside(full(src), full(dst)) : src.root === dst.root && inside(src.dir, dst.dir))
+  if (foldersOverlap(src, dst, caseInsensitiveKind("local", typeof navigator === "undefined" ? "" : navigator.userAgent)))
     return src.root === dst.root && src.dir === dst.dir ? "That's the same folder." : "One folder is inside the other. Pick two separate folders.";
   return null;
 }

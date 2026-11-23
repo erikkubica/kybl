@@ -308,6 +308,15 @@ fn mass_deletions_wait_for_a_confirmation() {
         assert_eq!(r.pending, 0);
         assert_eq!(files(&p.remote_dir).len(), 40);
         assert!(!p.db.cursor("m").unwrap().confirm_deletes, "a confirmation is used once");
+
+        // held deletions here came from the other side's changes: that listing isn't handled
+        let handled = p.db.cursor("m").unwrap().last_full_scan;
+        assert!(handled.is_some());
+        for n in 0..40 {
+            fs::remove_file(p.r(&format!("f{:03}.txt", n + 60))).unwrap();
+        }
+        assert_eq!(p.twoway().await.pending, 40);
+        assert_eq!(p.db.cursor("m").unwrap().last_full_scan, handled, "read again until confirmed");
     });
 }
 
@@ -432,6 +441,9 @@ fn a_run_with_problems_doesnt_mark_the_other_side_handled() {
     run(async {
         let p = pair().await;
         write(&p.l("locked/a.txt"), "a");
+        // the other side changed under the folder this computer can't read: left alone, so the
+        // next quick run must not start from this listing
+        write(&p.r("locked/b.txt"), "b");
         set_mode(&p.l("locked"), 0o000);
         let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(true, None).await.unwrap();
         set_mode(&p.l("locked"), 0o755);
@@ -440,6 +452,31 @@ fn a_run_with_problems_doesnt_mark_the_other_side_handled() {
         let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(true, None).await.unwrap();
         assert!(r.errors.is_empty(), "{:?}", r.errors);
         assert!(p.db.cursor("m").unwrap().last_full_scan.is_some());
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn a_standing_notice_alone_doesnt_hold_the_other_side_back() {
+    run(async {
+        // B4-2: an unreadable folder the other side didn't touch is a notice, not a failure of
+        // the run: the listing still counts as handled, so quick runs don't re-read it forever
+        let p = pair().await;
+        write(&p.l("locked/a.txt"), "a");
+        write(&p.l("open.txt"), "o");
+        p.twoway().await;
+        set_mode(&p.l("locked"), 0o000);
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(true, None).await.unwrap();
+        set_mode(&p.l("locked"), 0o755);
+        assert!(r.errors.iter().any(|e| e.contains("couldn't read locked")), "{:?}", r.errors);
+        let first = p.db.cursor("m").unwrap().last_full_scan;
+        assert!(first.is_some());
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        set_mode(&p.l("locked"), 0o000);
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(true, None).await.unwrap();
+        set_mode(&p.l("locked"), 0o755);
+        assert!(!r.errors.is_empty());
+        assert_ne!(p.db.cursor("m").unwrap().last_full_scan, first, "this listing counts as handled too");
     });
 }
 
@@ -499,5 +536,31 @@ fn the_remote_trash_keeps_every_version_deleted_the_same_day() {
         assert_eq!(read(&trash.join("a (2).txt")), "second");
         assert_eq!(numbered("t/d/x.tar.gz", 3), "t/d/x.tar (3).gz");
         assert_eq!(numbered("t/d/.env", 2), "t/d/.env (2)");
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn downloads_never_write_through_a_linked_folder() {
+    run(async {
+        // S2-1: `work` here is a link to a folder outside the synced one; the scan doesn't
+        // follow it, so `work/report.txt` on the other side looks new here
+        let p = pair().await;
+        let outside = tmp("outside");
+        write(&outside.join("keep.txt"), "mine");
+        std::os::unix::fs::symlink(&outside, p.local.join("work")).unwrap();
+        write(&p.r("work/report.txt"), "theirs");
+        write(&p.r("ok.txt"), "ok");
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(true, None).await.unwrap();
+        assert!(r.errors.iter().any(|e| e.contains("is a link")), "{:?}", r.errors);
+        assert_eq!(read(&p.l("ok.txt")), "ok");
+        assert!(!outside.join("report.txt").exists(), "nothing written outside the synced folder");
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).download().await.unwrap();
+        assert!(r.errors.iter().any(|e| e.contains("is a link")), "{:?}", r.errors);
+        assert!(!outside.join("report.txt").exists());
+        assert_eq!(read(&outside.join("keep.txt")), "mine");
+        assert!(local::link_on_the_way(&p.local, &p.local.join("a/b.txt")).is_none(), "folders not made yet are fine");
+        assert!(local::link_on_the_way(&p.local, &outside.join("x")).is_some(), "outside the folder");
+        let _ = fs::remove_dir_all(&outside);
     });
 }

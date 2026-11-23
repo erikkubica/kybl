@@ -76,17 +76,13 @@ pub fn safe_rel(rel: &str) -> bool {
 
 /// [`safe_rel`] for Windows or elsewhere. On Windows a name with `:` is a drive (`C:` replaces the
 /// folder it is joined to) or an alternate stream, and a device name (`NUL`, `COM1.txt`) isn't a
-/// file: neither may come from a remote key.
+/// file, and a name ending in a dot or space is trimmed to another file's name (`a.txt.` would
+/// land on `a.txt`): none of them may come from a remote key (see [`crate::dest::windows_unfit`]).
 fn safe_rel_on(rel: &str, windows: bool) -> bool {
-    let device = |p: &str| {
-        let stem = p.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
-        matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
-            || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit())
-    };
     !rel.is_empty()
         && !rel.contains('\0')
         && !rel.contains('\\')
-        && rel.split('/').all(|p| !p.is_empty() && p != "." && p != ".." && !(windows && (p.contains(':') || device(p))))
+        && rel.split('/').all(|p| !p.is_empty() && p != "." && p != ".." && !(windows && (p.contains(':') || crate::dest::windows_unfit(p))))
 }
 
 /// `a` and `b` name one file only by letter case: the same file on a disk that ignores case (so
@@ -115,6 +111,41 @@ pub fn same_entry(a: &Path, b: &Path) -> bool {
 
 fn rel_key(p: &Path) -> String {
     p.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/")
+}
+
+/// A link (or, on Windows, a junction) between `root` and `path`: a
+/// folder of the path, below the root, that leads somewhere else. Writing, renaming or deleting
+/// through it would act outside the synced folder, so sync refuses. A path outside the root
+/// counts as one. Folders that aren't there yet are fine (they are made as plain folders).
+pub fn link_on_the_way(root: &Path, path: &Path) -> Option<PathBuf> {
+    let Ok(rel) = path.strip_prefix(root) else { return Some(path.to_path_buf()) };
+    let mut at = root.to_path_buf();
+    let mut parts = rel.components().peekable();
+    while let Some(part) = parts.next() {
+        if parts.peek().is_none() {
+            break; // the file itself: replaced by a rename, never written through
+        }
+        at.push(part);
+        match std::fs::symlink_metadata(&at) {
+            // on Windows `is_symlink` covers junctions too (name-surrogate reparse points), but
+            // not OneDrive's placeholders, which are ordinary folders here
+            Ok(m) if m.file_type().is_symlink() => return Some(at),
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    None
+}
+
+/// [`link_on_the_way`] as an error to show for that file.
+pub fn no_link_on_the_way(root: &Path, path: &Path) -> Result<(), String> {
+    match link_on_the_way(root, path) {
+        None => Ok(()),
+        Some(link) => Err(format!(
+            "{} is a link to another place, and Kybl doesn't sync through links, so this file was left alone.",
+            link.strip_prefix(root).map(|r| r.display().to_string()).unwrap_or_else(|_| link.display().to_string())
+        )),
+    }
 }
 
 pub fn local_path_of(root: &Path, rel: &str) -> PathBuf {
@@ -435,14 +466,15 @@ mod tests {
 
     #[test]
     fn remote_keys_that_would_leave_the_folder_on_windows_are_refused() {
-        for bad in ["C:/Users/x/evil.txt", "a/C:", "a/b:c.txt", "NUL", "dir/com1.txt", "Lpt9", "aux.tar.gz", "CON "] {
+        for bad in ["C:/Users/x/evil.txt", "a/C:", "a/b:c.txt", "NUL", "dir/com1.txt", "Lpt9", "aux.tar.gz", "CON ", "budget.xlsx.", "budget.xlsx ", "dir./a.txt", "dir /a.txt"] {
             assert!(!safe_rel_on(bad, true), "{bad:?}");
         }
         for ok in ["a/b.txt", "console.txt", "com.txt", "COM10", "nul-ish/x", "LPTX"] {
             assert!(safe_rel_on(ok, true), "{ok:?}");
         }
         // elsewhere a colon is an ordinary character
-        assert!(safe_rel_on("12:30 notes.txt", false) && safe_rel_on("NUL", false));
+        assert!(safe_rel_on("12:30 notes.txt", false) && safe_rel_on("NUL", false) && safe_rel_on("a.txt.", false));
+        assert!(safe_rel_on(".env", true) && safe_rel_on("a..b/.git/x", true));
         for bad in ["", "../x", "a//b", "a\\b", "./a"] {
             assert!(!safe_rel_on(bad, false) && !safe_rel_on(bad, true), "{bad:?}");
         }

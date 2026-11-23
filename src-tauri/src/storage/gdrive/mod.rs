@@ -322,9 +322,35 @@ impl GDrive {
 
     /// The metadata of what a path found (fetched when the cache only had the id).
     async fn file_of(&self, f: &Found) -> SResult<DFile> {
-        match &f.file {
-            Some(d) => Ok(d.clone()),
-            None => self.d().get(&f.node.own_id, FILE_FIELDS).await,
+        let mut d = match &f.file {
+            Some(d) => d.clone(),
+            None => self.d().get(&f.node.own_id, FILE_FIELDS).await?,
+        };
+        self.follow_shortcuts(std::slice::from_mut(&mut d)).await;
+        Ok(d)
+    }
+
+    /// Shortcuts to files take the size, MD5, time and version of the file they point to: a
+    /// shortcut has none of its own, and reading one reads the target, so a copy planned from
+    /// a listing must expect the target's bytes. A target that can't be read keeps the shortcut's.
+    async fn follow_shortcuts(&self, files: &mut [DFile]) {
+        let wanted: Vec<(usize, String)> = files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.mime_type == api::SHORTCUT && !f.is_folder() && f.size.is_none())
+            .map(|(i, f)| (i, f.target().0.to_string()))
+            .filter(|(_, id)| !id.is_empty())
+            .collect();
+        if wanted.is_empty() {
+            return;
+        }
+        let d = self.d();
+        let found: Vec<(usize, SResult<DFile>)> =
+            futures_util::stream::iter(wanted).map(|(i, id)| { let d = &d; async move { (i, d.get(&id, api::TARGET_FIELDS).await) } }).buffer_unordered(8).collect().await;
+        for (i, t) in found {
+            if let Ok(t) = t {
+                files[i].take_target(t);
+            }
         }
     }
 
@@ -364,7 +390,14 @@ impl GDrive {
             let (name, parent) = match names.get(&id) {
                 Some(x) => x.clone(),
                 None => {
-                    let p = self.d().get(&id, "id,name,parents").await?;
+                    // a parent this account can't see (or one deleted meanwhile) isn't a folder
+                    // of this root: the file is elsewhere, and one such answer mustn't fail
+                    // (and so replay) the whole batch
+                    let p = match self.d().get(&id, "id,name,parents").await {
+                        Ok(p) => p,
+                        Err(e) if matches!(e.kind, ErrKind::NotFound | ErrKind::PermissionDenied) => return Ok(None),
+                        Err(e) => return Err(e),
+                    };
                     let x = (p.name.clone(), p.parents.first().cloned());
                     names.insert(id.clone(), x.clone());
                     x
@@ -508,6 +541,7 @@ impl Storage for GDrive {
             oldest_first(&mut list.files[i..j]);
             i = j;
         }
+        self.follow_shortcuts(&mut list.files).await;
         let items: Vec<(String, bool)> = list.files.iter().map(|f| (f.name.clone(), f.is_folder())).collect();
         // what this page shows is real; numbers for duplicates skip those and any other real name
         let known: HashMap<(bool, String), bool> = items.iter().map(|(n, f)| ((*f, n.clone()), true)).collect();
@@ -756,7 +790,7 @@ impl Storage for GDrive {
             let token = v["startPageToken"].as_str().unwrap_or_default().to_string();
             return Ok(ChangeBatch { changes: vec![], cursor: token, has_more: false });
         };
-        let fields = format!("nextPageToken,newStartPageToken,changes(fileId,removed,file({FILE_FIELDS},trashed))");
+        let fields = format!("nextPageToken,newStartPageToken,changes(fileId,removed,file({FILE_FIELDS},trashed,driveId))");
         let url = format!(
             "{}/drive/v3/changes?pageToken={}&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true&fields={}{drive}",
             self.base,
@@ -768,17 +802,22 @@ impl Storage for GDrive {
         let mut changes = Vec::new();
         for c in v["changes"].as_array().into_iter().flatten() {
             let id = c["fileId"].as_str().map(str::to_string);
-            let gone = c["removed"].as_bool() == Some(true) || c["file"]["trashed"].as_bool() == Some(true);
+            // My Drive's feed also brings every shared drive's changes: those files aren't in it
+            // (one moved out of My Drive is gone from it), so no walk up their folders
+            let elsewhere = root == MY_DRIVE && c["file"]["driveId"].as_str().is_some_and(|d| !d.is_empty());
+            let gone = elsewhere || c["removed"].as_bool() == Some(true) || c["file"]["trashed"].as_bool() == Some(true);
             if gone {
                 changes.push(Change { key: String::new(), entry: None, id });
                 continue;
             }
-            let Ok(f) = serde_json::from_value::<DFile>(c["file"].clone()) else { continue };
-            match self.path_in_root(root, &f, &mut names).await? {
-                Some(key) => changes.push(Change { entry: Some(f.entry(key.clone())), key, id }),
+            let Ok(mut f) = serde_json::from_value::<DFile>(c["file"].clone()) else { continue };
+            let Some(at) = self.path_in_root(root, &f, &mut names).await? else {
                 // not (or no longer) in this drive: gone from it, as far as anyone here knows
-                None => changes.push(Change { key: String::new(), entry: None, id }),
-            }
+                changes.push(Change { key: String::new(), entry: None, id });
+                continue;
+            };
+            self.follow_shortcuts(std::slice::from_mut(&mut f)).await;
+            changes.push(Change { entry: Some(f.entry(at.clone())), key: at, id });
         }
         if !changes.is_empty() {
             self.cache.forget_root(root);

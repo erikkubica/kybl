@@ -195,6 +195,21 @@ impl Dropbox {
         }
     }
 
+    /// After `upload_session/finish` answered "not found": the session may be gone because an
+    /// earlier try of this very finish committed it and only its answer was lost (a dropped
+    /// connection, or a 502/503/504 the HTTP layer sent again). The file is taken as uploaded
+    /// when it is there now with exactly this size, the time this upload set (when it set one),
+    /// and was saved by Dropbox in the last few minutes.
+    async fn landed(&self, path: &str, size: u64, opts: &WriteOpts<'_>) -> Option<Meta> {
+        const RECENT_MS: i64 = 15 * 60 * 1000;
+        let m = self.rpc("files/get_metadata", &json!({ "path": path })).await.ok()?.ok()?;
+        let m: Meta = serde_json::from_value(m).ok()?;
+        let ms = |s: &Option<String>| s.as_deref().and_then(extras::parse_rfc3339);
+        let fresh = ms(&m.server_modified).is_some_and(|t| (extras::now_ms() - t).abs() < RECENT_MS);
+        let time_ok = opts.modified.is_none_or(|want| ms(&m.client_modified).is_some_and(|t| t / 1000 == want / 1000));
+        (m.tag == "file" && m.size == Some(size as i64) && fresh && time_ok).then_some(m)
+    }
+
     fn commit(path: &str, opts: &WriteOpts<'_>) -> Value {
         let mode = match &opts.precondition {
             Precondition::IfMatch(rev) => json!({ ".tag": "update", "update": rev }),
@@ -262,7 +277,15 @@ impl Dropbox {
                         session = None;
                         continue;
                     }
-                    _ if route.ends_with("finish") => return Ok(Some(Err((code, v)))),
+                    _ if route.ends_with("finish") => {
+                        if code.contains("not_found")
+                            && let Some(m) = self.landed(path, end, opts).await
+                        {
+                            progress(end, end);
+                            return Ok(Some(Ok(m)));
+                        }
+                        return Ok(Some(Err((code, v))));
+                    }
                     _ => return Err(crate::oauth::http::error_of(ConnKind::Dropbox, 409, &b)),
                 }
             }
@@ -291,7 +314,14 @@ impl Dropbox {
                 let res = self.content_call("files/upload_session/finish", &arg, Bytes::new(), None).await?;
                 if res.status().as_u16() == 409 {
                     let b = res.bytes().await.unwrap_or_default();
-                    return Ok(Some(Err(dbx_error(&b))));
+                    let (code, v) = dbx_error(&b);
+                    if code.contains("not_found")
+                        && let Some(m) = self.landed(path, offset, opts).await
+                    {
+                        progress(offset, offset);
+                        return Ok(Some(Ok(m)));
+                    }
+                    return Ok(Some(Err((code, v))));
                 }
                 let v: Value = read_json(ConnKind::Dropbox, check(ConnKind::Dropbox, res).await?).await?;
                 progress(offset, offset);
@@ -563,6 +593,11 @@ impl Storage for Dropbox {
     }
 
     async fn copy(&self, from: &Loc, to: &Loc, is_dir: bool) -> SResult<()> {
+        // Dropbox ignores letter case: "A.txt" is the source itself, and clearing the target
+        // would delete it
+        if dbx_path(&from.path)?.to_lowercase() == dbx_path(&to.path)?.to_lowercase() {
+            return Err(StorageError::other("Source and destination are the same"));
+        }
         self.clear_target(&to.path, is_dir).await?;
         self.call("files/copy_v2", &json!({ "from_path": dbx_path(&from.path)?, "to_path": dbx_path(&to.path)?, "autorename": false })).await.map(|_| ())
     }
@@ -782,6 +817,47 @@ mod tests {
         let opts = WriteOpts { part_size: Some(1024), precondition: Precondition::IfMatch("old".into()), ..Default::default() };
         let out = d.write("", "big.bin", WriteSource::Bytes(data.clone().into()), opts, &|_, _| {}, &cancel).await.unwrap();
         assert!(matches!(out, WriteOutcome::Conflict(Some(ref e)) if e.etag.as_deref() == Some("cur")));
+    }
+
+    /// B3-5: the finish committed but its answer was lost (a 503 the HTTP layer sends again):
+    /// the retry's "not found" is the session already used, and the file is there.
+    #[tokio::test]
+    async fn a_finish_whose_answer_was_lost_counts_as_done() {
+        let finishes = Arc::new(AtomicU64::new(0));
+        let f2 = finishes.clone();
+        let mock = Mock::start(move |req| match req.path.as_str() {
+            "/content/files/upload_session/start" => Resp::json(200, &json!({ "session_id": "S" })),
+            "/content/files/upload_session/append_v2" => Resp::json(200, &Value::Null),
+            "/content/files/upload_session/finish" => match f2.fetch_add(1, Ordering::SeqCst) {
+                0 => Resp::status(503).header("retry-after", "0"),
+                _ => Resp::json(409, &json!({ "error_summary": "lookup_failed/not_found/..", "error": { ".tag": "lookup_failed", "lookup_failed": { ".tag": "not_found" } } })),
+            },
+            "/rpc/files/get_metadata" => Resp::json(200, &json!({ ".tag": "file", "name": "big.bin", "path_display": "/big.bin", "rev": "new", "size": 3000,
+                "client_modified": "2024-01-01T00:00:00Z", "server_modified": extras::format_rfc3339(extras::now_ms()) })),
+            _ => Resp::status(404),
+        })
+        .await;
+        let d = Dropbox::with_base(api(), format!("{}/rpc", mock.base), format!("{}/content", mock.base));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let modified = extras::parse_rfc3339("2024-01-01T00:00:00Z");
+        let opts = WriteOpts { part_size: Some(1024), modified, ..Default::default() };
+        let out = d.write("", "big.bin", WriteSource::Bytes(vec![7u8; 3000].into()), opts, &|_, _| {}, &cancel).await.unwrap();
+        assert!(matches!(out, WriteOutcome::Done(ref e) if e.etag.as_deref() == Some("new")));
+        assert_eq!(finishes.load(Ordering::SeqCst), 2);
+        // a file of another size there is not this upload
+        finishes.store(0, Ordering::SeqCst);
+        let opts = WriteOpts { part_size: Some(1024), modified, ..Default::default() };
+        assert!(d.write("", "big.bin", WriteSource::Bytes(vec![7u8; 2999].into()), opts, &|_, _| {}, &cancel).await.is_err());
+    }
+
+    /// B3-6: Dropbox ignores case, so "A.txt" is the source itself: clearing it would delete it.
+    #[tokio::test]
+    async fn copying_onto_a_case_only_different_name_deletes_nothing() {
+        let mock = Mock::start(|_| Resp::json(200, &json!({ ".tag": "file", "name": "a.txt", "size": 1 }))).await;
+        let d = Dropbox::with_base(api(), format!("{}/rpc", mock.base), format!("{}/content", mock.base));
+        let e = d.copy(&Loc::new("", "docs/a.txt"), &Loc::new("", "Docs/A.txt"), false).await.unwrap_err();
+        assert!(e.message.contains("same"), "{}", e.message);
+        assert!(mock.seen("/").is_empty(), "nothing asked of Dropbox, nothing deleted");
     }
 
     #[tokio::test]
