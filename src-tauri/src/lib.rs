@@ -1,4 +1,6 @@
 mod commands;
+// .zip / .tar / .tar.gz: browse like a folder, extract, compress
+mod archive;
 // WP-C: phone backup (camera roll and folders to any connection)
 mod backup;
 // WP-B1: SQLite open-with-migrations helper, and copy/move jobs between connections
@@ -228,6 +230,9 @@ pub fn run() {
             filecache::cache_usage,
             filecache::clear_caches,
             // WP0: storage core
+            archive::archive_open,
+            archive::archive_extract,
+            archive::archive_compress,
             storage::generic_cmds::list_roots,
             storage::generic_cmds::connection_capabilities,
             storage::generic_cmds::local_path,

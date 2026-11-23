@@ -4,7 +4,7 @@
  * ids the keyboard and the menu bar run (see desktop/useShortcuts).
  */
 import { asExport } from "../connections/native";
-import { createElement } from "react";
+import { createElement, useEffect } from "react";
 import { api, errMessage } from "../api";
 import { peekSyncMappings, reloadSync, syncApi, type SyncMapping } from "../sync";
 import { deviceName } from "../jobs/LocationPicker";
@@ -24,6 +24,9 @@ import type { MenuItem } from "../components/Dialogs";
 import type { Entry } from "../types";
 import { itemClipboard } from "../desktop/clipboard";
 import type { PaneCore, PaneEnv } from "./usePane";
+import { isArchiveName } from "../archive/archive";
+import { readOnlyMenu } from "../archive/archiveOps";
+import { canDiff, notePanePick, openDiff, otherPanePick } from "../viewers/diff";
 
 /** localStorage: the first "Keep on this device" explained what two-way sync means */
 const KEEP_EXPLAINED = "kybl.keepExplained";
@@ -36,6 +39,12 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   const { toast } = dialogs;
   // what this connection can do: actions it can't take stay out of the menus
   const { caps } = pane;
+  // an archive opened like a folder: read-only, so nothing that writes shows up
+  const ro = pane.archive.inArchive ? readOnlyMenu : <T,>(m: T[]) => m;
+  // "Compare with…" in another pane needs to know the one file selected here
+  const pick = selectedEntries.length === 1 && selectedEntries[0].kind === "file" && profile && bucket != null ? selectedEntries[0] : null;
+  notePanePick(pane.id, pick && profile && bucket != null ? { profileId: profile.id, bucket, key: pick.key, name: pick.name, size: pick.size, where: pane.bucketLabel ?? bucket } : null);
+  useEffect(() => () => notePanePick(pane.id, null), [pane.id]);
   // drives: a folder that is one offers Show in Finder / Eject instead of "Mount as drive…"
   const { mounts } = useMounts();
   const canShare = caps?.share !== "none";
@@ -53,6 +62,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   /** Enter / ⌘O / ⌘↓: a folder opens in the list; files open in their apps (a few at most). */
   const openSelection = (list: Entry[] = selectedEntries) => {
     if (list.length === 1 && list[0].kind === "folder") return pane.navigate(list[0].key);
+    if (list.length === 1 && isArchiveName(list[0].name)) return void pane.archive.open(list[0]);
     const files = list.filter((e) => e.kind === "file");
     // one document opens in the app's editor; several go to their own apps
     if (files.length === 1 && env.openDocument?.(files[0])) return;
@@ -310,7 +320,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     dialogs.menu(
       ev.clientX,
       ev.clientY,
-      tidyMenu([
+      tidyMenu(ro([
         { type: "item", label: "New folder…", icon: "folder-plus", hint: "⇧⌘N", onClick: () => ops.askNewFolder() },
         { type: "item", label: "Upload files…", icon: "upload", hint: "⌘U", onClick: () => ops.pickAndUpload(false) },
         { type: "item", label: "Upload folder…", icon: "folder", hint: "⇧⌘U", onClick: () => ops.pickAndUpload(true) },
@@ -330,7 +340,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
         ...placeItems(),
         { type: "sep" },
         ...(env.splitItems?.() ?? []),
-      ]),
+      ])),
     );
   };
 
@@ -343,7 +353,11 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     const files = list.filter((x) => x.kind === "file");
     const folders = list.filter((x) => x.kind === "folder");
     const clip = clipFor();
-    const items = tidyMenu([
+    // two text files, or this one and the one selected in another pane: the diff viewer
+    const other = one && e.kind === "file" ? otherPanePick(pane.id) : null;
+    const side = (x: { key: string; name: string }, where: string, pid = profile.id, b = bucket) => ({ profileId: pid, bucket: b, key: x.key, name: x.name, label: `${x.name} · ${where}` });
+    const here = pane.bucketLabel ?? bucket;
+    const items = tidyMenu(ro([
       folder
         ? { type: "item", label: "Open", icon: "folder", hint: "↵", onClick: () => pane.navigate(e.key) }
         : { type: "item", label: files.length > 1 ? `Open ${files.length} files` : "Open", icon: "reveal", hint: "⌘O", disabled: !files.length, onClick: () => openSelection(list) },
@@ -366,6 +380,15 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       folder && clip && { type: "item", label: `Paste into “${e.name}”`, icon: "copy", onClick: () => ops.paste(e.key) },
       // dual pane: to the other pane's folder (F5 / F6)
       ...(env.extraItemItems?.(list) ?? []),
+      // .zip / .tar / .tar.gz: Extract here, Extract to…, Compress (src/archive)
+      ...pane.archive.items(list),
+      list.length === 2 && files.length === 2 && files.every((f) => canDiff(f)) && { type: "item", label: "Compare files", icon: "compare", onClick: () => void openDiff(side(files[0], here), side(files[1], here)) },
+      !!other && canDiff(e) && canDiff(other) && other.key !== e.key && {
+        type: "item",
+        label: `Compare with “${other.name}”`,
+        icon: "compare",
+        onClick: () => void openDiff(side(e, here), side(other, other.where, other.profileId, other.bucket)),
+      },
       // one picker for any folder: this connection's (any bucket or drive), or another connection
       { type: "item", label: "Copy or move to…", icon: "move", onClick: () => askMove(list, "copy") },
       !!prefix && !search && {
@@ -388,7 +411,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       { type: "sep" },
       { type: "item", label: one ? "Rename…" : `Rename ${list.length} items…`, icon: "edit", hint: "F2", onClick: () => rename(list) },
       { type: "item", label: list.length > 1 ? `Delete ${list.length} items…` : "Delete…", icon: "trash", hint: "⌘⌫", danger: true, onClick: () => ops.askDelete(list) },
-    ]);
+    ]));
     dialogs.menu(ev.clientX, ev.clientY, items);
   };
 

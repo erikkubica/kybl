@@ -13,6 +13,11 @@ type NewTransfer = Pick<Transfer, "kind" | "name" | "profileId" | "bucket" | "ke
    * than a saved HEAD ("Open" in another app).
    */
   etag?: string | null;
+  /**
+   * Work of another kind (compress, extract) shown as one row: started (and retried) by calling
+   * this with the row's id; the backend reports on it with the same `transfer` events.
+   */
+  run?: (id: string) => Promise<unknown>;
 };
 
 /** Finished transfers kept in the list once a batch is over; older successful ones are dropped. */
@@ -39,6 +44,8 @@ const overwriteIds = new Set<string>();
 const requested = new Map<string, string>();
 /** The listed version of each download, by id (see `NewTransfer.etag`). */
 const listed = new Map<string, { etag: string; size: number }>();
+/** Rows started by their own command (see `NewTransfer.run`), by id. */
+const runners = new Map<string, (id: string) => Promise<unknown>>();
 /** Callers waiting for a transfer to end (see `whenFinished`). */
 const waiters = new Map<string, ((t: Transfer) => void)[]>();
 
@@ -175,7 +182,9 @@ function adoptRunning() {
 
 async function start(t: Transfer) {
   try {
-    if (t.kind === "upload") {
+    const run = runners.get(t.id);
+    if (run) await run(t.id);
+    else if (t.kind === "upload") {
       await api.startUpload(t.id, t.profileId, t.bucket, t.key, t.local);
     } else {
       // the backend picks a free name ("photo (1).jpg") unless told to overwrite; keep the path it
@@ -208,6 +217,7 @@ function clearWhere(pick: (t: Transfer) => boolean) {
     overwriteIds.delete(id);
     requested.delete(id);
     listed.delete(id);
+    runners.delete(id);
   }
   dirty = true;
   flush();
@@ -227,8 +237,9 @@ function requeue(id: string): Transfer | null {
 const actions = {
   add(items: (NewTransfer & { total?: number })[]): Transfer[] {
     listenOnce();
-    const created: Transfer[] = items.map(({ overwrite, etag, ...it }) => {
+    const created: Transfer[] = items.map(({ overwrite, etag, run, ...it }) => {
       const id = crypto.randomUUID();
+      if (run) runners.set(id, run);
       if (overwrite) overwriteIds.add(id);
       if (it.kind === "download") requested.set(id, it.local);
       if (it.kind === "download" && etag && it.total != null) listed.set(id, { etag, size: it.total });

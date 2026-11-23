@@ -775,6 +775,11 @@ pub trait Storage: Send + Sync + 'static {
         None
     }
 
+    /// SFTP connections can also run commands on the server (archives zip and unpack there).
+    fn as_sftp(&self) -> Option<&sftp::SftpBackend> {
+        None
+    }
+
     /// Where this connection's data lives (e.g. an S3 endpoint), so two connections saved for the
     /// same place are known to be the same storage. None when unknown.
     fn place_id(&self) -> Option<String> {

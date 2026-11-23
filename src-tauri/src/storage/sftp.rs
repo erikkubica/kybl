@@ -8,6 +8,7 @@
 //! One SSH connection per backend carries every request (SFTP runs many at once over it). It
 //! sends keepalives, and a dropped connection is opened again on the next request.
 
+pub mod exec;
 pub mod hostkey;
 pub mod replace;
 
@@ -583,6 +584,10 @@ impl Storage for SftpBackend {
 
     fn caps(&self) -> &Capabilities {
         &self.caps
+    }
+
+    fn as_sftp(&self) -> Option<&SftpBackend> {
+        Some(self)
     }
 
     /// The server and the folder paths start from (two connections to one server and folder

@@ -1,0 +1,163 @@
+/* =========================================================================
+   Text diff (DiffView.tsx). Loaded with its chunk; built on the app tokens,
+   so light and dark follow Settings.
+   ========================================================================= */
+.modal-backdrop.dif-host {
+  all: unset;
+}
+.dif {
+  --dif-add: color-mix(in srgb, var(--ok) 11%, var(--bg));
+  --dif-add-strong: color-mix(in srgb, var(--ok) 30%, transparent);
+  --dif-del: color-mix(in srgb, var(--danger) 9%, var(--bg));
+  --dif-del-strong: color-mix(in srgb, var(--danger) 26%, transparent);
+  --dif-none: color-mix(in srgb, var(--text) 3%, var(--bg));
+}
+.dif-gap {
+  flex: 1;
+}
+.dif-pos {
+  font-size: 12px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+.dif-stat {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.dif-stat.add {
+  color: var(--ok);
+}
+.dif-stat.del {
+  color: var(--danger);
+}
+
+.dif-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  outline: none;
+  font: 12px/1.6 var(--mono);
+  tab-size: 4;
+  padding-bottom: 24px;
+}
+.dif-row {
+  display: grid;
+  min-width: max-content;
+}
+.dif-body.wrap .dif-row {
+  min-width: 0;
+}
+.dif-body.split .dif-row {
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+}
+.dif-body.split:not(.wrap) .dif-row {
+  grid-template-columns: auto minmax(max-content, 1fr) auto minmax(max-content, 1fr);
+}
+.dif-body.inline .dif-row {
+  grid-template-columns: auto auto 18px minmax(max-content, 1fr);
+}
+.dif-body.inline.wrap .dif-row {
+  grid-template-columns: auto auto 18px minmax(0, 1fr);
+}
+.dif-num {
+  min-width: 4.5ch;
+  padding: 0 8px 0 10px;
+  text-align: right;
+  color: var(--faint);
+  user-select: none;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+.dif-num.dif-mid {
+  border-left: 1px solid var(--border);
+}
+.dif-sign {
+  text-align: center;
+  color: var(--dim);
+  user-select: none;
+}
+.dif-code {
+  padding: 0 12px 0 8px;
+  white-space: pre;
+}
+.dif-body.wrap .dif-code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dif-code.add,
+.dif-row.add .dif-code,
+.dif-row.add .dif-sign {
+  background: var(--dif-add);
+}
+.dif-code.del,
+.dif-row.del .dif-code,
+.dif-row.del .dif-sign {
+  background: var(--dif-del);
+}
+.dif-num.add,
+.dif-row.add .dif-num {
+  background: color-mix(in srgb, var(--ok) 14%, var(--panel));
+  color: var(--ok);
+}
+.dif-num.del,
+.dif-row.del .dif-num {
+  background: color-mix(in srgb, var(--danger) 11%, var(--panel));
+  color: var(--danger);
+}
+.dif-code.none {
+  background: repeating-linear-gradient(-45deg, var(--dif-none) 0 6px, var(--bg) 6px 12px);
+}
+.dif-code mark {
+  color: inherit;
+  border-radius: 2px;
+}
+.dif-code.add mark,
+.dif-row.add mark {
+  background: var(--dif-add-strong);
+}
+.dif-code.del mark,
+.dif-row.del mark {
+  background: var(--dif-del-strong);
+}
+.dif-heads {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  grid-template-columns: 1fr 1fr !important;
+  min-width: 0 !important;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  font: 600 11.5px/1 var(--font);
+}
+.dif-head {
+  padding: 8px 12px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dif-head + .dif-head {
+  border-left: 1px solid var(--border);
+}
+.dif-fold {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 12px;
+  border: 0;
+  border-block: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel));
+  color: var(--dim);
+  font: 11.5px/1.6 var(--font);
+  text-align: left;
+  cursor: pointer;
+  position: sticky;
+  left: 0;
+}
+.dif-fold:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 11%, var(--panel));
+}
