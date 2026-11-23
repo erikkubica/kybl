@@ -61,4 +61,5 @@ export const importApi = {
 /** The look of each app in the source list: a monogram on the app's colour, never its logo. */
 export const SOURCE_LOOK: Record<string, { mono: string; color: string }> = {
   filezilla: { mono: "FZ", color: "#b8160f" },
+  "ssh-config": { mono: ">_", color: "#3a4150" },
 };

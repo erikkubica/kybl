@@ -21,6 +21,7 @@ import type { Entry, ObjectDetails } from "../types";
 import { useCaps } from "../useCaps";
 import { rootName } from "../connections/roots";
 import { useLocalCopy } from "../localCopyProgress";
+import { ServerProps } from "../perms/ServerProps";
 
 /** A details request for a key that no longer exists (deleted or moved elsewhere). */
 export const isNotFound = (msg: string) => /NotFound|NoSuchKey|status: 404|\b404\b/i.test(msg);
@@ -102,6 +103,9 @@ export type EntryInfoProps = SizeProps & {
   onOpenExternal?(e: Entry): void;
   /** the file itself on the clipboard, to paste into a chat or a folder (macOS) */
   onCopyFile?(e: Entry): void;
+  /** servers: "Permissions…" and a link's "Show original" (src/perms) */
+  onPermissions?(): void;
+  onShowOriginal?(): void;
   /**
    * "pane": under a preview, the first action is the big one (phones). "sheet": a column beside
    * Quick Look's preview, which has Open in its own header, so the actions are all plain buttons
@@ -130,6 +134,8 @@ export function EntryInfo({
   onCalcSize,
   onOpenExternal,
   onCopyFile,
+  onPermissions,
+  onShowOriginal,
   variant = "pane",
 }: EntryInfoProps) {
   const isFolder = entry.kind === "folder";
@@ -324,6 +330,7 @@ export function EntryInfo({
             {(details?.modified ?? entry.modified) && <Prop label="Modified">{formatDateFull(details?.modified ?? entry.modified)}</Prop>}
             <Prop label="Kind">{entryKind(entry)}</Prop>
             <Prop label="Location">{where}</Prop>
+            <ServerProps entry={entry} onPermissions={caps?.permissions ? onPermissions : undefined} onShowOriginal={caps?.links ? onShowOriginal : undefined} />
           </dl>
 
           <button className="disclose" aria-expanded={techOpen} onClick={toggleTech}>

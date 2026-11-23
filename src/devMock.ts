@@ -116,6 +116,37 @@ function mockImportSites(): ImportSite[] {
   return out;
 }
 
+/** A made-up ~/.ssh/config, as src-tauri/src/import/ssh_config.rs reads it (every host is fictional). */
+function mockSshSites(): ImportSite[] {
+  const site = (alias: string, over: Partial<ImportSite>): ImportSite => ({
+    id: `ssh-${alias}`,
+    name: alias,
+    folder: ["SSH config"],
+    kind: "sftp",
+    protocol: "SFTP",
+    host: alias,
+    port: 0,
+    user: "demo",
+    startDir: "",
+    tls: "none",
+    auth: "keyFile",
+    notes: ["Key file id_ed25519"],
+    skip: null,
+    hasPassword: false,
+    needsSecret: false,
+    duplicateOf: null,
+    ...over,
+  });
+  return [
+    site("web", { host: "files.example.com", user: "deploy", duplicateOf: "Web server", notes: ["Key file id_web"] }),
+    site("web-alias", { host: "files.example.com", port: 2222, user: "deploy", notes: ["Key file id_web"] }),
+    site("db", { host: "10.0.0.5", notes: ["Key file id_ed25519", "Goes through bastion.example.com (ProxyJump), which Kybl doesn't support: it connects directly"] }),
+    site("nas", { host: "nas.home.test", user: "admin", auth: "agent", notes: ["Signs in with the SSH agent"] }),
+    site("old-box", { host: "old.example.net", notes: ["Key file not found: choose the key after import"], needsSecret: true }),
+    site("build", { host: "build.example.org", user: "ci", notes: ["Key file id_build has a passphrase: enter it after import"], needsSecret: true }),
+  ];
+}
+
 const mockTags: Record<string, Record<string, string>> = {};
 const transferPrefs = { concurrency: 3, partConcurrency: 4, bandwidthLimitKbps: 0, wifiOnly: false };
 
@@ -430,6 +461,73 @@ function otherCaps(p: Profile): Capabilities {
     multipart: false,
     maxObjectSize: null,
     backgroundUpload: false,
+    // src/perms: SFTP keeps Unix permissions and links; FTP permissions (SITE CHMOD)
+    permissions: k === "sftp" || k === "ftp",
+    links: k === "sftp",
+  };
+}
+
+// ---- servers: Unix permissions and symbolic links (src-tauri/src/storage/perms.rs)
+const serverKind = (id: string) => (kindOf(id) === "sftp" || kindOf(id) === "ftp" ? kindOf(id) : null);
+const mockModes = new Map<string, number>();
+function modeOf(pid: string, key: string): number {
+  const m = mockModes.get(`${pid}\u0000${key}`);
+  if (m !== undefined) return m;
+  if (key.endsWith("/")) return key === "exports/" ? 0o775 : 0o755;
+  if (/\.(sh|py)$/.test(key)) return 0o755;
+  return /^backup-/.test(key) ? 0o600 : 0o644;
+}
+/** a link on the demo SFTP server: where it is, what it says, and the key it leads to (null: outside the connection's folder) */
+type MockLink = { key: string; target: string; to: string | null };
+const mockLinks: Record<string, MockLink[]> = {};
+const linksOf = (pid: string): MockLink[] =>
+  (mockLinks[pid] ??=
+    kindOf(pid) === "sftp"
+      ? [
+          { key: "current/", target: "documents", to: "documents/" },
+          { key: "notes-link.txt", target: "documents/notes.txt", to: "documents/notes.txt" },
+          { key: "shared-logs/", target: "/var/log/shared", to: null },
+          { key: "documents/latest.pdf", target: "contract.pdf", to: "documents/contract.pdf" },
+          { key: "broken-link", target: "gone.txt", to: "gone.txt" },
+        ]
+      : []);
+/** A key under a folder link, as the key it really is ("current/x" → "documents/x"). */
+function realKey(pid: string, key: string): string {
+  for (const l of linksOf(pid)) {
+    if (l.to === null) continue;
+    if (key === l.key) return l.to;
+    if (l.key.endsWith("/") && key.startsWith(l.key)) return l.to + key.slice(l.key.length);
+  }
+  return key;
+}
+/** A server listing: modes, owner and group on everything, links where they are, and the inside of folder links. */
+function serverListing(pid: string, bucket: string, prefix: string, token: string | null) {
+  const real = realKey(pid, prefix);
+  const outside = linksOf(pid).some((l) => l.key === prefix && l.to === null);
+  const dir = outside ? undefined : remoteDir(pid, bucket, real);
+  const move = (k: string) => (real === prefix ? k : prefix + k.slice(real.length));
+  const start = Number(token ?? 0);
+  const all = dir?.objects ?? [];
+  const meta = (key: string) => ({ mode: modeOf(pid, realKey(pid, key)), owner: "deploy", group: "www-data" });
+  const folders = start === 0 ? (dir?.folders ?? []).map(move) : [];
+  const objects: ObjInfo[] = all.slice(start, start + 1000).map((o) => ({ ...o, key: move(o.key), ...meta(move(o.key)) }));
+  const folderInfo: ObjInfo[] = folders.map((f) => ({ key: f, size: 0, modified: null, etag: null, storageClass: null, ...meta(f) }));
+  if (start === 0) {
+    for (const l of linksOf(pid).filter((l) => l.key.slice(0, l.key.replace(/\/$/, "").lastIndexOf("/") + 1) === prefix)) {
+      if (l.key.endsWith("/")) {
+        folders.push(l.key);
+        folderInfo.push({ key: l.key, size: 0, modified: now - 30 * HOUR, etag: null, storageClass: null, ...meta(l.key), link: l.target });
+      } else {
+        const to = l.to && Object.values(tree).flatMap((d) => d.objects).find((x) => x.key === l.to);
+        objects.push({ ...(to || obj(l.key, 0, 300)), key: l.key, ...(to ? meta(l.key) : {}), link: l.target });
+      }
+    }
+  }
+  return {
+    folders,
+    objects,
+    nextToken: start + 1000 < all.length ? String(start + 1000) : null,
+    folderInfo,
   };
 }
 const HOST_KEY_UNKNOWN = "Kybl hasn't connected to this server before. Check that the server's fingerprint matches, then trust it to connect.\n\nhost-key-unknown SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8";
@@ -562,13 +660,18 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     // "Import connections": a made-up FileZilla list, big enough to try search and folders
     case "import_sources":
       await sleep(80);
-      return [{ id: "filezilla", name: "FileZilla", detected: true, path: "/Users/demo/.config/filezilla/sitemanager.xml", filterName: "FileZilla site list", extensions: ["xml"] }];
+      return [
+        { id: "filezilla", name: "FileZilla", detected: true, path: "/Users/demo/.config/filezilla/sitemanager.xml", filterName: "FileZilla site list", extensions: ["xml"] },
+        { id: "ssh-config", name: "SSH config", detected: true, path: "/home/demo/.ssh/config", filterName: "SSH config", extensions: [] },
+      ];
     case "import_preview":
       await sleep(250);
+      if (a.source === "ssh-config")
+        return { source: a.source, path: a.path ?? "/home/demo/.ssh/config", sites: mockSshSites(), hints: ["Match blocks aren't read: settings that only apply through Match don't carry over."] };
       return { source: a.source, path: a.path ?? "/Users/demo/.config/filezilla/sitemanager.xml", sites: mockImportSites(), hints: [FZ_HINT] };
     case "import_apply": {
       await sleep(600);
-      const sites = mockImportSites();
+      const sites = a.source === "ssh-config" ? mockSshSites() : mockImportSites();
       const out = { imported: [] as Profile[], skipped: [] as { name: string; reason: string }[], needsSecret: [] as string[] };
       for (const id of a.ids as string[]) {
         const s = sites.find((x) => x.id === id);
@@ -656,6 +759,7 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       }
       if (a.bucket === "logs-archive") throw "Can't reach the storage server. Nothing is answering at that address: check the connection's endpoint, or that the server is running.\n\ndispatch failure: io error: client error (Connect): tcp connect error: Connection refused (os error 61) (DispatchFailure(DispatchFailure { source: ConnectorError { kind: Io, source: hyper_util::client::legacy::Error(Connect, ConnectError(\"tcp connect error\", 127.0.0.1:9099, Os { code: 61, kind: ConnectionRefused }))) } }))";
       if (isOther(a.profileId)) otherConnect(profiles.find((x) => x.id === a.profileId)!, null);
+      if (serverKind(a.profileId)) return serverListing(a.profileId, a.bucket, a.prefix, a.token ?? null);
       // every root of the other kinds shows the demo tree (Shared with me: just the photos)
       const dir = remoteDir(a.profileId, a.bucket, a.prefix);
       const start = Number(a.token ?? 0);
@@ -682,11 +786,61 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     }
     case "head_object": {
       await sleep(200);
-      const o = Object.values(tree).flatMap((d) => d.objects).find((x) => x.key === a.key);
+      const real = serverKind(a.profileId) ? realKey(a.profileId, a.key) : a.key;
+      const o = Object.values(tree).flatMap((d) => d.objects).find((x) => x.key === real);
       if (!o) throw "NotFound";
       const ext = a.key.split(".").pop();
       const types: Record<string, string> = { jpg: "image/jpeg", png: "image/png", md: "text/markdown", json: "application/json", pdf: "application/pdf", mp4: "video/mp4", csv: "text/csv" };
       return { key: a.key, size: o?.size ?? 0, contentType: types[ext] ?? "application/octet-stream", modified: o?.modified ?? null, etag: o?.etag ?? null, storageClass: "STANDARD", metadata: ext === "jpg" ? { "uploaded-by": "demo", camera: "X100VI" } : {} };
+    }
+    case "set_permissions": {
+      await sleep(300);
+      const items = a.items as { key: string; isDir: boolean; mode: number | null }[];
+      const keys: { key: string; isDir: boolean }[] = [];
+      for (const it of items) {
+        if (!a.recurse || (a.recurse === "files" ? !it.isDir : a.recurse === "folders" ? it.isDir : true)) keys.push(it);
+        if (a.recurse && it.isDir) {
+          // what is inside, links not followed (the demo tree's keys below the folder)
+          const real = realKey(a.profileId, it.key);
+          for (const [pre, d] of Object.entries(tree)) {
+            if (!pre.startsWith(real)) continue;
+            if (a.recurse !== "folders") keys.push(...d.objects.map((o) => ({ key: o.key, isDir: false })));
+            if (a.recurse !== "files") keys.push(...d.folders.map((f) => ({ key: f, isDir: true })));
+          }
+        }
+      }
+      let done = 0;
+      for (const k of keys) {
+        const key = realKey(a.profileId, k.key);
+        mockModes.set(`${a.profileId}\u0000${key}`, (modeOf(a.profileId, key) & ~a.clear) | a.set);
+        done++;
+        if (done % 400 === 0) {
+          await emit("move-progress", { opId: a.opId, phase: "permissions", done, total: keys.length, bytes: 0, totalBytes: 0 });
+          await sleep(60);
+        }
+      }
+      // set window.__chmodRefused = true to have the server refuse (an FTP server without SITE CHMOD)
+      if ((window as unknown as { __chmodRefused?: boolean }).__chmodRefused) return { done: 0, total: keys.length, error: "This FTP server doesn't let Kybl change permissions (it has no SITE CHMOD)." };
+      return { done, total: keys.length, error: null };
+    }
+    case "resolve_link": {
+      await sleep(120);
+      const l = linksOf(a.profileId).find((x) => x.key === a.key);
+      if (!l) throw "This connection doesn't support that.";
+      if (l.to === null) throw `The original is outside this connection's folder: ${l.target}`;
+      const isDir = l.to.endsWith("/");
+      if (!isDir && !Object.values(tree).some((d) => d.objects.some((o) => o.key === l.to))) throw "The original isn't there any more: the link is broken.";
+      return { key: l.to, size: 0, modified: null, etag: null, storageClass: null };
+    }
+    case "make_link": {
+      await sleep(150);
+      const links = linksOf(a.profileId);
+      if (links.some((l) => l.key === a.key)) throw "Something with this name is already there.";
+      const parent = a.key.slice(0, a.key.lastIndexOf("/") + 1);
+      const to = realKey(a.profileId, parent + a.target);
+      const isDir = Object.values(tree).some((d) => d.folders.includes(`${to}/`));
+      links.push({ key: isDir ? `${a.key}/` : a.key, target: a.target, to: isDir ? `${to}/` : to });
+      return null;
     }
     case "get_text_preview":
       await sleep(250);

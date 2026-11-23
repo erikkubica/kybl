@@ -458,6 +458,10 @@ export type Capabilities = {
   backgroundUpload: boolean;
   /** Files are real files on this device: `localPath`, open and reveal work on them. */
   localPaths: boolean;
+  /** Unix permissions can be changed (SFTP; FTP servers with SITE CHMOD): "Permissions…". */
+  permissions?: boolean;
+  /** Symbolic links are told apart, traced ("Show original") and made ("Make link…"). */
+  links?: boolean;
 };
 
 // ---------------------------------------------------------------- WP-B1: copying between connections (src/jobs)

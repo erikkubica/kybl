@@ -9,6 +9,7 @@
 //! the file again here and stores the chosen sites' secrets straight into the vault.
 
 mod filezilla;
+mod ssh_config;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -30,8 +31,7 @@ pub enum SiteAuth {
     Missing,
     /// a private key file on this computer
     KeyFile,
-    /// the SSH agent (FileZilla has no such setting; apps like WinSCP and Cyberduck do)
-    #[allow(dead_code)]
+    /// the SSH agent (FileZilla has no such setting; an SSH config host without a key file uses it)
     Agent,
     /// saved, but encrypted with a key Kybl doesn't have (a master password)
     Encrypted,
@@ -107,6 +107,13 @@ pub trait Source: Sync {
     fn hints(&self, _sites: &[ImportedSite]) -> Vec<String> {
         vec![]
     }
+    /// The sites and the remarks together, for sources whose remarks come from reading the file
+    /// (what it held that doesn't carry over) rather than from the sites.
+    fn parse_all(&self, path: &Path) -> Result<(Vec<ImportedSite>, Vec<String>), String> {
+        let sites = self.parse(path)?;
+        let hints = self.hints(&sites);
+        Ok((sites, hints))
+    }
     /// The app's file on this computer, if it's there.
     fn detect(&self) -> Option<PathBuf> {
         self.default_paths().into_iter().find(|p| p.is_file())
@@ -114,7 +121,7 @@ pub trait Source: Sync {
 }
 
 /// Every app Kybl imports from. A new importer is one more file and one more line here.
-static SOURCES: &[&dyn Source] = &[&filezilla::FileZilla];
+static SOURCES: &[&dyn Source] = &[&filezilla::FileZilla, &ssh_config::SshConfig];
 
 fn source(id: &str) -> Result<&'static dyn Source, String> {
     SOURCES.iter().copied().find(|s| s.id() == id).ok_or_else(|| format!("Kybl can't import from “{id}”."))
@@ -207,16 +214,15 @@ pub fn import_sources() -> Vec<SourceInfo> {
 pub async fn import_preview(app: AppHandle, source: String, path: Option<String>) -> Result<ImportPreview, String> {
     let src = self::source(&source)?;
     let path = resolve_path(src, path)?;
-    let sites = {
+    let (sites, hints) = {
         let path = path.clone();
-        tauri::async_runtime::spawn_blocking(move || src.parse(&path)).await.map_err(|e| e.to_string())??
+        tauri::async_runtime::spawn_blocking(move || src.parse_all(&path)).await.map_err(|e| e.to_string())??
     };
     let existing = load_profiles(&app)?;
-    Ok(preview(src, &path, sites, &existing))
+    Ok(preview(src, &path, sites, hints, &existing))
 }
 
-fn preview(src: &dyn Source, path: &Path, sites: Vec<ImportedSite>, existing: &[Profile]) -> ImportPreview {
-    let hints = src.hints(&sites);
+fn preview(src: &dyn Source, path: &Path, sites: Vec<ImportedSite>, hints: Vec<String>, existing: &[Profile]) -> ImportPreview {
     let sites = sites
         .into_iter()
         .map(|mut site| {
@@ -228,7 +234,7 @@ fn preview(src: &dyn Source, path: &Path, sites: Vec<ImportedSite>, existing: &[
                     false
                 }
             };
-            add_auth_notes(&mut site);
+            add_auth_notes(&mut site, needs_secret);
             let duplicate_of = existing.iter().find(|p| same_place(&site, p)).map(|p| p.name.clone());
             let has_password = site.secret.as_deref().is_some_and(|s| !s.is_empty());
             SitePreview { site, has_password, needs_secret, duplicate_of }
@@ -238,7 +244,7 @@ fn preview(src: &dyn Source, path: &Path, sites: Vec<ImportedSite>, existing: &[
 }
 
 /// The sign-in remarks every source shares, in the words the dialog shows.
-fn add_auth_notes(site: &mut ImportedSite) {
+fn add_auth_notes(site: &mut ImportedSite, needs_secret: bool) {
     if site.skip.is_some() {
         return;
     }
@@ -248,7 +254,10 @@ fn add_auth_notes(site: &mut ImportedSite) {
         SiteAuth::Anonymous => Some("Anonymous sign-in".to_string()),
         SiteAuth::Agent => Some("Signs in with the SSH agent".to_string()),
         SiteAuth::KeyFile => Some(match &site.key_file {
-            Some(k) if k.is_file() => format!("Key file {}", k.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+            Some(k) if k.is_file() => {
+                let name = k.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                if needs_secret { format!("Key file {name} has a passphrase: enter it after import") } else { format!("Key file {name}") }
+            }
             _ => "Key file not found: choose the key after import".to_string(),
         }),
         SiteAuth::Password => None,
@@ -317,6 +326,25 @@ const MAX_KEY_FILE: u64 = 64 * 1024;
 
 fn looks_like_key(t: &str) -> bool {
     (t.contains("-----BEGIN") && t.contains("PRIVATE KEY-----")) || t.starts_with("PuTTY-User-Key-File-")
+}
+
+/// A private key that can't sign in without its passphrase: PEM and PKCS#8 say "ENCRYPTED",
+/// PuTTY names its encryption, and OpenSSH's own format names its cipher ("none" without one).
+fn key_has_passphrase(t: &str) -> bool {
+    use base64::Engine;
+    if t.starts_with("PuTTY-User-Key-File-") {
+        return !t.lines().any(|l| l.trim() == "Encryption: none");
+    }
+    if t.contains("ENCRYPTED") {
+        return true;
+    }
+    let Some(body) = t.split("-----BEGIN OPENSSH PRIVATE KEY-----").nth(1).and_then(|r| r.split("-----END").next()) else { return false };
+    let b64: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+    let Ok(raw) = base64::engine::general_purpose::STANDARD.decode(b64) else { return false };
+    // "openssh-key-v1" and a zero byte, then the cipher's name as a length-prefixed string
+    let Some(rest) = raw.strip_prefix(b"openssh-key-v1\0") else { return false };
+    let Some(len) = rest.get(..4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize) else { return false };
+    rest.get(4..4 + len).is_some_and(|name| name != b"none")
 }
 
 fn read_key_file(p: &Path) -> Option<String> {
@@ -395,7 +423,7 @@ pub fn to_profile(site: &ImportedSite, name: String) -> Result<Mapped, String> {
                 SiteAuth::KeyFile => {
                     net.auth = NetAuth::Key;
                     let key = site.key_file.as_deref().and_then(read_key_file);
-                    let needs = key.is_none();
+                    let needs = key.as_deref().is_none_or(key_has_passphrase);
                     (key, needs)
                 }
                 SiteAuth::Agent => {
@@ -643,6 +671,26 @@ mod tests {
     }
 
     #[test]
+    fn keys_with_a_passphrase() {
+        use base64::Engine;
+        let openssh = |cipher: &str| {
+            let mut raw = b"openssh-key-v1\0".to_vec();
+            raw.extend((cipher.len() as u32).to_be_bytes());
+            raw.extend(cipher.as_bytes());
+            raw.extend([0u8; 8]);
+            let b = base64::engine::general_purpose::STANDARD.encode(raw);
+            format!("-----BEGIN OPENSSH PRIVATE KEY-----\n{b}\n-----END OPENSSH PRIVATE KEY-----")
+        };
+        assert!(!key_has_passphrase(&openssh("none")));
+        assert!(key_has_passphrase(&openssh("aes256-ctr")));
+        assert!(key_has_passphrase("-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n-----END RSA PRIVATE KEY-----"));
+        assert!(key_has_passphrase("-----BEGIN ENCRYPTED PRIVATE KEY-----\nx\n-----END ENCRYPTED PRIVATE KEY-----"));
+        assert!(!key_has_passphrase("-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----"));
+        assert!(!key_has_passphrase("PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: none\n"));
+        assert!(key_has_passphrase("PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: aes256-cbc\n"));
+    }
+
+    #[test]
     fn skipped_sites_say_why_and_take_no_name() {
         let mut s = site(ConnKind::Ftp, "h", 0, "u");
         s.kind = None;
@@ -664,7 +712,7 @@ mod tests {
         let mut ask = site(ConnKind::Sftp, "h", 0, "u");
         ask.auth = SiteAuth::Missing;
         ask.secret = None;
-        let p = preview(&filezilla::FileZilla, Path::new("x.xml"), vec![s, s3, ask], &[]);
+        let p = preview(&filezilla::FileZilla, Path::new("x.xml"), vec![s, s3, ask], vec![], &[]);
         let json = serde_json::to_string(&p).unwrap();
         assert!(!json.contains("\"pw\""), "{json}");
         assert!(json.contains("\"hasPassword\":true"));

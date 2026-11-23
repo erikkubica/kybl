@@ -36,6 +36,9 @@ export type QuickInfoActions = SizeProps & {
   onDelete(list: Entry[]): void;
   /** properties saved, or the file turned out to be gone: list the folder again */
   onChanged?(): void;
+  /** servers: "Permissions…" and a link's "Show original" */
+  onPermissions?(list: Entry[]): void;
+  onShowOriginal?(e: Entry): void;
 };
 
 const isTyping = (t: EventTarget | null) => {
@@ -343,6 +346,8 @@ function QuickInfo({
         onCalcSize={act.onCalcSize}
         onOpenExternal={onOpenExternal}
         onCopyFile={onCopyFile}
+        onPermissions={act.onPermissions && (() => act.onPermissions!([entry]))}
+        onShowOriginal={act.onShowOriginal && (() => act.onShowOriginal!(entry))}
       />
     </div>
   );

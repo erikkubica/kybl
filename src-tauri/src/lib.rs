@@ -231,6 +231,9 @@ pub fn run() {
             storage::generic_cmds::list_roots,
             storage::generic_cmds::connection_capabilities,
             storage::generic_cmds::local_path,
+            storage::perms::set_permissions,
+            storage::perms::resolve_link,
+            storage::perms::make_link,
             // WP-A4
             storage::media::media_base,
             transfers::start_upload,

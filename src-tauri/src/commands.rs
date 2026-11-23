@@ -219,6 +219,9 @@ pub struct ListResult {
     pub(crate) folders: Vec<String>,
     pub(crate) objects: Vec<ObjInfo>,
     pub(crate) next_token: Option<String>,
+    /// what the store says about some of `folders` (permissions, link targets); servers only
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) folder_info: Vec<ObjInfo>,
 }
 
 pub(crate) fn obj_info(o: &aws_sdk_s3::types::Object) -> ObjInfo {
@@ -274,6 +277,7 @@ pub async fn list_objects(
         } else {
             None
         },
+        folder_info: vec![],
     })
 }
 

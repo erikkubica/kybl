@@ -6,7 +6,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { baseName } from "../format";
 import type { Sort } from "../components/FileTable";
-import type { Entry } from "../types";
+import type { Entry, ObjInfo } from "../types";
 import { sameLoc, useListing, type Loc } from "./useListing";
 import { useSearch } from "./useSearch";
 import { isPlaceholderIndex, useFolderPlaceholders } from "../thumbhash";
@@ -23,7 +23,29 @@ export const MAX_SORT_ITEMS = 200_000;
 const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 const NO_ENTRIES: Entry[] = [];
 
-const folderEntry = (f: string): Entry => ({ kind: "folder", key: f, name: baseName(f), size: 0, modified: null });
+const folderEntry = (f: string, info?: ObjInfo): Entry => ({
+  kind: "folder",
+  key: f,
+  name: baseName(f),
+  size: 0,
+  modified: info?.modified ?? null,
+  ...(info && { mode: info.mode, owner: info.owner, group: info.group, link: info.link }),
+});
+/** A listed file as a row (servers' permissions and link targets included when they say). */
+const fileEntry = (o: ObjInfo): Entry => ({
+  kind: "file",
+  key: o.key,
+  name: baseName(o.key),
+  size: o.size,
+  modified: o.modified,
+  etag: o.etag,
+  storageClass: o.storageClass,
+  native: o.native,
+  mime: o.mime,
+  id: o.id,
+  ...(o.mode !== undefined && { mode: o.mode, owner: o.owner, group: o.group }),
+  ...(o.link !== undefined && { link: o.link }),
+});
 
 /** A name (or any folder on the way to it) that starts with ".": hidden, like Finder does. */
 const dotted = (rel: string) => rel.startsWith(".") || rel.includes("/.");
@@ -68,16 +90,17 @@ export function useEntries(
         }
       }
       const found = [
-        ...[...folders].map(folderEntry),
-        ...results.map<Entry>((o) => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native, mime: o.mime, id: o.id })),
+        ...[...folders].map((f) => folderEntry(f)),
+        ...results.map(fileEntry),
       ];
       return hideDotfilesOf(search.loc.profileId) ? found.filter((e) => !dotted(e.key.slice(base.length))) : found;
     }
     if (!fresh && !stale) return [];
+    const info = listing.folderInfo?.length ? new Map(listing.folderInfo.map((i) => [i.key, i])) : null;
     const all = [
       // a folder's shared photo placeholders (.kybl/) are Kybl's, never shown
-      ...listing.folders.filter((f) => !isPlaceholderIndex(f)).map(folderEntry),
-      ...listing.objects.map<Entry>((o) => ({ kind: "file", key: o.key, name: baseName(o.key), size: o.size, modified: o.modified, etag: o.etag, storageClass: o.storageClass, native: o.native, mime: o.mime, id: o.id })),
+      ...listing.folders.filter((f) => !isPlaceholderIndex(f)).map((f) => folderEntry(f, info?.get(f))),
+      ...listing.objects.map(fileEntry),
     ];
     return listing.loc && hideDotfilesOf(listing.loc.profileId) ? all.filter((e) => !e.name.startsWith(".")) : all;
   }, [listing, search, fresh, stale, hideDotfilesOf]);

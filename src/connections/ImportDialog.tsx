@@ -76,7 +76,8 @@ export function ImportDialog({ onClose, onImported, toast }: Props) {
     const picked = await openDialog({
       title: `Choose a ${src.name} file`,
       defaultPath: dir,
-      filters: [{ name: src.filterName, extensions: src.extensions }],
+      // a file with no extension to filter by (~/.ssh/config) can be any file
+      filters: src.extensions.length ? [{ name: src.filterName, extensions: src.extensions }] : undefined,
     }).catch(() => null);
     const file = Array.isArray(picked) ? picked[0] : picked;
     if (typeof file === "string") void load(src, file);

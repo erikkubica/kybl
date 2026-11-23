@@ -94,6 +94,7 @@ impl Item {
             mime: file.and_then(|f| f["mimeType"].as_str()).map(str::to_string),
             hashes: Hashes { quickxor: hash("quickXorHash"), sha1: hash("sha1Hash"), sha256: hash("sha256Hash"), ..Default::default() },
             native: None,
+            ..Default::default()
         }
     }
 }

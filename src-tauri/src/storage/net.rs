@@ -272,8 +272,8 @@ pub struct PageCache {
     inner: Mutex<HashMap<String, (Instant, Arc<Listing>)>>,
 }
 
-/// A whole folder: subfolder keys and files, sorted.
-type Listing = (Vec<String>, Vec<Entry>);
+/// A whole folder: subfolder keys and files, sorted, and what is known about some folders.
+type Listing = (Vec<String>, Vec<Entry>, HashMap<String, Entry>);
 
 impl PageCache {
     const KEEP: Duration = Duration::from_secs(60);
@@ -285,6 +285,16 @@ impl PageCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = SResult<(Vec<String>, Vec<Entry>)>>,
     {
+        self.page_with_info(dir, token, || async { fetch().await.map(|(d, f)| (d, f, vec![])) }).await
+    }
+
+    /// [`page`](Self::page) for stores that say more about folders than their names (permissions,
+    /// link targets): `fetch` also answers those, as entries keyed like the folders.
+    pub async fn page_with_info<F, Fut>(&self, dir: &str, token: Option<String>, fetch: F) -> SResult<Page>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = SResult<(Vec<String>, Vec<Entry>, Vec<Entry>)>>,
+    {
         let kept = if token.is_some() {
             let mut m = self.inner.lock().unwrap();
             m.retain(|_, (at, _)| at.elapsed() < Self::KEEP);
@@ -295,17 +305,20 @@ impl PageCache {
         let listing = match kept {
             Some(l) => l,
             None => {
-                let (mut folders, mut files) = fetch().await?;
+                let (mut folders, mut files, info) = fetch().await?;
                 sort_listing(&mut folders, &mut files);
-                let l = Arc::new((folders, files));
+                let info = info.into_iter().map(|e| (e.key.clone(), e)).collect();
+                let l = Arc::new((folders, files, info));
                 if folders_and_files(&l) > PAGE {
                     self.inner.lock().unwrap().insert(dir.to_string(), (Instant::now(), l.clone()));
                 }
                 l
             }
         };
-        let (folders, files) = &*listing;
-        Ok(page_after(folders, files, token.as_deref()))
+        let (folders, files, info) = &*listing;
+        let mut page = page_after(folders, files, token.as_deref());
+        page.folder_info = page.folders.iter().filter_map(|f| info.get(f).cloned()).collect();
+        Ok(page)
     }
 
     /// Something changed below `dir` (or anywhere, for ""): forget kept listings there.
@@ -347,7 +360,7 @@ pub fn page_after(folders: &[String], files: &[Entry], token: Option<&str>) -> P
         Some(e) => format!("f:{}", e.key),
         None => format!("d:{}", page_folders.last().map(String::as_str).unwrap_or_default()),
     });
-    Page { folders: page_folders, objects: page_files, next_token }
+    Page { folders: page_folders, objects: page_files, next_token, folder_info: vec![] }
 }
 
 // ---------------------------------------------------------------- writes

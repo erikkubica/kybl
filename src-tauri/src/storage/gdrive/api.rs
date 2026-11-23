@@ -81,6 +81,7 @@ impl DFile {
             mime: Some(mime.to_string()),
             hashes: Hashes { md5: self.md5_checksum.clone(), ..Default::default() },
             native,
+            ..Default::default()
         }
     }
 }

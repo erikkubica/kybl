@@ -60,7 +60,27 @@ pub fn sftp_caps() -> Capabilities {
         range_read: true,
         conditional_write: CondWrite::Compare,
         thumbnails: ThumbMode::Local,
+        permissions: true,
+        links: true,
         ..Capabilities::default()
+    }
+}
+
+/// One name in a folder: its attributes (a link's are what it points at) and, for a symbolic
+/// link, its target as stored.
+struct Listed {
+    name: String,
+    meta: FileAttributes,
+    link: Option<String>,
+}
+
+/// The permissions, owner and group a server reports (SFTP v3 gives numbers for the owner).
+fn unix_meta(m: &FileAttributes) -> Entry {
+    Entry {
+        mode: m.permissions.map(|p| p & 0o7777),
+        owner: m.user.clone().or_else(|| m.uid.map(|u| u.to_string())),
+        group: m.group.clone().or_else(|| m.gid.map(|g| g.to_string())),
+        ..Default::default()
     }
 }
 
@@ -349,34 +369,59 @@ impl SftpBackend {
     fn entry(key: String, m: &FileAttributes) -> Entry {
         let size = m.size.unwrap_or(0);
         let modified = m.mtime.map(|t| t as i64 * 1000);
-        Entry { etag: Some(weak_etag(size, modified)), size: size as i64, modified, key, ..Default::default() }
+        Entry { etag: Some(weak_etag(size, modified)), size: size as i64, modified, key, ..unix_meta(m) }
     }
 
-    /// The folder at `path`: (name, attributes), links resolved to what they point at.
-    async fn read_dir(&self, path: String) -> SResult<Vec<(String, FileAttributes)>> {
+    fn folder(key: String, m: &FileAttributes) -> Entry {
+        Entry { key, modified: m.mtime.map(|t| t as i64 * 1000), ..unix_meta(m) }
+    }
+
+    /// The folder at `path`, links resolved to what they point at (a broken link lists as an
+    /// empty file, so it can still be seen and deleted).
+    async fn read_dir(&self, path: String) -> SResult<Vec<Listed>> {
         self.with(move |c| {
             let path = path.clone();
             Box::pin(async move {
                 let mut out = Vec::new();
                 for e in c.sftp.read_dir(path.clone()).await? {
-                    let name = e.file_name();
+                    let name = e.file_name().to_string();
                     if name == "." || name == ".." {
                         continue;
                     }
                     let mut meta = e.metadata();
+                    let mut link = None;
                     if meta.is_symlink() {
-                        match c.sftp.metadata(format!("{}/{name}", path.trim_end_matches('/'))).await {
+                        let full = format!("{}/{name}", path.trim_end_matches('/'));
+                        link = Some(c.sftp.read_link(full.clone()).await.map(|t| t.to_string()).unwrap_or_default());
+                        match c.sftp.metadata(full).await {
                             Ok(m) => meta = m,
-                            // a broken link has nothing to show
-                            Err(_) => continue,
+                            Err(_) => {
+                                meta.set_regular(true);
+                                meta.size = Some(0);
+                            }
                         }
                     }
-                    out.push((name, meta));
+                    out.push(Listed { name, meta, link });
                 }
                 Ok(out)
             })
         })
         .await
+    }
+
+    /// The attributes of `path` itself, not of what a link there points at.
+    async fn link_metadata(&self, path: String) -> SResult<Option<FileAttributes>> {
+        let r = self
+            .with(move |c| {
+                let p = path.clone();
+                Box::pin(async move { c.sftp.symlink_metadata(p).await })
+            })
+            .await;
+        match r {
+            Ok(m) => Ok(Some(m)),
+            Err(e) if e.kind == ErrKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     async fn metadata(&self, path: String) -> SResult<Option<FileAttributes>> {
@@ -468,13 +513,14 @@ impl SftpBackend {
                 Err(e) if e.kind == ErrKind::NotFound => return Ok(()),
                 Err(e) => return Err(e),
             };
-            let (dirs, files): (Vec<_>, Vec<_>) = entries.into_iter().partition(|(_, m)| m.is_dir());
-            for (name, _) in dirs {
+            // a link (to a folder too) goes by itself: what it points at is never touched
+            let (dirs, files): (Vec<_>, Vec<_>) = entries.into_iter().partition(|e| e.meta.is_dir() && e.link.is_none());
+            for Listed { name, .. } in dirs {
                 check_cancel(cancel)?;
                 self.remove_tree(format!("{}/{name}", path.trim_end_matches('/')), cancel).await?;
             }
             check_cancel(cancel)?;
-            let removals = futures_util::stream::iter(files.into_iter().map(|(name, _)| {
+            let removals = futures_util::stream::iter(files.into_iter().map(|Listed { name, .. }| {
                 let p = format!("{}/{name}", path.trim_end_matches('/'));
                 async move {
                     self.with(move |c| {
@@ -602,18 +648,19 @@ impl Storage for SftpBackend {
         let prefix = dir_prefix(dir);
         let path = self.path(&prefix).await?;
         self.pages
-            .page(&prefix, token, || async {
-                let (mut folders, mut files) = (Vec::new(), Vec::new());
-                for (name, meta) in self.read_dir(path).await? {
+            .page_with_info(&prefix, token, || async {
+                let (mut folders, mut files, mut info) = (Vec::new(), Vec::new(), Vec::new());
+                for Listed { name, meta, link } in self.read_dir(path).await? {
                     let key = format!("{prefix}{name}");
                     if meta.is_dir() {
                         folders.push(format!("{key}/"));
+                        info.push(Entry { link, ..Self::folder(format!("{key}/"), &meta) });
                     } else {
-                        files.push(Self::entry(key, &meta));
+                        files.push(Entry { link, ..Self::entry(key, &meta) });
                     }
                 }
                 self.known_dirs.lock().unwrap().insert(prefix.clone());
-                Ok((folders, files))
+                Ok((folders, files, info))
             })
             .await
     }
@@ -624,7 +671,7 @@ impl Storage for SftpBackend {
         let Some(meta) = self.metadata(self.path(path).await?).await? else { return Ok(None) };
         let k = parts.join("/");
         Ok(match (meta.is_dir(), want_dir) {
-            (true, true) => Some(Entry { key: if k.is_empty() { k } else { format!("{k}/") }, modified: meta.mtime.map(|t| t as i64 * 1000), ..Default::default() }),
+            (true, true) => Some(Self::folder(if k.is_empty() { k } else { format!("{k}/") }, &meta)),
             (false, false) => Some(Self::entry(k, &meta)),
             _ => None,
         })
@@ -757,7 +804,9 @@ impl Storage for SftpBackend {
                 return Err(top_refused());
             }
             let p = self.path(key).await?;
-            let r = if is_dir {
+            // a folder that is a link: only the link goes, never what is in the folder it points at
+            let is_tree = is_dir && !self.link_metadata(p.clone()).await?.is_some_and(|m| m.is_symlink());
+            let r = if is_tree {
                 self.remove_tree(p, cancel).await
             } else {
                 self.with(move |c| {
@@ -800,6 +849,55 @@ impl Storage for SftpBackend {
         Ok(())
     }
 
+    async fn set_mode(&self, _root: &str, path: &str, mode: u32) -> SResult<()> {
+        let full = self.path(path).await?;
+        self.with(move |c| {
+            let p = full.clone();
+            Box::pin(async move { c.sftp.set_metadata(p, FileAttributes { permissions: Some(mode & 0o7777), ..FileAttributes::empty() }).await })
+        })
+        .await?;
+        self.pages.forget(path);
+        Ok(())
+    }
+
+    async fn make_link(&self, _root: &str, path: &str, target: &str) -> SResult<()> {
+        if key_parts(path)?.is_empty() || target.trim().is_empty() {
+            return Err(StorageError::other("A link needs a name and something to point at."));
+        }
+        let full = self.path(path.trim_end_matches('/')).await?;
+        if self.link_metadata(full.clone()).await?.is_some() {
+            return Err(StorageError::exists());
+        }
+        let target = target.to_string();
+        self.with(move |c| {
+            let (link, target) = (full.clone(), target.clone());
+            // OpenSSH (and servers built like it) read SSH_FXP_SYMLINK's two paths the other way
+            // round from the draft: the target first, then the link
+            Box::pin(async move { c.sftp.symlink(target, link).await })
+        })
+        .await?;
+        self.pages.forget(path);
+        Ok(())
+    }
+
+    async fn resolve_link(&self, _root: &str, path: &str) -> SResult<Entry> {
+        let full = self.path(path.trim_end_matches('/')).await?;
+        let base = self.base().await?;
+        let (real, real_base) = self
+            .with(move |c| {
+                let (p, b) = (full.clone(), base.clone());
+                Box::pin(async move { Ok((c.sftp.canonicalize(p).await?.to_string(), c.sftp.canonicalize(b).await?.to_string())) })
+            })
+            .await?;
+        let Some(meta) = self.metadata(real.clone()).await? else {
+            return Err(StorageError::new(ErrKind::NotFound, "The original isn't there any more: the link is broken.").with_detail(real));
+        };
+        let Some(rel) = key_under(&real_base, &real) else {
+            return Err(StorageError::other(format!("The original is outside this connection's folder: {real}")));
+        };
+        Ok(if meta.is_dir() { Self::folder(if rel.is_empty() { rel } else { format!("{rel}/") }, &meta) } else { Self::entry(rel, &meta) })
+    }
+
     /// From statvfs, where the server has it (OpenSSH does); nothing otherwise.
     async fn quota(&self) -> SResult<Option<Quota>> {
         let base = self.base().await?;
@@ -817,6 +915,15 @@ impl Storage for SftpBackend {
             Quota { used: s.blocks.saturating_sub(s.blocks_free) * unit, total: Some(s.blocks * unit) }
         }))
     }
+}
+
+/// `path` (a full server path) as a key below `base`: "" for the base itself, None outside it.
+fn key_under(base: &str, path: &str) -> Option<String> {
+    let base = base.trim_end_matches('/');
+    if path.trim_end_matches('/') == base {
+        return Some(String::new());
+    }
+    path.strip_prefix(base).and_then(|r| r.strip_prefix('/')).map(|r| r.trim_end_matches('/').to_string())
 }
 
 fn is_connection_error(e: &SftpError) -> bool {

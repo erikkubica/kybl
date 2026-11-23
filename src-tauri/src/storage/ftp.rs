@@ -64,6 +64,8 @@ pub fn ftp_caps() -> Capabilities {
         range_read: true,
         conditional_write: CondWrite::Compare,
         thumbnails: ThumbMode::Local,
+        // SITE CHMOD: most Unix servers take it; one that doesn't says so when asked
+        permissions: true,
         ..Capabilities::default()
     }
 }
@@ -268,8 +270,9 @@ impl FtpBackend {
         join(&self.base().await?, key)
     }
 
-    /// The folder `dir` (a server path), straight from the server: (name, entry fields).
-    async fn list_raw(&self, path: &str) -> SResult<Vec<FtpFile>> {
+    /// The folder `dir` (a server path), straight from the server: each name's fields, and the
+    /// permissions, owner, group and link target its line gives.
+    async fn list_raw(&self, path: &str) -> SResult<Vec<(FtpFile, Entry)>> {
         let mlsd = self.feats.get().is_some_and(|f| f.mlsd);
         let path = path.to_string();
         let lines = self
@@ -292,15 +295,25 @@ impl FtpBackend {
         let (mlsd, lines) = lines;
         Ok(lines
             .iter()
-            .filter_map(|l| if mlsd { ListParser::parse_mlsd(l).ok() } else { FtpFile::try_from(l.as_str()).ok() })
-            .filter(|f| !matches!(f.name(), "." | "..") && !f.name().contains('/'))
+            .filter_map(|l| {
+                let f = if mlsd { ListParser::parse_mlsd(l).ok() } else { FtpFile::try_from(l.as_str()).ok() }?;
+                let mut meta = line_meta(l, mlsd);
+                meta.link = f.symlink().map(|t| t.to_string_lossy().into_owned()).filter(|t| !t.is_empty());
+                Some((f, meta))
+            })
+            .filter(|(f, _)| !matches!(f.name(), "." | "..") && !f.name().contains('/'))
             .collect())
     }
 
-    fn entry(key: String, f: &FtpFile) -> Entry {
+    fn entry(key: String, f: &FtpFile, meta: &Entry) -> Entry {
         let modified = f.modified().duration_since(UNIX_EPOCH).ok().map(|d| d.as_millis() as i64).filter(|m| *m > 0);
         let size = f.size() as u64;
-        Entry { etag: Some(weak_etag(size, modified)), size: size as i64, modified, key, ..Default::default() }
+        Entry { etag: Some(weak_etag(size, modified)), size: size as i64, modified, key, ..meta.clone() }
+    }
+
+    fn folder(key: String, f: &FtpFile, meta: &Entry) -> Entry {
+        let modified = f.modified().duration_since(UNIX_EPOCH).ok().map(|d| d.as_millis() as i64).filter(|m| *m > 0);
+        Entry { key, modified, ..meta.clone() }
     }
 
     async fn ensure_dir(&self, dir: &str) -> SResult<()> {
@@ -340,7 +353,7 @@ impl FtpBackend {
     /// Deletes a folder and everything in it, depth first.
     fn remove_tree<'a>(&'a self, path: String, cancel: &'a AtomicBool) -> BoxFuture<'a, SResult<()>> {
         Box::pin(async move {
-            for f in self.list_raw(&path).await? {
+            for (f, _) in self.list_raw(&path).await? {
                 check_cancel(cancel)?;
                 let child = format!("{}/{}", path.trim_end_matches('/'), f.name());
                 if f.is_directory() {
@@ -444,18 +457,21 @@ impl Storage for FtpBackend {
         let prefix = dir_prefix(dir);
         let path = self.path(&prefix).await?;
         self.pages
-            .page(&prefix, token, || async {
-                let (mut folders, mut files) = (Vec::new(), Vec::new());
-                for f in self.list_raw(&path).await? {
+            .page_with_info(&prefix, token, || async {
+                let (mut folders, mut files, mut info) = (Vec::new(), Vec::new(), Vec::new());
+                for (f, meta) in self.list_raw(&path).await? {
                     let key = format!("{prefix}{}", f.name());
                     if f.is_directory() {
+                        if meta.mode.is_some() || meta.owner.is_some() {
+                            info.push(Self::folder(format!("{key}/"), &f, &meta));
+                        }
                         folders.push(format!("{key}/"));
                     } else {
-                        files.push(Self::entry(key, &f));
+                        files.push(Self::entry(key, &f, &meta));
                     }
                 }
                 self.known_dirs.lock().unwrap().insert(prefix.clone());
-                Ok((folders, files))
+                Ok((folders, files, info))
             })
             .await
     }
@@ -472,10 +488,10 @@ impl Storage for FtpBackend {
             Err(e) if e.kind == ErrKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
         };
-        let found = listing.iter().find(|f| f.name() == *name);
+        let found = listing.iter().find(|(f, _)| f.name() == *name);
         Ok(match found {
-            Some(f) if f.is_directory() && want_dir => Some(Entry { key: format!("{parent}{name}/"), ..Default::default() }),
-            Some(f) if !f.is_directory() && !want_dir => Some(Self::entry(format!("{parent}{name}"), f)),
+            Some((f, m)) if f.is_directory() && want_dir => Some(Self::folder(format!("{parent}{name}/"), f, m)),
+            Some((f, m)) if !f.is_directory() && !want_dir => Some(Self::entry(format!("{parent}{name}"), f, m)),
             _ => None,
         })
     }
@@ -674,6 +690,32 @@ impl Storage for FtpBackend {
         Ok((done, total))
     }
 
+    /// With `SITE CHMOD`, which isn't in the FTP standard but most Unix servers take.
+    async fn set_mode(&self, _root: &str, path: &str, mode: u32) -> SResult<()> {
+        let full = self.path(path.trim_end_matches('/')).await?;
+        if full.contains(['\r', '\n']) {
+            return Err(StorageError::other("This name can't be sent to an FTP server."));
+        }
+        let took = self
+            .run(move |ftp, _| {
+                let p = full.clone();
+                Box::pin(async move {
+                    match ftp.site(format!("CHMOD {:o} {p}", mode & 0o7777)).await {
+                        Ok(_) => Ok(true),
+                        // "unknown command", "not implemented": the server has no SITE CHMOD
+                        Err(FtpError::UnexpectedResponse(r)) if matches!(r.status.code(), 500 | 501 | 502 | 504) => Ok(false),
+                        Err(e) => Err(e),
+                    }
+                })
+            })
+            .await?;
+        if !took {
+            return Err(StorageError::new(ErrKind::Unsupported, "This FTP server doesn't let Kybl change permissions (it has no SITE CHMOD)."));
+        }
+        self.pages.forget(path);
+        Ok(())
+    }
+
     async fn rename(&self, from: &Loc, to: &Loc, is_dir: bool) -> SResult<()> {
         if key_parts(&from.path)?.is_empty() {
             return Err(top_refused());
@@ -748,6 +790,52 @@ fn temp_refused(stored: &SResult<Stored>) -> bool {
 /// deleted: what is left of it is all there is.
 fn remove_after_failed_store(direct: Option<bool>) -> bool {
     direct != Some(true)
+}
+
+/// The permissions, owner and group a listing line gives, where it gives them: MLSD's
+/// `UNIX.mode`, `UNIX.owner` / `UNIX.uid` and `UNIX.group` / `UNIX.gid` facts, or a Unix
+/// `ls -l` line ("-rwxr-xr-x 1 owner group size date name").
+fn line_meta(line: &str, mlsd: bool) -> Entry {
+    let mut e = Entry::default();
+    if mlsd {
+        let facts = line.split_once("; ").map(|(f, _)| f).unwrap_or(if line.starts_with(' ') { "" } else { line });
+        for fact in facts.split(';') {
+            let Some((k, v)) = fact.split_once('=') else { continue };
+            match k.to_ascii_lowercase().as_str() {
+                "unix.mode" => e.mode = u32::from_str_radix(v, 8).ok().filter(|m| *m <= 0o7777),
+                "unix.owner" | "unix.ownername" => e.owner = Some(v.to_string()),
+                "unix.uid" if e.owner.is_none() => e.owner = Some(v.to_string()),
+                "unix.group" | "unix.groupname" => e.group = Some(v.to_string()),
+                "unix.gid" if e.group.is_none() => e.group = Some(v.to_string()),
+                _ => {}
+            }
+        }
+        return e;
+    }
+    let words: Vec<&str> = line.split_whitespace().collect();
+    let Some(perm) = words.first().map(|w| w.as_bytes()) else { return e };
+    if perm.len() < 10 || !b"-dlcbps".contains(&perm[0]) || !perm[1..10].iter().all(|c| b"rwxsStTl-".contains(c)) {
+        return e;
+    }
+    let mut mode = 0u32;
+    for (i, &c) in perm[1..10].iter().enumerate() {
+        let bit = 1 << (8 - i);
+        match (i % 3, c) {
+            (0, b'r') | (1, b'w') | (2, b'x') => mode |= bit,
+            (2, b's') => mode |= bit | if i == 2 { 0o4000 } else { 0o2000 },
+            (2, b'S') => mode |= if i == 2 { 0o4000 } else { 0o2000 },
+            (2, b't') => mode |= bit | 0o1000,
+            (2, b'T') => mode |= 0o1000,
+            _ => {}
+        }
+    }
+    e.mode = Some(mode);
+    // permissions, links, owner, group, size, three date words, the name
+    if words.len() >= 9 {
+        e.owner = Some(words[2].to_string());
+        e.group = Some(words[3].to_string());
+    }
+    e
 }
 
 /// A temporary name for servers that refuse names starting with a dot: "dir/name.kybl-…ext",
@@ -850,12 +938,30 @@ mod tests {
     fn listings_parse_both_ways() {
         let f = ListParser::parse_mlsd("type=file;size=12;modify=20261122100000; a b.txt").unwrap();
         assert_eq!(f.name(), "a b.txt");
-        let e = FtpBackend::entry("x/a b.txt".into(), &f);
+        let e = FtpBackend::entry("x/a b.txt".into(), &f, &Entry::default());
         assert_eq!(e.size, 12);
         assert_eq!(e.modified, Some(1_795_341_600_000));
         let d = FtpFile::try_from("drwxr-xr-x    2 ftp      ftp          4096 Nov 22  2025 photos").unwrap();
         assert!(d.is_directory());
         assert_eq!(d.name(), "photos");
+    }
+
+    #[test]
+    fn listing_lines_carry_permissions_and_owners() {
+        let m = line_meta("type=file;size=12;modify=20261122100000;UNIX.mode=0644;UNIX.owner=www;UNIX.gid=33; a b.txt", true);
+        assert_eq!((m.mode, m.owner.as_deref(), m.group.as_deref()), (Some(0o644), Some("www"), Some("33")));
+        assert_eq!(line_meta("type=dir;modify=20261122100000; pub", true).mode, None);
+        assert_eq!(line_meta("type=file;unix.mode=99999; x", true).mode, None);
+        let l = line_meta("-rwxr-x--- 1 deploy staff 1234 Nov  5 13:46 run.sh", false);
+        assert_eq!((l.mode, l.owner.as_deref(), l.group.as_deref()), (Some(0o750), Some("deploy"), Some("staff")));
+        assert_eq!(line_meta("drwxr-sr-t 2 a b 4096 Jan 1 2026 shared", false).mode, Some(0o3755));
+        assert_eq!(line_meta("-rwSr--r-- 1 a b 1 Jan 1 2026 x", false).mode, Some(0o4644));
+        assert_eq!(line_meta("lrwxrwxrwx 1 a b 7 Jan 1 2026 cur -> release", false).mode, Some(0o777));
+        // DOS listings have no permissions
+        assert_eq!(line_meta("11-05-26  01:46PM       <DIR>          docs", false), Entry::default());
+        // the file and its link target, through suppaftp's own parser
+        let f = FtpFile::try_from("lrwxrwxrwx 1 a b 7 Nov  5 13:46 cur -> releases/42").unwrap();
+        assert_eq!(f.symlink().map(|p| p.to_string_lossy().into_owned()).as_deref(), Some("releases/42"));
     }
 
     #[test]
