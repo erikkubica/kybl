@@ -1,5 +1,6 @@
 //! Custom actions (Settings → Actions): a shell command line with placeholders, run on the
-//! selected files and folders, on this computer (`$SHELL -l -c`) or on an SFTP server over SSH.
+//! selected files and folders, on this computer (`$SHELL -l -c`, /bin/sh for csh) or on an SFTP
+//! server over SSH.
 //!
 //! Templates are shell commands on purpose, but every placeholder value is shell-quoted (single
 //! quotes), so a file name can never become part of the command. Output streams to the page as
@@ -53,23 +54,25 @@ pub fn quote(s: &str) -> String {
 /// Whether `s` reads back the same through [`quote`] in every shell: no line break or other
 /// control character. csh and tcsh end a command at a newline even inside single quotes, and no
 /// quoting of a newline reads the same there and in POSIX shells, so text that goes to a server's
-/// shell (or to a csh login shell here) must not hold one.
+/// shell must not hold one.
 pub fn plain_text(s: &str) -> bool {
     !s.chars().any(char::is_control)
 }
 
 /// Put before a server script that `cd`s into a folder others can write to: PATH keeps only
 /// absolute folders, so a `zip` or `rg` there is never the one that runs (a PATH with `.` or an
-/// empty entry would find it).
-const ABSOLUTE_PATH: &str = "set -f; P=; IFS=:; for d in $PATH; do case $d in /*) P=$P${P:+:}$d;; esac; done; unset IFS; set +f; PATH=$P; export PATH; ";
+/// empty entry would find it). With no absolute folder at all it is /usr/bin:/bin: an empty PATH
+/// makes most shells search the current folder.
+const ABSOLUTE_PATH: &str = "set -f; P=; IFS=:; for d in $PATH; do case $d in /*) P=$P${P:+:}$d;; esac; done; unset IFS; set +f; PATH=${P:-/usr/bin:/bin}; export PATH; ";
 
-/// A command for an SSH exec channel: `script` (POSIX sh, one line) run by `sh`, whatever the
+/// A command for an SSH exec channel: `script` (POSIX sh, one line) run by /bin/sh, which replaces
+/// the login shell (`exec`, so a Stop signal reaches the script and its trap), whatever the
 /// account's login shell is (fish and csh read the quoting the same way, see [`quote`]), with an
 /// absolute-only PATH. None when the script (a name in it) holds a line break or another control
 /// character (see [`plain_text`]): it isn't sent.
 pub fn sh_c(script: &str) -> Option<String> {
     let script = format!("{ABSOLUTE_PATH}{script}");
-    plain_text(&script).then(|| format!("sh -c {}", quote(&script)))
+    plain_text(&script).then(|| format!("exec /bin/sh -c {}", quote(&script)))
 }
 
 /// A path or name as one word that can't be read as an option: one starting with "-" gets "./".
@@ -377,8 +380,8 @@ pub fn custom_action_preview(template: String, items: Vec<Item>, dir: String) ->
     Ok(expand(&template, &items, &dir))
 }
 
-/// The message for an item (or the folder) whose name can't be passed to a shell on a server or
-/// to csh (see [`plain_text`]); None when every name can.
+/// The message for an item (or the folder) whose name can't be passed to a shell on a server (see
+/// [`plain_text`]); None when every name can.
 fn unquotable(items: &[Item], dir: &str) -> Option<String> {
     let bad = items.iter().map(|i| i.path.as_str()).chain([dir]).find(|p| !plain_text(p))?;
     Some(format!("“{}” has a line break or another control character in its name, so it can't be passed to a command.", name_of(bad).escape_debug()))
@@ -426,11 +429,6 @@ async fn run<R: Runtime>(app: &AppHandle<R>, state: &AppState, spec: &RunSpec, c
         sftp.disconnect().await;
         r?;
     } else {
-        if local::csh() {
-            if let Some(bad) = unquotable(&spec.items, &spec.dir) {
-                return Err(bad);
-            }
-        }
         let lines = expand(&spec.template, &spec.items, &spec.dir);
         for (i, line) in lines.iter().enumerate() {
             if cancel.load(Ordering::Relaxed) {
@@ -467,26 +465,25 @@ mod local {
         time::Duration,
     };
 
-    use tokio::{io::AsyncReadExt, process::Command};
+    use tokio::{
+        io::{AsyncRead, AsyncReadExt},
+        process::Command,
+    };
 
+    /// The shell that runs a line: the user's (`$SHELL`), except csh and tcsh, which expand `!`
+    /// even inside single quotes (`!#` pastes the line's earlier words in raw, so a name could
+    /// end the quoting) and end a command at a newline there: /bin/sh runs it then.
     #[cfg(unix)]
-    fn user_shell() -> String {
-        std::env::var("SHELL").ok().filter(|s| s.starts_with('/') && Path::new(s).exists()).unwrap_or_else(|| "/bin/sh".into())
-    }
-
-    /// Whether the user's shell is csh or tcsh (see [`super::plain_text`]).
-    pub fn csh() -> bool {
-        #[cfg(unix)]
-        return user_shell().rsplit('/').next().is_some_and(|n| n.ends_with("csh"));
-        #[cfg(not(unix))]
-        false
+    pub fn user_shell(env: Option<String>) -> String {
+        env.filter(|s| s.starts_with('/') && Path::new(s).exists())
+            .filter(|s| !s.rsplit('/').next().is_some_and(|n| n.ends_with("csh")))
+            .unwrap_or_else(|| "/bin/sh".into())
     }
 
     /// The user's shell as a login shell (so PATH has Homebrew and the like, as in Terminal).
     #[cfg(unix)]
     fn shell(line: &str) -> Command {
-        let sh = user_shell();
-        let mut c = Command::new(sh);
+        let mut c = Command::new(user_shell(std::env::var("SHELL").ok()));
         c.args(["-l", "-c", line]);
         // its own process group, so Stop ends what it started too
         c.process_group(0);
@@ -532,6 +529,16 @@ mod local {
             Some(t) if t.elapsed() > Duration::from_secs(2) => terminate(child, true),
             Some(_) => {}
         }
+    }
+
+    /// Reads `a` and `b` to their end, keeping nothing.
+    async fn drain(a: Option<impl AsyncRead + Unpin>, b: Option<impl AsyncRead + Unpin>) {
+        async fn one(r: Option<impl AsyncRead + Unpin>) {
+            let Some(mut r) = r else { return };
+            let mut buf = [0u8; 4096];
+            while matches!(r.read(&mut buf).await, Ok(n) if n > 0) {}
+        }
+        tokio::join!(one(a), one(b));
     }
 
     /// Runs one command line in `dir`: (exit code, stopped).
@@ -589,6 +596,11 @@ mod local {
                 }
             }
         }
+        // something started in the background still holds the pipes: keep reading them (and
+        // throwing the output away) until it closes them, or its next write would kill it (SIGPIPE)
+        if out_open || err_open {
+            tokio::spawn(drain(out_open.then_some(out), err_open.then_some(err)));
+        }
         let status = match exited {
             Some((s, _)) => s,
             None => loop {
@@ -605,10 +617,6 @@ mod local {
 #[cfg(not(desktop))]
 mod local {
     use std::sync::atomic::AtomicBool;
-
-    pub fn csh() -> bool {
-        false
-    }
 
     pub async fn run(_line: &str, _dir: &str, _cancel: &AtomicBool, _on_data: impl FnMut(bool, &[u8])) -> Result<(Option<i32>, bool), String> {
         Err("Actions run on a computer.".into())
@@ -756,6 +764,38 @@ mod tests {
         let cmd = sh_c("printf %s \"$PATH\"").unwrap();
         let out = std::process::Command::new("/bin/sh").arg("-c").arg(&cmd).env("PATH", ":.:/usr/bin:bin:/bin::").output().unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout), "/usr/bin:/bin");
+        // no absolute entry at all: not an empty PATH (which searches the current folder)
+        for none in ["", ".", "bin::."] {
+            let out = std::process::Command::new("/bin/sh").arg("-c").arg(&cmd).env("PATH", none).output().unwrap();
+            assert_eq!(String::from_utf8_lossy(&out.stdout), "/usr/bin:/bin", "{none:?}");
+        }
+    }
+
+    /// A csh or tcsh `$SHELL` never runs an action line (it expands `!#` inside single quotes).
+    #[cfg(all(unix, desktop))]
+    #[test]
+    fn local_actions_never_run_in_csh() {
+        assert_eq!(local::user_shell(Some("/bin/tcsh".into())), "/bin/sh");
+        assert_eq!(local::user_shell(Some("/bin/csh".into())), "/bin/sh");
+        if std::path::Path::new("/bin/bash").exists() {
+            assert_eq!(local::user_shell(Some("/bin/bash".into())), "/bin/bash");
+        }
+        assert_eq!(local::user_shell(Some("zsh".into())), "/bin/sh");
+        assert_eq!(local::user_shell(None), "/bin/sh");
+    }
+
+    /// The script replaces the login shell, so a signal sent to the session reaches it.
+    #[cfg(unix)]
+    #[test]
+    fn server_scripts_replace_the_login_shell() {
+        let cmd = sh_c("echo $$").unwrap();
+        assert!(cmd.starts_with("exec /bin/sh -c "));
+        for sh in ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/tcsh", "/bin/csh"].into_iter().filter(|p| std::path::Path::new(p).exists()) {
+            let child = std::process::Command::new(sh).arg("-c").arg(&cmd).stdout(std::process::Stdio::piped()).spawn().unwrap();
+            let pid = child.id();
+            let out = child.wait_with_output().unwrap();
+            assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), pid.to_string(), "{sh}");
+        }
     }
 
     #[cfg(unix)]
@@ -871,5 +911,29 @@ mod tests {
             assert_eq!(out, b"before");
             assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
         });
+    }
+
+    /// A program the action leaves running keeps working after the run has ended: its later
+    /// output goes nowhere instead of killing it (SIGPIPE).
+    #[cfg(all(unix, desktop))]
+    #[test]
+    fn background_programs_outlive_the_run() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let flag = std::env::temp_dir().join(format!("kybl-bg-{}", uuid::Uuid::new_v4().simple()));
+        rt.block_on(async {
+            let cancel = AtomicBool::new(false);
+            let line = format!("(sleep 1; echo late; echo late >&2; touch {}) & exit 0", quote(&flag.to_string_lossy()));
+            let (code, stopped) = local::run(&line, "/", &cancel, |_, _| {}).await.unwrap();
+            assert_eq!((code, stopped), (Some(0), false));
+            assert!(!flag.exists());
+            for _ in 0..40 {
+                if flag.exists() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        });
+        assert!(flag.exists(), "the background program died on its first write");
+        std::fs::remove_file(flag).ok();
     }
 }

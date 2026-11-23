@@ -23,6 +23,13 @@ const PASTE_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
 export const cleanPaste = (s: string) => s.replace(PASTE_CONTROL, "");
 
 /**
+ * Whether pasting `s` needs a yes first: it has a line break and the shell hasn't turned on
+ * bracketed paste, so each line would run as soon as it arrives (text hidden on a web page rides
+ * along in a copy, a hidden "\ncurl … | sh\n" included).
+ */
+export const pasteNeedsConfirm = (s: string, bracketed: boolean) => !bracketed && /[\r\n]/.test(s);
+
+/**
  * `s` as one word for any shell (POSIX, fish, csh): as it is when plain, else in single quotes with
  * each quote and backslash written outside them (`'\''`, `'\\'`), so nothing between the quotes is
  * special anywhere (fish reads `\'` inside single quotes as a quote). Null when it holds a control

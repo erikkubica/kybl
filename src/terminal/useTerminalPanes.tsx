@@ -13,7 +13,7 @@ import { baseName } from "../format";
 import { LOCAL_PROFILE, type Loc, type PaneId } from "../browser/types";
 import type { Pane } from "../browser/usePane";
 import type { MenuItem } from "../components/Dialogs";
-import type { Dialogs } from "../shell/useDialogs";
+import type { ConfirmOptions, Dialogs } from "../shell/useDialogs";
 import type { Place } from "../shell/crossPane";
 import { leaves } from "../shell/paneLayout";
 import type { Layout, WorkspaceStore } from "../shell/workspaces";
@@ -29,6 +29,7 @@ import {
   focusWhenShown,
   setTerminalOpener,
   setTerminalPanes,
+  setPasteConfirm,
   shellQuote,
   terminalIdle,
   terminalRemoteBase,
@@ -54,6 +55,7 @@ export type TermHost = {
   setActive: (id: PaneId) => void;
   focus: (id: PaneId) => void;
   close: (id: PaneId) => void;
+  confirm: Dialogs["confirm"];
   menu: Dialogs["menu"];
   toast: Dialogs["toast"];
   rootLabel: (profileId: string, root: string) => string;
@@ -75,6 +77,10 @@ export function useTerminalPanes(initial: Layout) {
   const termsRef = useRef(terms);
   termsRef.current = terms;
   useEffect(() => setTerminalPanes(terms), [terms]);
+  useEffect(() => {
+    setPasteConfirm((text) => host.current?.confirm(pasteDialog(text)) ?? Promise.resolve(false));
+    return () => setPasteConfirm(null);
+  }, []);
 
   /** Slot `id` shows terminal `place` (a pane brought back by a workspace), or files (undefined). */
   const assign = (id: PaneId, place: TermPlace | undefined) =>
@@ -354,4 +360,20 @@ export function useTerminalPanes(initial: Layout) {
   }, []);
 
   return { terms, setTerms, assign, host, open, toggle, items, dropTarget, drop, nameOf, gc, render };
+}
+
+/** The question before a paste whose lines would run at once (see `pasteNeedsConfirm`): the whole text, as it will be typed. */
+function pasteDialog(text: string): ConfirmOptions {
+  const lines = text.replace(/[\r\n]+$/, "").split(/\r\n|\r|\n/).length;
+  const shown = text.length > 4000 ? `${text.slice(0, 4000)}\n…` : text;
+  return {
+    title: lines > 1 ? `Paste ${lines} lines?` : "Paste and run?",
+    message: (
+      <>
+        <p>This shell runs each line as soon as it is pasted. Check the text first: a copy from a web page can hold lines you didn’t see.</p>
+        <pre className="toast-detail selectable">{shown}</pre>
+      </>
+    ),
+    label: "Paste",
+  };
 }

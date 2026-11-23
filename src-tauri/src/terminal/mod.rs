@@ -75,6 +75,7 @@ pub fn close_for(label: &str) {
     };
     for s in gone {
         s.task.abort();
+        s.credit.close();
     }
 }
 
@@ -82,6 +83,7 @@ fn close(id: u32) {
     let s = SESSIONS.lock().unwrap().remove(&id);
     if let Some(s) = s {
         s.task.abort();
+        s.credit.close();
     }
 }
 

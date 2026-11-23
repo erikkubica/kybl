@@ -12,8 +12,8 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { LS } from "../browser/types";
-import { setTermImpl, takeFocusWhenShown, takeStartup, type TermAction, type TermSpec } from "./api";
-import { cleanPaste } from "./quote";
+import { confirmPaste, setTermImpl, takeFocusWhenShown, takeStartup, type TermAction, type TermSpec } from "./api";
+import { cleanPaste, pasteNeedsConfirm } from "./quote";
 
 const SCROLLBACK = 5000;
 const FONT_KEY = "s3b.term.font";
@@ -114,10 +114,22 @@ class Session {
         const t = e.clipboardData?.getData("text/plain");
         e.preventDefault();
         e.stopPropagation();
-        if (t && this.state === "running") this.term.paste(cleanPaste(t));
+        if (t) void this.pasteText(t);
       },
       true,
     );
+  }
+
+  /** Clipboard text into the shell: control characters gone, and a yes first when its lines would run at once. */
+  private async pasteText(t: string) {
+    const text = cleanPaste(t);
+    if (!text || this.state !== "running") return;
+    if (pasteNeedsConfirm(text, this.term.modes.bracketedPasteMode)) {
+      const run = this.run;
+      if (!(await confirmPaste(text)) || run !== this.run || this.state !== "running") return;
+      this.term.focus();
+    }
+    this.term.paste(text);
   }
 
   /** Shows the terminal in `box` (first time: starts the shell, sized to it). */
@@ -282,7 +294,7 @@ class Session {
       case "paste":
         void navigator.clipboard
           ?.readText()
-          .then((t) => t && this.state === "running" && this.term.paste(cleanPaste(t)))
+          .then((t) => this.pasteText(t))
           .catch(() => {});
         break;
       case "font+":

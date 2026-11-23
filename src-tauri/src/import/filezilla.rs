@@ -137,7 +137,8 @@ pub fn decode_remote_dir(s: &str) -> Option<String> {
         }
         i += 1;
         let len = number(&mut i)?;
-        if len == 0 || chars.get(i) != Some(&' ') || i + 1 + len > chars.len() {
+        // checked: a huge length must not wrap round and pass (the slice below would then panic)
+        if len == 0 || chars.get(i) != Some(&' ') || i.checked_add(1).and_then(|n| n.checked_add(len)).is_none_or(|end| end > chars.len()) {
             return None;
         }
         i += 1;
@@ -531,6 +532,11 @@ mod tests {
         assert_eq!(decode_remote_dir("3 0 2 C: 3 foo"), None);
         assert_eq!(decode_remote_dir("1 0 9 short"), None);
         assert_eq!(decode_remote_dir("1 0 x home"), None);
+        // a length near usize::MAX must not wrap round the bounds check (it panicked, killing the app)
+        for huge in ["1 0 18446744073709551615 x", "1 0 18446744073709551614 x", "1 0 4 home 18446744073709551615 x", "1 0 99999999999999999999999 x"] {
+            assert_eq!(decode_remote_dir(huge), None, "{huge}");
+        }
+        assert!(parse_str("<FileZilla3><Servers><Server><Host>h</Host><RemoteDir>1 0 18446744073709551615 x</RemoteDir></Server></Servers></FileZilla3>").is_ok());
     }
 
     #[test]

@@ -13,7 +13,7 @@
 
 use std::{
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
     time::Duration,
@@ -38,6 +38,8 @@ pub const QUEUE: usize = 32;
 pub struct Credit {
     unacked: AtomicUsize,
     notify: Notify,
+    /// the terminal was closed: the pump ends, even while it waits for the page
+    closed: AtomicBool,
 }
 
 impl Credit {
@@ -54,11 +56,21 @@ impl Credit {
         self.notify.notify_waiters();
     }
 
-    /// Returns once fewer than [`HIGH_WATER`] bytes are waiting for the page.
+    /// The terminal is closed (its page may be gone and never acknowledge again): the pump ends.
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        self.notify.notify_waiters();
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
+    /// Returns once fewer than [`HIGH_WATER`] bytes are waiting for the page, or it is closed.
     async fn wait_room(&self) {
         loop {
             let woken = self.notify.notified();
-            if self.unacked.load(Ordering::Acquire) < HIGH_WATER {
+            if self.is_closed() || self.unacked.load(Ordering::Acquire) < HIGH_WATER {
                 return;
             }
             woken.await;
@@ -67,12 +79,16 @@ impl Credit {
 }
 
 /// Moves chunks from `rx` to `sink` in batches until `rx` closes (everything left is sent first).
-/// `sink` returns false when the page is gone, which ends the pump early.
+/// `sink` returns false when the page is gone, and [`Credit::close`] is called when the terminal
+/// is closed: either ends the pump early.
 pub async fn pump(mut rx: mpsc::Receiver<Vec<u8>>, credit: Arc<Credit>, window: Duration, max: usize, mut sink: impl FnMut(Vec<u8>) -> bool) {
     // long ago: the first output goes at once
     let mut last = Instant::now() - window;
     loop {
         credit.wait_room().await;
+        if credit.is_closed() {
+            return;
+        }
         let Some(mut buf) = rx.recv().await else { return };
         let mut closed = false;
         // whatever is already waiting joins at once
@@ -179,6 +195,22 @@ mod tests {
         assert_eq!(got.lock().unwrap().last().unwrap(), b"more");
         drop(tx);
         task.await.unwrap();
+    }
+
+    /// Closed while waiting for an acknowledgement that will never come (the page went away):
+    /// the pump ends instead of waiting for ever.
+    #[tokio::test]
+    async fn a_close_ends_a_pump_waiting_for_the_page() {
+        let (tx, rx) = mpsc::channel(QUEUE);
+        let (_got, sink) = collect();
+        let credit = Arc::new(Credit::default());
+        let task = tokio::spawn(pump(rx, credit.clone(), WINDOW, HIGH_WATER, sink));
+        tx.send(vec![0u8; HIGH_WATER]).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert!(!task.is_finished());
+        credit.close();
+        tokio::time::timeout(Duration::from_secs(2), task).await.expect("the pump ended").unwrap();
+        drop(tx);
     }
 
     #[tokio::test]

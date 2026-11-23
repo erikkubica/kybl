@@ -553,6 +553,41 @@ fn server_unpack_fails_closed_when_the_archive_cant_be_listed() {
     }
 }
 
+/// Unpacking into a folder that is there already merges into it, but not when it holds a link
+/// (someone else could point `out/link` at a folder elsewhere): the app's own path takes over.
+/// Zipping never moves the zip into a folder of the zip's name.
+#[cfg(unix)]
+#[test]
+fn server_unpack_never_merges_through_links() {
+    let f = FakeServer::new();
+    let out = format!("{}/out", f.dir());
+    for sh in shells() {
+        for format in [Format::Zip, Format::Tar] {
+            let script = remote::extract_script(&format!("{}/a", f.dir()), format, &f.dir(), "out");
+            let _ = std::fs::remove_dir_all(&out);
+            std::fs::create_dir_all(format!("{out}/sub")).unwrap();
+            assert_eq!(f.run(sh, &script, &[("N", "x")]), Some(0), "{sh} {format:?}");
+            assert!(Path::new(&format!("{out}/ok")).exists());
+            std::fs::remove_file(format!("{out}/ok")).unwrap();
+            std::os::unix::fs::symlink(f.s.0.join("bin"), format!("{out}/sub/link")).unwrap();
+            assert_eq!(f.run(sh, &script, &[("N", "x")]), Some(125), "{sh} {format:?}");
+            assert!(!Path::new(&format!("{out}/ok")).exists());
+            // the folder itself a link
+            let _ = std::fs::remove_dir_all(&out);
+            std::os::unix::fs::symlink(f.s.0.join("bin"), &out).unwrap();
+            assert_eq!(f.run(sh, &script, &[("N", "x")]), Some(125), "{sh} {format:?}");
+            assert!(!f.s.0.join("bin/ok").exists());
+            std::fs::remove_file(&out).unwrap();
+            assert!(f.leftovers().is_empty(), "{:?}", f.leftovers());
+        }
+        std::fs::create_dir_all(format!("{}/A.zip", f.dir())).unwrap();
+        assert_eq!(f.run(sh, &remote::compress_script(&f.dir(), &["a b".into()], "A.zip"), &[]), Some(1), "{sh}");
+        assert!(std::fs::read_dir(format!("{}/A.zip", f.dir())).unwrap().next().is_none());
+        assert!(f.leftovers().is_empty(), "{:?}", f.leftovers());
+        std::fs::remove_dir(format!("{}/A.zip", f.dir())).unwrap();
+    }
+}
+
 /// Stop while the server unzips or zips: the tool is stopped and the temporary folder or
 /// `.part` file removed, whichever sh the server has.
 #[cfg(unix)]
