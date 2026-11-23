@@ -593,14 +593,19 @@ impl SftpBackend {
     }
 
     /// Writes the bytes to a new file at `path`. Ok(false) when cancelled.
-    async fn upload(&self, path: &str, mut body: ByteStream, len: Option<u64>, modified: Option<i64>, progress: Progress<'_>, cancel: &AtomicBool) -> SResult<bool> {
+    /// Writes `body` to `path`: a new file, or with `offset` the rest of one from that byte on.
+    #[allow(clippy::too_many_arguments)]
+    async fn upload(&self, path: &str, mut body: ByteStream, len: Option<u64>, offset: Option<u64>, modified: Option<i64>, progress: Progress<'_>, cancel: &AtomicBool) -> SResult<bool> {
         let c = self.conn().await?;
-        let mut f = c
-            .sftp
-            .open_with_flags(path.to_string(), OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
-            .await
-            .map_err(sftp_error)?;
-        let mut meter = Meter::new(len, progress, cancel);
+        let flags = match offset {
+            Some(_) => OpenFlags::CREATE | OpenFlags::WRITE,
+            None => OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+        };
+        let mut f = c.sftp.open_with_flags(path.to_string(), flags).await.map_err(sftp_error)?;
+        if let Some(at) = offset {
+            f.seek(SeekFrom::Start(at)).await.map_err(write_error)?;
+        }
+        let mut meter = Meter::starting_at(offset.unwrap_or(0), len, progress, cancel);
         while let Some(chunk) = body.next().await {
             if meter.cancelled() {
                 let _ = f.close().await;
@@ -798,17 +803,47 @@ impl Storage for SftpBackend {
         }
         self.ensure_dir(&parent_key(path)).await?;
         let target = self.path(path).await?;
-        let tmp = self.path(&temp_key(path)).await?;
-        let (body, len) = source_stream(src).await?;
-        match self.upload(&tmp, body, len, opts.modified, progress, cancel).await {
+        // an interrupted upload carries on in its temporary file, from the bytes already there
+        let len_now = source_len(&src).await;
+        let (tmp_key, offset) = match opts.resume.as_ref().filter(|rs| is_temp_for(&rs.upload_id, path)) {
+            Some(rs) => {
+                let have = self.metadata(self.path(&rs.upload_id).await?).await?.filter(|m| !m.is_dir()).and_then(|m| m.size);
+                match resume_offset(have, len_now) {
+                    Some(at) => (rs.upload_id.clone(), Some(at)),
+                    None => (temp_key(path), None),
+                }
+            }
+            None => (temp_key(path), None),
+        };
+        let tmp = self.path(&tmp_key).await?;
+        // with `on_part` the caller keeps an interrupted upload to carry on: its file stays
+        let keep = opts.on_part.is_some();
+        announce_temp(&opts, &tmp_key, offset.unwrap_or(0));
+        let (body, len) = source_stream_from(src, offset.unwrap_or(0)).await?;
+        match self.upload(&tmp, body, len, offset, opts.modified, progress, cancel).await {
             Ok(true) => {}
             Ok(false) => {
-                self.remove_quietly(tmp).await;
+                if !keep {
+                    self.remove_quietly(tmp).await;
+                }
                 return Ok(WriteOutcome::Cancelled);
             }
             Err(e) => {
-                self.remove_quietly(tmp).await;
+                if !keep {
+                    self.remove_quietly(tmp).await;
+                }
                 return Err(e);
+            }
+        }
+        // a resumed file goes in place only whole
+        if offset.is_some()
+            && let Some(want) = len
+        {
+            let got = self.metadata(tmp.clone()).await?.and_then(|m| m.size);
+            if got != Some(want) {
+                self.remove_quietly(tmp).await;
+                return Err(StorageError::other("The upload couldn't be carried on where it stopped, so it will start over.")
+                    .with_detail(format!("{} bytes on the server instead of {want}", got.unwrap_or(0))));
             }
         }
         // the temporary file is kept when it can't go in place: it may be all there is of the
@@ -886,6 +921,10 @@ impl Storage for SftpBackend {
         self.pages.forget(&to.path);
         self.known_dirs.lock().unwrap().retain(|d| !d.starts_with(&k));
         Ok(())
+    }
+
+    async fn remote_hash(&self, _root: &str, path: &str, size: u64) -> SResult<Option<(HashKind, String)>> {
+        self.hash_on_server(path, size).await
     }
 
     async fn set_mode(&self, _root: &str, path: &str, mode: u32) -> SResult<()> {

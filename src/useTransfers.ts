@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage } from "./api";
+import { logMessage } from "./activityLog";
+import { formatBytes } from "./format";
 import { createStore, useStore } from "./store";
 import type { Transfer, TransferEvent } from "./types";
 
@@ -159,8 +161,11 @@ function listenOnce() {
       total: ev.total || cur.total,
       error: ev.error,
       speed,
+      verified: ev.state === "done" ? ev.verified : undefined,
     };
     byId.set(ev.id, next);
+    if (ev.resumedFrom) logMessage("info", `${cur.name}: carried on from ${formatBytes(ev.resumedFrom)} instead of starting over.`);
+    else if (ev.restarted) logMessage("info", `${cur.name}: couldn't carry on where it stopped, so it started over.`);
     settle(next);
     markDirty();
   }).catch(() => {
@@ -182,6 +187,23 @@ function adoptRunning() {
         if (t.kind === "upload") batch.add(t.id);
       }
       if (list.length) markDirty();
+    })
+    .catch(() => {});
+  // paused or failed ones kept from before (also across a restart): Resume / Retry carries on
+  api
+    .keptTransfers()
+    .then((list) => {
+      for (const k of list) {
+        if (byId.has(k.id)) continue;
+        const { requested: asked, overwrite, state, ...t } = k;
+        byId.set(k.id, { ...t, state, speed: 0 });
+        if (k.kind === "download") requested.set(k.id, asked || k.local);
+        if (overwrite) overwriteIds.add(k.id);
+      }
+      if (list.length) {
+        dirty = true;
+        flush();
+      }
     })
     .catch(() => {});
 }
@@ -238,7 +260,7 @@ function requeue(id: string): Transfer | null {
   }
   const t = byId.get(id);
   if (!t || t.state === "queued" || t.state === "running" || t.state === "done") return null;
-  const fresh: Transfer = { ...t, state: "queued", error: null, speed: 0 };
+  const fresh: Transfer = { ...t, state: "queued", error: null, speed: 0, verified: undefined };
   byId.set(id, fresh);
   lastSample.delete(id);
   if (t.kind === "upload") batch.add(id);
@@ -272,7 +294,62 @@ const actions = {
     return created;
   },
   cancel(id: string) {
-    if (!external.has(id)) api.cancelTransfer(id).catch(() => {});
+    if (external.has(id)) return;
+    api.cancelTransfer(id).catch(() => {});
+    // a paused one isn't running, so no event comes back: it ends here (what it kept is dropped)
+    const t = byId.get(id);
+    if (t?.state === "paused") {
+      const stopped: Transfer = { ...t, state: "cancelled", speed: 0 };
+      byId.set(id, stopped);
+      settle(stopped);
+      dirty = true;
+      flush();
+    }
+  },
+  /** Stops a queued or running transfer but keeps what it did; Resume carries on from there. */
+  pause(id: string) {
+    if (!external.has(id)) api.pauseTransfer(id).catch(() => {});
+  },
+  pauseAll() {
+    api.pauseAllTransfers().catch(() => {});
+  },
+  /** Starts a paused (or failed) transfer again under the same id, so it carries on. */
+  resume(id: string) {
+    actions.retry(id);
+  },
+  /** Resumes every paused transfer; returns how many. */
+  resumeAll(): number {
+    const again: Transfer[] = [];
+    for (const t of [...byId.values()]) {
+      if (t.state !== "paused") continue;
+      const fresh = requeue(t.id);
+      if (fresh) again.push(fresh);
+    }
+    if (!again.length) return 0;
+    dirty = true;
+    flush();
+    markDirty();
+    (async () => {
+      for (let i = 0; i < again.length; i += 50) await Promise.all(again.slice(i, i + 50).map(start));
+    })();
+    return again.length;
+  },
+  /** Lets a queued transfer start next (on its connection), and lists it first among the queued. */
+  moveToTop(id: string) {
+    const t = byId.get(id);
+    if (!t || t.state !== "queued") return;
+    api.moveTransferToTop(id).catch(() => {});
+    // Map order is list order: put it before the first queued one
+    const entries = [...byId.entries()];
+    const from = entries.findIndex(([k]) => k === id);
+    const to = entries.findIndex(([, x]) => x.state === "queued");
+    if (from <= to) return;
+    const [moved] = entries.splice(from, 1);
+    entries.splice(to, 0, moved);
+    byId.clear();
+    for (const [k, v] of entries) byId.set(k, v);
+    dirty = true;
+    flush();
   },
   cancelAll() {
     for (const t of byId.values()) {
@@ -358,6 +435,9 @@ const actions = {
 };
 
 export type TransferActions = typeof actions;
+
+/** The queue's actions, for components outside the hook (the Activity panel's pause and resume). */
+export const transferActions: TransferActions = actions;
 
 /** Actions on the queue. Stable across renders and does not subscribe to progress. */
 export function useTransfers(onError: (msg: string) => void): TransferActions {

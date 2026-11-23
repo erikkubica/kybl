@@ -168,7 +168,8 @@ export type Entry = {
   id?: string;
 } & ServerMeta;
 
-export type TransferState = "queued" | "running" | "done" | "error" | "cancelled";
+/** "paused": stopped by the user (or the app quit), keeping what it did to carry on from. */
+export type TransferState = "queued" | "running" | "paused" | "done" | "error" | "cancelled";
 
 export type Transfer = {
   id: string;
@@ -185,6 +186,8 @@ export type Transfer = {
   bucket: string;
   key: string;
   local: string;
+  /** done and checked after copying: what was compared ("size", "md5", "etag", "sha256", "quickxor", "dropbox") */
+  verified?: string;
 };
 
 export type TransferEvent = {
@@ -193,4 +196,9 @@ export type TransferEvent = {
   bytes: number;
   total: number;
   error: string | null;
+  /** it carried on from this byte instead of starting over */
+  resumedFrom?: number;
+  /** it had got somewhere before but had to start over */
+  restarted?: boolean;
+  verified?: string;
 };

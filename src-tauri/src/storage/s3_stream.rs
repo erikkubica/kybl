@@ -50,7 +50,7 @@ use super::{s3::S3Backend, ByteStream, Entry, ErrKind, PartRecord, Progress, Reo
 use crate::{
     multipart::{part_plan, part_size_for, CHUNK, SINGLE_PUT_LIMIT},
     state::sdk_err,
-    tuning::LIMITER,
+    tuning::{self, UP},
 };
 
 /// Memory all stream uploads may hold in part buffers at once.
@@ -141,7 +141,7 @@ struct PartBody {
     data: Bytes,
     pos: usize,
     sent: Arc<AtomicU64>,
-    wait: Option<Pin<Box<tokio::time::Sleep>>>,
+    wait: Option<tuning::Wait>,
 }
 
 impl Body for PartBody {
@@ -162,10 +162,7 @@ impl Body for PartBody {
         let chunk = self.data.slice(self.pos..end);
         self.pos = end;
         self.sent.fetch_add(chunk.len() as u64, Ordering::Relaxed);
-        let pause = LIMITER.take(chunk.len());
-        if !pause.is_zero() {
-            self.wait = Some(Box::pin(tokio::time::sleep(pause)));
-        }
+        self.wait = UP.take_wait(chunk.len());
         Poll::Ready(Some(Ok(Frame::data(chunk))))
     }
 

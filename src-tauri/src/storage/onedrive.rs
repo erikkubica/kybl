@@ -297,14 +297,19 @@ impl OneDrive {
         let mut restarted = false;
         let mut failures = 0u32;
         loop {
+            // with `on_part` the caller keeps the session to carry on later (a paused transfer)
             if cancel.load(Ordering::Relaxed) {
-                let _ = self.api.send_unsigned(|c| c.delete(&session)).await;
+                if opts.on_part.is_none() {
+                    let _ = self.api.send_unsigned(|c| c.delete(&session)).await;
+                }
                 return Ok(None);
             }
             src.seek(offset).await?;
             let chunk = match src.chunk(piece as usize, cancel).await {
                 Err(e) if e.is_cancelled() => {
-                    let _ = self.api.send_unsigned(|c| c.delete(&session)).await;
+                    if opts.on_part.is_none() {
+                        let _ = self.api.send_unsigned(|c| c.delete(&session)).await;
+                    }
                     return Ok(None);
                 }
                 r => r?,

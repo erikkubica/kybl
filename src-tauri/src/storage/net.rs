@@ -17,7 +17,7 @@ use futures_util::StreamExt;
 use tokio::io::AsyncReadExt;
 
 use super::*;
-use crate::{state::NetConfig, tuning::LIMITER};
+use crate::{state::NetConfig, tuning::{Lane, UP}};
 
 /// Files listed per page.
 pub const PAGE: usize = 1000;
@@ -367,10 +367,21 @@ pub fn page_after(folders: &[String], files: &[Entry], token: Option<&str>) -> P
 
 /// The bytes of a write and how many there are, when known.
 pub async fn source_stream(src: WriteSource) -> SResult<(ByteStream, Option<u64>)> {
+    source_stream_from(src, 0).await
+}
+
+/// The bytes of a write from byte `offset` on (a resumed upload), and how many the whole source
+/// has, when known. A local file is read from there; a stream that can be opened again at an
+/// offset is; any other is read and the first bytes dropped.
+pub async fn source_stream_from(src: WriteSource, offset: u64) -> SResult<(ByteStream, Option<u64>)> {
     Ok(match src {
         WriteSource::Path(p) => {
-            let f = tokio::fs::File::open(&p).await?;
+            let mut f = tokio::fs::File::open(&p).await?;
             let len = f.metadata().await?.len();
+            if offset > 0 {
+                use tokio::io::AsyncSeekExt;
+                f.seek(io::SeekFrom::Start(offset.min(len))).await?;
+            }
             let s = futures_util::stream::unfold(f, |mut f| async move {
                 let mut buf = BytesMut::zeroed(CHUNK);
                 match f.read(&mut buf).await {
@@ -386,10 +397,72 @@ pub async fn source_stream(src: WriteSource) -> SResult<(ByteStream, Option<u64>
         }
         WriteSource::Bytes(b) => {
             let n = b.len() as u64;
-            (Box::pin(futures_util::stream::iter([Ok::<Bytes, io::Error>(b)])), Some(n))
+            let rest = b.slice((offset.min(n)) as usize..);
+            (Box::pin(futures_util::stream::iter([Ok::<Bytes, io::Error>(rest)])), Some(n))
         }
-        WriteSource::Stream { len, body, .. } => (body, len),
+        WriteSource::Stream { len, body, .. } if offset == 0 => (body, len),
+        WriteSource::Stream { len, reopen: Some(reopen), .. } => (reopen(offset).await?, len),
+        WriteSource::Stream { len, body, reopen: None } => (skip_start(body, offset), len),
     })
+}
+
+/// `body` without its first `n` bytes.
+fn skip_start(body: ByteStream, n: u64) -> ByteStream {
+    Box::pin(futures_util::stream::unfold((body, n), |(mut body, mut left)| async move {
+        loop {
+            match body.next().await? {
+                Ok(mut c) if left > 0 => {
+                    let k = left.min(c.len() as u64) as usize;
+                    left -= k as u64;
+                    let _ = c.split_to(k);
+                    if !c.is_empty() {
+                        return Some((Ok(c), (body, 0)));
+                    }
+                }
+                other => return Some((other, (body, left))),
+            }
+        }
+    }))
+}
+
+/// How many bytes a write's source has, when that is known without reading it.
+pub fn source_len(src: &WriteSource) -> impl std::future::Future<Output = Option<u64>> + Send + 'static {
+    let known = match src {
+        WriteSource::Path(p) => Err(p.clone()),
+        WriteSource::Bytes(b) => Ok(Some(b.len() as u64)),
+        WriteSource::Stream { len, .. } => Ok(*len),
+    };
+    async move {
+        match known {
+            Ok(n) => n,
+            Err(p) => tokio::fs::metadata(p).await.ok().map(|m| m.len()),
+        }
+    }
+}
+
+/// Whether `tmp` names a temporary file Kybl writes `path` into (in the same folder, with
+/// `.kybl-` in its name): only such a file is ever carried on with or removed for a resume.
+pub fn is_temp_for(tmp: &str, path: &str) -> bool {
+    let (dir, name) = (parent_key(tmp), file_name(tmp));
+    dir == parent_key(path) && !name.contains('/') && name.contains(".kybl-") && name.contains(file_name(path).split('.').next().unwrap_or_default())
+}
+
+/// Where an interrupted upload to a server's temporary file (SFTP, FTP) carries on: the bytes
+/// already there, when that many make sense for a source of `len` bytes; None to start over.
+pub fn resume_offset(have: Option<u64>, len: Option<u64>) -> Option<u64> {
+    match (have, len) {
+        (Some(h), Some(l)) if h > 0 && h <= l => Some(h),
+        (Some(h), None) if h > 0 => Some(h),
+        _ => None,
+    }
+}
+
+/// The resume state a server backend hands out for an upload into the temporary file `tmp_key`
+/// (announced as part 0, as `WriteOpts::on_part` expects); `done` bytes are there already.
+pub fn announce_temp(opts: &WriteOpts<'_>, tmp_key: &str, done: u64) {
+    if let Some(f) = opts.on_part {
+        f(PartRecord { number: 0, size: done, etag: tmp_key.to_string() });
+    }
 }
 
 /// Counts what goes out: reports progress every 150 ms, keeps to the shared bandwidth cap and
@@ -400,12 +473,18 @@ pub struct Meter<'a> {
     last: Instant,
     progress: Progress<'a>,
     cancel: &'a AtomicBool,
+    lane: Lane,
 }
 
 impl<'a> Meter<'a> {
     pub fn new(total: Option<u64>, progress: Progress<'a>, cancel: &'a AtomicBool) -> Self {
-        progress(0, total.unwrap_or(0));
-        Self { done: 0, total, last: Instant::now(), progress, cancel }
+        Self::starting_at(0, total, progress, cancel)
+    }
+
+    /// A write that carries on at byte `done` (a resumed upload): progress counts from there.
+    pub fn starting_at(done: u64, total: Option<u64>, progress: Progress<'a>, cancel: &'a AtomicBool) -> Self {
+        progress(done, total.unwrap_or(0));
+        Self { done, total, last: Instant::now(), progress, cancel, lane: UP.lane() }
     }
 
     pub fn cancelled(&self) -> bool {
@@ -419,7 +498,7 @@ impl<'a> Meter<'a> {
             (self.progress)(self.done, self.total.unwrap_or(self.done).max(self.done));
             self.last = Instant::now();
         }
-        LIMITER.throttle(n).await;
+        self.lane.throttle(n).await;
     }
 
     pub fn finish(&self) {
@@ -540,6 +619,21 @@ pub fn top_refused() -> StorageError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uploads_carry_on_only_into_their_own_temp_file_at_a_sensible_offset() {
+        assert!(is_temp_for("a/b/.report.kybl-1f2e.tmp", "a/b/report.pdf"));
+        assert!(is_temp_for(".report.kybl-1f2e.tmp", "report.pdf"));
+        assert!(!is_temp_for("a/c/.report.kybl-1f2e.tmp", "a/b/report.pdf"), "another folder");
+        assert!(!is_temp_for("a/b/report.pdf", "a/b/report.pdf"), "the file itself");
+        assert!(!is_temp_for("a/b/.other.kybl-1f2e.tmp", "a/b/report.pdf"), "another file's");
+        assert_eq!(resume_offset(Some(100), Some(1000)), Some(100));
+        assert_eq!(resume_offset(Some(1000), Some(1000)), Some(1000), "all there: just the rename left");
+        assert_eq!(resume_offset(Some(1001), Some(1000)), None, "more than the source: start over");
+        assert_eq!(resume_offset(Some(0), Some(1000)), None);
+        assert_eq!(resume_offset(None, Some(1000)), None);
+        assert_eq!(resume_offset(Some(5), None), Some(5));
+    }
 
     #[test]
     fn hosts_and_ports_from_what_people_type() {

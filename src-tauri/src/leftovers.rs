@@ -116,7 +116,10 @@ pub fn start(app: &AppHandle) {
     let Ok(dir) = app.path().app_data_dir() else { return };
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join(FILE);
-    let earlier: Ledger = std::fs::read(&path).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default();
+    let mut earlier: Ledger = std::fs::read(&path).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default();
+    // what a paused or interrupted transfer kept to carry on from is the resume store's (`resume`)
+    earlier.uploads.retain(|u| !crate::resume::keeps_upload(&u.upload_id));
+    earlier.partials.retain(|p| !crate::resume::keeps_partial(p));
     // kept until cleaned up, so a run that ends early again still knows about them
     {
         let mut l = LEDGER.lock().unwrap();

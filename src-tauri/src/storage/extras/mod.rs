@@ -16,7 +16,7 @@ use futures_util::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use super::*;
-use crate::tuning::LIMITER;
+use crate::tuning::UP;
 
 // ---------------------------------------------------------------- dates
 
@@ -230,7 +230,7 @@ impl Source {
                     if got == 0 {
                         break;
                     }
-                    LIMITER.throttle(got).await;
+                    UP.throttle(got).await;
                 }
                 buf.freeze()
             }
@@ -242,7 +242,7 @@ impl Source {
                     match body.next().await {
                         Some(c) => {
                             let c = c?;
-                            LIMITER.throttle(c.len()).await;
+                            UP.throttle(c.len()).await;
                             buf.extend_from_slice(&c);
                         }
                         None => *ended = true,

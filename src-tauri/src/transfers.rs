@@ -1,8 +1,12 @@
+//! The upload / download queue: each transfer runs in its turn per connection (`state::Slots`),
+//! can be paused and carried on (also after a restart, see `resume`), keeps to the download and
+//! upload caps (`tuning`), and is checked once done when the settings ask (`verify`).
+
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, LazyLock, Mutex,
     },
     time::{Duration, Instant},
@@ -14,28 +18,35 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::AsyncWriteExt;
 
 use crate::dest;
-use crate::multipart;
+use crate::multipart::{self, PAUSED};
+use crate::resume::{self, Saved};
 use crate::state::{err, sdk_err, AppState};
-use crate::storage::{self, generic_cmds, Conn};
+use crate::storage::{self, generic_cmds::{self, Dl}, Conn, PartRecord, ResumeState, WriteOpts};
 use crate::transfer_notice::{self as notice, Dir};
-use crate::tuning::LIMITER;
+use crate::tuning::DOWN;
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct TransferEvent {
     id: String,
-    /// queued | running | done | error | cancelled
+    /// queued | running | paused | done | error | cancelled
     state: &'static str,
     bytes: u64,
     total: u64,
     error: Option<String>,
+    /// it carried on from this byte instead of starting over (said once, as it ends or pauses)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resumed_from: Option<u64>,
+    /// it had got somewhere before, but had to start over
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    restarted: bool,
+    /// done and checked: what was compared ("size", "md5", "etag", "sha256", "quickxor", "dropbox")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verified: Option<&'static str>,
 }
 
 fn emit(app: &AppHandle, id: &str, state: &'static str, bytes: u64, total: u64, error: Option<String>) {
-    let _ = app.emit(
-        "transfer",
-        TransferEvent { id: id.to_string(), state, bytes, total, error },
-    );
+    let _ = app.emit("transfer", TransferEvent { id: id.to_string(), state, bytes, total, error, ..Default::default() });
 }
 
 /// A transfer that has not ended, as `active_transfers` reports it.
@@ -53,11 +64,20 @@ pub struct ActiveTransfer {
     bucket: String,
     key: String,
     local: String,
+    /// a download: the path the page asked for, and whether it replaces a file there
+    #[serde(skip)]
+    requested: String,
+    #[serde(skip)]
+    overwrite: bool,
 }
 
 /// Every transfer that has not ended. The page only learns of transfers it started; on Android
 /// the process (and its transfers) can outlive the page, and a page opened again asks for these.
 static ACTIVE: LazyLock<Mutex<HashMap<String, ActiveTransfer>>> = LazyLock::new(Default::default);
+
+/// The pause flag of every transfer that has not ended: set together with its cancel flag, it
+/// stops the transfer but keeps what it did, to carry on later.
+static PAUSES: LazyLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = LazyLock::new(Default::default);
 
 /// How many transfers have not ended (for the quit prompt).
 #[cfg_attr(mobile, allow(dead_code))]
@@ -74,6 +94,50 @@ fn track(id: &str, f: impl FnOnce(&mut ActiveTransfer)) {
 #[tauri::command]
 pub fn active_transfers() -> Vec<ActiveTransfer> {
     ACTIVE.lock().unwrap().values().cloned().collect()
+}
+
+/// Transfers kept from an earlier run or paused in this one (and not running now), for the page
+/// to show as paused or failed: Resume / Retry starts them again under the same id.
+#[tauri::command]
+pub fn kept_transfers() -> Vec<Saved> {
+    let running = ACTIVE.lock().unwrap();
+    resume::list().into_iter().filter(|s| !running.contains_key(&s.id)).collect()
+}
+
+/// Pauses a transfer: it stops, keeping what it did (the partial file, the parts sent, the
+/// server's upload session), and carries on from there when started again. One still waiting
+/// for its turn just stops waiting.
+#[tauri::command]
+pub async fn pause_transfer(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    pause(&state, &id).await;
+    Ok(())
+}
+
+/// Pauses every transfer that hasn't ended.
+#[tauri::command]
+pub async fn pause_all_transfers(state: State<'_, AppState>) -> Result<usize, String> {
+    let ids: Vec<String> = ACTIVE.lock().unwrap().keys().cloned().collect();
+    for id in &ids {
+        pause(&state, id).await;
+    }
+    Ok(ids.len())
+}
+
+async fn pause(state: &AppState, id: &str) {
+    let flag = PAUSES.lock().unwrap().get(id).cloned();
+    if let (Some(p), Some(c)) = (flag, state.cancels.lock().await.get(id)) {
+        p.store(true, Ordering::Relaxed);
+        c.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Moves a transfer still waiting for its turn to the front of its connection's queue. False
+/// when it isn't waiting (running already, or ended).
+#[tauri::command]
+pub async fn move_transfer_to_top(state: State<'_, AppState>, id: String) -> Result<bool, String> {
+    let profile = ACTIVE.lock().unwrap().get(&id).map(|t| t.profile_id.clone());
+    let Some(profile) = profile else { return Ok(false) };
+    Ok(state.transfer_slots(&profile).await.to_front(&id))
 }
 
 pub(crate) enum Outcome {
@@ -107,8 +171,8 @@ pub(crate) async fn download_file(
     cancel: &AtomicBool,
     progress: Progress<'_>,
 ) -> Result<Outcome, String> {
-    let mut etag = None;
-    download_to(client, bucket, key, Path::new(dest), None, false, cancel, progress, None, &mut etag).await
+    let mut dl = Dl::default();
+    download_to(client, bucket, key, Path::new(dest), None, false, cancel, progress, None, &mut dl).await
 }
 
 /// Opens the partial file of an earlier attempt to carry on from its end, asking the server for
@@ -141,8 +205,8 @@ async fn resume_from(
 
 /// The download itself, into `<dest>.s3part` and renamed onto `dest` once whole. With
 /// `resume_etag`, a partial file from an earlier attempt is continued. With `keep_partial`, a
-/// failed download leaves its partial file for a later retry (a cancelled one never does).
-/// `etag_out` receives the object's ETag, which a retry needs to resume.
+/// failed download leaves its partial file for a later retry (a cancelled one never does, a
+/// paused one does: see [`Dl`]). `dl.etag` receives the object's ETag, which a retry needs.
 #[allow(clippy::too_many_arguments)]
 async fn download_to(
     client: &Client,
@@ -154,7 +218,7 @@ async fn download_to(
     cancel: &AtomicBool,
     progress: Progress<'_>,
     hold: Hold<'_>,
-    etag_out: &mut Option<String>,
+    dl: &mut Dl<'_>,
 ) -> Result<Outcome, String> {
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent).await.map_err(err)?;
@@ -180,11 +244,16 @@ async fn download_to(
             (file, 0, out, total, etag)
         }
     };
-    etag_out.clone_from(&etag);
+    dl.etag.clone_from(&etag);
+    dl.from = got;
+    if let Some(seen) = dl.seen {
+        seen(etag.as_deref());
+    }
     progress(got, total);
 
     let mut last_emit = Instant::now();
     let mut checked_at = got;
+    let mut lane = DOWN.lane();
     let result: Result<bool, String> = async {
         let mut failures = 0u32;
         loop {
@@ -200,7 +269,7 @@ async fn download_to(
                         progress(got, total);
                         last_emit = Instant::now();
                     }
-                    LIMITER.throttle(chunk.len()).await;
+                    lane.throttle(chunk.len()).await;
                     // "Wi-Fi only" and the phone moved to mobile data: let go of the connection,
                     // keep what arrived, and ask for the rest once it is back on Wi-Fi
                     if let Some(paused) = hold
@@ -265,6 +334,7 @@ async fn download_to(
     // flushed to disk before anything else looks at it
     let _ = file.sync_all().await;
     drop(file);
+    let paused = dl.pause.is_some_and(|p| p.load(Ordering::Relaxed));
     match result {
         Ok(true) => {
             tokio::fs::rename(&part_path, dest).await.map_err(err)?;
@@ -272,6 +342,8 @@ async fn download_to(
             crate::leftovers::partial_ended(&part_path);
             Ok(Outcome::Done)
         }
+        // paused: what arrived stays, to carry on from (the same version, asked by its ETag)
+        Ok(false) if paused && etag.is_some() => Err(PAUSED.into()),
         Ok(false) => {
             let _ = tokio::fs::remove_file(&part_path).await;
             Ok(Outcome::Cancelled)
@@ -285,8 +357,8 @@ async fn download_to(
     }
 }
 
-/// A download that failed, kept so Retry (the same transfer id) continues its partial file under
-/// the name it was given.
+/// A download that failed or was paused, kept so Retry / Resume (the same transfer id) continues
+/// its partial file under the name it was given.
 struct PendingDownload {
     profile_id: String,
     bucket: String,
@@ -299,6 +371,18 @@ struct PendingDownload {
 }
 
 static PENDING_DOWNLOADS: LazyLock<Mutex<HashMap<String, PendingDownload>>> = LazyLock::new(Default::default);
+
+/// Takes in a transfer kept from an earlier run (`resume::start`): a download gets its name and
+/// partial file back, so starting it again carries on.
+pub fn adopt(s: &Saved) {
+    if !s.is_download() || s.local.is_empty() {
+        return;
+    }
+    let chosen = PathBuf::from(&s.local);
+    dest::park(&chosen, &s.id);
+    let kept = PendingDownload { profile_id: s.profile_id.clone(), bucket: s.bucket.clone(), key: s.key.clone(), requested: s.requested.clone(), chosen, etag: s.version.clone() };
+    PENDING_DOWNLOADS.lock().unwrap().insert(s.id.clone(), kept);
+}
 
 /// Forgets the failed download `id` and removes its partial file, unless that file isn't its own
 /// any more (a download that replaces the file can take a name a failed download left behind).
@@ -412,6 +496,55 @@ enum Kind {
     Download { resume: bool },
 }
 
+/// What the transfer reports as it ends: carried on from where it stopped, or started over.
+/// `prior`: bytes reported done before this run; `kept`: bytes of it kept to carry on from (the
+/// partial file, the parts the server has), 0 when unknown; `first`: the first progress above
+/// zero in this run. A run that carries on reports what it kept straight away; one starting over
+/// climbs from zero.
+fn resume_note(prior: u64, kept: u64, first: u64) -> (Option<u64>, bool) {
+    let base = if kept > 0 { kept } else { prior };
+    if base == 0 || first == 0 {
+        return (None, false);
+    }
+    if first as f64 >= base as f64 * 0.9 {
+        (Some(first.min(base.max(prior))), false)
+    } else {
+        (None, true)
+    }
+}
+
+/// How much of a transfer kept from before can be carried on from, where that is known without
+/// asking the server: a download's partial file, the parts of an S3 multipart upload or of a
+/// cloud drive's upload session. 0 otherwise (a server's temporary file: `prior` stands in).
+fn kept_bytes(kind: Kind, local: &str, kept: Option<&Saved>) -> u64 {
+    match kind {
+        Kind::Download { resume: true } => std::fs::metadata(dest::part_path(Path::new(local))).map_or(0, |m| m.len()),
+        Kind::Download { resume: false } => 0,
+        Kind::Upload => match kept.and_then(|k| k.upload.as_ref().map(|u| (k.via.as_str(), u))) {
+            Some(("s3" | "drive", u)) => u.parts.iter().map(|p| p.size).sum(),
+            _ => 0,
+        },
+    }
+}
+
+/// The resume state an upload's backend reports through `on_part`: the temporary file on an
+/// SFTP / FTP server (announced as part 0), or a cloud drive's upload session (each piece).
+fn collect_part(st: &mut Option<(ResumeState, &'static str)>, p: PartRecord) {
+    let via = if p.number == 0 { "server" } else { "drive" };
+    match st {
+        Some((rs, _)) if rs.upload_id == p.etag => {
+            if p.number > 0 {
+                rs.parts.retain(|q| q.number != p.number);
+                rs.parts.push(p);
+            }
+        }
+        _ => {
+            let parts = if p.number > 0 { vec![p.clone()] } else { vec![] };
+            *st = Some((ResumeState { upload_id: p.etag, part_size: p.size, parts }, via));
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn spawn_transfer(
     app: AppHandle,
@@ -423,6 +556,7 @@ async fn spawn_transfer(
     key: String,
     local: String,
     requested: String,
+    overwrite: bool,
     resume_etag: Option<String>,
     listed: Option<crate::filecache::Ident>,
 ) -> Result<(), String> {
@@ -433,38 +567,47 @@ async fn spawn_transfer(
         Kind::Download { .. } => None,
     };
     let cancel = Arc::new(AtomicBool::new(false));
+    let pause = Arc::new(AtomicBool::new(false));
     state.cancels.lock().await.insert(id.clone(), cancel.clone());
+    PAUSES.lock().unwrap().insert(id.clone(), pause.clone());
     let slots = state.transfer_slots(&profile_id).await;
     emit(&app, &id, "queued", 0, 0, None);
     let dir = match kind {
         Kind::Upload => Dir::Upload,
         Kind::Download { .. } => Dir::Download,
     };
+    let kind_name = match kind {
+        Kind::Upload => "upload",
+        Kind::Download { .. } => "download",
+    };
     let name = key.rsplit('/').find(|n| !n.is_empty()).unwrap_or(&key).to_string();
     notice::queued(&app, &id, dir, &name);
+    // what an earlier run (or pause) kept of it
+    let kept = resume::get(&id).filter(|s| s.kind == kind_name && s.profile_id == profile_id && s.bucket == bucket && s.key == key);
+    let prior = kept.as_ref().map_or(0, |s| s.bytes);
+    let kept_now = kept_bytes(kind, &local, kept.as_ref());
     ACTIVE.lock().unwrap().insert(
         id.clone(),
         ActiveTransfer {
             id: id.clone(),
-            kind: match kind {
-                Kind::Upload => "upload",
-                Kind::Download { .. } => "download",
-            },
+            kind: kind_name,
             name: name.clone(),
             state: "queued",
-            bytes: 0,
-            total: 0,
+            bytes: prior,
+            total: kept.as_ref().map_or(0, |s| s.total),
             profile_id: profile_id.clone(),
             bucket: bucket.clone(),
             key: key.clone(),
             local: local.clone(),
+            requested: requested.clone(),
+            overwrite,
         },
     );
 
     tauri::async_runtime::spawn(async move {
         // a transfer cancelled while it waits for its turn ends right away, not when its turn comes
         let permit = tokio::select! {
-            p = slots.acquire() => Some(p),
+            p = slots.acquire_as(&id) => Some(p),
             _ = async {
                 while !cancel.load(Ordering::Relaxed) {
                     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -477,12 +620,38 @@ async fn spawn_transfer(
                 tokio::time::sleep(Duration::from_secs(3)).await;
             }
         }
+        // written down while it runs, so a crash or quit mid-way finds it again on the next start
+        let mut record = kept.clone().unwrap_or_default();
+        record.id = id.clone();
+        record.kind = kind_name.into();
+        record.name = name.clone();
+        record.profile_id = profile_id.clone();
+        record.bucket = bucket.clone();
+        record.key = key.clone();
+        record.local = local.clone();
+        record.requested = requested.clone();
+        record.overwrite = overwrite;
+        record.state = "running".into();
+        record.error = None;
         let mut done_bytes = 0u64;
-        let mut etag = None;
+        let first = AtomicU64::new(0);
+        let mut verify_part_size: Option<u64> = None;
+        let mut checked: Option<&'static str> = None;
+        let mut local_done: Option<PathBuf> = None;
+        // a download's version is written down as soon as it is known
+        let seen = |v: Option<&str>| {
+            let v = v.map(str::to_string);
+            resume::update(&id, |s| s.version = v);
+        };
+        let mut dl = Dl { pause: Some(&pause), seen: Some(&seen), ..Default::default() };
         let result = if permit.is_none() || cancel.load(Ordering::Relaxed) {
             Ok(Outcome::Cancelled)
         } else {
+            resume::put(record.clone());
             let report = |done: u64, total: u64| {
+                if done > 0 {
+                    let _ = first.compare_exchange(0, done, Ordering::Relaxed, Ordering::Relaxed);
+                }
                 emit(&app, &id, "running", done, total, None);
                 notice::progress(&app, &id, done, total);
                 track(&id, |t| {
@@ -503,14 +672,65 @@ async fn spawn_transfer(
             match kind {
                 Kind::Upload => match local_source(source.expect("an upload has a source"), &key, &id).await {
                     Ok((path, temp)) => {
+                        let now = multipart::stamp(&path).await.ok();
                         let r = match &conn {
                             Conn::S3(client) => {
-                                multipart::upload_resumable(client, &id, &profile_id, &bucket, &key, &path, &cancel, &report, Some(&paused)).await
+                                // parts an earlier run sent, for the same file unchanged
+                                if let Some(s) = &kept
+                                    && s.via == "s3"
+                                    && let (Some(rs), Some(st)) = (&s.upload, s.stamp)
+                                    && multipart::kept(&id).is_none()
+                                    && s.local == path
+                                {
+                                    multipart::adopt(&id, client, &profile_id, &bucket, &key, &path, st, rs);
+                                }
+                                let part_size = Mutex::new(None);
+                                let total = now.map_or(0, |n| n.0);
+                                let on_state = |m: &multipart::Multipart| {
+                                    *part_size.lock().unwrap() = Some(m.part_size());
+                                    let rs = m.to_resume(total);
+                                    resume::update(&id, |s| {
+                                        s.via = "s3".into();
+                                        s.upload = Some(rs);
+                                        s.stamp = now;
+                                    });
+                                };
+                                let r = multipart::upload_resumable(client, &id, &profile_id, &bucket, &key, &path, &cancel, &report, Some(&paused), &pause, Some(&on_state)).await;
+                                verify_part_size = *part_size.lock().unwrap();
+                                r
                             }
-                            Conn::Other(s) => generic_cmds::upload(&**s, &bucket, &key, &path, &cancel, &report).await,
+                            Conn::Other(s) => {
+                                // a cloud drive's session or a server's temporary file kept from
+                                // before, for the same file unchanged
+                                let resume_state = kept
+                                    .as_ref()
+                                    .filter(|k| (k.via == "drive" || k.via == "server") && k.stamp.is_some() && k.stamp == now && k.local == path)
+                                    .and_then(|k| k.upload.clone());
+                                let st: Mutex<Option<(ResumeState, &'static str)>> = Mutex::new(None);
+                                let on_part = |p: PartRecord| {
+                                    let mut g = st.lock().unwrap();
+                                    collect_part(&mut g, p);
+                                    if let Some((rs, via)) = g.as_ref() {
+                                        let (rs, via) = (rs.clone(), *via);
+                                        resume::update(&id, |s| {
+                                            s.via = via.into();
+                                            s.upload = Some(rs);
+                                            s.stamp = now;
+                                        });
+                                    }
+                                };
+                                let opts = WriteOpts { resume: resume_state, on_part: Some(&on_part), ..Default::default() };
+                                let r = generic_cmds::upload_with(&**s, &bucket, &key, &path, opts, &cancel, &report).await;
+                                // a pause keeps the session / temporary file; Done needs nothing kept
+                                match &r {
+                                    Ok(Outcome::Cancelled) if pause.load(Ordering::Relaxed) => Err(PAUSED.to_string()),
+                                    _ => r,
+                                }
+                            }
                         };
                         if let Ok(Outcome::Done) = r {
                             done_bytes = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
+                            local_done = Some(PathBuf::from(&path));
                         }
                         // a failed upload keeps its copy of a picked file for Retry
                         if temp.is_some() && r.is_ok() {
@@ -533,32 +753,52 @@ async fn spawn_transfer(
                     let r = match served {
                         Some(r) => r,
                         None => match &conn {
-                            Conn::S3(client) => download_to(client, &bucket, &key, &chosen, tag, true, &cancel, &report, Some(&paused), &mut etag).await,
-                            Conn::Other(s) => generic_cmds::download(&**s, &bucket, &key, &chosen, &cancel, &report, Some(&paused)).await,
+                            Conn::S3(client) => download_to(client, &bucket, &key, &chosen, tag, true, &cancel, &report, Some(&paused), &mut dl).await,
+                            Conn::Other(s) => generic_cmds::download_resumable(&**s, &bucket, &key, &chosen, tag, true, &cancel, &report, Some(&paused), &mut dl).await,
                         },
                     };
                     if let Ok(Outcome::Done) = r {
                         done_bytes = tokio::fs::metadata(&chosen).await.map(|m| m.len()).unwrap_or(0);
                         if fetched {
-                            crate::filecache::remember_download(&app, conn.clone(), profile_id.clone(), bucket.clone(), key.clone(), etag.clone(), chosen.clone());
+                            crate::filecache::remember_download(&app, conn.clone(), profile_id.clone(), bucket.clone(), key.clone(), dl.etag.clone(), chosen.clone());
                         }
+                        local_done = Some(chosen);
                     }
                     r
                 }
             }
         };
+        let paused_now = pause.load(Ordering::Relaxed) && !matches!(result, Ok(Outcome::Done));
+        // checked once done, as the settings ask; a copy that doesn't match fails
+        let mut result = result;
+        if let (Ok(Outcome::Done), Some(path)) = (&result, &local_done) {
+            match crate::verify::check(&app, &conn, &profile_id, &bucket, &key, path, verify_part_size).await {
+                Ok(c) => checked = c,
+                Err(e) => {
+                    if matches!(kind, Kind::Download { .. }) {
+                        // a download that came out different is no use to anyone
+                        let _ = tokio::fs::remove_file(path).await;
+                    }
+                    result = Err(format!("{e} Retry to transfer it again."));
+                }
+            }
+        }
         drop(permit);
+        let last = ACTIVE.lock().unwrap().get(&id).map(|t| (t.bytes, t.total)).unwrap_or((0, 0));
         match (kind, &result) {
             (Kind::Download { .. }, r) => {
                 let chosen = PathBuf::from(&local);
-                // a failed download keeps its name (and partial file) for Retry; otherwise the
-                // name is free for others again
-                match r {
-                    Err(_) => dest::park(&chosen, &id),
-                    Ok(_) => dest::release(&chosen),
+                // a failed or paused download keeps its name (and partial file) for Retry;
+                // otherwise the name is free for others again
+                let keep = r.is_err() || paused_now;
+                if keep {
+                    dest::park(&chosen, &id);
+                } else {
+                    dest::release(&chosen);
                 }
                 match r {
-                    Err(_) => {
+                    _ if keep => {
+                        let etag = dl.etag.clone().or_else(|| kept.as_ref().and_then(|k| k.version.clone()));
                         let kept = PendingDownload { profile_id: profile_id.clone(), bucket: bucket.clone(), key: key.clone(), requested, chosen, etag };
                         PENDING_DOWNLOADS.lock().unwrap().insert(id.clone(), kept);
                     }
@@ -566,31 +806,76 @@ async fn spawn_transfer(
                     Ok(Outcome::Cancelled) => {
                         let _ = tokio::fs::remove_file(dest::part_path(&chosen)).await;
                     }
-                    Ok(Outcome::Done) => {}
+                    _ => {}
                 }
             }
-            // stopped before its turn came: what an earlier attempt left on the server goes too
-            (Kind::Upload, Ok(Outcome::Cancelled)) => {
+            // stopped (not paused) before or while it ran: what it left on the server goes too
+            (Kind::Upload, Ok(Outcome::Cancelled)) if !paused_now => {
                 multipart::forget(&id);
                 forget_picked(&id);
+                if let Some(s) = resume::get(&id) {
+                    resume::give_up(&app, &s);
+                }
             }
             _ => {}
         }
+        // kept for later (paused, failed), or forgotten (done, cancelled)
+        match &result {
+            _ if paused_now => resume::update_or_put(&id, record.clone(), |s| {
+                s.state = "paused".into();
+                (s.bytes, s.total) = (last.0.max(s.bytes), last.1.max(s.total));
+                s.error = None;
+            }),
+            Err(e) => {
+                let e = e.clone();
+                // it went through but didn't match: nothing of it is left to carry on from
+                let finished = local_done.is_some();
+                resume::update_or_put(&id, record.clone(), |s| {
+                    s.state = "error".into();
+                    (s.bytes, s.total) = last;
+                    s.error = Some(e);
+                    if finished {
+                        s.upload = None;
+                        s.version = None;
+                    }
+                })
+            }
+            Ok(_) => {
+                resume::remove(&id);
+            }
+        }
         ACTIVE.lock().unwrap().remove(&id);
+        PAUSES.lock().unwrap().remove(&id);
         notice::finished(
             &app,
             &id,
             match result {
                 Ok(Outcome::Done) => Some(true),
+                _ if paused_now => None,
                 Ok(Outcome::Cancelled) => None,
                 Err(_) => Some(false),
             },
         );
-        match result {
-            Ok(Outcome::Done) => emit(&app, &id, "done", done_bytes, done_bytes, None),
-            Ok(Outcome::Cancelled) => emit(&app, &id, "cancelled", 0, 0, None),
-            Err(e) => emit(&app, &id, "error", 0, 0, Some(e)),
-        }
+        let (resumed_from, restarted) = resume_note(prior, kept_now, first.load(Ordering::Relaxed));
+        let ev = |state: &'static str, bytes: u64, total: u64, error: Option<String>| TransferEvent {
+            id: id.clone(),
+            state,
+            bytes,
+            total,
+            error,
+            resumed_from,
+            restarted,
+            verified: checked,
+        };
+        let _ = app.emit(
+            "transfer",
+            match result {
+                Ok(Outcome::Done) => ev("done", done_bytes, done_bytes, None),
+                _ if paused_now => ev("paused", last.0.max(prior), last.1, None),
+                Ok(Outcome::Cancelled) => ev("cancelled", 0, 0, None),
+                Err(e) => ev("error", 0, 0, Some(e)),
+            },
+        );
         app.state::<AppState>().cancels.lock().await.remove(&id);
     });
     Ok(())
@@ -606,15 +891,19 @@ pub async fn start_upload(
     key: String,
     local_path: String,
 ) -> Result<(), String> {
+    if state.cancels.lock().await.contains_key(&id) {
+        return Err("This upload is already running.".into());
+    }
     let requested = local_path.clone();
-    spawn_transfer(app, &state, Kind::Upload, id, profile_id, bucket, key, local_path, requested, None, None).await
+    spawn_transfer(app, &state, Kind::Upload, id, profile_id, bucket, key, local_path, requested, false, None, None).await
 }
 
 /// Starts a download and answers with the local path it writes to: `dest_path` itself when
 /// `overwrite`, else the first free name ("photo (1).jpg") if a file is already there. Starting
-/// the same id again after it failed continues its partial file under the same name. `etag` and
-/// `size` are the version the listing showed, if the page knows it: when the file cache holds
-/// that version it is copied without asking the server (see `filecache::serve_download`).
+/// the same id again after it failed or was paused continues its partial file under the same
+/// name (also after a restart). `etag` and `size` are the version the listing showed, if the
+/// page knows it: when the file cache holds that version it is copied without asking the server
+/// (see `filecache::serve_download`).
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn start_download(
@@ -655,7 +944,7 @@ pub async fn start_download(
     };
     let local = chosen.to_string_lossy().into_owned();
     let kind = Kind::Download { resume: resume_etag.is_some() };
-    if let Err(e) = spawn_transfer(app, &state, kind, id, profile_id, bucket, key, local.clone(), dest_path, resume_etag, listed).await {
+    if let Err(e) = spawn_transfer(app, &state, kind, id, profile_id, bucket, key, local.clone(), dest_path, overwrite, resume_etag, listed).await {
         dest::release(&chosen);
         let _ = std::fs::remove_file(dest::part_path(&chosen));
         return Err(e);
@@ -663,10 +952,10 @@ pub async fn start_download(
     Ok(local)
 }
 
-/// Stops a transfer. For one that already failed (and was kept for Retry) it drops what was
-/// kept: the partial download file, or the multipart upload on the server.
+/// Stops a transfer. For one that already failed or was paused (and was kept for Retry) it drops
+/// what was kept: the partial download file, the multipart upload or temporary file on the server.
 #[tauri::command]
-pub async fn cancel_transfer(state: State<'_, AppState>, id: String) -> Result<(), String> {
+pub async fn cancel_transfer(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     if let Some(flag) = state.cancels.lock().await.get(&id) {
         flag.store(true, Ordering::Relaxed);
         return Ok(());
@@ -674,30 +963,59 @@ pub async fn cancel_transfer(state: State<'_, AppState>, id: String) -> Result<(
     if let Some(p) = PENDING_DOWNLOADS.lock().unwrap().remove(&id) {
         forget_download(&id, p);
     }
-    multipart::forget(&id);
+    let aborted = multipart::forget(&id);
     forget_picked(&id);
+    if let Some(s) = resume::remove(&id)
+        && !(aborted && s.via == "s3")
+    {
+        resume::give_up(&app, &s);
+    }
     Ok(())
 }
 
-/// On quit: stops every transfer and bucket operation, aborts open multipart uploads (waiting at
-/// most `limit`) and removes partial download files, so nothing is left behind.
+/// On quit: every transfer still queued or running is paused and kept for the next start (with
+/// what it did: partial files, the parts sent); bucket operations stop. Multipart uploads and
+/// partial files nothing keeps are cleaned up as before (waiting at most `limit`).
 #[cfg_attr(mobile, allow(dead_code))]
 pub async fn shutdown(state: &AppState, limit: Duration) {
+    let running: Vec<ActiveTransfer> = ACTIVE.lock().unwrap().values().cloned().collect();
+    for p in PAUSES.lock().unwrap().values() {
+        p.store(true, Ordering::Relaxed);
+    }
     for flag in state.cancels.lock().await.values() {
         flag.store(true, Ordering::Relaxed);
     }
-    let parts: Vec<PathBuf> = ACTIVE
-        .lock()
-        .unwrap()
-        .values()
+    for t in &running {
+        let fresh = Saved {
+            id: t.id.clone(),
+            kind: t.kind.into(),
+            name: t.name.clone(),
+            profile_id: t.profile_id.clone(),
+            bucket: t.bucket.clone(),
+            key: t.key.clone(),
+            local: t.local.clone(),
+            requested: if t.requested.is_empty() { t.local.clone() } else { t.requested.clone() },
+            overwrite: t.overwrite,
+            ..Default::default()
+        };
+        resume::update_or_put(&t.id, fresh, |s| {
+            s.state = "paused".into();
+            s.bytes = s.bytes.max(t.bytes);
+            s.total = s.total.max(t.total);
+        });
+    }
+    let parts: Vec<PathBuf> = running
+        .iter()
         .filter(|t| t.kind == "download")
         .map(|t| dest::part_path(Path::new(&t.local)))
         .chain(PENDING_DOWNLOADS.lock().unwrap().drain().map(|(_, p)| dest::part_path(&p.chosen)))
+        .filter(|p| !resume::keeps_partial(p))
         .collect();
     multipart::abort_all(limit).await;
     for p in parts {
         let _ = std::fs::remove_file(p);
     }
+    resume::save();
 }
 
 #[cfg(test)]
@@ -705,6 +1023,39 @@ mod tests {
     use super::*;
     use crate::state::{build_client, Profile};
     use std::sync::Mutex;
+
+    #[test]
+    fn a_transfer_says_whether_it_carried_on_or_started_over() {
+        // nothing before: nothing to say
+        assert_eq!(resume_note(0, 0, 5000), (None, false));
+        // carried on from the kept partial file
+        assert_eq!(resume_note(4000, 3000, 3000), (Some(3000), false));
+        // a server temp file: what was reported before stands in
+        assert_eq!(resume_note(4000, 0, 4000), (Some(4000), false));
+        // climbed from zero although bytes were kept: started over
+        assert_eq!(resume_note(4000, 3000, 64), (None, true));
+        // no progress yet: nothing to say
+        assert_eq!(resume_note(4000, 3000, 0), (None, false));
+    }
+
+    #[test]
+    fn the_resume_state_follows_what_the_backend_announces() {
+        let mut st = None;
+        collect_part(&mut st, PartRecord { number: 0, size: 100, etag: ".a.kybl-1.tmp".into() });
+        let (rs, via) = st.clone().unwrap();
+        assert_eq!((rs.upload_id.as_str(), rs.part_size, rs.parts.len(), via), (".a.kybl-1.tmp", 100, 0, "server"));
+        // a drive session: one record per piece, the latest of each number kept
+        let mut st = None;
+        for (n, size) in [(1, 10), (2, 10), (2, 12)] {
+            collect_part(&mut st, PartRecord { number: n, size, etag: "session".into() });
+        }
+        let (rs, via) = st.clone().unwrap();
+        assert_eq!(via, "drive");
+        assert_eq!(rs.parts.iter().map(|p| (p.number, p.size)).collect::<Vec<_>>(), vec![(1, 10), (2, 12)]);
+        // a new session replaces the old one
+        collect_part(&mut st, PartRecord { number: 1, size: 5, etag: "other".into() });
+        assert_eq!(st.unwrap().0.parts.len(), 1);
+    }
 
     #[test]
     fn a_picked_files_copy_lives_in_a_folder_named_after_its_transfer() {
@@ -830,8 +1181,8 @@ mod tests {
             let dest = dir.join("file.bin");
             // what the failed first attempt left behind
             std::fs::write(dest::part_path(&dest), &data[..70_000]).unwrap();
-            let mut etag = None;
-            let r = download_to(&client, "b", "file.bin", &dest, Some("\"v1\""), true, &AtomicBool::new(false), &|_, _| {}, None, &mut etag).await;
+            let mut dl = Dl::default();
+            let r = download_to(&client, "b", "file.bin", &dest, Some("\"v1\""), true, &AtomicBool::new(false), &|_, _| {}, None, &mut dl).await;
             assert!(matches!(r, Ok(Outcome::Done)), "download failed: {:?}", r.err());
             assert_eq!(std::fs::read(&dest).unwrap(), data, "the continued file is whole and in order");
             assert!(!dest::part_path(&dest).exists());

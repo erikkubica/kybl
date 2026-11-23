@@ -152,7 +152,7 @@ function mockSshSites(): ImportSite[] {
 }
 
 const mockTags: Record<string, Record<string, string>> = {};
-const transferPrefs = { concurrency: 3, partConcurrency: 4, bandwidthLimitKbps: 0, wifiOnly: false };
+const transferPrefs = { concurrency: 3, partConcurrency: 4, downloadLimitKbps: 0, uploadLimitKbps: 0, wifiOnly: false, verify: "size" as "off" | "size" | "checksum" };
 
 const buckets = ["media-prod", "backups", "static-assets", "logs-archive"];
 
@@ -322,23 +322,46 @@ const mockThumbhash = (key: string) => MOCK_HASHES[Math.abs(hash(key)) % MOCK_HA
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const cancelled = new Set<string>();
 
+/** transfers asked to pause, the bytes each paused one kept (to carry on from), and the running ones */
+const pausing = new Set<string>();
+const keptAt = new Map<string, { bytes: number; total: number }>();
+const runningIds = new Set<string>();
+
 async function simulateTransfer(id: string, total: number, fail = false): Promise<boolean> {
-  await sleep(200 + Math.random() * 600);
-  const steps = 14 + Math.floor(Math.random() * 30);
-  for (let i = 1; i <= steps; i++) {
-    if (cancelled.has(id)) {
-      await emit("transfer", { id, state: "cancelled", bytes: 0, total, error: null });
-      return false;
+  const kept = keptAt.get(id);
+  if (kept) total = kept.total;
+  keptAt.delete(id);
+  runningIds.add(id);
+  cancelled.delete(id);
+  try {
+    await sleep(200 + Math.random() * 600);
+    const steps = 14 + Math.floor(Math.random() * 30);
+    const from = kept ? Math.floor((kept.bytes / total) * steps) : 0;
+    const resumedFrom = kept ? kept.bytes : undefined;
+    for (let i = from + 1; i <= steps; i++) {
+      if (pausing.delete(id)) {
+        const bytes = Math.round((total * (i - 1)) / steps);
+        keptAt.set(id, { bytes, total });
+        await emit("transfer", { id, state: "paused", bytes, total, error: null, resumedFrom });
+        return false;
+      }
+      if (cancelled.has(id)) {
+        await emit("transfer", { id, state: "cancelled", bytes: 0, total, error: null });
+        return false;
+      }
+      if (fail && !kept && i > steps / 2) {
+        await emit("transfer", { id, state: "error", bytes: 0, total, error: "AccessDenied: the key does not allow s3:PutObject" });
+        return false;
+      }
+      await emit("transfer", { id, state: "running", bytes: Math.round((total * i) / steps), total, error: null });
+      await sleep(260);
     }
-    if (fail && i > steps / 2) {
-      await emit("transfer", { id, state: "error", bytes: 0, total, error: "AccessDenied: the key does not allow s3:PutObject" });
-      return false;
-    }
-    await emit("transfer", { id, state: "running", bytes: Math.round((total * i) / steps), total, error: null });
-    await sleep(260);
+    const verified = transferPrefs.verify === "off" ? undefined : transferPrefs.verify === "checksum" ? "md5" : "size";
+    await emit("transfer", { id, state: "done", bytes: total, total, error: null, resumedFrom, verified });
+    return true;
+  } finally {
+    runningIds.delete(id);
   }
-  await emit("transfer", { id, state: "done", bytes: total, total, error: null });
-  return true;
 }
 
 let uploadCount = 0;
@@ -1188,7 +1211,37 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       return [];
     case "cancel_transfer":
       cancelled.add(a.id);
+      keptAt.delete(a.id);
       return null;
+    case "pause_transfer":
+      if (runningIds.has(a.id)) pausing.add(a.id);
+      return null;
+    case "pause_all_transfers":
+      for (const id of runningIds) pausing.add(id);
+      return runningIds.size;
+    case "move_transfer_to_top":
+      return runningIds.has(a.id);
+    case "kept_transfers":
+      // ?kept: one download paused in an earlier run, to carry on
+      if (!location.search.includes("kept")) return [];
+      keptAt.set("kept-1", { bytes: 41_000_000, total: 96_000_000 });
+      return [
+        {
+          id: "kept-1",
+          kind: "download",
+          name: "drone-footage-4k.mov",
+          profileId: "p1",
+          bucket: "media-prod",
+          key: "video/drone-footage-4k.mov",
+          local: "/Users/demo/Downloads/drone-footage-4k.mov",
+          requested: "/Users/demo/Downloads/drone-footage-4k.mov",
+          overwrite: false,
+          bytes: 41_000_000,
+          total: 96_000_000,
+          state: "paused",
+          error: null,
+        },
+      ];
     case "sync_list":
       return { pausedAll: syncPausedAll, mappings: syncMappings, statuses: Object.values(syncStatus) };
     case "sync_save": {
