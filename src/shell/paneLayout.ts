@@ -102,6 +102,105 @@ export function closePane(n: PaneNode, id: PaneId): PaneNode | null {
   return tidy({ ...n, kids, sizes });
 }
 
+// ---------------------------------------------------------------- rearranging panes
+
+/** Where a pane dragged onto another lands: beside it on that side (the two share its room), or in its place ("center": the two swap). */
+export type DropZone = "left" | "right" | "top" | "bottom" | "center";
+
+/** The tree with panes `a` and `b` in each other's places (every share stays where it was). */
+export function swapPanes(n: PaneNode, a: PaneId, b: PaneId): PaneNode {
+  if (n.t === "pane") return n.id === a ? leaf(b) : n.id === b ? leaf(a) : n;
+  return { ...n, kids: n.kids.map((k) => swapPanes(k, a, b)) };
+}
+
+/**
+ * Pane `id` taken out of its place (its split closing up behind it) and put beside pane `target`
+ * on side `zone`, the two sharing what `target` had; "center" swaps the two. The number of panes
+ * stays the same, so `MAX_PANES` never stands in the way; whether the result fits the window is
+ * for the caller to check (`minSize`).
+ */
+export function movePane(n: PaneNode, id: PaneId, target: PaneId, zone: DropZone): PaneNode {
+  if (id === target) return n;
+  if (zone === "center") return swapPanes(n, id, target);
+  const rest = closePane(n, id);
+  if (!rest) return n;
+  return splitPane(rest, target, zone === "left" || zone === "right" ? "row" : "col", id, zone === "left" || zone === "top");
+}
+
+/** The arrangement without the shares: two trees with the same shape lay their panes out the same way. */
+export function shapeOf(n: PaneNode): string {
+  return n.t === "pane" ? n.id : `${n.dir}(${n.kids.map(shapeOf).join(",")})`;
+}
+
+/** Child indexes from the root to pane `id`, or null when it isn't in the tree. */
+function pathTo(n: PaneNode, id: PaneId): number[] | null {
+  if (n.t === "pane") return n.id === id ? [] : null;
+  for (let i = 0; i < n.kids.length; i++) {
+    const p = pathTo(n.kids[i], id);
+    if (p) return [i, ...p];
+  }
+  return null;
+}
+
+function nodeAt(n: PaneNode, path: number[]): PaneNode {
+  return path.reduce((x, i) => (x.t === "split" ? x.kids[i] : x), n);
+}
+
+function replaceAt(n: PaneNode, path: number[], by: PaneNode): PaneNode {
+  if (!path.length || n.t === "pane") return by;
+  const [i, ...rest] = path;
+  return { ...n, kids: n.kids.map((k, j) => (j === i ? replaceAt(k, rest, by) : k)) };
+}
+
+/**
+ * Pane `id` one step that way, for the keyboard ("Move pane ▸ Left"): in a split running that way
+ * it trades places with its neighbour (each keeps its share); inside a stack it steps out of the
+ * stack to that side first. Null when it is at that edge of the window already.
+ */
+export function moveToward(n: PaneNode, id: PaneId, d: "left" | "right" | "up" | "down"): PaneNode | null {
+  const dir: Dir = d === "left" || d === "right" ? "row" : "col";
+  const fwd = d === "right" || d === "down";
+  const path = pathTo(n, id);
+  if (!path) return null;
+  for (let depth = path.length - 1; depth >= 0; depth--) {
+    const at = path.slice(0, depth);
+    const s = nodeAt(n, at);
+    if (s.t !== "split" || s.dir !== dir) continue;
+    const k = path[depth];
+    const kids = [...s.kids];
+    const sizes = [...s.sizes];
+    if (kids[k].t === "pane") {
+      // beside its neighbour in this split: the two trade places
+      const j = fwd ? k + 1 : k - 1;
+      if (j < 0 || j >= kids.length) continue;
+      [kids[k], kids[j]] = [kids[j], kids[k]];
+      [sizes[k], sizes[j]] = [sizes[j], sizes[k]];
+    } else {
+      // in a stack: out of it, beside it on that side, with half of the stack's room
+      const rest = closePane(kids[k], id);
+      if (!rest) continue;
+      const half = sizes[k] / 2;
+      kids[k] = rest;
+      sizes[k] = half;
+      const i = fwd ? k + 1 : k;
+      kids.splice(i, 0, leaf(id));
+      sizes.splice(i, 0, half);
+    }
+    return tidy(replaceAt(n, at, { ...s, kids, sizes }));
+  }
+  return null;
+}
+
+/**
+ * The tree with pane `id` added along the whole of its `side` edge ("right": a column down the
+ * right of everything), taking an even share. Moving a pane into another workspace puts it there.
+ */
+export function dockEdge(n: PaneNode, id: PaneId, side: "right" | "bottom"): PaneNode {
+  const dir: Dir = side === "right" ? "row" : "col";
+  const m = n.t === "split" && n.dir === dir ? n.kids.length : 1;
+  return tidy({ t: "split", dir, sizes: [m / (m + 1), 1 / (m + 1)], kids: [n, leaf(id)] });
+}
+
 /** Sets the shares of the split at `path` (child indexes from the root). */
 export function setSizes(n: PaneNode, path: number[], sizes: number[]): PaneNode {
   if (n.t === "pane") return n;
