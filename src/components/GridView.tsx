@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useMeasured, useWindowed } from "../useWindowed";
 import { formatBytes, entrySize } from "../format";
-import { EmptyState, FileIcon } from "./FileIcon";
+import { EmptyState, FileIcon, LinkBadge } from "./FileIcon";
 import { cachedThumb, canListThumb, loadThumb, onThumbReady } from "../thumbs";
 import { cachedPlaceholder, canPlaceholder, forgetPlaceholderMiss, learnPlaceholder, loadPlaceholder } from "../thumbhash";
 import { imageModeFor } from "../imageMode";
@@ -174,6 +174,7 @@ const Card = memo(function Card({
             waits its turn, and not over a placeholder: dozens of tiles animating kept the CPU and
             GPU busy */}
         {!thumb && !ph && <FileIcon entry={entry} size={34} big>{loading && thumb === undefined && <span className="shimmer" />}</FileIcon>}
+        {(thumb || ph) && entry.link !== undefined && <LinkBadge link={entry.link} />}
       </div>
       <div className="card-text">
         {markKind ? (
