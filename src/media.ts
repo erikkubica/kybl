@@ -66,7 +66,7 @@ export async function playableUrl(
 const CACHED_IMAGE_MAX = 40_000_000;
 
 /**
- * Full-size photos loaded right now, shared: the details panel and Quick Look asking for the same
+ * Full-size photos loaded right now, shared: the phone's details screen and Quick Look asking for the same
  * photo get the same bytes and blob URL (one fetch, whichever asked first), and the blob is let
  * go when the last of them is done with it.
  */

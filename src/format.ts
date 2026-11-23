@@ -21,7 +21,7 @@ export function formatBytes(n: number, digits = 1): string {
   return `${v >= 100 ? v.toFixed(0) : v.toFixed(digits)} ${units[i]}`;
 }
 
-/** Full, unambiguous timestamp (tooltips, details panel). */
+/** Full, unambiguous timestamp (tooltips, file info). */
 export function formatDateFull(ms: number | null | undefined): string {
   if (!ms) return "—";
   return new Date(ms).toLocaleString(undefined, {

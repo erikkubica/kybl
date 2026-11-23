@@ -451,7 +451,7 @@ code {
   .toolbar:is(.search-open, :has(.search:focus-within)) > .path-title {
     display: none;
   }
-  .toolbar:has(.path-title.editing) > :is(.tb-view, .tb-details, .search) {
+  .toolbar:has(.path-title.editing) > :is(.tb-view, .search) {
     display: none;
   }
 }
@@ -1334,60 +1334,18 @@ kbd {
   }
 }
 
-/* ---------------------------------------------------------------- details pane */
-.content {
-  /* media in the details pane grows with the pane */
-  --media-h: clamp(200px, calc(var(--preview-w, 336px) - 48px), 600px);
-}
-.pane-resizer {
-  position: relative;
-  z-index: 6;
-  width: 0;
-  flex: none;
-  cursor: col-resize;
-  outline: none;
-}
-.pane-resizer::before {
-  content: "";
-  position: absolute;
-  inset: 0 -4px;
-}
-.pane-resizer::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -1px;
-  width: 2px;
-  background: var(--accent-solid);
-  opacity: 0;
-  transition: opacity 0.15s 0.1s;
-}
-.pane-resizer:hover::after,
-.pane-resizer:focus-visible::after,
-body.resizing-col .pane-resizer::after {
-  opacity: 1;
-}
+/* ---------------------------------------------------------------- previews and file info
+   (components/PreviewPane on phones, components/EntryInfo there and in Quick Look) */
 body.resizing-col,
 body.resizing-col * {
   cursor: col-resize !important;
   user-select: none !important;
 }
-body.resizing-col .preview-inner {
-  animation: none;
-}
 .content {
-  /* the details pane sizes itself against the room next to it (below) */
   container-type: inline-size;
 }
 .preview {
-  /* the list keeps at least 340px: in a narrow window the details pane gives up width first
-     (down to its 260px minimum), then steps aside altogether */
-  width: min(var(--preview-w, 336px), max(260px, calc(100cqw - 340px)));
   flex: none;
-  border-left: 1px solid var(--border);
-  background: var(--panel);
-  overflow-y: auto;
 }
 .preview-empty {
   display: flex;
@@ -4587,7 +4545,7 @@ body.marquee-selecting * {
   height: 9px;
 }
 
-/* ---------------------------------------------------------------- details pane: properties editor, sizes, errors */
+/* ---------------------------------------------------------------- file info: properties editor, sizes, errors */
 .props-edit {
   margin-top: 10px;
 }
@@ -5314,15 +5272,6 @@ input[type="range"]:focus-visible {
   height: 12px;
   border-color: rgba(255, 255, 255, 0.35);
   border-top-color: #fff;
-}
-
-/* No room for a usable list and the details pane side by side: the list wins. The pane comes back
-   by itself once the window (or the sidebar) leaves room; its open/closed setting is untouched. */
-@container (max-width: 599px) {
-  .preview,
-  .content > .pane-resizer {
-    display: none;
-  }
 }
 
 /* the pane's connection badge before its path: picks another connection or bucket for the pane */

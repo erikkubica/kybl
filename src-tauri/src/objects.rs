@@ -115,7 +115,7 @@ fn present<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Option<String>>, D:
     Option::<String>::deserialize(d).map(Some)
 }
 
-/// Header edits from the details panel; see `api.updateObjectProps`.
+/// Header edits from the file info (Get Info); see `api.updateObjectProps`.
 #[derive(Deserialize, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ObjectProps {

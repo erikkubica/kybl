@@ -60,11 +60,11 @@ const RETRY_AFTER_MS = 60_000;
 const cache = new Map<string, string | number>();
 const blobs: { k: string; url: string }[] = [];
 const inflight = new Map<string, Promise<string | null>>();
-/** tiles waiting to hear that their thumbnail exists, whoever asked for it (the details panel) */
+/** tiles waiting to hear that their thumbnail exists, whoever asked for it (Quick Look, the phone's details screen) */
 const readyHooks = new Map<string, Set<(url: string) => void>>();
 
 /**
- * Calls `f` when a thumbnail for this file is made anywhere in the app (the preview panel asking
+ * Calls `f` when a thumbnail for this file is made anywhere in the app (a preview asking
  * for the selected photo, say), so a tile showing an icon or a placeholder can take it at once.
  */
 export function onThumbReady(profileId: string, bucket: string, e: Entry, f: (url: string) => void): () => void {

@@ -67,6 +67,8 @@ export type Settings = {
   showHiddenFiles: boolean;
   /** desktop: the connections sidebar folded away (⌥⌘S, or its button by the window controls) */
   sidebarHidden: boolean;
+  /** desktop: Quick Look's info column shown; null = not chosen yet (shown in a wide enough window) */
+  quickInfo: boolean | null;
 };
 
 export type Favorite = { profileId: string; bucket: string; prefix: string; name: string };
@@ -98,6 +100,7 @@ export const DEFAULTS: Settings = {
   syncBrowsing: false,
   showHiddenFiles: false,
   sidebarHidden: false,
+  quickInfo: null,
 };
 
 export const ACCENTS: { id: Exclude<Accent, "scheme">; label: string; color: string }[] = [
@@ -141,6 +144,7 @@ export function loadSettings(): Settings {
       delete (s as Settings & { listThumbs?: boolean }).listThumbs;
     }
     if (!["off", "placeholders", "full"].includes(s.imageMode)) s.imageMode = DEFAULTS.imageMode;
+    if (typeof s.quickInfo !== "boolean") s.quickInfo = null;
     // one-time: the first version turned the old thumbnails switch into Placeholders more often
     // than meant, and Placeholders was the default then; both now mean Thumbnails
     if (!localStorage.getItem(IMAGE_MODE_V2)) {

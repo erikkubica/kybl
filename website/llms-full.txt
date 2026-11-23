@@ -11,7 +11,7 @@ Secret keys are stored in the operating system keychain: the macOS Keychain, Win
 ## Features
 
 - Thumbnails in a blink: JPEGs use the photo's embedded EXIF thumbnail, read from only the first 256 KB. Other images are resized once. All thumbnails are cached on disk, so a folder you've seen opens instantly.
-- Previews without downloading: images, video, audio, PDF and text open in the details panel next to size, date and the full key.
+- Previews without downloading: images, video, audio, PDF and text open in Quick Look (Space), next to size, date and the full key (Get Info, ⌘I).
 - Drag, drop, done: upload files or whole folders by dragging from Finder or Explorer. Large files use multipart upload.
 - A transfer queue that talks: speed and time left for every upload and download, with cancel and retry.
 - Share links in one click: presigned URLs valid for 1 hour, 1 day or 7 days, or copy the s3:// URI. Nothing has to be made public.

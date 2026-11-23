@@ -11,7 +11,7 @@ export type ViewerProps = {
   text: string | null;
   /** whether changes are allowed (text-like kinds only) */
   editable: boolean;
-  /** "preview": small, read-only, in the side panel; "full": the whole window */
+  /** "preview": small, read-only, in Quick Look or the details screen; "full": the whole window */
   mode: "preview" | "full";
   /**
    * Called on every change with a getter for the current text (lines joined with "\n").

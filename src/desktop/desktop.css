@@ -196,6 +196,192 @@
   max-width: 520px;
   overflow-wrap: anywhere;
 }
+/* ---------------------------------------------------------------- Quick Look: info column (Get Info) */
+.ql {
+  container-type: inline-size;
+}
+/* wider with the info beside the preview, so the preview keeps about the room it had */
+.ql.with-info {
+  width: min(1320px, calc(100vw - 48px));
+}
+.ql-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.ql-main > .ql-body {
+  min-width: 0;
+}
+.ql-info {
+  flex: none;
+  width: clamp(290px, 29%, 360px);
+  border-left: 1px solid var(--border);
+  background: var(--raised);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.ql-info-inner {
+  padding: 16px 16px 28px;
+  animation: fade-in 0.18s;
+}
+.ei-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin-bottom: 14px;
+}
+.ei-head > .ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+  background: var(--hover);
+}
+.ei-name {
+  min-width: 0;
+}
+.ei-head .preview-title {
+  margin: 2px 0 2px;
+  font-size: 14.5px;
+}
+.ei-head .preview-sub {
+  margin: 0;
+}
+.ei-gone {
+  margin: 0 0 12px;
+  font-size: 12px;
+}
+.ei-gone .link-btn {
+  margin: 0;
+  font-size: 12px;
+}
+.ql-info {
+  overflow-x: hidden;
+}
+.ql-info .preview-actions {
+  margin-bottom: 14px;
+}
+/* the icon buttons keep their size; Download gives up width first */
+.ql-info .preview-actions > .btn {
+  flex: none;
+  min-width: 32px;
+  padding: 0 7px;
+}
+.ql-info .preview-actions > .btn.grow {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 10px;
+  overflow: hidden;
+}
+.ql-info .preview-actions > .btn > * {
+  flex: none;
+}
+/* several items: the summary fills the column, centred */
+.ql-info > .preview-empty {
+  min-height: 100%;
+  padding: 24px 22px;
+}
+/* a dialog asked for from Quick Look (Delete asks first) comes up over it */
+body:has(.ql-backdrop) .modal-backdrop {
+  z-index: 130;
+}
+/* a small window: the info goes under the preview instead of beside it */
+@container (max-width: 820px) {
+  .ql-main {
+    flex-direction: column;
+  }
+  .ql-main > .ql-body {
+    min-height: 0;
+  }
+  .ql-info {
+    width: auto;
+    max-height: 50%;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+  .ql-info-inner {
+    max-width: 620px;
+    margin: 0 auto;
+  }
+}
+
+/* a folder in Quick Look: its art, name and size */
+.ql-folder .dim {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+}
+.ql-folder .link-btn {
+  margin: 0;
+}
+
+/* several items shown together: a tile each, to pick one from */
+.ql-sheet {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  align-content: start;
+  gap: 8px;
+  padding: 18px;
+}
+.ql-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px 8px 8px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  cursor: default;
+}
+.ql-tile:hover {
+  background: var(--hover);
+}
+.ql-tile:focus-visible {
+  border-color: var(--accent-solid);
+  outline: none;
+}
+.ql-tile-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  margin-bottom: 4px;
+}
+.ql-tile-art img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(14, 16, 30, 0.18);
+}
+.ql-tile-name,
+.ql-tile-sub {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ql-tile-name {
+  font-size: 12px;
+}
+.ql-tile-sub {
+  color: var(--faint);
+  font-size: 11px;
+}
+.ql-tile.more {
+  justify-content: center;
+  color: var(--dim);
+  font-size: 12px;
+}
+
 /* Quick Look has its own Open in the header: the document viewer's floating one would repeat it */
 .ql-body .dv-open-full {
   display: none;

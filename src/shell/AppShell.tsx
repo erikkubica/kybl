@@ -33,7 +33,7 @@ import { undoStack } from "../desktop/undo";
 import { usePane, type Pane, type PaneEnv } from "../browser/usePane";
 import { BrowserPane } from "../browser/BrowserPane";
 import type { EmptyActions } from "../browser/PaneEmpty";
-import { LS, PANE_IDS, paneKeys, THIS_MAC, type Loc, type PaneId, type PaneView } from "../browser/types";
+import { PANE_IDS, paneKeys, THIS_MAC, type Loc, type PaneId, type PaneView } from "../browser/types";
 import { forgetCaps, peekCaps } from "../useCaps";
 import { sendItems } from "./crossPane";
 import { clearAuthNeeded, useAuthNeeded } from "../connections/authNeeded";
@@ -48,7 +48,6 @@ import { useDialogs } from "./useDialogs";
 import type { MenuItem } from "../components/Dialogs";
 import { photoMenuItems } from "./photoMenu";
 import { loadExpanded, useConnections } from "./useConnections";
-import { PreviewAside, usePreviewLayout } from "./PreviewAside";
 import { useFinderDrop } from "./useFinderDrop";
 import { useShellCommands } from "./useShellCommands";
 import { dualMenuItems, SplitLayout } from "./SplitLayout";
@@ -196,7 +195,7 @@ export function AppShell() {
   const [ws, setWs] = useState<WorkspaceStore>(() => {
     const s = loadWorkspaces(() => {
       const t = loadLayout(settings.layout);
-      return { tree: t, links: loadLinks(t, settings.syncBrowsing), recent: leaves(t), details: { one: LS.get("s3b.preview") !== "0", many: LS.get("s3b.preview.dual") === "1" } };
+      return { tree: t, links: loadLinks(t, settings.syncBrowsing), recent: leaves(t) };
     });
     const i = s.list.findIndex((w) => w.id === s.active);
     const w = s.list[i];
@@ -204,8 +203,6 @@ export function AppShell() {
     const start: Workspace = w.start === "saved" && w.saved ? { ...w, ...copyLayout(w.saved) } : w;
     // its panes into their slots' keys, where the slots read where to open and how to show it
     for (const id of leaves(start.tree)) writeSlot(id, start.panes[id]);
-    LS.set("s3b.preview", start.details.one ? "1" : "0");
-    LS.set("s3b.preview.dual", start.details.many ? "1" : "0");
     const list = [...s.list];
     list[i] = start;
     return { ...s, list };
@@ -238,10 +235,6 @@ export function AppShell() {
   const [recent, setRecent] = useState<PaneId[]>(() => wsNow.recent);
   const setActiveId = useCallback((id: PaneId) => setRecent((cur) => (cur[0] === id ? cur : [id, ...cur.filter((x) => x !== id)])), []);
   const activeId = recent.find((id) => ids.includes(id)) ?? ids[0];
-  // two lists side by side leave little room: the details pane has its own switch there, off at first
-  const singlePreview = usePreviewLayout("s3b.preview");
-  const dualPreview = usePreviewLayout("s3b.preview.dual", false);
-  const preview = dual ? dualPreview : singlePreview;
 
   const [connDialog, setConnDialogState] = useState<ConnDialogAsk | null>(null);
   const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
@@ -555,13 +548,13 @@ export function AppShell() {
   const treeRef = useRef(tree);
   treeRef.current = tree;
   const focusSoon = (id: PaneId) => requestAnimationFrame(() => requestAnimationFrame(() => focusPaneList(id)));
-  /** The room the panes share now (with one pane, its list less a details panel two panes would show). */
+  /** The room the panes share now. */
   const paneRoom = () => {
     const box = document.querySelector<HTMLElement>(".splits");
     if (box) return { w: box.clientWidth, h: box.clientHeight };
     const one = document.querySelector<HTMLElement>(`[data-pane="${ids[0]}"]`);
     if (!one) return null;
-    return { w: one.clientWidth - (dualPreview.previewOpen ? dualPreview.previewWidth : 0), h: one.clientHeight };
+    return { w: one.clientWidth, h: one.clientHeight };
   };
   /** The width the sidebar gave up when a split folded it (0: it wasn't folded for a split). */
   const autoFold = useRef(0);
@@ -729,7 +722,6 @@ export function AppShell() {
     links,
     recent: [activeId, ...recent.filter((x) => x !== activeId && ids.includes(x))],
     panes: Object.fromEntries(ids.map((id) => [id, snapOf(id, withScroll)])),
-    details: { one: singlePreview.previewOpen, many: dualPreview.previewOpen },
   });
   const live = liveLayout();
   /** A workspace's layout: the one on screen as it is now, another as it was left. */
@@ -772,7 +764,7 @@ export function AppShell() {
   const DEFAULT_VIEW: PaneView = { view: "list", sort: null, hidden: null, compact: null, tile: null };
   /**
    * Points the slots at a workspace's panes (`fallback`: where a pane without a place of its own
-   * opens; without one, This Mac), and takes its layout, links and details panel. Synchronized
+   * opens; without one, This Mac), and takes its layout and links. Synchronized
    * browsing doesn't follow these moves, and a pane waiting out of step forgets it.
    */
   const applyLayout = (l: Layout, wsId: string, fallback: Loc | null, focus = true) => {
@@ -809,8 +801,6 @@ export function AppShell() {
     setTree(l.tree);
     setLinks(l.links);
     setRecent([...l.recent.filter((x) => nextIds.includes(x)), ...nextIds.filter((x) => !l.recent.includes(x))]);
-    singlePreview.setOpen(l.details.one);
-    dualPreview.setOpen(l.details.many);
     // the sidebar folds to its rail when that is what it takes to show every pane, as a split
     // does, and comes back when a split had folded it and the panes fit beside it
     const room = paneRoom();
@@ -849,7 +839,7 @@ export function AppShell() {
   /** "+": one pane where the active pane is (or This Mac), its name ready to type over. */
   const newWorkspace = () => {
     const snap = active.here ? { loc: active.here, view: active.viewState() } : null;
-    const w: Workspace = { ...oneLayout(snap, live.details), id: newId(), name: nextName(ws.list), color: null, start: "restore", saved: null };
+    const w: Workspace = { ...oneLayout(snap), id: newId(), name: nextName(ws.list), color: null, start: "restore", saved: null };
     addWorkspace(w, undefined, false);
     setWsEditing(w.id);
   };
@@ -1347,7 +1337,6 @@ export function AppShell() {
     openSettings: () => openSettings(),
     closeSettings: () => setSettingsOpen(false),
     shell: {
-      "get-info": preview.togglePreview,
       undo,
     },
     free: {
@@ -1428,8 +1417,6 @@ export function AppShell() {
     dualItems: dualItemsFor(p),
     settings,
     updateSettings,
-    previewOpen: preview.previewOpen,
-    onTogglePreview: preview.togglePreview,
     dropUpload: dropOver === p.id,
     bucketNote: (p.profile && conns.bucketsBy[p.profile.id]?.note) || null,
     bucketError: (p.profile && conns.bucketsBy[p.profile.id]?.error) || null,
@@ -1443,7 +1430,6 @@ export function AppShell() {
       if (dual && activeId !== p.id) setActiveId(p.id);
     },
   });
-  const previewStyle = { "--preview-w": `${preview.previewWidth}px` } as React.CSSProperties;
   const nameOf = (id: PaneId) => paneName(slot(id)) || slot(id).profile?.name || "Empty pane";
   const paneSwitcher: PaneSwitcher | null =
     dual && cramped
@@ -1457,7 +1443,6 @@ export function AppShell() {
         }
       : null;
   const wsOpen = wsSettings ? ws.list.find((w) => w.id === wsSettings.id) : null;
-  const aside = (p: Pane) => preview.previewOpen && <PreviewAside pane={p} layout={preview} settings={settings} reloadIfShowing={reloadIfShowing} onOpenFull={(e) => openDocument(p.id, e)} />;
 
   return (
     <div className={`app ${sideHidden ? "side-hidden" : ""}`}>
@@ -1563,7 +1548,7 @@ export function AppShell() {
         />
         <PaneContext.Provider value={{ panes: panesRef.current, active, other, dual, setActive: setActiveId }}>
           {dual ? (
-            <div className="content dual-wrap" style={previewStyle}>
+            <div className="content dual-wrap">
               <SplitLayout
                 tree={tree}
                 activeId={activeId}
@@ -1575,10 +1560,9 @@ export function AppShell() {
                 linked={isLinked}
                 onToggleLink={toggleSync}
               />
-              {aside(active)}
             </div>
           ) : (
-            <BrowserPane {...paneProps(first)} contentStyle={previewStyle} aside={aside(first)} />
+            <BrowserPane {...paneProps(first)} />
           )}
         </PaneContext.Provider>
 

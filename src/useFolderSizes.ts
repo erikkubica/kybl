@@ -1,7 +1,7 @@
 /**
  * Folder sizes. S3 has no such thing, so a folder's size is worked out by listing everything
  * under it, which costs one request per 1,000 objects. That is why it runs on demand (menu, the
- * Size column, the details pane) and the result is kept until something changes the bucket.
+ * Size column, Get Info) and the result is kept until something changes the bucket.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -18,7 +18,7 @@ export type FolderSize = {
 const PARALLEL = 3;
 let seq = 0;
 
-/** The shape the list, grid and details pane take (components/listNav): nothing while unknown or failed. */
+/** The shape the list, grid and file info take (components/listNav): nothing while unknown or failed. */
 export type FolderSizeView = { bytes: number; objects: number; running: boolean };
 
 export function useFolderSizes(profileId: string | null, bucket: string | null, onError?: (prefix: string, message: string) => void) {
@@ -108,7 +108,7 @@ export function useFolderSizes(profileId: string | null, bucket: string | null, 
 
   const get = useCallback((prefix: string): FolderSize | undefined => sizes[scope + prefix], [sizes, scope]);
 
-  /** `get` for the list and the details pane: a failed run reads as not calculated (Calculate shows again). */
+  /** `get` for the list and the file info: a failed run reads as not calculated (Calculate shows again). */
   const view = useCallback(
     (prefix: string): FolderSizeView | undefined => {
       const s = sizes[scope + prefix];

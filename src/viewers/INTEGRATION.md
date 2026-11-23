@@ -9,7 +9,7 @@ import type { DocumentHandle } from "../viewers/DocumentView";            // typ
 
 `registry.ts` holds only data and `import()` calls. `LazyDocumentView` is `React.lazy(() => import("./DocumentView"))`,
 so mounting it pulls DocumentView, its CSS and the one viewer it needs on first use. **Never import
-`DocumentView.tsx` (or any viewer) statically** from App/MobileApp/PreviewPane, or CodeMirror lands in the first-load bundle.
+`DocumentView.tsx` (or any viewer) statically** from App/MobileApp/PreviewPane/QuickLook, or CodeMirror lands in the first-load bundle.
 
 Measured with the registry imported from PreviewPane: first-load JS grows by about 4.5 KB (about 1.8 KB gzipped),
 mostly the preload lists for the viewer chunks. Everything else is lazy.
@@ -49,7 +49,13 @@ ref?: Ref<DocumentHandle>;
 - Saving keeps the file's encoding, BOM and line endings, and on the backend its Content-Type,
   Cache-Control, Content-Disposition, Content-Encoding, user metadata, storage class and tags.
 
-## 1. PreviewPane (`src/components/PreviewPane.tsx`)
+## 1. Previews: Quick Look (desktop) and PreviewPane (phones)
+
+Desktop has no details panel: Space opens Quick Look (`src/desktop/QuickLook.tsx`), which shows the
+preview with an info column beside it (`src/components/EntryInfo.tsx`; ⌘I or "Get Info" opens it that
+way). Its `Content` uses the same `viewerFor` + `<LazyDocumentView mode="preview">` pattern as below,
+filling the Quick Look body. Phones keep `src/components/PreviewPane.tsx`: the preview over the same
+`EntryInfo`. The snippet below is how PreviewPane wires it.
 
 Keep the existing image (thumbnail / presigned URL), video, audio and PDF paths. Replace the plain
 `textPreview` `<pre>` (and the "No preview for this file type" note for Office files) with the preview mode:

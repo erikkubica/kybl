@@ -531,16 +531,6 @@ body.resizing-row * {
   --pc: var(--dim);
 }
 
-/* the details pane of a connection without share links or S3 properties (This Mac): stopgap
-   until PreviewPane reads the capabilities itself */
-.preview-caps {
-  display: contents;
-}
-.preview-caps[data-no-share] .section:has(> .share-row),
-.preview-caps[data-no-props] .props-edit {
-  display: none;
-}
-
 /* the sentence of a pane that couldn't list (like .empty p, as a div for its folded details) */
 .error-state .error-msg {
   margin: 0 0 10px;
