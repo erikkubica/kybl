@@ -45,6 +45,11 @@ export type FileDragOptions = {
   switchWorkspace: (id: string) => void;
   /** a new workspace with one pane at `loc`, on screen */
   newWorkspaceAt: (loc: Loc) => void;
+  /**
+   * Terminal panes (src/terminal): what dropping the items on pane `pane` does when it is one
+   * (undefined: not a terminal; null: it can't take them), and the drop (it types their paths).
+   */
+  terminal?: { target: (pane: PaneId, from: Place, items: Entry[]) => string | null | undefined; drop: (pane: PaneId, from: Place, items: Entry[]) => void };
 };
 
 const what = (items: Entry[]) => (items.length === 1 ? `“${items[0].name}”` : `${items.length.toLocaleString()} items`);
@@ -107,6 +112,7 @@ export function useFileDrag(o: FileDragOptions) {
     onDrop: (items, dest, copy, destBucket, pane, destProfile) => {
       const g = origin.current;
       if (!g) return;
+      if (pane && opts.current.terminal?.target(pane, g.place, items)) return opts.current.terminal.drop(pane, g.place, items);
       if (pane) {
         const dst = opts.current.slot(pane);
         if (dst.here) send(g, dst.here, items, copy, dest, opsFor(g, dst));
@@ -133,6 +139,8 @@ export function useFileDrag(o: FileDragOptions) {
     },
     paneTarget: (pane, d, items) => {
       const g = origin.current;
+      const say = g ? opts.current.terminal?.target(pane, g.place, items) : undefined;
+      if (say !== undefined) return say ? { dest: "", label: "", copyOnly: true, say } : null;
       const dst = opts.current.slot(pane);
       if (!g || !dst.here) return null;
       const dest = d ?? dst.prefix;

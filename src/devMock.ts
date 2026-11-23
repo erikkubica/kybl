@@ -507,6 +507,8 @@ async function handle(cmd: string, a: any): Promise<unknown> {
   if (cmd.startsWith("job_")) return (await import("./jobs/devJobs")).handleJob(cmd, a);
   // WP-C: phone backup (src/mobile/backup/devBackup.ts)
   if (cmd.startsWith("backup_")) return (await import("./mobile/backup/devBackup")).handleBackup(cmd, a);
+  // terminal panes: a fake shell (src/terminal/devTerminal.ts)
+  if (cmd.startsWith("terminal_")) return (await import("./terminal/devTerminal")).handleTerminal(cmd, a, profiles);
   if (a?.profileId === LOCAL) {
     const r = await handleLocal(cmd, a);
     if (r !== undefined) return r;

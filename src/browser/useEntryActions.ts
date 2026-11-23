@@ -297,6 +297,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
           !!env.openMigration && { type: "item", label: prefix ? "Copy this folder to another connection…" : "Copy everything to another connection…", icon: "copy", onClick: migrateHere },
           isS3 && { type: "item", label: "Copy S3 URI", icon: "copy", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") },
           onDisk && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: pane.showHidden, onClick: toggleHidden },
+          ...(env.terminalItems?.(prefix) ?? []),
           ...(env.extraPlaceItems?.() ?? []),
         ];
 
@@ -351,6 +352,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       one && e.kind === "file" && { type: "item", label: "Quick Look", icon: "eye", hint: "Space", onClick: () => pane.setQuick(e.key) },
       { type: "item", label: "Get Info", icon: "info", hint: "⌘I", onClick: () => pane.getInfo(e) },
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => pane.navigate(entryParent(e), e.key) },
+      ...(folder ? (env.terminalItems?.(e.key, "Open in terminal") ?? []) : []),
       // Show in Finder, Open with ▸ (desktop/openWith.ts)
       ...(one ? openInItems({ profileId: profile.id, bucket, onDisk, ops, toast }, e) : []),
       // this computer's own files aren't downloaded: Copy, Move and F5/F6 put them elsewhere

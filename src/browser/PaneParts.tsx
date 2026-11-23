@@ -132,7 +132,9 @@ export function DragGhost({ drag, bucket, profileId }: { drag: DragState; bucket
       <span className="drag-text">
         <strong>{drag.items.length === 1 ? drag.items[0].name : `${drag.items.length} items`}</strong>
         <span>
-          {drag.dest != null
+          {drag.dest != null && drag.say
+            ? drag.say
+            : drag.dest != null
             ? drag.label != null
               ? // into the other pane: moves (⌥ copies), unless that place only takes copies
                 `${drag.copy ? "Copy" : "Move"} to ${drag.label}${drag.copy || drag.copyOnly ? "" : " · ⌥ to copy"}`

@@ -57,6 +57,8 @@ export type PaneEnv = {
   extraPlaceItems?: () => MenuItem[];
   /** the empty-space menu's last item: Split ▸ Right, Down, Left, Up (the shell's) */
   splitItems?: () => MenuItem[];
+  /** "Open terminal here" for folder `key` of this pane's root (the shell's; none where a terminal can't open) */
+  terminalItems?: (key: string, label?: string) => MenuItem[];
   /** extra items for the menu of selected items */
   extraItemItems?: (list: Entry[]) => (MenuItem | false)[];
   /** opens a file in the app's full-window viewer/editor; false when it should open in its own app */

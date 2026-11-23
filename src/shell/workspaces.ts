@@ -14,6 +14,7 @@
  */
 import { LS, PANE_IDS, paneKeys, type Loc, type PaneId, type PaneView } from "../browser/types";
 import { leaf, leaves, parseLinks, parseTree, type PaneNode, type SyncLink } from "./paneLayout";
+import { parseTermPlace, type TermPlace } from "../terminal/api";
 
 const KEY = "s3b.workspaces";
 
@@ -24,6 +25,8 @@ export type PaneSnap = {
   view: PaneView;
   /** how far down its list was (not kept between launches) */
   scroll?: number;
+  /** a terminal pane (src/terminal) in this folder; `loc` is null then */
+  term?: TermPlace;
 };
 
 /** What a workspace shows: the part a switch takes in and gives back. */
@@ -88,14 +91,17 @@ export function oneLayout(snap: PaneSnap | null): Layout {
 
 /** A deep copy (duplicating, saving the start): nothing shared with the one on screen. */
 export function copyLayout(l: Layout): Layout {
-  return JSON.parse(JSON.stringify({ ...l, panes: stripScroll(l.panes) })) as Layout;
+  const c = JSON.parse(JSON.stringify({ ...l, panes: stripScroll(l.panes) })) as Layout;
+  // a copy's terminals start shells of their own
+  for (const p of Object.values(c.panes)) if (p?.term) delete p.term.sid;
+  return c;
 }
 
 function stripScroll(panes: Layout["panes"]): Layout["panes"] {
   const out: Layout["panes"] = {};
   for (const id of PANE_IDS) {
     const p = panes[id];
-    if (p) out[id] = { loc: p.loc, view: p.view };
+    if (p) out[id] = { loc: p.loc, view: p.view, ...(p.term ? { term: p.term } : {}) };
   }
   return out;
 }
@@ -141,7 +147,10 @@ function parseLayout(v: unknown): Layout | null {
   const rawPanes = (x.panes && typeof x.panes === "object" ? x.panes : {}) as Record<string, unknown>;
   for (const id of ids) {
     const p = rawPanes[id] as Record<string, unknown> | undefined;
-    if (p && typeof p === "object") panes[id] = { loc: isLoc(p.loc) ? p.loc : null, view: parseView(p.view) };
+    if (p && typeof p === "object") {
+      const term = parseTermPlace(p.term);
+      panes[id] = { loc: isLoc(p.loc) && !term ? p.loc : null, view: parseView(p.view), ...(term ? { term } : {}) };
+    }
   }
   const recent = Array.isArray(x.recent) ? (x.recent as PaneId[]).filter((id) => ids.includes(id)) : [];
   return {

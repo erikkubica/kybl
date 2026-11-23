@@ -55,6 +55,8 @@ export function useShortcuts(opts: ShortcutOptions) {
       // the menu bar has them too, and whichever takes the press first runs it, so they are never
       // left to own(): a key the menu can't match still works here
       if (ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.key === "Tab") id = ev.shiftKey ? "prev-workspace" : "next-workspace";
+      // ⌃`: a terminal below the active pane, or to it and back (by code: layouts put ` elsewhere)
+      else if (ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey && (ev.code === "Backquote" || ev.key === "`")) id = "toggle-terminal";
       else if (mod && ev.shiftKey && (ev.code === "BracketLeft" || ev.code === "BracketRight"))
         id = ev.altKey ? (ev.code === "BracketLeft" ? "move-workspace-left" : "move-workspace-right") : ev.code === "BracketLeft" ? "prev-workspace" : "next-workspace";
       else if (mod && ev.altKey && !ev.shiftKey && /^Digit[1-9]$/.test(ev.code)) id = `workspace-${ev.code.slice(5)}`;

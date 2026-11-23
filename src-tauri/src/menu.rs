@@ -17,7 +17,7 @@ use tauri::{
 };
 
 /// Item ids passed to the page as they are.
-const PAGE_ITEMS: [&str; 40] = [
+const PAGE_ITEMS: [&str; 41] = [
     "duplicate",
     "new-connection",
     "new-folder",
@@ -58,6 +58,7 @@ const PAGE_ITEMS: [&str; 40] = [
     "workspace-settings",
     "close-workspace",
     "command-palette",
+    "toggle-terminal",
 ];
 
 /// Handled here, not by the page (named apart from the tray menu's ids, which share the handler).
@@ -159,6 +160,9 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &item("compare-folders", "Compare Folders", None)?,
             &item("pane-copy", "Copy to Other Pane", None)?,
             &item("pane-move", "Move to Other Pane", None)?,
+            // a terminal pane below the active one, or back and forth to it (the page takes ⌃`
+            // first while a terminal has the keyboard)
+            &item("toggle-terminal", "Terminal", Some("Ctrl+Backquote"))?,
             &sep()?,
             &PredefinedMenuItem::fullscreen(app, None)?,
         ],

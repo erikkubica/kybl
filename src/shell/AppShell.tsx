@@ -10,6 +10,7 @@ import { findMount, useMounts } from "../mount/useMounts";
 import type { MountInfo } from "../api";
 import { tidyMenu } from "../desktop/menus";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTerminalPanes } from "../terminal/useTerminalPanes";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage, errSummary } from "../api";
@@ -129,7 +130,8 @@ type ConnDialogAsk = { profile: Profile | null; reconnect?: boolean; startKind?:
 
 /** Gives a pane's file list keyboard focus (after a sidebar click the arrows should move in it). */
 export function focusPaneList(id: PaneId) {
-  document.querySelector<HTMLElement>(`[data-pane="${id}"] [data-list-focus]`)?.focus({ preventScroll: true });
+  // (a terminal pane: its terminal's input)
+  document.querySelector<HTMLElement>(`[data-pane="${id}"] [data-list-focus], [data-pane="${id}"] textarea.xterm-helper-textarea`)?.focus({ preventScroll: true });
 }
 
 export function AppShell() {
@@ -222,6 +224,9 @@ export function AppShell() {
   const [tree, setTree] = useState<PaneNode>(() => wsNow.tree);
   const ids = useMemo(() => leaves(tree), [tree]);
   const dual = ids.length > 1;
+  // terminal panes (src/terminal): slots that show a shell instead of files
+  const term = useTerminalPanes(wsNow);
+  const fileIds = ids.filter((id) => !term.terms[id]);
   useEffect(() => {
     // dragging a divider changes the tree on every mouse move: write once it settles
     const t = window.setTimeout(() => saveLayout(tree), 200);
@@ -243,6 +248,8 @@ export function AppShell() {
   const [recent, setRecent] = useState<PaneId[]>(() => wsNow.recent);
   const setActiveId = useCallback((id: PaneId) => setRecent((cur) => (cur[0] === id ? cur : [id, ...cur.filter((x) => x !== id)])), []);
   const activeId = recent.find((id) => ids.includes(id)) ?? ids[0];
+  /** the file pane used last: what the sidebar, the menus and the keyboard act on while a terminal has the keyboard */
+  const fileId = recent.find((id) => fileIds.includes(id)) ?? fileIds[0] ?? null;
 
   const [connDialog, setConnDialogState] = useState<ConnDialogAsk | null>(null);
   const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
@@ -413,6 +420,7 @@ export function AppShell() {
     // the empty-space menu's Split ▸ (splitItems is defined further down; this runs on a right-click)
     splitItems: () => [{ type: "submenu", label: "Split", icon: "dual-pane", items: () => splitItems(id) }],
     beginItemDrag: (...a) => beginItemDrag.current?.(...a),
+    terminalItems: (key, label) => term.items(id, key, label),
     ...dualPane.envFor(id),
   });
   // one pane per slot, always (hooks can't come and go with the layout); a slot that isn't on
@@ -425,12 +433,12 @@ export function AppShell() {
   const p6 = usePane(envFor("p6"));
   const slots = [left, right, p3, p4, p5, p6];
   const slot = (id: PaneId) => slots[PANE_IDS.indexOf(id)];
-  const active = slot(activeId);
-  /** The pane `id` pairs with: the one active most recently before it (with two, the other one). */
-  const otherOf = (id: PaneId): PaneId | null => recent.find((x) => x !== id && ids.includes(x)) ?? ids.find((x) => x !== id) ?? null;
-  const otherId = dual ? otherOf(activeId) : null;
+  const active = slot(fileId ?? activeId);
+  /** The file pane `id` pairs with: the one active most recently before it (with two, the other one). */
+  const otherOf = (id: PaneId): PaneId | null => recent.find((x) => x !== id && fileIds.includes(x)) ?? fileIds.find((x) => x !== id) ?? null;
+  const otherId = dual ? otherOf(active.id) : null;
   const other = otherId ? slot(otherId) : null;
-  panesRef.current = ids.map(slot);
+  panesRef.current = fileIds.map(slot);
   allPanes.current = slots;
   // a trackpad pinch over a grid (the web view sees a wheel with Ctrl) sizes that pane's tiles
   useEffect(() => {
@@ -524,7 +532,7 @@ export function AppShell() {
       .then((list) => {
         conns.setProfiles(list);
         // the first pane on screen opens like the one pane always did; the others follow below
-        const firstId = ids[0];
+        const firstId = fileIds[0] ?? ids[0];
         const last = settings.restoreLast || startSaved.current ? slot(firstId).savedLocation() : null;
         const all = [...list, THIS_MAC];
         // where it was last time (This Mac too); else the first saved connection
@@ -540,11 +548,12 @@ export function AppShell() {
   // on launch the other panes reopen where they were, or start at the first one's place (a pane
   // made by a split opens its own place and is marked here at once)
   const opened = useRef(new Set<PaneId>());
-  const first = slot(ids[0]);
+  const first = slot(fileIds[0] ?? ids[0]);
   useEffect(() => {
     if (!first.here || !first.profile || !profiles.length) return;
-    for (const id of ids.slice(1)) {
-      if (opened.current.has(id)) continue;
+    for (const id of ids) {
+      // (a terminal's slot shows no files)
+      if (id === first.id || term.terms[id] || opened.current.has(id)) continue;
       opened.current.add(id);
       const p = slot(id);
       if (p.profile) continue;
@@ -626,7 +635,11 @@ export function AppShell() {
     // `fill`: the new pane opens somewhere else (the command palette's ⌘↵)
     if (fill) fill(fresh);
     else if (src.here && src.profile) p.go(src.profile, src.here.bucket, src.here.prefix);
-    else p.showConnection(src.profile?.id ?? null);
+    else if (term.terms[id] && profiles.some((x) => x.id === term.terms[id]!.profileId)) {
+      // split from a terminal: its folder
+      const at = term.terms[id]!;
+      p.go(profiles.find((x) => x.id === at.profileId)!, at.bucket, at.prefix);
+    } else p.showConnection(src.profile?.id ?? null);
     if (p.view !== src.view) p.setView(src.view);
     setTree(splitPane(t, id, dir, fresh, before));
     setActiveId(fresh);
@@ -650,6 +663,8 @@ export function AppShell() {
     p.sel.setSelected(new Set());
     p.showConnection(null);
     opened.current.delete(id);
+    // a terminal's slot is a file pane again (its shell ends unless another workspace has the pane now)
+    term.assign(id, undefined);
   };
   /** Closes a pane; false when it is the only one (⌘W then closes the window, as it always did). */
   const close = (id: PaneId = activeId) => {
@@ -727,6 +742,8 @@ export function AppShell() {
   const listScroller = (id: PaneId) => document.querySelector<HTMLElement>(`[data-pane="${id}"] .table-body, [data-pane="${id}"] .grid-scroll`);
   const snapOf = (id: PaneId, withScroll: boolean): PaneSnap => {
     const p = slot(id);
+    const t = term.terms[id];
+    if (t) return { loc: null, view: p.viewState(), term: t };
     const top = withScroll ? listScroller(id)?.scrollTop : undefined;
     return { loc: p.here, view: p.viewState(), ...(top ? { scroll: top } : {}) };
   };
@@ -792,9 +809,14 @@ export function AppShell() {
     p.ent.setQuery("");
     p.applyView(s?.view ?? DEFAULT_VIEW);
     opened.current.add(id);
+    term.assign(id, s?.term);
     const at = s?.loc ?? fallback;
     const prof = at ? profiles.find((x) => x.id === at.profileId) : null;
-    if (at && prof) {
+    if (s?.term) {
+      // a terminal pane: its slot shows no files
+      p.showConnection(null);
+      p.history.load(null, null);
+    } else if (at && prof) {
       p.go(prof, at.bucket, at.prefix, { history: false });
       p.history.load(hist, at);
       void conns.loadBuckets(prof);
@@ -979,6 +1001,7 @@ export function AppShell() {
     const ls = leaves(l.tree);
     const names = ls.map((id) => {
       const at = l.panes[id]?.loc;
+      if (l.panes[id]?.term) return "terminal";
       if (!at) return "empty";
       return at.prefix ? baseName(at.prefix) : conns.rootLabel(at.profileId, at.bucket) || profiles.find((x) => x.id === at.profileId)?.name || at.bucket;
     });
@@ -1170,8 +1193,28 @@ export function AppShell() {
     wsDest,
     switchWorkspace,
     newWorkspaceAt: (loc) => addWorkspace({ ...oneLayout({ loc, view: DEFAULT_VIEW }), id: newId(), name: nextName(ws.list), color: null, start: "restore", saved: null }, undefined, false),
+    // dropped on a terminal: their paths, typed in
+    terminal: { target: term.dropTarget, drop: (pane, from, items) => void term.drop(pane, from, items) },
   });
   beginItemDrag.current = fileDrag.begin;
+
+  // ------------------------------------------------------------ terminal panes
+  term.host.current = {
+    profiles,
+    slot,
+    ids,
+    activeId,
+    fileId,
+    splitBelow: (src, fill) => split("col", src, false, fill),
+    setActive: setActiveId,
+    focus: focusSoon,
+    close: takeFromLive,
+    menu: dialogs.menu,
+    toast,
+    rootLabel: conns.rootLabel,
+  };
+  // a shell ends once no workspace has its pane any more
+  useEffect(() => term.gc(ws), [term.terms, ws]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // refresh listing once all uploads have finished
   useEffect(
@@ -1558,6 +1601,7 @@ export function AppShell() {
       "split-right": () => split("row"),
       "split-down": () => split("col"),
       "close-pane": () => close(),
+      "toggle-terminal": () => term.toggle(),
       // the dual pane's old toggle, for anything still sending it
       "toggle-dual": () => (dual ? closeOthers() : split("row")),
       "focus-left": () => focusToward("left"),
@@ -1698,7 +1742,7 @@ export function AppShell() {
   };
   const paneProps = (p: Pane) => ({
     pane: p,
-    active: p === active,
+    active: p.id === activeId,
     dual,
     label: `Pane ${ids.indexOf(p.id) + 1} of ${ids.length}`,
     dualItems: dualItemsFor(p),
@@ -1721,7 +1765,14 @@ export function AppShell() {
     // (after resting on a tab opened another workspace, this slot may be another pane)
     lifted: paneDrag.dragging === p.id && !dragAway(),
   });
-  const nameOf = (id: PaneId) => paneName(slot(id)) || slot(id).profile?.name || "Empty pane";
+  /** Pane slot `id` on screen: a file pane, or a terminal. */
+  const paneView = (id: PaneId, style?: React.CSSProperties) =>
+    term.terms[id] ? (
+      term.render(id, { style, active: id === activeId, dual, onGrip: paneDrag.grip?.(id), lifted: paneDrag.dragging === id && !dragAway() })
+    ) : (
+      <BrowserPane {...paneProps(slot(id))} style={style} />
+    );
+  const nameOf =(id: PaneId) => term.nameOf(id) || paneName(slot(id)) || slot(id).profile?.name || "Empty pane";
   const paneSwitcher: PaneSwitcher | null =
     dual && cramped
       ? {
@@ -1846,7 +1897,7 @@ export function AppShell() {
               <SplitLayout
                 tree={tree}
                 activeId={activeId}
-                pane={(id, style) => <BrowserPane {...paneProps(slot(id))} style={style} />}
+                pane={paneView}
                 onSizes={(path, sizes) => setTree((t) => setSizes(t, path, sizes))}
                 onEqualize={(path) => setTree((t) => equalize(t, path))}
                 nameOf={nameOf}
@@ -1856,7 +1907,7 @@ export function AppShell() {
               />
             </div>
           ) : (
-            <BrowserPane {...paneProps(first)} />
+            paneView(ids[0])
           )}
         </PaneContext.Provider>
 

@@ -53,6 +53,8 @@ export type DragState = {
   tab?: TabDropTarget | null;
   /** what the ghost says where nothing takes the items (a tab that only opens, or refuses) */
   note?: string | null;
+  /** what dropping there does, in the target's own words (a terminal pastes the paths) */
+  say?: string | null;
 };
 
 /**
@@ -101,7 +103,7 @@ export function useItemDrag<P extends string = string>({
    * Whether another pane accepts the items at `dest` (a folder there; null = the folder it
    * shows), and the label of that place; null = no.
    */
-  paneTarget?: (pane: P, dest: string | null, items: Entry[]) => { dest: string; label: string; copyOnly?: boolean } | null;
+  paneTarget?: (pane: P, dest: string | null, items: Entry[]) => { dest: string; label: string; copyOnly?: boolean; say?: string } | null;
   /** workspace tabs: which is under the point (not the one on screen), what it does with the items, resting on it, letting go there */
   tabs?: {
     at: (x: number, y: number) => string | null;
@@ -138,6 +140,7 @@ export function useItemDrag<P extends string = string>({
     let destPane: P | null = null;
     let label: string | null = null;
     let copyOnly = false;
+    let say: string | null = null;
     // a modifier held before the press counts too
     let alt = ev.altKey;
     let springTimer = 0;
@@ -183,6 +186,7 @@ export function useItemDrag<P extends string = string>({
       destPane = null;
       label = null;
       copyOnly = false;
+      say = null;
       const pane = (el?.closest("[data-pane]")?.getAttribute("data-pane") ?? null) as P | null;
       let ok = false;
       if (el && pane && pane !== cbs.current.home()) {
@@ -193,6 +197,7 @@ export function useItemDrag<P extends string = string>({
           destPane = pane;
           label = t.label;
           copyOnly = !!t.copyOnly;
+          say = t.say ?? null;
           ok = true;
         }
       } else if (el && (d != null || !el.hasAttribute("data-drop-pane"))) {
@@ -263,7 +268,7 @@ export function useItemDrag<P extends string = string>({
     };
 
     const show = () =>
-      setDrag({ items, x, y, dest: tab && "label" in tab.t ? "" : dest, bucket: destBucket, profile: destProfile, pane: destPane, label, copy: isCopy(), copyOnly, outside, ...tabState() });
+      setDrag({ items, x, y, dest: tab && "label" in tab.t ? "" : dest, bucket: destBucket, profile: destProfile, pane: destPane, label, copy: isCopy(), copyOnly, outside, say: dest != null ? say : null, ...tabState() });
 
     const unlight = () => {
       light(null);
