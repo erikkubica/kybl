@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy · Kybl</title>
+<meta name="description" content="How the Kybl app and Kybl Storage handle your data, including data from Google Drive, Dropbox and OneDrive.">
+<link rel="canonical" href="https://kybl.app/privacy-policy/">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@600&family=DM+Sans:opsz,wght@9..40,400;9..40,700&display=swap">
+<link rel="stylesheet" href="/assets/legal.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <a class="brand" href="/"><img src="/assets/mark.svg" alt="">kybl</a>
+    <nav aria-label="Legal">
+      <a href="/privacy-policy/" aria-current="page">Privacy</a>
+      <a href="/terms-of-service/">Terms</a>
+      <a href="/">Home</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <h1>Privacy Policy</h1>
+  <p class="updated">Last updated 23 November 2026</p>
+
+  <div class="summary">
+    <ul>
+      <li>The Kybl app runs on your device. Your files, keys and passwords go straight from your device to the storage you connect. They don’t pass through Kybl’s servers.</li>
+      <li>Kybl has no ads, no analytics and no tracking, and never sells data.</li>
+      <li>Kybl Storage, the optional hosted storage, keeps your email address and the files you upload, encrypted at rest in the EU.</li>
+    </ul>
+  </div>
+
+  <p>This policy covers the Kybl apps for macOS, Windows, Linux, Android and iOS (“the app”), the website kybl.app, and Kybl Storage at app.kybl.app and s3.kybl.app. “Kybl”, “we” and “us” mean the developer of Kybl. Questions: <a href="mailto:hello@kybl.app">hello@kybl.app</a>.</p>
+
+  <h2>1. The app</h2>
+  <p>The app is a file manager for storage you choose: S3-compatible services (AWS S3, Cloudflare R2, Hetzner, Backblaze B2, Wasabi and others), SFTP, FTP, WebDAV, Google Drive, Dropbox, OneDrive, and folders on your own device.</p>
+  <h3>What stays on your device</h3>
+  <ul>
+    <li><strong>Connection details and secrets</strong> (access keys, passwords, sign-in tokens) are stored on your device, encrypted, with the key kept in your system keychain.</li>
+    <li><strong>Caches</strong>: thumbnails, small blurred previews, and copies of files you opened, so they don’t download twice. You can clear them in Settings.</li>
+    <li><strong>Settings and history</strong>: your preferences, favorites, sync setup and transfer list.</li>
+  </ul>
+  <p>Files and folder listings travel directly between your device and the storage provider you connected, under that provider’s own privacy policy. We don’t receive them.</p>
+  <h3>What the app sends to us</h3>
+  <p>Nothing, unless you use Kybl Storage (section 3). The app checks GitHub for new versions (GitHub sees your IP address, as with any download), and the website may load fonts from Google Fonts. There is no telemetry or crash reporting.</p>
+  <h3>Optional shared previews</h3>
+  <p>If you turn on placeholder sharing for a connection, the app writes small preview data (a <code>.kybl/thumbhash.json</code> file, or a <code>thumbhash</code> metadata field on files it uploads) into <em>your own</em> storage, so your other devices can show previews sooner. It’s off by default and never leaves your storage.</p>
+
+  <h2>2. Google Drive, Dropbox and OneDrive</h2>
+  <p>When you add a Google Drive, Dropbox or OneDrive connection, you sign in with that provider in your browser and allow Kybl to access your files.</p>
+  <h3>Google user data</h3>
+  <ul>
+    <li><strong>What we access:</strong> with the Google Drive permission you grant, the app lists, opens, downloads, uploads, renames, moves, copies and deletes files and folders in your Google Drive, only when you ask it to. It also reads your account’s email address and storage quota, to name the connection and show free space.</li>
+    <li><strong>How we use it:</strong> only to show your Drive in the app and do what you ask with your files: browsing, previews, transfers, sync, and mounting as a drive.</li>
+    <li><strong>Where it goes:</strong> Google data is handled on your device and sent only between your device and Google. It isn’t sent to Kybl’s servers or to anyone else. The sign-in token is stored encrypted on your device, and file copies stay in the app’s local cache.</li>
+    <li><strong>Sharing:</strong> we don’t share, sell or transfer Google user data to anyone. We don’t use it for advertising, and we don’t use it to develop, improve or train AI or machine learning models. No person at Kybl reads it.</li>
+    <li><strong>Removing it:</strong> remove the connection in the app to delete its token and cached data from your device. You can also revoke Kybl’s access at any time at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</li>
+  </ul>
+  <p class="callout">Kybl’s use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+  <p>Dropbox and OneDrive connections work the same way: data goes only between your device and that provider, the token is stored encrypted on your device, and you can revoke access in your Dropbox or Microsoft account settings.</p>
+
+  <h2>3. Kybl Storage</h2>
+  <p>Kybl Storage is optional S3-compatible storage run by us. If you create an account, we process:</p>
+  <ul>
+    <li><strong>Your email address</strong>: to sign you in with one-time codes (there are no passwords) and to send messages about your account. Codes are sent through our email provider.</li>
+    <li><strong>Files you upload</strong>: stored encrypted at rest with object storage hosted by Hetzner in Germany. We access them only to run the service: storing, serving, moving them between our storage backends, or deleting them.</li>
+    <li><strong>Account and usage data</strong>: buckets, access keys (only a protected form of each secret is stored), storage used, and sessions.</li>
+    <li><strong>Security data</strong>: IP addresses and request counts, used for a limited time to stop abuse, such as limiting sign-up and sign-in attempts.</li>
+  </ul>
+  <p>We use this data only to provide and secure Kybl Storage, under a contract with you or, for security, our legitimate interest. We don’t sell it, and we share it only with the providers that run the service (hosting and email) or when the law requires it.</p>
+  <p><strong>Deleting your account</strong> in the dashboard removes your sign-in, sessions and access keys at once, then deletes your files and buckets. Copies left in database backups disappear as old backups are replaced.</p>
+
+  <h2>4. The website</h2>
+  <p>kybl.app is a static website with no cookies, analytics or tracking. Our hosting keeps standard server logs (IP address, page and time) for a short time, for security.</p>
+
+  <h2>5. Your rights</h2>
+  <p>Depending on where you live (including under the EU GDPR), you can ask to see, correct, export or delete your personal data, object to or restrict how we use it, and complain to a data protection authority. For Kybl Storage, most of this can be done in the dashboard. For anything else, email <a href="mailto:hello@kybl.app">hello@kybl.app</a>. Data held only on your device is yours to delete: remove the connection, clear the caches, or uninstall the app.</p>
+
+  <h2>6. Children</h2>
+  <p>Kybl isn’t directed at children under 16, and we don’t knowingly collect their data.</p>
+
+  <h2>7. Changes</h2>
+  <p>If this policy changes, we’ll update it here and change the date at the top. Significant changes to Kybl Storage will also be emailed to account holders.</p>
+</main>
+
+<footer class="foot">© 2026 Kybl · <a href="/terms-of-service/">Terms of Service</a> · <a href="mailto:hello@kybl.app">hello@kybl.app</a></footer>
+</body>
+</html>
