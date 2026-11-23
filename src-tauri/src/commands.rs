@@ -85,7 +85,7 @@ pub async fn save_profile(
     state.clients.lock().await.remove(&profile.id);
     registry::forget(&profile.id);
     #[cfg(desktop)]
-    crate::tunnels::run::connection_changed(&app, &profile.id, Some(profile.net.as_ref().map(|n| n.tunnels.as_slice()).unwrap_or_default()));
+    crate::tunnels::run::connection_changed(&app, &profile.id, Some(&profile));
     // the connection may point somewhere else now (another endpoint or account)
     crate::filecache::forget_profile(&app, &profile.id).await;
     Ok(profile)

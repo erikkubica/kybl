@@ -21,6 +21,9 @@ use std::{
     },
 };
 
+#[cfg(unix)]
+use std::time::Duration;
+
 use serde::Serialize;
 use tauri::{
     ipc::{Channel, InvokeResponseBody},
@@ -262,11 +265,17 @@ async fn open_local<R: Runtime>(
 async fn run_pty(mut pty: pty::Pty, ev: pty::PtyEvents, mut cmds: mpsc::UnboundedReceiver<Cmd>, out: mpsc::Sender<Vec<u8>>, exit: oneshot::Sender<Option<i32>>) {
     let pty::PtyEvents { output: mut from_pty, exit: mut ended } = ev;
     // the reader's chunks go on to the pump through here, so this task sees when they stop
-    let forward = tokio::spawn(async move {
+    let progress = Arc::new(Progress::default());
+    let p = progress.clone();
+    let mut forward = tokio::spawn(async move {
         while let Some(c) = from_pty.recv().await {
-            if out.send(c).await.is_err() {
+            p.sending.store(true, Ordering::SeqCst);
+            let sent = out.send(c).await;
+            p.sending.store(false, Ordering::SeqCst);
+            if sent.is_err() {
                 break;
             }
+            p.moved.fetch_add(1, Ordering::SeqCst);
         }
     });
     let _stop = AbortOnDrop(forward.abort_handle());
@@ -282,13 +291,61 @@ async fn run_pty(mut pty: pty::Pty, ev: pty::PtyEvents, mut cmds: mpsc::Unbounde
             },
             code = &mut ended => {
                 // (`forward` ends once the terminal has no more output)
-                let drained = tokio::time::timeout(std::time::Duration::from_millis(300), forward).await.is_ok();
+                let drained = drain(&mut forward, &progress, DRAIN_QUIET, DRAIN_STUCK).await;
                 if !drained {
                     pty.stop_reading();
                 }
                 let _ = exit.send(code.ok().flatten());
                 return;
             }
+        }
+    }
+}
+
+/// How the forwarder of a local shell's output is getting on.
+#[cfg(unix)]
+#[derive(Default)]
+struct Progress {
+    /// chunks handed on to the page so far
+    moved: std::sync::atomic::AtomicU64,
+    /// waiting for the page to take a chunk (it is behind)
+    sending: std::sync::atomic::AtomicBool,
+}
+
+/// After the shell ended: nothing more for this long, and nothing waiting for the page, means a
+/// job left in the background holds the terminal open.
+#[cfg(unix)]
+const DRAIN_QUIET: Duration = Duration::from_millis(300);
+/// The page took nothing for this long while output waited for it: given up on.
+#[cfg(unix)]
+const DRAIN_STUCK: Duration = Duration::from_secs(5);
+/// At most this long in all (a background job that keeps printing).
+#[cfg(unix)]
+const DRAIN_MAX: Duration = Duration::from_secs(30);
+
+/// Waits for the forwarder to hand on the last of the output: as long as it keeps going, or the
+/// page is still taking chunks (a long `cat` at the end), not a fixed moment. True when it ended.
+#[cfg(unix)]
+async fn drain(forward: &mut tokio::task::JoinHandle<()>, progress: &Progress, quiet: Duration, stuck: Duration) -> bool {
+    let mut last = progress.moved.load(Ordering::SeqCst);
+    let mut idle = Duration::ZERO;
+    let end = tokio::time::Instant::now() + DRAIN_MAX;
+    loop {
+        if tokio::time::Instant::now() >= end {
+            return false;
+        }
+        if tokio::time::timeout(quiet, &mut *forward).await.is_ok() {
+            return true;
+        }
+        let now = progress.moved.load(Ordering::SeqCst);
+        if now != last {
+            last = now;
+            idle = Duration::ZERO;
+            continue;
+        }
+        idle += quiet;
+        if !progress.sending.load(Ordering::SeqCst) || idle >= stuck {
+            return false;
         }
     }
 }
@@ -388,6 +445,46 @@ pub fn terminal_close(id: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A shell that ended while the page was behind: its last output still goes out, as long as
+    /// the page keeps taking it; a terminal held open by a quiet background job is let go soon.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_last_output_waits_for_a_slow_page() {
+        let (out, mut page) = mpsc::channel::<u32>(1);
+        let progress = Arc::new(Progress::default());
+        let p = progress.clone();
+        // 20 chunks are left, and the page takes one every 50 ms (1 s in all, past the quiet time)
+        let mut forward = tokio::spawn(async move {
+            for c in 0..20 {
+                p.sending.store(true, Ordering::SeqCst);
+                let sent = out.send(c).await;
+                p.sending.store(false, Ordering::SeqCst);
+                if sent.is_err() {
+                    break;
+                }
+                p.moved.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        let reader = tokio::spawn(async move {
+            let mut got = vec![];
+            while let Some(c) = page.recv().await {
+                got.push(c);
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            got
+        });
+        assert!(drain(&mut forward, &progress, Duration::from_millis(100), Duration::from_secs(5)).await);
+        assert_eq!(reader.await.unwrap(), (0..20).collect::<Vec<_>>());
+
+        // nothing to hand on, and nothing coming (a background job keeps the terminal open)
+        let idle = Arc::new(Progress::default());
+        let mut held = tokio::spawn(std::future::pending::<()>());
+        let t = std::time::Instant::now();
+        assert!(!drain(&mut held, &idle, Duration::from_millis(100), Duration::from_secs(5)).await);
+        assert!(t.elapsed() < Duration::from_secs(1));
+        held.abort();
+    }
 
     #[test]
     fn plain_words_stay_as_they_are() {

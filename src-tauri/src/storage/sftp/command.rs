@@ -31,6 +31,44 @@ fn parse_hash(out: &str) -> Option<(HashKind, String)> {
     }
 }
 
+const RAN: &str = "kybl:ran";
+const NO_TOOL: &str = "kybl:no-hash-tool";
+
+/// The hash command for the file at `path` on the server: the first hash tool it has, then a line
+/// saying the script ran at all. Run by `sh`, whatever the login shell is (fish, csh).
+fn hash_command(path: &str) -> String {
+    let q = crate::actions::quote(path);
+    let script = format!(
+        "if command -v sha256sum >/dev/null 2>&1; then sha256sum -b -- {q}; \
+         elif command -v shasum >/dev/null 2>&1; then shasum -a 256 -b -- {q}; \
+         elif command -v md5sum >/dev/null 2>&1; then md5sum -b -- {q}; \
+         elif command -v md5 >/dev/null 2>&1; then md5 -q -- {q}; \
+         else echo {NO_TOOL}; fi 2>/dev/null; echo {RAN}"
+    );
+    format!("sh -c {}", crate::actions::quote(&script))
+}
+
+/// What a hash command's output says.
+#[derive(Debug, PartialEq)]
+enum HashRun {
+    Hash(HashKind, String),
+    /// no hash tool, or no shell that runs commands (an SFTP-only account): not asked again
+    NoCommands,
+    /// the tools are there but this file gave no hash (unreadable, gone): ask again next time
+    ThisFile,
+}
+
+fn read_hash_run(out: &str) -> HashRun {
+    if let Some((kind, hex)) = parse_hash(out) {
+        return HashRun::Hash(kind, hex);
+    }
+    // without the closing line our script never ran (a forced `internal-sftp`, a menu shell)
+    if out.contains(NO_TOOL) || !out.contains(RAN) {
+        return HashRun::NoCommands;
+    }
+    HashRun::ThisFile
+}
+
 /// How a command on the server ended.
 pub struct ExecEnd {
     /// the exit status, None when the server didn't say (stopped, or the connection dropped)
@@ -98,8 +136,7 @@ impl SftpBackend {
         if NO_HASH.lock().unwrap().contains(&who) {
             return Ok(None);
         }
-        let q = crate::actions::quote(&self.remote_path(key).await?);
-        let cmd = format!("sha256sum -b -- {q} 2>/dev/null || shasum -a 256 -b -- {q} 2>/dev/null || md5sum -b -- {q} 2>/dev/null || md5 -q -- {q} 2>/dev/null");
+        let cmd = hash_command(&self.remote_path(key).await?);
         let stop = AtomicBool::new(false);
         let mut out = Vec::new();
         let deadline = Duration::from_secs(20) + Duration::from_secs_f64(size as f64 / 50e6);
@@ -111,14 +148,22 @@ impl SftpBackend {
                 std::future::pending::<()>().await
             } => unreachable!(),
         };
-        let parsed = match ran {
-            Ok(end) if !end.stopped => parse_hash(&String::from_utf8_lossy(&out)),
-            _ => None,
+        let run = match ran {
+            Ok(end) if !end.stopped => read_hash_run(&String::from_utf8_lossy(&out)),
+            // out of time (a slow disk, a huge file): this file only
+            Ok(_) => HashRun::ThisFile,
+            // the server refuses commands for this user (not a dropped connection)
+            Err(e) if e.kind != crate::storage::ErrKind::Network => HashRun::NoCommands,
+            Err(_) => HashRun::ThisFile,
         };
-        if parsed.is_none() {
-            NO_HASH.lock().unwrap().insert(who);
-        }
-        Ok(parsed)
+        Ok(match run {
+            HashRun::Hash(kind, hex) => Some((kind, hex)),
+            HashRun::NoCommands => {
+                NO_HASH.lock().unwrap().insert(who);
+                None
+            }
+            HashRun::ThisFile => None,
+        })
     }
 
     /// Closes the SSH connection (a connection opened just to run a command).
@@ -143,5 +188,39 @@ mod tests {
         for nothing in ["", "sha256sum: not found", "Permission denied", "abc123  x"] {
             assert_eq!(parse_hash(nothing), None, "{nothing:?}");
         }
+    }
+
+    /// Only a server without the tools (or without a shell) stops being asked; one file that
+    /// gives no hash doesn't turn checking off for the whole server.
+    #[test]
+    fn only_missing_tools_turn_hashing_off() {
+        let sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        assert_eq!(read_hash_run(&format!("{sha}  a\n{RAN}\n")), HashRun::Hash(HashKind::Sha256, sha.into()));
+        // unreadable or deleted file: the tool ran and printed nothing
+        assert_eq!(read_hash_run(&format!("{RAN}\n")), HashRun::ThisFile);
+        assert_eq!(read_hash_run(&format!("{NO_TOOL}\n{RAN}\n")), HashRun::NoCommands);
+        // a forced sftp-only account answers with its own text, never our closing line
+        assert_eq!(read_hash_run("This service allows sftp connections only.\n"), HashRun::NoCommands);
+        assert_eq!(read_hash_run(""), HashRun::NoCommands);
+    }
+
+    /// The command as a login shell runs it, on a file with a quote and a space in its name.
+    #[cfg(unix)]
+    #[test]
+    fn the_hash_command_runs_in_a_shell() {
+        let dir = std::env::temp_dir().join(format!("kybl-hash-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("it's here.bin");
+        std::fs::write(&file, b"").unwrap();
+        let run = |path: &std::path::Path| {
+            let out = std::process::Command::new("sh").arg("-c").arg(hash_command(&path.to_string_lossy())).output().unwrap();
+            read_hash_run(&String::from_utf8_lossy(&out.stdout))
+        };
+        match run(&file) {
+            HashRun::Hash(_, hex) => assert!(hex == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" || hex == "d41d8cd98f00b204e9800998ecf8427e"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(run(&dir.join("gone")), HashRun::ThisFile);
+        std::fs::remove_dir_all(dir).ok();
     }
 }

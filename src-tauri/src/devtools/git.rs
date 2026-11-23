@@ -4,11 +4,12 @@
 //!
 //! Big repositories: every run is time-boxed. When the whole repository's status doesn't come
 //! back in time, the status of just the folder on screen is asked for (and the repository is
-//! remembered as slow); when even that is too slow, only the branch shows. Answers are cached
-//! per repository for a moment, so several panes (and quick refreshes) share one run.
+//! remembered as slow for a few minutes, then tried whole again); when even that is too slow,
+//! only the branch shows. Answers are cached per repository for a moment, so several panes (and
+//! quick refreshes) share one run.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     path::{Path, PathBuf},
     process::Command,
     sync::{Arc, Mutex, OnceLock},
@@ -17,10 +18,13 @@ use std::{
 
 use serde::Serialize;
 
-use super::tools::{command, find_tool, run_capture};
+use super::tools::{command, find_tool, run_capture, RunError};
 
 /// How long one git run may take.
 const TIME_BOX: Duration = Duration::from_millis(1500);
+/// A repository whose whole status took too long is asked about whole again after this (the
+/// first run after boot or wake is often slow only because nothing is cached yet).
+const SLOW_RETRY: Duration = Duration::from_secs(300);
 /// An answer this fresh is reused.
 const FRESH: Duration = Duration::from_millis(1200);
 /// More changed or ignored paths than this are left out (the marks then show what fits).
@@ -183,8 +187,15 @@ struct Caches {
     /// folder → its repository (None: not in one), with when that was found
     repos: HashMap<PathBuf, (Instant, Option<(PathBuf, String)>)>,
     status: HashMap<PathBuf, Cached>,
-    /// repositories whose whole status took too long
-    slow: HashSet<PathBuf>,
+    /// repositories whose whole status took too long, and when
+    slow: HashMap<PathBuf, Instant>,
+}
+
+impl Caches {
+    /// Whether to skip the whole-repository run for `top` now.
+    fn is_slow(&self, top: &Path, now: Instant) -> bool {
+        self.slow.get(top).is_some_and(|at| now.duration_since(*at) < SLOW_RETRY)
+    }
 }
 
 fn caches() -> &'static Mutex<Caches> {
@@ -226,15 +237,15 @@ fn find_repo(bin: &Path, dir: &Path) -> Option<Repo> {
     found.map(|(top, prefix)| Repo { top, prefix })
 }
 
-fn run_status(bin: &Path, top: &Path, scoped: Option<&str>) -> Option<Porcelain> {
+fn run_status(bin: &Path, top: &Path, scoped: Option<&str>) -> Result<Porcelain, RunError> {
     let mut c = git(bin);
     c.arg("-C").arg(top).args(["status", "--porcelain=v2", "-z", "--branch", "--ignored=matching", "--untracked-files=normal"]);
     if let Some(dir) = scoped {
         c.arg("--").arg(dir);
     }
-    match run_capture(c, TIME_BOX) {
-        Ok((st, out)) if st.success() => Some(parse_porcelain_v2(&out)),
-        _ => None,
+    match run_capture(c, TIME_BOX)? {
+        (st, out) if st.success() => Ok(parse_porcelain_v2(&out)),
+        _ => Err(RunError::Failed),
     }
 }
 
@@ -263,18 +274,30 @@ pub fn status_of(dir: &Path, force: bool) -> Option<GitInfo> {
     let (status, partial) = match cached {
         Some(hit) => hit,
         None => {
-            let slow = caches().lock().unwrap().slow.contains(&repo.top);
-            let whole = if slow { None } else { run_status(&bin, &repo.top, None) };
+            let slow = caches().lock().unwrap().is_slow(&repo.top, now);
+            let whole = if slow {
+                None
+            } else {
+                match run_status(&bin, &repo.top, None) {
+                    Ok(st) => {
+                        caches().lock().unwrap().slow.remove(&repo.top);
+                        Some(st)
+                    }
+                    // only running out of time makes it slow; any other failure is this run's
+                    Err(RunError::TimedOut) => {
+                        caches().lock().unwrap().slow.insert(repo.top.clone(), Instant::now());
+                        None
+                    }
+                    Err(_) => None,
+                }
+            };
             let (st, scoped) = match whole {
                 Some(st) => (Some(st), None),
                 None => {
-                    if !slow {
-                        caches().lock().unwrap().slow.insert(repo.top.clone());
-                    }
                     if repo.prefix.is_empty() {
                         (None, None)
                     } else {
-                        (run_status(&bin, &repo.top, Some(&repo.prefix)), Some(repo.prefix.clone()))
+                        (run_status(&bin, &repo.top, Some(&repo.prefix)).ok(), Some(repo.prefix.clone()))
                     }
                 }
             };
@@ -315,6 +338,19 @@ u UU N... 100644 100644 100644 100644 a b c conflict.txt\0\
 ? scratch/\0\
 ! node_modules/\0\
 ! dist/\0";
+
+    /// One slow run (a cold cache after boot) doesn't mark the repository slow for good.
+    #[test]
+    fn a_slow_repository_is_tried_whole_again_later() {
+        let mut c = Caches::default();
+        let top = Path::new("/repo");
+        let now = Instant::now();
+        assert!(!c.is_slow(top, now));
+        c.slow.insert(top.to_path_buf(), now);
+        assert!(c.is_slow(top, now + Duration::from_secs(10)));
+        assert!(!c.is_slow(top, now + SLOW_RETRY + Duration::from_secs(1)));
+        assert!(!c.is_slow(Path::new("/other"), now));
+    }
 
     #[test]
     fn reads_porcelain_v2() {

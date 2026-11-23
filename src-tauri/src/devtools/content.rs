@@ -68,14 +68,88 @@ pub fn rg_args(q: &Query) -> Vec<String> {
 }
 
 /// grep's (GNU and BSD): binary files skipped, .git left out. Dotfiles are left out afterwards.
-pub fn grep_args(q: &Query) -> Vec<String> {
+/// A regular expression goes as Perl syntax (`perl`: the grep has `-P`, which reads `\d`, `\w`,
+/// `(?i)`, lazy repeats like the app's own matcher does), else as an extended one with the common
+/// Perl classes spelled out ([`ere`]). Lines it finds are checked with the app's matcher again.
+pub fn grep_args(q: &Query, perl: bool) -> Vec<String> {
     let mut a: Vec<String> = ["-r", "-I", "-n", "--null", "--exclude-dir=.git"].iter().map(|s| s.to_string()).collect();
     if !q.case_sensitive {
         a.push("-i".into());
     }
-    a.push(if q.regex { "-E" } else { "-F" }.into());
-    a.extend(["-e".into(), q.text.clone(), "--".into(), ".".into()]);
+    let text = match (q.regex, perl) {
+        (false, _) => {
+            a.push("-F".into());
+            q.text.clone()
+        }
+        (true, true) => {
+            a.push("-P".into());
+            q.text.clone()
+        }
+        (true, false) => {
+            a.push("-E".into());
+            ere(&q.text)
+        }
+    };
+    a.extend(["-e".into(), text, "--".into(), ".".into()]);
     a
+}
+
+/// A Rust/Perl regular expression as POSIX extended syntax, as far as it goes: `\d`, `\w`, `\s`
+/// and their negations become bracket classes (also inside brackets, the negated ones excepted).
+pub fn ere(re: &str) -> String {
+    let mut out = String::with_capacity(re.len());
+    let mut in_class = false;
+    let mut chars = re.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                let Some(n) = chars.next() else {
+                    out.push('\\');
+                    break;
+                };
+                let class = match n {
+                    'd' => Some(("0-9", "[0-9]")),
+                    'w' => Some(("[:alnum:]_", "[[:alnum:]_]")),
+                    's' => Some(("[:space:]", "[[:space:]]")),
+                    'D' if !in_class => Some(("", "[^0-9]")),
+                    'W' if !in_class => Some(("", "[^[:alnum:]_]")),
+                    'S' if !in_class => Some(("", "[^[:space:]]")),
+                    _ => None,
+                };
+                match class {
+                    Some((inside, outside)) => out.push_str(if in_class { inside } else { outside }),
+                    None => {
+                        out.push('\\');
+                        out.push(n);
+                    }
+                }
+            }
+            '[' if !in_class => {
+                in_class = true;
+                out.push('[');
+                // a `]` (or `^]`) right after the opening bracket is a literal one
+                if chars.peek() == Some(&'^') {
+                    out.push(chars.next().unwrap());
+                }
+                if chars.peek() == Some(&']') {
+                    out.push(chars.next().unwrap());
+                }
+            }
+            ']' if in_class => {
+                in_class = false;
+                out.push(']');
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Whether grep, run with `LC_ALL=C` and without `-P`, finds exactly the lines the app's matcher
+/// does: a plain text, matched case-sensitively or in ASCII only. Else the built-in walker
+/// searches (it uses the matcher itself).
+fn grep_reads_like_the_app(q: &Query) -> bool {
+    !q.regex && (q.case_sensitive || q.text.is_ascii())
 }
 
 /// A path (below the searched folder) with a dot-named file or folder in it.
@@ -123,16 +197,19 @@ pub fn search_local(dir: &Path, prefix: &str, q: &Query, cancel: &AtomicBool, em
     };
     let mut out = Batcher { emit, last: Instant::now(), all: Vec::new(), stat: &stat };
     let mut col = Collector::new(prefix, &m, MAX_FILES);
-    let tool = find_tool("rg").map(|p| (p, "ripgrep", rg_args(q))).or_else(|| if cfg!(windows) { None } else { find_tool("grep").map(|p| (p, "grep", grep_args(q))) });
+    let tool = find_tool("rg")
+        .map(|p| (p, "ripgrep", rg_args(q)))
+        .or_else(|| if cfg!(windows) || !grep_reads_like_the_app(q) { None } else { find_tool("grep").map(|p| (p, "grep", grep_args(q, false))) });
     let (engine, truncated) = match tool {
         Some((bin, engine, args)) => {
             let mut cmd = command(&bin);
             cmd.args(&args).current_dir(dir);
             let mut lines = Lines::default();
             let mut bytes = 0usize;
-            let skip_dots = engine == "grep" && !q.hidden;
+            let is_grep = engine == "grep";
+            let skip_dots = is_grep && !q.hidden;
             let on_line = |l: &[u8], col: &mut Collector| match parse_grep_line(l) {
-                Some((p, n, t)) if !(skip_dots && dotted(&p)) => col.push(&p, n, &t),
+                Some((p, n, t)) if !(skip_dots && dotted(&p)) && (!is_grep || m.is_match(&t)) => col.push(&p, n, &t),
                 _ => true,
             };
             let (end, err) = run_streaming(cmd, cancel, Instant::now() + LOCAL_TIME, |chunk| {
@@ -217,11 +294,16 @@ fn walk_local<F: FnMut(Vec<Hit>, usize, u64)>(dir: &Path, q: &Query, m: &Matcher
 /// out says which (or that neither is there, or the folder isn't).
 pub fn remote_script(dir: &str, q: &Query) -> String {
     let words = |tool: &str, args: Vec<String>| std::iter::once(tool.to_string()).chain(args).map(|a| shell_quote(&a)).collect::<Vec<_>>().join(" ");
+    // a regular expression: Perl syntax where this grep reads it (GNU), else extended syntax
+    let grep = if q.regex {
+        format!("if printf 'a1\\n' | grep -qP '\\d' 2>/dev/null; then exec {}; else exec {}; fi", words("grep", grep_args(q, true)), words("grep", grep_args(q, false)))
+    } else {
+        format!("exec {}", words("grep", grep_args(q, false)))
+    };
     let script = format!(
-        "cd {} 2>/dev/null || {{ echo kybl:nodir; exit 0; }}; if command -v rg >/dev/null 2>&1; then echo kybl:rg; exec {}; elif command -v grep >/dev/null 2>&1; then echo kybl:grep; exec {}; else echo kybl:none; fi",
+        "cd {} 2>/dev/null || {{ echo kybl:nodir; exit 0; }}; if command -v rg >/dev/null 2>&1; then echo kybl:rg; exec {}; elif command -v grep >/dev/null 2>&1; then echo kybl:grep; {grep}; else echo kybl:none; fi",
         shell_quote(dir),
         words("rg", rg_args(q)),
-        words("grep", grep_args(q)),
     );
     // the login shell may not be a POSIX one (fish, csh): sh runs the script
     format!("sh -c {}", shell_quote(&script))
@@ -254,8 +336,10 @@ pub async fn search_sftp(s: &SftpBackend, prefix: &str, q: &Query, cancel: &Atom
             *engine = Some(String::from_utf8_lossy(l).trim().trim_start_matches("kybl:").to_string());
             return true;
         }
+        let grep = engine.as_deref() == Some("grep");
         match parse_grep_line(l) {
-            Some((p, n, t)) if !(engine.as_deref() == Some("grep") && !q.hidden && dotted(&p)) => col.push(&p, n, &t),
+            // grep's regular expressions are close to the matcher's, not the same: it decides
+            Some((p, n, t)) if !(grep && !q.hidden && dotted(&p)) && (!grep || m.is_match(&t)) => col.push(&p, n, &t),
             _ => true,
         }
     };
@@ -357,9 +441,42 @@ mod tests {
         let e = a.iter().position(|x| x == "-e").unwrap();
         assert_eq!(&a[e + 1..], ["-rf --pre=evil", "--", "."]);
         assert!(a.contains(&"--fixed-strings".to_string()) && a.contains(&"--ignore-case".to_string()));
-        let g = grep_args(&Query { case_sensitive: true, regex: true, ..q("a|b") });
+        let g = grep_args(&Query { case_sensitive: true, regex: true, ..q("a|b") }, false);
         assert!(g.contains(&"-E".to_string()) && !g.contains(&"-i".to_string()));
         assert_eq!(&g[g.len() - 4..], ["-e", "a|b", "--", "."]);
+        let g = grep_args(&Query { regex: true, ..q(r"\d+") }, true);
+        assert!(g.contains(&"-P".to_string()));
+        assert_eq!(&g[g.len() - 4..], ["-e", r"\d+", "--", "."]);
+    }
+
+    /// grep without -P reads the app's (Perl-style) classes the way the app does.
+    #[test]
+    fn perl_classes_become_extended_ones() {
+        assert_eq!(ere(r"\d{4}-\d\d"), "[0-9]{4}-[0-9][0-9]");
+        assert_eq!(ere(r"\w+\s\S"), "[[:alnum:]_]+[[:space:]][^[:space:]]");
+        assert_eq!(ere(r"[\d.]+\D"), "[0-9.]+[^0-9]");
+        assert_eq!(ere(r"[]\w]"), "[][:alnum:]_]");
+        assert_eq!(ere(r"a\.b\\d"), r"a\.b\\d");
+        assert_eq!(ere("plain|text"), "plain|text");
+        // what grep can't read like the matcher goes to the built-in walker on this computer
+        assert!(grep_reads_like_the_app(&q("todo")));
+        assert!(!grep_reads_like_the_app(&q("école")));
+        assert!(grep_reads_like_the_app(&Query { case_sensitive: true, ..q("école") }));
+        assert!(!grep_reads_like_the_app(&Query { regex: true, ..q("a.b") }));
+    }
+
+    /// The grep a server falls back to finds what the matcher finds for `\d{4}` (not "dddd").
+    #[cfg(unix)]
+    #[test]
+    fn grep_finds_perl_classes() {
+        let dir = std::env::temp_dir().join(format!("kybl-ere-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "dddd\nyear 2024\n").unwrap();
+        let rq = Query { regex: true, ..q(r"\d{4}") };
+        let out = std::process::Command::new("grep").args(grep_args(&rq, false)).current_dir(&dir).output().unwrap();
+        let found: Vec<_> = String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| parse_grep_line(l.as_bytes())).map(|(_, n, _)| n).collect();
+        assert_eq!(found, vec![2]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The server's script, run by a local sh: the query and the folder come through as typed.
