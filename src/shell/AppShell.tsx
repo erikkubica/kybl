@@ -110,7 +110,8 @@ import { useEdit, type EditPlace } from "../edit/useEdit";
 import { EditorSheet } from "../edit/EditorSheet";
 import { LazyEditConflictHost, LazyEditingChip } from "../edit/lazy";
 import { useEditCount, type SaveRule } from "../edit/editStore";
-import { mirrorToPane } from "../mirror";
+import { listMirrors, mirrorToPane, quickRun } from "../mirror";
+import { registerCommands } from "../palette/commands";
 import {
   allGroups,
   groupLabel,
@@ -334,6 +335,23 @@ export function AppShell() {
     setTransfersOpen(true);
     setActivityAsked(true);
   }, []);
+  // ⌘K: each saved mirror runs from the palette (its dry run first, as from a folder's ⋯ menu)
+  const dialogsRef = useRef(dialogs);
+  dialogsRef.current = dialogs;
+  useEffect(
+    () =>
+      registerCommands("mirrors", () =>
+        listMirrors().map((m) => ({
+          id: `mirror:${m.id}`,
+          title: `Run mirror “${m.name}”`,
+          group: "Mirror",
+          keywords: `deploy sync ${m.src.connectionName} ${m.dst.connectionName}`,
+          icon: "play" as const,
+          run: () => quickRun(m, dialogsRef.current, showJobs),
+        })),
+      ),
+    [showJobs],
+  );
   // copies between connections: their dialog, the quick F5 / F6 confirm, and what happens when one ends
   const migrations = useMigrationHost({ dialogs, reloadIfShowing, clearAllSizes, showJobs });
 
