@@ -260,7 +260,7 @@ async fn make_thumbnail<R: Runtime>(
         return Ok(bytes);
     }
 
-    // the whole photo is already in the file cache (opened in Quick Look or the details panel):
+    // the whole photo is already in the file cache (opened in Quick Look or the phone's details screen):
     // made from those bytes, with no request
     if !etag.is_empty()
         && (0..=MAX_FULL_DOWNLOAD).contains(&size)

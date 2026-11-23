@@ -77,7 +77,7 @@ const SHORTCUTS: { label: string; keys: string[] }[] = [
   { label: "Select an area", keys: ["drag on empty space"] },
   { label: "Open folder or file", keys: ["⌘", "O"] },
   { label: "Quick Look", keys: ["Space"] },
-  { label: "Show or hide details", keys: ["⌘", "I"] },
+  { label: "Get Info (Quick Look with details)", keys: ["⌘", "I"] },
   { label: "Actions menu for the selection", keys: ["⇧", "F10"] },
   { label: "Copy / cut / paste items", keys: ["⌘C", "⌘X", "⌘V"] },
   { label: "Undo the last move, copy or rename", keys: ["⌘", "Z"] },
@@ -684,7 +684,7 @@ export function SettingsPage({
 
                 <h3 className="set-title">Sharing</h3>
                 <div className="set-card">
-                  <Row label="Share link lifetime" hint="Used by the quick “Copy link” actions. The details panel can still pick another.">
+                  <Row label="Share link lifetime" hint="Used by the quick “Copy link” actions. Get Info (⌘I) can still pick another.">
                     <Seg
                       label="Share link lifetime"
                       value={settings.linkExpiry}

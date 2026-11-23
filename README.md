@@ -12,7 +12,7 @@ Hetzner Object Storage, AWS S3, Cloudflare R2, Backblaze B2, Wasabi, DigitalOcea
   JPEGs use the photo's embedded EXIF thumbnail (only the first 256 KB is read), other images are
   downloaded and resized once. All thumbnails are cached on disk, so revisits are instant.
 - **Browse** folders with breadcrumbs, lazy paging for huge folders, recursive search in a folder.
-- **Details panel** with previews: images, video, audio, PDF, text. Video and audio stream, no download first.
+- **Quick Look and Get Info**: Space previews images, video, audio, PDF, text and documents, with the file's details, share link and actions beside it (⌘I). Video and audio stream, no download first.
 - **Upload** files or folders (button or drag & drop from Finder) with multipart for big files.
 - **Download** files or whole folders, **delete**, **rename** (files and folders), **new folder**.
 - **Move and copy** files and folders: drag them onto a folder or a breadcrumb, or pick a destination.

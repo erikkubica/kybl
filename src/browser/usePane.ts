@@ -121,6 +121,10 @@ function usePaneCore(env: PaneEnv) {
 
   const [busy, setBusy] = useState<string | null>(null);
   const [quick, setQuick] = useState<string | null>(null);
+  /** Get Info on several items: Quick Look shows them together (their keys), not one by one */
+  const [quickGroup, setQuickGroup] = useState<string[] | null>(null);
+  /** Quick Look opened by Get Info: its info column shows, whatever it was left at */
+  const [quickInfo, setQuickInfo] = useState(false);
   const searchInput = useRef<HTMLInputElement>(null);
   /** a key to select once it shows up in the listing of that connection and bucket */
   const pendingSelect = useRef<{ profileId: string; bucket: string; key: string } | null>(null);
@@ -272,21 +276,59 @@ function usePaneCore(env: PaneEnv) {
 
   // ------------------------------------------------------------ Quick Look
   const quickIndex = quick ? entries.findIndex((e) => e.key === quick) : -1;
+  /** a file deleted from Quick Look: where it was, so the preview moves on to the one after it */
+  const quickNext = useRef<number | null>(null);
   useEffect(() => {
-    if (quick && quickIndex < 0) setQuick(null);
+    if (!quick || quickIndex >= 0) return;
+    const at = quickNext.current;
+    quickNext.current = null;
+    const next = at != null && !quickGroup ? entries[Math.min(at, entries.length - 1)] : undefined;
+    if (next) {
+      setQuick(next.key);
+      setSelected(new Set([next.key]));
+      setCursor(next.key, true);
+    } else setQuick(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quick, quickIndex]);
+  useEffect(() => {
+    if (quick) return;
+    setQuickGroup(null);
+    setQuickInfo(false);
+    quickNext.current = null;
+  }, [quick]);
+  const quickEntries = useMemo(
+    () => (quickGroup ? quickGroup.map((k) => entries.find((e) => e.key === k)).filter((e): e is Entry => !!e) : null),
+    [quickGroup, entries],
+  );
   const stepQuick = useCallback(
     (delta: number) => {
       const i = entries.findIndex((e) => e.key === quick);
       const next = entries[i + delta];
       if (!next) return;
+      quickNext.current = null;
+      setQuickGroup(null);
       setQuick(next.key);
       setSelected(new Set([next.key]));
       setCursor(next.key, true);
     },
     [entries, quick, setSelected, setCursor],
   );
+  /** From the items shown together, one of them on its own (the selection stays). */
+  const pickQuick = useCallback((e: Entry) => {
+    setQuickGroup(null);
+    setQuick(e.key);
+    setCursor(e.key, true);
+  }, [setCursor]);
   const closeQuick = useCallback(() => setQuick(null), []);
+  /** Delete from Quick Look: it stays open on the next item once this one is gone (or closes). */
+  const deleteFromQuick = useCallback(
+    (list: Entry[]) => {
+      if (list.length === 1 && !quickGroup) quickNext.current = entries.findIndex((e) => e.key === list[0].key);
+      else setQuick(null);
+      opsRef.current.askDelete(list);
+    },
+    [entries, quickGroup],
+  );
   const downloadOne = useCallback((e: Entry) => void opsRef.current.downloadEntries([e]), []);
   const copyFile = useCallback((e: Entry) => void opsRef.current.copyFile(e), []);
   /** Space / F3: opens the preview of the item under the cursor, or closes it. */
@@ -294,6 +336,18 @@ function usePaneCore(env: PaneEnv) {
     if (quick) return setQuick(null);
     const key = sel.cursor.current && sel.selected.has(sel.cursor.current) ? sel.cursor.current : sel.selectedEntries[0]?.key;
     if (key) setQuick(key);
+  };
+  /**
+   * Get Info (⌘I, the item menu): Quick Look with its info column, for files and folders alike.
+   * Several items show together, with what they add up to.
+   */
+  const getInfo = (e?: Entry) => {
+    const list = e && !sel.selected.has(e.key) ? [e] : sel.selectedEntries;
+    if (!list.length) return;
+    const lead = e ?? list.find((x) => x.key === sel.cursor.current) ?? list[0];
+    setQuickGroup(list.length > 1 ? list.map((x) => x.key) : null);
+    setQuickInfo(true);
+    setQuick(lead.key);
   };
 
   // ------------------------------------------------------------ press, drag to move
@@ -381,8 +435,13 @@ function usePaneCore(env: PaneEnv) {
     quick,
     setQuick,
     quickIndex,
+    quickEntries,
+    quickInfo,
     stepQuick,
+    pickQuick,
     closeQuick,
+    deleteFromQuick,
+    getInfo,
     downloadOne,
     copyFile,
     quickLook,

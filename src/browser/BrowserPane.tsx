@@ -3,7 +3,7 @@
  * or grid with its empty and error states, the status bar, Quick Look and the drag ghost. All
  * state lives in the pane object from usePane; this only draws it.
  */
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties } from "react";
 import { Icon } from "../Icons";
 import { Toolbar } from "../components/Toolbar";
 import { rootIcon } from "../connections/roots";
@@ -32,8 +32,6 @@ export type BrowserPaneProps = {
   dualItems?: () => MenuItem[];
   settings: Settings;
   updateSettings: (patch: Partial<Settings>) => void;
-  previewOpen: boolean;
-  onTogglePreview: () => void;
   /** the panes button: split, or the panes menu */
   onPanes?: (x: number, y: number) => void;
   /** the panes menu's items, for "…" when a narrow pane has no room for the panes button */
@@ -48,9 +46,6 @@ export type BrowserPaneProps = {
   bucketError?: string | null;
   bucketReconnect: boolean;
   empty: EmptyActions;
-  /** drawn next to the list: the details pane in single-pane mode */
-  aside?: ReactNode;
-  contentStyle?: CSSProperties;
   /** the pane was clicked or focused: it becomes the active one */
   onActivate: () => void;
   style?: CSSProperties;
@@ -106,7 +101,6 @@ export function BrowserPane(p: BrowserPaneProps) {
         bucketLabel={pane.bucketLabel}
         bucketIcon={pane.profile ? rootIcon(pane.profile.id, bucket ?? "") : undefined}
         prefix={prefix}
-        previewOpen={p.previewOpen}
         searchActive={!!search}
         searchRunning={!!search?.running && !search.stopped}
         query={ent.query}
@@ -137,7 +131,6 @@ export function BrowserPane(p: BrowserPaneProps) {
         onSearch={actions.doSearch}
         onStopSearch={ent.sr.stop}
         onClearSearch={actions.clearSearch}
-        onTogglePreview={p.onTogglePreview}
         dual={p.dual}
         onPanes={p.onPanes}
         panesItems={p.panesItems}
@@ -151,7 +144,7 @@ export function BrowserPane(p: BrowserPaneProps) {
 
       <PaneBanners pane={pane} />
 
-      <div className="content" style={p.contentStyle}>
+      <div className="content">
         <div className={`pane ${pane.compact ? "compact" : ""}`}>
           {!profile && <Welcome actions={p.empty} />}
           {profile && bucket == null && <ChooseBucket profile={profile} note={p.bucketNote} error={p.bucketError} reconnect={p.bucketReconnect} actions={p.empty} />}
@@ -237,7 +230,6 @@ export function BrowserPane(p: BrowserPaneProps) {
             </div>
           )}
         </div>
-        {p.aside}
       </div>
 
       {pane.quick && pane.quickIndex >= 0 && profile && bucket != null && (
@@ -245,13 +237,31 @@ export function BrowserPane(p: BrowserPaneProps) {
           profileId={profile.id}
           bucket={bucket}
           entry={entries[pane.quickIndex]}
+          group={pane.quickEntries}
           index={pane.quickIndex}
           count={entries.length}
+          startWithInfo={pane.quickInfo}
+          infoPref={settings.quickInfo}
+          onInfoPref={(on) => p.updateSettings({ quickInfo: on })}
+          info={{
+            defaultExpiry: settings.linkExpiry,
+            onCopyLink: actions.copyLink,
+            onCopyText: actions.copyText,
+            onDownload: pane.caps?.localPaths ? undefined : (list) => void ops.downloadEntries(list, pane.relBase),
+            onRename: (e) => ops.askRename(e),
+            onMoveTo: (list) => actions.askMove(list),
+            onDelete: pane.deleteFromQuick,
+            onChanged: ent.refresh,
+            folderSize: pane.folderSizes.view,
+            onCalcSize: (k) => actions.calcSizes([k]),
+          }}
           onStep={pane.stepQuick}
+          onPick={pane.pickQuick}
           onClose={pane.closeQuick}
           onOpen={pane.openEntry}
           onDownload={pane.caps?.localPaths ? undefined : pane.downloadOne}
           onCopyFile={IS_MAC ? pane.copyFile : undefined}
+          onOpenExternal={(e) => void ops.openInApp(e)}
         />
       )}
       {pane.drag && !pane.drag.outside && profile && <DragGhost drag={pane.drag} bucket={bucket} profileId={profile.id} />}

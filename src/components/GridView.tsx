@@ -114,7 +114,7 @@ const Card = memo(function Card({
       { rootMargin: "240px" },
     );
     io.observe(el);
-    // its thumbnail made elsewhere (the details panel for the selected photo): take it now rather
+    // its thumbnail made elsewhere (Quick Look for the selected photo): take it now rather
     // than waiting for this tile's own turn, or, showing placeholders only, the one it left behind
     const offReady = onThumbReady(profileId, bucket, entry, (url) => {
       if (!alive) return;

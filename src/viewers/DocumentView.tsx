@@ -1,7 +1,7 @@
 /**
  * Opens a file in the right in-app viewer, and for text-like files lets people edit and save it.
  *
- * - mode "preview": the side panel. Read-only, compact, a smaller download limit.
+ * - mode "preview": Quick Look and the phone's details screen. Read-only, compact, a smaller download limit.
  * - mode "full": the whole window (desktop modal or phone screen). Editing, ⌘S / Ctrl+S, conflict
  *   handling (Reload / Overwrite / Save as copy) and an unsaved-changes question on close.
  *

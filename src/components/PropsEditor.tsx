@@ -1,6 +1,6 @@
 /**
  * Edit an object's headers (Content-Type, Cache-Control, …), storage class, user metadata and
- * tags from the details pane. Headers and metadata are saved by copying the object onto itself
+ * tags from the file info (Get Info, the phone's details screen). Headers and metadata are saved by copying the object onto itself
  * (api.updateObjectProps); tags have their own call and are left out when the provider has no
  * tagging.
  */

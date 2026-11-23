@@ -22,7 +22,6 @@ export function Toolbar({
   bucketLabel,
   bucketIcon,
   prefix,
-  previewOpen,
   searchActive,
   searchRunning,
   query,
@@ -49,7 +48,6 @@ export function Toolbar({
   onSearch,
   onStopSearch,
   onClearSearch,
-  onTogglePreview,
   dual = false,
   onPanes,
   panesItems,
@@ -66,7 +64,6 @@ export function Toolbar({
   /** the root's icon (a bucket, a drive, a folder, a server), in the enclosing folders menu */
   bucketIcon?: IconName;
   prefix: string;
-  previewOpen: boolean;
   /** showing deep search results */
   searchActive: boolean;
   /** a deep search is still scanning */
@@ -104,7 +101,6 @@ export function Toolbar({
   onSearch: (q: string) => void;
   onStopSearch: () => void;
   onClearSearch: () => void;
-  onTogglePreview: () => void;
   /** more than one pane is on screen */
   dual?: boolean;
   /** the panes button (shows only with this): one pane splits right, more open the panes menu */
@@ -250,9 +246,6 @@ export function Toolbar({
           aria-haspopup="menu"
         >
           <Icon name="eye" />
-        </button>
-        <button className={`icon-btn tb-details ${previewOpen ? "on" : ""}`} onClick={onTogglePreview} title="Details panel (⌘I)" aria-label="Details panel" aria-pressed={previewOpen}>
-          <Icon name="panel" />
         </button>
 
         {/* folded to its icon until clicked (or ⌘F), and while a filter or search is on it stays open */}

@@ -1,71 +1,147 @@
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
 import { classify, formatBytes, formatDateFull, isWebImage, entrySize, entryKind } from "../format";
 import { FileIcon } from "../components/FileIcon";
 import { ErrorText } from "../components/ErrorText";
 import { MAX_PDF_BYTES, PdfView } from "../components/PdfView";
+import { EntryInfo, FolderSizeLine, SelectionInfo, useObjectHead, type SizeProps } from "../components/EntryInfo";
 import type { Entry } from "../types";
 import { imageUrl, playableUrl } from "../media";
 import { cachedThumb, canThumb, loadThumb, onThumbReady } from "../thumbs";
 import { usePlaceholder } from "../thumbhash";
 import { asExport } from "../connections/native";
-// the same previews as the details panel (components/PreviewPane): documents in the document
-// viewer, images the web view can't draw by their thumbnail, Google files by their Office export
+// the same previews as the phone's details screen (components/PreviewPane): documents in the
+// document viewer, images the web view can't draw by their thumbnail, Google files by their Office export
 import { LazyDocumentView, viewerFor } from "../viewers/registry";
 import { releaseOnUnmount } from "../releaseMedia";
 import { useLocalCopy } from "../localCopyProgress";
 
 const MAX_TEXT = 50 * 1000 * 1000;
+/** the info column shows by itself (until it is switched off or on) in a window at least this wide */
+const INFO_MIN_WINDOW = 900;
+/** at most this many tiles for a selection shown together */
+const SHEET_MAX = 240;
+
+/** What the info column does with the item (desktop: the pane's own file actions). */
+export type QuickInfoActions = SizeProps & {
+  /** share-link lifetime preselected from Settings, in seconds */
+  defaultExpiry: number;
+  onCopyLink(e: Entry, secs: number): void;
+  onCopyText(text: string, what: string): void;
+  /** absent on this computer's own disk */
+  onDownload?(list: Entry[]): void;
+  onRename(e: Entry): void;
+  onMoveTo(list: Entry[]): void;
+  onDelete(list: Entry[]): void;
+  /** properties saved, or the file turned out to be gone: list the folder again */
+  onChanged?(): void;
+};
+
+const isTyping = (t: EventTarget | null) => {
+  const el = t as HTMLElement | null;
+  return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
+};
 
 /**
- * Space bar preview, like Quick Look in Finder: a large look at the selected file over the list.
+ * Space bar preview, like Quick Look in Finder: a large look at the selected file over the list,
+ * with an info column beside it (Finder's Get Info: name, actions, share link, size, date, place,
+ * technical details), toggled with its (i) button or ⌘I and remembered. ⌘I in the list opens it
+ * that way ("Get Info"), for folders too, and for several items together.
+ *
  * Arrow keys page through the files around it, Space or Escape closes it, Enter or ⌘O opens the
- * file in its default app.
+ * file in its default app. Keys typed into a field of the info column stay there.
  */
 export function QuickLook({
   profileId,
   bucket,
   entry,
+  group,
   index,
   count,
+  startWithInfo,
+  infoPref,
+  onInfoPref,
+  info: act,
   onStep,
+  onPick,
   onClose,
   onOpen,
   onDownload,
   onCopyFile,
+  onOpenExternal,
 }: {
   profileId: string;
   bucket: string;
   entry: Entry;
+  /** several items shown together (Get Info on a selection), instead of `entry` */
+  group?: Entry[] | null;
   /** position among the list's entries, for "3 of 40" */
   index: number;
   count: number;
+  /** opened by Get Info: the info column shows whatever it was left at */
+  startWithInfo?: boolean;
+  /** the info column's setting: on, off, or null for "if the window is wide enough" */
+  infoPref: boolean | null;
+  onInfoPref(on: boolean): void;
+  info: QuickInfoActions;
   onStep: (delta: number) => void;
+  /** one item of `group` on its own */
+  onPick: (e: Entry) => void;
   onClose: () => void;
   onOpen: (e: Entry) => void;
   /** absent on this computer's own disk */
   onDownload?: (e: Entry) => void;
   /** the file itself on the clipboard (⌘C here), to paste into a chat or a folder */
   onCopyFile?: (e: Entry) => void;
+  /** documents: "Open in another app" */
+  onOpenExternal?: (e: Entry) => void;
 }) {
   // a Copy or Open of this file still downloading shows on its button
   const busy = useLocalCopy(profileId, bucket, entry.key);
   const working = !!busy;
+  const many = !!group && group.length > 1;
+  const isFile = entry.kind === "file" && !many;
+  const [infoOpen, setInfoOpen] = useState(() => !!startWithInfo || (infoPref ?? window.innerWidth >= INFO_MIN_WINDOW));
+  const toggleInfo = () => {
+    const next = !infoOpen;
+    setInfoOpen(next);
+    onInfoPref(next);
+  };
+  const toggleRef = useRef(toggleInfo);
+  toggleRef.current = toggleInfo;
+  // the share link's lifetime stays as picked from one file to the next
+  const [expiry, setExpiry] = useState(act.defaultExpiry);
+  const sheet = useRef<HTMLDivElement>(null);
+
   // the list underneath must not see these keys while the preview is up
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // a dialog over the preview (Delete asks first) has the keyboard
+      if (document.querySelector(".modal-backdrop, .ctx-menu")) return;
       const mod = e.metaKey || e.ctrlKey;
+      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      // typing in the info column (Edit properties): only Escape leaves the field, and ⌘I still toggles
+      if (isTyping(e.target)) {
+        if (e.key === "Escape") (e.target as HTMLElement).blur();
+        else if (!(mod && k === "i")) return;
+      }
+      // a button of the info column reached with the keyboard: Space and Enter press it
+      const t = e.target as HTMLElement;
+      if ((e.key === " " || e.key === "Enter") && sheet.current?.contains(t) && t.closest("button, a[href], [role=button]") && t.matches(":focus-visible")) return;
       let handled = true;
-      if (e.key === "Escape" || e.key === " ") onClose();
+      // (Escape in a field only let go of it, above: the preview stays)
+      if (isTyping(e.target) && e.key === "Escape") handled = true;
+      else if (mod && k === "i") toggleRef.current();
+      else if (e.key === "Escape" || e.key === " ") onClose();
+      else if (many && e.key.startsWith("Arrow")) handled = true;
       else if (e.key === "ArrowLeft" || e.key === "ArrowUp") onStep(-1);
       else if (e.key === "ArrowRight" || e.key === "ArrowDown") onStep(1);
-      else if (e.key === "Enter" || (mod && e.key.toLowerCase() === "o")) onOpen(entry);
-      else if (mod && (e.key.toLowerCase() === "w" || e.key === ".")) onClose();
-      else if (mod && e.key.toLowerCase() === "c" && onCopyFile && entry.kind === "file" && !window.getSelection()?.toString()) {
+      else if (!many && (e.key === "Enter" || (mod && k === "o"))) onOpen(entry);
+      else if (mod && (k === "w" || e.key === ".")) onClose();
+      else if (mod && k === "c" && onCopyFile && isFile && !window.getSelection()?.toString()) {
         if (!working) onCopyFile(entry);
-      }
-      else handled = false;
+      } else handled = false;
       if (handled) {
         e.preventDefault();
         e.stopPropagation();
@@ -73,27 +149,59 @@ export function QuickLook({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [entry, onClose, onStep, onOpen, onCopyFile, working]);
+  }, [entry, many, isFile, onClose, onStep, onOpen, onCopyFile, working]);
+
+  // the info column's actions: rename and move put the preview away (their dialog takes over)
+  const rename = (e: Entry) => {
+    onClose();
+    act.onRename(e);
+  };
+  const moveTo = (list: Entry[]) => {
+    onClose();
+    act.onMoveTo(list);
+  };
+  const groupParts = many ? describe(group!) : "";
 
   return (
     <div className="ql-backdrop" onMouseDown={onClose}>
-      <div className="ql" role="dialog" aria-modal="true" aria-label={`Preview of ${entry.name}`} onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        ref={sheet}
+        className={`ql ${infoOpen ? "with-info" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={many ? `${group!.length} items` : `${infoOpen ? "Info" : "Preview"} of ${entry.name}`}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <div className="ql-head">
-          <button className="icon-btn" onClick={() => onStep(-1)} disabled={index <= 0} aria-label="Previous" title="Previous (←)">
-            <Icon name="chevron" size={14} className="ql-prev" />
-          </button>
-          <button className="icon-btn" onClick={() => onStep(1)} disabled={index >= count - 1} aria-label="Next" title="Next (→)">
-            <Icon name="chevron" size={14} />
-          </button>
+          {!many && (
+            <>
+              <button className="icon-btn" onClick={() => onStep(-1)} disabled={index <= 0} aria-label="Previous" title="Previous (←)">
+                <Icon name="chevron" size={14} className="ql-prev" />
+              </button>
+              <button className="icon-btn" onClick={() => onStep(1)} disabled={index >= count - 1} aria-label="Next" title="Next (→)">
+                <Icon name="chevron" size={14} />
+              </button>
+            </>
+          )}
           <div className="ql-title">
-            <strong title={entry.key}>{entry.name}</strong>
-            <span>
-              {entry.kind === "file" ? `${entrySize(entry)} · ` : ""}
-              {entryKind(entry)}
-              {count > 1 ? ` · ${index + 1} of ${count.toLocaleString()}` : ""}
-            </span>
+            {many ? (
+              <>
+                <strong>{group!.length.toLocaleString()} items</strong>
+                <span>{groupParts}</span>
+              </>
+            ) : (
+              <>
+                <strong title={entry.key}>{entry.name}</strong>
+                <span>
+                  {entry.kind === "file" ? `${entrySize(entry)} · ` : ""}
+                  {entryKind(entry)}
+                  {count > 1 ? ` · ${index + 1} of ${count.toLocaleString()}` : ""}
+                </span>
+              </>
+            )}
           </div>
-          {entry.kind === "file" && (
+          {/* with the info column open, Copy and Download are in it */}
+          {isFile && !infoOpen && (
             <>
               {onCopyFile && (
                 <button
@@ -111,26 +219,180 @@ export function QuickLook({
                   <Icon name="download" size={14} /> Download
                 </button>
               )}
-              <button
-                className={`btn btn-sm btn-primary ${busy?.verb === "open" ? "btn-progress" : ""}`}
-                style={busy?.verb === "open" ? ({ "--p": `${busy.percent}%` } as React.CSSProperties) : undefined}
-                onClick={() => onOpen(entry)}
-                disabled={!!busy}
-                title="Open in its app (⌘O)"
-              >
-                <Icon name="reveal" size={14} /> {busy?.verb === "open" ? `Opening ${busy.percent}%` : "Open"}
-              </button>
             </>
           )}
+          {!many && (
+            <button
+              className={`btn btn-sm btn-primary ${busy?.verb === "open" ? "btn-progress" : ""}`}
+              style={busy?.verb === "open" ? ({ "--p": `${busy.percent}%` } as React.CSSProperties) : undefined}
+              onClick={() => onOpen(entry)}
+              disabled={!!busy}
+              title={entry.kind === "folder" ? "Open the folder (↵)" : "Open in its app (⌘O)"}
+            >
+              <Icon name={entry.kind === "folder" ? "folder" : "reveal"} size={14} /> {busy?.verb === "open" ? `Opening ${busy.percent}%` : "Open"}
+            </button>
+          )}
+          <button
+            className={`icon-btn ql-info-toggle ${infoOpen ? "on" : ""}`}
+            onClick={toggleInfo}
+            aria-pressed={infoOpen}
+            aria-label="Info"
+            title={infoOpen ? "Hide info (⌘I)" : "Show info (⌘I)"}
+          >
+            <Icon name="info" />
+          </button>
           <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close (Space)">
             <Icon name="x" />
           </button>
         </div>
-        <div className="ql-body">
-          <Content key={entry.key} profileId={profileId} bucket={bucket} entry={entry} onOpen={onOpen} />
+        <div className="ql-main">
+          <div className="ql-body">
+            {many ? (
+              <GroupSheet profileId={profileId} bucket={bucket} group={group!} onPick={onPick} />
+            ) : entry.kind === "folder" ? (
+              <FolderLook key={entry.key} entry={entry} folderSize={act.folderSize} onCalcSize={act.onCalcSize} />
+            ) : (
+              <Content key={entry.key} profileId={profileId} bucket={bucket} entry={entry} onOpen={onOpen} />
+            )}
+          </div>
+          {infoOpen && (
+            <aside className="ql-info" aria-label="Info">
+              {many ? (
+                <SelectionInfo
+                  selection={group!}
+                  folderSize={act.folderSize}
+                  onCalcSize={act.onCalcSize}
+                  onDownload={act.onDownload && (() => act.onDownload!(group!))}
+                  onMoveTo={() => moveTo(group!)}
+                  onDelete={() => act.onDelete(group!)}
+                />
+              ) : (
+                <QuickInfo
+                  key={entry.key}
+                  profileId={profileId}
+                  bucket={bucket}
+                  entry={entry}
+                  act={act}
+                  expiry={expiry}
+                  onExpiry={setExpiry}
+                  onRename={rename}
+                  onMoveTo={moveTo}
+                  onCopyFile={onCopyFile}
+                  onOpenExternal={onOpenExternal}
+                />
+              )}
+            </aside>
+          )}
         </div>
       </div>
     </div>
+  );
+}
+
+/** "3 files and 2 folders" */
+function describe(list: Entry[]) {
+  const files = list.filter((e) => e.kind === "file").length;
+  const folders = list.length - files;
+  return [files && `${files.toLocaleString()} ${files === 1 ? "file" : "files"}`, folders && `${folders.toLocaleString()} ${folders === 1 ? "folder" : "folders"}`].filter(Boolean).join(" and ");
+}
+
+/** The info column for one item: what EntryInfo shows, with its object details read here. */
+function QuickInfo({
+  profileId,
+  bucket,
+  entry,
+  act,
+  expiry,
+  onExpiry,
+  onRename,
+  onMoveTo,
+  onCopyFile,
+  onOpenExternal,
+}: {
+  profileId: string;
+  bucket: string;
+  entry: Entry;
+  act: QuickInfoActions;
+  expiry: number;
+  onExpiry(secs: number): void;
+  onRename(e: Entry): void;
+  onMoveTo(list: Entry[]): void;
+  onCopyFile?(e: Entry): void;
+  onOpenExternal?(e: Entry): void;
+}) {
+  const head = useObjectHead(profileId, bucket, entry);
+  return (
+    <div className="ql-info-inner">
+      <EntryInfo
+        variant="sheet"
+        profileId={profileId}
+        bucket={bucket}
+        entry={entry}
+        head={head}
+        defaultExpiry={act.defaultExpiry}
+        expiry={expiry}
+        onExpiry={onExpiry}
+        onCopyLink={(secs) => act.onCopyLink(entry, secs)}
+        onCopyText={act.onCopyText}
+        onDownload={act.onDownload && (() => act.onDownload!([entry]))}
+        onRename={() => onRename(entry)}
+        onMoveTo={() => onMoveTo([entry])}
+        onDelete={() => act.onDelete([entry])}
+        onChanged={act.onChanged}
+        folderSize={act.folderSize}
+        onCalcSize={act.onCalcSize}
+        onOpenExternal={onOpenExternal}
+        onCopyFile={onCopyFile}
+      />
+    </div>
+  );
+}
+
+/** A folder: its art, name and size (worked out on request); Open in the header goes in. */
+function FolderLook({ entry, folderSize, onCalcSize }: SizeProps & { entry: Entry }) {
+  return (
+    <div className="ql-none ql-folder">
+      <FileIcon entry={entry} size={72} big />
+      <strong>{entry.name}</strong>
+      <span className="dim">
+        <FolderSizeLine entryKey={entry.key} folderSize={folderSize} onCalcSize={onCalcSize} />
+        {entry.modified ? ` · ${formatDateFull(entry.modified)}` : ""}
+      </span>
+    </div>
+  );
+}
+
+/** Several items at once: a tile each (the photo's thumbnail once one was made), to pick one from. */
+function GroupSheet({ profileId, bucket, group, onPick }: { profileId: string; bucket: string; group: Entry[]; onPick: (e: Entry) => void }) {
+  const shown = group.slice(0, SHEET_MAX);
+  return (
+    <div className="ql-sheet">
+      {shown.map((e) => (
+        <SheetTile key={e.key} profileId={profileId} bucket={bucket} entry={e} onPick={onPick} />
+      ))}
+      {group.length > shown.length && <div className="ql-tile more">and {(group.length - shown.length).toLocaleString()} more</div>}
+    </div>
+  );
+}
+
+function SheetTile({ profileId, bucket, entry, onPick }: { profileId: string; bucket: string; entry: Entry; onPick: (e: Entry) => void }) {
+  const thumbable = canThumb(entry);
+  const [thumb, setThumb] = useState<string | null | undefined>(() => (thumbable ? cachedThumb(profileId, bucket, entry) : null));
+  useEffect(() => {
+    if (!thumbable || thumb !== undefined) return;
+    let live = true;
+    loadThumb(profileId, bucket, entry, () => live).then((u) => live && setThumb(u ?? null));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId, bucket, entry.key, thumbable]);
+  return (
+    <button type="button" className="ql-tile" onClick={() => onPick(entry)} title={`${entry.name}: show it on its own`}>
+      <span className="ql-tile-art">{thumb ? <img src={thumb} alt="" /> : <FileIcon entry={entry} size={40} big />}</span>
+      <span className="ql-tile-name">{entry.name}</span>
+      <span className="ql-tile-sub">{entry.kind === "file" ? entrySize(entry) : "Folder"}</span>
+    </button>
   );
 }
 
@@ -185,7 +447,7 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
     };
   }, [profileId, bucket, entry.key, media, text]);
 
-  // the details panel's thumbnail finishing while the full size is still on its way: show it then
+  // a thumbnail (the grid's) finishing while the full size is still on its way: show it then
   const [, setThumbTick] = useState(0);
   useEffect(() => {
     if (!media || cls !== "image" || url) return;
@@ -219,7 +481,7 @@ function Content({ profileId, bucket, entry, onOpen }: { profileId: string; buck
       </Suspense>
     );
   if (thumbable && thumb) return <img className="ql-image thumb" src={thumb} alt={entry.name} />;
-  // the thumbnail the grid or the details panel already made: shown at once, scaled to fit, while
+  // the thumbnail the grid already made: shown at once, scaled to fit, while
   // the full-size photo comes in (rather than a blur and a wait for something already on screen)
   const ready = media && cls === "image" && !url ? cachedThumb(profileId, bucket, entry) : undefined;
   if (typeof ready === "string")

@@ -1,8 +1,7 @@
 /**
  * Workspaces: named pane layouts the window switches between, like a browser's windows as tabs
  * ("Client work", "Backups", "Photos"). Each keeps its tree of splits, every pane's place and view
- * choices, its synchronized browsing links, which pane was active and whether the details panel
- * was open.
+ * choices, its synchronized browsing links and which pane was active.
  *
  * The window has a fixed set of pane slots (usePane hooks can't come and go), so a workspace isn't
  * a set of live panes: it is a snapshot. The one on screen lives in the slots; switching takes a
@@ -34,8 +33,6 @@ export type Layout = {
   /** its panes by when they were last active, the active one first */
   recent: PaneId[];
   panes: Partial<Record<PaneId, PaneSnap>>;
-  /** the details panel open, with one pane and with several (each has its own switch) */
-  details: { one: boolean; many: boolean };
 };
 
 export type StartMode = "restore" | "saved";
@@ -85,8 +82,8 @@ export function copyName(list: Workspace[], name: string): string {
 }
 
 /** A workspace of one pane at `snap` (a new workspace opens where the active pane is). */
-export function oneLayout(snap: PaneSnap | null, details: Layout["details"]): Layout {
-  return { tree: leaf("left"), links: [], recent: ["left"], panes: snap ? { left: { ...snap, scroll: undefined } } : {}, details };
+export function oneLayout(snap: PaneSnap | null): Layout {
+  return { tree: leaf("left"), links: [], recent: ["left"], panes: snap ? { left: { ...snap, scroll: undefined } } : {} };
 }
 
 /** A deep copy (duplicating, saving the start): nothing shared with the one on screen. */
@@ -147,13 +144,13 @@ function parseLayout(v: unknown): Layout | null {
     if (p && typeof p === "object") panes[id] = { loc: isLoc(p.loc) ? p.loc : null, view: parseView(p.view) };
   }
   const recent = Array.isArray(x.recent) ? (x.recent as PaneId[]).filter((id) => ids.includes(id)) : [];
-  const d = (x.details && typeof x.details === "object" ? x.details : {}) as Record<string, unknown>;
   return {
     tree,
     links: parseLinks(x.links),
     recent: [...recent, ...ids.filter((id) => !recent.includes(id))],
+    // (a "details" field saved by older versions, for the details panel since folded into
+    // Quick Look's Get Info, is left behind here)
     panes,
-    details: { one: d.one !== false, many: d.many === true },
   };
 }
 

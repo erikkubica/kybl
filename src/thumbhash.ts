@@ -462,7 +462,7 @@ export function useFolderPlaceholders(loc: { profileId: string; bucket: string; 
 }
 
 /**
- * The placeholder of one photo for a preview (the side panel, Quick Look) to show while the
+ * The placeholder of one photo for a preview (Quick Look, the phone's details screen) to show while the
  * image loads; null when there is none (or the connection's image mode is off).
  */
 export function usePlaceholder(profileId: string, bucket: string, e: Entry | null): string | null {

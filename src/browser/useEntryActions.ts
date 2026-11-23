@@ -349,6 +349,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
         : { type: "item", label: files.length > 1 ? `Open ${files.length} files` : "Open", icon: "reveal", hint: "⌘O", disabled: !files.length, onClick: () => openSelection(list) },
       one && e.kind === "file" && env.canOpenDocument?.(e) && { type: "item", label: "Open in default app", icon: "external", onClick: () => void ops.openInApp(e) },
       one && e.kind === "file" && { type: "item", label: "Quick Look", icon: "eye", hint: "Space", onClick: () => pane.setQuick(e.key) },
+      { type: "item", label: "Get Info", icon: "info", hint: "⌘I", onClick: () => pane.getInfo(e) },
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => pane.navigate(entryParent(e), e.key) },
       // Show in Finder, Open with ▸ (desktop/openWith.ts)
       ...(one ? openInItems({ profileId: profile.id, bucket, onDisk, ops, toast }, e) : []),
@@ -418,6 +419,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     rename: () => rename(selectedEntries),
     open: () => openSelection(),
     "quick-look": pane.quickLook,
+    "get-info": () => pane.getInfo(),
     copy: () => ops.clip(selectedEntries, "copy"),
     cut: () => ops.clip(selectedEntries, "cut"),
     duplicate: () => selectedEntries.length > 0 && void ops.duplicate(selectedEntries),
