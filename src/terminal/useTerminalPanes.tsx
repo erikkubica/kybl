@@ -115,11 +115,20 @@ export function useTerminalPanes(initial: Layout) {
     const stale = () => gen.current.get(t.sid) !== n || termsRef.current[id]?.sid !== t.sid || !termsRef.current[id]?.follow;
     if (to.profileId !== t.profileId || (t.profileId !== LOCAL_PROFILE && to.bucket !== t.bucket)) return note(t.sid, "not following: another place");
     let path: string | null = null;
-    if (t.profileId === LOCAL_PROFILE) path = await api.localPath(to.profileId, to.bucket, to.prefix.replace(/\/+$/, "")).then((p) => (p ? shellQuote(p) : null), () => null);
-    else {
+    // a name with control characters would act as keys when typed: not followed
+    let untypeable = false;
+    if (t.profileId === LOCAL_PROFILE) {
+      const p = await api.localPath(to.profileId, to.bucket, to.prefix.replace(/\/+$/, "")).catch(() => null);
+      if (p) path = shellQuote(p);
+      untypeable = !!p && path == null;
+    } else {
       const base = terminalRemoteBase(t.sid);
-      if (base != null) path = remotePath(base, to.prefix);
+      if (base != null) {
+        path = remotePath(base, to.prefix);
+        untypeable = path == null;
+      }
     }
+    if (untypeable && !stale()) return note(t.sid, "not following: the folder name has control characters");
     if (!path || stale()) return;
     for (let i = 0; ; i++) {
       if (await terminalIdle(t.sid)) break;
@@ -233,14 +242,19 @@ export function useTerminalPanes(initial: Layout) {
   const drop = async (pane: PaneId, from: Place, items: Entry[]) => {
     const t = termsRef.current[pane];
     if (!t) return;
-    let paths: string[];
+    let quoted: (string | null)[];
     if (t.profileId === LOCAL_PROFILE) {
       const got = await Promise.all(items.map((e) => api.localPath(from.profileId, from.bucket, e.key.replace(/\/+$/, "")).catch(() => null)));
-      paths = got.filter((p): p is string => !!p).map(shellQuote);
+      quoted = got.filter((p): p is string => !!p).map(shellQuote);
     } else {
       const base = terminalRemoteBase(t.sid);
       if (base == null) return;
-      paths = items.map((e) => remotePath(base, e.key));
+      quoted = items.map((e) => remotePath(base, e.key));
+    }
+    // names with control characters would act as keys (or end the bracketed paste): left out
+    const paths = quoted.filter((p): p is string => p != null);
+    if (paths.length < quoted.length) {
+      host.current?.toast("info", paths.length ? "Names with control characters were left out." : "That name has control characters, so it isn't pasted into the terminal.");
     }
     if (paths.length && writeToTerminal(pane, `${paths.join(" ")} `)) {
       host.current?.setActive(pane);

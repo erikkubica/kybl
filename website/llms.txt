@@ -2,7 +2,7 @@
 
 > Kybl is a free, fast app (macOS, Windows, Linux, Android, and iPhone by sideloading) for S3-compatible object storage. It lets you browse, upload, download, share and sync files on Amazon S3, Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph and any other S3 server. Built with Rust and Tauri.
 
-Kybl (pronounced "kibble", from the Czech and Slovak word for bucket) is a native desktop and phone client. Bring your own bucket, and Kybl talks to your storage directly and stores secret keys in the operating system keychain, never in a file. Or use Kybl Storage: S3 storage run by Kybl, 10 GB free, encrypted at rest, connected from the app without copying keys.
+Kybl (pronounced "kibble", from the Czech and Slovak word for bucket) is a native desktop and phone client. Bring your own bucket, and Kybl talks to your storage directly and keeps secret keys encrypted, with the key in the operating system keychain, never in plain text. Or use Kybl Storage: S3 storage run by Kybl, 10 GB free, encrypted at rest, connected from the app without copying keys.
 
 ## Pages
 
@@ -15,7 +15,7 @@ Kybl (pronounced "kibble", from the Czech and Slovak word for bucket) is a nativ
 - Price: free download
 - Platforms: macOS (Apple Silicon and Intel), Windows (64-bit installer), Linux (AppImage, .deb, .rpm), Android (APK), iPhone and iPad (sideloaded .ipa)
 - Providers: Amazon S3, Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph, any S3-compatible endpoint
-- Security: secret keys in macOS Keychain, Windows Credential Manager or Linux Secret Service
+- Security: secret keys encrypted, with the key in macOS Keychain, Windows Credential Manager or Linux Secret Service
 - Folder sync: upload or download direction, ignore rules, runs from the menu bar with the window closed
 - Kybl Storage: 10 GB free, stored in the EU, every file encrypted at rest (AES-256, SSE-C) with a key per bucket; not end-to-end, Kybl's servers encrypt files on the way in
 - Account site: https://app.kybl.app/

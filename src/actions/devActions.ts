@@ -4,11 +4,12 @@
  * "sleep" streams for a while (to try Stop); "false" or "exit N" fails.
  */
 import { emit } from "@tauri-apps/api/event";
+import { templateProblem } from "./templateCheck";
 
 type Item = { path: string; isDir: boolean };
 const PER_ITEM = ["path", "name", "ext", "stem"];
 
-const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+const quote = (s: string) => `'${s.replace(/['\\]/g, (c) => (c === "'" ? `'\\''` : `'\\\\'`))}'`;
 const arg = (s: string) => quote(s.startsWith("-") ? `./${s}` : s);
 const nameOf = (p: string) => p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? p;
 function splitExt(name: string, dir: boolean): [string, string] {
@@ -48,8 +49,11 @@ function fakeOutput(line: string, items: Item[]): { lines: [stream: "out" | "err
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function handleAction(cmd: string, a: any): Promise<unknown> {
   switch (cmd) {
-    case "custom_action_preview":
+    case "custom_action_preview": {
+      const problem = templateProblem(a.template);
+      if (problem) throw problem;
       return expand(a.template, a.items, a.dir);
+    }
     case "custom_action_stop":
       stopped.add(a.runId);
       return null;

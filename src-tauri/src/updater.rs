@@ -11,7 +11,9 @@
 //! * **.deb / .rpm, Android, iOS**: the download (or the release page) opens in the browser and
 //!   the package manager, Android's installer or AltStore installs it.
 //!
-//! Every download is checked against the SHA-256 GitHub records for the asset. No second HTTP
+//! Every download is checked against the SHA-256 GitHub records for the asset (an asset without
+//! one is not installed), downloaded into a folder only this account can open, and checked again
+//! right before it is installed or run. No second HTTP
 //! stack: this is the same client the Kybl Storage sign-in uses.
 
 use std::{
@@ -83,9 +85,9 @@ pub struct UpdateStatus {
 
 pub struct Updater {
     st: Mutex<UpdateStatus>,
-    /// Windows: the downloaded installer, run on restart
+    /// Windows: the downloaded installer and its SHA-256, run on restart (checked again first)
     #[cfg_attr(not(windows), allow(dead_code))]
-    file: Mutex<Option<PathBuf>>,
+    file: Mutex<Option<(PathBuf, String)>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -364,11 +366,48 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Downloads into a fresh temp folder; `progress(received, total)` is called now and then.
-async fn download(a: &Asset, progress: impl Fn(u64, u64)) -> Result<PathBuf, String> {
-    let dir = std::env::temp_dir().join("kybl-update");
-    let _ = tokio::fs::remove_dir_all(&dir).await;
-    tokio::fs::create_dir_all(&dir).await.map_err(err)?;
+/// The SHA-256 GitHub lists for the asset, which every update must have.
+fn wanted_sha(a: &Asset) -> Result<&str, String> {
+    a.sha256
+        .as_deref()
+        .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+        .ok_or_else(|| "GitHub lists no checksum for this update, so it can't be checked and wasn't installed. Download it from the release page instead.".into())
+}
+
+/// The SHA-256 of a file on disk (lower-case hex).
+fn sha256_file(path: &Path) -> Result<String, String> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).map_err(err)?;
+    let mut sha = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        let n = f.read(&mut buf).map_err(err)?;
+        if n == 0 {
+            break;
+        }
+        sha.update(&buf[..n]);
+    }
+    Ok(hex(sha.finish().as_ref()))
+}
+
+/// Whether the file at `path` is still the one GitHub lists (checked again right before it is
+/// installed or run, so what runs is what was checked).
+fn still_matches(path: &Path, want: &str) -> Result<(), String> {
+    if sha256_file(path)? == want {
+        Ok(())
+    } else {
+        Err("The update file changed after it was checked, so it wasn't installed. Try again.".into())
+    }
+}
+
+/// Downloads into `dir`, emptied and made private to this account first (the app's cache
+/// folder, never a shared temp folder another account could plant files in);
+/// `progress(received, total)` is called now and then. The file is checked against the
+/// SHA-256 GitHub lists, read back from disk.
+async fn download(a: &Asset, dir: &Path, progress: impl Fn(u64, u64)) -> Result<PathBuf, String> {
+    let want = wanted_sha(a)?.to_ascii_lowercase();
+    let _ = tokio::fs::remove_dir_all(dir).await;
+    crate::filecache::private_dir(dir).map_err(err)?;
     let name = Path::new(&a.name).file_name().ok_or("The update file has no name")?;
     let path = dir.join(name);
 
@@ -382,7 +421,11 @@ async fn download(a: &Asset, progress: impl Fn(u64, u64)) -> Result<PathBuf, Str
         .and_then(|v| v.to_str().ok()?.parse().ok())
         .unwrap_or(a.size);
     progress(0, total);
-    let mut file = tokio::fs::File::create(&path).await.map_err(err)?;
+    let mut opts = tokio::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    opts.mode(0o600);
+    let mut file = opts.open(&path).await.map_err(err)?;
     let mut sha = ring::digest::Context::new(&ring::digest::SHA256);
     let mut body = res.into_body();
     let mut got = 0u64;
@@ -407,9 +450,12 @@ async fn download(a: &Asset, progress: impl Fn(u64, u64)) -> Result<PathBuf, Str
     if a.size > 0 && got != a.size {
         return Err(format!("The download is incomplete ({got} of {} bytes). Try again.", a.size));
     }
-    if let Some(want) = &a.sha256
-        && hex(sha.finish().as_ref()) != *want
-    {
+    // the bytes received, and the file they were written to
+    let on_disk = {
+        let p = path.clone();
+        tokio::task::spawn_blocking(move || sha256_file(&p)).await.map_err(err)??
+    };
+    if hex(sha.finish().as_ref()) != want || on_disk != want {
         let _ = tokio::fs::remove_file(&path).await;
         return Err("The download doesn't match the checksum GitHub lists for it, so it wasn't installed.".into());
     }
@@ -430,29 +476,34 @@ fn codesign(args: &[&std::ffi::OsStr]) -> Result<String, String> {
     if out.status.success() { Ok(text) } else { Err(text.trim().to_string()) }
 }
 
-/// The new app must be intact and, when this copy is signed with a certificate (every release
-/// is), signed with that same certificate.
+/// The new app must be intact and signed with the same certificate as this copy (every release
+/// is signed with one). A copy without a certificate (ad-hoc signed: a local build, or a release
+/// built without one) has nothing to compare against, so it doesn't update itself: any validly
+/// signed app would pass.
 #[cfg(target_os = "macos")]
 fn verify_signature(current: &Path, new: &Path) -> Result<(), String> {
     use std::ffi::OsStr;
     codesign(&[OsStr::new("--verify"), OsStr::new("--strict"), OsStr::new("--deep"), new.as_os_str()])
         .map_err(|e| format!("The update's signature is broken, so it wasn't installed.\n\n{e}"))?;
     let designated = codesign(&[OsStr::new("-d"), OsStr::new("-r-"), current.as_os_str()])
-        .ok()
-        .and_then(|t| t.lines().find_map(|l| l.strip_prefix("designated => ").map(str::to_string)));
-    if let Some(req) = designated.filter(|r| r.contains("certificate")) {
-        let req = format!("={req}");
-        codesign(&[OsStr::new("--verify"), OsStr::new("-R"), OsStr::new(&req), new.as_os_str()])
-            .map_err(|e| format!("The update isn't signed like this copy of Kybl, so it wasn't installed.\n\n{e}"))?;
-    }
+        .map_err(|e| format!("Couldn't read this copy's signature, so the update can't be checked and wasn't installed.\n\n{e}"))?
+        .lines()
+        .find_map(|l| l.strip_prefix("designated => ").map(str::to_string));
+    let req = designated.filter(|r| r.contains("certificate")).ok_or(
+        "This copy of Kybl isn't signed with a certificate, so an update can't be checked against it and wasn't installed. Download it from the release page instead.",
+    )?;
+    let req = format!("={req}");
+    codesign(&[OsStr::new("--verify"), OsStr::new("-R"), OsStr::new(&req), new.as_os_str()])
+        .map_err(|e| format!("The update isn't signed like this copy of Kybl, so it wasn't installed.\n\n{e}"))?;
     Ok(())
 }
 
 /// Unpacks the new app next to the running one (same disk, so the swap is two renames) and
 /// swaps it in. The running app keeps working from the old files until it restarts.
 #[cfg(target_os = "macos")]
-fn install(_app: &AppHandle, file: &Path) -> Result<(), String> {
+fn install(_app: &AppHandle, file: &Path, sha: &str) -> Result<(), String> {
     let bundle = running_bundle().ok_or("This copy of Kybl isn't an installed app, so it can't update itself.")?;
+    still_matches(file, sha)?;
     install_into(&bundle, file)
 }
 
@@ -491,18 +542,23 @@ fn install_into(bundle: &Path, file: &Path) -> Result<(), String> {
 
 /// Nothing to do yet: the installer runs on restart, once the app is out of its way.
 #[cfg(windows)]
-fn install(app: &AppHandle, file: &Path) -> Result<(), String> {
-    *app.state::<Updater>().file.lock().unwrap() = Some(file.to_path_buf());
+fn install(app: &AppHandle, file: &Path, sha: &str) -> Result<(), String> {
+    *app.state::<Updater>().file.lock().unwrap() = Some((file.to_path_buf(), sha.to_string()));
     Ok(())
 }
 
 /// Writes the new AppImage beside the running one, then renames it over it.
 #[cfg(target_os = "linux")]
-fn install(_app: &AppHandle, file: &Path) -> Result<(), String> {
+fn install(_app: &AppHandle, file: &Path, sha: &str) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     let target = appimage().ok_or("Not running from an AppImage")?;
     let tmp = target.with_file_name(".Kybl.AppImage.new");
     std::fs::copy(file, &tmp).map_err(|e| format!("Kybl can't write next to {} ({e}). Download the update from the release page instead.", target.display()))?;
+    // the copy is the file that will run: it is the one checked
+    if let Err(e) = still_matches(&tmp, sha) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
     let done = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).and_then(|_| std::fs::rename(&tmp, &target));
     if let Err(e) = done {
         let _ = std::fs::remove_file(&tmp);
@@ -512,7 +568,7 @@ fn install(_app: &AppHandle, file: &Path) -> Result<(), String> {
 }
 
 #[cfg(mobile)]
-fn install(_app: &AppHandle, _file: &Path) -> Result<(), String> {
+fn install(_app: &AppHandle, _file: &Path, _sha: &str) -> Result<(), String> {
     Err("Updates install from the browser on this device.".into())
 }
 
@@ -583,7 +639,8 @@ pub async fn update_install(app: AppHandle) -> Result<UpdateStatus, String> {
     }
     update(&app, |st| st.error = None);
     let asset = rel.asset.clone().ok_or_else(|| fail(&app, "The release has no file for this device.".into()))?;
-    let file = download(&asset, |received, total| {
+    let dir = app.path().app_cache_dir().map_err(|e| fail(&app, e.to_string()))?.join("update");
+    let file = download(&asset, &dir, |received, total| {
         update(&app, |st| {
             st.received = received;
             st.total = total;
@@ -593,7 +650,8 @@ pub async fn update_install(app: AppHandle) -> Result<UpdateStatus, String> {
     .map_err(|e| fail(&app, e))?;
     update(&app, |st| st.phase = "installing");
     let app2 = app.clone();
-    tauri::async_runtime::spawn_blocking(move || install(&app2, &file))
+    let sha = asset.sha256.clone().unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || install(&app2, &file, &sha))
         .await
         .map_err(|e| fail(&app, e.to_string()))?
         .map_err(|e| fail(&app, e))?;
@@ -632,7 +690,7 @@ fn can_restart(_app: &AppHandle) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     appimage().ok_or("Not running from an AppImage")?;
     #[cfg(windows)]
-    _app.state::<Updater>().file.lock().unwrap().as_ref().filter(|f| f.is_file()).ok_or("The installer is missing. Try again.")?;
+    _app.state::<Updater>().file.lock().unwrap().as_ref().filter(|(f, _)| f.is_file()).ok_or("The installer is missing. Try again.")?;
     Ok(())
 }
 
@@ -653,7 +711,9 @@ fn restart(app: &AppHandle) -> Result<(), String> {
 fn restart(app: &AppHandle) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let file = app.state::<Updater>().file.lock().unwrap().clone().ok_or("The installer is missing. Try again.")?;
+    let (file, sha) = app.state::<Updater>().file.lock().unwrap().clone().ok_or("The installer is missing. Try again.")?;
+    // it waited in the cache since it was checked: what runs is what was checked
+    still_matches(&file, &sha)?;
     let started = if file.extension().is_some_and(|e| e.eq_ignore_ascii_case("msi")) {
         // msiexec cannot start the app afterwards: chain it
         let exe = std::env::current_exe().map_err(err)?;
@@ -709,6 +769,37 @@ mod tests {
         }
     }
 
+    /// No checksum from GitHub: nothing is downloaded, let alone installed.
+    #[tokio::test]
+    async fn an_update_without_a_checksum_is_refused() {
+        let dir = std::env::temp_dir().join(format!("kybl-upd-{}", uuid::Uuid::new_v4()));
+        let a = |sha: Option<&str>| Asset { name: "Kybl.AppImage".into(), url: "https://example.invalid/x".into(), size: 1, sha256: sha.map(str::to_string) };
+        for sha in [None, Some(""), Some("abcd"), Some(&*"z".repeat(64))] {
+            let e = download(&a(sha), &dir, |_, _| {}).await.unwrap_err();
+            assert!(e.contains("no checksum"), "{e}");
+        }
+        assert!(!dir.exists(), "nothing was written");
+    }
+
+    #[test]
+    fn the_file_is_checked_again_before_it_runs() {
+        let dir = std::env::temp_dir().join(format!("kybl-upd-{}", uuid::Uuid::new_v4()));
+        crate::filecache::private_dir(&dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+        }
+        let f = dir.join("setup.exe");
+        std::fs::write(&f, b"hello").unwrap();
+        let want = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+        assert_eq!(sha256_file(&f).unwrap(), want);
+        assert!(still_matches(&f, want).is_ok());
+        std::fs::write(&f, b"hellO").unwrap();
+        assert!(still_matches(&f, want).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The whole macOS path against the real latest release: GitHub API, the CDN redirect, the
     /// checksum, unpacking, the signature check against a copy of the installed app (signed
     /// with the release certificate) and the swap. Run with:
@@ -727,7 +818,7 @@ mod tests {
             sha256: gh.digest.as_deref().and_then(|d| d.strip_prefix("sha256:")).map(str::to_ascii_lowercase),
         };
         assert!(asset.sha256.is_some(), "GitHub lists a digest");
-        let file = download(&asset, |got, total| eprint!("\r{got} / {total}")).await.expect("download");
+        let file = download(&asset, &std::env::temp_dir().join(format!("kybl-e2e-dl-{}", std::process::id())), |got, total| eprint!("\r{got} / {total}")).await.expect("download");
         eprintln!();
 
         let dir = std::env::temp_dir().join(format!("kybl-e2e-{}", std::process::id()));
@@ -740,15 +831,18 @@ mod tests {
         match install_into(&bundle, &file) {
             Ok(()) => {}
             // the release is signed differently (ad-hoc while CI has no certificate): refused,
-            // and the old app is untouched. Then the same over an ad-hoc copy, which goes through.
+            // and the old app is untouched
             Err(e) if e.contains("isn't signed like") => {
                 eprintln!("refused as expected: {e}");
                 assert!(bundle.join("Contents/old-marker").exists(), "a refused update leaves the app alone");
-                assert!(std::process::Command::new("/usr/bin/codesign").args(["--force", "--deep", "-s", "-"]).arg(&bundle).status().unwrap().success());
-                install_into(&bundle, &file).expect("install over an ad-hoc copy");
+                std::fs::remove_dir_all(&dir).unwrap();
+                return;
             }
             Err(e) => panic!("install: {e}"),
         }
+        // an ad-hoc signed copy has nothing to check an update against: refused
+        assert!(std::process::Command::new("/usr/bin/codesign").args(["--force", "--deep", "-s", "-"]).arg(&bundle).status().unwrap().success());
+        assert!(install_into(&bundle, &file).unwrap_err().contains("isn't signed with a certificate"));
         assert!(!bundle.join("Contents/old-marker").exists(), "the new app replaced the old one");
         let plist = std::fs::read_to_string(bundle.join("Contents/Info.plist")).unwrap();
         assert!(plist.contains(&rel.tag_name.trim_start_matches('v').to_string()), "new version in place");

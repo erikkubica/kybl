@@ -192,11 +192,91 @@ fn caches() -> &'static Mutex<Caches> {
     C.get_or_init(Default::default)
 }
 
+/// A hooks folder that can't hold anything.
+const NO_HOOKS: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
+
 fn git(git: &Path) -> Command {
     let mut c = command(git);
-    // reading the status never takes the index lock away from the user's own git
-    c.env("GIT_OPTIONAL_LOCKS", "0").env("GIT_TERMINAL_PROMPT", "0").arg("--no-optional-locks").arg("--literal-pathspecs");
+    // reading the status never takes the index lock away from the user's own git, never asks for
+    // anything, and never runs the fsmonitor or a hook a repository names (a folder on screen can
+    // be one the user just downloaded: its `.git/config` is not to be trusted)
+    c.env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .arg("--no-optional-locks")
+        .arg("--literal-pathspecs");
+    for (k, v) in [("core.fsmonitor", "false"), ("core.hooksPath", NO_HOOKS), ("core.untrackedCache", "false")] {
+        c.arg("-c").arg(format!("{k}={v}"));
+    }
     c
+}
+
+/// The `-c` settings that switch off every program the repository's own config (and the files it
+/// includes) names for git to run: filter drivers (`clean`/`process` run while reading the status
+/// for files whose timestamps changed), diff and merge drivers. None: a name that can't be
+/// overridden safely, so git is not run there at all.
+fn repo_overrides(names: &[(String, String)]) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for (scope, name) in names {
+        // the user's own (global/system) settings are trusted; the repository's are not
+        if !matches!(scope.as_str(), "local" | "worktree") {
+            continue;
+        }
+        // git prints the section and key in lower case and the sub-section as written
+        let Some((section, rest)) = name.split_once('.') else { continue };
+        let Some((sub, _key)) = rest.rsplit_once('.') else { continue };
+        let section = section.to_ascii_lowercase();
+        let keys: &[&str] = match section.as_str() {
+            "filter" => &["clean", "smudge", "process"],
+            "diff" => &["textconv", "command"],
+            "merge" => &["driver"],
+            _ => continue,
+        };
+        // `-c` splits at the first '=': a sub-section holding one (or a control character)
+        // couldn't be addressed, so the repository is skipped instead
+        if sub.is_empty() || sub.contains('=') || sub.chars().any(char::is_control) {
+            return None;
+        }
+        if !seen.insert((section.clone(), sub.to_string())) {
+            continue;
+        }
+        for k in keys {
+            out.push(format!("{section}.{sub}.{k}="));
+        }
+        if section == "filter" {
+            out.push(format!("filter.{sub}.required=false"));
+        }
+    }
+    Some(out)
+}
+
+/// The repository's own config names as (scope, name), read without running anything; None when
+/// git can't say (older than 2.26, no `--show-scope`), in which case the status isn't read.
+fn repo_config_names(bin: &Path, top: &Path) -> Option<Vec<(String, String)>> {
+    let mut c = git(bin);
+    c.arg("-C").arg(top).args(["config", "--list", "--name-only", "-z", "--show-scope", "--includes"]);
+    let (st, out) = run_capture(c, TIME_BOX).ok()?;
+    if !st.success() {
+        return None;
+    }
+    let parts: Vec<String> = out.split(|b| *b == 0).filter(|p| !p.is_empty()).map(|p| String::from_utf8_lossy(p).into_owned()).collect();
+    if parts.len() % 2 != 0 {
+        return None;
+    }
+    Some(parts.chunks(2).map(|p| (p[0].clone(), p[1].clone())).collect())
+}
+
+/// `git -C top` with every program the repository could name switched off; None when that can't
+/// be made sure of (git then isn't run there).
+fn git_in(bin: &Path, top: &Path) -> Option<Command> {
+    let names = repo_config_names(bin, top)?;
+    let mut c = git(bin);
+    for o in repo_overrides(&names)? {
+        c.arg("-c").arg(o);
+    }
+    c.arg("-C").arg(top);
+    Some(c)
 }
 
 fn find_repo(bin: &Path, dir: &Path) -> Option<Repo> {
@@ -227,8 +307,9 @@ fn find_repo(bin: &Path, dir: &Path) -> Option<Repo> {
 }
 
 fn run_status(bin: &Path, top: &Path, scoped: Option<&str>) -> Option<Porcelain> {
-    let mut c = git(bin);
-    c.arg("-C").arg(top).args(["status", "--porcelain=v2", "-z", "--branch", "--ignored=matching", "--untracked-files=normal"]);
+    let mut c = git_in(bin, top)?;
+    // submodules have config of their own, not read above: they're left alone
+    c.args(["status", "--porcelain=v2", "-z", "--branch", "--ignored=matching", "--untracked-files=normal", "--ignore-submodules=all"]);
     if let Some(dir) = scoped {
         c.arg("--").arg(dir);
     }
@@ -358,6 +439,85 @@ u UU N... 100644 100644 100644 100644 a b c conflict.txt\0\
         assert_eq!(inside, Some(GitKind::Untracked));
         let (c, _) = scope(&p, "");
         assert_eq!(c.len(), 10);
+    }
+
+    #[test]
+    fn overrides_switch_off_repository_programs() {
+        let n = |s: &str, k: &str| (s.to_string(), k.to_string());
+        let o = repo_overrides(&[
+            n("local", "filter.Pwn.clean"),
+            n("local", "filter.Pwn.process"),
+            n("worktree", "diff.x.y.textconv"),
+            n("global", "filter.lfs.clean"),
+            n("local", "core.fsmonitor"),
+        ])
+        .unwrap();
+        assert!(o.contains(&"filter.Pwn.clean=".to_string()));
+        assert!(o.contains(&"filter.Pwn.process=".to_string()));
+        assert!(o.contains(&"filter.Pwn.required=false".to_string()));
+        assert!(o.contains(&"diff.x.y.textconv=".to_string()));
+        assert_eq!(o.iter().filter(|x| x.starts_with("filter.Pwn.clean")).count(), 1);
+        // the user's own filters stay
+        assert!(!o.iter().any(|x| x.contains("lfs")));
+        // a name `-c` can't address: not run at all
+        assert!(repo_overrides(&[n("local", "filter.a=b.clean")]).is_none());
+        assert!(repo_overrides(&[n("local", "filter.a\nb.clean")]).is_none());
+    }
+
+    /// A downloaded folder whose `.git/config` names programs (fsmonitor, a clean filter, both
+    /// also through an include): looking at it must run none of them.
+    #[test]
+    fn a_repository_config_runs_nothing() {
+        let Some(bin) = find_tool("git") else { return };
+        let dir = std::env::temp_dir().join(format!("kybl-git-evil-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = |args: &[&str]| {
+            let mut c = git(&bin);
+            c.arg("-C").arg(&dir).args(args).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t");
+            assert!(c.status().unwrap().success(), "git {args:?}");
+        };
+        run(&["init", "-q", "-b", "trunk"]);
+        std::fs::write(dir.join("f.txt"), "same").unwrap();
+        std::fs::write(dir.join(".gitattributes"), "* filter=pwn\n*.txt filter=inc\n").unwrap();
+        run(&["add", "."]);
+        run(&["-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", "first"]);
+        let flag = |n: &str| dir.join(format!("PWNED-{n}"));
+        let touch = |n: &str| format!("touch '{}'", flag(n).display());
+        let mut cfg = std::fs::read_to_string(dir.join(".git/config")).unwrap();
+        cfg.push_str(&format!(
+            "[core]\n\tfsmonitor = \"{}; echo\"\n[filter \"pwn\"]\n\tclean = \"{}; cat\"\n\tprocess = \"{}\"\n\trequired = true\n[include]\n\tpath = extra\n",
+            touch("fsmonitor"),
+            touch("clean"),
+            touch("process")
+        ));
+        std::fs::write(dir.join(".git/config"), cfg).unwrap();
+        std::fs::write(dir.join(".git/extra"), format!("[filter \"inc\"]\n\tclean = \"{}; cat\"\n", touch("include"))).unwrap();
+        std::fs::write(dir.join(".git/hooks/post-index-change"), format!("#!/bin/sh\n{}\n", touch("hook"))).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir.join(".git/hooks/post-index-change"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        // same bytes, newer timestamp: git has to look at the content, through the filter
+        std::fs::write(dir.join("f.txt"), "same").unwrap();
+        let later = std::time::SystemTime::now() + Duration::from_secs(5);
+        std::fs::File::options().write(true).open(dir.join("f.txt")).unwrap().set_modified(later).unwrap();
+
+        let info = status_of(&dir, true).expect("a work tree");
+        assert_eq!(info.branch.as_deref(), Some("trunk"));
+        for n in ["fsmonitor", "clean", "process", "include", "hook"] {
+            assert!(!flag(n).exists(), "git ran the repository's {n}");
+        }
+        // a sub-section `-c` can't address: no status at all, and still nothing ran
+        let mut cfg = std::fs::read_to_string(dir.join(".git/config")).unwrap();
+        cfg.push_str(&format!("[filter \"a=b\"]\n\tclean = \"{}; cat\"\n", touch("eq")));
+        std::fs::write(dir.join(".git/config"), cfg).unwrap();
+        std::fs::write(dir.join(".gitattributes"), "* filter=a=b\n").unwrap();
+        caches().lock().unwrap().status.clear();
+        let info = status_of(&dir, true).expect("a work tree");
+        assert!(info.changes.is_empty());
+        assert!(!flag("eq").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The real git, when there is one: a fresh repository with a change of each kind.

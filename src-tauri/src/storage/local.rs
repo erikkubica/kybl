@@ -116,7 +116,7 @@ fn parts(key: &str) -> SResult<Vec<&str>> {
             || part == "."
             || part == ".."
             || part.contains('\0')
-            || (cfg!(windows) && (part.contains('\\') || part.contains(':')));
+            || (cfg!(windows) && (part.contains('\\') || part.contains(':') || crate::dest::windows_unfit(part)));
         if bad {
             return Err(outside());
         }

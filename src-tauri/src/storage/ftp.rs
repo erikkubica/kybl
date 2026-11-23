@@ -17,7 +17,7 @@ use std::{
     collections::HashSet,
     ops::Range,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::AtomicBool,
         Arc, Mutex,
     },
     time::{Duration, Instant, UNIX_EPOCH},
@@ -108,8 +108,6 @@ pub struct FtpBackend {
     host: String,
     port: u16,
     tls: TlsMode,
-    /// `TlsMode::Auto` found the server refuses AUTH TLS, so later connections skip asking
-    plain_fallback: AtomicBool,
     user: String,
     password: String,
     /// the server's own certificate, trusted by the user
@@ -125,7 +123,67 @@ pub struct FtpBackend {
     known_dirs: Mutex<HashSet<String>>,
 }
 
+/// Answers to AUTH TLS that mean "not offered here" (anything else, a 4xx above all, is a
+/// passing failure and never a reason to go on unencrypted).
+const NOT_OFFERED: [u32; 4] = [500, 502, 504, 534];
+
+const TLS_STOPPED: &str = "This server encrypted the connection before (or says it can), but now refuses to. Kybl didn't fall back to plain FTP, so nothing was sent unencrypted. Something on this network may be in the way: try another network. If the server really stopped offering encryption, turn encryption off in this connection's settings.";
+
+/// Whether a FEAT answer lists AUTH TLS (or SSL).
+fn offers_tls<'a>(feats: impl IntoIterator<Item = (&'a str, Option<&'a str>)>) -> bool {
+    feats.into_iter().any(|(k, v)| {
+        let line = format!("{k} {}", v.unwrap_or("")).to_ascii_uppercase();
+        line.starts_with("AUTH") && (line.contains("TLS") || line.contains("SSL"))
+    })
+}
+
+/// The servers ("user@host:port") an "encrypt if available" connection once reached with TLS,
+/// kept in the app's data folder: such a server refusing later is not taken as "it only speaks
+/// plain FTP" (that refusal is what someone on the network would forge to read the password).
+pub mod tls_memory {
+    use std::{
+        collections::HashSet,
+        path::PathBuf,
+        sync::{Mutex, OnceLock},
+    };
+
+    static PATH: OnceLock<PathBuf> = OnceLock::new();
+    static SEEN: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+    /// Where the list is kept (set once at start-up; without it, it lasts until the app quits).
+    pub fn init(path: PathBuf) {
+        let _ = PATH.set(path);
+    }
+
+    fn with<T>(f: impl FnOnce(&mut HashSet<String>) -> T) -> T {
+        let mut g = SEEN.lock().unwrap();
+        let set = g.get_or_insert_with(|| {
+            PATH.get().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        });
+        f(set)
+    }
+
+    pub fn seen(key: &str) -> bool {
+        with(|s| s.contains(key))
+    }
+
+    pub fn remember(key: &str) {
+        let list = with(|s| s.insert(key.to_string()).then(|| s.iter().cloned().collect::<Vec<_>>()));
+        if let (Some(list), Some(path)) = (list, PATH.get()) {
+            let tmp = path.with_extension("tmp");
+            if serde_json::to_vec(&list).ok().is_some_and(|b| std::fs::write(&tmp, b).is_ok()) {
+                let _ = std::fs::rename(&tmp, path);
+            }
+        }
+    }
+}
+
 impl FtpBackend {
+    /// This server and account, for [`tls_memory`].
+    fn tls_key(&self) -> String {
+        format!("{}@{}:{}", self.user, self.host.to_ascii_lowercase(), self.port)
+    }
+
     pub fn new(cfg: &NetConfig, password: Option<String>) -> SResult<Self> {
         let default_port = if cfg.tls == TlsMode::Implicit { 990 } else { 21 };
         let (host, port) = socket_addr(cfg, default_port);
@@ -137,7 +195,6 @@ impl FtpBackend {
             host,
             port,
             tls: cfg.tls,
-            plain_fallback: AtomicBool::new(false),
             user: cfg.user.trim().to_string(),
             password: password.unwrap_or_default(),
             cert_pin: cfg.cert_fingerprint.clone().filter(|f| !f.trim().is_empty()),
@@ -165,14 +222,32 @@ impl FtpBackend {
                         .with_detail(e.to_string()),
                     e => err(e),
                 })?,
-                TlsMode::Auto if self.plain_fallback.load(Ordering::Relaxed) => Ftp::connect(&addr).await.map_err(err)?,
+                // asked on every connection: one refusal (which anyone on the network can forge)
+                // never decides for the next
                 TlsMode::Auto => match Ftp::connect(&addr).await.map_err(err)?.into_secure(tls(), &self.host).await {
-                    Ok(ftp) => ftp,
-                    // AUTH TLS refused: the server only speaks plain FTP. A failed handshake is not a
-                    // refusal and stays an error.
-                    Err(FtpError::UnexpectedResponse(_)) => {
-                        self.plain_fallback.store(true, Ordering::Relaxed);
-                        Ftp::connect(&addr).await.map_err(err)?
+                    Ok(ftp) => {
+                        tls_memory::remember(&self.tls_key());
+                        ftp
+                    }
+                    // AUTH TLS refused as not offered: the server may only speak plain FTP. A
+                    // failed handshake is not a refusal and stays an error.
+                    Err(FtpError::UnexpectedResponse(r)) if NOT_OFFERED.contains(&r.status.code()) => {
+                        if tls_memory::seen(&self.tls_key()) {
+                            return Err(StorageError::new(ErrKind::Network, TLS_STOPPED).with_detail(r.to_string()));
+                        }
+                        let mut plain = Ftp::connect(&addr).await.map_err(err)?;
+                        // a server that lists AUTH TLS among its features doesn't refuse it: something
+                        // between here and there answered instead
+                        let feats = plain.feat().await.unwrap_or_default();
+                        if offers_tls(feats.iter().map(|(k, v)| (k.as_str(), v.as_deref()))) {
+                            let _ = plain.quit().await;
+                            return Err(StorageError::new(ErrKind::Network, TLS_STOPPED).with_detail(r.to_string()));
+                        }
+                        plain
+                    }
+                    // busy, rate limited, a transient failure: not a reason to send the password in clear
+                    Err(FtpError::UnexpectedResponse(r)) => {
+                        return Err(StorageError::new(ErrKind::Network, "The server couldn't start encryption just now. Try again in a moment.").with_detail(r.to_string()));
                     }
                     Err(e) => return Err(err(e)),
                 },
@@ -927,6 +1002,24 @@ fn ftp_error(e: FtpError, host: &str) -> StorageError {
 mod tests {
     use super::*;
     use suppaftp::Status;
+
+    #[test]
+    fn a_server_listing_auth_tls_is_not_taken_for_plain() {
+        assert!(offers_tls([("AUTH", Some("TLS"))]));
+        assert!(offers_tls([("MLST", Some("type*;size*")), ("auth", Some("SSL TLS"))]));
+        assert!(offers_tls([("AUTH TLS", None)]));
+        assert!(!offers_tls([("MLST", Some("type*;")), ("UTF8", None)]));
+        assert!(!offers_tls(std::iter::empty()));
+    }
+
+    #[test]
+    fn tls_once_seen_is_remembered() {
+        let k = format!("u@{}:21", uuid::Uuid::new_v4());
+        assert!(!tls_memory::seen(&k));
+        tls_memory::remember(&k);
+        assert!(tls_memory::seen(&k));
+        assert!(!NOT_OFFERED.contains(&421) && !NOT_OFFERED.contains(&431));
+    }
 
     #[test]
     fn temporary_names_without_a_leading_dot() {

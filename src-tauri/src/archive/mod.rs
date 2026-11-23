@@ -256,6 +256,9 @@ pub struct ExtractJob {
 #[tauri::command]
 pub async fn archive_extract(app: AppHandle, state: State<'_, AppState>, id: String, job: ExtractJob) -> Result<(), String> {
     let a = app.clone();
+    if job.folder.as_deref().is_some_and(|f| !remote::plain_folder_name(f)) {
+        return Err("That folder name can't be used to unpack into.".into());
+    }
     spawn_task(app, &state, id, move |task| async move {
         let state = a.state::<AppState>();
         let inside = job.src_profile_id.starts_with(PREFIX);

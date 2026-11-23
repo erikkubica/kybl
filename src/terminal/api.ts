@@ -48,21 +48,7 @@ export function parseTermPlace(v: unknown): TermPlace | undefined {
   };
 }
 
-/** `s` as one word for a POSIX shell (and fish): as it is when plain, else in single quotes. Same rules as the backend's. */
-export function shellQuote(s: string): string {
-  if (s && /^[A-Za-z0-9_\-./+:@%,=]+$/.test(s)) return s;
-  return `'${s.replace(/'/g, `'\\''`)}'`;
-}
-
-/** A remote path for a shell: `base` from the backend ("/var/www", "~", "~/site") joined with `key`, the ~ left unquoted. */
-export function remotePath(base: string, key: string): string {
-  const k = key.replace(/\/+$/, "");
-  if (base === "~" || base.startsWith("~/")) {
-    const rel = [base.slice(2), k].filter(Boolean).join("/");
-    return rel ? `~/${shellQuote(rel)}` : "~";
-  }
-  return shellQuote(k ? `${base.replace(/\/+$/, "")}/${k}` : base);
-}
+export { remotePath, shellQuote, typeable } from "./quote";
 
 // ---------------------------------------------------------------- hooks the shell and the chunk fill in
 

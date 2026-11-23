@@ -82,13 +82,13 @@ fn plain(c: char) -> bool {
     c.is_ascii_alphanumeric() || "_-./+:@%,=".contains(c)
 }
 
-/// `s` as one word for a POSIX shell (bash, zsh, sh, and fish too): as it is when it is plain,
-/// otherwise in single quotes, a quote inside written `'\''`.
+/// `s` as one word for any shell (bash, zsh, sh, fish, csh): as it is when it is plain, otherwise
+/// quoted as [`crate::actions::quote`] does (quotes and backslashes outside the single quotes).
 pub fn shell_quote(s: &str) -> String {
     if !s.is_empty() && s.chars().all(plain) {
         return s.to_string();
     }
-    format!("'{}'", s.replace('\'', r"'\''"))
+    crate::actions::quote(s)
 }
 
 /// The line typed into a fresh remote shell to go to folder `dir` (absolute, "~" or "~/…"), with

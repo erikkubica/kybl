@@ -32,9 +32,28 @@ pub struct Item {
 
 // ---------------------------------------------------------------- template expansion
 
-/// `s` as one shell word: single quotes, a quote inside written as `'\''`.
+/// `s` as one shell word: single quotes, with each quote and backslash written outside them,
+/// escaped (`'\''`, `'\\'`). Nothing between the quotes is then special to any shell: POSIX
+/// shells, fish (where `\'` and `\\` are escapes even inside single quotes) and csh all read it
+/// back as `s`.
 pub fn quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        match c {
+            '\'' => out.push_str(r"'\''"),
+            '\\' => out.push_str(r"'\\'"),
+            c => out.push(c),
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// A command for an SSH exec channel: `script` (POSIX sh) run by `sh`, whatever the account's
+/// login shell is (fish and csh read the quoting the same way, see [`quote`]).
+pub fn sh_c(script: &str) -> String {
+    format!("sh -c {}", quote(script))
 }
 
 /// A path or name as one word that can't be read as an option: one starting with "-" gets "./".
@@ -89,6 +108,95 @@ fn substitute(template: &str, value: impl Fn(&str) -> Option<String>) -> String 
 fn uses(template: &str, word: &str) -> bool {
     let needle = format!("{{{word}}}");
     template.match_indices(&needle).any(|(i, _)| !template[..i].ends_with('$'))
+}
+
+/// Every placeholder the template can hold.
+const PLACEHOLDERS: [&str; 6] = ["path", "name", "ext", "stem", "paths", "dir"];
+
+/// Refuses a template that puts a placeholder inside quotes of its own (`"{path}"`, `'{name}'`)
+/// or backticks: the value is quoted already, and inside other quotes that quoting doesn't hold
+/// (`"'$(cmd)'"` runs `cmd`). Read the way sh reads it; `$(…)` starts a fresh, unquoted context
+/// even inside double quotes. The error names the placeholder.
+pub fn check_template(template: &str) -> Result<(), String> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Ctx {
+        Plain,
+        Single,
+        Double,
+        Backtick,
+        /// `$( … )`, with how many plain `(` are open inside it
+        Subst(u32),
+    }
+    let mut stack = vec![Ctx::Plain];
+    let b = template.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        let ctx = *stack.last().unwrap();
+        let c = b[i];
+        // a placeholder here (`${word}` is the shell's)
+        if c == b'{' && !(i > 0 && b[i - 1] == b'$') {
+            let rest = &template[i + 1..];
+            if let Some(w) = PLACEHOLDERS.iter().find(|w| rest.starts_with(&format!("{w}}}"))) {
+                if matches!(ctx, Ctx::Single | Ctx::Double) {
+                    return Err(format!("{{{w}}} is inside quotes. Take the quotes away around it: Kybl quotes every placeholder itself, and inside other quotes a file name could run as a command."));
+                }
+                if stack.contains(&Ctx::Backtick) {
+                    return Err(format!("{{{w}}} is inside backticks. Use $( … ) instead: inside backticks a file name could run as a command."));
+                }
+            }
+        }
+        match ctx {
+            Ctx::Single => {
+                if c == b'\'' {
+                    stack.pop();
+                }
+            }
+            Ctx::Double => match c {
+                b'\\' => i += 1,
+                b'"' => {
+                    stack.pop();
+                }
+                b'`' => stack.push(Ctx::Backtick),
+                b'$' if b.get(i + 1) == Some(&b'(') => {
+                    stack.push(Ctx::Subst(0));
+                    i += 1;
+                }
+                _ => {}
+            },
+            Ctx::Backtick => match c {
+                b'\\' => i += 1,
+                b'`' => {
+                    stack.pop();
+                }
+                _ => {}
+            },
+            Ctx::Plain | Ctx::Subst(_) => match c {
+                b'\\' => i += 1,
+                b'\'' => stack.push(Ctx::Single),
+                b'"' => stack.push(Ctx::Double),
+                b'`' => stack.push(Ctx::Backtick),
+                b'$' if b.get(i + 1) == Some(&b'(') => {
+                    stack.push(Ctx::Subst(0));
+                    i += 1;
+                }
+                b'(' => {
+                    if let Some(Ctx::Subst(n)) = stack.last_mut() {
+                        *n += 1;
+                    }
+                }
+                b')' => match stack.last_mut() {
+                    Some(Ctx::Subst(0)) => {
+                        stack.pop();
+                    }
+                    Some(Ctx::Subst(n)) => *n -= 1,
+                    _ => {}
+                },
+                _ => {}
+            },
+        }
+        i += 1;
+    }
+    Ok(())
 }
 
 /// The command lines to run: one per item when the template uses `{path}`, `{name}`, `{ext}` or
@@ -234,12 +342,14 @@ pub async fn custom_action_stop(state: State<'_, AppState>, run_id: String) -> R
 
 /// What the template turns into for these items (the editor's preview).
 #[tauri::command]
-pub fn custom_action_preview(template: String, items: Vec<Item>, dir: String) -> Vec<String> {
-    expand(&template, &items, &dir)
+pub fn custom_action_preview(template: String, items: Vec<Item>, dir: String) -> Result<Vec<String>, String> {
+    check_template(&template)?;
+    Ok(expand(&template, &items, &dir))
 }
 
 async fn run<R: Runtime>(app: &AppHandle<R>, state: &AppState, spec: &RunSpec, cancel: &AtomicBool) -> Result<RunEnd, String> {
     let mut sink = Sink::new(app, &spec.run_id);
+    check_template(&spec.template)?;
     let mut end = RunEnd { code: Some(0), ..Default::default() };
     if spec.on_server {
         let sftp = crate::storage::registry::open_sftp(app, state, &spec.profile_id).await?;
@@ -451,6 +561,62 @@ mod tests {
         assert_eq!(quote("a b"), "'a b'");
         assert_eq!(quote("it's"), r"'it'\''s'");
         assert_eq!(quote(""), "''");
+        // a backslash never sits inside the quotes (fish reads `\'` there as a quote)
+        assert_eq!(quote(r"a\b"), r"'a'\\'b'");
+        assert_eq!(quote(r"\'; touch x; echo \"), r"''\\''\''; touch x; echo '\\''");
+    }
+
+    /// Between the single quotes there is never a quote or a backslash, so fish, csh and POSIX
+    /// shells all end the word where it ends.
+    #[test]
+    fn quoted_text_holds_nothing_any_shell_reads() {
+        for p in NASTY.iter().copied().chain([r"\'; cd; touch pwned; echo \", r"x\\'\"]) {
+            let q = quote(p);
+            let mut inside = false;
+            let mut chars = q.chars();
+            while let Some(c) = chars.next() {
+                match (inside, c) {
+                    (false, '\'') | (true, '\'') => inside = !inside,
+                    (false, '\\') => assert!(matches!(chars.next(), Some('\\' | '\'')), "{q}"),
+                    (true, '\\') => panic!("backslash inside quotes: {q}"),
+                    (false, c) => panic!("{c:?} outside quotes: {q}"),
+                    _ => {}
+                }
+            }
+            assert!(!inside, "{q}");
+        }
+    }
+
+    /// The real fish, when installed: what it reads back is the name.
+    #[cfg(unix)]
+    #[test]
+    fn fish_reads_the_quoting_back() {
+        let Some(fish) = ["/opt/homebrew/bin/fish", "/usr/local/bin/fish", "/usr/bin/fish"].into_iter().find(|p| std::path::Path::new(p).exists()) else { return };
+        for p in NASTY.iter().copied().chain([r"\'; touch /tmp/kybl-fish-pwned; echo \"]) {
+            let out = std::process::Command::new(fish).arg("-c").arg(format!("printf %s {}", quote(p))).output().unwrap();
+            assert_eq!(String::from_utf8_lossy(&out.stdout), p);
+        }
+        assert!(!std::path::Path::new("/tmp/kybl-fish-pwned").exists());
+    }
+
+    #[test]
+    fn placeholders_inside_quotes_are_refused() {
+        for bad in [r#"convert "{path}" out.png"#, "echo '{name}'", r#"echo "a {paths} b""#, "echo `basename {path}`", r#"x "$(echo `y {dir}`)""#, r#"echo "it's {stem}""#] {
+            assert!(check_template(bad).is_err(), "{bad}");
+        }
+        for ok in [
+            "convert {path} out.png",
+            r#"echo "$(basename {path})""#,
+            "awk '{print $1}' {path}",
+            r#"echo "${path}" {name}"#,
+            r#"echo "a" {path} 'b'"#,
+            r#"echo \"{path}\""#,
+            "echo $( (cd {dir}) ) {path}",
+            r#"echo "{unknown}" {ext}"#,
+        ] {
+            assert!(check_template(ok).is_ok(), "{ok}");
+        }
+        assert!(check_template(r#"x "{path}""#).unwrap_err().starts_with("{path} is inside quotes"));
     }
 
     #[cfg(unix)]

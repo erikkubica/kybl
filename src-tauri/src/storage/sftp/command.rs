@@ -99,7 +99,8 @@ impl SftpBackend {
             return Ok(None);
         }
         let q = crate::actions::quote(&self.remote_path(key).await?);
-        let cmd = format!("sha256sum -b -- {q} 2>/dev/null || shasum -a 256 -b -- {q} 2>/dev/null || md5sum -b -- {q} 2>/dev/null || md5 -q -- {q} 2>/dev/null");
+        // run by sh, whatever the login shell is (fish, csh)
+        let cmd = crate::actions::sh_c(&format!("sha256sum -b -- {q} 2>/dev/null || shasum -a 256 -b -- {q} 2>/dev/null || md5sum -b -- {q} 2>/dev/null || md5 -q -- {q} 2>/dev/null"));
         let stop = AtomicBool::new(false);
         let mut out = Vec::new();
         let deadline = Duration::from_secs(20) + Duration::from_secs_f64(size as f64 / 50e6);

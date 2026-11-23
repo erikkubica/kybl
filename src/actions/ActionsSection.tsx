@@ -10,7 +10,8 @@ import {
   deleteAction,
   exportActions,
   extList,
-  importActions,
+  parseImport,
+  addImported,
   newId,
   previewCommand,
   saveAction,
@@ -20,6 +21,7 @@ import {
   type ActionWhere,
   type CustomAction,
 } from "./customActions";
+import { templateProblem } from "./templateCheck";
 import "./actions.css";
 
 type ToastFn = (kind: "success" | "error" | "info", text: string) => void;
@@ -251,7 +253,8 @@ function ActionEditor({
     });
   };
 
-  const valid = !!a.name.trim() && !!a.command.trim() && !shortcutBad;
+  const cmdProblem = templateProblem(a.command);
+  const valid = !!a.name.trim() && !!a.command.trim() && !shortcutBad && !cmdProblem;
   const save = () => valid && onSave({ ...a, name: a.name.trim(), extensions: extList(a.extensions).join(", ") });
 
   return (
@@ -287,6 +290,7 @@ function ActionEditor({
             placeholder="sips -Z 2048 {path}"
           />
         </label>
+        {cmdProblem && <p className="ca-bad">{cmdProblem}</p>}
         <div className="ca-chips" aria-label="Placeholders">
           {PLACEHOLDERS.map((x) => (
             <button key={x.p} type="button" className="chip" title={x.what} onClick={() => insert(x.p)}>
@@ -398,15 +402,47 @@ function ActionEditor({
 function ImportDialog({ onClose, onToast }: { onClose: () => void; onToast: ToastFn }) {
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // parsed, waiting for the user to look the commands over
+  const [review, setReview] = useState<CustomAction[] | null>(null);
   const run = () => {
     try {
-      const n = importActions(text);
-      onToast("success", n === 1 ? "1 action added" : `${n} actions added`);
-      onClose();
+      setReview(parseImport(text));
     } catch (e) {
       setError(e instanceof SyntaxError ? "That isn’t valid JSON." : e instanceof Error ? e.message : String(e));
     }
   };
+  if (review) {
+    const add = () => {
+      const n = addImported(review);
+      onToast("success", n === 1 ? "1 action added, switched off" : `${n} actions added, switched off`);
+      onClose();
+    };
+    return (
+      <Modal title="Import actions" onClose={onClose} width={560}>
+        <div className="modal-body ca-form">
+          <p>These commands will run in a shell when you use the actions. Add them only if you trust where they came from. They are added switched off, without shortcuts: switch each on when you’ve checked it.</p>
+          <div className="ca-import-list" aria-label="Actions to import">
+            {review.map((a) => (
+              <div key={a.id} className="ca-import-item">
+                <strong>{a.name}</strong>
+                <small>{a.where === "server" ? "On the server" : LOCAL_LABEL}</small>
+                <code>{a.command}</code>
+                {templateProblem(a.command) && <small className="ca-bad">{templateProblem(a.command)}</small>}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-sm" onClick={() => setReview(null)}>
+            Back
+          </button>
+          <button className="btn btn-sm btn-primary" onClick={add}>
+            {review.length === 1 ? "Add 1 action" : `Add ${review.length} actions`}
+          </button>
+        </div>
+      </Modal>
+    );
+  }
   return (
     <Modal title="Import actions" onClose={onClose} width={520}>
       <div className="modal-body ca-form">
