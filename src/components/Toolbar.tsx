@@ -54,6 +54,7 @@ export function Toolbar({
   onPanes,
   panesItems,
   provider,
+  connName,
   onSwitchConnection,
   onGoTo,
   favorite,
@@ -112,6 +113,8 @@ export function Toolbar({
   panesItems?: () => MenuItem[];
   /** the pane's connection kind, shown as the switcher's badge */
   provider?: string;
+  /** the pane's connection, named after the badge so it's clear which server this is */
+  connName?: string;
   /** the badge before the folder's name: pick another connection or bucket for this pane */
   onSwitchConnection?: (x: number, y: number) => void;
   /** typing a path into the bar (Go to folder) */
@@ -192,8 +195,23 @@ export function Toolbar({
           <Icon name="arrow-up" />
         </button>
         {onSwitchConnection && (
-          <button className="icon-btn conn-switch" onClick={(e) => onSwitchConnection(...anchorOf(e))} title="Switch connection or bucket" aria-label="Switch connection or bucket" aria-haspopup="menu">
+          <button
+            className="icon-btn conn-switch"
+            onClick={(e) => onSwitchConnection(...anchorOf(e))}
+            title={connName ? `${connName} · click to switch connection or bucket` : "Switch connection or bucket"}
+            aria-label={connName ? `Connection ${connName}. Switch connection or bucket` : "Switch connection or bucket"}
+            aria-haspopup="menu"
+          >
             <ProviderBadge provider={provider} />
+            {/* at the top, the root's own name already says it when they match (a server named after its host) */}
+            {connName && !(parts.length === 0 && connName === (bucketLabel ?? bucket)) && (
+              <>
+                <span className="conn-name">{connName}</span>
+                <span className="conn-sep" aria-hidden>
+                  /
+                </span>
+              </>
+            )}
           </button>
         )}
         {bucket != null ? (

@@ -379,9 +379,30 @@ code {
   min-width: 4px;
 }
 .icon-btn.conn-switch {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
   width: auto;
+  min-width: 32px;
+  flex: 0 40 auto;
+  gap: 6px;
   padding: 0 4px;
   margin: 0 0 0 2px;
+}
+/* which server or account the pane is on, before the folder's name: muted, and it gives way
+   before the folder's name does */
+.conn-switch .conn-name {
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 13px;
+}
+.conn-switch .conn-sep {
+  margin-left: -2px;
+  color: var(--faint);
 }
 /* "…" holds much of what had its own button: its dots as heavy as the other icons' lines */
 .tb-more svg {

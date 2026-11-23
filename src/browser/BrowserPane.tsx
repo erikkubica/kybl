@@ -142,6 +142,7 @@ export function BrowserPane(p: BrowserPaneProps) {
         onPanes={p.onPanes}
         panesItems={p.panesItems}
         provider={pane.profile?.provider}
+        connName={pane.profile?.name}
         onSwitchConnection={p.onSwitchConnection}
         onGoTo={here ? (t) => void actions.goToPath(t) : undefined}
         favorite={actions.isFavorite}
