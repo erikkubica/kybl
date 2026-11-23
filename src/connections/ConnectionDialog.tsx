@@ -15,7 +15,8 @@ import { Modal } from "../components/Dialogs";
 import { ErrorText } from "../components/ErrorText";
 import type { Profile } from "../types";
 import { KINDS, certTrouble, hostKeyChanged, hostKeyUnknown, isCloudKind, kindInfo, pickOf, type BlobKind, type NetKind, type PickId } from "./kinds";
-import { SECRET_NOTE, Segmented, type Draft, type FormApi } from "./fields";
+import { Field, RAW, SECRET_NOTE, Segmented, type Draft, type FormApi } from "./fields";
+import { normalizeGroup } from "./groups";
 import { KindPicker } from "./KindPicker";
 import { S3Form } from "./S3Form";
 import { NetForm } from "./NetForm";
@@ -37,6 +38,8 @@ export type ConnectionDialogProps = {
   startKind?: PickId;
   /** computers: the picker offers "Import connections…" (from FileZilla and other apps) */
   onImport?: () => void;
+  /** computers: the sidebar's groups; the form gets a Group field offering them */
+  groups?: string[];
   /** A sign-in connection whose access ended: start signing in again right away. */
   reconnect?: boolean;
   onSaved: (p: Profile) => void;
@@ -54,7 +57,7 @@ export type ConnectionDialogHandle = {
 /** Kinds this version can edit; anything else was saved by a newer Kybl and can only be deleted. */
 const editable = (p: Profile) => p.provider === "kybl" || KINDS.some((k) => k.id === (p.kind ?? "s3"));
 
-export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl, kyblFirst, startKind, reconnect, onImport, ref }: ConnectionDialogProps) {
+export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl, kyblFirst, startKind, reconnect, onImport, groups, ref }: ConnectionDialogProps) {
   const [pick, setPick] = useState<PickId | null>(initial ? pickOf(initial) : (startKind ?? null));
   // the keyboard follows the step: the form's first field after a kind is chosen, the first kind
   // again after "All kinds" or a discard (the dialog box can stay the same, so it won't refocus by itself)
@@ -154,6 +157,7 @@ export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl,
           onClose={onClose}
           onBack={back}
           onDirty={() => (dirty.current = true)}
+          groups={groups}
         />
       </Modal>
       {discardAsk}
@@ -170,8 +174,11 @@ function KeyedForm({
   onClose,
   onBack,
   onDirty,
+  groups,
 }: {
   pick: Exclude<PickId, CloudKind | "kybl">;
+  /** the sidebar's groups, offered in the Group field (no field without them: phones) */
+  groups?: string[];
   initial: Profile | null;
   onSaved: (p: Profile) => void;
   onDeleted: (id: string) => void;
@@ -193,6 +200,7 @@ function KeyedForm({
   // how photos show for this connection (kept on this device, applied on Save)
   const [photos, setPhotos] = useState<ImageMode | "app">(() => (initial ? connImageMode(initial.id) ?? "app" : "app"));
   const [sharing, setSharing] = useState(() => (initial ? sharedPlaceholdersOn(initial.id) : false));
+  const [group, setGroup] = useState(() => normalizeGroup(initial?.group));
   const live = useRef(true);
   useEffect(() => {
     // (set again on mount: development mode mounts effects twice)
@@ -211,7 +219,8 @@ function KeyedForm({
     setTried(true);
     const d = form.current?.draft() ?? null;
     if (!d) requestAnimationFrame(() => formEl.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
-    return d;
+    // the forms build the profile afresh: the group comes from here (or stays as it was)
+    return d && { ...d, profile: { ...d.profile, group: (groups ? normalizeGroup(group) : normalizeGroup(initial?.group)) || null } };
   };
 
   const hostOf = (p: Profile) => p.net?.host || p.name;
@@ -301,6 +310,31 @@ function KeyedForm({
           <NetForm kind={pick as NetKind} {...common} />
         ) : (
           <BlobForm kind={pick as BlobKind} {...common} />
+        )}
+
+        {groups && (
+          <Field label="Group" optional wide hint="A folder in the sidebar. Use / for a group inside a group, like Clients/Acme.">
+            {(c) => (
+              <>
+                <input
+                  {...c}
+                  {...RAW}
+                  list="conn-groups"
+                  value={group}
+                  onChange={(e) => {
+                    setGroup(e.target.value);
+                    onEdit();
+                  }}
+                  placeholder="None: listed at the top level"
+                />
+                <datalist id="conn-groups">
+                  {groups.map((g) => (
+                    <option key={g} value={g} />
+                  ))}
+                </datalist>
+              </>
+            )}
+          </Field>
         )}
 
         <div className="field span2">

@@ -278,6 +278,8 @@ async fn finish(app: &AppHandle, state: &AppState, tok: TokenResponse, replace_i
         access_key_id: tok.access_key_id,
         bucket: None,
         path_style: true,
+        // connecting again keeps its place in the sidebar
+        group: existing.and_then(|i| profiles[i].group.clone()),
         ..Default::default()
     };
     set_secret(state, &profile.id, &tok.secret_access_key).await?;

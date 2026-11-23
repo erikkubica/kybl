@@ -452,6 +452,8 @@ pub async fn oauth_start(
             tenant: if kind == ConnKind::Onedrive { tenant } else { None },
             scopes: p.scopes.iter().map(|s| s.to_string()).collect(),
         }),
+        // signing in again keeps its place in the sidebar
+        group: existing.and_then(|i| profiles[i].group.clone()),
         ..Default::default()
     };
     let stored = Stored { refresh_token: refresh, client_id: client_id.clone(), client_secret: own.as_ref().and(secret) };

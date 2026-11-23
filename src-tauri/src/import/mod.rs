@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
-use crate::state::{load_profiles, save_profiles, set_secret, AppState, ConnKind, NetAuth, NetConfig, Profile, TlsMode};
+use crate::state::{load_profiles, normalize_group, save_profiles, set_secret, AppState, ConnKind, NetAuth, NetConfig, Profile, TlsMode};
 
 /// How a site signs in, as far as the other app told us.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -328,30 +328,39 @@ fn read_key_file(p: &Path) -> Option<String> {
     looks_like_key(t).then(|| t.to_string())
 }
 
-/// What a connection is called: the site's name, after its innermost folder when it has one
-/// ("Acme / Production"), since many lists reuse names like "Live" under each client.
+/// What a connection is called: the site's own name (its folders become its sidebar group, so
+/// "Live" under each client stays "Live"), else who signs in where.
 fn base_name(site: &ImportedSite) -> String {
     let name = site.name.trim();
-    let name = if name.is_empty() {
-        if site.user.is_empty() { site.host.clone() } else { format!("{}@{}", site.user, site.host) }
-    } else {
+    if !name.is_empty() {
         name.to_string()
-    };
-    match site.folder.last().map(|f| f.trim()).filter(|f| !f.is_empty()) {
-        Some(f) => format!("{f} / {name}"),
-        None => name,
+    } else if site.user.is_empty() {
+        site.host.clone()
+    } else {
+        format!("{}@{}", site.user, site.host)
     }
 }
 
-/// `name`, or "name (2)", "name (3)"… so no two connections share a name.
-fn unique_name(base: String, taken: &mut HashSet<String>) -> String {
+/// The sidebar group a site lands in: the other app's folders, outermost first ("Clients/Acme").
+fn group_of(site: &ImportedSite) -> Option<String> {
+    normalize_group(&site.folder.join("/"))
+}
+
+/// What has to differ between two connections: the name within its group (two clients may
+/// both have a "Live", but one group never shows two).
+fn name_key(group: Option<&str>, name: &str) -> String {
+    format!("{}\u{0}{}", group.unwrap_or("").to_lowercase(), name.to_lowercase())
+}
+
+/// `name`, or "name (2)", "name (3)"… so no two connections in one group share a name.
+fn unique_name(base: String, group: Option<&str>, taken: &mut HashSet<String>) -> String {
     let mut name = base.clone();
     let mut n = 2;
-    while taken.contains(&name.to_lowercase()) {
+    while taken.contains(&name_key(group, &name)) {
         name = format!("{base} ({n})");
         n += 1;
     }
-    taken.insert(name.to_lowercase());
+    taken.insert(name_key(group, &name));
     name
 }
 
@@ -363,7 +372,7 @@ pub fn to_profile(site: &ImportedSite, name: String) -> Result<Mapped, String> {
     let kind = site.kind.ok_or("Kybl can't open this kind of site.")?;
     let id = uuid::Uuid::new_v4().to_string();
     let password = site.secret.clone().filter(|s| !s.is_empty());
-    let base = |kind: ConnKind| Profile { id: id.clone(), name: name.clone(), kind, provider: kind_name(kind).to_string(), ..Default::default() };
+    let base = |kind: ConnKind| Profile { id: id.clone(), name: name.clone(), kind, provider: kind_name(kind).to_string(), group: group_of(site), ..Default::default() };
     let port = if site.port == effective_port(kind, site.tls, 0) { 0 } else { site.port };
     let mut net = NetConfig {
         host: site.host.trim().to_string(),
@@ -450,9 +459,10 @@ fn aws_region(host: &str) -> Option<&str> {
     (r != "s3" && r.contains('-')).then_some(r)
 }
 
-/// Maps the chosen sites to profiles: names made unique against `existing` and each other.
+/// Maps the chosen sites to profiles: names made unique within their group, against `existing`
+/// and each other.
 pub fn plan(sites: &[ImportedSite], ids: &[String], existing: &[Profile]) -> (Vec<Mapped>, Vec<Skipped>) {
-    let mut taken: HashSet<String> = existing.iter().map(|p| p.name.to_lowercase()).collect();
+    let mut taken: HashSet<String> = existing.iter().map(|p| name_key(p.group.as_deref(), &p.name)).collect();
     let mut mapped = Vec::new();
     let mut skipped = Vec::new();
     for id in ids {
@@ -467,7 +477,7 @@ pub fn plan(sites: &[ImportedSite], ids: &[String], existing: &[Profile]) -> (Ve
         // name it only once it can really be imported, so a skipped site doesn't take a name
         match to_profile(site, String::new()) {
             Ok(mut m) => {
-                m.profile.name = unique_name(base_name(site), &mut taken);
+                m.profile.name = unique_name(base_name(site), m.profile.group.as_deref(), &mut taken);
                 mapped.push(m);
             }
             Err(reason) => skipped.push(Skipped { name: site.name.clone(), reason }),
@@ -556,20 +566,38 @@ mod tests {
     }
 
     #[test]
-    fn names_carry_the_folder_and_stay_unique() {
-        let existing = vec![net_profile(ConnKind::Ftp, "Acme / Live", "a", 0, "", TlsMode::None)];
+    fn folders_become_groups_and_names_stay_unique_within_one() {
+        // an existing "Live" in the same group clashes; one at the top level or elsewhere doesn't
+        let mut same = net_profile(ConnKind::Ftp, "Live", "a", 0, "", TlsMode::None);
+        same.group = Some("Clients/Acme".into());
+        let mut other = net_profile(ConnKind::Ftp, "Staging", "x", 0, "", TlsMode::None);
+        other.group = Some("Clients/Globex".into());
+        let existing = vec![same, other, net_profile(ConnKind::Ftp, "Staging", "y", 0, "", TlsMode::None)];
         let a = site(ConnKind::Ftp, "a.example.com", 21, "u");
         let mut b = site(ConnKind::Ftp, "b.example.com", 21, "u");
         b.id = "b".into();
         let mut top = site(ConnKind::Ftp, "c.example.com", 21, "u");
         top.id = "c".into();
         top.folder.clear();
-        let sites = vec![a.clone(), b, top];
+        let mut globex = site(ConnKind::Ftp, "d.example.com", 21, "u");
+        globex.id = "d".into();
+        globex.name = "Staging".into();
+        globex.folder = vec![" Clients ".into(), "Initech".into(), "".into()];
+        let sites = vec![a.clone(), b, top, globex];
         let ids: Vec<String> = sites.iter().map(|s| s.id.clone()).collect();
         let (mapped, skipped) = plan(&sites, &ids, &existing);
         assert!(skipped.is_empty());
-        let names: Vec<&str> = mapped.iter().map(|m| m.profile.name.as_str()).collect();
-        assert_eq!(names, ["Acme / Live (2)", "Acme / Live (3)", "Live"]);
+        let got: Vec<(&str, Option<&str>)> = mapped.iter().map(|m| (m.profile.name.as_str(), m.profile.group.as_deref())).collect();
+        assert_eq!(
+            got,
+            [
+                ("Live (2)", Some("Clients/Acme")),
+                ("Live (3)", Some("Clients/Acme")),
+                ("Live", None),
+                // folder names are tidied, and "Staging" exists only in other groups
+                ("Staging", Some("Clients/Initech")),
+            ]
+        );
         // the usual port is stored as 0, like a hand-made connection with an empty port field
         assert_eq!(mapped[0].profile.net.as_ref().unwrap().port, 0);
         assert_eq!(mapped[0].secret.as_deref(), Some("pw"));
@@ -622,7 +650,7 @@ mod tests {
         let ok = { let mut o = site(ConnKind::Ftp, "h2", 0, "u"); o.id = "ok".into(); o };
         let (mapped, skipped) = plan(&[s.clone(), ok], &[s.id.clone(), "ok".into(), "gone".into()], &[]);
         assert_eq!(mapped.len(), 1);
-        assert_eq!(mapped[0].profile.name, "Acme / Live");
+        assert_eq!((mapped[0].profile.name.as_str(), mapped[0].profile.group.as_deref()), ("Live", Some("Clients/Acme")));
         assert_eq!(skipped.len(), 2);
         assert_eq!(skipped[0].reason, "Not supported: Storj");
         assert_eq!(skipped[1].reason, "No longer in the file");

@@ -37,6 +37,9 @@ export const api = {
   saveProfile: (profile: Profile, secret?: string) =>
     invoke<Profile>("save_profile", { profile, secret: secret || null }),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
+  /** Files connections under sidebar groups by id ("" = the top level); returns every profile. */
+  setProfileGroups: (groups: Record<string, string>) =>
+    invoke<Profile[]>("set_profile_groups", { groups: Object.fromEntries(Object.entries(groups).map(([id, g]) => [id, g || null])) }),
   testConnection: (profile: Profile, secret?: string) =>
     invoke<string>("test_connection", { profile, secret: secret || null }),
 
@@ -295,7 +298,7 @@ export type TransferPrefs = {
  *   "select-all", "delete", "rename", "duplicate" (⌘D), "get-info", "settings", "new-connection".
  *   Panes (View menu): "split-right" (⌘\), "split-down" (⇧⌘\), "close-pane",
  *   "swap-panes" (⇧⌘S), "same-folder", "compare-folders", "pane-copy" (F5), "pane-move" (F6),
- *   "switch-pane", "toggle-hidden", "toggle-sidebar" (⌥⌘S), "tiles-bigger" (⌘+), "tiles-smaller" (⌘−), "toggle-compact" (all in the View menu).
+ *   "switch-pane", "toggle-hidden", "toggle-sidebar" (⌥⌘S), "filter-connections" (⌥⌘F), "tiles-bigger" (⌘+), "tiles-smaller" (⌘−), "toggle-compact" (all in the View menu).
  * - `shared-files`: see `takeSharedFiles`.
  * - `open-transfers` (null): a transfer notification was tapped (phones).
  * - `app-resumed` (null): the app came back to the foreground (phones; desktop on window focus).

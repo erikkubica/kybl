@@ -60,6 +60,17 @@ pub struct Profile {
     /// Azure Blob Storage, Google Cloud Storage
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blob: Option<BlobConfig>,
+    /// the sidebar folder it is filed under, outermost first and slash-separated ("Clients/Acme");
+    /// none for a connection at the top level
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+}
+
+/// A group path as it is saved: each folder trimmed, empty ones dropped, joined by "/"; `None`
+/// when nothing is left (the top level).
+pub fn normalize_group(raw: &str) -> Option<String> {
+    let parts: Vec<&str> = raw.split('/').map(str::trim).filter(|s| !s.is_empty()).collect();
+    (!parts.is_empty()).then(|| parts.join("/"))
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -610,6 +621,28 @@ pub async fn client_for<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_is_optional_and_round_trips() {
+        // profiles saved before groups existed load at the top level
+        let old: Profile = serde_json::from_str(r#"{"id":"a","name":"A","provider":"aws","endpoint":"","region":"","accessKeyId":"K","pathStyle":false}"#).unwrap();
+        assert_eq!(old.group, None);
+        // and one without a group doesn't write the field
+        assert!(!serde_json::to_string(&old).unwrap().contains("group"));
+        let filed = Profile { group: Some("Clients/Acme".into()), ..old };
+        let json = serde_json::to_string(&filed).unwrap();
+        assert!(json.contains(r#""group":"Clients/Acme""#), "{json}");
+        let back: Profile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.group.as_deref(), Some("Clients/Acme"));
+    }
+
+    #[test]
+    fn group_paths_are_tidied() {
+        assert_eq!(normalize_group(" Clients / Acme /").as_deref(), Some("Clients/Acme"));
+        assert_eq!(normalize_group("//Work//").as_deref(), Some("Work"));
+        assert_eq!(normalize_group("  / "), None);
+        assert_eq!(normalize_group(""), None);
+    }
 
     static LIMIT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(2);
     fn limit() -> usize {

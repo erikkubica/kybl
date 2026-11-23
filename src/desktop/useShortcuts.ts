@@ -61,6 +61,8 @@ export function useShortcuts(opts: ShortcutOptions) {
       else if (mod && k === "i") id = own("get-info");
       else if (mod && k === "l") id = "go-to";
       else if (mod && k === "r") id = "refresh";
+      // by code: Option turns "f" into "ƒ"; before ⌘F, which Ctrl+Alt+F would otherwise match
+      else if (mod && ev.altKey && ev.code === "KeyF") id = own("filter-connections");
       else if (mod && k === "f") id = "search";
       // split layouts: ⌘\ splits the active pane to the right, ⇧⌘\ downwards (by code too:
       // Shift turns "\" into "|", and some keyboards have it elsewhere)

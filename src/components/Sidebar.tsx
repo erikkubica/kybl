@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../Icons";
 import { KYBL } from "../kybl";
 import { useCaps } from "../useCaps";
@@ -12,6 +12,7 @@ import type { Favorite } from "../settings";
 import type { MountInfo } from "../api";
 import { findMount } from "../mount/useMounts";
 import { driveBadgeTitle } from "../mount/driveMenu";
+import { FILTER_MIN, RECENT_MIN, RECENT_SHOWN, findConnections, groupName, groupOf, groupTree, type Found, type GroupNode, type Range } from "../connections/groups";
 
 const SYNC_LABEL: Record<SyncState, string> = {
   idle: "Synced folders are up to date",
@@ -63,6 +64,165 @@ function DriveBadge({ m, onMenu }: { m: MountInfo | undefined; onMenu?(m: MountI
   );
 }
 
+/** A connection's badge: its provider's, or this computer's. */
+function ConnBadge({ p, own, large }: { p: Profile; own: boolean; large?: boolean }) {
+  return own ? (
+    <span className={`pbadge local ${large ? "lg" : ""}`} aria-hidden="true">
+      <Icon name={deviceIcon} size={large ? 15 : 12} />
+    </span>
+  ) : (
+    <ProviderBadge provider={p.provider} large={large} />
+  );
+}
+
+/** `text` with the typed words marked. */
+function Marked({ text, hits }: { text: string; hits: Range[] }) {
+  if (!hits.length) return <>{text}</>;
+  const out: React.ReactNode[] = [];
+  let at = 0;
+  for (const [a, b] of hits) {
+    if (a > at) out.push(text.slice(at, a));
+    out.push(<mark key={a}>{text.slice(a, b)}</mark>);
+    at = b;
+  }
+  if (at < text.length) out.push(text.slice(at));
+  return <>{out}</>;
+}
+
+/** What the filter field found: one row per connection, its group (or what matched) beneath. */
+function FindResults({
+  found,
+  query,
+  cursor,
+  activeId,
+  builtIn,
+  onHover,
+  onOpen,
+  onConnectionMenu,
+}: {
+  found: Found[];
+  query: string;
+  cursor: number;
+  activeId: string | null;
+  builtIn: (p: Profile) => boolean;
+  onHover: (i: number) => void;
+  onOpen: (p: Profile) => void;
+  onConnectionMenu?(p: Profile, x: number, y: number): void;
+}) {
+  if (!found.length)
+    return (
+      <p className="side-note find-none">
+        No connection matches “{query.trim()}”. Names, servers, user names, kinds and groups are searched.
+      </p>
+    );
+  return (
+    <div id="side-find-results" role="listbox" aria-label="Connections found">
+      <div className="side-head">
+        <span>{found.length === 1 ? "1 connection" : `${found.length} connections`}</span>
+        <span className="side-count">↩ opens</span>
+      </div>
+      {found.map((f, i) => (
+        <div
+          key={f.p.id}
+          id={`side-find-${f.p.id}`}
+          className={`side-item find-row ${i === cursor ? "cursor" : ""} ${f.p.id === activeId ? "active" : ""}`}
+          role="option"
+          aria-selected={i === cursor}
+          // the field keeps the keyboard; a click opens without taking it
+          onMouseDown={(e) => e.preventDefault()}
+          onMouseMove={() => i !== cursor && onHover(i)}
+          onClick={() => onOpen(f.p)}
+          onContextMenu={
+            onConnectionMenu &&
+            ((e) => {
+              e.preventDefault();
+              onConnectionMenu(f.p, e.clientX, e.clientY);
+            })
+          }
+          title={builtIn(f.p) ? f.p.name : `${f.p.name} · ${addressOf(f.p)}`}
+        >
+          <ConnBadge p={f.p} own={builtIn(f.p)} />
+          <span className="find-text">
+            <span className="find-name">
+              <Marked text={f.p.name} hits={f.nameHits} />
+            </span>
+            {f.detail && (
+              <span className="find-detail">
+                <Marked text={f.detail} hits={f.detailHits} />
+              </span>
+            )}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+type GroupCtx = {
+  open: Set<string>;
+  /** the group of the connection on screen ("" at the top level) */
+  activeGroup: string;
+  onToggle: (path: string) => void;
+  onMenu?: (path: string, x: number, y: number) => void;
+};
+
+/**
+ * A level of the connections list: at the top, the connections there and then the groups; inside
+ * a group, its groups first (like folders in a folder) and then its connections.
+ */
+function GroupBody({ node, depth, ctx, renderConnection }: { node: GroupNode; depth: number; ctx: GroupCtx; renderConnection: (p: Profile) => React.ReactNode }) {
+  const groups = node.groups.map((g) => <GroupRow key={g.path} node={g} depth={depth} ctx={ctx} renderConnection={renderConnection} />);
+  const items = node.items.map(renderConnection);
+  return <>{depth === 0 ? [items, groups] : [groups, items]}</>;
+}
+
+function GroupRow({ node, depth, ctx, renderConnection }: { node: GroupNode; depth: number; ctx: GroupCtx; renderConnection: (p: Profile) => React.ReactNode }) {
+  const open = ctx.open.has(node.path);
+  // folded shut over the connection on screen: the folder says it's in there
+  const holdsActive = !open && (ctx.activeGroup === node.path || ctx.activeGroup.startsWith(`${node.path}/`));
+  const toggle = () => ctx.onToggle(node.path);
+  return (
+    <div className="side-group" role="group" aria-label={node.name}>
+      <div
+        className={`side-item group-row ${open ? "open" : ""} ${holdsActive ? "holds-active" : ""}`}
+        onClick={toggle}
+        onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return;
+          if (e.key === "ArrowRight" && !open) (e.preventDefault(), toggle());
+          else if (e.key === "ArrowLeft" && open) (e.preventDefault(), toggle());
+          else onActivate(toggle)(e);
+        }}
+        onContextMenu={
+          ctx.onMenu &&
+          ((e) => {
+            e.preventDefault();
+            ctx.onMenu!(node.path, e.clientX, e.clientY);
+          })
+        }
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        aria-label={`${node.name}, ${node.count} ${node.count === 1 ? "connection" : "connections"}`}
+        title={holdsActive ? `${node.path.split("/").join(" › ")}: the connection on screen is in here` : node.path.split("/").join(" › ")}
+      >
+        <span className="group-ico" aria-hidden="true">
+          <Icon name="folder" size={15} />
+        </span>
+        <span className="side-label">{node.name}</span>
+        <span className="side-count" aria-hidden="true">
+          {node.count}
+        </span>
+        <Icon name="chevron" size={13} className="side-caret" />
+      </div>
+      {open && (
+        <div className="group-body">
+          <GroupBody node={node} depth={depth + 1} ctx={ctx} renderConnection={renderConnection} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export type BucketList = {
   names: string[];
   note: string | null;
@@ -104,6 +264,14 @@ export function Sidebar({
   onDriveMenu,
   onHide,
   peek,
+  recent = [],
+  openGroups,
+  onToggleGroup,
+  onGroupMenu,
+  onOpenConnection,
+  findSignal = 0,
+  findOnMount,
+  onFindDone,
 }: {
   profiles: Profile[];
   /** connection of the bucket on screen */
@@ -148,16 +316,224 @@ export function Sidebar({
   onHide?: () => void;
   /** shown over the panes from the folded rail: its button opens it for good */
   peek?: boolean;
+  /** connections opened last, newest first (ids): "Recent" once the list is long */
+  recent?: string[];
+  /** groups folded open (paths) */
+  openGroups?: Set<string>;
+  onToggleGroup?(path: string): void;
+  /** right-click on a group's row (at the pointer) */
+  onGroupMenu?(path: string, x: number, y: number): void;
+  /** opens a connection in the pane in use (a found or recent connection) */
+  onOpenConnection?(p: Profile): void;
+  /** goes up by one each time ⌥⌘F asks for the filter field */
+  findSignal?: number;
+  /** the filter field takes the keyboard as soon as this sidebar shows */
+  findOnMount?: boolean;
+  /** finding is over (opened one, or Esc with nothing typed): the keyboard goes back to the pane */
+  onFindDone?(): void;
 }) {
   // connections whose hidden buckets are on show (to pick which to bring back)
   const [showHidden, setShowHidden] = useState<Set<string>>(new Set());
+
+  // ---- finding a connection by typing
+  const [query, setQuery] = useState("");
+  const [cursor, setCursor] = useState(0);
+  // ⌥⌘F shows the field even for a short list, until it's left empty
+  const [findAsked, setFindAsked] = useState(false);
+  const findRef = useRef<HTMLInputElement>(null);
+  const many = profiles.length > FILTER_MIN;
+  const showFind = many || findAsked || !!query;
+  const found = useMemo(() => findConnections(profiles, query), [profiles, query]);
+  // the overlay from the folded rail, brought up by ⌥⌘F or the rail's "All connections": it
+  // takes the request that opened it
+  // at once when the field is there (keys typed straight after ⌥⌘F land in it), else as soon as
+  // it has rendered (a short list shows it only on request)
+  const wantFocus = useRef(false);
+  const focusFind = () => {
+    const el = findRef.current;
+    if (!wantFocus.current || !el) return;
+    wantFocus.current = false;
+    el.focus();
+    el.select();
+  };
+  useLayoutEffect(focusFind);
+  const seenSignal = useRef(findOnMount ? -1 : findSignal);
+  useEffect(() => {
+    if (findSignal === seenSignal.current) return;
+    seenSignal.current = findSignal;
+    setFindAsked(true);
+    wantFocus.current = true;
+    focusFind();
+  }, [findSignal]);
+  const openFound = (p: Profile) => {
+    setQuery("");
+    setFindAsked(false);
+    findRef.current?.blur();
+    onOpenConnection?.(p);
+  };
+  const onFindKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!found.length) return;
+      const d = e.key === "ArrowDown" ? 1 : -1;
+      setCursor((c) => (c + d + found.length) % found.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const hit = found[cursor];
+      if (hit) openFound(hit.p);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (query) setQuery("");
+      else {
+        setFindAsked(false);
+        findRef.current?.blur();
+        onFindDone?.();
+      }
+    }
+  };
+  // the keyboard's row stays in view as it moves
+  useEffect(() => {
+    if (!query) return;
+    const hit = found[cursor];
+    if (hit) document.getElementById(`side-find-${hit.p.id}`)?.scrollIntoView({ block: "nearest" });
+  }, [cursor, query, found]);
+
+  // ---- groups and recent
+  const tree = useMemo(() => groupTree(profiles), [profiles]);
+  const activeGroup = useMemo(() => {
+    const p = profiles.find((x) => x.id === activeId);
+    return p ? groupOf(p) : "";
+  }, [profiles, activeId]);
+  const recentProfiles = useMemo(
+    () =>
+      recent
+        .filter((id) => id !== activeId)
+        .map((id) => profiles.find((p) => p.id === id))
+        .filter((p): p is Profile => !!p)
+        .slice(0, RECENT_SHOWN),
+    [recent, profiles, activeId],
+  );
+  const showRecent = profiles.length > RECENT_MIN && recentProfiles.length > 0;
+  const groupCtx: GroupCtx = {
+    open: openGroups ?? new Set(),
+    activeGroup,
+    onToggle: (path) => onToggleGroup?.(path),
+    onMenu: onGroupMenu,
+  };
+
+  // ---- where am I: the connection on screen scrolls into view when it changes (and once its
+  // group has folded open), without moving a list that already shows it
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const revealed = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!activeId || query) return;
+    if (revealed.current === activeId) return;
+    const row = scrollRef.current?.querySelector(`[data-conn-row="${CSS.escape(activeId)}"]`);
+    if (!row) return;
+    revealed.current = activeId;
+    row.scrollIntoView({ block: "nearest" });
+  });
+
+  const renderConnection = (p: Profile) => (
+    <SidebarConnection
+      key={p.id}
+      p={p}
+      active={p.id === activeId}
+      open={expanded.has(p.id)}
+      list={bucketsBy[p.id]}
+      bucket={bucket}
+      hidden={hiddenBuckets[p.id]}
+      revealing={showHidden.has(p.id)}
+      onReveal={() =>
+        setShowHidden((cur) => {
+          const next = new Set(cur);
+          if (next.has(p.id)) next.delete(p.id);
+          else next.add(p.id);
+          return next;
+        })
+      }
+      own={builtIn(p)}
+      authNeeded={!!authNeeded?.has(p.id)}
+      rootLabel={rootLabel}
+      onToggleProfile={onToggleProfile}
+      onEditProfile={onEditProfile}
+      onSelectBucket={onSelectBucket}
+      onOpenBucketByName={onOpenBucketByName}
+      onNewBucket={onNewBucket}
+      onHideBucket={onHideBucket}
+      onReconnect={onReconnect}
+      onSignInAgain={onSignInAgain}
+      onConnectionMenu={onConnectionMenu}
+      onBucketMenu={onBucketMenu}
+      mounts={mounts}
+      onDriveMenu={onDriveMenu}
+    />
+  );
+
   return (
     // the web view's own menu (Reload, Inspect) means nothing here
     <aside className="sidebar" onContextMenu={(e) => e.preventDefault()}>
       <div className="sidebar-drag" data-tauri-drag-region>
         {onHide && <SidebarToggle open={!peek} overlay={peek} onToggle={onHide} />}
       </div>
-      <div className="sidebar-scroll">
+      {showFind && (
+        <div className="side-find">
+          <Icon name="search" size={13} />
+          <input
+            ref={findRef}
+            type="text"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setCursor(0);
+            }}
+            onKeyDown={onFindKey}
+            onBlur={() => !query && setFindAsked(false)}
+            placeholder="Find connection"
+            aria-label="Find a connection"
+            role="combobox"
+            aria-expanded={!!query}
+            aria-controls="side-find-results"
+            aria-activedescendant={query && found[cursor] ? `side-find-${found[cursor].p.id}` : undefined}
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
+          />
+          {query ? (
+            <button
+              type="button"
+              className="icon-btn side-find-clear"
+              onClick={() => {
+                setQuery("");
+                findRef.current?.focus();
+              }}
+              title="Clear (Esc)"
+              aria-label="Clear"
+            >
+              <Icon name="x" size={11} />
+            </button>
+          ) : (
+            <kbd className="side-find-key" aria-hidden="true">
+              ⌥⌘F
+            </kbd>
+          )}
+        </div>
+      )}
+      <div className="sidebar-scroll" ref={scrollRef}>
+        {query ? (
+          <FindResults
+            found={found}
+            query={query}
+            cursor={cursor}
+            activeId={activeId}
+            builtIn={builtIn}
+            onHover={setCursor}
+            onOpen={openFound}
+            onConnectionMenu={onConnectionMenu}
+          />
+        ) : (
+          <>
         {favorites && favorites.length > 0 && (
           <div className="fav-list">
             <div className="side-head">
@@ -200,46 +576,44 @@ export function Sidebar({
             })}
           </div>
         )}
+        {showRecent && (
+          <div className="recent-list">
+            <div className="side-head">
+              <span>Recent</span>
+            </div>
+            {recentProfiles.map((p) => (
+              <div
+                key={p.id}
+                className="side-item recent-row"
+                onClick={() => onOpenConnection?.(p)}
+                onKeyDown={onActivate(() => onOpenConnection?.(p))}
+                role="button"
+                tabIndex={0}
+                title={builtIn(p) ? p.name : `${p.name} · ${addressOf(p)}`}
+                onContextMenu={
+                  onConnectionMenu &&
+                  ((e) => {
+                    e.preventDefault();
+                    onConnectionMenu(p, e.clientX, e.clientY);
+                  })
+                }
+              >
+                <ConnBadge p={p} own={builtIn(p)} />
+                <span className="side-label">{p.name}</span>
+                {groupOf(p) && <span className="side-aside">{groupName(groupOf(p))}</span>}
+              </div>
+            ))}
+          </div>
+        )}
         {profiles.length > 0 && (
           <div className="side-head">
             <span>Connections</span>
+            {many && <span className="side-count">{profiles.length}</span>}
           </div>
         )}
-        {profiles.map((p) => (
-          <SidebarConnection
-            key={p.id}
-            p={p}
-            active={p.id === activeId}
-            open={expanded.has(p.id)}
-            list={bucketsBy[p.id]}
-            bucket={bucket}
-            hidden={hiddenBuckets[p.id]}
-            revealing={showHidden.has(p.id)}
-            onReveal={() =>
-              setShowHidden((cur) => {
-                const next = new Set(cur);
-                if (next.has(p.id)) next.delete(p.id);
-                else next.add(p.id);
-                return next;
-              })
-            }
-            own={builtIn(p)}
-            authNeeded={!!authNeeded?.has(p.id)}
-            rootLabel={rootLabel}
-            onToggleProfile={onToggleProfile}
-            onEditProfile={onEditProfile}
-            onSelectBucket={onSelectBucket}
-            onOpenBucketByName={onOpenBucketByName}
-            onNewBucket={onNewBucket}
-            onHideBucket={onHideBucket}
-            onReconnect={onReconnect}
-            onSignInAgain={onSignInAgain}
-            onConnectionMenu={onConnectionMenu}
-            onBucketMenu={onBucketMenu}
-            mounts={mounts}
-            onDriveMenu={onDriveMenu}
-          />
-        ))}
+        <GroupBody node={tree} depth={0} ctx={groupCtx} renderConnection={renderConnection} />
+          </>
+        )}
       </div>
       <div className="side-foot">
         <button className="side-item" onClick={onNewProfile}>
@@ -340,6 +714,7 @@ function SidebarConnection({
         aria-current={here || undefined}
         aria-label={p.name}
         title={own ? undefined : addressOf(p)}
+        data-conn-row={p.id}
         onContextMenu={
           onConnectionMenu &&
           ((e) => {
@@ -350,13 +725,7 @@ function SidebarConnection({
         // a server's one root takes dropped items at its top level, like a bucket row
         {...(single ? { "data-drop-bucket": "", "data-drop-profile": p.id } : {})}
       >
-        {own ? (
-          <span className="pbadge local" aria-hidden="true">
-            <Icon name={deviceIcon} size={12} />
-          </span>
-        ) : (
-          <ProviderBadge provider={p.provider} />
-        )}
+        <ConnBadge p={p} own={own} />
         <span className="side-label" title={p.cloud?.accountEmail && p.cloud.accountEmail !== p.name ? `${p.name} · ${p.cloud.accountEmail}` : undefined}>
           {p.name}
         </span>
@@ -514,9 +883,15 @@ export function SidebarRail({
   onOpenSettings,
   onConnectionMenu,
   onHover,
+  recent = [],
+  onMore,
 }: {
   profiles: Profile[];
   activeId: string | null;
+  /** connections opened last, newest first (ids): what a long list keeps on the rail */
+  recent?: string[];
+  /** a long list's "All connections": the whole sidebar over the panes, its filter field ready */
+  onMore?: () => void;
   favorites?: Favorite[];
   syncState: SyncState | null;
   authNeeded?: Set<string>;
@@ -533,6 +908,12 @@ export function SidebarRail({
   onHover?: (on: boolean) => void;
 }) {
   const favs = (favorites ?? []).filter((f) => profiles.some((p) => p.id === f.profileId));
+  // a long list doesn't fit as icons: the one on screen and the recent ones stay, the rest is a
+  // click (or ⌥⌘F) away in the full sidebar
+  const long = profiles.length > RECENT_MIN && !!onMore;
+  const shown = long
+    ? [activeId, ...recent.filter((id) => id !== activeId).slice(0, RECENT_SHOWN)].map((id) => profiles.find((p) => p.id === id)).filter((p): p is Profile => !!p)
+    : profiles;
   return (
     <aside className="sidebar rail" onContextMenu={(e) => e.preventDefault()}>
       <div className="sidebar-drag" data-tauri-drag-region />
@@ -554,7 +935,7 @@ export function SidebarRail({
           </button>
         ))}
         {favs.length > 0 && <div className="rail-sep" />}
-        {profiles.map((p) => (
+        {shown.map((p) => (
           <button
             key={p.id}
             type="button"
@@ -570,20 +951,22 @@ export function SidebarRail({
                 onConnectionMenu(p, e.clientX, e.clientY);
               })
             }
-            title={p.name}
+            title={groupOf(p) ? `${p.name} · ${groupOf(p).split("/").join(" › ")}` : p.name}
             aria-label={p.name}
             aria-haspopup="menu"
           >
-            {builtIn(p) ? (
-              <span className="pbadge local lg" aria-hidden="true">
-                <Icon name={deviceIcon} size={15} />
-              </span>
-            ) : (
-              <ProviderBadge provider={p.provider} large />
-            )}
+            <ConnBadge p={p} own={builtIn(p)} large />
             {authNeeded?.has(p.id) && <span className="rail-dot" title="Sign in again" />}
           </button>
         ))}
+        {long && (
+          <button type="button" className="rail-btn rail-more" onClick={onMore} title={`All ${profiles.length} connections (⌥⌘F)`} aria-label={`All ${profiles.length} connections`}>
+            <Icon name="search" size={16} />
+            <span className="rail-more-count" aria-hidden="true">
+              {profiles.length > 999 ? "999+" : profiles.length}
+            </span>
+          </button>
+        )}
       </div>
       <div className="rail-foot">
         <button type="button" className="icon-btn" onClick={onNewProfile} title="New connection" aria-label="New connection">

@@ -17,7 +17,7 @@ use tauri::{
 };
 
 /// Item ids passed to the page as they are.
-const PAGE_ITEMS: [&str; 30] = [
+const PAGE_ITEMS: [&str; 31] = [
     "duplicate",
     "new-connection",
     "new-folder",
@@ -45,6 +45,7 @@ const PAGE_ITEMS: [&str; 30] = [
     "pane-move",
     "toggle-hidden",
     "toggle-sidebar",
+    "filter-connections",
     "tiles-bigger",
     "tiles-smaller",
     "toggle-compact",
@@ -128,6 +129,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &item("search", "Search…", None)?,
             &item("toggle-hidden", "Show Hidden Files", Some("CmdOrCtrl+Shift+Period"))?,
             &item("toggle-sidebar", "Show or Hide Sidebar", Some("CmdOrCtrl+Alt+S"))?,
+            &item("filter-connections", "Find Connection…", Some("CmdOrCtrl+Alt+F"))?,
             &sep()?,
             // the pane in use: grid tile size and compact rows
             &item("tiles-bigger", "Bigger Icons", Some("CmdOrCtrl+Equal"))?,

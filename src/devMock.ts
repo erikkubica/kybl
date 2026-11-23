@@ -18,11 +18,58 @@ const profiles: Profile[] = [
   { id: "p2", name: "AWS production", provider: "aws", endpoint: "https://s3.eu-central-1.amazonaws.com", region: "eu-central-1", accessKeyId: "DEMOKEY", bucket: null, pathStyle: false },
   { id: "p3", name: "Local MinIO", provider: "custom", endpoint: "http://localhost:9000", region: "us-east-1", accessKeyId: "minio", bucket: null, pathStyle: true },
   // A3: a server (one root, no bucket level) and a cloud drive (a few named roots, from the WP-A2 block)
-  { id: "n1", name: "Web server", kind: "sftp", provider: "sftp", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, net: { host: "files.example.com", port: 0, user: "deploy", basePath: "/var/www", tls: "none", auth: "password", hostKey: "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8", url: null } },
+  { id: "n1", name: "Web server", kind: "sftp", provider: "sftp", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, group: "Servers", net: { host: "files.example.com", port: 0, user: "deploy", basePath: "/var/www", tls: "none", auth: "password", hostKey: "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8", url: null } },
   // an FTPS server with its own certificate (see OWN_CERT below): "Trust this certificate…"
-  { id: "n2", name: "Office NAS", kind: "ftp", provider: "ftp", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, net: { host: "nas.example.com", port: 0, user: "office", basePath: "", tls: "explicit", auth: "password", hostKey: null, certFingerprint: null, url: null } },
+  { id: "n2", name: "Office NAS", kind: "ftp", provider: "ftp", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, group: "Servers", net: { host: "nas.example.com", port: 0, user: "office", basePath: "", tls: "explicit", auth: "password", hostKey: null, certFingerprint: null, url: null } },
   { id: "g1", name: "Google Drive (demo@gmail.com)", kind: "gdrive", provider: "gdrive", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, cloud: { accountEmail: "demo@gmail.com", accountId: "1001", clientId: null, tenant: null, scopes: ["drive"] } },
+  ...(new URLSearchParams(location.search).has("many") ? manyProfiles() : []),
 ];
+
+/**
+ * `?many`: about 150 more connections in a few groups, like a big FileZilla import (every name and
+ * host is made up), to try the sidebar at scale.
+ */
+function manyProfiles(): Profile[] {
+  const key = "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8";
+  const net = (id: string, name: string, kind: "ftp" | "sftp", host: string, group: string | null, over: Partial<Profile["net"] & object> = {}): Profile => ({
+    id,
+    name,
+    kind,
+    provider: kind,
+    endpoint: "",
+    region: "",
+    accessKeyId: "",
+    bucket: null,
+    pathStyle: false,
+    group,
+    net: { host, port: 0, user: "deploy", basePath: "", tls: kind === "ftp" ? "auto" : "none", auth: "password", hostKey: kind === "sftp" ? key : null, certFingerprint: null, url: null, ...over },
+  });
+  const clients = ["Acme", "Globex", "Initech", "Umbrella", "Stark", "Wayne", "Hooli", "Pied Piper", "Soylent", "Tyrell", "Cyberdyne", "Wonka", "Oscorp", "Vandelay", "Aperture", "Massive Dynamic"];
+  const out: Profile[] = [];
+  clients.forEach((c, i) => {
+    const d = `${c.toLowerCase().replace(/\s+/g, "")}.example`;
+    const g = `Clients/${c}`;
+    out.push(net(`mc${i}a`, "Live", "sftp", `www.${d}`, g, { basePath: "/var/www/html" }));
+    out.push(net(`mc${i}b`, "Staging", "ftp", `staging.${d}`, g));
+    if (i % 3 === 0) out.push(net(`mc${i}c`, "Backups", "ftp", `backup.${d}`, g, { tls: "implicit" }));
+  });
+  // the shared hosting accounts: one group a level down
+  const words = ["amber", "birch", "cobalt", "dune", "ember", "fjord", "garnet", "harbor", "indigo", "juniper", "kestrel", "lumen", "maple", "nimbus", "orchid", "pebble", "quartz", "raven", "sable", "tundra"];
+  words.forEach((w, i) => {
+    out.push(net(`mh${i}`, `FTP ${w}-shop.test`, "ftp", `ftp.${w}-shop.test`, i < 10 ? "Hosting/Shared EU" : "Hosting/Shared US", { user: `${w}_ftp` }));
+  });
+  out.push(net("mp1", "Home NAS", "sftp", "nas.home.test", "Personal", { user: "me" }));
+  out.push(net("mp2", "Blog", "ftp", "ftp.myblog.test", "Personal", { user: "blog" }));
+  // and the wall a first import left behind: no groups, names like "SSH host"
+  const tlds = ["cz", "sk", "test", "example"];
+  for (let i = 0; i < 83; i++) {
+    const w = words[i % words.length];
+    const host = `${w}${["", "-web", "-mail", "-dev", "-old"][Math.floor(i / words.length)]}.${tlds[i % tlds.length]}`;
+    const ssh = i % 3 === 1;
+    out.push(net(`mw${i}`, `${ssh ? "SSH" : "FTP"} ${host}`, ssh ? "sftp" : "ftp", host, null, { user: ssh ? "root" : `${w}${i}` }));
+  }
+  return out;
+}
 
 const FZ_HINT = "FileZilla's “FTP over TLS if available” sites keep that setting: encrypted when the server supports it, plain FTP when it doesn't. Turn the fallback off in a site's settings once you know its server supports FTPS.";
 
@@ -498,6 +545,17 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       else profiles.push(p);
       return p;
     }
+    case "set_profile_groups":
+      for (const p of profiles) {
+        if (!(p.id in a.groups)) continue;
+        const g = String(a.groups[p.id] ?? "")
+          .split("/")
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .join("/");
+        p.group = g || null;
+      }
+      return profiles.map((p) => ({ ...p }));
     case "delete_profile":
       profiles.splice(profiles.findIndex((x) => x.id === a.id), 1);
       return null;
@@ -519,10 +577,14 @@ async function handle(cmd: string, a: any): Promise<unknown> {
           out.skipped.push({ name: s.name, reason: s.skip ?? "Not supported" });
           continue;
         }
-        const name = s.folder.length ? `${s.folder[s.folder.length - 1]} / ${s.name}` : s.name;
+        // the folders become the group (src-tauri/src/import/mod.rs); a name repeats only across groups
+        const group = s.folder.map((f) => f.trim()).filter(Boolean).join("/") || null;
+        let name = s.name;
+        for (let n = 2; profiles.some((x) => (x.group ?? null) === group && x.name.toLowerCase() === name.toLowerCase()); n++) name = `${s.name} (${n})`;
         const p: Profile = {
           id: `imp${Date.now()}${out.imported.length}`,
           name,
+          group,
           kind: s.kind,
           provider: s.kind,
           endpoint: "",
