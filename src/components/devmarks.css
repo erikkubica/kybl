@@ -1,0 +1,227 @@
+/* Git awareness and content search (DevMarks.tsx): the branch chip, status marks, the search
+   field's Names / Contents switch and a content hit's matching line. Colours from the theme
+   tokens, so light and dark follow. */
+
+/* ---------------------------------------------------------------- branch chip */
+.git-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  /* gives way before the folder's name does, down to its icon */
+  flex: 0 100 auto;
+  min-width: 22px;
+  max-width: 160px;
+  height: 20px;
+  margin-left: 2px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--hover);
+  color: var(--dim);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.git-branch svg {
+  flex: none;
+  opacity: 0.85;
+}
+.git-branch-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.git-branch-sync {
+  flex: none;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.git-branch.detached .git-branch-name {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+/* while searching, the field needs the room more than the branch does */
+@container (max-width: 760px) {
+  .toolbar:is(.search-open, :has(.search:focus-within)) > .git-branch {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- status marks */
+.git-mark {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  min-width: 14px;
+  height: 14px;
+  margin-left: auto;
+  padding: 0 2px;
+  border-radius: 4px;
+  font: 700 10px/1 var(--mono);
+  letter-spacing: 0;
+  color: var(--git-c);
+  background: color-mix(in srgb, var(--git-c) 13%, transparent);
+}
+.git-mark i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--git-c);
+}
+.git-modified,
+.git-renamed {
+  --git-c: var(--warn);
+}
+.git-added,
+.git-untracked {
+  --git-c: var(--ok);
+}
+.git-deleted,
+.git-conflicted {
+  --git-c: var(--danger);
+}
+.git-conflicted {
+  outline: 1px solid var(--git-c);
+}
+.git-inside {
+  --git-c: var(--warn);
+  background: none;
+}
+.row.git-ignored > *,
+.card.git-ignored > * {
+  opacity: 0.5;
+}
+.card .git-mark {
+  margin-left: 4px;
+  vertical-align: 1px;
+}
+.card-name:has(.git-mark) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.card-name:has(.git-mark) > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------------------------------------------------------------- content hits */
+.c-name:has(.hit-line) .name-text {
+  flex: 0 1 auto;
+  max-width: 55%;
+}
+.hit-line {
+  flex: 1 1 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 1px 6px;
+  border-radius: 5px;
+  color: var(--dim);
+  font: 12px/1.35 var(--mono);
+  cursor: pointer;
+}
+.hit-line:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.hit-no {
+  flex: none;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.hit-no::after {
+  content: ":";
+}
+.hit-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+.hit-text mark {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--warn) 30%, transparent);
+  color: var(--text);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--warn) 30%, transparent);
+}
+.hit-count {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--hover);
+  color: var(--faint);
+  font: 600 10.5px/16px var(--font);
+}
+.row.selected .hit-line {
+  color: inherit;
+}
+.c-name:has(.hit-line) .git-mark {
+  margin-left: 0;
+}
+
+/* ---------------------------------------------------------------- search field */
+.search-modes {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.search.folded:not(:focus-within) .search-modes {
+  display: none;
+}
+/* open with its switches: room to type besides them (the path gives way first) */
+.toolbar:is(.search-open, :has(.search:focus-within)) > .search:has(.search-modes) {
+  min-width: 250px;
+}
+.toolbar:is(.search-open, :has(.search:focus-within)) > .search:has(.search-opt) {
+  min-width: 290px;
+}
+.search:has(.search-modes):focus-within {
+  width: 380px;
+}
+.search-seg {
+  display: inline-flex;
+  padding: 1px;
+  border-radius: 6px;
+  background: var(--hover);
+}
+.search-seg button,
+.search-opt {
+  height: 18px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--faint);
+  font: 600 10.5px/18px var(--font);
+  cursor: pointer;
+}
+.search-seg button:hover:not(.off),
+.search-opt:hover {
+  color: var(--text);
+}
+.search-seg button.on {
+  background: var(--raised);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+[data-theme="dark"] .search-seg button.on {
+  background: var(--border-strong);
+}
+.search-seg button.off {
+  opacity: 0.45;
+  cursor: default;
+}
+.search-opt {
+  padding: 0 4px;
+}
+.search-opt.mono {
+  font-family: var(--mono);
+}
+.search-opt.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}

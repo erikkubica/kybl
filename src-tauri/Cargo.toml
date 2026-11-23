@@ -43,6 +43,8 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 percent-encoding = "2"
 mime_guess = "2"
 walkdir = "2"
+# content search patterns (devtools): already in the tree through suppaftp (lazy-regex), so no size
+regex = "1"
 uuid = { version = "1", features = ["v4"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 kamadak-exif = "0.6"

@@ -7,6 +7,8 @@ import { cachedPlaceholder, canPlaceholder, forgetPlaceholderMiss, learnPlacehol
 import { imageModeFor } from "../imageMode";
 import { useListNav, useMarquee, type Box, type FolderSizeInfo, type SelectKeys } from "./listNav";
 import type { Entry } from "../types";
+import { GitBadge } from "./DevMarks";
+import type { GitMark } from "../browser/useGitStatus";
 
 /** Tile width when the app passes none (settings.tileSize defaults to the same). */
 const DEFAULT_TILE = 160;
@@ -22,6 +24,9 @@ const Card = memo(function Card({
   bucket,
   label,
   size,
+  markKind,
+  markTitle,
+  markLetter,
   onPress,
   onOpen,
   onContext,
@@ -39,6 +44,10 @@ const Card = memo(function Card({
   label: string;
   /** folder size, once worked out */
   size?: FolderSizeInfo;
+  /** git status (parts of a GitMark, so the memo still holds) */
+  markKind?: GitMark["kind"];
+  markTitle?: string;
+  markLetter?: string;
   onPress: (e: Entry, ev: React.MouseEvent) => void;
   onOpen: (e: Entry) => void;
   onContext: (ev: React.MouseEvent, e: Entry) => void;
@@ -143,7 +152,7 @@ const Card = memo(function Card({
       data-index={index}
       data-drop={folder ? entry.key : undefined}
       data-spring={folder ? "" : undefined}
-      className={`card ${selected ? "selected" : ""} ${active ? "active" : ""}`}
+      className={`card ${selected ? "selected" : ""} ${active ? "active" : ""} ${markKind === "ignored" ? "git-ignored" : ""}`}
       role="option"
       aria-selected={selected}
       aria-posinset={index + 1}
@@ -167,7 +176,14 @@ const Card = memo(function Card({
         {!thumb && !ph && <FileIcon entry={entry} size={34} big>{loading && thumb === undefined && <span className="shimmer" />}</FileIcon>}
       </div>
       <div className="card-text">
-        <div className="card-name">{label}</div>
+        {markKind ? (
+          <div className="card-name">
+            <span>{label}</span>
+            <GitBadge mark={{ kind: markKind, title: markTitle ?? "", letter: markLetter ?? "" }} />
+          </div>
+        ) : (
+          <div className="card-name">{label}</div>
+        )}
         {meta && <div className="card-meta">{meta}</div>}
       </div>
     </div>
@@ -201,6 +217,7 @@ export function GridView({
   onSelectKeys,
   onUpload,
   onNewFolder,
+  gitMark,
 }: {
   entries: Entry[];
   selected: Set<string>;
@@ -232,6 +249,8 @@ export function GridView({
   onSelectKeys?: SelectKeys;
   onUpload?(): void;
   onNewFolder?(): void;
+  /** this computer's folders in a git work tree: an item's status mark */
+  gitMark?(e: Entry): GitMark | undefined;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const grid = useRef<HTMLDivElement>(null);
@@ -362,6 +381,7 @@ export function GridView({
           const i = win.start + n;
           const rel = e.key.slice(prefix.length).replace(/\/$/, "");
           const fs = e.kind === "folder" ? folderSize?.(e.key) : undefined;
+          const mark = gitMark?.(e);
           return (
             <Card
               key={e.key}
@@ -375,6 +395,9 @@ export function GridView({
               bucket={bucket}
               label={searchMode ? rel : e.name}
               size={fs}
+              markKind={mark?.kind}
+              markTitle={mark?.title}
+              markLetter={mark?.letter}
               onPress={press}
               onOpen={onOpen}
               onContext={onContext}

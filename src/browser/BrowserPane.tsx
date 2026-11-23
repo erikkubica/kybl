@@ -3,7 +3,7 @@
  * or grid with its empty and error states, the status bar, Quick Look and the drag ghost. All
  * state lives in the pane object from usePane; this only draws it.
  */
-import type { CSSProperties } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import { Icon } from "../Icons";
 import { Toolbar } from "../components/Toolbar";
 import { rootIcon } from "../connections/roots";
@@ -16,6 +16,9 @@ import { PaneBanners, PaneStatusBar } from "./PaneParts";
 import type { Pane } from "./usePane";
 import { useImageModes } from "../imageMode";
 import type { MenuItem } from "../components/Dialogs";
+import { BranchChip, SearchModes } from "../components/DevMarks";
+import type { Entry } from "../types";
+import { registerCommands } from "../palette/commands";
 
 /** the clipboard takes files on macOS only for now (see platform.rs) */
 const IS_MAC = /Mac/.test(navigator.platform || navigator.userAgent);
@@ -79,6 +82,40 @@ export function BrowserPane(p: BrowserPaneProps) {
   const uploadFiles = () => void ops.pickAndUpload(false);
   const newFolder = () => ops.askNewFolder();
   const here = !!profile && bucket != null;
+  const { sr } = ent;
+  // ⌘K "Search Inside Files": the active pane's search field, set to look inside files
+  const live = useRef({ pane, sr });
+  live.current = { pane, sr };
+  useEffect(() => {
+    if (!active) return;
+    return registerCommands("content-search", () => {
+      const { pane: pn, sr: s } = live.current;
+      return [
+        {
+          id: "content-search:open",
+          title: "Search Inside Files",
+          group: "View",
+          icon: "search",
+          keywords: "contents text ripgrep find in files",
+          disabled: !pn.here ? "Open a folder first" : pn.contentsOff,
+          run: () => {
+            s.configure({ mode: "contents" });
+            pn.searchInput.current?.focus();
+            pn.searchInput.current?.select();
+          },
+        },
+      ];
+    });
+  }, [active]);
+  const gitMark = pane.git.info ? pane.git.markFor : undefined;
+  const hits = search?.hits;
+  const hitOf = hits ? (e: Entry) => hits[e.key] : undefined;
+  /** a content hit's line clicked: that file, previewed at the line */
+  const previewHit = (e: Entry) => {
+    sel.setSelected(new Set([e.key]));
+    sel.setCursor(e.key, true);
+    pane.setQuick(e.key);
+  };
   /** The toolbar's "…": refresh and Go to folder, the other pane's items, then the folder's own. */
   const moreMenu = (x: number, y: number, folded: MenuItem[]) =>
     actions.onMoreMenu(x, y, [
@@ -144,6 +181,11 @@ export function BrowserPane(p: BrowserPaneProps) {
         onGoTo={here ? (t) => void actions.goToPath(t) : undefined}
         favorite={actions.isFavorite}
         onToggleFavorite={here ? () => actions.toggleFavorite(bucket!, prefix) : undefined}
+        afterPath={pane.git.info && <BranchChip info={pane.git.info} />}
+        searchExtras={
+          here && <SearchModes mode={sr.mode} caseSensitive={sr.caseSensitive} regex={sr.regex} contentsOff={pane.contentsOff} onChange={sr.configure} />
+        }
+        searchPlaceholder={sr.mode === "contents" ? "Search inside files, ↵" : undefined}
         onGrip={p.onGrip}
       />
 
@@ -173,6 +215,7 @@ export function BrowserPane(p: BrowserPaneProps) {
                   bucket={bucket}
                   autoFocus={active}
                   folderSize={pane.folderSizes.view}
+                  gitMark={gitMark}
                   onUpload={uploadFiles}
                   onNewFolder={newFolder}
                   activeKey={sel.cursorKey}
@@ -218,6 +261,9 @@ export function BrowserPane(p: BrowserPaneProps) {
                   onBackgroundContextMenu={actions.onBackgroundContext}
                   folderSize={pane.folderSizes.view}
                   onCalcSize={(k) => actions.calcSizes([k])}
+                  gitMark={gitMark}
+                  hitOf={hitOf}
+                  onHitOpen={previewHit}
                 />
               )}
               <PaneStatusBar pane={pane} />
@@ -246,6 +292,7 @@ export function BrowserPane(p: BrowserPaneProps) {
           index={pane.quickIndex}
           count={entries.length}
           startWithInfo={pane.quickInfo}
+          hit={hits?.[entries[pane.quickIndex]?.key]}
           infoPref={settings.quickInfo}
           onInfoPref={(on) => p.updateSettings({ quickInfo: on })}
           info={{

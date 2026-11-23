@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { GitBadge, HitLine } from "./DevMarks";
+import type { GitMark } from "../browser/useGitStatus";
+import type { ContentHit } from "../browser/devtoolsApi";
 import { useMeasured, useWindowed } from "../useWindowed";
 import { Icon } from "../Icons";
 import { formatBytes, formatDate, formatDateFull, entrySize, entryKind, parentPrefix } from "../format";
@@ -125,6 +128,9 @@ export function FileTable({
   onUpload,
   onNewFolder,
   onGoUp,
+  gitMark,
+  hitOf,
+  onHitOpen,
 }: {
   entries: Entry[];
   selected: Set<string>;
@@ -162,6 +168,12 @@ export function FileTable({
   onNewFolder?(): void;
   /** a ".." row on top goes to the enclosing folder (given only inside a folder) */
   onGoUp?(): void;
+  /** this computer's folders in a git work tree: an item's status mark */
+  gitMark?(e: Entry): GitMark | undefined;
+  /** a search inside files: the item's first matching line */
+  hitOf?(e: Entry): ContentHit | undefined;
+  /** a click on that line: preview the file there */
+  onHitOpen?(e: Entry): void;
 }) {
   const sentinel = useRef<HTMLDivElement>(null);
   const table = useRef<HTMLDivElement>(null);
@@ -498,6 +510,8 @@ export function FileTable({
           const rel = e.key.slice(prefix.length).replace(/\/$/, "");
           const slash = searchMode ? rel.lastIndexOf("/") : -1;
           const folder = e.kind === "folder";
+          const mark = gitMark?.(e);
+          const hit = hitOf?.(e);
           return (
             <div
               key={e.key}
@@ -506,7 +520,7 @@ export function FileTable({
               data-index={i}
               data-drop={folder ? e.key : undefined}
               data-spring={folder ? "" : undefined}
-              className={`row ${sel ? "selected" : ""} ${folder ? "is-folder" : ""} ${i === nav.activeIndex && !upActive ? "active" : ""}`}
+              className={`row ${sel ? "selected" : ""} ${folder ? "is-folder" : ""} ${i === nav.activeIndex && !upActive ? "active" : ""} ${mark?.kind === "ignored" ? "git-ignored" : ""}`}
               role="row"
               aria-rowindex={i + 2}
               aria-selected={sel}
@@ -523,6 +537,8 @@ export function FileTable({
                   {slash >= 0 && <span className="dim">{rel.slice(0, slash + 1)}</span>}
                   {slash >= 0 ? rel.slice(slash + 1) : e.name}
                 </span>
+                {hit && <HitLine hit={hit} onOpen={onHitOpen && (() => onHitOpen(e))} />}
+                {mark && <GitBadge mark={mark} />}
               </div>
               {shown.map((c) => {
                 switch (c.id) {
