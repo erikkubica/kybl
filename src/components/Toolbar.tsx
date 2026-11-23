@@ -101,7 +101,7 @@ export function Toolbar({
   onClearSearch: () => void;
   /** more than one pane is on screen */
   dual?: boolean;
-  /** the panes button (shows only with this): one pane splits right, more open the panes menu */
+  /** the panes button (shows only with this): opens the panes menu (split four ways, size, close) */
   onPanes?: (x: number, y: number) => void;
   /** the panes menu's items, for "⋯" when the panes button had to fold away */
   panesItems?: () => MenuItem[];
@@ -309,9 +309,9 @@ export function Toolbar({
             ref={panes}
             className={`icon-btn tb-panes ${dual ? "on" : ""}`}
             onClick={(e) => onPanes(...anchorOf(e))}
-            title={dual ? "Panes: split or close" : "Split right: two panes side by side (⌘\\)"}
-            aria-label={dual ? "Panes" : "Split right"}
-            aria-haspopup={dual ? "menu" : undefined}
+            title={dual ? "Panes: split, size or close" : "Split: add a pane right, below, left or above"}
+            aria-label="Panes"
+            aria-haspopup="menu"
           >
             <Icon name="dual-pane" />
           </button>

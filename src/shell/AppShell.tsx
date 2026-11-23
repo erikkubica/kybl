@@ -1424,7 +1424,8 @@ export function AppShell() {
     empty: emptyFor(p.id),
     // one pane: a click splits it, as the dual pane button always did; more: the panes menu
     onSwitchConnection: (x: number, y: number) => switchMenu(p.id, x, y),
-    onPanes: (x: number, y: number) => (dual ? panesMenu(p.id, x, y) : split("row", p.id)),
+    // always the menu, so where the new pane goes is a choice (⌘\ still splits right at once)
+    onPanes: (x: number, y: number) => panesMenu(p.id, x, y),
     panesItems: () => panesItems(p.id),
     onActivate: () => {
       if (dual && activeId !== p.id) setActiveId(p.id);
