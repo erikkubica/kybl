@@ -183,14 +183,13 @@ type GroupCtx = {
 };
 
 /**
- * A level of the connections list: at the top of the list or of a kind section, the connections
- * there and then the groups; inside a group, its groups first (like folders in a folder) and then
- * its connections.
+ * A level of a kind section or a group: its groups first (like folders in a folder), then its
+ * connections, so a section of a hundred loose servers doesn't bury its folders at the bottom.
  */
 function GroupBody({ node, depth, ctx, renderConnection }: { node: GroupNode; depth: number; ctx: GroupCtx; renderConnection: (p: Profile) => React.ReactNode }) {
   const groups = node.groups.map((g) => <GroupRow key={g.path} node={g} depth={depth} ctx={ctx} renderConnection={renderConnection} />);
   const items = node.items.map(renderConnection);
-  return <>{depth === 0 ? [items, groups] : [groups, items]}</>;
+  return <>{[groups, items]}</>;
 }
 
 /** Arrow keys fold a row open and shut; Enter and Space toggle it. */
@@ -850,7 +849,12 @@ function SidebarConnection({
         )}
         {!single && <Icon name="chevron" size={13} className="side-caret" />}
       </div>
-      {single && active && list?.note && !list.names.length && <p className="side-note">{list.note}</p>}
+      {/* the pane shows the whole message; here two lines are enough to say something's wrong */}
+      {single && active && list?.note && !list.names.length && (
+        <p className="side-note clamp" title={list.note}>
+          {list.note}
+        </p>
+      )}
       {open && !single && (
         <div className="bucket-list">
           {list?.names.map((b) => {
