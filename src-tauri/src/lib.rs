@@ -281,6 +281,8 @@ pub fn run() {
             #[cfg(desktop)]
             terminal::terminal_close,
             #[cfg(desktop)]
+            terminal::terminal_busy,
+            #[cfg(desktop)]
             sync::sync_list,
             #[cfg(desktop)]
             sync::sync_save,

@@ -31,6 +31,12 @@ export type TerminalSlotProps = {
   onClose: () => void;
   /** ⌃` inside the terminal: back to the file pane */
   onToggle: () => void;
+  /** it `cd`s wherever the file pane it opened from goes; `canFollow`: that pane is on screen */
+  follow: boolean;
+  canFollow: boolean;
+  onFollow: () => void;
+  /** why it didn't follow last time ("not following: busy"), or null */
+  note: string | null;
   menu: (x: number, y: number, items: MenuItem[]) => void;
 };
 
@@ -42,6 +48,8 @@ export function TerminalSlot(p: TerminalSlotProps) {
     p.menu(r.left, r.bottom + 4, [
       { type: "item", label: "Clear", icon: "x", hint: K("K"), onClick: act("clear") },
       { type: "item", label: "Restart shell", icon: "refresh", onClick: act("restart") },
+      { type: "sep" },
+      { type: "item", label: "Follow the folder above", checked: p.follow, disabled: !p.canFollow && !p.follow, onClick: p.onFollow },
       { type: "sep" },
       { type: "item", label: "Copy", icon: "copy", hint: K("C"), onClick: act("copy") },
       { type: "item", label: "Paste", icon: "copy", hint: K("V"), onClick: act("paste") },
@@ -86,6 +94,18 @@ export function TerminalSlot(p: TerminalSlotProps) {
           <span className="term-path" title={p.path}>
             {p.path}
           </span>
+          {p.follow && (
+            <span
+              className={`term-follow ${p.note ? "off" : ""}`}
+              title={
+                p.note
+                  ? "Kybl types into a shell only while it waits at its prompt. It follows again on the next folder change."
+                  : "Goes wherever the folder of the pane it opened from goes"
+              }
+            >
+              {p.note ?? "following"}
+            </span>
+          )}
           <div className="spacer" />
           <button className="icon-btn" onClick={more} title="Terminal actions" aria-label="Terminal actions" aria-haspopup="menu">
             <Icon name="more" />

@@ -1,7 +1,8 @@
 /**
  * The shell's side of terminal panes: which pane slots show a terminal (and in which folder), the
  * ways to open one (⌃`, the pane's ⋯ and folder menus, the command palette, `openTerminal`),
- * files dropped on one, and ending the shells of panes no workspace has any more.
+ * files dropped on one, following the folder of the pane it opened from, and ending the shells of
+ * panes no workspace has any more.
  *
  * A terminal takes a pane slot like a file pane: the layout (paneLayout.ts) splits, drags, docks
  * and moves it the same way. Its slot's file pane sits idle, showing nothing, meanwhile.
@@ -29,7 +30,9 @@ import {
   setTerminalOpener,
   setTerminalPanes,
   shellQuote,
+  terminalIdle,
   terminalRemoteBase,
+  typeIntoTerminal,
   writeToTerminal,
   type TermPlace,
   type TermSpec,
@@ -86,6 +89,81 @@ export function useTerminalPanes(initial: Layout) {
     });
 
   const profileOf = (id: string) => host.current?.profiles.find((p) => p.id === id) ?? null;
+
+  // ---- following the folder of the pane a terminal opened from ("Follow the folder above")
+  /** a word in a following terminal's header when it didn't follow (by session) */
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const note = (sid: string, text: string | null) =>
+    setNotes((cur) => {
+      if ((cur[sid] ?? null) === text) return cur;
+      const next = { ...cur };
+      if (text) next[sid] = text;
+      else delete next[sid];
+      return next;
+    });
+  /** the place each following terminal last saw its file pane at, and the latest follow under way */
+  const seen = useRef(new Map<string, string>());
+  const gen = useRef(new Map<string, number>());
+  /**
+   * Terminal `id` goes to `to` with ` cd 'path'` (a leading space keeps it out of the history), but
+   * only into a shell idling at its prompt: never into a running program or a half-typed line.
+   * A shell still drawing its prompt gets a moment; then it is left alone, and says so.
+   */
+  const follow = async (id: PaneId, t: TermSpec, to: Loc) => {
+    const n = (gen.current.get(t.sid) ?? 0) + 1;
+    gen.current.set(t.sid, n);
+    const stale = () => gen.current.get(t.sid) !== n || termsRef.current[id]?.sid !== t.sid || !termsRef.current[id]?.follow;
+    if (to.profileId !== t.profileId || (t.profileId !== LOCAL_PROFILE && to.bucket !== t.bucket)) return note(t.sid, "not following: another place");
+    let path: string | null = null;
+    if (t.profileId === LOCAL_PROFILE) path = await api.localPath(to.profileId, to.bucket, to.prefix.replace(/\/+$/, "")).then((p) => (p ? shellQuote(p) : null), () => null);
+    else {
+      const base = terminalRemoteBase(t.sid);
+      if (base != null) path = remotePath(base, to.prefix);
+    }
+    if (!path || stale()) return;
+    for (let i = 0; ; i++) {
+      if (await terminalIdle(t.sid)) break;
+      if (stale()) return;
+      if (i >= 6) return note(t.sid, "not following: busy");
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    if (stale() || !typeIntoTerminal(t.sid, ` cd ${path}\r`)) return;
+    note(t.sid, null);
+    setTerms((cur) => (cur[id]?.sid === t.sid ? { ...cur, [id]: { ...cur[id]!, bucket: to.bucket, prefix: to.prefix } } : cur));
+  };
+  // after each render: a following terminal whose file pane went elsewhere goes there too
+  useEffect(() => {
+    const h = host.current;
+    if (!h) return;
+    const ts = termsRef.current;
+    for (const id of h.ids) {
+      const t = ts[id];
+      if (!t?.follow || !t.from || !h.ids.includes(t.from) || ts[t.from]) continue;
+      const to = h.slot(t.from).here;
+      if (!to) continue;
+      const key = `${to.profileId}\n${to.bucket}\n${to.prefix}`;
+      if (seen.current.get(t.sid) === key) continue;
+      seen.current.set(t.sid, key);
+      if (to.profileId === t.profileId && to.bucket === t.bucket && to.prefix === t.prefix) note(t.sid, null);
+      else void follow(id, t, to);
+    }
+  });
+  /** "Follow the folder above" on or off for terminal pane `id`. */
+  const setFollow = (id: PaneId, on: boolean) => {
+    const t = termsRef.current[id];
+    if (!t) return;
+    seen.current.delete(t.sid);
+    gen.current.delete(t.sid);
+    note(t.sid, null);
+    setTerms((cur) => {
+      const c = cur[id];
+      if (!c) return cur;
+      const next = { ...c };
+      if (on) next.follow = true;
+      else delete next.follow;
+      return { ...cur, [id]: next };
+    });
+  };
 
   /** A terminal below pane `src` at `at` (default: the folder `src` shows); its slot, or null when it couldn't. */
   const open = (src: PaneId, at?: Loc | null, startup?: string[]): PaneId | null => {
@@ -213,6 +291,10 @@ export function useTerminalPanes(initial: Layout) {
         }}
         onClose={() => host.current?.close(id)}
         onToggle={toggle}
+        follow={!!t.follow}
+        canFollow={!!t.from && h.ids.includes(t.from) && !termsRef.current[t.from]}
+        onFollow={() => setFollow(id, !t.follow)}
+        note={t.follow ? (notes[t.sid] ?? null) : null}
         menu={h.menu}
       />
     );

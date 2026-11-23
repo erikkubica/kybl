@@ -1283,6 +1283,24 @@ kbd {
   font-size: 13.5px;
   line-height: 1.55;
 }
+.welcome-card.welcome-missing {
+  max-width: 340px;
+  color: var(--warn);
+}
+.welcome-card.welcome-missing h2 {
+  margin: 10px 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.welcome-card.welcome-missing p {
+  margin-bottom: 14px;
+  font-size: 12.5px;
+}
+.welcome .welcome-missing .btn {
+  height: 28px;
+  padding: 0 12px;
+}
 .welcome-logo {
   width: 68px;
   height: 68px;

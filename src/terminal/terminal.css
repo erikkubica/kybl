@@ -25,6 +25,19 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+/* "Follow the folder above" is on: a quiet word, and why when it didn't */
+.toolbar > .term-follow {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--hover);
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.toolbar > .term-follow.off {
+  color: var(--warn, var(--dim));
+}
 .term-content {
   position: relative;
   flex: 1;
