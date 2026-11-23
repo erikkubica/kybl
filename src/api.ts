@@ -176,6 +176,15 @@ export const api = {
   copyFileToClipboard: (path: string) => invoke<void>("copy_file_to_clipboard", { path }),
   /** Shows the file in Finder / Explorer / the file manager. Desktop only. */
   revealLocal: (path: string) => invoke<void>("reveal_local", { path }),
+  /**
+   * The apps that open a file called `name` (only the extension counts, so a file not downloaded
+   * yet works too) or, with `folder`, a folder. Default first. Desktop; empty on phones.
+   */
+  appsFor: (name: string, folder: boolean) => invoke<AppChoice[]>("apps_for", { name, folder }),
+  /** Opens a local file or folder with `app` (an `AppChoice.path`; "" is the default app). */
+  openWith: (path: string, app: string) => invoke<void>("open_with", { path, app }),
+  /** Windows: the system's "How do you want to open this file?" window. */
+  openWithChooser: (path: string) => invoke<void>("open_with_chooser", { path }),
   /** System share sheet with local files (phones; macOS share menu where available). */
   shareFiles: (paths: string[]) => invoke<void>("share_files", { paths }),
   /** System share sheet with text, such as a share link. */
@@ -238,6 +247,16 @@ export const api = {
    */
   localPath: (profileId: string, bucket: string, key: string) =>
     invoke<string | null>("local_path", { profileId, bucket, key }),
+};
+
+/** An app from `appsFor`: "Open with ▸" lists these. */
+export type AppChoice = {
+  name: string;
+  /** what `openWith` takes: the app bundle on macOS, "" for "the default app" on Windows / Linux */
+  path: string;
+  isDefault: boolean;
+  /** a small PNG data URL (macOS) */
+  icon: string | null;
 };
 
 /** Editable object headers; see `updateObjectProps`. `metadata` replaces all user metadata when given. */

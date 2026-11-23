@@ -4238,6 +4238,41 @@ body.dragging-items * {
   font-weight: 600;
 }
 
+/* ---------------------------------------------------------------- menus: submenus, app icons */
+/* the row whose submenu is open stays lit while the pointer or focus is in the submenu */
+.ctx-item.open:not(:focus) {
+  background: color-mix(in srgb, var(--accent-solid) 22%, transparent);
+}
+.ctx-item .ctx-more {
+  margin-right: -3px;
+  color: var(--faint);
+}
+.ctx-item:focus .ctx-more {
+  color: inherit;
+}
+.ctx-sub {
+  min-width: 200px;
+  max-width: 320px;
+  transform-origin: top left;
+  animation-duration: 0.1s;
+}
+.ctx-sub .ctx-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-img {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin: 0 -0.5px;
+  object-fit: contain;
+}
+.ctx-loading {
+  padding: 7px 9px;
+  font-weight: 500;
+}
+
 /* ---------------------------------------------------------------- toasts: details, dismiss */
 .toast {
   align-items: flex-start;
