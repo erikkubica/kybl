@@ -27,7 +27,8 @@ use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC
 use serde::{Deserialize, Serialize};
 use tauri::{ipc::InvokeBody, AppHandle, State};
 
-use crate::state::{client_for, err, load_profiles, sdk_err, AppState};
+use crate::state::{err, load_profiles, sdk_err, AppState};
+use crate::storage::{Conn, Storage, WriteOpts, WriteOutcome, WriteSource};
 
 /// What the frontend needs to know about an opened or saved document.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
@@ -373,7 +374,14 @@ pub async fn doc_open(
     path: String,
     max_bytes: u64,
 ) -> Result<tauri::ipc::Response, String> {
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match crate::storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        // this computer's files and the other providers: read through the storage core
+        Conn::Other(s) => {
+            let (meta, bytes) = other_open(&*s, &root, &path, max_bytes).await?;
+            return Ok(tauri::ipc::Response::new(frame(&meta, &bytes)));
+        }
+    };
     let cache = crate::filecache::get(&app);
     // Seen before (a preview, a download, "Open"): a HEAD tells whether the copy on disk is still
     // the current version. Never cached: straight to the GET, no HEAD spent.
@@ -395,6 +403,57 @@ pub async fn doc_open(
         tokio::task::spawn_blocking(move || c.store_bytes(&profile_id, &root, &path, &id, &bytes));
     }
     Ok(tauri::ipc::Response::new(body))
+}
+
+// ---------------------------------------------------------------- other connections
+
+fn entry_meta(e: &crate::storage::Entry) -> DocMeta {
+    DocMeta {
+        etag: e.etag.as_deref().map(|t| norm_etag(t).to_string()),
+        size: e.size.max(0) as u64,
+        modified: e.modified,
+        content_type: e.mime.clone(),
+        version: None,
+        warning: None,
+    }
+}
+
+/// A file of a connection that isn't S3 (this computer, SFTP, Drive…), with what the editor
+/// needs to save it back safely.
+async fn other_open(s: &dyn Storage, root: &str, path: &str, max_bytes: u64) -> Result<(DocMeta, Vec<u8>), String> {
+    let e = s.stat(root, path).await.map_err(|e| e.to_string())?.ok_or_else(|| "This file is no longer there.".to_string())?;
+    if e.size.max(0) as u64 > max_bytes {
+        return Err(TOO_LARGE.into());
+    }
+    let mut meta = entry_meta(&e);
+    let r = s.read(root, path, None, None).await.map_err(|e| e.to_string())?;
+    if meta.content_type.is_none() {
+        meta.content_type = r.content_type.clone();
+    }
+    let bytes = r.collect(max_bytes).await.map_err(|_| TOO_LARGE.to_string())?;
+    meta.size = bytes.len() as u64;
+    Ok((meta, bytes))
+}
+
+/// Saves an edit to a connection that isn't S3, refusing (CONFLICT) when the file changed since
+/// it was opened, like the S3 path does.
+async fn other_save(s: &dyn Storage, root: &str, key: &str, bytes: Vec<u8>, expect: &Precondition) -> Result<DocMeta, String> {
+    use crate::storage::Precondition as Pre;
+    let now = s.stat(root, key).await.map_err(|e| e.to_string())?.map(|e| entry_meta(&e));
+    check(expect, now.as_ref())?;
+    let precondition = match (expect, &now) {
+        (Precondition::Absent { .. }, _) => Pre::IfNoneMatch,
+        (Precondition::Match { .. }, Some(n)) => Pre::IfUnchanged { etag: n.etag.clone(), size: n.size as i64, modified: n.modified },
+        _ => Pre::None,
+    };
+    let opts = WriteOpts { preserve_meta: true, precondition, ..Default::default() };
+    let never = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    match s.write(root, key, WriteSource::Bytes(bytes.into()), opts, &|_, _| {}, &never).await {
+        Ok(WriteOutcome::Done(e)) => Ok(entry_meta(&e)),
+        Ok(WriteOutcome::Conflict(now)) => Err(conflict(now.map(|e| entry_meta(&e)).as_ref())),
+        Ok(WriteOutcome::Cancelled) => Err("The save was stopped.".into()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 fn ident(m: &DocMeta) -> crate::filecache::Ident {
@@ -422,7 +481,10 @@ pub async fn doc_save(app: AppHandle, state: State<'_, AppState>, request: tauri
         .unwrap_or_default();
     let guard = guard_for(&provider);
     let keep_kms = provider == "aws";
-    let client = client_for(&app, &state, &profile_id).await?;
+    let client = match crate::storage::connect(&app, &state, &profile_id).await? {
+        Conn::S3(c) => c,
+        Conn::Other(s) => return other_save(&*s, &bucket, &key, bytes, &expect).await,
+    };
     let cache = crate::filecache::get(&app);
     // editor saves are small (EDIT_MAX), so keeping a copy for the cache costs little
     let kept = cache.map(|_| bytes.clone());
