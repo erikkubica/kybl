@@ -6,9 +6,14 @@
 //!   that root's contents). Keys inside are `prefix + path`.
 //! - **Listings** are cached for [`TTL`] (Finder asks for the same folder many times a second),
 //!   and dropped as soon as Kybl itself changes something in that folder. A lookup of one file
-//!   lists its folder once instead of asking the server about each name.
-//! - **Reads** go through the block cache ([`super::cache`]): ranged reads, kept on disk, with
-//!   the next block fetched ahead while a file is read front to back.
+//!   lists its folder once instead of asking the server about each name. Past [`TTL`] (up to
+//!   [`STALE`]) the cached listing is still answered at once and a fresh one is fetched behind
+//!   it: macOS's WebDAV client gives up on slow answers (Finder then freezes or shows an empty
+//!   folder), and a big folder is several pages from the server. Asks for the same folder at the
+//!   same time share one listing. The list of roots and the quota work the same way.
+//! - **Reads** go through the block cache ([`super::cache`]): ranged reads, kept on disk. Blocks
+//!   are fetched ahead only while a file is read front to back; a lone read (Finder peeking at a
+//!   video's start or end to draw its icon) fetches just the block it needs.
 //! - **Writes** go to a local file and are uploaded in the background ([`super::writeback`]).
 //!   Until then the drive shows the local copy.
 //! - **Clutter** (`._*`, `.DS_Store`, Spotlight and Trash folders) never reaches the server
@@ -17,9 +22,14 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fmt,
+    future::Future,
+    hash::Hash,
     io::{Read, Seek, SeekFrom, Write},
     path::PathBuf,
-    sync::{atomic::AtomicBool, Arc, Mutex, Weak},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex, Weak,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -40,8 +50,18 @@ use crate::storage::{BoxFuture, Entry, ErrKind, Loc, ServerCopy, Storage, Storag
 
 /// How long a folder listing is trusted.
 pub const TTL: Duration = Duration::from_secs(10);
+/// How long an older listing is still answered at once while a fresh one is fetched; past it the
+/// ask waits for the fresh one (a folder last seen long ago may have changed a lot).
+pub const STALE: Duration = Duration::from_secs(5 * 60);
+/// How long the list of roots is trusted (an older one is answered while it is refreshed).
+const ROOTS_TTL: Duration = Duration::from_secs(60);
 /// How long the storage quota is trusted.
 const QUOTA_TTL: Duration = Duration::from_secs(60);
+/// How long the first ask for the quota waits for it. Finder asks for it with the drive's top
+/// folder; a store that is slow to count (or can't) must not hold the listing up.
+const QUOTA_WAIT: Duration = Duration::from_millis(500);
+/// The most blocks fetched ahead of a file read front to back.
+const READ_AHEAD: u64 = 8;
 
 /// Hands out the drive's connection (the registry in the app, a fixed store in tests).
 pub type Opener = Arc<dyn Fn() -> BoxFuture<'static, Result<Arc<dyn Storage>, String>> + Send + Sync>;
@@ -156,6 +176,49 @@ impl DavDirEntry for DirEntry {
     }
 }
 
+// ---------------------------------------------------------------- one request for many
+
+/// The result of a backend call, shared by everyone who asked while it was under way.
+type Flight<T> = Arc<tokio::sync::OnceCell<FsResult<T>>>;
+
+/// Backend calls under way by key: a second ask for the same thing joins the first instead of
+/// making its own (Finder sends several PROPFINDs of the same folder at once).
+struct Flights<K, T> {
+    map: Mutex<HashMap<K, (u64, Flight<T>)>>,
+}
+
+impl<K, T> Default for Flights<K, T> {
+    fn default() -> Self {
+        Self { map: Mutex::default() }
+    }
+}
+
+impl<K: Hash + Eq + Clone, T: Clone> Flights<K, T> {
+    /// Runs `f`, or joins the call for `k` under way. `epoch` is the cache epoch the caller saw:
+    /// a call started before something changed (another epoch) is never joined, since its answer
+    /// may not show that change.
+    async fn run<F: Future<Output = FsResult<T>>>(&self, k: K, epoch: u64, f: impl FnOnce() -> F) -> FsResult<T> {
+        let cell = {
+            let mut map = self.map.lock().unwrap();
+            match map.get(&k) {
+                Some((e, c)) if *e == epoch => c.clone(),
+                _ => {
+                    let c = Flight::default();
+                    map.insert(k.clone(), (epoch, c.clone()));
+                    c
+                }
+            }
+        };
+        let r = cell.get_or_init(f).await.clone();
+        // the first one out clears it, so a failure is tried again next time
+        let mut map = self.map.lock().unwrap();
+        if map.get(&k).is_some_and(|(_, c)| Arc::ptr_eq(c, &cell)) {
+            map.remove(&k);
+        }
+        r
+    }
+}
+
 // ---------------------------------------------------------------- the file system
 
 /// One folder's children, as listed.
@@ -186,12 +249,22 @@ type Roots = Arc<Vec<(String, String, bool)>>;
 type QuotaPair = (u64, Option<u64>);
 
 pub struct Inner {
+    /// this drive itself, for work that goes on after a request is answered
+    me: Weak<Inner>,
     open: Opener,
     spec: Spec,
     started: SystemTime,
     listings: Mutex<HashMap<(String, String), Arc<Listing>>>,
+    listing_calls: Flights<(String, String), Arc<Listing>>,
+    /// goes up whenever Kybl drops listings because it changed something: a listing fetched
+    /// from before isn't cached or shared
+    epoch: AtomicU64,
     roots: Mutex<Option<(Instant, Roots)>>,
+    roots_calls: Flights<(), Roots>,
     quota: Mutex<Option<(Instant, Option<QuotaPair>)>>,
+    quota_calls: Flights<(), Option<QuotaPair>>,
+    /// per file version read lately: (last block asked for, blocks asked for in a row)
+    reads: Mutex<HashMap<String, (u64, u32)>>,
     pub blocks: Arc<BlockCache>,
     pub uploads: Arc<WriteBack>,
     junk: JunkStore,
@@ -204,13 +277,19 @@ pub struct KyblFs(pub Arc<Inner>);
 
 impl KyblFs {
     pub fn new(open: Opener, spec: Spec, blocks: Arc<BlockCache>, uploads: Arc<WriteBack>) -> Self {
-        let inner = Arc::new(Inner {
+        let inner = Arc::new_cyclic(|me| Inner {
+            me: me.clone(),
             open,
             spec,
             started: SystemTime::now(),
             listings: Mutex::default(),
+            listing_calls: Flights::default(),
+            epoch: AtomicU64::new(0),
             roots: Mutex::default(),
+            roots_calls: Flights::default(),
             quota: Mutex::default(),
+            quota_calls: Flights::default(),
+            reads: Mutex::default(),
             blocks,
             uploads: uploads.clone(),
             junk: JunkStore::default(),
@@ -253,13 +332,37 @@ impl Inner {
         String::from_utf8_lossy(path.as_bytes()).trim_matches('/').to_string()
     }
 
-    /// The roots of a drive that shows all of them, as folder names.
-    async fn roots(&self) -> FsResult<Roots> {
-        if let Some((at, r)) = &*self.roots.lock().unwrap()
-            && at.elapsed() < Duration::from_secs(60)
-        {
-            return Ok(r.clone());
+    /// Runs `f` in the background, on its own task, so it finishes even when the request that
+    /// started it is answered (or dropped) first.
+    fn background<F>(&self, f: impl FnOnce(Arc<Inner>) -> F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        if let Some(me) = self.me.upgrade() {
+            tokio::spawn(f(me));
         }
+    }
+
+    /// The roots of a drive that shows all of them, as folder names. An older list is answered
+    /// at once and refreshed behind it: roots rarely change, and every path of the drive needs it.
+    async fn roots(&self) -> FsResult<Roots> {
+        let cached = self.roots.lock().unwrap().clone();
+        if let Some((at, r)) = cached {
+            if at.elapsed() >= ROOTS_TTL {
+                self.background(|me| async move {
+                    let _ = me.fetch_roots().await;
+                });
+            }
+            return Ok(r);
+        }
+        self.fetch_roots().await
+    }
+
+    async fn fetch_roots(&self) -> FsResult<Roots> {
+        self.roots_calls.run((), 0, || self.list_roots()).await
+    }
+
+    async fn list_roots(&self) -> FsResult<Roots> {
         let s = self.storage().await?;
         let mut out: Vec<(String, String, bool)> = Vec::new();
         for r in s.roots().await.map_err(fs_err)? {
@@ -311,14 +414,35 @@ impl Inner {
         false
     }
 
-    /// The folder `dir` ("" or ending with `/`), from the cache while it is fresh.
+    /// The folder `dir` ("" or ending with `/`), from the cache while it is fresh; while it is
+    /// merely stale, from the cache too, with a fresh listing fetched behind it.
     async fn listing(&self, root: &str, dir: &str) -> FsResult<Arc<Listing>> {
         let k = (root.to_string(), dir.to_string());
-        if let Some(l) = self.listings.lock().unwrap().get(&k)
-            && l.at.elapsed() < TTL
-        {
-            return Ok(l.clone());
+        let cached = self.listings.lock().unwrap().get(&k).cloned();
+        if let Some(l) = cached {
+            let age = l.at.elapsed();
+            if age < TTL {
+                return Ok(l);
+            }
+            if age < STALE {
+                let (root, dir) = k;
+                self.background(|me| async move {
+                    let _ = me.fetch_listing(&root, &dir).await;
+                });
+                return Ok(l);
+            }
         }
+        self.fetch_listing(root, dir).await
+    }
+
+    /// A fresh listing of `dir`, shared with anyone asking for it at the same time.
+    async fn fetch_listing(&self, root: &str, dir: &str) -> FsResult<Arc<Listing>> {
+        let epoch = self.epoch.load(Ordering::SeqCst);
+        self.listing_calls.run((root.to_string(), dir.to_string()), epoch, || self.list_now(root, dir, epoch)).await
+    }
+
+    async fn list_now(&self, root: &str, dir: &str, epoch: u64) -> FsResult<Arc<Listing>> {
+        let started = Instant::now();
         let s = self.storage().await?;
         let mut l = Listing { at: Instant::now(), dirs: BTreeSet::new(), files: BTreeMap::new() };
         let mut token = None;
@@ -348,24 +472,54 @@ impl Inner {
                 None => break,
             }
         }
+        super::server::timing(|| format!("list {dir:?}: {} items in {} ms", l.dirs.len() + l.files.len(), started.elapsed().as_millis()));
         let l = Arc::new(l);
         let mut cache = self.listings.lock().unwrap();
-        if cache.len() > 2000 {
-            cache.retain(|_, v| v.at.elapsed() < TTL);
+        // something changed while this was listed: answer with it, but don't keep it
+        if self.epoch.load(Ordering::SeqCst) != epoch {
+            return Ok(l);
         }
-        cache.insert(k, l.clone());
+        if cache.len() > 2000 {
+            cache.retain(|_, v| v.at.elapsed() < STALE);
+        }
+        cache.insert((root.to_string(), dir.to_string()), l.clone());
         Ok(l)
     }
 
     /// Kybl changed something in the folder holding `key`.
     fn forget_parent(&self, root: &str, key: &str) {
         let (parent, _) = split_key(key.trim_end_matches('/'));
-        self.listings.lock().unwrap().remove(&(root.to_string(), parent));
+        let mut cache = self.listings.lock().unwrap();
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+        cache.remove(&(root.to_string(), parent));
     }
 
     /// A folder and everything below it changed.
     fn forget_tree(&self, root: &str, dir: &str) {
-        self.listings.lock().unwrap().retain(|(r, d), _| !(r == root && d.starts_with(dir)));
+        let mut cache = self.listings.lock().unwrap();
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+        cache.retain(|(r, d), _| !(r == root && d.starts_with(dir)));
+    }
+
+    /// How many blocks to fetch ahead of block `idx` of `v`: none for a lone read, more and more
+    /// while the file is read front to back. Kept per file version, not per open file: macOS's
+    /// client reads a file as many ranged GETs, each a new open.
+    fn read_ahead(&self, v: &FileVersion, idx: u64) -> u64 {
+        let k = format!("{}\n{}\n{}", v.root, v.key, v.version);
+        let mut reads = self.reads.lock().unwrap();
+        if reads.len() > 512 {
+            reads.clear();
+        }
+        let (last, run) = reads.get(&k).copied().unwrap_or((u64::MAX, 0));
+        let run = if last != u64::MAX && idx == last + 1 {
+            run + 1
+        } else if idx == last {
+            run
+        } else {
+            0
+        };
+        reads.insert(k, (idx, run));
+        if run == 0 { 0 } else { (1u64 << run.min(3)).min(READ_AHEAD) }
     }
 
     /// What the server has at `key` (not counting pending saves). Matches names that differ
@@ -794,16 +948,67 @@ impl Inner {
         }
     }
 
+    /// The quota, never slow: the last one known (refreshed behind it when old), else whatever
+    /// arrives within [`QUOTA_WAIT`]; past that "unknown" (Finder shows no free space) until the
+    /// call, which goes on in the background, has an answer.
     async fn quota(&self) -> FsResult<(u64, Option<u64>)> {
-        if let Some((at, q)) = &*self.quota.lock().unwrap()
-            && at.elapsed() < QUOTA_TTL
-        {
+        let cached = *self.quota.lock().unwrap();
+        if let Some((at, q)) = cached {
+            if at.elapsed() >= QUOTA_TTL {
+                self.background(|me| async move {
+                    let _ = me.fetch_quota().await;
+                });
+            }
             return q.ok_or(FsError::NotImplemented);
         }
-        let s = self.storage().await?;
-        let q = s.quota().await.ok().flatten().map(|q| (q.used, q.total));
-        *self.quota.lock().unwrap() = Some((Instant::now(), q));
-        q.ok_or(FsError::NotImplemented)
+        let Some(me) = self.me.upgrade() else { return Err(FsError::NotImplemented) };
+        let call = tokio::spawn(async move { me.fetch_quota().await });
+        match tokio::time::timeout(QUOTA_WAIT, call).await {
+            Ok(Ok(Ok(q))) => q.ok_or(FsError::NotImplemented),
+            _ => {
+                // "unknown" for now, already old: later asks answer at once (and join or start
+                // a refresh) instead of each waiting again
+                let mut q = self.quota.lock().unwrap();
+                if q.is_none() {
+                    let old = Instant::now().checked_sub(QUOTA_TTL).unwrap_or_else(Instant::now);
+                    *q = Some((old, None));
+                }
+                Err(FsError::NotImplemented)
+            }
+        }
+    }
+
+    /// What Kybl does after it changed something in `dir` (and below).
+    #[cfg(test)]
+    pub fn forget_folder(&self, root: &str, dir: &str) {
+        self.forget_tree(root, dir);
+    }
+
+    /// Makes every cached listing, the roots and the quota look `by` older (tests of what
+    /// happens past the TTLs, without waiting for them).
+    #[cfg(test)]
+    pub fn age_caches(&self, by: Duration) {
+        let older = |at: Instant| at.checked_sub(by).unwrap_or(at);
+        for l in self.listings.lock().unwrap().values_mut() {
+            *l = Arc::new(Listing { at: older(l.at), dirs: l.dirs.clone(), files: l.files.clone() });
+        }
+        if let Some((at, _)) = &mut *self.roots.lock().unwrap() {
+            *at = older(*at);
+        }
+        if let Some((at, _)) = &mut *self.quota.lock().unwrap() {
+            *at = older(*at);
+        }
+    }
+
+    async fn fetch_quota(&self) -> FsResult<Option<QuotaPair>> {
+        self.quota_calls
+            .run((), 0, || async {
+                let s = self.storage().await?;
+                let q = s.quota().await.ok().flatten().map(|q| (q.used, q.total));
+                *self.quota.lock().unwrap() = Some((Instant::now(), q));
+                Ok(q)
+            })
+            .await
     }
 }
 
@@ -886,16 +1091,15 @@ impl RemoteRead {
         {
             return Ok(b.clone());
         }
-        let fetched = !self.fs.blocks.has(&self.ver, idx);
+        let ahead = self.fs.read_ahead(&self.ver, idx);
         let b = self.fs.blocks.block(&*self.storage, &self.ver, idx).await.map_err(fs_err)?;
         self.cur = Some((idx, b.clone()));
-        // read front to back: fetch the next block while this one is used
-        let next = idx + 1;
-        if fetched && next < self.ver.blocks() && !self.fs.blocks.has(&self.ver, next) {
-            let (blocks, storage, ver) = (self.fs.blocks.clone(), self.storage.clone(), self.ver.clone());
-            tokio::spawn(async move {
-                let _ = blocks.block(&*storage, &ver, next).await;
-            });
+        // read front to back: fetch the next blocks while this one is used (a lone read, like
+        // Finder peeking at the end of a video for its icon, fetches nothing extra)
+        for next in idx + 1..=idx + ahead {
+            if !self.fs.blocks.prefetch(self.storage.clone(), &self.ver, next) {
+                break;
+            }
         }
         Ok(b)
     }
