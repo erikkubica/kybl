@@ -469,6 +469,21 @@ export function makeFileOps(c: OpsContext) {
   };
 
   // ---------------------------------------------------------------- rename
+  /** Whether folder `parent` lists an item named exactly `key` (not just the same letters in another case). */
+  const spelledSo = async (pid: string, b: string, parent: string, key: string) => {
+    let token: string | null = null;
+    try {
+      do {
+        const r = await api.listObjects(pid, b, parent, token);
+        if (r.folders.includes(key) || r.objects.some((o) => o.key === key)) return true;
+        token = r.nextToken;
+      } while (token);
+      return false;
+    } catch {
+      // can't tell: treat it as taken, so nothing is replaced unasked
+      return true;
+    }
+  };
   const askRename = (e: Entry) => {
     const { profile, bucket } = c;
     if (!profile || bucket == null) return;
@@ -493,7 +508,10 @@ export function makeFileOps(c: OpsContext) {
         const found = await existing(pid, b, [{ key: to, folder: isFolder }]);
         if (!found) return;
         let replaced = false;
-        if (found.has(to)) {
+        // on this computer's case-blind disks a new spelling of the same name finds the item itself:
+        // only a listed item spelled exactly so is another one (a case-sensitive disk)
+        const caseOnly = !!c.localPaths && to.toLowerCase() === e.key.toLowerCase() && found.has(to) && !(await spelledSo(pid, b, parent, to));
+        if (found.has(to) && !caseOnly) {
           if (isFolder) {
             toast("error", `There’s already a folder named “${name}” here. Pick another name.`);
             return;

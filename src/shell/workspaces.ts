@@ -26,6 +26,9 @@ export type PaneSnap = {
   view: PaneView;
   /** how far down its list was (not kept between launches) */
   scroll?: number;
+  /** what was selected, and the filter typed (not kept between launches either) */
+  selected?: string[];
+  query?: string;
   /** a terminal pane (src/terminal) in this folder; `loc` is null then */
   term?: TermPlace;
   /** in a recipe (recipes.ts): a terminal's startup commands, one per line */
@@ -92,7 +95,7 @@ export function copyName(list: Workspace[], name: string): string {
 
 /** A workspace of one pane at `snap` (a new workspace opens where the active pane is). */
 export function oneLayout(snap: PaneSnap | null): Layout {
-  return { tree: leaf("left"), links: [], recent: ["left"], panes: snap ? { left: { ...snap, scroll: undefined } } : {} };
+  return { tree: leaf("left"), links: [], recent: ["left"], panes: snap ? { left: { ...snap, scroll: undefined, selected: undefined, query: undefined } } : {} };
 }
 
 /** A deep copy (duplicating, saving the start): nothing shared with the one on screen. */

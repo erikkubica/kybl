@@ -13,8 +13,9 @@ export function shellCommands(h: PaletteHost): PaletteCommand[] {
   const noFolder = a.bucket == null ? "Open a folder first" : null;
   const picked = a.sel.selectedEntries.length;
   const noSel = noFolder ?? (picked ? null : "Select something first");
-  const multi = h.panes.length > 1;
-  const onePane = multi ? null : "Only one pane is open";
+  // panes on screen (terminals too) for closing, sizing and focusing; file panes for file-to-file commands
+  const onePane = h.paneCount > 1 ? null : "Only one pane is open";
+  const oneFilePane = h.panes.length > 1 ? null : "Needs a second file pane";
   const onDisk = !!a.caps?.localPaths;
   const workspaces = h.workspaces.length;
   /** a menu command, by its route id */
@@ -90,12 +91,12 @@ export function shellCommands(h: PaletteHost): PaletteCommand[] {
     r("close-pane", "Close Pane", { group: "Panes", icon: "x", shortcut: "⌘W", disabled: onePane }),
     { id: "app:close-other-panes", title: "Close Other Panes", group: "Panes", disabled: onePane, run: h.closeOtherPanes },
     { id: "app:equalize-panes", title: "Make Panes the Same Size", group: "Panes", icon: "columns", keywords: "equalize", disabled: onePane, run: h.equalizePanes },
-    r("switch-pane", "Switch Pane", { group: "Panes", shortcut: "Tab", disabled: onePane }),
-    r("swap-panes", "Swap Panes", { group: "Panes", icon: "swap", shortcut: "⇧⌘S", disabled: onePane }),
-    r("same-folder", "Same Folder in Other Pane", { group: "Panes", disabled: onePane ?? noFolder }),
-    r("compare-folders", "Compare Folders", { group: "Panes", icon: "compare", keywords: "diff", disabled: onePane ?? noFolder }),
-    r("pane-copy", "Copy to Other Pane", { group: "Panes", icon: "copy", shortcut: "F5", disabled: onePane ?? noSel }),
-    r("pane-move", "Move to Other Pane", { group: "Panes", icon: "move", shortcut: "F6", disabled: onePane ?? noSel }),
+    r("switch-pane", "Switch Pane", { group: "Panes", shortcut: "Tab", disabled: oneFilePane }),
+    r("swap-panes", "Swap Panes", { group: "Panes", icon: "swap", shortcut: "⇧⌘S", disabled: oneFilePane }),
+    r("same-folder", "Same Folder in Other Pane", { group: "Panes", disabled: oneFilePane ?? noFolder }),
+    r("compare-folders", "Compare Folders", { group: "Panes", icon: "compare", keywords: "diff", disabled: oneFilePane ?? noFolder }),
+    r("pane-copy", "Copy to Other Pane", { group: "Panes", icon: "copy", shortcut: "F5", disabled: oneFilePane ?? noSel }),
+    r("pane-move", "Move to Other Pane", { group: "Panes", icon: "move", shortcut: "F6", disabled: oneFilePane ?? noSel }),
     ...h.syncPartners.map(
       (s): PaletteCommand => ({
         id: `app:sync-${s.id}`,

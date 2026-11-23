@@ -18,7 +18,16 @@ export function formatBytes(n: number, digits = 1): string {
     v /= base;
     i++;
   } while (v >= base && i < units.length - 1);
-  return `${v >= 100 ? v.toFixed(0) : v.toFixed(digits)} ${units[i]}`;
+  // the unit is picked on the rounded figure: 999.95 KB is "1.0 MB", 99.95 KB "100 KB"
+  const show = (x: number) => (x >= 100 ? x.toFixed(0) : x.toFixed(digits));
+  let s = show(v);
+  if (v < 100 && parseFloat(s) >= 100) s = v.toFixed(0);
+  if (parseFloat(s) >= base && i < units.length - 1) {
+    v /= base;
+    i++;
+    s = show(v);
+  }
+  return `${s} ${units[i]}`;
 }
 
 /** Full, unambiguous timestamp (tooltips, file info). */
@@ -63,9 +72,11 @@ export function formatSpeed(bps: number): string {
 
 export function formatEta(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return "";
-  if (seconds < 60) return `${Math.ceil(seconds)}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.ceil(seconds % 60)}s`;
-  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  // whole seconds first, so 119.2 s is "2m 0s", never "1m 60s"
+  const t = Math.ceil(seconds);
+  if (t < 60) return `${t}s`;
+  if (t < 3600) return `${Math.floor(t / 60)}m ${t % 60}s`;
+  return `${Math.floor(t / 3600)}h ${Math.floor((t % 3600) / 60)}m`;
 }
 
 export type FileClass =

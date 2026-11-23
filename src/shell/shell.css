@@ -289,6 +289,8 @@
   box-shadow: var(--shadow-lg);
   animation: ws-pop-in 0.12s var(--ease);
   transform-origin: top left;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 @keyframes ws-pop-in {
   from {
@@ -516,7 +518,7 @@ body.pane-dragging.pane-drag-refused * {
   box-shadow: var(--shadow-sm);
 }
 .pane-drop-zone.refused .pane-drop-label {
-  color: var(--muted);
+  color: var(--dim);
 }
 .pane-ghost-name {
   min-width: 0;

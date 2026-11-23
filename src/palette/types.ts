@@ -17,6 +17,8 @@ export type PaletteHost = {
   /** the active pane, and every pane on screen */
   active: Pane;
   panes: Pane[];
+  /** how many panes are on screen, terminals included */
+  paneCount: number;
   /** runs a menu / shortcut command by id (useShellCommands' route) */
   route: (id: string) => boolean;
   openConnection: (p: Profile, newPane: boolean) => void;

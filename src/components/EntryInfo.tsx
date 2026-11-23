@@ -473,7 +473,23 @@ export function SelectionInfo({
 /** One label/value line. With `onCopy` the whole line is a click-to-copy target. */
 function Prop({ label, mono, onCopy, children }: { label: string; mono?: boolean; onCopy?: () => void; children: React.ReactNode }) {
   return (
-    <div className={`prop ${onCopy ? "copyable" : ""}`} onClick={onCopy} title={onCopy ? "Click to copy" : undefined}>
+    <div
+      className={`prop ${onCopy ? "copyable" : ""}`}
+      onClick={onCopy}
+      title={onCopy ? "Click to copy" : undefined}
+      // reachable from the keyboard too: Tab to it, Enter or Space copies
+      role={onCopy ? "button" : undefined}
+      tabIndex={onCopy ? 0 : undefined}
+      onKeyDown={
+        onCopy
+          ? (ev) => {
+              if (ev.target !== ev.currentTarget || (ev.key !== "Enter" && ev.key !== " ")) return;
+              ev.preventDefault();
+              onCopy();
+            }
+          : undefined
+      }
+    >
       <dt title={label}>{label}</dt>
       <dd className={mono ? "mono" : ""}>{children}</dd>
       {onCopy && <Icon name="copy" size={12} className="copy-hint" />}

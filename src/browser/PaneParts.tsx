@@ -130,7 +130,7 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
         <span title={hereSize.error}>
           ·{" "}
           {hereSize.state === "done"
-            ? `Whole folder: ${formatBytes(hereSize.bytes)} in ${hereSize.objects.toLocaleString()} objects`
+            ? `Whole folder: ${formatBytes(hereSize.bytes)} in ${hereSize.objects.toLocaleString()} ${hereSize.objects === 1 ? "object" : "objects"}`
             : hereSize.state === "loading"
               ? `Adding up the folder… ${formatBytes(hereSize.bytes)} so far`
               : "Couldn’t work out the folder size"}

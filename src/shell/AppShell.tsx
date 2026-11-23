@@ -11,6 +11,7 @@ import type { MountInfo } from "../api";
 import { tidyMenu } from "../desktop/menus";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTerminalPanes } from "../terminal/useTerminalPanes";
+import { terminalBusy } from "../terminal/api";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage, errSummary } from "../api";
@@ -38,7 +39,7 @@ import { PANE_IDS, paneKeys, THIS_MAC, type Loc, type PaneId, type PaneView } fr
 import { forgetCaps, peekCaps } from "../useCaps";
 import { sendItems } from "./crossPane";
 import { clearAuthNeeded, useAuthNeeded } from "../connections/authNeeded";
-import { closestLocalRoot, rootsMode } from "../connections/roots";
+import { closestLocalRoot, rootIcon, rootsMode } from "../connections/roots";
 import { canView, LazyDocumentView, viewerFor } from "../viewers/registry";
 import { asExport } from "../connections/native";
 import type { DocumentHandle } from "../viewers/DocumentView";
@@ -537,12 +538,26 @@ export function AppShell() {
     requestAnimationFrame(() => focusPaneList(id));
   };
 
-  /** Shows a connection in a pane: expands it in the sidebar and opens a bucket of it. */
+  /** the latest connectIn per pane: an older one whose bucket list comes late opens nothing */
+  const connectGen = useRef(new Map<PaneId, number>());
+  /**
+   * Shows a connection in a pane: expands it in the sidebar and opens a bucket of it, unless the
+   * pane went somewhere else while its bucket list loaded.
+   */
   const connectIn = useCallback(
     async (id: PaneId, p: Profile, preferBucket?: string, startPrefix = "") => {
-      paneById(id).showConnection(p.id);
+      const n = (connectGen.current.get(id) ?? 0) + 1;
+      connectGen.current.set(id, n);
+      const before = paneById(id);
+      const was = { here: before.here, profile: before.profile?.id };
+      before.showConnection(p.id);
       conns.expand(p.id);
       const names = await conns.loadBuckets(p, true);
+      const now = paneById(id);
+      // still as it was (not drawn again yet), or still waiting on this connection
+      const untouched = now.here === was.here && now.profile?.id === was.profile;
+      const waiting = now.here == null && now.profile?.id === p.id;
+      if (connectGen.current.get(id) !== n || !(untouched || waiting)) return;
       const pick = preferBucket != null && names.includes(preferBucket) ? preferBucket : p.bucket || names[0];
       // "" is a root too: the one root of a server connection
       if (pick != null) paneById(id).openBucket(p, pick, pick === preferBucket ? startPrefix : "");
@@ -701,6 +716,7 @@ export function AppShell() {
       p.go(profiles.find((x) => x.id === at.profileId)!, at.bucket, at.prefix);
     } else p.showConnection(src.profile?.id ?? null);
     if (p.view !== src.view) p.setView(src.view);
+    keepScrolls();
     setTree(splitPane(t, id, dir, fresh, before));
     setActiveId(fresh);
     focusSoon(fresh);
@@ -727,10 +743,55 @@ export function AppShell() {
     // a terminal's slot is a file pane again (its shell ends unless another workspace has the pane now)
     term.assign(id, undefined);
   };
-  /** Closes a pane; false when it is the only one (⌘W then closes the window, as it always did). */
+  /**
+   * Asks before terminals still running a program close with their panes (their shells end):
+   * true to go ahead. An idle shell, or one not known to be busy, closes without asking.
+   */
+  const okToEndShells = async (sids: (string | undefined)[], label: string) => {
+    const busy = await busyShells(sids);
+    return !busy || confirmEndShells(busy, label);
+  };
+  /** how many of sessions `sids` run a program */
+  const busyShells = async (sids: (string | undefined)[]) => {
+    const live = sids.filter((s): s is string => !!s);
+    return live.length ? (await Promise.all(live.map((s) => terminalBusy(s)))).filter((b) => b === true).length : 0;
+  };
+  const confirmEndShells = (busy: number, label: string) =>
+    dialogs.confirm({
+      title: busy === 1 ? "A program is still running in a terminal" : `Programs are still running in ${busy} terminals`,
+      label,
+      danger: true,
+      message: <p>{busy === 1 ? "Closing ends it, and what the terminal has printed is gone." : "Closing ends them, and what the terminals have printed is gone."}</p>,
+    });
+  /** the terminals' sessions among panes `of` on screen */
+  const sidsOf = (of: PaneId[]) => of.map((x) => term.terms[x]?.sid);
+  /** the terminals' sessions in workspace `wsId` */
+  const wsSids = (wsId: string) => {
+    const l = layoutOf(wsId);
+    return wsId === ws.active ? sidsOf(leaves(l.tree)) : leaves(l.tree).map((x) => l.panes[x]?.term?.sid);
+  };
+  /** the latest close steps, for after a confirm (by then this render's values are old) */
+  const paneLater = useRef({ close: (_id: PaneId): boolean => false, closeOthers: (_id: PaneId) => {}, takeFromLive: (_id: PaneId) => {} });
+  /**
+   * Closes a pane, asking first when it is a terminal with a program running; false when it is
+   * the only one (⌘W then closes the window, as it always did).
+   */
   const close = (id: PaneId = activeId) => {
+    if (!closePane(treeRef.current, id)) return false;
+    const sid = term.terms[id]?.sid;
+    if (!sid) return closeNow(id);
+    void okToEndShells([sid], "Close terminal").then((ok) => ok && paneLater.current.close(id));
+    return true;
+  };
+  const closeOthers = (id: PaneId = activeId) => {
+    const sids = sidsOf(ids.filter((x) => x !== id));
+    if (!sids.some(Boolean)) return closeOthersNow(id);
+    void okToEndShells(sids, "Close other panes").then((ok) => ok && paneLater.current.closeOthers(id));
+  };
+  const closeNow = (id: PaneId) => {
     const next = closePane(treeRef.current, id);
     if (!next) return false;
+    keepScrolls();
     vacate(id);
     setTree(next);
     unfoldIfRoom(next);
@@ -739,7 +800,8 @@ export function AppShell() {
     if (id === activeId) focusSoon(recent.find((x) => x !== id && leaves(next).includes(x)) ?? leaves(next)[0]);
     return true;
   };
-  const closeOthers = (id: PaneId = activeId) => {
+  const closeOthersNow = (id: PaneId) => {
+    keepScrolls();
     for (const x of ids) if (x !== id) vacate(x);
     setTree(leaf(id));
     unfoldIfRoom(leaf(id));
@@ -795,7 +857,7 @@ export function AppShell() {
   /** a workspace's panes' Back / Forward while another is on screen (this session only) */
   const histories = useRef(new Map<string, Partial<Record<PaneId, HistorySnap>>>());
   /** how far down a pane's list was, given back once that list is there again */
-  const pendingScroll = useRef(new Map<PaneId, { loc: Loc; top: number }>());
+  const pendingScroll = useRef(new Map<PaneId, { loc: Loc; top: number; selected?: string[] }>());
   /** the workspace being renamed in its tab, and the one whose settings are open */
   const [wsEditing, setWsEditing] = useState<string | null>(null);
   const [wsSettings, setWsSettings] = useState<{ id: string; anchor: DOMRect } | null>(null);
@@ -806,8 +868,12 @@ export function AppShell() {
     const p = slot(id);
     const t = term.terms[id];
     if (t) return { loc: null, view: p.viewState(), term: t };
-    const top = withScroll ? listScroller(id)?.scrollTop : undefined;
-    return { loc: p.here, view: p.viewState(), ...(top ? { scroll: top } : {}) };
+    if (!withScroll) return { loc: p.here, view: p.viewState() };
+    // this session only: how far down, what is selected and the filter typed
+    const top = listScroller(id)?.scrollTop;
+    const selected = [...p.sel.selected];
+    const query = p.ent.query;
+    return { loc: p.here, view: p.viewState(), ...(top ? { scroll: top } : {}), ...(selected.length ? { selected } : {}), ...(query ? { query } : {}) };
   };
   /** What the workspace on screen shows now. */
   const liveLayout = (withScroll = false): Layout => ({
@@ -850,8 +916,9 @@ export function AppShell() {
       }
       if (!p.ent.fresh) continue;
       pendingScroll.current.delete(id);
+      if (s.selected) p.sel.setSelected(new Set(s.selected));
       const el = listScroller(id);
-      if (el) el.scrollTop = s.top;
+      if (el && s.top) el.scrollTop = s.top;
     }
   });
 
@@ -882,7 +949,8 @@ export function AppShell() {
       p.go(prof, at.bucket, at.prefix, { history: false });
       p.history.load(hist, at);
       void conns.loadBuckets(prof);
-      if (s?.scroll && s.loc) pendingScroll.current.set(id, { loc: s.loc, top: s.scroll });
+      if (s?.query) p.ent.setQuery(s.query);
+      if ((s?.scroll || s?.selected?.length) && s.loc) pendingScroll.current.set(id, { loc: s.loc, top: s.scroll ?? 0, selected: s.selected });
     } else {
       p.showConnection(null);
       p.history.load(null, null);
@@ -1018,11 +1086,22 @@ export function AppShell() {
     const w = ws.list.find((x) => x.id === id);
     if (!w || ws.list.length < 2) return;
     const n = paneCount(layoutOf(id));
-    if (n > 1) {
+    const sids = wsSids(id);
+    const terms = sids.filter(Boolean).length;
+    // a program running in one of its terminals asks for itself; otherwise several panes ask once
+    const busy = await busyShells(sids);
+    if (busy) {
+      if (!(await confirmEndShells(busy, "Close workspace"))) return;
+    } else if (n > 1) {
       const ok = await dialogs.confirm({
         title: `Close “${w.name}”?`,
         label: "Close workspace",
-        message: <p>Its {n} panes and the folders they show close with it. No files are touched.</p>,
+        message: (
+          <p>
+            Its {n} panes and the folders they show close with it{terms ? (terms === 1 ? ", and its terminal ends" : `, and its ${terms} terminals end`) : ""}. No files are
+            touched.
+          </p>
+        ),
       });
       if (!ok) return;
     }
@@ -1031,7 +1110,10 @@ export function AppShell() {
   const closeOtherWorkspaces = async (id: string) => {
     const others = ws.list.filter((x) => x.id !== id);
     if (!others.length) return;
-    if (others.some((x) => paneCount(layoutOf(x.id)) > 1)) {
+    const busy = await busyShells(others.flatMap((x) => wsSids(x.id)));
+    if (busy) {
+      if (!(await confirmEndShells(busy, others.length === 1 ? "Close workspace" : "Close workspaces"))) return;
+    } else if (others.some((x) => paneCount(layoutOf(x.id)) > 1)) {
       const ok = await dialogs.confirm({
         title: others.length === 1 ? `Close “${others[0].name}”?` : `Close ${others.length} other workspaces?`,
         label: others.length === 1 ? "Close workspace" : "Close workspaces",
@@ -1138,7 +1220,7 @@ export function AppShell() {
   };
   /** Takes pane `id` off the screen: closed, or as the only one, an empty pane in its place. */
   const takeFromLive = (id: PaneId) => {
-    if (close(id)) return;
+    if (closeNow(id)) return;
     vacate(id);
     applyLayout(oneLayout(null), ws.active, null);
   };
@@ -1274,11 +1356,13 @@ export function AppShell() {
     splitBelow: (src, fill) => split("col", src, false, fill),
     setActive: setActiveId,
     focus: focusSoon,
-    close: takeFromLive,
+    // the terminal's own Close: asks first when a program runs in it
+    close: (id) => void okToEndShells(sidsOf([id]), "Close terminal").then((ok) => ok && paneLater.current.takeFromLive(id)),
     menu: dialogs.menu,
     toast,
     rootLabel: conns.rootLabel,
   };
+  paneLater.current = { close: closeNow, closeOthers: closeOthersNow, takeFromLive };
   // a shell ends once no workspace has its pane any more
   useEffect(() => term.gc(ws), [term.terms, ws]); // eslint-disable-line react-hooks/exhaustive-deps
   rec.host.current = {
@@ -1571,6 +1655,29 @@ export function AppShell() {
           ]),
     ]));
   };
+  /**
+   * A connection's roots in a menu (the rail's, the pane badge's), with the sidebar's wording and
+   * extras: S3 opens a bucket by name, Kybl Storage makes a new one, drives just list.
+   */
+  const rootMenuItems = (p: Profile, shown: string[], here: string | null, open: (b: string) => void, id: PaneId): MenuItem[] => {
+    const caps = peekCaps(p.id);
+    const buckets = rootsMode(p, caps) === "buckets";
+    const canCreate = caps ? caps.createRoot : p.provider === KYBL;
+    const own = p.id === THIS_MAC.id;
+    const icon = rootIcon(p.id);
+    const extra: MenuItem[] = own
+      ? []
+      : canCreate
+        ? [{ type: "sep" }, { type: "item", label: "New bucket…", icon: "plus", onClick: () => askNewBucket(p, id) }]
+        : buckets
+          ? [{ type: "sep" }, { type: "item", label: "Open bucket by name…", icon: "plus", onClick: () => askBucketName(p, id) }]
+          : [];
+    return [
+      ...shown.map((b): MenuItem => ({ type: "item", label: conns.rootLabel(p.id, b), icon, checked: b === here || undefined, onClick: () => open(b) })),
+      ...(!shown.length ? [{ type: "item" as const, label: conns.bucketsBy[p.id]?.note ?? (buckets ? "No buckets yet" : "Nothing here yet"), disabled: true, onClick: () => {} }] : []),
+      ...extra,
+    ];
+  };
   /** The folded sidebar: a connection's icon lists its buckets (a server's one root just opens). */
   const railPick = async (p: Profile, x: number, y: number) => {
     if (!active.profile) return void connectIn(active.id, p);
@@ -1581,21 +1688,8 @@ export function AppShell() {
     const names = await conns.loadBuckets(p);
     const hidden = new Set(conns.hiddenBuckets[p.id] ?? []);
     const shown = names.filter((b) => !hidden.has(b));
-    const own = p.id === THIS_MAC.id;
     const here = active.profile?.id === p.id ? active.bucket : null;
-    const note = conns.bucketsBy[p.id]?.note;
-    dialogs.menu(x, y, [
-      { type: "label", label: p.name },
-      ...shown.map((b) => ({
-        type: "item" as const,
-        label: conns.rootLabel(p.id, b),
-        icon: own ? ("folder" as const) : ("bucket" as const),
-        checked: b === here ? true : undefined,
-        onClick: () => (active.openBucket(p, b), focusListSoon()),
-      })),
-      ...(!shown.length ? [{ type: "item" as const, label: note ?? "No buckets yet", disabled: true, onClick: () => {} }] : []),
-      ...(own ? [] : [{ type: "sep" as const }, { type: "item" as const, label: "Open bucket by name…", icon: "plus" as const, onClick: () => askBucketName(p) }]),
-    ]);
+    dialogs.menu(x, y, [{ type: "label", label: p.name }, ...rootMenuItems(p, shown, here, (b) => (active.openBucket(p, b), focusListSoon()), active.id)]);
   };
   /** The badge before a pane's path: every connection, each with its buckets, opened in that pane. */
   const switchMenu = (id: PaneId, x: number, y: number) => {
@@ -1607,7 +1701,6 @@ export function AppShell() {
     };
     dialogs.menu(x, y, [
       ...profiles.map((p): MenuItem => {
-        const own = p.id === THIS_MAC.id;
         const current = pane.profile?.id === p.id;
         if (rootsMode(p, peekCaps(p.id)) === "single") return { type: "item", label: p.name, checked: current || undefined, onClick: () => open(p, "") };
         return {
@@ -1617,12 +1710,7 @@ export function AppShell() {
             const names = conns.bucketsBy[p.id]?.names?.length ? conns.bucketsBy[p.id].names : await conns.loadBuckets(p).catch(() => [] as string[]);
             const hidden = new Set(conns.hiddenBuckets[p.id] ?? []);
             const shown = names.filter((b) => !hidden.has(b));
-            const here = current ? pane.bucket : null;
-            return [
-              ...shown.map((b): MenuItem => ({ type: "item", label: conns.rootLabel(p.id, b), icon: own ? "folder" : "bucket", checked: b === here || undefined, onClick: () => open(p, b) })),
-              ...(!shown.length ? [{ type: "item" as const, label: conns.bucketsBy[p.id]?.note ?? "No buckets yet", disabled: true, onClick: () => {} }] : []),
-              ...(own ? [] : [{ type: "sep" as const }, { type: "item" as const, label: "Open bucket by name…", icon: "plus" as const, onClick: () => askBucketName(p, id) }]),
-            ];
+            return rootMenuItems(p, shown, current ? pane.bucket : null, (b) => open(p, b), id);
           },
         };
       }),
@@ -1725,6 +1813,7 @@ export function AppShell() {
       favorites: settings.favorites,
       active,
       panes: panesRef.current,
+      paneCount: ids.length,
       route: (id) => routeRef.current(id),
       openConnection: (p, newPane) => (newPane ? inNewPane((fresh) => void connectIn(fresh, p)) : openConnection(p)),
       openPlace: (loc, newPane, selectKey) => {
@@ -1776,7 +1865,8 @@ export function AppShell() {
       return p.profile && p.bucket != null ? p.id : null;
     },
     onDrop: (id, paths) => void paneById(id).ops.uploadPaths(paths),
-    onRefused: () => overlayUp() && toast("info", "Finish what’s open first, then drop the files again."),
+    // dropped where nothing takes them: behind a dialog, on a pane with no folder open, on a terminal
+    onRefused: () => toast("info", overlayUp() ? "Finish what’s open first, then drop the files again." : "Drop the files on a pane with a folder open to upload them there."),
     // over a workspace's tab: resting there opens it; letting go uploads into its active pane's folder
     tabs: {
       at: (x, y) => {

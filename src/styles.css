@@ -405,7 +405,7 @@ code {
   border: 0;
   border-radius: var(--r-sm);
   background: none;
-  color: var(--muted);
+  color: var(--dim);
   font: inherit;
   font-size: 13px;
   white-space: nowrap;
@@ -433,7 +433,7 @@ code {
   border: 0;
   border-radius: var(--r-sm);
   background: none;
-  color: var(--muted);
+  color: var(--dim);
   font: inherit;
   font-size: 13px;
   letter-spacing: 1px;
@@ -906,7 +906,8 @@ kbd {
 }
 .thead {
   height: 30px;
-  padding: 0 18px;
+  /* the body keeps its scrollbar's 10px (scrollbar-gutter): the header gives them up too, so columns line up */
+  padding: 0 28px 0 18px;
   border-bottom: 1px solid var(--border);
   flex: none;
 }
@@ -987,6 +988,7 @@ kbd {
 .table-body {
   flex: 1;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   /* room under the last row of a long list: a place to right-click the folder itself */
   padding: 4px 8px 72px;
 }
@@ -1255,6 +1257,18 @@ kbd {
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   flex: none;
+  /* a narrow pane: the parts stay on one line, and the hints give way first (cut short) */
+  white-space: nowrap;
+  overflow: hidden;
+}
+.statusbar > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.statusbar > span:first-child,
+.statusbar > .sel {
+  flex-shrink: 0;
 }
 .statusbar .spacer {
   flex: 1;
@@ -1266,6 +1280,7 @@ kbd {
   color: var(--dim);
 }
 .statusbar .busy .spinner {
+  flex: none;
   width: 11px;
   height: 11px;
 }
@@ -1402,6 +1417,8 @@ body.resizing-col * {
 }
 .preview {
   flex: none;
+  /* the media box's height: images, PDFs and text scroll inside it (the phone's details screen) */
+  --media-h: min(52vh, 420px);
 }
 .preview-empty {
   display: flex;
@@ -1675,7 +1692,8 @@ body.resizing-col * {
 .props.tech .prop {
   grid-template-columns: 84px minmax(0, 1fr);
 }
-.prop.copyable:hover {
+.prop.copyable:hover,
+.prop.copyable:focus-visible {
   background: var(--hover);
 }
 .prop.copyable dd {
@@ -1689,7 +1707,8 @@ body.resizing-col * {
   opacity: 0;
   transition: opacity 0.12s;
 }
-.prop.copyable:hover .copy-hint {
+.prop.copyable:hover .copy-hint,
+.prop.copyable:focus-visible .copy-hint {
   opacity: 1;
 }
 
@@ -4296,7 +4315,7 @@ body.dragging-items * {
   place-items: center;
   height: 18px;
   margin: 0 -5px;
-  color: var(--muted);
+  color: var(--dim);
   background: var(--raised);
 }
 .ctx-scroll.up {
