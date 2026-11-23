@@ -10,7 +10,8 @@
  * sideways to reorder; with the keyboard, ⌥⇧← / → moves the focused one. Too many to fit: the
  * strip scrolls (a mouse wheel scrolls it sideways too) and fades at the edges it hides.
  *
- * A tab is also a drop target for things dragged from the panes: see "dropping onto a tab" below.
+ * A tab is also a drop target for things dragged from the panes: see "dropping onto a tab" below
+ * (files dragged there can rest on "+" too: `NEW_WS`).
  */
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { Icon } from "../Icons";
@@ -64,6 +65,9 @@ export const SPRING_MS = 500;
  * `spring` while the timer runs (the tab fills up to say it's about to open).
  */
 export type TabDropTarget = { id: string; ok: boolean | null; spring: boolean };
+
+/** `TabDropTarget.id` of "+" (new workspace), which a drag of files can rest on too */
+export const NEW_WS = "+";
 
 /** The workspace whose tab is under the point, if any (the ghost and overlays don't take the pointer). */
 export function wsTabAt(x: number, y: number): string | null {
@@ -337,7 +341,7 @@ export function WorkspaceBar(p: WorkspaceBarProps) {
           })}
         </div>
       </div>
-      <button type="button" className="icon-btn ws-new" onClick={p.onNew} title="New workspace (⌘T)" aria-label="New workspace">
+      <button type="button" className={`icon-btn ws-new ${p.drop?.id === NEW_WS ? "drop-over springing" : ""}`} onClick={p.onNew} title="New workspace (⌘T)" aria-label="New workspace">
         <Icon name="plus" size={15} />
       </button>
       <div className="ws-fill" data-tauri-drag-region />

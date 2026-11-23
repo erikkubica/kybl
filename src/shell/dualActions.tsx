@@ -255,15 +255,6 @@ export function makeDualActions(get: () => DualContext) {
   /** What a pane gets on top of the shell's own environment (all of it inert in single-pane mode). */
   const envFor = (id: PaneId): Partial<PaneEnv> => ({
     onNavigated: (from, to) => follow(id, from, to),
-    dropOnOtherPane: (items: Entry[], target: PaneId, dest: string, copy: boolean) => void sendToPane(pane(id), pane(target), items, copy ? "copy" : "move", dest, get()),
-    otherPaneTarget: (target: PaneId, dest: string | null, items: Entry[]) => {
-      const src = pane(id);
-      const dst = pane(target);
-      if (!multi() || !dst.here || !src.here) return null;
-      const d = dest ?? dst.prefix;
-      if (dst.here.profileId === src.here.profileId && dst.bucket === src.bucket && !isValidDest(items, d)) return null;
-      return { dest: d, label: d && dst.profile ? destLabel(d, dst.bucket ?? "", dst.profile.id) : (dst.bucketLabel ?? ""), copyOnly: crossesDisk(src, dst) };
-    },
     // swap, compare, "this folder in the other pane" and synchronized browsing: in the toolbar's
     // "…" (the shell adds them there) and the link on the divider, not in the folder menus
     extraPlaceItems: (): MenuItem[] => [],

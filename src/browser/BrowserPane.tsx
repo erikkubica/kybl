@@ -12,7 +12,7 @@ import { GridView } from "../components/GridView";
 import { QuickLook } from "../desktop/QuickLook";
 import type { Settings } from "../settings";
 import { ChooseBucket, ListError, Welcome, type EmptyActions } from "./PaneEmpty";
-import { DragGhost, PaneBanners, PaneStatusBar } from "./PaneParts";
+import { PaneBanners, PaneStatusBar } from "./PaneParts";
 import type { Pane } from "./usePane";
 import { useImageModes } from "../imageMode";
 import type { MenuItem } from "../components/Dialogs";
@@ -93,7 +93,8 @@ export function BrowserPane(p: BrowserPaneProps) {
     <section
       className={`browser-pane ${p.dual ? (active ? "is-active" : "is-inactive") : ""} ${p.lifted ? "lifted" : ""}`}
       data-pane={pane.id}
-      data-drop-pane={p.dual ? "" : undefined}
+      // (items dragged from another workspace drop on a single pane's empty space too)
+      data-drop-pane=""
       data-active-pane={active ? "" : undefined}
       aria-label={p.dual ? p.label : undefined}
       onMouseDownCapture={p.onActivate}
@@ -268,7 +269,6 @@ export function BrowserPane(p: BrowserPaneProps) {
           onOpenExternal={(e) => void ops.openInApp(e)}
         />
       )}
-      {pane.drag && !pane.drag.outside && profile && <DragGhost drag={pane.drag} bucket={bucket} profileId={profile.id} />}
     </section>
   );
 }
