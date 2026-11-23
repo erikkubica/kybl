@@ -208,3 +208,211 @@
   min-width: 0;
   min-height: 0;
 }
+
+/* ---------------------------------------------------------------- batch rename */
+.br {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+/* the preview takes what is left of a short window, never less than a few rows */
+.br-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+.br-mode {
+  align-self: flex-start;
+}
+.br-mode button {
+  width: auto;
+  padding: 0 12px;
+  font-size: 12.5px;
+}
+.br-pattern,
+.br-pair input {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.br-pattern[aria-invalid="true"],
+.br-pair input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+.br-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: -4px;
+}
+.br-chip {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--field);
+  color: var(--dim);
+  font: 11.5px var(--mono);
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.br-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.br-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.br-opts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 12px;
+}
+.br-opts > .check {
+  align-self: center;
+}
+.br-opt {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--dim);
+}
+.br-opt input[type="number"] {
+  width: 68px;
+}
+.br-opt input:not([type="number"]) {
+  width: 104px;
+}
+.br-opt select {
+  min-width: 112px;
+}
+.br-opt :disabled {
+  opacity: 0.55;
+}
+.br-inline-em {
+  color: var(--faint);
+  font-style: normal;
+  font-size: 12px;
+}
+.modal-body p.br-note {
+  margin-top: -4px;
+}
+.br-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--dim);
+}
+.br-preview-head .check {
+  font-weight: 400;
+  font-size: 12px;
+}
+.br-preview {
+  flex: 1 1 252px;
+  min-height: 116px;
+  max-height: 252px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--panel);
+}
+.br-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  color: var(--text);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.br-row > svg {
+  flex: none;
+  color: var(--faint);
+}
+.br-old,
+.br-new {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.br-old {
+  color: var(--dim);
+}
+.br-new {
+  font-weight: 550;
+}
+.br-row.st-same .br-new {
+  color: var(--faint);
+  font-weight: 400;
+  font-style: italic;
+}
+.br-row.st-invalid,
+.br-row.st-conflict {
+  background: var(--danger-soft);
+}
+.br-row.st-invalid .br-new,
+.br-row.st-conflict .br-new {
+  color: var(--danger);
+}
+.br-why {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 600;
+}
+.br-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+.br-foot-note {
+  align-self: center;
+  color: var(--danger);
+  font-size: 12px;
+}
+/* "N items not renamed": the list under the error */
+.br-failed {
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 8px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--panel);
+  list-style: none;
+  font-size: 12.5px;
+}
+.br-failed li {
+  padding: 2px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.br-failed li span,
+.br-failed li.more {
+  color: var(--faint);
+}
+@media (max-width: 560px) {
+  .br-pair {
+    grid-template-columns: 1fr;
+  }
+}
