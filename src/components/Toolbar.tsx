@@ -12,10 +12,10 @@ export const TILE_MAX = 320;
 
 /**
  * A desktop pane's header: one row, left to right
- *   [+ ▾] [↑] [☆] [connection ▾] folder name [⌄]  [⋯]   ……   [view ▾] [details] [search] [panes]
- * Creating things sits behind +, the pane's less frequent actions behind ⋯ and how the list looks
- * behind the eye, so a pane at its least width (340px) still fits on one row: the folder's name
- * gives way first, then (below ~420px) the star and the panes button fold into ⋯.
+ *   [+] [↑] [connection] folder name [⋯]   ……   [view] [details] [search] [panes]
+ * Creating things sits behind +, the pane's less frequent actions (favorites among them) behind ⋯
+ * and how the list looks behind the eye, so a pane at its least width (340px) still fits on one
+ * row: the folder's name gives way first, then (below ~420px) the panes button folds into ⋯.
  */
 export function Toolbar({
   bucket,
@@ -122,7 +122,6 @@ export function Toolbar({
 }) {
   const parts = prefix.split("/").filter(Boolean);
   const dialogs = useDialogs();
-  const star = useRef<HTMLButtonElement>(null);
   const panes = useRef<HTMLButtonElement>(null);
   const anchorOf = (e: React.MouseEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -141,7 +140,7 @@ export function Toolbar({
 
   const moreMenu = (e: React.MouseEvent) => {
     const extra: MenuItem[] = [];
-    if (onToggleFavorite && folded(star))
+    if (onToggleFavorite)
       extra.push({ type: "item", label: favorite ? "Remove from favorites" : "Add to favorites", icon: "star", onClick: onToggleFavorite });
     if (panesItems && folded(panes)) extra.push({ type: "submenu", label: "Panes", icon: "dual-pane", items: panesItems });
     onMoreMenu(...anchorOf(e), extra);
@@ -178,9 +177,8 @@ export function Toolbar({
   return (
     <header className="chrome">
       <div className={`toolbar ${searchOpen ? "search-open" : ""}`} data-tauri-drag-region>
-        <button className="icon-btn tb-drop" disabled={disabled} onClick={createMenu} title="Upload or create (⌘U, ⇧⌘N)" aria-label="Upload or create" aria-haspopup="menu">
+        <button className="icon-btn" disabled={disabled} onClick={createMenu} title="Upload or create (⌘U, ⇧⌘N)" aria-label="Upload or create" aria-haspopup="menu">
           <Icon name="plus" />
-          <Icon name="chevron-down" size={10} className="tb-caret" />
         </button>
         <button
           className="icon-btn"
@@ -193,22 +191,9 @@ export function Toolbar({
         >
           <Icon name="arrow-up" />
         </button>
-        {onToggleFavorite && (
-          <button
-            ref={star}
-            className={`icon-btn fav-star tb-fav ${favorite ? "on" : ""}`}
-            onClick={onToggleFavorite}
-            title={favorite ? "Remove from favorites" : "Add to favorites"}
-            aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
-            aria-pressed={!!favorite}
-          >
-            <Icon name="star" size={15} />
-          </button>
-        )}
         {onSwitchConnection && (
-          <button className="icon-btn conn-switch tb-drop" onClick={(e) => onSwitchConnection(...anchorOf(e))} title="Switch connection or bucket" aria-label="Switch connection or bucket" aria-haspopup="menu">
+          <button className="icon-btn conn-switch" onClick={(e) => onSwitchConnection(...anchorOf(e))} title="Switch connection or bucket" aria-label="Switch connection or bucket" aria-haspopup="menu">
             <ProviderBadge provider={provider} />
-            <Icon name="chevron-down" size={10} className="tb-caret" />
           </button>
         )}
         {bucket != null ? (
@@ -225,14 +210,13 @@ export function Toolbar({
         <div className="spacer" data-tauri-drag-region />
 
         <button
-          className="icon-btn tb-drop tb-view"
+          className="icon-btn tb-view"
           onClick={viewMenu}
           title={`View: ${view === "grid" ? "grid" : "list"}${compact ? ", compact" : ""}, sorted by ${sortName} ${sort.dir === "asc" ? "ascending" : "descending"}`}
           aria-label="View options"
           aria-haspopup="menu"
         >
           <Icon name="eye" />
-          <Icon name="chevron-down" size={10} className="tb-caret" />
         </button>
         <button className={`icon-btn tb-details ${previewOpen ? "on" : ""}`} onClick={onTogglePreview} title="Details panel (⌘I)" aria-label="Details panel" aria-pressed={previewOpen}>
           <Icon name="panel" />

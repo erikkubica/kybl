@@ -378,22 +378,9 @@ code {
   align-self: stretch;
   min-width: 4px;
 }
-/* a button that opens a menu: its icon and a small caret */
-.icon-btn.tb-drop {
-  display: inline-flex;
-  align-items: center;
-  gap: 1px;
+.icon-btn.conn-switch {
   width: auto;
-  padding: 0 3px 0 6px;
-}
-.tb-caret {
-  opacity: 0.55;
-}
-.icon-btn.tb-drop:hover .tb-caret {
-  opacity: 0.9;
-}
-.icon-btn.conn-switch.tb-drop {
-  padding: 0 3px 0 4px;
+  padding: 0 4px;
   margin: 0 0 0 2px;
 }
 /* "…" holds much of what had its own button: its dots as heavy as the other icons' lines */
@@ -412,19 +399,13 @@ code {
   min-width: 0;
   padding: 0 4px 0 6px;
 }
-.path-title .path-parents {
-  width: 18px;
-  height: 24px;
-  color: var(--faint);
-}
 .crumbs.path-title.editing {
   flex: 1 1 auto;
   min-width: 140px;
 }
-/* a narrow pane: the star and the panes button fold into "…"; while searching or typing a path
+/* a narrow pane: the panes button folds into "…"; while searching or typing a path
    the name or the view buttons step aside so the field has room */
 @container (max-width: 420px) {
-  .toolbar > .tb-fav,
   .toolbar > .tb-panes {
     display: none;
   }

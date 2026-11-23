@@ -266,13 +266,3 @@ body.resizing-row * {
   outline: none;
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
-.fav-star {
-  flex: none;
-  color: var(--faint);
-}
-.fav-star.on {
-  color: #e5a50a;
-}
-.fav-star.on svg {
-  fill: currentColor;
-}

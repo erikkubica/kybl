@@ -1,14 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Icon, type IconName } from "../Icons";
+import type { IconName } from "../Icons";
 import type { MenuItem } from "./Dialogs";
 import { useDialogs } from "../shell/useDialogs";
 
 /**
  * The desktop pane's place in its one-row header: just the current folder's name (the root's
  * name at the top), cut short with an ellipsis when the pane is narrow. The whole path is its
- * tooltip; a click turns it into a text field to type a path (as ⇧⌘G does), and the small chevron
- * after it, or a right-click on the name, lists the enclosing folders to jump to, like the path
- * menu in a Finder window's title.
+ * tooltip; a click turns it into a text field to type a path (as ⇧⌘G does), and a right-click or
+ * ⌘-click lists the enclosing folders to jump to, like the path menu in a Finder window's title.
  *
  * The full breadcrumb trail (Breadcrumbs.tsx) stays for phones, where the bar has the width.
  * Keeps the `crumbs can-edit` classes: Go to folder (useEntryActions `askGoTo`) looks for them to
@@ -110,9 +109,13 @@ export function PathTitle({
       <button
         type="button"
         className="crumb current path-name"
-        title={onGoTo ? `${full}\nClick to type a path (⇧⌘G) · right-click for the enclosing folders` : full}
+        title={onGoTo ? `${full}\nClick to type a path (⇧⌘G) · right-click or ⌘-click for the enclosing folders` : `${full}\nRight-click or ⌘-click for the enclosing folders`}
         aria-label={onGoTo ? `${full}. Type a path` : full}
-        onClick={onGoTo ? startEdit : undefined}
+        onClick={(e) => {
+          // ⌘-click lists the enclosing folders, as on a Finder window's title
+          if (e.metaKey || !onGoTo) parentsMenu(...below(e.currentTarget));
+          else startEdit();
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
           parentsMenu(...below(e.currentTarget));
@@ -120,18 +123,6 @@ export function PathTitle({
       >
         <span className="crumb-label">{name}</span>
       </button>
-      {n > 0 && (
-        <button
-          type="button"
-          className="icon-btn path-parents"
-          title="Enclosing folders"
-          aria-label="Enclosing folders"
-          aria-haspopup="menu"
-          onClick={(e) => parentsMenu(...below(e.currentTarget.previousElementSibling as HTMLElement))}
-        >
-          <Icon name="chevron-down" size={12} />
-        </button>
-      )}
     </nav>
   );
 }
