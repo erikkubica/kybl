@@ -6,6 +6,7 @@
 import { useRef } from "react";
 import { useShortcuts } from "../desktop/useShortcuts";
 import type { Pane } from "../browser/usePane";
+import { useActionShortcuts } from "../actions/customActions";
 
 /** At most this often, a window coming back to the front reloads the folders on screen. */
 const RESUME_REFRESH_MS = 15_000;
@@ -71,6 +72,8 @@ export function useShellCommands({
     return true;
   };
 
+  // custom actions' own shortcuts (Settings → Actions), routed like the built-in ones
+  useActionShortcuts(route);
   // the window coming back to the front reloads the folders on screen, at most every so often
   const lastResume = useRef(0);
   useShortcuts({

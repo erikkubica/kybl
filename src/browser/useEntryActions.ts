@@ -23,6 +23,7 @@ import { MoveDialog } from "../components/MoveDialog";
 import type { MenuItem } from "../components/Dialogs";
 import type { Entry } from "../types";
 import { itemClipboard } from "../desktop/clipboard";
+import { actionCommandMap, actionsMenu, type ActionContext } from "../actions/customActions";
 import type { PaneCore, PaneEnv } from "./usePane";
 
 /** localStorage: the first "Keep on this device" explained what two-way sync means */
@@ -278,6 +279,19 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     onClick: () => toggleFavorite(b, pre),
   });
 
+  // custom actions (Settings → Actions): "Actions ▸" and their shortcuts
+  const actionCtx: ActionContext = {
+    profile,
+    bucket,
+    prefix,
+    onDisk,
+    dialogs,
+    transfers: env.transfers,
+    jobs: env.jobs,
+    refresh: ent.refresh,
+    selection: () => sel.selectedEntries,
+  };
+
   // ------------------------------------------------------------ context menus
   const calcSizes = (keys: string[]) => pane.folderSizes.calc(keys);
   const clipFor = () => {
@@ -353,6 +367,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => pane.navigate(entryParent(e), e.key) },
       // Show in Finder, Open with ▸ (desktop/openWith.ts)
       ...(one ? openInItems({ profileId: profile.id, bucket, onDisk, ops, toast }, e) : []),
+      ...actionsMenu(actionCtx, list),
       // this computer's own files aren't downloaded: Copy, Move and F5/F6 put them elsewhere
       !onDisk && { type: "item", label: one && e.native?.exports.length ? `Download as ${e.native.exports[0].label}` : "Download", icon: "download", hint: "⇧⌘D", onClick: () => ops.downloadEntries(list, relBase) },
       // a Google Doc / Sheet / Slides: its other formats (PDF…)
@@ -426,6 +441,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     paste: () => ops.paste(),
     deselect: () => sel.setSelected(new Set()),
     "toggle-hidden": toggleHidden,
+    ...actionCommandMap(actionCtx),
   };
 
   return {
