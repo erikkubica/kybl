@@ -7,6 +7,7 @@ import { api, errMessage, type TransferPrefs } from "../api";
 import { IMAGE_MODES } from "../imageMode";
 import type { Profile } from "../types";
 import { ProviderBadge } from "./Sidebar";
+import { addressOf } from "../connections/kinds";
 import { KyblLockup } from "./KyblMark";
 import { SyncSection } from "./SyncSection";
 // WP-E4: drives
@@ -401,6 +402,7 @@ export function SettingsPage({
   onCompact,
   onEditProfile,
   onNewProfile,
+  onImportProfiles,
   onClose,
   initialPage,
   activeProfileId,
@@ -413,6 +415,8 @@ export function SettingsPage({
   onCompact: (c: boolean) => void;
   onEditProfile: (p: Profile) => void;
   onNewProfile: () => void;
+  /** "Import connections…" from FileZilla and other apps (computers only) */
+  onImportProfiles?: () => void;
   onClose: () => void;
   initialPage?: SettingsPageId;
   activeProfileId: string | null;
@@ -698,8 +702,15 @@ export function SettingsPage({
                       <div className="set-label">
                         {p.name}
                         <small className="selectable">
-                          {p.endpoint || "Amazon S3"} · {p.region}
-                          {p.bucket ? ` · ${p.bucket}` : ""}
+                          {/* servers and drives have no endpoint or region: their own address */}
+                          {p.kind && p.kind !== "s3" ? (
+                            addressOf(p)
+                          ) : (
+                            <>
+                              {p.endpoint || "Amazon S3"} · {p.region}
+                              {p.bucket ? ` · ${p.bucket}` : ""}
+                            </>
+                          )}
                         </small>
                       </div>
                       <button className="btn btn-sm" onClick={() => onEditProfile(p)}>
@@ -708,10 +719,15 @@ export function SettingsPage({
                     </div>
                   ))}
                 </div>
-                <div style={{ marginTop: 12 }}>
+                <div className="btn-row" style={{ marginTop: 12 }}>
                   <button className="btn btn-primary btn-sm" onClick={onNewProfile}>
                     <Icon name="plus" size={14} /> New connection
                   </button>
+                  {onImportProfiles && (
+                    <button className="btn btn-sm" onClick={onImportProfiles}>
+                      <Icon name="download" size={14} /> Import connections…
+                    </button>
+                  )}
                 </div>
               </>
             )}

@@ -22,6 +22,7 @@ import { TILE_MAX, TILE_MIN } from "../components/Toolbar";
 import { TransferPanel, type ActivityTab } from "../components/TransferPanel";
 import { ConnectionDialog } from "../components/ConnectionDialog";
 import { KyblConnectDialog } from "../components/KyblConnectDialog";
+import { ImportDialog } from "../connections/ImportDialog";
 import { SettingsPage, type SettingsPageId } from "../components/SettingsPage";
 import { UpdateBanner } from "../components/UpdateBanner";
 import { KYBL } from "../kybl";
@@ -142,6 +143,7 @@ export function AppShell() {
 
   const [connDialog, setConnDialogState] = useState<{ profile: Profile | null; reconnect?: boolean } | null>(null);
   const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   /** Opens the editor for a connection: Kybl Storage connections have their own (no keys to edit). */
   const setConnDialog = useCallback((d: { profile: Profile | null; reconnect?: boolean } | null) => {
     if (d?.profile?.id === THIS_MAC.id) return; // built in: nothing to edit
@@ -742,7 +744,7 @@ export function AppShell() {
   const overlayUp = () =>
     !!docRef.current ||
     dialogs.isOpen() ||
-    !!(connDialog || kyblDialog || allPanes.current.some((p) => p.quick)) ||
+    !!(connDialog || kyblDialog || importOpen || allPanes.current.some((p) => p.quick)) ||
     !!document.querySelector(".modal-backdrop, .ctx-menu, .ql-backdrop");
 
   useShellCommands({
@@ -974,6 +976,7 @@ export function AppShell() {
           }}
           onEditProfile={(p) => setConnDialog({ profile: p })}
           onNewProfile={() => setConnDialog({ profile: null })}
+          onImportProfiles={() => setImportOpen(true)}
           onClose={() => setSettingsOpen(false)}
           initialPage={settingsPage}
           activeProfileId={active.profile?.id ?? null}
@@ -1003,6 +1006,10 @@ export function AppShell() {
             setKyblDialog({ existing: null });
           }}
           kyblFirst={!saved.some((p) => p.provider === KYBL)}
+          onImport={() => {
+            setConnDialog(null);
+            setImportOpen(true);
+          }}
           onSaved={(p) => {
             forgetCaps(p.id);
             clearAuthNeeded(p.id);
@@ -1010,6 +1017,15 @@ export function AppShell() {
             void connectIn(activeRef.current.id, p);
           }}
           onDeleted={forgetProfile}
+        />
+      )}
+      {importOpen && (
+        <ImportDialog
+          onClose={() => setImportOpen(false)}
+          onImported={(list) => {
+            for (const p of list) conns.upsertProfile(p);
+          }}
+          toast={toast}
         />
       )}
       {doc && (

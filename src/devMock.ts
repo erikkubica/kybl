@@ -7,6 +7,7 @@ import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import type { ObjInfo, Profile } from "./types";
 import type { Capabilities, JobSpec, RootInfo } from "./api";
+import type { ImportSite } from "./connections/importApi";
 import { S3_CAPS } from "./useCaps";
 
 const HOUR = 3600_000;
@@ -20,6 +21,51 @@ const profiles: Profile[] = [
   { id: "n1", name: "Web server", kind: "sftp", provider: "sftp", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, net: { host: "files.example.com", port: 0, user: "deploy", basePath: "/var/www", tls: "none", auth: "password", hostKey: "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8", url: null } },
   { id: "g1", name: "Google Drive (demo@gmail.com)", kind: "gdrive", provider: "gdrive", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, cloud: { accountEmail: "demo@gmail.com", accountId: "1001", clientId: null, tenant: null, scopes: ["drive"] } },
 ];
+
+const FZ_HINT = "FileZilla's “FTP over TLS if available” sites are imported with TLS turned on. If one of them only speaks plain FTP, turn encryption off in its settings.";
+
+/** A made-up FileZilla site list for "Import connections" (every name and host is fictional). */
+function mockImportSites(): ImportSite[] {
+  const site = (i: number, over: Partial<ImportSite>): ImportSite => ({
+    id: `fz-${i}`,
+    name: `Site ${i}`,
+    folder: [],
+    kind: "ftp",
+    protocol: "FTP (TLS if available)",
+    host: `ftp${i}.example.com`,
+    port: 21,
+    user: `user${i}`,
+    startDir: "",
+    tls: "explicit",
+    auth: "password",
+    notes: [],
+    skip: null,
+    hasPassword: true,
+    needsSecret: false,
+    duplicateOf: null,
+    ...over,
+  });
+  const clients = ["Acme", "Globex", "Initech", "Umbrella", "Stark", "Wayne", "Hooli", "Pied Piper"];
+  const out: ImportSite[] = [
+    site(0, { name: "Web server", kind: "sftp", protocol: "SFTP", host: "files.example.com", port: 22, user: "deploy", tls: "none", duplicateOf: "Web server" }),
+    site(1, { name: "Public mirror", host: "mirror.example.org", user: "", auth: "anonymous", hasPassword: false, notes: ["Anonymous sign-in"] }),
+    site(2, { name: "Old NAS", protocol: "FTP (plain)", tls: "none", host: "192.168.1.20", notes: ["Active mode isn't available: Kybl uses passive mode"] }),
+  ];
+  let i = 3;
+  for (const c of clients) {
+    out.push(site(i++, { folder: ["Clients", c], name: "Live", kind: "sftp", protocol: "SFTP", host: `${c.toLowerCase().replace(" ", "")}.example.net`, port: 22, tls: "none", startDir: "/var/www/html" }));
+    out.push(site(i++, { folder: ["Clients", c], name: "Staging", host: `staging.${c.toLowerCase().replace(" ", "")}.example.net` }));
+    out.push(site(i++, { folder: ["Clients", c], name: "Backups", protocol: "FTPS (implicit TLS)", tls: "implicit", port: 990, host: `backup.${c.toLowerCase().replace(" ", "")}.example.net` }));
+  }
+  out.push(site(i++, { folder: ["Clients", "Acme"], name: "Deploy key", kind: "sftp", protocol: "SFTP", tls: "none", port: 2222, auth: "keyFile", hasPassword: false, notes: ["Key file acme_deploy.ppk"] }));
+  out.push(site(i++, { folder: ["Personal"], name: "Blog", auth: "encrypted", hasPassword: false, needsSecret: true, notes: ["Encrypted with a master password: enter the password after import"] }));
+  out.push(site(i++, { folder: ["Personal"], name: "Ask every time", auth: "missing", hasPassword: false, needsSecret: true, notes: ["No password saved: add it after import"] }));
+  out.push(site(i++, { folder: ["Personal"], name: "Photos drive", kind: null, protocol: "Google Drive", host: "drive.example", tls: "none", skip: "Not supported from FileZilla: Google Drive. Add it in Kybl and sign in instead" }));
+  out.push(site(i++, { folder: ["Personal", "Cloud"], name: "Nextcloud", kind: "webdav", protocol: "WebDAV", host: "cloud.example.com", port: 443, tls: "implicit" }));
+  // enough rows to feel a real list (the user's own lists run to a couple of hundred)
+  for (let n = 0; n < 150; n++) out.push(site(i++, { folder: ["Archive", `Batch ${Math.floor(n / 25) + 1}`], name: `Old site ${n + 1}` }));
+  return out;
+}
 
 const mockTags: Record<string, Record<string, string>> = {};
 const transferPrefs = { concurrency: 3, partConcurrency: 4, bandwidthLimitKbps: 0, wifiOnly: false };
@@ -435,6 +481,43 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     case "delete_profile":
       profiles.splice(profiles.findIndex((x) => x.id === a.id), 1);
       return null;
+    // "Import connections": a made-up FileZilla list, big enough to try search and folders
+    case "import_sources":
+      await sleep(80);
+      return [{ id: "filezilla", name: "FileZilla", detected: true, path: "/Users/demo/.config/filezilla/sitemanager.xml", filterName: "FileZilla site list", extensions: ["xml"] }];
+    case "import_preview":
+      await sleep(250);
+      return { source: a.source, path: a.path ?? "/Users/demo/.config/filezilla/sitemanager.xml", sites: mockImportSites(), hints: [FZ_HINT] };
+    case "import_apply": {
+      await sleep(600);
+      const sites = mockImportSites();
+      const out = { imported: [] as Profile[], skipped: [] as { name: string; reason: string }[], needsSecret: [] as string[] };
+      for (const id of a.ids as string[]) {
+        const s = sites.find((x) => x.id === id);
+        if (!s) continue;
+        if (s.skip || !s.kind) {
+          out.skipped.push({ name: s.name, reason: s.skip ?? "Not supported" });
+          continue;
+        }
+        const name = s.folder.length ? `${s.folder[s.folder.length - 1]} / ${s.name}` : s.name;
+        const p: Profile = {
+          id: `imp${Date.now()}${out.imported.length}`,
+          name,
+          kind: s.kind,
+          provider: s.kind,
+          endpoint: "",
+          region: "",
+          accessKeyId: "",
+          bucket: null,
+          pathStyle: false,
+          net: { host: s.host, port: s.port, user: s.user, basePath: s.startDir, tls: s.tls, auth: s.auth === "keyFile" ? "key" : "password", hostKey: null, url: null },
+        };
+        profiles.push(p);
+        out.imported.push(p);
+        if (s.needsSecret) out.needsSecret.push(name);
+      }
+      return out;
+    }
     case "kybl_default_app_url":
       return "http://127.0.0.1:8080";
     case "kybl_connect_cancel":
@@ -868,6 +951,8 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     case "plugin:dialog|open":
       // "Open with ▸ Other…" picks an app
       if (a?.options?.filters?.[0]?.extensions?.includes("app")) return "/Applications/Xcode.app";
+      // "Import connections ▸ Choose file…"
+      if (a?.options?.filters?.[0]?.extensions?.includes("xml")) return "/Users/demo/Downloads/FileZilla export.xml";
       return a?.options?.directory
         ? ["/Users/demo/Downloads"]
         : ["/Users/demo/shoot/DSC_0412.jpg", "/Users/demo/shoot/DSC_0413.jpg", "/Users/demo/shoot/DSC_0414.jpg", "/Users/demo/shoot/reel.mov", "/Users/demo/shoot/notes.txt"];
