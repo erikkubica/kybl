@@ -208,7 +208,7 @@ pub fn search_local(dir: &Path, prefix: &str, q: &Query, cancel: &AtomicBool, em
             let mut bytes = 0usize;
             let is_grep = engine == "grep";
             let skip_dots = is_grep && !q.hidden;
-            let on_line = |l: &[u8], col: &mut Collector| match parse_grep_line(l) {
+            let on_line = |l: &[u8], col: &mut Collector| match parse_grep_line(l, cfg!(windows)) {
                 Some((p, n, t)) if !(skip_dots && dotted(&p)) && (!is_grep || m.is_match(&t)) => col.push(&p, n, &t),
                 _ => true,
             };
@@ -291,8 +291,10 @@ fn walk_local<F: FnMut(Vec<Hit>, usize, u64)>(dir: &Path, q: &Query, m: &Matcher
 // ---------------------------------------------------------------- SFTP
 
 /// What runs on the server: in the folder, ripgrep where installed, else grep; the first line
-/// out says which (or that neither is there, or the folder isn't).
-pub fn remote_script(dir: &str, q: &Query) -> String {
+/// out says which (or that neither is there, or the folder isn't). None when the folder's name or
+/// the search text holds a line break or another control character (see
+/// [`crate::actions::plain_text`]).
+pub fn remote_script(dir: &str, q: &Query) -> Option<String> {
     let words = |tool: &str, args: Vec<String>| std::iter::once(tool.to_string()).chain(args).map(|a| shell_quote(&a)).collect::<Vec<_>>().join(" ");
     // a regular expression: Perl syntax where this grep reads it (GNU), else extended syntax
     let grep = if q.regex {
@@ -305,7 +307,8 @@ pub fn remote_script(dir: &str, q: &Query) -> String {
         shell_quote(dir),
         words("rg", rg_args(q)),
     );
-    // the login shell may not be a POSIX one (fish, csh): sh runs the script
+    // the login shell may not be a POSIX one (fish, csh): sh runs the script, and PATH there
+    // holds absolute folders only (an `rg` in the folder searched is never the one run)
     crate::actions::sh_c(&script)
 }
 
@@ -316,7 +319,13 @@ const NO_COMMANDS: &str = "This server doesn't let Kybl run commands (an SFTP-on
 pub async fn search_sftp(s: &SftpBackend, prefix: &str, q: &Query, cancel: &AtomicBool, mut emit: impl FnMut(Vec<Hit>, usize, u64)) -> Result<ContentResult, String> {
     let m = Matcher::new(&q.text, q.case_sensitive, q.regex)?;
     let dir = s.remote_path(prefix).await?;
-    let script = remote_script(&dir, q);
+    let Some(script) = remote_script(&dir, q) else {
+        return Err(if crate::actions::plain_text(&q.text) {
+            "This folder's name has a line break or another control character, so it can't be searched on the server.".into()
+        } else {
+            "Search text with a line break or another control character can't be sent to the server.".into()
+        });
+    };
     // set when the user stops, time runs out or enough was found: the command is stopped
     let halt = AtomicBool::new(false);
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(bool, Vec<u8>)>();
@@ -337,7 +346,7 @@ pub async fn search_sftp(s: &SftpBackend, prefix: &str, q: &Query, cancel: &Atom
             return true;
         }
         let grep = engine.as_deref() == Some("grep");
-        match parse_grep_line(l) {
+        match parse_grep_line(l, false) {
             // grep's regular expressions are close to the matcher's, not the same: it decides
             Some((p, n, t)) if !(grep && !q.hidden && dotted(&p)) && (!grep || m.is_match(&t)) => col.push(&p, n, &t),
             _ => true,
@@ -381,6 +390,8 @@ pub async fn search_sftp(s: &SftpBackend, prefix: &str, q: &Query, cancel: &Atom
     let (end, ()) = tokio::join!(run, read);
     let end = match end {
         Ok(end) => end,
+        // a server whose shell isn't a Unix one
+        Err(e) if e.message == crate::storage::sftp::command::NOT_POSIX => return Ok(ContentResult { unavailable: Some(e.message), ..Default::default() }),
         // an SFTP-only account, or a server that runs no commands
         Err(e) if e.kind != crate::storage::ErrKind::Network => return Ok(ContentResult { unavailable: Some(NO_COMMANDS.into()), ..Default::default() }),
         Err(e) => return Err(e.to_string()),
@@ -474,7 +485,7 @@ mod tests {
         std::fs::write(dir.join("a.txt"), "dddd\nyear 2024\n").unwrap();
         let rq = Query { regex: true, ..q(r"\d{4}") };
         let out = std::process::Command::new("grep").args(grep_args(&rq, false)).current_dir(&dir).output().unwrap();
-        let found: Vec<_> = String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| parse_grep_line(l.as_bytes())).map(|(_, n, _)| n).collect();
+        let found: Vec<_> = String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| parse_grep_line(l.as_bytes(), false)).map(|(_, n, _)| n).collect();
         assert_eq!(found, vec![2]);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -487,17 +498,31 @@ mod tests {
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         std::fs::write(dir.join("sub/a.txt"), "nothing\nsay 'it's $(here)`\n").unwrap();
         std::fs::write(dir.join(".hidden.txt"), "it's $(here)`").unwrap();
-        let script = remote_script(&dir.to_string_lossy(), &q("it's $(here)`"));
+        let script = remote_script(&dir.to_string_lossy(), &q("it's $(here)`")).unwrap();
         let out = std::process::Command::new("/bin/sh").arg("-c").arg(&script).output().unwrap();
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
         let mut lines = text.split('\n');
         let engine = lines.next().unwrap();
         assert!(engine == "kybl:rg" || engine == "kybl:grep", "{text}");
-        let found: Vec<_> = lines.filter_map(|l| parse_grep_line(l.as_bytes())).filter(|(p, ..)| !dotted(p)).collect();
+        let found: Vec<_> = lines.filter_map(|l| parse_grep_line(l.as_bytes(), false)).filter(|(p, ..)| !dotted(p)).collect();
         assert_eq!(found, vec![("sub/a.txt".to_string(), 2, "say 'it's $(here)`".to_string())]);
         // a folder that isn't there
-        let out = std::process::Command::new("/bin/sh").arg("-c").arg(remote_script("/nonexistent/kybl", &q("x"))).output().unwrap();
+        let out = std::process::Command::new("/bin/sh").arg("-c").arg(remote_script("/nonexistent/kybl", &q("x")).unwrap()).output().unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "kybl:nodir");
+        // an `rg` and a `grep` planted in the folder, on a server whose PATH has "." and an empty
+        // entry: neither runs
+        let marker = dir.join("PLANTED-RAN");
+        for tool in ["rg", "grep"] {
+            let p = dir.join(tool);
+            std::fs::write(&p, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let out = std::process::Command::new("/bin/sh").arg("-c").arg(&script).env("PATH", format!(".::{}", std::env::var("PATH").unwrap_or_default())).output().unwrap();
+        assert!(!marker.exists(), "{}", String::from_utf8_lossy(&out.stdout));
+        // a line break in the search text (or the folder) is never sent
+        assert!(remote_script("/srv", &q("a'\ntouch x\n'")).is_none());
+        assert!(remote_script("/srv/a\nb", &q("x")).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

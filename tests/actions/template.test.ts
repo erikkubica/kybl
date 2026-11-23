@@ -24,3 +24,15 @@ test("placeholders outside quotes, and $( … ), are fine", () => {
     assert.equal(templateProblem(ok), null, ok);
   }
 });
+
+test("a placeholder in a here-document, or right after a backslash, is refused", () => {
+  for (const bad of ["cat <<EOF\n{name}\nEOF", "cat <<-'X'\n{path}\nX", "echo \\{path}", "x $(cat <<E\n{dir}\nE\n)"]) {
+    assert.ok(templateProblem(bad), JSON.stringify(bad));
+  }
+  assert.match(templateProblem("echo \\{path}")!, /backslash/);
+  assert.match(templateProblem("cat <<EOF\n{name}\nEOF")!, /here-document/);
+  // bash's here-string, a quoted "<<" and an escaped backslash are fine
+  for (const ok of ["cat <<< {path}", "echo '<<' {path}", "echo \\\\ {path}"]) {
+    assert.equal(templateProblem(ok), null, ok);
+  }
+});

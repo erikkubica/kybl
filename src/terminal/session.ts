@@ -13,6 +13,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { LS } from "../browser/types";
 import { setTermImpl, takeFocusWhenShown, takeStartup, type TermAction, type TermSpec } from "./api";
+import { cleanPaste } from "./quote";
 
 const SCROLLBACK = 5000;
 const FONT_KEY = "s3b.term.font";
@@ -105,6 +106,18 @@ class Session {
     // ⌃⇧Tab switch workspaces: xterm would send a Tab and cancel the event, so it never reached the
     // app's window listener; returning false lets the event bubble on untouched.
     this.term.attachCustomKeyEventHandler((e) => !ownKey(e) && !passKey(e));
+    // ⌘V and the system Edit menu paste through xterm's own textarea: taken over here (capture,
+    // before xterm sees it) so clipboard text loses its control characters first
+    this.host.addEventListener(
+      "paste",
+      (e) => {
+        const t = e.clipboardData?.getData("text/plain");
+        e.preventDefault();
+        e.stopPropagation();
+        if (t && this.state === "running") this.term.paste(cleanPaste(t));
+      },
+      true,
+    );
   }
 
   /** Shows the terminal in `box` (first time: starts the shell, sized to it). */
@@ -233,7 +246,7 @@ class Session {
   /** Types `text` as if pasted (bracketed paste when the shell asks for it). */
   write(text: string): boolean {
     if (this.state !== "running") return false;
-    this.term.paste(text);
+    this.term.paste(cleanPaste(text));
     this.term.focus();
     return true;
   }
@@ -269,7 +282,7 @@ class Session {
       case "paste":
         void navigator.clipboard
           ?.readText()
-          .then((t) => t && this.state === "running" && this.term.paste(t))
+          .then((t) => t && this.state === "running" && this.term.paste(cleanPaste(t)))
           .catch(() => {});
         break;
       case "font+":

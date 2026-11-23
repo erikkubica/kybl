@@ -55,7 +55,9 @@ pub struct Hit {
 
 /// One output line of `rg -n --null` / `grep -rn --null`: `path\0line:text`. Without the NUL
 /// (a grep that lacks --null) it reads `path:line:text`, taking the first `:digits:`.
-pub fn parse_grep_line(raw: &[u8]) -> Option<(String, u64, String)> {
+/// `windows`: the path is ripgrep's on Windows (`.\sub\a.txt`), whose backslashes are
+/// separators; anywhere else (and on every SFTP server) a backslash is part of a name.
+pub fn parse_grep_line(raw: &[u8], windows: bool) -> Option<(String, u64, String)> {
     let raw = raw.strip_suffix(b"\n").unwrap_or(raw);
     let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
     let (path, rest) = match raw.iter().position(|b| *b == 0) {
@@ -79,13 +81,17 @@ pub fn parse_grep_line(raw: &[u8]) -> Option<(String, u64, String)> {
     let colon = rest.iter().position(|b| *b == b':')?;
     let line: u64 = std::str::from_utf8(&rest[..colon]).ok()?.parse().ok()?;
     let mut path = String::from_utf8_lossy(path).into_owned();
+    // separators first, so a leading `.\` goes too
+    if windows {
+        path = path.replace('\\', "/");
+    }
     while let Some(p) = path.strip_prefix("./") {
         path = p.to_string();
     }
     if path.is_empty() {
         return None;
     }
-    Some((path.replace('\\', "/"), line, String::from_utf8_lossy(&rest[colon + 1..]).into_owned()))
+    Some((path, line,String::from_utf8_lossy(&rest[colon + 1..]).into_owned()))
 }
 
 /// Splits a byte stream into lines (the last, unfinished one waits for the next chunk).
@@ -199,15 +205,19 @@ mod tests {
 
     #[test]
     fn reads_rg_and_grep_lines() {
-        assert_eq!(parse_grep_line(b"src/main.rs\x0012:fn main() {\n"), Some(("src/main.rs".into(), 12, "fn main() {".into())));
+        assert_eq!(parse_grep_line(b"src/main.rs\x0012:fn main() {\n", false), Some(("src/main.rs".into(), 12, "fn main() {".into())));
         // grep from a folder given as "."
-        assert_eq!(parse_grep_line(b"./a b/c:d.txt\x003:x:y"), Some(("a b/c:d.txt".into(), 3, "x:y".into())));
+        assert_eq!(parse_grep_line(b"./a b/c:d.txt\x003:x:y", false), Some(("a b/c:d.txt".into(), 3, "x:y".into())));
         // a grep without --null: the first ":digits:" splits
-        assert_eq!(parse_grep_line(b"./notes/todo.md:7:call: 10:30"), Some(("notes/todo.md".into(), 7, "call: 10:30".into())));
-        assert_eq!(parse_grep_line(b"weird:name.txt:42:hit"), Some(("weird:name.txt".into(), 42, "hit".into())));
-        assert_eq!(parse_grep_line(b"Binary file x matches"), None);
-        assert_eq!(parse_grep_line(b""), None);
-        assert_eq!(parse_grep_line(b"win\\path.txt\x001:a\r\n"), Some(("win/path.txt".into(), 1, "a".into())));
+        assert_eq!(parse_grep_line(b"./notes/todo.md:7:call: 10:30", false), Some(("notes/todo.md".into(), 7, "call: 10:30".into())));
+        assert_eq!(parse_grep_line(b"weird:name.txt:42:hit", false), Some(("weird:name.txt".into(), 42, "hit".into())));
+        assert_eq!(parse_grep_line(b"Binary file x matches", false), None);
+        assert_eq!(parse_grep_line(b"", false), None);
+        assert_eq!(parse_grep_line(b"win\\path.txt\x001:a\r\n", true), Some(("win/path.txt".into(), 1, "a".into())));
+        // ripgrep on Windows, given ".": the prefix goes too
+        assert_eq!(parse_grep_line(b".\\src\\a.txt\x002:x", true), Some(("src/a.txt".into(), 2, "x".into())));
+        // elsewhere (and on every SFTP server) a backslash is part of the name
+        assert_eq!(parse_grep_line(b"./a\\b.txt\x001:x", false), Some(("a\\b.txt".into(), 1, "x".into())));
     }
 
     #[test]

@@ -12,6 +12,16 @@
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 export const typeable = (s: string) => !CONTROL.test(s);
 
+// eslint-disable-next-line no-control-regex
+const PASTE_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
+
+/**
+ * Clipboard text made safe to paste: every control character except tab and line breaks goes.
+ * An ESC in copied text (invisible on a web page) could end the shell's bracketed paste early
+ * (`ESC[201~`), and what follows would then run as typed keys.
+ */
+export const cleanPaste = (s: string) => s.replace(PASTE_CONTROL, "");
+
 /**
  * `s` as one word for any shell (POSIX, fish, csh): as it is when plain, else in single quotes with
  * each quote and backslash written outside them (`'\''`, `'\\'`), so nothing between the quotes is
