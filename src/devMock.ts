@@ -236,6 +236,14 @@ async function simulateSync(id: string) {
   await pushStatus(id, { state: "idle", done: 0, total: 0, current: null, files, lastSync: Date.now(), summary: `${total} uploaded` });
 }
 
+/** A fake app for "Open with ▸": a coloured tile with its initial stands in for the icon. */
+function mockApp(name: string, isDefault: boolean) {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect x="2" y="2" width="28" height="28" rx="7" fill="hsl(${h} 60% 50%)"/><text x="16" y="21.5" font-family="-apple-system,sans-serif" font-size="15" font-weight="700" fill="#fff" text-anchor="middle">${name[0]}</text></svg>`;
+  return { name, path: `/Applications/${name}.app`, isDefault, icon: `data:image/svg+xml,${encodeURIComponent(svg)}` };
+}
+
 // ---- WP0: this computer ("local") and per-connection capabilities
 const LOCAL = "local";
 const HOME = "/Users/demo";
@@ -684,6 +692,22 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       const keys = Object.entries(tree).filter(([k]) => k.startsWith(a.prefix)).flatMap(([, n]) => n.objects);
       return { bytes: keys.reduce((s, o) => s + o.size, 0), objects: keys.length };
     }
+    // "Open with ▸": a few apps per type, the default first
+    case "apps_for": {
+      await sleep(250);
+      const ext = a.folder ? "/" : (/\.([^./]+)$/.exec(a.name)?.[1] ?? "").toLowerCase();
+      const pick = (names: string[], def: string) => [def, ...names.filter((n) => n !== def).sort((x, y) => x.localeCompare(y))].map((n) => mockApp(n, n === def));
+      if (ext === "/") return pick(["Visual Studio Code", "Cursor", "Zed", "Sublime Text", "Terminal", "iTerm"], "Finder");
+      if (/^(jpe?g|png|gif|heic|webp|tiff?)$/.test(ext)) return pick(["Photos", "Pixelmator Pro", "Affinity Photo", "Google Chrome"], "Preview");
+      if (/^(mov|mp4|m4v|mkv)$/.test(ext)) return pick(["VLC", "IINA", "DaVinci Resolve"], "QuickTime Player");
+      if (ext === "pdf") return pick(["Google Chrome", "Safari", "PDF Expert"], "Preview");
+      if (ext === "") return [];
+      return pick(["Visual Studio Code", "Cursor", "Zed", "Sublime Text", "BBEdit"], "TextEdit");
+    }
+    case "open_with":
+    case "open_with_chooser":
+      console.info("[mock]", cmd, a);
+      return null;
     case "temp_folder":
       return "/tmp/kybl";
     case "write_temp_file":
@@ -837,6 +861,8 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     case "download_folder":
       return "/storage/emulated/0/Download/Kybl";
     case "plugin:dialog|open":
+      // "Open with ▸ Other…" picks an app
+      if (a?.options?.filters?.[0]?.extensions?.includes("app")) return "/Applications/Xcode.app";
       return a?.options?.directory
         ? ["/Users/demo/Downloads"]
         : ["/Users/demo/shoot/DSC_0412.jpg", "/Users/demo/shoot/DSC_0413.jpg", "/Users/demo/shoot/DSC_0414.jpg", "/Users/demo/shoot/reel.mov", "/Users/demo/shoot/notes.txt"];

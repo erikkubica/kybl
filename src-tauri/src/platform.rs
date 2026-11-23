@@ -10,6 +10,8 @@
 
 #[cfg(target_os = "android")]
 pub(crate) mod android;
+/// "Open with": the apps for a type, and opening an item with one (desktop).
+pub(crate) mod apps;
 #[cfg(target_os = "ios")]
 pub(crate) mod ios;
 /// The Android secret-key file, sealed with a Keystore key (generic, so it is tested here).
@@ -230,6 +232,14 @@ fn must_exist(path: &str) -> Result<(), String> {
     }
 }
 
+/// Like [`must_exist`], but a folder is fine too (show it in Finder, open it in an editor).
+fn must_exist_or_dir(path: &str) -> Result<(), String> {
+    match std::fs::metadata(path) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(format!("{} isn't on this device any more.", name(path))),
+    }
+}
+
 /// Runs a command of the native plugin without holding up the async runtime while, say, the
 /// share sheet or the Face ID prompt is up.
 #[cfg(mobile)]
@@ -422,7 +432,8 @@ pub async fn temp_folder(app: tauri::AppHandle) -> Result<String, String> {
 pub async fn reveal_local(path: String) -> Result<(), String> {
     #[cfg(desktop)]
     {
-        must_exist(&path)?;
+        // folders too: a folder kept on this device by sync is shown the same way
+        must_exist_or_dir(&path)?;
         tauri_plugin_opener::reveal_item_in_dir(&path).map_err(|e| format!("Couldn't show {}: {e}", name(&path)))
     }
     #[cfg(mobile)]

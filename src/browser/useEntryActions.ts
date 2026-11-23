@@ -12,6 +12,7 @@ import { baseName, parentPrefix } from "../format";
 import { destLabel, entryParent } from "../moving";
 import { expiryLabel, type Favorite } from "../settings";
 import { tidyMenu } from "../desktop/menus";
+import { openInItems } from "../desktop/openWith";
 import { parseLocation } from "../desktop/paths";
 import { GoToDialog } from "../desktop/GoToDialog";
 import { SyncThisFolder } from "../desktop/SyncThisFolder";
@@ -335,6 +336,8 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       one && e.kind === "file" && env.canOpenDocument?.(e) && { type: "item", label: "Open in default app", icon: "external", onClick: () => void ops.openInApp(e) },
       one && e.kind === "file" && { type: "item", label: "Quick Look", icon: "eye", hint: "Space", onClick: () => pane.setQuick(e.key) },
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => pane.navigate(entryParent(e), e.key) },
+      // Show in Finder, Open with ▸ (desktop/openWith.ts)
+      ...(one ? openInItems({ profileId: profile.id, bucket, onDisk, ops, toast }, e) : []),
       // this computer's own files aren't downloaded: Copy, Move and F5/F6 put them elsewhere
       !onDisk && { type: "item", label: one && e.native?.exports.length ? `Download as ${e.native.exports[0].label}` : "Download", icon: "download", hint: "⇧⌘D", onClick: () => ops.downloadEntries(list, relBase) },
       // a Google Doc / Sheet / Slides: its other formats (PDF…)

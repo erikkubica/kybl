@@ -308,6 +308,15 @@ export function makeFileOps(c: OpsContext) {
     if (path) await api.openLocal(path).catch((err) => toast("error", errMessage(err)));
   };
 
+  /**
+   * "Open with ▸ app": like Open, with the app the person chose (an `AppChoice.path`). `app`
+   * null: Windows' own "How do you want to open this file?" window.
+   */
+  const openWith = async (picked: Entry, app: string | null) => {
+    const path = await localCopy(picked, "open");
+    if (path) await (app === null ? api.openWithChooser(path) : api.openWith(path, app)).catch((err) => toast("error", errMessage(err)));
+  };
+
   /** Puts the file itself on the clipboard, to paste into a chat, a mail or a Finder window. */
   const copyFile = async (picked: Entry) => {
     const path = await localCopy(picked, "copy");
@@ -750,7 +759,7 @@ export function makeFileOps(c: OpsContext) {
     void relocate(cl.items, dest, mode, { srcBucket: cl.bucket, destBucket: bucket }).then((ok) => ok && usedUp());
   };
 
-  return { uploadPaths, pickAndUpload, downloadEntries, openInApp, copyFile, askDelete, askRename, askNewFolder, relocate, duplicate, clip, paste };
+  return { uploadPaths, pickAndUpload, downloadEntries, openInApp, openWith, copyFile, askDelete, askRename, askNewFolder, relocate, duplicate, clip, paste };
 }
 
 export type FileOps = ReturnType<typeof makeFileOps>;

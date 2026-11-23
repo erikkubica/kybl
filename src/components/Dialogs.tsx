@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { errDetail, errSummary } from "../api";
 import { Icon, type IconName } from "../Icons";
 
@@ -276,8 +276,15 @@ export type MenuItem =
       disabled?: boolean;
       /** a toggle (shown with a tick); the menu stays a plain menu otherwise */
       checked?: boolean;
+      /** a picture instead of the icon, such as an app's own icon (a data URL) */
+      image?: string;
       onClick: () => void;
     }
+  /**
+   * A row that opens a submenu (hover, → or Enter). `items` runs when it opens and may return a
+   * promise: the submenu says "Loading…" until it settles.
+   */
+  | { type: "submenu"; label: string; icon?: IconName; disabled?: boolean; items: () => MenuItem[] | Promise<MenuItem[]> }
   | { type: "sep" }
   /** a small grey heading above a group of items */
   | { type: "label"; label: string };
@@ -295,6 +302,81 @@ export function menuPointFor(el: Element | null): { x: number; y: number } {
 }
 
 const TYPE_AHEAD_MS = 600;
+/** Hovering a submenu item this long opens it; leaving it for another item closes it after the longer wait, so a diagonal move into the submenu doesn't lose it. */
+const SUB_OPEN_MS = 120;
+const SUB_CLOSE_MS = 280;
+
+type TypeAhead = { text: string; at: number };
+
+/**
+ * Arrow keys, Home/End and type-ahead inside one menu panel. True when it handled the key.
+ */
+function navigate(e: React.KeyboardEvent, panel: HTMLElement | null, typed: { current: TypeAhead }): boolean {
+  const list = [...(panel?.querySelectorAll<HTMLButtonElement>(".ctx-item:not(:disabled)") ?? [])];
+  if (list.length === 0) return false;
+  const i = list.indexOf(document.activeElement as HTMLButtonElement);
+  let next = -1;
+  if (e.key === "ArrowDown") next = i < 0 ? 0 : (i + 1) % list.length;
+  else if (e.key === "ArrowUp") next = i < 0 ? list.length - 1 : (i - 1 + list.length) % list.length;
+  else if (e.key === "Home" || e.key === "PageUp") next = 0;
+  else if (e.key === "End" || e.key === "PageDown") next = list.length - 1;
+  else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && e.key !== " ") {
+    // type-ahead: jump to the next item starting with what was typed
+    const now = Date.now();
+    typed.current = { text: (now - typed.current.at < TYPE_AHEAD_MS ? typed.current.text : "") + e.key.toLowerCase(), at: now };
+    const q = typed.current.text;
+    const order = [...list.slice(i + (q.length === 1 ? 1 : 0)), ...list.slice(0, i + (q.length === 1 ? 1 : 0))];
+    const hit = order.find((b) => (b.dataset.label ?? "").toLowerCase().startsWith(q));
+    if (hit) next = list.indexOf(hit);
+  } else return false;
+  e.preventDefault();
+  if (next >= 0) list[next].focus();
+  return true;
+}
+
+const focusFirst = (panel: HTMLElement | null) => panel?.querySelector<HTMLElement>(".ctx-item:not(:disabled)")?.focus({ preventScroll: true });
+
+/** The leading icon of an item: a tick for toggles, an app's own picture, or one of ours. */
+function ItemIcon({ it }: { it: Extract<MenuItem, { type: "item" | "submenu" }> }) {
+  if (it.type === "item" && it.checked !== undefined) return <span className="ctx-check">{it.checked && <Icon name="check" size={14} />}</span>;
+  if (it.type === "item" && it.image) return <img className="ctx-img" src={it.image} alt="" width={16} height={16} draggable={false} />;
+  return it.icon ? <Icon name={it.icon} size={15} /> : <span style={{ width: 15 }} />;
+}
+
+/** One panel's plain items, separators and headings (submenu rows are drawn by the caller). */
+function PlainRow({ it, onClose, onHover }: { it: Exclude<MenuItem, { type: "submenu" }>; onClose: () => void; onHover?: () => void }) {
+  if (it.type === "sep") return <div className="ctx-sep" role="separator" />;
+  if (it.type === "label")
+    return (
+      <div className="ctx-heading" role="presentation">
+        {it.label}
+      </div>
+    );
+  return (
+    <button
+      className={`ctx-item ${it.danger ? "danger" : ""}`}
+      role={it.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+      aria-checked={it.checked === undefined ? undefined : it.checked}
+      aria-keyshortcuts={it.hint || undefined}
+      data-label={it.label}
+      disabled={it.disabled}
+      onMouseEnter={(e) => {
+        e.currentTarget.focus({ preventScroll: true });
+        onHover?.();
+      }}
+      onClick={() => {
+        onClose();
+        it.onClick();
+      }}
+    >
+      <ItemIcon it={it} />
+      <span className="ctx-label">{it.label}</span>
+      {it.hint && <span className="ctx-hint">{it.hint}</span>}
+    </button>
+  );
+}
+
+type SubState = { index: number; anchor: DOMRect; items: MenuItem[] | null; focus: boolean };
 
 export function ContextMenu({
   x,
@@ -311,12 +393,20 @@ export function ContextMenu({
   label?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const subRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x, y, maxH: 0 });
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   // focus goes back to where it was unless the menu closed because something else was clicked
   const restore = useRef(true);
-  const typed = useRef({ text: "", at: 0 });
+  const typed = useRef<TypeAhead>({ text: "", at: 0 });
+  const [sub, setSub] = useState<SubState | null>(null);
+  const subNow = useRef<SubState | null>(null);
+  subNow.current = sub;
+  // a submenu whose items are still loading when another one opens must not replace it
+  const subSeq = useRef(0);
+  const timer = useRef<number | undefined>(undefined);
+  const clearTimer = () => window.clearTimeout(timer.current);
 
   useEffect(() => {
     const el = ref.current;
@@ -333,10 +423,21 @@ export function ContextMenu({
     }
   }, [x, y]);
 
+  /** Closes the submenu; `refocus` puts focus back on the row that opened it. */
+  const closeSub = (refocus: boolean) => {
+    clearTimer();
+    const s = subNow.current;
+    if (!s) return;
+    subSeq.current++;
+    setSub(null);
+    if (refocus) ref.current?.querySelector<HTMLElement>(`[data-index="${s.index}"]`)?.focus({ preventScroll: true });
+  };
+
   useEffect(() => {
     const prev = document.activeElement;
     const first = ref.current?.querySelector<HTMLElement>(".ctx-item:not(:disabled)");
     (first ?? ref.current)?.focus({ preventScroll: true });
+    const inside = (t: EventTarget | null) => t instanceof Node && (!!ref.current?.contains(t) || !!subRef.current?.contains(t));
     const away = () => {
       restore.current = false;
       closeRef.current();
@@ -344,102 +445,220 @@ export function ContextMenu({
     // caught on the way down: a window drag strip (the toolbar's empty space) stops the event
     // before it would bubble here, and the menu stayed open
     const downAway = (e: MouseEvent) => {
-      if (ref.current?.contains(e.target as Node)) return;
+      if (inside(e.target)) return;
       away();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        closeRef.current();
+        // a submenu closes first, like the system's menus
+        if (subNow.current) closeSub(true);
+        else closeRef.current();
       }
+    };
+    // a long submenu (many apps) scrolls; anywhere else the page moved under the menu
+    const wheelAway = (e: WheelEvent) => {
+      if (!inside(e.target)) away();
     };
     window.addEventListener("mousedown", downAway, true);
     window.addEventListener("blur", away);
     window.addEventListener("keydown", onKey, true);
-    window.addEventListener("wheel", away, { passive: true });
+    window.addEventListener("wheel", wheelAway, { passive: true });
     window.addEventListener("resize", away);
     return () => {
       window.removeEventListener("mousedown", downAway, true);
       window.removeEventListener("blur", away);
       window.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("wheel", away);
+      window.removeEventListener("wheel", wheelAway);
       window.removeEventListener("resize", away);
+      window.clearTimeout(timer.current);
       if (restore.current) restoreFocus(prev, modalStack.length === 0);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const move = (e: React.KeyboardEvent) => {
-    const list = [...(ref.current?.querySelectorAll<HTMLButtonElement>(".ctx-item:not(:disabled)") ?? [])];
-    if (list.length === 0) return;
-    const i = list.indexOf(document.activeElement as HTMLButtonElement);
-    let next = -1;
-    if (e.key === "ArrowDown") next = i < 0 ? 0 : (i + 1) % list.length;
-    else if (e.key === "ArrowUp") next = i < 0 ? list.length - 1 : (i - 1 + list.length) % list.length;
-    else if (e.key === "Home" || e.key === "PageUp") next = 0;
-    else if (e.key === "End" || e.key === "PageDown") next = list.length - 1;
-    else if (e.key === "Tab") {
+  /** Opens the submenu of row `i` (its items may come later); `focus` moves the keyboard into it. */
+  const openSub = (i: number, el: HTMLElement, focus: boolean) => {
+    clearTimer();
+    const it = items[i];
+    if (it?.type !== "submenu" || it.disabled) return;
+    const s = subNow.current;
+    if (s?.index === i) {
+      if (focus) {
+        if (s.items) focusFirst(subRef.current);
+        else setSub({ ...s, focus: true });
+      }
+      return;
+    }
+    const seq = ++subSeq.current;
+    const anchor = el.getBoundingClientRect();
+    let got: MenuItem[] | Promise<MenuItem[]>;
+    try {
+      got = it.items();
+    } catch {
+      got = [];
+    }
+    if (Array.isArray(got)) return setSub({ index: i, anchor, items: got, focus });
+    setSub({ index: i, anchor, items: null, focus });
+    const done = (list: MenuItem[]) => {
+      if (subSeq.current === seq) setSub((cur) => (cur && cur.index === i ? { ...cur, items: list } : cur));
+    };
+    got.then(done, () => done([]));
+  };
+
+  const keys = (e: React.KeyboardEvent) => {
+    if (e.key === "Tab") {
       e.preventDefault();
       closeRef.current();
       return;
-    } else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && e.key !== " ") {
-      // type-ahead: jump to the next item starting with what was typed
-      const now = Date.now();
-      typed.current = { text: (now - typed.current.at < TYPE_AHEAD_MS ? typed.current.text : "") + e.key.toLowerCase(), at: now };
-      const q = typed.current.text;
-      const order = [...list.slice(i + (q.length === 1 ? 1 : 0)), ...list.slice(0, i + (q.length === 1 ? 1 : 0))];
-      const hit = order.find((b) => (b.dataset.label ?? "").toLowerCase().startsWith(q));
-      if (hit) next = list.indexOf(hit);
-    } else return;
-    e.preventDefault();
-    if (next >= 0) list[next].focus();
+    }
+    const el = document.activeElement as HTMLElement | null;
+    if (e.key === "ArrowRight" && el?.dataset.submenu && el.dataset.index) {
+      e.preventDefault();
+      openSub(Number(el.dataset.index), el, true);
+      return;
+    }
+    if (navigate(e, ref.current, typed) && subNow.current) closeSub(false);
   };
 
   return (
+    <>
+      <div
+        ref={ref}
+        className="ctx-menu"
+        role="menu"
+        aria-label={label}
+        tabIndex={-1}
+        style={{ left: pos.x, top: pos.y, maxHeight: pos.maxH || undefined }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onContextMenu={(e) => e.preventDefault()}
+        onKeyDown={keys}
+      >
+        {items.map((it, i) =>
+          it.type === "submenu" ? (
+            <button
+              key={i}
+              className={`ctx-item ${sub?.index === i ? "open" : ""}`}
+              role="menuitem"
+              aria-haspopup="menu"
+              aria-expanded={sub?.index === i}
+              data-label={it.label}
+              data-index={i}
+              data-submenu="1"
+              disabled={it.disabled}
+              onMouseEnter={(e) => {
+                const el = e.currentTarget;
+                el.focus({ preventScroll: true });
+                if (sub?.index === i) return clearTimer();
+                clearTimer();
+                timer.current = window.setTimeout(() => openSub(i, el, false), SUB_OPEN_MS);
+              }}
+              onClick={(e) => openSub(i, e.currentTarget, true)}
+            >
+              <ItemIcon it={it} />
+              <span className="ctx-label">{it.label}</span>
+              <Icon name="chevron" size={13} className="ctx-more" />
+            </button>
+          ) : (
+            <PlainRow
+              key={i}
+              it={it}
+              onClose={onClose}
+              onHover={() => {
+                clearTimer();
+                if (subNow.current) timer.current = window.setTimeout(() => closeSub(false), SUB_CLOSE_MS);
+              }}
+            />
+          ),
+        )}
+      </div>
+      {sub && (
+        <SubPanel
+          panelRef={subRef}
+          sub={sub}
+          onClose={onClose}
+          onBack={() => closeSub(true)}
+          onEnter={clearTimer}
+          typed={typed}
+        />
+      )}
+    </>
+  );
+}
+
+/** A submenu: next to its row (or to the left when there is no room), scrolling when long. */
+function SubPanel({
+  panelRef,
+  sub,
+  onClose,
+  onBack,
+  onEnter,
+  typed,
+}: {
+  panelRef: React.RefObject<HTMLDivElement | null>;
+  sub: SubState;
+  onClose: () => void;
+  /** ← or Escape: back to the row that opened it */
+  onBack: () => void;
+  onEnter: () => void;
+  typed: { current: TypeAhead };
+}) {
+  const [pos, setPos] = useState<{ x: number; y: number; maxH: number } | null>(null);
+  const { anchor, items, focus } = sub;
+
+  useLayoutEffect(() => {
+    const el = panelRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const maxH = window.innerHeight - 16;
+    const h = Math.min(r.height, maxH);
+    // the first row lines up with the row that opened it (5px padding + 1px border)
+    let left = anchor.right + 4;
+    if (left + r.width > window.innerWidth - 8) left = Math.max(8, anchor.left - r.width - 4);
+    const top = Math.max(8, Math.min(anchor.top - 6, window.innerHeight - h - 8));
+    setPos({ x: left, y: top, maxH });
+  }, [anchor, items, panelRef]);
+
+  useEffect(() => {
+    // opened from the keyboard: keys go to the submenu even while its items load
+    if (!focus) return;
+    if (items) focusFirst(panelRef.current);
+    if (!panelRef.current?.contains(document.activeElement)) panelRef.current?.focus({ preventScroll: true });
+  }, [focus, items, panelRef]);
+
+  return (
     <div
-      ref={ref}
-      className="ctx-menu"
+      ref={panelRef}
+      className="ctx-menu ctx-sub"
       role="menu"
-      aria-label={label}
       tabIndex={-1}
-      style={{ left: pos.x, top: pos.y, maxHeight: pos.maxH || undefined }}
+      // unplaced for one layout pass: transparent, not hidden, so it can take focus already
+      style={pos ? { left: pos.x, top: pos.y, maxHeight: pos.maxH } : { left: anchor.right, top: anchor.top, opacity: 0 }}
       onMouseDown={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.preventDefault()}
-      onKeyDown={move}
+      onMouseEnter={onEnter}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          onBack();
+        } else if (e.key === "Tab") {
+          e.preventDefault();
+          onClose();
+        } else navigate(e, panelRef.current, typed);
+      }}
     >
-      {items.map((it, i) =>
-        it.type === "sep" ? (
-          <div key={i} className="ctx-sep" role="separator" />
-        ) : it.type === "label" ? (
-          <div key={i} className="ctx-heading" role="presentation">
-            {it.label}
-          </div>
-        ) : (
-          <button
-            key={i}
-            className={`ctx-item ${it.danger ? "danger" : ""}`}
-            role={it.checked === undefined ? "menuitem" : "menuitemcheckbox"}
-            aria-checked={it.checked === undefined ? undefined : it.checked}
-            aria-keyshortcuts={it.hint || undefined}
-            data-label={it.label}
-            disabled={it.disabled}
-            onMouseEnter={(e) => e.currentTarget.focus({ preventScroll: true })}
-            onClick={() => {
-              onClose();
-              it.onClick();
-            }}
-          >
-            {it.checked !== undefined ? (
-              <span className="ctx-check">{it.checked && <Icon name="check" size={14} />}</span>
-            ) : it.icon ? (
-              <Icon name={it.icon} size={15} />
-            ) : (
-              <span style={{ width: 15 }} />
-            )}
-            <span className="ctx-label">{it.label}</span>
-            {it.hint && <span className="ctx-hint">{it.hint}</span>}
-          </button>
-        ),
+      {items === null ? (
+        <div className="ctx-heading ctx-loading" role="presentation">
+          Loading…
+        </div>
+      ) : items.length === 0 ? (
+        <div className="ctx-heading" role="presentation">
+          Nothing to show
+        </div>
+      ) : (
+        // one level deep: a submenu inside a submenu isn't drawn
+        items.map((it, i) => (it.type === "submenu" ? null : <PlainRow key={i} it={it} onClose={onClose} />))
       )}
     </div>
   );
