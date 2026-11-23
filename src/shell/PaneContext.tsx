@@ -8,11 +8,11 @@ import type { Pane } from "../browser/usePane";
 import type { PaneId } from "../browser/types";
 
 export type PaneApi = {
-  left: Pane;
-  right: Pane;
-  /** the pane the keyboard, menus and sidebar act on (always the left one in single-pane mode) */
+  /** the panes on screen, in reading order */
+  panes: Pane[];
+  /** the pane the keyboard, menus and sidebar act on (the only one in single-pane mode) */
   active: Pane;
-  /** the other pane, while two are on screen */
+  /** the pane the active one pairs with (F5 / F6, swap, compare), while several are on screen */
   other: Pane | null;
   dual: boolean;
   setActive: (id: PaneId) => void;

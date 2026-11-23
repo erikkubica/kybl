@@ -1,7 +1,8 @@
 /**
  * The desktop app around the browser panes: the sidebar of connections and favorites, the
  * Activity panel, Settings, connection dialogs and the update banner. It owns the panes (one, or
- * two side by side) and routes the sidebar, the keyboard and the menu bar to the active one.
+ * several in a layout of splits) and routes the sidebar, the keyboard and the menu bar to the
+ * active one.
  */
 import { MountDialog } from "../mount/MountDialog";
 import { driveItems } from "../mount/driveMenu";
@@ -31,7 +32,7 @@ import { undoStack } from "../desktop/undo";
 import { usePane, type Pane, type PaneEnv } from "../browser/usePane";
 import { BrowserPane } from "../browser/BrowserPane";
 import type { EmptyActions } from "../browser/PaneEmpty";
-import { THIS_MAC, type PaneId } from "../browser/types";
+import { PANE_IDS, THIS_MAC, type PaneId } from "../browser/types";
 import { forgetCaps, peekCaps } from "../useCaps";
 import { sendItems } from "./crossPane";
 import { clearAuthNeeded, useAuthNeeded } from "../connections/authNeeded";
@@ -47,8 +48,9 @@ import { loadExpanded, useConnections } from "./useConnections";
 import { PreviewAside, usePreviewLayout } from "./PreviewAside";
 import { useFinderDrop } from "./useFinderDrop";
 import { useShellCommands } from "./useShellCommands";
-import { DualPane, DualTools } from "./DualPane";
-import { makeDualActions, type DualContext } from "./dualActions";
+import { DualTools, SplitLayout } from "./SplitLayout";
+import { closePane, equalize, freeSlot, leaf, leaves, loadLayout, MAX_PANES, minSize, relation, saveLayout, setSizes, splitPane, type Dir, type PaneNode } from "./paneLayout";
+import { makeDualActions, paneName, type DualContext } from "./dualActions";
 import { PaneContext } from "./PaneContext";
 import { useMigrationHost } from "./useMigrationHost";
 
@@ -117,8 +119,21 @@ export function AppShell() {
     [],
   );
   const sidePeek = useSidePeek(sideHidden, () => dialogs.isOpen());
-  const dual = settings.layout === "dual";
-  const [activeId, setActiveId] = useState<PaneId>("left");
+  // the panes on screen as a tree of splits, kept between launches (an old dual pane becomes a
+  // split of two on the first launch)
+  const [tree, setTree] = useState<PaneNode>(() => loadLayout(settings.layout));
+  const ids = useMemo(() => leaves(tree), [tree]);
+  const dual = ids.length > 1;
+  useEffect(() => {
+    // dragging a divider changes the tree on every mouse move: write once it settles
+    const t = window.setTimeout(() => saveLayout(tree), 200);
+    return () => window.clearTimeout(t);
+  }, [tree]);
+  // the panes by when they were last active, most recent first: the first on screen is the
+  // active one, the next is what "the other pane" means for it (F5 / F6, swap, compare)
+  const [recent, setRecent] = useState<PaneId[]>(() => leaves(tree));
+  const setActiveId = useCallback((id: PaneId) => setRecent((cur) => (cur[0] === id ? cur : [id, ...cur.filter((x) => x !== id)])), []);
+  const activeId = recent.find((id) => ids.includes(id)) ?? ids[0];
   // two lists side by side leave little room: the details pane has its own switch there, off at first
   const singlePreview = usePreviewLayout("s3b.preview");
   const dualPreview = usePreviewLayout("s3b.preview.dual", false);
@@ -289,12 +304,23 @@ export function AppShell() {
     },
     ...dualPane.envFor(id),
   });
+  // one pane per slot, always (hooks can't come and go with the layout); a slot that isn't on
+  // screen holds nothing and sits idle
   const left = usePane(envFor("left"));
   const right = usePane(envFor("right"));
-  const active = dual && activeId === "right" ? right : left;
-  const other = dual ? (active === left ? right : left) : null;
-  panesRef.current = dual ? [left, right] : [left];
-  allPanes.current = [left, right];
+  const p3 = usePane(envFor("p3"));
+  const p4 = usePane(envFor("p4"));
+  const p5 = usePane(envFor("p5"));
+  const p6 = usePane(envFor("p6"));
+  const slots = [left, right, p3, p4, p5, p6];
+  const slot = (id: PaneId) => slots[PANE_IDS.indexOf(id)];
+  const active = slot(activeId);
+  /** The pane `id` pairs with: the one active most recently before it (with two, the other one). */
+  const otherOf = (id: PaneId): PaneId | null => recent.find((x) => x !== id && ids.includes(x)) ?? ids.find((x) => x !== id) ?? null;
+  const otherId = dual ? otherOf(activeId) : null;
+  const other = otherId ? slot(otherId) : null;
+  panesRef.current = ids.map(slot);
+  allPanes.current = slots;
   // a trackpad pinch over a grid (the web view sees a wheel with Ctrl) sizes that pane's tiles
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
@@ -309,9 +335,10 @@ export function AppShell() {
     return () => window.removeEventListener("wheel", onWheel);
   }, []);
   dualCtx.current = {
-    left,
-    right,
-    dual,
+    panes: panesRef.current,
+    pane: slot,
+    otherOf,
+    relation: (a, b) => relation(tree, a, b),
     activeId: active.id,
     setActive: setActiveId,
     profiles,
@@ -328,7 +355,7 @@ export function AppShell() {
   /** Sidebar clicks, favorites and new connections open here. */
   const activeRef = useRef(active);
   activeRef.current = active;
-  const paneById = (id: PaneId) => allPanes.current.find((p) => p.id === id) ?? left;
+  const paneById = (id: PaneId) => allPanes.current.find((p) => p.id === id) ?? active;
   const focusListSoon = () => {
     const id = activeRef.current.id;
     requestAnimationFrame(() => focusPaneList(id));
@@ -378,11 +405,13 @@ export function AppShell() {
       .listProfiles()
       .then((list) => {
         conns.setProfiles(list);
-        const last = settings.restoreLast ? left.savedLocation() : null;
+        // the first pane on screen opens like the one pane always did; the others follow below
+        const firstId = ids[0];
+        const last = settings.restoreLast ? slot(firstId).savedLocation() : null;
         const all = [...list, THIS_MAC];
         // where it was last time (This Mac too); else the first saved connection
         const start = all.find((p) => p.id === last?.profileId) ?? list[0];
-        if (start) void connectIn("left", start, last?.profileId === start.id ? last.bucket : undefined, last?.prefix ?? "");
+        if (start) void connectIn(firstId, start, last?.profileId === start.id ? last.bucket : undefined, last?.prefix ?? "");
         // the other connections left open last time list their buckets too
         for (const p of all) if (p !== start && loadExpanded().has(p.id)) void conns.loadBuckets(p);
       })
@@ -390,24 +419,125 @@ export function AppShell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // two panes: the right one reopens where it was, or starts at the left one's place
-  const rightTried = useRef(false);
+  // on launch the other panes reopen where they were, or start at the first one's place (a pane
+  // made by a split opens its own place and is marked here at once)
+  const opened = useRef(new Set<PaneId>());
+  const first = slot(ids[0]);
   useEffect(() => {
-    if (!dual) {
-      rightTried.current = false;
-      return;
+    if (!first.here || !first.profile || !profiles.length) return;
+    for (const id of ids.slice(1)) {
+      if (opened.current.has(id)) continue;
+      opened.current.add(id);
+      const p = slot(id);
+      if (p.profile) continue;
+      const saved = settings.restoreLast ? p.savedLocation() : null;
+      const prof = saved && profiles.find((x) => x.id === saved.profileId);
+      if (prof && saved) p.go(prof, saved.bucket, saved.prefix);
+      else p.go(first.profile, first.here.bucket, first.here.prefix);
     }
-    if (rightTried.current || right.profile || !left.here || !profiles.length) return;
-    rightTried.current = true;
-    const saved = settings.restoreLast ? right.savedLocation() : null;
-    const p = saved && profiles.find((x) => x.id === saved.profileId);
-    if (p && saved) right.go(p, saved.bucket, saved.prefix);
-    else if (left.profile) right.go(left.profile, left.here.bucket, left.here.prefix);
-  }, [dual, left.here, left.profile, right, profiles, settings.restoreLast]);
-  // back to one pane: the keyboard goes to the one left on screen
-  useEffect(() => {
-    if (!dual) setActiveId("left");
-  }, [dual]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids, first.here, first.profile, profiles, settings.restoreLast]);
+
+  // ------------------------------------------------------------ splitting and closing panes
+  const treeRef = useRef(tree);
+  treeRef.current = tree;
+  const focusSoon = (id: PaneId) => requestAnimationFrame(() => requestAnimationFrame(() => focusPaneList(id)));
+  /** The room the panes share now (with one pane, its list less a details panel two panes would show). */
+  const paneRoom = () => {
+    const box = document.querySelector<HTMLElement>(".splits");
+    if (box) return { w: box.clientWidth, h: box.clientHeight };
+    const one = document.querySelector<HTMLElement>(`[data-pane="${ids[0]}"]`);
+    if (!one) return null;
+    return { w: one.clientWidth - (dualPreview.previewOpen ? dualPreview.previewWidth : 0), h: one.clientHeight };
+  };
+  /** Why pane `id` can't be split that way, or null when it can: a free slot, and room for every pane after it. */
+  const splitRefusal = (dir: Dir, id: PaneId): string | null => {
+    const t = treeRef.current;
+    const fresh = freeSlot(t);
+    if (!fresh || leaves(t).length >= MAX_PANES) return `Kybl shows up to ${MAX_PANES} panes. Close one to make room.`;
+    const room = paneRoom();
+    const need = minSize(splitPane(t, id, dir, fresh));
+    if (room && (need.w > room.w || need.h > room.h)) return "There isn’t room for another pane. Make the window bigger, or close a pane.";
+    return null;
+  };
+  /** Splits a pane: the new one opens the same place (and view) and becomes the active pane. */
+  const split = (dir: Dir, id: PaneId = activeId) => {
+    const why = splitRefusal(dir, id);
+    if (why) return toast("info", why);
+    const t = treeRef.current;
+    const fresh = freeSlot(t)!;
+    const src = slot(id);
+    const p = slot(fresh);
+    opened.current.add(fresh);
+    if (src.here && src.profile) p.go(src.profile, src.here.bucket, src.here.prefix);
+    else p.showConnection(src.profile?.id ?? null);
+    if (p.view !== src.view) p.setView(src.view);
+    setTree(splitPane(t, id, dir, fresh));
+    setActiveId(fresh);
+    focusSoon(fresh);
+  };
+  /** A pane leaves the screen: its slot lets go of its place, so it is empty when used again. */
+  const vacate = (id: PaneId) => {
+    const p = slot(id);
+    p.closeQuick();
+    p.ent.setQuery("");
+    p.sel.setSelected(new Set());
+    p.showConnection(null);
+    opened.current.delete(id);
+  };
+  /** Closes a pane; false when it is the only one (⌘W then closes the window, as it always did). */
+  const close = (id: PaneId = activeId) => {
+    const next = closePane(treeRef.current, id);
+    if (!next) return false;
+    vacate(id);
+    setTree(next);
+    setRecent((cur) => cur.filter((x) => x !== id));
+    if (id === activeId) focusSoon(recent.find((x) => x !== id && leaves(next).includes(x)) ?? leaves(next)[0]);
+    return true;
+  };
+  const closeOthers = (id: PaneId = activeId) => {
+    for (const x of ids) if (x !== id) vacate(x);
+    setTree(leaf(id));
+    setActiveId(id);
+    focusSoon(id);
+  };
+  /** ⌥⌘ and an arrow: the nearest pane that way (in a window too small for all, the previous or next one). */
+  const focusToward = (d: "left" | "right" | "up" | "down") => {
+    if (!dual) return false;
+    const rect = (id: PaneId) => document.querySelector(`[data-pane="${id}"]`)?.getBoundingClientRect();
+    const a = rect(activeId);
+    let best: PaneId | null = null;
+    let bestScore = Infinity;
+    for (const id of ids) {
+      const r = id !== activeId && rect(id);
+      if (!a || !r) continue;
+      const across = d === "left" || d === "right";
+      const gap = { left: a.left - r.right, right: r.left - a.right, up: a.top - r.bottom, down: r.top - a.bottom }[d];
+      if (gap < -2) continue;
+      const overlap = across ? Math.min(a.bottom, r.bottom) - Math.max(a.top, r.top) : Math.min(a.right, r.right) - Math.max(a.left, r.left);
+      // beside it first, then the nearest, then the one sharing the longest edge
+      const score = (overlap > 0 ? 0 : 1e6) + gap * 10 - overlap;
+      if (score < bestScore) (bestScore = score), (best = id);
+    }
+    if (!best && ids.every((id) => id === activeId || !rect(id))) {
+      const i = ids.indexOf(activeId) + (d === "left" || d === "up" ? -1 : 1);
+      best = ids[(i + ids.length) % ids.length];
+    }
+    if (!best) return true;
+    setActiveId(best);
+    focusSoon(best);
+    return true;
+  };
+  /** The panes button with several panes: split, size and close. */
+  const panesMenu = (id: PaneId, x: number, y: number) =>
+    dialogs.menu(x, y, [
+      { type: "item", label: "Split right", icon: "dual-pane", hint: "⌘\\", disabled: !!splitRefusal("row", id), onClick: () => split("row", id) },
+      { type: "item", label: "Split down", icon: "split-down", hint: "⇧⌘\\", disabled: !!splitRefusal("col", id), onClick: () => split("col", id) },
+      { type: "item", label: "Make panes the same size", onClick: () => setTree((t) => equalize(t)) },
+      { type: "sep" },
+      { type: "item", label: "Close pane", icon: "x", hint: "⌘W", onClick: () => void close(id) },
+      { type: "item", label: "Close other panes", onClick: () => closeOthers(id) },
+    ]);
 
   // refresh listing once all uploads have finished
   useEffect(
@@ -600,6 +730,15 @@ export function AppShell() {
       "tiles-smaller": () => (active.view === "grid" ? active.setTile(Math.max(TILE_MIN, active.tile - 24)) : false),
       "toggle-compact": () => active.setCompact(!active.compact),
       ...dualPane.commands,
+      "split-right": () => split("row"),
+      "split-down": () => split("col"),
+      "close-pane": () => close(),
+      // the dual pane's old toggle, for anything still sending it
+      "toggle-dual": () => (dual ? closeOthers() : split("row")),
+      "focus-left": () => focusToward("left"),
+      "focus-right": () => focusToward("right"),
+      "focus-up": () => focusToward("up"),
+      "focus-down": () => focusToward("down"),
     },
     dual,
     editorOpen: () => !!docRef.current,
@@ -611,9 +750,9 @@ export function AppShell() {
     target: (x, y) => {
       // a dialog owns the screen: nothing lands behind it
       if (overlayUp()) return null;
-      // with two panes, the one under the pointer; else (or without a position) the active one
+      // with several panes, the one under the pointer; else (or without a position) the active one
       const under = x != null && y != null ? document.elementFromPoint(x, y)?.closest("[data-pane]")?.getAttribute("data-pane") : null;
-      const p = dualCtx.current?.dual && under ? paneById(under as PaneId) : activeRef.current;
+      const p = (dualCtx.current?.panes.length ?? 0) > 1 && under ? paneById(under as PaneId) : activeRef.current;
       return p.profile && p.bucket != null ? p.id : null;
     },
     onDrop: (id, paths) => void paneById(id).ops.uploadPaths(paths),
@@ -621,20 +760,27 @@ export function AppShell() {
   });
 
   // ------------------------------------------------------------ render
-  const paneProps = (p: Pane) => ({
-    pane: p,
-    active: p === active,
-    dual,
-    dualTools: dual ? (
+  /** A pane's buttons for its other pane (several panes only). */
+  const toolsFor = (p: Pane) => {
+    const o = dual ? otherOf(p.id) : null;
+    return o ? (
       <DualTools
-        side={p === left ? "left" : "right"}
-        onToOther={() => dualPane.sameFolderInOther(p === left ? "left" : "right")}
+        // with two panes "the right pane" says it all; with more, the folder tells them apart
+        toOther={{ dir: relation(tree, p.id, o) ?? "right", name: ids.length > 2 ? paneName(slot(o)) : "" }}
+        onToOther={() => dualPane.sameFolderInOther(p.id)}
         onSwap={dualPane.swap}
         onCompare={dualPane.compare}
         syncBrowsing={settings.syncBrowsing}
         onSyncBrowsing={() => updateSettings({ syncBrowsing: !settings.syncBrowsing })}
       />
-    ) : undefined,
+    ) : undefined;
+  };
+  const paneProps = (p: Pane) => ({
+    pane: p,
+    active: p === active,
+    dual,
+    label: `Pane ${ids.indexOf(p.id) + 1} of ${ids.length}`,
+    dualTools: toolsFor(p),
     settings,
     updateSettings,
     previewOpen: preview.previewOpen,
@@ -643,7 +789,8 @@ export function AppShell() {
     bucketNote: (p.profile && conns.bucketsBy[p.profile.id]?.note) || null,
     bucketReconnect: !!(p.profile && conns.bucketsBy[p.profile.id]?.reconnect),
     empty: emptyFor(p.id),
-    onToggleDual: () => void dualPane.commands["toggle-dual"](),
+    // one pane: a click splits it, as the dual pane button always did; more: the panes menu
+    onPanes: (x: number, y: number) => (dual ? panesMenu(p.id, x, y) : split("row", p.id)),
     onActivate: () => {
       if (dual && activeId !== p.id) setActiveId(p.id);
     },
@@ -720,17 +867,25 @@ export function AppShell() {
       )}
 
       <main className="main">
-        <PaneContext.Provider value={{ left, right, active, other, dual, setActive: setActiveId }}>
+        <PaneContext.Provider value={{ panes: panesRef.current, active, other, dual, setActive: setActiveId }}>
           {dual ? (
             <div className="content dual-wrap" style={previewStyle}>
-              <DualPane
-                left={(style) => <BrowserPane {...paneProps(left)} style={style} />}
-                right={(style) => <BrowserPane {...paneProps(right)} style={style} />}
+              <SplitLayout
+                tree={tree}
+                activeId={activeId}
+                pane={(id, style) => <BrowserPane {...paneProps(slot(id))} style={style} />}
+                onSizes={(path, sizes) => setTree((t) => setSizes(t, path, sizes))}
+                onEqualize={(path) => setTree((t) => equalize(t, path))}
+                nameOf={(id) => paneName(slot(id)) || slot(id).profile?.name || "Empty pane"}
+                onPick={(id) => {
+                  setActiveId(id);
+                  focusSoon(id);
+                }}
               />
               {aside(active)}
             </div>
           ) : (
-            <BrowserPane {...paneProps(left)} contentStyle={previewStyle} aside={aside(left)} />
+            <BrowserPane {...paneProps(first)} contentStyle={previewStyle} aside={aside(first)} />
           )}
         </PaneContext.Provider>
 
@@ -778,10 +933,9 @@ export function AppShell() {
           compact={active.compact}
           profiles={saved}
           onChange={updateSettings}
-          // Settings sets it for both panes (each can still change its own from its toolbar)
+          // Settings sets it for every pane (each can still change its own from its toolbar)
           onCompact={(c) => {
-            left.setCompact(c);
-            right.setCompact(c);
+            for (const p of slots) p.setCompact(c);
           }}
           onEditProfile={(p) => setConnDialog({ profile: p })}
           onNewProfile={() => setConnDialog({ profile: null })}

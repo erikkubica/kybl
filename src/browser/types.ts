@@ -9,7 +9,13 @@ import type { Profile } from "../types";
 
 export type { Loc } from "./useListing";
 
-export type PaneId = "left" | "right";
+/**
+ * The pane slots. "left" and "right" are the two panes of the old dual pane (their saved places
+ * and view choices keep those names); a split layout adds the others. A slot keeps its id
+ * wherever it sits in the layout, so it is a name, not a position.
+ */
+export const PANE_IDS = ["left", "right", "p3", "p4", "p5", "p6"] as const;
+export type PaneId = (typeof PANE_IDS)[number];
 
 /**
  * The reserved profile id of this computer's own disk (the Local provider, WP0). Its roots are

@@ -8,12 +8,15 @@ export function CompareSummary({
   diff,
   leftName,
   rightName,
+  sides = ["left", "right"],
   partial,
   onClose,
 }: {
   diff: FolderDiff;
   leftName: string;
   rightName: string;
+  /** where the two panes are: side by side, or one above the other */
+  sides?: ["left", "right"] | ["top", "bottom"];
   /** a listing was not loaded to the end: only the loaded items were compared */
   partial: boolean;
   onClose: () => void;
@@ -39,10 +42,11 @@ export function CompareSummary({
               <li className="dim">{n(diff.same, "item")} the same</li>
             </ul>
             <p>
-              Selected what the other side is missing or has an older copy of: {n(leftSel, "item")} on the left, {n(rightSel, "item")} on the right.{" "}
+              Selected what the other side is missing or has an older copy of: {n(leftSel, "item")} {sides[0] === "left" ? "on the left" : "in the top pane"}, {n(rightSel, "item")}{" "}
+              {sides[1] === "right" ? "on the right" : "in the bottom pane"}.{" "}
               {leftSel && rightSel
                 ? "Press F5 to copy the active pane’s selection across, then Tab to the other pane and press F5 again."
-                : `Press F5 to copy ${leftSel + rightSel === 1 ? "it" : "them"} to the ${leftSel ? "right" : "left"}.`}
+                : `Press F5 to copy ${leftSel + rightSel === 1 ? "it" : "them"} to the ${leftSel ? sides[1] : sides[0]}${sides[0] === "top" ? " pane" : ""}.`}
             </p>
           </>
         )}

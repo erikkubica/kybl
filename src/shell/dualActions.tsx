@@ -1,8 +1,11 @@
 /**
- * Dual pane behaviour that spans both panes: switching the active pane, copy / move to the other
- * pane (F5 / F6 and drag), swapping them, opening the same folder in both, synchronized browsing
- * and Compare folders. Made once by the shell; it reads the current panes through `get`, so the
+ * Behaviour that spans two panes: switching the active pane, copy / move to the other pane
+ * (F5 / F6 and drag), swapping them, opening the same folder in both, synchronized browsing and
+ * Compare folders. Made once by the shell; it reads the current panes through `get`, so the
  * callbacks it hands to the panes never go stale.
+ *
+ * "The other pane" is the one the shell pairs with each pane (`otherOf`): with two panes simply
+ * the other one, with more the one used most recently before it. Dragging works between any two.
  */
 import { createElement } from "react";
 import { parentPrefix } from "../format";
@@ -20,9 +23,14 @@ import type { Dialogs } from "./useDialogs";
 import type { ConfirmMigration } from "./useMigrationHost";
 
 export type DualContext = {
-  left: Pane;
-  right: Pane;
-  dual: boolean;
+  /** the panes on screen, in reading order */
+  panes: Pane[];
+  /** any pane slot, on screen or not */
+  pane: (id: PaneId) => Pane;
+  /** the pane `id` pairs with: F5 / F6 go there, swap and compare use it */
+  otherOf: (id: PaneId) => PaneId | null;
+  /** which way pane `b` is from pane `a` */
+  relation: (a: PaneId, b: PaneId) => "left" | "right" | "up" | "down" | null;
   activeId: PaneId;
   setActive: (id: PaneId) => void;
   profiles: Profile[];
@@ -37,11 +45,18 @@ export type DualContext = {
   confirmMigration?: ConfirmMigration;
 };
 
-const otherId = (id: PaneId): PaneId => (id === "left" ? "right" : "left");
 const placeName = (p: Pane) => (p.prefix && p.profile ? destLabel(p.prefix, p.bucket ?? "", p.profile.id) : (p.bucketLabel ?? ""));
 
+export const paneName = placeName;
+
 export function makeDualActions(get: () => DualContext) {
-  const pane = (id: PaneId) => (id === "left" ? get().left : get().right);
+  const pane = (id: PaneId) => get().pane(id);
+  const multi = () => get().panes.length > 1;
+  /** the other pane of `id`, while there is one on screen */
+  const otherPane = (id: PaneId) => {
+    const o = get().otherOf(id);
+    return o ? pane(o) : null;
+  };
   // a pane following the other must not make the other follow it back
   let following = false;
 
@@ -62,9 +77,9 @@ export function makeDualActions(get: () => DualContext) {
   /** Synchronized browsing: into a subfolder, or up a level, when the other pane can do the same. */
   const follow = (id: PaneId, from: Loc | null, to: Loc) => {
     const c = get();
-    if (following || !c.dual || !c.settings.syncBrowsing || !from || from.profileId !== to.profileId || from.bucket !== to.bucket) return;
-    const o = pane(otherId(id));
-    if (!o.here || o.ent.search) return;
+    if (following || !multi() || !c.settings.syncBrowsing || !from || from.profileId !== to.profileId || from.bucket !== to.bucket) return;
+    const o = otherPane(id);
+    if (!o?.here || o.ent.search) return;
     if (to.prefix.startsWith(from.prefix) && to.prefix !== from.prefix) {
       const sub = to.prefix.slice(from.prefix.length);
       const target = o.prefix + sub;
@@ -80,14 +95,14 @@ export function makeDualActions(get: () => DualContext) {
   const sendSelection = async (mode: "copy" | "move") => {
     const c = get();
     const src = pane(c.activeId);
-    const dst = pane(otherId(c.activeId));
+    const dst = otherPane(c.activeId);
     let items = src.sel.selectedEntries;
     if (!items.length && src.sel.cursor.current) items = src.ent.entries.filter((e) => e.key === src.sel.cursor.current);
     if (!items.length) {
       c.dialogs.toast("info", `Select what to ${mode} first`);
       return;
     }
-    if (!dst.here) {
+    if (!dst?.here) {
       c.dialogs.toast("info", "Open a folder in the other pane first");
       return;
     }
@@ -122,24 +137,34 @@ export function makeDualActions(get: () => DualContext) {
     if (ok) await sendToPane(src, dst, items, mode, dst.prefix, c);
   };
 
+  /** The active pane and its other pane trade places (with two panes: the two of them). */
   const swap = () => {
     const c = get();
-    const [a, b] = [c.left.here, c.right.here];
+    const p = pane(c.activeId);
+    const o = otherPane(c.activeId);
+    if (!o) return;
+    const [a, b] = [p.here, o.here];
     quietly(() => {
-      if (b) goTo(c.left, b);
-      if (a) goTo(c.right, a);
+      if (b) goTo(p, b);
+      if (a) goTo(o, a);
     });
   };
 
   /** Opens the folder of pane `id` (the active one by default) in the other pane too. */
   const sameFolderInOther = (id: PaneId = get().activeId) => {
     const src = pane(id);
-    if (src.here) quietly(() => goTo(pane(otherId(id)), src.here!));
+    const dst = otherPane(id);
+    if (src.here && dst) quietly(() => goTo(dst, src.here!));
   };
 
   const compare = () => {
     const c = get();
-    const { left, right } = c;
+    const o = c.otherOf(c.activeId);
+    if (!o) return;
+    // the two in reading order: with two panes side by side, left and right as always
+    const order = c.panes.map((p) => p.id);
+    const [left, right] = order.indexOf(c.activeId) < order.indexOf(o) ? [pane(c.activeId), pane(o)] : [pane(o), pane(c.activeId)];
+    const across = c.relation(left.id, right.id) === "down";
     if (!left.here || !right.here) {
       c.dialogs.toast("info", "Open a folder in both panes to compare them");
       return;
@@ -156,7 +181,7 @@ export function makeDualActions(get: () => DualContext) {
     left.sel.setSelected(new Set(sel.left));
     right.sel.setSelected(new Set(sel.right));
     // F5 copies from the active pane: when only one side has something selected, that's the one
-    const only: PaneId | null = sel.left.length && !sel.right.length ? "left" : sel.right.length && !sel.left.length ? "right" : null;
+    const only: PaneId | null = sel.left.length && !sel.right.length ? left.id : sel.right.length && !sel.left.length ? right.id : null;
     if (only && only !== c.activeId) c.setActive(only);
     const partial = !!(left.ent.listing.next || right.ent.listing.next);
     c.dialogs.show((close) =>
@@ -164,6 +189,7 @@ export function makeDualActions(get: () => DualContext) {
         diff,
         leftName: placeName(left),
         rightName: placeName(right),
+        sides: across ? ["top", "bottom"] : ["left", "right"],
         partial,
         onClose: () => {
           close();
@@ -173,10 +199,12 @@ export function makeDualActions(get: () => DualContext) {
     );
   };
 
+  /** Tab: the next pane in reading order (with two panes, the other one). */
   const switchPane = () => {
     const c = get();
-    if (!c.dual) return false;
-    const id = otherId(c.activeId);
+    if (!multi()) return false;
+    const ids = c.panes.map((p) => p.id);
+    const id = ids[(ids.indexOf(c.activeId) + 1) % ids.length];
     c.setActive(id);
     c.focusPane(id);
     return true;
@@ -189,7 +217,7 @@ export function makeDualActions(get: () => DualContext) {
     otherPaneTarget: (target: PaneId, dest: string | null, items: Entry[]) => {
       const src = pane(id);
       const dst = pane(target);
-      if (!get().dual || !dst.here || !src.here) return null;
+      if (!multi() || !dst.here || !src.here) return null;
       const d = dest ?? dst.prefix;
       if (dst.here.profileId === src.here.profileId && dst.bucket === src.bucket && !isValidDest(items, d)) return null;
       return { dest: d, label: d && dst.profile ? destLabel(d, dst.bucket ?? "", dst.profile.id) : (dst.bucketLabel ?? ""), copyOnly: crossesDisk(src, dst) };
@@ -198,9 +226,8 @@ export function makeDualActions(get: () => DualContext) {
     // between the panes and in the View menu, not in the folder menus
     extraPlaceItems: (): MenuItem[] => [],
     extraItemItems: (list: Entry[]): (MenuItem | false)[] => {
-      const c = get();
-      const dst = pane(otherId(id));
-      if (!c.dual || !dst.here) return [];
+      const dst = otherPane(id);
+      if (!multi() || !dst?.here) return [];
       const src = pane(id);
       const where = placeName(dst) || "the other pane";
       const run = (mode: "copy" | "move") => void sendToPane(src, dst, list, mode, dst.prefix, get());
@@ -216,16 +243,12 @@ export function makeDualActions(get: () => DualContext) {
 
   /** Commands that work with or without a bucket on screen; false = not handled (single pane). */
   const commands: Record<string, () => boolean | void> = {
-    "toggle-dual": () => {
-      const c = get();
-      c.updateSettings({ layout: c.dual ? "single" : "dual" });
-    },
     "switch-pane": switchPane,
-    "swap-panes": () => (get().dual ? swap() : false),
-    "same-folder": () => (get().dual ? sameFolderInOther() : false),
-    "compare-folders": () => (get().dual ? compare() : false),
-    "pane-copy": () => (get().dual ? void sendSelection("copy") : false),
-    "pane-move": () => (get().dual ? void sendSelection("move") : false),
+    "swap-panes": () => (multi() ? swap() : false),
+    "same-folder": () => (multi() ? sameFolderInOther() : false),
+    "compare-folders": () => (multi() ? compare() : false),
+    "pane-copy": () => (multi() ? void sendSelection("copy") : false),
+    "pane-move": () => (multi() ? void sendSelection("move") : false),
   };
 
   return { envFor, commands, sameFolderInOther, swap, compare };

@@ -22,7 +22,7 @@ export type ShortcutOptions = {
   onResume: () => void;
   /** where the active list lives (with two panes, the active pane); default the whole page */
   listScope?: () => ParentNode | null;
-  /** two panes on screen: the commander keys (Tab, F3, F5–F8) work */
+  /** several panes on screen: the commander keys (Tab, F3, F5–F8) work */
   dual?: boolean;
   /** something owns the keyboard (the full-window editor): no shortcut runs */
   muted?: () => boolean;
@@ -62,7 +62,14 @@ export function useShortcuts(opts: ShortcutOptions) {
       else if (mod && k === "l") id = "go-to";
       else if (mod && k === "r") id = "refresh";
       else if (mod && k === "f") id = "search";
-      else if (mod && k === "\\") id = own("toggle-dual");
+      // split layouts: ⌘\ splits the active pane to the right, ⇧⌘\ downwards (by code too:
+      // Shift turns "\" into "|", and some keyboards have it elsewhere)
+      else if (mod && !ev.altKey && (k === "\\" || k === "|" || ev.code === "Backslash")) id = own(ev.shiftKey ? "split-down" : "split-right");
+      // ⌘W closes the active pane while there are several; with one it falls through to the
+      // window's own Close (see the preventDefault below)
+      else if (mod && k === "w" && !ev.shiftKey && !ev.altKey) id = "close-pane";
+      // ⌥⌘ and an arrow: the pane next to the active one that way
+      else if (mod && ev.altKey && ev.key.startsWith("Arrow")) id = `focus-${ev.key.slice(5).toLowerCase()}`;
       else if (mod && ev.shiftKey && k === "s") id = own("swap-panes");
       // by code: Option turns "s" into "ß"
       else if (mod && ev.altKey && ev.code === "KeyS") id = own("toggle-sidebar");
@@ -111,8 +118,9 @@ export function useShortcuts(opts: ShortcutOptions) {
         return;
       }
       if (!id) return;
-      // ⌘R / ⌘F / ⌘L must never fall through to the webview (reload, find) even behind a dialog
-      if (route(id) || mod) ev.preventDefault();
+      // ⌘R / ⌘F / ⌘L must never fall through to the webview (reload, find) even behind a dialog;
+      // ⌘W does when no pane closed, so the window's Close (menu bar) still gets it
+      if (route(id) || (mod && id !== "close-pane")) ev.preventDefault();
     };
 
     const onMouse = (e: MouseEvent) => {
