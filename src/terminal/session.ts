@@ -26,6 +26,11 @@ type Info = { id: number; remoteBase: string | null };
 type Msg = ArrayBuffer | { exit: number | null };
 
 const MAC = /Mac/i.test(navigator.platform || navigator.userAgent);
+/** a prompt's end, right before the cursor (see Session.idle) */
+const PROMPT_REMOTE = /[$%#] $/;
+const PROMPT_LOCAL = /[$%#>❯] $/;
+/** ms after a key is typed before the line counts as known (its echo has come back) */
+const TYPED_LATELY = 500;
 
 let fontSize = clampFont(Number(LS.get(FONT_KEY)) || FONT_DEFAULT);
 function clampFont(n: number) {
@@ -72,6 +77,8 @@ class Session {
   private ackTimer = 0;
   remoteBase: string | null = null;
   private opened = false;
+  /** when a key was last typed (its echo may not be on screen yet) */
+  private lastInput = 0;
 
   constructor(readonly spec: TermSpec) {
     this.host = document.createElement("div");
@@ -178,7 +185,40 @@ class Session {
     if (this.id != null) void invoke("terminal_write", { id: this.id, data, binary }).catch(() => {});
   }
 
+  /** Sends `text` as typed keys (not a paste: a line ending in \r runs), the keyboard left alone. */
+  type(text: string): boolean {
+    if (this.state !== "running") return false;
+    this.send(text);
+    return true;
+  }
+
+  /** Whether a program runs in the foreground: asked of the terminal on This Mac; null over SSH. */
+  async busy(): Promise<boolean | null> {
+    if (this.state !== "running" || this.id == null) return false;
+    return invoke<boolean | null>("terminal_busy", { id: this.id }).catch(() => null);
+  }
+
+  /**
+   * Whether the shell waits at its prompt with nothing typed: the screen isn't a full-screen
+   * program's, the line up to the cursor ends in a prompt ("$ ", "% ", "# ", and on This Mac,
+   * where the terminal also says no program runs, "> " and "❯ "), nothing was typed a moment
+   * ago, and on This Mac no program holds the terminal. Cheap and cautious: when in doubt, busy.
+   */
+  async idle(): Promise<boolean> {
+    if (this.state !== "running") return false;
+    // keys typed a moment ago may not be echoed yet: the line isn't known
+    if (Date.now() - this.lastInput < TYPED_LATELY) return false;
+    const b = this.term.buffer.active;
+    if (b.type !== "normal") return false;
+    const line = b.getLine(b.baseY + b.cursorY)?.translateToString(false, 0, b.cursorX) ?? "";
+    const local = this.remoteBase == null;
+    if (!(local ? PROMPT_LOCAL : PROMPT_REMOTE).test(line)) return false;
+    if (local && (await this.busy()) === true) return false;
+    return true;
+  }
+
   private input(d: string, binary: boolean) {
+    this.lastInput = Date.now();
     if (this.state === "running") return this.send(d, binary);
     if (this.state === "ended" && d.includes("\r")) this.restart();
   }
@@ -295,4 +335,7 @@ setTermImpl({
   },
   action: (sid, a) => sessions.get(sid)?.action(a),
   remoteBase: (sid) => sessions.get(sid)?.remoteBase,
+  type: (sid, text) => sessions.get(sid)?.type(text) ?? false,
+  idle: async (sid) => (await sessions.get(sid)?.idle()) ?? false,
+  busy: async (sid) => (sessions.get(sid) ? sessions.get(sid)!.busy() : null),
 });

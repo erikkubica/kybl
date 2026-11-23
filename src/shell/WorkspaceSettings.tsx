@@ -1,28 +1,39 @@
 /**
  * A workspace's settings, in a popover under its tab (the tab's cog, or "Settings…" in its menu):
- * its name, a colour for its tab, where it opens when Kybl starts, and Duplicate / Close.
+ * its name, a colour for its tab, its recipe (recipes.ts: the layout saved to reset to or open
+ * again, each terminal's startup commands, opening from it when Kybl starts), and Duplicate / Close.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../Icons";
-import { WS_COLORS, type StartMode } from "./workspaces";
+import type { PaneId } from "../browser/types";
+import { WS_COLORS } from "./workspaces";
+
+/** A workspace's recipe as the popover shows it. */
+export type RecipeView = {
+  /** what it opens, in a few words ("3 panes · acme, public_html, terminal") */
+  summary: string;
+  /** its terminals: where each opens, and its startup commands as typed (one per line) */
+  terminals: { id: PaneId; label: string; startup: string }[];
+  openOnLaunch: boolean;
+  /** the layout on screen is the recipe (nothing to update) */
+  matches: boolean;
+};
 
 export type WorkspaceSettingsProps = {
   name: string;
   color: string | null;
-  start: StartMode;
-  /** what "At these folders" opens, in a few words ("2 panes · Photos, Downloads"), or null before it was saved */
-  savedSummary: string | null;
-  /** what is open now, in the same few words */
-  nowSummary: string;
-  /** the saved folders are the ones open now (nothing to take over) */
-  savedIsNow: boolean;
+  /** its recipe, or null before one is saved */
+  recipe: RecipeView | null;
   canClose: boolean;
   anchor: DOMRect;
   onRename: (name: string) => void;
   onColor: (color: string | null) => void;
-  onStart: (mode: StartMode) => void;
-  /** "Use the folders open now": the workspace's start becomes what it shows */
-  onSaveStart: () => void;
+  /** "Save layout as recipe" / "Update from layout": the recipe becomes what the workspace shows */
+  onSaveRecipe: () => void;
+  onResetRecipe: () => void;
+  onDeleteRecipe: () => void;
+  onOpenOnLaunch: (on: boolean) => void;
+  onStartup: (pane: PaneId, text: string) => void;
   onDuplicate: () => void;
   onClose: () => void;
   onDismiss: () => void;
@@ -128,29 +139,57 @@ export function WorkspaceSettings(p: WorkspaceSettingsProps) {
         ))}
       </div>
 
-      <div className="ws-pop-label">When Kybl opens</div>
-      <div className="ws-start" role="radiogroup" aria-label="When Kybl opens">
-        <button type="button" role="radio" aria-checked={p.start === "restore"} className={`ws-choice ${p.start === "restore" ? "on" : ""}`} onClick={() => p.onStart("restore")}>
-          <span className="ws-radio" aria-hidden />
-          <span>
-            <b>Where I left off</b>
-            <small>The folders this workspace showed last</small>
-          </span>
-        </button>
-        <button type="button" role="radio" aria-checked={p.start === "saved"} className={`ws-choice ${p.start === "saved" ? "on" : ""}`} onClick={() => p.onStart("saved")}>
-          <span className="ws-radio" aria-hidden />
-          <span>
-            <b>Always at these folders</b>
-            <small>{p.savedSummary ?? p.nowSummary}</small>
-          </span>
-        </button>
-        {p.start === "saved" && (
-          <button type="button" className="btn btn-sm ws-save-start" onClick={p.onSaveStart} disabled={p.savedIsNow} title={p.savedIsNow ? "These are the folders open now" : `Now open: ${p.nowSummary}`}>
-            <Icon name="refresh" size={12} />
-            Use the folders open now
+      <div className="ws-pop-label">Recipe</div>
+      {p.recipe ? (
+        <div className="ws-recipe">
+          <div className="ws-recipe-sum" title={p.recipe.summary}>
+            <Icon name="columns" size={12} />
+            <span>{p.recipe.summary}</span>
+          </div>
+          {p.recipe.terminals.map((t) => (
+            <label key={t.id} className="ws-recipe-term">
+              <span>
+                <Icon name="terminal" size={11} />
+                <b>{t.label}</b>
+                <small>runs on start</small>
+              </span>
+              <textarea
+                value={t.startup}
+                rows={Math.min(4, Math.max(2, t.startup.split("\n").length))}
+                placeholder={"One command per line, e.g.\nnpm run dev"}
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+                onChange={(e) => p.onStartup(t.id, e.target.value)}
+              />
+            </label>
+          ))}
+          <label className="check ws-recipe-launch">
+            <input type="checkbox" checked={p.recipe.openOnLaunch} onChange={(e) => p.onOpenOnLaunch(e.target.checked)} />
+            <span>Open from the recipe when Kybl starts</span>
+          </label>
+          <div className="ws-recipe-actions">
+            <button type="button" className="btn btn-sm" onClick={p.onResetRecipe} title="Close what this workspace shows and open the recipe again">
+              <Icon name="refresh" size={12} />
+              Reset to recipe
+            </button>
+            <button type="button" className="btn btn-sm" onClick={p.onSaveRecipe} disabled={p.recipe.matches} title={p.recipe.matches ? "The recipe is what this workspace shows" : "Save the layout on screen as the recipe"}>
+              Update
+            </button>
+            <button type="button" className="icon-btn ws-recipe-del" onClick={p.onDeleteRecipe} title="Delete recipe" aria-label="Delete recipe">
+              <Icon name="trash" size={13} />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="ws-recipe">
+          <p className="ws-recipe-hint">Save the panes, folders and terminals open now, to reset to them later or open them as a new workspace from +.</p>
+          <button type="button" className="btn btn-sm" onClick={p.onSaveRecipe}>
+            <Icon name="plus" size={12} />
+            Save layout as recipe
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="ws-pop-foot">
         <button type="button" className="btn btn-sm" onClick={p.onDuplicate}>

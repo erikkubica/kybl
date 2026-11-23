@@ -84,6 +84,7 @@ import { WorkspaceBar, wsTabAt, type PaneSwitcher } from "./WorkspaceBar";
 import { usePaneDrag, type DropCheck } from "./usePaneDrag";
 import { useFileDrag } from "./useFileDrag";
 import { WorkspaceSettings } from "./WorkspaceSettings";
+import { useWorkspaceRecipes } from "./useWorkspaceRecipes";
 import {
   copyLayout,
   copyName,
@@ -97,7 +98,6 @@ import {
   writeSlot,
   type Layout,
   type PaneSnap,
-  type StartMode,
   type Workspace,
   type WorkspaceStore,
 } from "./workspaces";
@@ -205,27 +205,26 @@ export function AppShell() {
   const recents = useRecentConnections();
   // ⌥⌘F: the sidebar's filter field takes the keyboard (each press bumps this)
   const [findSignal, setFindSignal] = useState(0);
+  // workspace recipes (recipes.ts): layouts saved to reset to or open again, terminals included
+  const rec = useWorkspaceRecipes();
   // workspaces (workspaces.ts): named layouts the window switches between. The one on screen lives
   // in the pane slots and the state below; the others are snapshots. The first launch with them
   // makes "Default workspace" of the layout as it was.
   const [ws, setWs] = useState<WorkspaceStore>(() => {
-    const s = loadWorkspaces(() => {
+    const loaded = loadWorkspaces(() => {
       const t = loadLayout(settings.layout);
       return { tree: t, links: loadLinks(t, settings.syncBrowsing), recent: leaves(t) };
     });
-    const i = s.list.findIndex((w) => w.id === s.active);
-    const w = s.list[i];
-    // one that always opens at its saved folders starts there
-    const start: Workspace = w.start === "saved" && w.saved ? { ...w, ...copyLayout(w.saved) } : w;
+    // the ones set to open from their recipe do (their terminals type their startup commands)
+    const s = rec.atLaunch(loaded);
+    const start = s.list.find((w) => w.id === s.active)!;
     // its panes into their slots' keys, where the slots read where to open and how to show it
     for (const id of leaves(start.tree)) writeSlot(id, start.panes[id]);
-    const list = [...s.list];
-    list[i] = start;
-    return { ...s, list };
+    return s;
   });
   const wsNow = ws.list.find((w) => w.id === ws.active) ?? ws.list[0];
-  /** the workspace on screen at launch opens at its saved folders even with "reopen where I was" off */
-  const startSaved = useRef(wsNow.start === "saved");
+  /** the workspace on screen at launch opens at its recipe's folders even with "reopen where I was" off */
+  const startSaved = useRef(wsNow.start === "saved" && !!rec.recipeOf(wsNow));
   // the panes on screen as a tree of splits (the workspace's)
   const [tree, setTree] = useState<PaneNode>(() => wsNow.tree);
   const ids = useMemo(() => leaves(tree), [tree]);
@@ -581,10 +580,18 @@ export function AppShell() {
       .listProfiles()
       .then((list) => {
         conns.setProfiles(list);
-        // the first pane on screen opens like the one pane always did; the others follow below
-        const firstId = fileIds[0] ?? ids[0];
-        const last = settings.restoreLast || startSaved.current ? slot(firstId).savedLocation() : null;
         const all = [...list, THIS_MAC];
+        // opened from its recipe: a pane whose connection isn't on this device stays empty, and says so
+        const gone = startSaved.current ? rec.missingAtLaunch(wsNow, (pid) => all.some((x) => x.id === pid)) : {};
+        for (const id of Object.keys(gone) as PaneId[]) {
+          opened.current.add(id);
+          term.assign(id, undefined);
+          slot(id).showConnection(null);
+        }
+        // the first pane on screen opens like the one pane always did; the others follow below
+        const firstId = fileIds.find((id) => !gone[id]) ?? ids.find((id) => !gone[id]);
+        if (!firstId) return;
+        const last = settings.restoreLast || startSaved.current ? slot(firstId).savedLocation() : null;
         // where it was last time (This Mac too); else the first saved connection
         const start = all.find((p) => p.id === last?.profileId) ?? list[0];
         if (start) void connectIn(firstId, start, last?.profileId === start.id ? last.bucket : undefined, last?.prefix ?? "");
@@ -598,7 +605,7 @@ export function AppShell() {
   // on launch the other panes reopen where they were, or start at the first one's place (a pane
   // made by a split opens its own place and is marked here at once)
   const opened = useRef(new Set<PaneId>());
-  const first = slot(fileIds[0] ?? ids[0]);
+  const first = slot(fileIds.find((id) => !rec.notes[id]) ?? fileIds[0] ?? ids[0]);
   useEffect(() => {
     if (!first.here || !first.profile || !profiles.length) return;
     for (const id of ids) {
@@ -713,6 +720,7 @@ export function AppShell() {
     p.sel.setSelected(new Set());
     p.showConnection(null);
     opened.current.delete(id);
+    rec.clearNote(id);
     // a terminal's slot is a file pane again (its shell ends unless another workspace has the pane now)
     term.assign(id, undefined);
   };
@@ -854,14 +862,14 @@ export function AppShell() {
    * Points slot `id` at a pane as a workspace kept it: its place, how it looked, its Back / Forward
    * and how far down its list was (`fallback`: where it opens without a place; without one, This Mac).
    */
-  const fillSlot = (id: PaneId, s: PaneSnap | undefined, hist: HistorySnap | null, fallback: Loc | null) => {
+  const fillSlot = (id: PaneId, s: PaneSnap | undefined, hist: HistorySnap | null, fallback: Loc | null, empty = false) => {
     const p = slot(id);
     p.closeQuick();
     p.ent.setQuery("");
     p.applyView(s?.view ?? DEFAULT_VIEW);
     opened.current.add(id);
     term.assign(id, s?.term);
-    const at = s?.loc ?? fallback;
+    const at = s?.loc ?? (empty ? null : fallback);
     const prof = at ? profiles.find((x) => x.id === at.profileId) : null;
     if (s?.term) {
       // a terminal pane: its slot shows no files
@@ -875,20 +883,23 @@ export function AppShell() {
     } else {
       p.showConnection(null);
       p.history.load(null, null);
-      void connectIn(id, THIS_MAC);
+      // (a recipe's pane whose connection is gone stays empty, with a note)
+      if (!empty) void connectIn(id, THIS_MAC);
     }
   };
-  const applyLayout = (l: Layout, wsId: string, fallback: Loc | null, focus = true) => {
+  /** `empty`: panes that stay empty (a recipe's, whose connection is gone) */
+  const applyLayout = (l: Layout, wsId: string, fallback: Loc | null, focus = true, empty?: Set<PaneId>) => {
     const nextIds = leaves(l.tree);
     const hist = histories.current.get(wsId) ?? {};
     pendingScroll.current.clear();
+    rec.clearNotes();
     dualPane.quietly(() => {
       for (const id of PANE_IDS) {
         if (!nextIds.includes(id)) {
           if (ids.includes(id)) vacate(id);
           continue;
         }
-        fillSlot(id, l.panes[id], hist[id] ?? null, fallback);
+        fillSlot(id, l.panes[id], hist[id] ?? null, fallback, !!empty?.has(id));
       }
     });
     dualPane.forgetBehind();
@@ -919,7 +930,7 @@ export function AppShell() {
     applyLayout(target, id, active.here);
   };
   /** Adds a workspace (after the others, or after `after`) and shows it. */
-  const addWorkspace = (w: Workspace, after?: string, focus = true) => {
+  const addWorkspace = (w: Workspace, after?: string, focus = true, empty?: Set<PaneId>) => {
     const now = liveLayout(true);
     keepHistories();
     setWsSettings(null);
@@ -928,30 +939,45 @@ export function AppShell() {
       const at = after ? list.findIndex((x) => x.id === after) + 1 : list.length;
       return { list: [...list.slice(0, at), w, ...list.slice(at)], active: w.id };
     });
-    applyLayout(w, w.id, active.here, focus);
+    applyLayout(w, w.id, active.here, focus, empty);
   };
   /** "+": one pane where the active pane is (or This Mac), its name ready to type over. */
   const newWorkspace = () => {
     const snap = active.here ? { loc: active.here, view: active.viewState() } : null;
-    const w: Workspace = { ...oneLayout(snap), id: newId(), name: nextName(ws.list), color: null, start: "restore", saved: null };
+    const w: Workspace = { ...oneLayout(snap), id: newId(), name: nextName(ws.list), color: null, start: "restore", recipe: null };
     addWorkspace(w, undefined, false);
     setWsEditing(w.id);
   };
   const duplicateWorkspace = (id: string) => {
     const src = ws.list.find((w) => w.id === id);
     if (!src) return;
-    const w: Workspace = { ...src, ...copyLayout(layoutOf(id)), saved: src.saved && copyLayout(src.saved), id: newId(), name: copyName(ws.list, src.name) };
+    const w: Workspace = { ...src, ...copyLayout(layoutOf(id)), id: newId(), name: copyName(ws.list, src.name) };
     addWorkspace(w, id);
   };
-  const patchWorkspace = (id: string, patch: Partial<Pick<Workspace, "name" | "color" | "start" | "saved">>) =>
+  const patchWorkspace = (id: string, patch: Partial<Pick<Workspace, "name" | "color" | "start" | "recipe">>) =>
     setWs((cur) => ({ ...cur, list: cur.list.map((w) => (w.id === id ? { ...w, ...patch } : w)) }));
   const renameWorkspace = (id: string, name: string) => {
     const n = name.trim().slice(0, 80);
-    if (n) patchWorkspace(id, { name: n });
+    const before = ws.list.find((w) => w.id === id)?.name;
+    if (!n) return;
+    patchWorkspace(id, { name: n });
+    if (before) rec.renamed(id, before, n);
   };
-  const setStart = (id: string, start: StartMode) => {
-    const w = ws.list.find((x) => x.id === id);
-    patchWorkspace(id, { start, ...(start === "saved" && !w?.saved ? { saved: copyLayout(layoutOf(id)) } : {}) });
+  /** Shows layout `l` as workspace `id`, in place of what it showed (a reset to its recipe). */
+  const replaceWorkspace = (id: string, l: Layout, empty: Set<PaneId>) => {
+    histories.current.delete(id);
+    setWsSettings(null);
+    if (id === ws.active) {
+      setWs((cur) => ({ ...cur, list: cur.list.map((w) => (w.id === id ? { ...w, ...l } : w)) }));
+    } else {
+      const now = liveLayout(true);
+      keepHistories();
+      setWs((cur) => {
+        const list = withLive(cur, now).list.map((w) => (w.id === id ? { ...w, ...l } : w));
+        return { list, active: id };
+      });
+    }
+    applyLayout(l, id, null, true, empty);
   };
   const moveWorkspace = (from: number, to: number) => setWs((cur) => ({ ...cur, list: reorder(cur.list, from, to) }));
   /** The latest of the steps that run after a confirm (by then this render's values are old). */
@@ -1047,20 +1073,6 @@ export function AppShell() {
       { type: "item", label: "Close workspace", icon: "x", disabled: ws.list.length < 2, onClick: () => void closeWorkspace(id) },
       { type: "item", label: "Close other workspaces", disabled: ws.list.length < 2, onClick: () => void closeOtherWorkspaces(id) },
     ]);
-  /** "2 panes · Photos, Downloads": what a layout opens, in a few words. */
-  const describe = (l: Layout) => {
-    const ls = leaves(l.tree);
-    const names = ls.map((id) => {
-      const at = l.panes[id]?.loc;
-      if (l.panes[id]?.term) return "terminal";
-      if (!at) return "empty";
-      return at.prefix ? baseName(at.prefix) : conns.rootLabel(at.profileId, at.bucket) || profiles.find((x) => x.id === at.profileId)?.name || at.bucket;
-    });
-    return `${ls.length === 1 ? "1 pane" : `${ls.length} panes`} · ${names.join(", ")}`;
-  };
-  /** the parts of a layout that "Use the folders open now" would change */
-  const placeKey = (l: Layout) => JSON.stringify([l.tree, l.links, leaves(l.tree).map((id) => [l.panes[id]?.loc ?? null, l.panes[id]?.view ?? null])]);
-
   // ------------------------------------------------------------ moving panes
   // A pane dragged by its header's empty part (usePaneDrag) docks beside another or swaps with
   // it, or goes to another workspace: dropped on its tab, or into its layout once resting on the
@@ -1243,7 +1255,7 @@ export function AppShell() {
     toast,
     wsDest,
     switchWorkspace,
-    newWorkspaceAt: (loc) => addWorkspace({ ...oneLayout({ loc, view: DEFAULT_VIEW }), id: newId(), name: nextName(ws.list), color: null, start: "restore", saved: null }, undefined, false),
+    newWorkspaceAt: (loc) => addWorkspace({ ...oneLayout({ loc, view: DEFAULT_VIEW }), id: newId(), name: nextName(ws.list), color: null, start: "restore", recipe: null }, undefined, false),
     // dropped on a terminal: their paths, typed in
     terminal: { target: term.dropTarget, drop: (pane, from, items) => void term.drop(pane, from, items) },
   });
@@ -1266,6 +1278,19 @@ export function AppShell() {
   };
   // a shell ends once no workspace has its pane any more
   useEffect(() => term.gc(ws), [term.terms, ws]); // eslint-disable-line react-hooks/exhaustive-deps
+  rec.host.current = {
+    ws,
+    layoutOf,
+    profiles,
+    rootLabel: conns.rootLabel,
+    show: replaceWorkspace,
+    add: (w, empty) => addWorkspace(w, undefined, true, empty),
+    patch: patchWorkspace,
+    newEmpty: newWorkspace,
+    confirm: dialogs.confirm,
+    menu: dialogs.menu,
+    toast,
+  };
 
   // refresh listing once all uploads have finished
   useEffect(
@@ -1351,6 +1376,7 @@ export function AppShell() {
       conns.upsertProfile(saved);
       if (reopen) await connectIn(id, saved);
     },
+    missing: rec.notes[id],
   });
 
   // the connection in the pane in use: first in Recent, and its kind section and group fold open
@@ -1927,7 +1953,7 @@ export function AppShell() {
           editingId={wsEditing}
           settingsId={wsSettings?.id ?? null}
           onPick={switchWorkspace}
-          onNew={newWorkspace}
+          onNew={rec.newMenu}
           onEdit={setWsEditing}
           onEditEnd={(id, name) => {
             setWsEditing(null);
@@ -2109,16 +2135,25 @@ export function AppShell() {
           key={wsOpen.id}
           name={wsOpen.name}
           color={wsOpen.color}
-          start={wsOpen.start}
-          savedSummary={wsOpen.saved ? describe(wsOpen.saved) : null}
-          nowSummary={describe(layoutOf(wsOpen.id))}
-          savedIsNow={!!wsOpen.saved && placeKey(wsOpen.saved) === placeKey(layoutOf(wsOpen.id))}
+          recipe={rec.view(wsOpen.id)}
           canClose={ws.list.length > 1}
           anchor={wsSettings.anchor}
           onRename={(n) => renameWorkspace(wsOpen.id, n)}
           onColor={(color) => patchWorkspace(wsOpen.id, { color })}
-          onStart={(mode) => setStart(wsOpen.id, mode)}
-          onSaveStart={() => patchWorkspace(wsOpen.id, { saved: copyLayout(layoutOf(wsOpen.id)) })}
+          onSaveRecipe={() => rec.save(wsOpen.id)}
+          onResetRecipe={() => {
+            setWsSettings(null);
+            void rec.reset(wsOpen.id);
+          }}
+          onDeleteRecipe={() => {
+            const r = rec.recipeOf(wsOpen);
+            if (r) rec.remove(r.id);
+          }}
+          onOpenOnLaunch={(on) => patchWorkspace(wsOpen.id, { start: on ? "saved" : "restore" })}
+          onStartup={(pane, text) => {
+            const r = rec.recipeOf(wsOpen);
+            if (r) rec.setLines(r.id, pane, text);
+          }}
           onDuplicate={() => duplicateWorkspace(wsOpen.id)}
           onClose={() => {
             setWsSettings(null);

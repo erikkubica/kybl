@@ -17,8 +17,11 @@
 import { LOCAL_PROFILE, type PaneId } from "../browser/types";
 import type { Profile } from "../types";
 
-/** Where a terminal pane opened: a folder of a connection, and the session it shows. */
-export type TermPlace = { profileId: string; bucket: string; prefix: string; sid?: string; from?: PaneId };
+/**
+ * Where a terminal pane opened: a folder of a connection, and the session it shows; `from` is the
+ * file pane it opened from, and `follow` has it `cd` wherever that pane goes (while the shell idles).
+ */
+export type TermPlace = { profileId: string; bucket: string; prefix: string; sid?: string; from?: PaneId; follow?: boolean };
 /** A terminal pane on screen: always with its session id. */
 export type TermSpec = TermPlace & { sid: string };
 
@@ -41,6 +44,7 @@ export function parseTermPlace(v: unknown): TermPlace | undefined {
     prefix: x.prefix,
     ...(typeof x.sid === "string" && x.sid ? { sid: x.sid } : {}),
     ...(typeof x.from === "string" ? { from: x.from as PaneId } : {}),
+    ...(x.follow === true ? { follow: true } : {}),
   };
 }
 
@@ -72,6 +76,12 @@ export type TermImpl = {
   action: (sid: string, a: TermAction) => void;
   /** where the shell's connection folder is on the server (SFTP), once connected */
   remoteBase: (sid: string) => string | null | undefined;
+  /** sends `text` to the shell as typed keys (no paste, the keyboard stays where it is) */
+  type: (sid: string, text: string) => boolean;
+  /** the shell sits at its prompt with nothing typed (see session.ts) */
+  idle: (sid: string) => Promise<boolean>;
+  /** a program runs in the foreground (This Mac); null when that can't be told */
+  busy: (sid: string) => Promise<boolean | null>;
 };
 export type TermAction = "clear" | "restart" | "copy" | "paste" | "font+" | "font-" | "font0";
 
@@ -127,4 +137,19 @@ export function gcTerminals(keep: Set<string>) {
 
 export function terminalRemoteBase(sid: string) {
   return impl?.remoteBase(sid);
+}
+
+/** Sends `text` to session `sid` as typed keys, without taking the keyboard; false when it isn't running. */
+export function typeIntoTerminal(sid: string, text: string): boolean {
+  return !!impl?.type(sid, text);
+}
+
+/** Whether session `sid` is at its prompt with nothing typed, so a line can go in safely. */
+export async function terminalIdle(sid: string): Promise<boolean> {
+  return (await impl?.idle(sid)) ?? false;
+}
+
+/** Whether a program runs in session `sid` (null: not known, as over SSH or before the first terminal). */
+export async function terminalBusy(sid: string): Promise<boolean | null> {
+  return (await impl?.busy(sid)) ?? null;
 }
