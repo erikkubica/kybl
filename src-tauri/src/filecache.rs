@@ -435,6 +435,7 @@ pub async fn serve_download<R: Runtime>(
     dest: &Path,
     cancel: &AtomicBool,
     progress: Progress<'_>,
+    dl: &mut crate::storage::generic_cmds::Dl<'_>,
 ) -> Option<Result<Outcome, String>> {
     let cache = get(app)?;
     if !cacheable(conn) || !cache.has_any(profile, root, key) {
@@ -472,7 +473,8 @@ pub async fn serve_download<R: Runtime>(
     };
     match copied {
         Ok(true) if std::fs::metadata(&part).map(|m| m.len()).ok() == Some(id.size) => {
-            if tokio::fs::rename(&part, dest).await.is_err() {
+            // as a fetched download: a file that turned up at `dest` meanwhile is kept
+            if dl.finish(&part, dest).is_err() {
                 let _ = tokio::fs::remove_file(&part).await;
                 return None;
             }
@@ -501,7 +503,8 @@ fn copy_file(src: &Path, dest: &Path, part: &Path, done: &std::sync::atomic::Ato
         std::fs::create_dir_all(parent)?;
     }
     let mut from = std::fs::File::open(src)?;
-    let mut to = std::fs::File::create(part)?;
+    // exclusive, never through a link planted at that name (as every download's partial file)
+    let mut to = crate::dest::create_part_blocking(part)?;
     crate::leftovers::partial_started(part);
     let mut buf = vec![0u8; 1 << 20];
     let mut got = 0u64;
@@ -779,6 +782,28 @@ mod tests {
         assert_eq!(done.load(Ordering::Relaxed), 5);
         // a cancel stops it
         assert!(!copy_file(&src, &dest, &part, &done, &AtomicBool::new(true)).unwrap());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A link planted at the partial file's name (a shared folder) is replaced, never written
+    /// through: the file it points at stays as it was.
+    #[cfg(unix)]
+    #[test]
+    fn a_copy_from_the_cache_never_writes_through_a_link() {
+        let (c, dir) = cache(1 << 20, 1 << 19, 1 << 20);
+        c.store_bytes("p", "b", "k", &id("e", 5), b"hello");
+        let src = c.lookup("p", "b", "k", &id("e", 5)).unwrap();
+        let dest = dir.join("shared/report.pdf");
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        let victim = dir.join("victim.txt");
+        std::fs::write(&victim, b"precious").unwrap();
+        let part = crate::dest::part_path(&dest);
+        std::os::unix::fs::symlink(&victim, &part).unwrap();
+        let done = std::sync::atomic::AtomicU64::new(0);
+        assert!(copy_file(&src, &dest, &part, &done, &AtomicBool::new(false)).unwrap());
+        assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+        assert!(std::fs::symlink_metadata(&part).unwrap().file_type().is_file());
+        assert_eq!(std::fs::read(&part).unwrap(), b"hello");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -96,6 +96,18 @@ fn failed_run(e: &StorageError) -> HashRun {
     }
 }
 
+/// Whether a run that wasn't stopped tells anything about the server: it gave an exit status or
+/// some output. A channel that just closed (the connection dropped, the server hung up) gives
+/// neither, and is no verdict on what the server can run.
+fn said_anything(end: &ExecEnd, out: &[u8]) -> bool {
+    ended_properly(end) || !out.is_empty()
+}
+
+/// The command was stopped by us, or the server gave its exit status.
+fn ended_properly(end: &ExecEnd) -> bool {
+    end.stopped || end.code.is_some()
+}
+
 /// How a command on the server ended.
 pub struct ExecEnd {
     /// the exit status, None when the server didn't say (stopped, or the connection dropped)
@@ -133,7 +145,12 @@ impl SftpBackend {
                         out.extend_from_slice(d);
                     }
                 });
-                tokio::time::timeout(Duration::from_secs(20), run).await.map_err(|_| StorageError::other("The server didn't answer in time."))??;
+                let end = tokio::time::timeout(Duration::from_secs(20), run).await.map_err(|_| StorageError::other("The server didn't answer in time."))??;
+                // a channel that just closed (a dropped connection) says nothing about the shell:
+                // asked again next time rather than remembered
+                if !said_anything(&end, &out) {
+                    return Err(StorageError::new(ErrKind::Network, "The connection to the server dropped before the command ended."));
+                }
                 let ok = probe_says_posix(&String::from_utf8_lossy(&out));
                 SHELLS.lock().unwrap().insert(who, ok);
                 ok
@@ -212,6 +229,9 @@ impl SftpBackend {
             } => unreachable!(),
         };
         let run = match ran {
+            // the channel closed with no exit status (the connection dropped mid-way, perhaps
+            // after part of the output): this file only, never "no commands here"
+            Ok(end) if !ended_properly(&end) => HashRun::ThisFile,
             Ok(end) if !end.stopped => read_hash_run(&String::from_utf8_lossy(&out)),
             // out of time (a slow disk, a huge file): this file only
             Ok(_) => HashRun::ThisFile,
@@ -268,6 +288,19 @@ mod tests {
         assert_eq!(failed_run(&StorageError::new(ErrKind::Unsupported, "refused")), HashRun::NoCommands);
         assert_eq!(failed_run(&StorageError::other("The server didn't run the command.")), HashRun::ThisFile);
         assert_eq!(failed_run(&StorageError::new(ErrKind::Network, "dropped")), HashRun::ThisFile);
+    }
+
+    /// A channel that closed without an exit status (a dropped connection) is no verdict: the
+    /// shell probe isn't remembered and hashing isn't turned off for the server.
+    #[test]
+    fn a_dropped_channel_is_no_verdict() {
+        let dropped = ExecEnd { code: None, stopped: false };
+        assert!(!said_anything(&dropped, b""));
+        assert!(!ended_properly(&dropped));
+        assert!(said_anything(&dropped, b"kybl'sh\n"), "an answer that came is read");
+        let exited = ExecEnd { code: Some(1), stopped: false };
+        assert!(said_anything(&exited, b"") && ended_properly(&exited));
+        assert!(ended_properly(&ExecEnd { code: None, stopped: true }));
     }
 
     /// The command as a login shell runs it, on a file with a quote and a space in its name.

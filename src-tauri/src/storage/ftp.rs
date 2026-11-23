@@ -185,8 +185,14 @@ fn offers_tls<'a>(feats: impl IntoIterator<Item = (&'a str, Option<&'a str>)>) -
 /// The list only ever grows. Every write re-reads the file under a lock and merges (another
 /// running Kybl may have added servers since), and goes through a flushed temporary file. A file
 /// that can't be read is never taken for "nothing seen": what can still be read from it is kept,
-/// the damaged copy is set aside, and for the rest of the run every server counts as seen (an
-/// "encrypt if available" connection then refuses plain FTP and says how to allow it).
+/// the damaged copy is set aside, and the list is in doubt: a server not in it may have been seen,
+/// so an "encrypt if available" connection refused encryption asks the user before going plain,
+/// and only consent given in that run counts (a file that couldn't be opened is read again on
+/// the next question, and once it reads whole the doubt is over).
+///
+/// The user's consent to plain FTP is kept in the same list as `<key>#plain`. Server keys end in
+/// the port's digits, so no key (whatever its user name) is ever read as a consent entry. Older
+/// `plain:<key>` entries are ignored (they could be a server key): the user is asked once more.
 pub mod tls_memory {
     use std::{
         collections::HashSet,
@@ -197,17 +203,62 @@ pub mod tls_memory {
     static PATH: OnceLock<PathBuf> = OnceLock::new();
     static MEMORY: Mutex<Option<Memory>> = Mutex::new(None);
 
+    /// Why the list may lack entries.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Doubt {
+        /// the file couldn't be opened (locked, a passing error): read again on the next question
+        Unreadable,
+        /// the file was damaged: what was lost stays lost for this run
+        Damaged,
+    }
+
+    /// What the list says of a server.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Known {
+        /// reached with TLS before
+        Seen,
+        /// not in a list read whole
+        NotSeen,
+        /// not in the list, but the list may lack entries
+        Unsure,
+    }
+
     #[derive(Default, Debug)]
     pub(super) struct Memory {
+        /// servers seen with TLS (`user@host:port`) and consent entries ([`consent_entry`])
         seen: HashSet<String>,
-        /// the file couldn't be read whole: entries may be missing, so every server counts as seen
-        doubt: bool,
+        /// the file couldn't be read whole: entries may be missing
+        doubt: Option<Doubt>,
+        /// servers the user agreed to use over plain FTP during this run: they count even while
+        /// the list is in doubt (the consent was given knowing what the server is like now)
+        agreed_now: HashSet<String>,
     }
 
     impl Memory {
+        /// An entry read from the list (or added since).
         pub(super) fn seen(&self, key: &str) -> bool {
-            self.doubt || self.seen.contains(key)
+            self.seen.contains(key)
         }
+
+        pub(super) fn known(&self, key: &str) -> Known {
+            match (self.seen(key), self.doubt) {
+                (true, _) => Known::Seen,
+                (false, None) => Known::NotSeen,
+                (false, Some(_)) => Known::Unsure,
+            }
+        }
+
+        /// The user's consent for plain FTP: in doubt, only consent given in this run counts (a
+        /// lost "seen with TLS" entry must not let an old consent through).
+        pub(super) fn plain_allowed(&self, key: &str) -> bool {
+            self.agreed_now.contains(key) || (self.doubt.is_none() && self.seen.contains(&consent_entry(key)))
+        }
+    }
+
+    /// The consent entry of a server, kept in the same list. Server keys always end in the port's
+    /// digits, so no server key (whatever its user name) can be written like one.
+    pub(super) fn consent_entry(key: &str) -> String {
+        format!("{key}#plain")
     }
 
     /// Where the list is kept (set once at start-up; without it, it lasts until the app quits).
@@ -249,18 +300,27 @@ pub mod tls_memory {
     /// set aside and rewritten from that, and `m` stays in doubt. A file that exists but can't be
     /// opened: in doubt too, and left alone (false: the file must not be written over).
     pub(super) fn merge_from_disk(path: &Path, m: &mut Memory) -> bool {
+        // a file that couldn't be opened before and reads whole now: nothing is missing any more
+        let clear = |m: &mut Memory| {
+            if m.doubt == Some(Doubt::Unreadable) {
+                m.doubt = None;
+            }
+        };
         let raw = match std::fs::read(path) {
             Ok(raw) => raw,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
             Err(_) => {
-                m.doubt = true;
+                m.doubt = m.doubt.or(Some(Doubt::Unreadable));
                 return false;
             }
         };
         match serde_json::from_slice::<Vec<String>>(&raw) {
-            Ok(list) => m.seen.extend(list),
+            Ok(list) => {
+                m.seen.extend(list);
+                clear(m);
+            }
             Err(_) => {
-                m.doubt = true;
+                m.doubt = Some(Doubt::Damaged);
                 m.seen.extend(salvage(&raw));
                 let aside = path.with_extension(format!("damaged-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)));
                 if std::fs::rename(path, &aside).is_err() {
@@ -306,15 +366,16 @@ pub mod tls_memory {
         f(m, path)
     }
 
-    pub fn seen(key: &str) -> bool {
+    pub fn seen(key: &str) -> Known {
         with(|m, path| {
             // another running Kybl may have reached this server with TLS since the list was read
+            // (and a file that couldn't be opened is tried again)
             if !m.seen(key)
                 && let Some(p) = path
             {
                 merge_from_disk(p, m);
             }
-            m.seen(key)
+            m.known(key)
         })
     }
 
@@ -322,27 +383,22 @@ pub mod tls_memory {
         add(key.to_string());
     }
 
-    /// Kept in the same list, marked apart from the servers seen with TLS.
-    fn plain_entry(key: &str) -> String {
-        format!("plain:{key}")
-    }
-
     /// The user agreed that this server, which offers no encryption, may be used over plain FTP.
     /// Asked before the first unencrypted sign-in; a lost list only means being asked again.
     pub fn allow_plain(key: &str) {
-        add(plain_entry(key));
+        with(|m, _| m.agreed_now.insert(key.to_string()));
+        add(consent_entry(key));
     }
 
     pub fn plain_allowed(key: &str) -> bool {
-        let entry = plain_entry(key);
         with(|m, path| {
             // another running Kybl may have been given the OK since the list was read
-            if !m.seen.contains(&entry)
+            if !m.plain_allowed(key)
                 && let Some(p) = path
             {
                 merge_from_disk(p, m);
             }
-            m.seen.contains(&entry)
+            m.plain_allowed(key)
         })
     }
 
@@ -410,7 +466,10 @@ impl FtpBackend {
                     // AUTH TLS refused as not offered: the server may only speak plain FTP. A
                     // failed handshake is not a refusal and stays an error.
                     Err(FtpError::UnexpectedResponse(r)) if NOT_OFFERED.contains(&r.status.code()) => {
-                        if tls_memory::seen(&self.tls_key()) {
+                        // reached with TLS before: never plain. A list that may lack entries
+                        // (it couldn't be read whole) goes on to the user's consent below, where
+                        // only consent given in this run counts.
+                        if tls_memory::seen(&self.tls_key()) == tls_memory::Known::Seen {
                             return Err(StorageError::new(ErrKind::Network, TLS_STOPPED).with_detail(r.to_string()));
                         }
                         let mut plain = Ftp::connect(&addr).await.map_err(err)?;
@@ -612,6 +671,28 @@ impl FtpBackend {
             known.insert(k.clone());
         }
         Ok(())
+    }
+
+    /// Whether the folder at `path` is a link to a folder elsewhere. Only MLSD can call a link a
+    /// folder; LIST of its parent tells (a listing without MLSD already shows links as links).
+    /// An error when LIST can't tell: the caller must then not go into it.
+    async fn dir_is_link(&self, path: &str) -> SResult<bool> {
+        if !self.feats.get().is_some_and(|f| f.mlsd) {
+            return Ok(false);
+        }
+        let path = path.trim_end_matches('/');
+        let (parent, name) = match path.rfind('/') {
+            Some(0) => ("/", &path[1..]),
+            Some(i) => (&path[..i], &path[i + 1..]),
+            None => (".", path),
+        };
+        let unsure = |detail: String| StorageError::new(ErrKind::Other, format!("Stopped deleting {path}: Kybl couldn't check whether it is a link to another folder, so it didn't go into it.")).with_detail(detail);
+        if name.is_empty() {
+            return Err(unsure("no folder name".into()));
+        }
+        let listed = self.list_raw_as(parent, false).await.map_err(|e| unsure(e.to_string()))?;
+        let links = link_dirs([name], listed.iter().map(|(f, _)| (f.name(), f.is_symlink()))).map_err(|name| unsure(format!("LIST didn't show {name}")))?;
+        Ok(!links.is_empty())
     }
 
     /// Deletes a folder and everything in it, depth first.
@@ -871,18 +952,32 @@ impl Storage for FtpBackend {
         // reused only once the transfer finished cleanly
         lease.healthy = false;
         let left = end.map(|e| e - start);
+        // the read runs to the end of the file (as SIZE gave it): the server closes the data
+        // connection and answers 226 once it's all sent
+        let to_end = total.is_some() && end == total;
         let host = self.host.clone();
         let body = futures_util::stream::unfold(Some((lease, down, left)), move |st| {
             let host = host.clone();
             async move {
                 let (mut lease, mut down, left) = st?;
                 if left == Some(0) {
-                    // stopped short of the end: this connection is dropped, not reused
+                    // every byte to the end of the file came: the transfer's answer is read so
+                    // the connection goes back to the pool. Stopped short of the end, it is
+                    // dropped instead (the server is still sending).
+                    if to_end && tokio::time::timeout(CMD_TIMEOUT, down.finish()).await.is_ok_and(|r| r.is_ok()) {
+                        lease.healthy = true;
+                    }
                     return None;
                 }
                 let want = left.map_or(CHUNK, |l| CHUNK.min(l as usize));
                 let mut buf = BytesMut::zeroed(want);
                 match tokio::time::timeout(CMD_TIMEOUT, down.read(&mut buf)).await {
+                    // the data connection closed before the size SIZE gave: a cut transfer (an
+                    // abort, a NAT, the file cut short meanwhile), never a whole file
+                    Ok(Ok(0)) if total.is_some() && left.is_some_and(|l| l > 0) => {
+                        let got = end.unwrap_or(0) - start - left.unwrap_or(0);
+                        Some((Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, format!("{host} ended the transfer after {got} of {} bytes", end.unwrap_or(0) - start))), None))
+                    }
                     Ok(Ok(0)) => {
                         if tokio::time::timeout(CMD_TIMEOUT, down.finish()).await.is_ok_and(|r| r.is_ok()) {
                             lease.healthy = true;
@@ -936,13 +1031,34 @@ impl Storage for FtpBackend {
         };
         // with `on_part` the caller keeps an interrupted upload to carry on: its file stays
         let keep = opts.on_part.is_some();
-        let (mut body, len) = source_stream_from(src, offset.unwrap_or(0)).await?;
+        // a file on this computer can be read again from its start (see below)
+        let again = match &src {
+            WriteSource::Path(p) => Some(p.clone()),
+            _ => None,
+        };
+        let (mut body, mut len) = source_stream_from(src, offset.unwrap_or(0)).await?;
         let (mut tmp_key, mut plain) = match (&resume_tmp, offset) {
             (Some(t), Some(_)) => (t.clone(), !file_name(t).starts_with('.')),
             _ => (temp_key(path), false),
         };
         announce_temp(&opts, &tmp_key, offset.unwrap_or(0));
         let mut stored = self.store(&self.path(&tmp_key).await?, &mut body, len, offset, progress, cancel).await;
+        // REST goes out with the STOR, so a server that can't carry on an upload where it
+        // stopped refuses the STOR itself: its temporary file is of no use, start over
+        let mut offset = offset;
+        if offset.is_some()
+            && let Ok(Stored::Refused(e)) = &stored
+        {
+            self.remove_partial(self.path(&tmp_key).await?).await;
+            let Some(p) = again else {
+                return Err(StorageError::other("This server can't carry on an upload where it stopped, so it will start over.").with_detail(e.to_string()));
+            };
+            (body, len) = source_stream_from(WriteSource::Path(p), 0).await?;
+            offset = None;
+            (tmp_key, plain) = (temp_key(path), false);
+            announce_temp(&opts, &tmp_key, 0);
+            stored = self.store(&self.path(&tmp_key).await?, &mut body, len, None, progress, cancel).await;
+        }
         // some servers refuse names starting with a dot: a temporary name like the file's own
         if temp_refused(&stored) && offset.is_none() {
             plain = true;
@@ -1038,7 +1154,20 @@ impl Storage for FtpBackend {
             }
             let p = self.path(key).await?;
             let r = if is_dir {
-                self.remove_tree(p, cancel).await
+                // a "folder" MLSD listed may be a link to a folder elsewhere: that one goes as a
+                // link, and what it points at is never emptied
+                match self.dir_is_link(&p).await {
+                    Ok(true) => {
+                        let link = p.trim_end_matches('/').to_string();
+                        self.run(move |ftp, _| {
+                            let link = link.clone();
+                            Box::pin(async move { ftp.rm(&link).await })
+                        })
+                        .await
+                    }
+                    Ok(false) => self.remove_tree(p, cancel).await,
+                    Err(e) => Err(e),
+                }
             } else {
                 self.run(move |ftp, _| {
                     let p = p.clone();
@@ -1298,9 +1427,9 @@ mod tests {
     #[test]
     fn tls_once_seen_is_remembered() {
         let k = format!("u@{}:21", uuid::Uuid::new_v4());
-        assert!(!tls_memory::seen(&k));
+        assert_eq!(tls_memory::seen(&k), tls_memory::Known::NotSeen);
         tls_memory::remember(&k);
-        assert!(tls_memory::seen(&k));
+        assert_eq!(tls_memory::seen(&k), tls_memory::Known::Seen);
         assert!(!NOT_OFFERED.contains(&421) && !NOT_OFFERED.contains(&431));
     }
 
@@ -1410,13 +1539,60 @@ mod tests {
         std::fs::write(&path, br#"["u@one:21","u@t\"wo:21","u@thr"#).unwrap();
         let mut m = Memory::default();
         merge_from_disk(&path, &mut m);
-        assert!(m.seen("u@never-seen:21"), "a damaged list must not be taken for 'nothing seen'");
+        assert_eq!(m.known("u@never-seen:21"), tls_memory::Known::Unsure, "a damaged list must not be taken for 'nothing seen'");
         let mut next_run = Memory::default();
         merge_from_disk(&path, &mut next_run);
         assert!(next_run.seen("u@one:21") && next_run.seen("u@t\"wo:21"), "what was readable is kept: {next_run:?}");
         assert!(!next_run.seen("u@never-seen:21"), "the rewritten list reads normally again");
         let aside = std::fs::read_dir(&dir).unwrap().filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().contains("damaged")).count();
         assert_eq!(aside, 1, "the damaged file is set aside, not deleted");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A list in doubt never says "seen" of a server it doesn't hold (that answer offered only the
+    /// way to turn encryption off): consent is asked for, and only consent of this run counts. A
+    /// file that couldn't be opened is read again, and the doubt ends once it reads whole.
+    #[test]
+    fn a_tls_memory_in_doubt_asks_instead_of_refusing() {
+        use tls_memory::{consent_entry, merge_from_disk, Known, Memory};
+        let dir = std::env::temp_dir().join(format!("kybl-tls-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ftp-tls-seen.json");
+        // a path that can't be read as a file stands in for a locked one
+        std::fs::create_dir_all(&path).unwrap();
+        let mut m = Memory::default();
+        assert!(!merge_from_disk(&path, &mut m), "an unreadable file is never written over");
+        assert_eq!(m.known("u@h:21"), Known::Unsure);
+        std::fs::remove_dir(&path).unwrap();
+        let listed = serde_json::to_vec(&["u@tls:21".to_string(), consent_entry("u@h:21")]).unwrap();
+        std::fs::write(&path, listed).unwrap();
+        assert!(merge_from_disk(&path, &mut m));
+        assert_eq!(m.known("u@h:21"), Known::NotSeen, "read whole now: no doubt left");
+        assert_eq!(m.known("u@tls:21"), Known::Seen);
+        assert!(m.plain_allowed("u@h:21"));
+        // a damaged list stays in doubt: its consent entries don't count, this run's do
+        std::fs::write(&path, format!("[\"{}\",\"u@cut", consent_entry("u@h:21"))).unwrap();
+        let mut d = Memory::default();
+        merge_from_disk(&path, &mut d);
+        assert_eq!(d.known("u@other:21"), Known::Unsure);
+        assert!(!d.plain_allowed("u@h:21"), "a 'seen with TLS' entry of it may be what was lost");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A server key whose user name starts like a consent entry is never read as consent.
+    #[test]
+    fn consent_entries_cannot_be_written_as_server_keys() {
+        use tls_memory::{consent_entry, merge_from_disk, Memory};
+        let dir = std::env::temp_dir().join(format!("kybl-tls-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ftp-tls-seen.json");
+        // seen with TLS for the user "plain:alice", and the old form of alice's consent
+        std::fs::write(&path, serde_json::to_vec(&["plain:alice@h:21", "alice#plain@h:21"]).unwrap()).unwrap();
+        let mut m = Memory::default();
+        merge_from_disk(&path, &mut m);
+        assert!(!m.plain_allowed("alice@h:21"), "neither is alice's consent");
+        // every server key ends in its port's digits; every consent entry doesn't
+        assert!(consent_entry("x@h:21").ends_with("#plain"));
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1516,3 +1692,7 @@ mod tests {
         assert_eq!(ftp_error(FtpError::UnexpectedResponse(r), "h").kind, ErrKind::PermissionDenied);
     }
 }
+
+#[cfg(test)]
+#[path = "ftp_fake_tests.rs"]
+mod fake_tests;

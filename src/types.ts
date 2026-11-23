@@ -201,4 +201,6 @@ export type TransferEvent = {
   /** it had got somewhere before but had to start over */
   restarted?: boolean;
   verified?: string;
+  /** the download landed under this name instead: a file turned up at its own while it ran */
+  local?: string;
 };
