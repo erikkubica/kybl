@@ -46,7 +46,7 @@ export async function openDiff(left: DiffSide, right: DiffSide, opts: { title?: 
 export const diffOpen = () => !!closeCurrent;
 
 // ------------------------------------------------------------ comparing across panes
-type Picked = { profileId: string; bucket: string; key: string; name: string; size: number; where: string };
+type Picked = { profileId: string; bucket: string; key: string; name: string; size: number; modified: number | null; where: string };
 const picks = new Map<string, Picked | null>();
 
 /** A pane says which single file it has selected (null: none, or several), for "Compare with…". */

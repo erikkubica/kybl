@@ -9,6 +9,7 @@ import type { ObjInfo, Profile } from "./types";
 import type { Capabilities, JobSpec, RootInfo } from "./api";
 import type { ImportSite } from "./connections/importApi";
 import { S3_CAPS } from "./useCaps";
+import { installArchiveMock } from "./archive/devArchive";
 
 const HOUR = 3600_000;
 const now = Date.now();
@@ -1434,3 +1435,6 @@ function demoPdf(): ArrayBuffer {
     return handle(cmd, (args ?? {}) as Record<string, string>);
   };
 }
+
+// ---------------------------------------------------------------- archives and the text diff (src/archive)
+installArchiveMock(localTree);

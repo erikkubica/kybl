@@ -264,7 +264,7 @@ export function DiffView({ left, right, title, onClose }: { left: DiffSide; righ
     );
   else
     content = (
-      <div className={`dif-body ${inline ? "inline" : "split"} ${prefs.wrap ? "wrap" : ""}`} ref={body} tabIndex={-1}>
+      <div className={`dif-body ${inline ? "dif-inline" : "dif-split"} ${prefs.wrap ? "dif-wrap" : ""}`} ref={body} tabIndex={-1}>
         {!inline && (
           <div className="dif-row dif-heads">
             <div className="dif-head" title={labelOf(left)}>

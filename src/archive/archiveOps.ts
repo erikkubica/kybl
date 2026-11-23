@@ -5,7 +5,7 @@
  */
 import { errMessage } from "../api";
 import { baseName } from "../format";
-import { entryParent, placeLabel } from "../moving";
+import { destLabel, entryParent, placeLabel } from "../moving";
 import { applyChoices, findExisting, freeKeys, type Choice, type Clash } from "../desktop/conflicts";
 import type { FileOps } from "../desktop/fileOps";
 import type { MenuItem, Toast } from "../components/Dialogs";
@@ -179,7 +179,8 @@ export function makeArchiveOps(c: ArchiveCtx) {
     const want = `${dir}${list.length === 1 ? list[0].name : "Archive"}.zip`;
     let key = want;
     try {
-      key = (await freeKeys(profile.id, bucket, [want])).get(want) ?? want;
+      // taken: "Archive (1).zip" (freeKeys numbers from 1)
+      if ((await findExisting(profile.id, bucket, [{ key: want, folder: false }])).has(want)) key = (await freeKeys(profile.id, bucket, [want])).get(want) ?? want;
     } catch {
       /* write it under the wanted name; the backend refuses to replace a file */
     }
@@ -209,7 +210,7 @@ export function makeArchiveOps(c: ArchiveCtx) {
   const items = (list: Entry[]): (MenuItem | false)[] => {
     if (!c.profile || c.bucket == null || !list.length) return [];
     if (inArchive) {
-      const where = origin ? baseName(origin.key.slice(0, origin.key.lastIndexOf("/"))) || placeLabel(origin.profileId, origin.root, "") : "";
+      const where = origin ? destLabel(origin.key.slice(0, origin.key.lastIndexOf("/") + 1), origin.root, origin.profileId) : "";
       return [
         { type: "item", label: where ? `Extract to “${where}”` : "Extract here", icon: "archive", onClick: () => void extractEntries(list) },
         !!c.openMigration && { type: "item", label: "Extract to…", icon: "move", onClick: () => void extractTo(list) },

@@ -4,7 +4,8 @@
  * ids the keyboard and the menu bar run (see desktop/useShortcuts).
  */
 import { asExport } from "../connections/native";
-import { createElement, useEffect } from "react";
+import { createElement, useEffect, useRef } from "react";
+import { registerCommands, type PaletteCommand } from "../palette/commands";
 import { api, errMessage } from "../api";
 import { peekSyncMappings, reloadSync, syncApi, type SyncMapping } from "../sync";
 import { deviceName } from "../jobs/LocationPicker";
@@ -44,8 +45,32 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   const ro = pane.archive.inArchive ? readOnlyMenu : <T,>(m: T[]) => m;
   // "Compare with…" in another pane needs to know the one file selected here
   const pick = selectedEntries.length === 1 && selectedEntries[0].kind === "file" && profile && bucket != null ? selectedEntries[0] : null;
-  notePanePick(pane.id, pick && profile && bucket != null ? { profileId: profile.id, bucket, key: pick.key, name: pick.name, size: pick.size, where: pane.bucketLabel ?? bucket } : null);
+  notePanePick(pane.id, pick && profile && bucket != null ? { profileId: profile.id, bucket, key: pick.key, name: pick.name, size: pick.size, modified: pick.modified, where: pane.bucketLabel ?? bucket } : null);
   useEffect(() => () => notePanePick(pane.id, null), [pane.id]);
+  // ⌘K: Compress, Extract, Compare files for the active pane's selection
+  const paletteRef = useRef<() => PaletteCommand[]>(() => []);
+  paletteRef.current = () => {
+    if (!profile || bucket == null || document.querySelector("[data-active-pane]")?.getAttribute("data-pane") !== pane.id) return [];
+    const list = selectedEntries;
+    const archives = list.filter((x) => x.kind === "file" && isArchiveName(x.name));
+    const inside = pane.archive.inArchive;
+    const none = !list.length && "Select files first";
+    const compare = compareFor(list);
+    return [
+      { id: "files:compress", title: "Compress to .zip", group: "Files", keywords: "zip archive", icon: "archive", disabled: none || (inside && "Archives open read-only") || (!!search && "Not in search results"), run: () => pane.archive.compress(list) },
+      {
+        id: "files:extract",
+        title: "Extract here",
+        group: "Files",
+        keywords: "unzip untar archive",
+        icon: "archive",
+        disabled: inside ? none : archives.length !== list.length || !list.length ? "Select .zip, .tar or .tar.gz files" : false,
+        run: () => (inside ? pane.archive.extractEntries(list) : pane.archive.extractFiles(archives)),
+      },
+      { id: "files:compare", title: compare?.title ?? "Compare files", group: "Files", keywords: "diff", icon: "compare", disabled: !compare && "Select two text files (here, or one in each pane)", run: () => compare?.run() },
+    ];
+  };
+  useEffect(() => registerCommands(`files:${pane.id}`, () => paletteRef.current()), [pane.id]);
   // drives: a folder that is one offers Show in Finder / Eject instead of "Mount as drive…"
   const { mounts } = useMounts();
   const canShare = caps?.share !== "none";
@@ -358,6 +383,32 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     );
   };
 
+  /** "Compare files" (the diff viewer): two text files here, or one and the file selected in another pane. */
+  const compareFor = (list: Entry[]): { title: string; run: () => void } | null => {
+    if (!profile || bucket == null) return null;
+    const here = pane.bucketLabel ?? bucket;
+    const side = (x: { key: string; name: string }, where: string, pid = profile.id, b = bucket) => ({ profileId: pid, bucket: b, key: x.key, name: x.name, label: `${x.name} · ${where}` });
+    const files = list.filter((x) => x.kind === "file");
+    // the older file goes on the left, so additions read as what changed since
+    const newer = (a: { modified: number | null }, b: { modified: number | null }) => a.modified != null && b.modified != null && a.modified > b.modified;
+    if (list.length === 2 && files.length === 2 && files.every((f) => canDiff(f))) {
+      const [a, b] = newer(files[0], files[1]) ? [files[1], files[0]] : files;
+      return { title: "Compare files", run: () => void openDiff(side(a, here), side(b, here)) };
+    }
+    const other = list.length === 1 && files.length === 1 ? otherPanePick(pane.id) : null;
+    const same = other && other.profileId === profile.id && other.bucket === bucket && other.key === files[0].key;
+    if (other && !same && canDiff(files[0]) && canDiff(other))
+      return {
+        title: `Compare with “${other.name}”`,
+        run: () => {
+          const mine = side(files[0], here);
+          const theirs = side(other, other.where, other.profileId, other.bucket);
+          void (newer(files[0], other) ? openDiff(theirs, mine) : openDiff(mine, theirs));
+        },
+      };
+    return null;
+  };
+
   const onContext = (ev: React.MouseEvent, e: Entry) => {
     if (!profile || bucket == null) return;
     const list = selected.has(e.key) ? selectedEntries : [e];
@@ -367,10 +418,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     const files = list.filter((x) => x.kind === "file");
     const folders = list.filter((x) => x.kind === "folder");
     const clip = clipFor();
-    // two text files, or this one and the one selected in another pane: the diff viewer
-    const other = one && e.kind === "file" ? otherPanePick(pane.id) : null;
-    const side = (x: { key: string; name: string }, where: string, pid = profile.id, b = bucket) => ({ profileId: pid, bucket: b, key: x.key, name: x.name, label: `${x.name} · ${where}` });
-    const here = pane.bucketLabel ?? bucket;
+    const compare = compareFor(list);
     const items = tidyMenu(ro([
       folder
         ? { type: "item", label: "Open", icon: "folder", hint: "↵", onClick: () => pane.navigate(e.key) }
@@ -397,13 +445,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       ...(env.extraItemItems?.(list) ?? []),
       // .zip / .tar / .tar.gz: Extract here, Extract to…, Compress (src/archive)
       ...pane.archive.items(list),
-      list.length === 2 && files.length === 2 && files.every((f) => canDiff(f)) && { type: "item", label: "Compare files", icon: "compare", onClick: () => void openDiff(side(files[0], here), side(files[1], here)) },
-      !!other && canDiff(e) && canDiff(other) && other.key !== e.key && {
-        type: "item",
-        label: `Compare with “${other.name}”`,
-        icon: "compare",
-        onClick: () => void openDiff(side(e, here), side(other, other.where, other.profileId, other.bucket)),
-      },
+      !!compare && { type: "item", label: compare.title, icon: "compare", onClick: compare.run },
       // one picker for any folder: this connection's (any bucket or drive), or another connection
       { type: "item", label: "Copy or move to…", icon: "move", onClick: () => askMove(list, "copy") },
       !!prefix && !search && {

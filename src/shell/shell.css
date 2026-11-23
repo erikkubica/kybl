@@ -624,6 +624,36 @@ body.resizing-row * {
 .compare-list .dim {
   color: var(--dim);
 }
+/* files that differ, each with a Compare button (the text diff) */
+.compare-files {
+  margin: 0 0 12px;
+  padding: 4px 0;
+  list-style: none;
+  border-block: 1px solid var(--border);
+  max-height: 220px;
+  overflow: auto;
+}
+.compare-files li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.compare-files li > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.compare-files .dim {
+  color: var(--dim);
+}
+.compare-files .btn {
+  gap: 4px;
+}
 
 /* two toolbars share the width: the search field gives the path more room until it is used */
 @container (max-width: 620px) {
