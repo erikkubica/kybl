@@ -54,8 +54,8 @@ export type GroupNode = {
 };
 
 /**
- * The connections as a tree of groups. Top-level connections keep their saved order (the
- * connections people add by hand, This Mac last); inside a group they go by name, as a folder of
+ * The connections as a tree of groups. Top-level connections keep their saved order (This
+ * Mac first, then the connections people add by hand); inside a group they go by name, as a folder of
  * imported sites reads best. Groups go by name, before the connections beside them.
  */
 export function groupTree(profiles: Profile[], sortTop = false): GroupNode {
@@ -130,7 +130,10 @@ export function sidebarLayout(profiles: Profile[]): SidebarLayout {
       true,
     ),
   }));
-  return { top: groupTree(profiles.filter((p) => !kinds.has(p.kind ?? "s3"))), sections };
+  // This Mac first: it's always there and always the same, so it shouldn't move as connections come and go
+  const top = profiles.filter((p) => !kinds.has(p.kind ?? "s3"));
+  const isLocal = (p: Profile) => p.kind === "local" || p.id === "local";
+  return { top: groupTree([...top.filter(isLocal), ...top.filter((p) => !isLocal(p))]), sections };
 }
 
 /** Where a connection sits: the key of its section ("" at the top level). */

@@ -343,6 +343,54 @@ function ItemIcon({ it }: { it: Extract<MenuItem, { type: "item" | "submenu" }> 
   return it.icon ? <Icon name={it.icon} size={15} /> : <span style={{ width: 15 }} />;
 }
 
+/** Whether a menu panel has more above or below what shows. */
+function useScrollEdges(panel: React.RefObject<HTMLDivElement | null>, dep: unknown) {
+  const [edge, setEdge] = useState({ up: false, down: false });
+  useLayoutEffect(() => {
+    const el = panel.current;
+    if (!el) return;
+    const update = () => {
+      const up = el.scrollTop > 1;
+      const down = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+      setEdge((e) => (e.up === up && e.down === down ? e : { up, down }));
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
+  }, [panel, dep]);
+  return edge;
+}
+
+/**
+ * The arrow at a long menu's top or bottom edge, as in the system's menus: it says there is more,
+ * and resting the pointer on it scrolls that way (the wheel and the keyboard scroll too).
+ */
+function ScrollArrow({ panel, dir }: { panel: React.RefObject<HTMLDivElement | null>; dir: "up" | "down" }) {
+  const frame = useRef(0);
+  const stop = () => cancelAnimationFrame(frame.current);
+  useEffect(() => stop, []);
+  const start = () => {
+    stop();
+    const tick = () => {
+      const el = panel.current;
+      if (!el) return;
+      el.scrollTop += dir === "up" ? -7 : 7;
+      frame.current = requestAnimationFrame(tick);
+    };
+    frame.current = requestAnimationFrame(tick);
+  };
+  return (
+    <div className={`ctx-scroll ${dir}`} aria-hidden onMouseEnter={start} onMouseLeave={stop}>
+      <Icon name="chevron-down" size={12} />
+    </div>
+  );
+}
+
 /** One panel's plain items, separators and headings (submenu rows are drawn by the caller). */
 function PlainRow({ it, onClose, onHover }: { it: Exclude<MenuItem, { type: "submenu" }>; onClose: () => void; onHover?: () => void }) {
   if (it.type === "sep") return <div className="ctx-sep" role="separator" />;
@@ -407,12 +455,13 @@ export function ContextMenu({
   const subSeq = useRef(0);
   const timer = useRef<number | undefined>(undefined);
   const clearTimer = () => window.clearTimeout(timer.current);
+  const edge = useScrollEdges(ref, pos);
 
   useEffect(() => {
     const el = ref.current;
     if (el) {
       const r = el.getBoundingClientRect();
-      const maxH = window.innerHeight - 16;
+      const maxH = window.innerHeight - 24;
       const h = Math.min(r.height, maxH);
       setPos({
         x: Math.max(8, Math.min(x, window.innerWidth - r.width - 8)),
@@ -535,6 +584,7 @@ export function ContextMenu({
         onContextMenu={(e) => e.preventDefault()}
         onKeyDown={keys}
       >
+        {edge.up && <ScrollArrow panel={ref} dir="up" />}
         {items.map((it, i) =>
           it.type === "submenu" ? (
             <button
@@ -572,6 +622,7 @@ export function ContextMenu({
             />
           ),
         )}
+        {edge.down && <ScrollArrow panel={ref} dir="down" />}
       </div>
       {sub && (
         <SubPanel
@@ -606,12 +657,13 @@ function SubPanel({
 }) {
   const [pos, setPos] = useState<{ x: number; y: number; maxH: number } | null>(null);
   const { anchor, items, focus } = sub;
+  const edge = useScrollEdges(panelRef, pos);
 
   useLayoutEffect(() => {
     const el = panelRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    const maxH = window.innerHeight - 16;
+    const maxH = window.innerHeight - 24;
     const h = Math.min(r.height, maxH);
     // the first row lines up with the row that opened it (5px padding + 1px border)
     let left = anchor.right + 4;
@@ -648,6 +700,7 @@ function SubPanel({
         } else navigate(e, panelRef.current, typed);
       }}
     >
+      {edge.up && <ScrollArrow panel={panelRef} dir="up" />}
       {items === null ? (
         <div className="ctx-heading ctx-loading" role="presentation">
           Loading…
@@ -660,6 +713,7 @@ function SubPanel({
         // one level deep: a submenu inside a submenu isn't drawn
         items.map((it, i) => (it.type === "submenu" ? null : <PlainRow key={i} it={it} onClose={onClose} />))
       )}
+      {edge.down && <ScrollArrow panel={panelRef} dir="down" />}
     </div>
   );
 }

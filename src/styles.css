@@ -4220,6 +4220,30 @@ body.dragging-items * {
   overflow-y: auto;
   outline: none;
 }
+/* a long menu's top and bottom arrows: they float over the items (no jump when they appear) */
+.ctx-scroll {
+  position: sticky;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  height: 18px;
+  margin: 0 -5px;
+  color: var(--muted);
+  background: var(--raised);
+}
+.ctx-scroll.up {
+  top: -5px;
+  margin-top: -5px;
+  margin-bottom: -13px;
+}
+.ctx-scroll.up svg {
+  transform: rotate(180deg);
+}
+.ctx-scroll.down {
+  bottom: -5px;
+  margin-top: -13px;
+  margin-bottom: -5px;
+}
 /* the pointer focuses the item under it, so focus is the one highlight for mouse and keyboard */
 .ctx-item:focus:not(:disabled) {
   background: var(--accent-solid);
