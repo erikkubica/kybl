@@ -9,6 +9,8 @@
  * Escape doesn't), the cog that shows on hover opens its settings, right-click its menu. Tabs drag
  * sideways to reorder; with the keyboard, ⌥⇧← / → moves the focused one. Too many to fit: the
  * strip scrolls (a mouse wheel scrolls it sideways too) and fades at the edges it hides.
+ *
+ * A tab is also a drop target for things dragged from the panes: see "dropping onto a tab" below.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { Icon } from "../Icons";
@@ -42,7 +44,61 @@ export type WorkspaceBarProps = {
   onReorder: (from: number, to: number) => void;
   /** the window can't show every pane: pick the one to show */
   switcher: PaneSwitcher | null;
+  /** something dragged is over a tab (TabDropTarget) */
+  drop?: TabDropTarget | null;
 };
+
+// ---------------------------------------------------------------- dropping onto a tab
+// Things dragged elsewhere in the window (a pane by its header, later files from a list) can be
+// dropped onto a workspace's tab, and holding them over one for a moment opens that workspace
+// ("spring-loading", as a folder does in Finder) so they can be dropped into its layout instead.
+// The drag itself owns the pointer; these helpers only answer which tab is under it and time the
+// spring, and the bar draws what `drop` says.
+
+/** how long a drag rests on a tab before that workspace opens */
+export const SPRING_MS = 500;
+
+/**
+ * A tab with something dragged over it: `ok` true when letting go there drops it into that
+ * workspace, false when it can't take it (drawn refused), null when it only springs (no drop);
+ * `spring` while the timer runs (the tab fills up to say it's about to open).
+ */
+export type TabDropTarget = { id: string; ok: boolean | null; spring: boolean };
+
+/** The workspace whose tab is under the point, if any (the ghost and overlays don't take the pointer). */
+export function wsTabAt(x: number, y: number): string | null {
+  const el = document.elementFromPoint(x, y)?.closest<HTMLElement>(".ws-tab[data-ws]");
+  return el?.dataset.ws ?? null;
+}
+
+/**
+ * Spring-loading for a drag: call `over` with the tab under the pointer on every move (null when
+ * none); resting on one tab for `delay` calls `open` with it, once. `cancel` when the drag ends.
+ */
+export function springLoader(open: (id: string) => void, delay = SPRING_MS) {
+  let at: string | null = null;
+  let timer = 0;
+  return {
+    over(id: string | null) {
+      if (id === at) return;
+      window.clearTimeout(timer);
+      at = id;
+      if (id)
+        timer = window.setTimeout(() => {
+          at = null;
+          open(id);
+        }, delay);
+    },
+    /** the tab whose timer is running */
+    get pending() {
+      return at;
+    },
+    cancel() {
+      window.clearTimeout(timer);
+      at = null;
+    },
+  };
+}
 
 /** past this the press is a drag, not a click */
 const DRAG_START = 4;
@@ -225,6 +281,8 @@ export function WorkspaceBar(p: WorkspaceBarProps) {
           {p.tabs.map((t, i) => {
             const on = t.id === p.activeId;
             const color = colorValue(t.color);
+            const drop = p.drop?.id === t.id ? p.drop : null;
+            const dropCls = drop ? `drop-over ${drop.ok === false ? "drop-no" : drop.ok ? "drop-ok" : ""} ${drop.spring ? "springing" : ""}` : "";
             return (
               <div
                 key={t.id}
@@ -232,7 +290,7 @@ export function WorkspaceBar(p: WorkspaceBarProps) {
                 role="tab"
                 aria-selected={on}
                 tabIndex={on ? 0 : -1}
-                className={`ws-tab ${on ? "on" : ""} ${p.settingsId === t.id ? "set-open" : ""} ${dragging && drag.current?.id === t.id ? "lifted" : ""}`}
+                className={`ws-tab ${on ? "on" : ""} ${p.settingsId === t.id ? "set-open" : ""} ${dragging && drag.current?.id === t.id ? "lifted" : ""} ${dropCls}`}
                 style={color ? ({ "--ws": color } as CSSProperties) : undefined}
                 title={p.editingId === t.id ? undefined : `${t.name}${t.panes > 1 ? ` · ${t.panes} panes` : ""}`}
                 // the list keeps the keyboard: a click on a tab doesn't take it

@@ -368,7 +368,7 @@ code {
   border-bottom: 1px solid var(--border);  container-type: inline-size;
 }
 /* the pane's one header row (Toolbar.tsx): nothing wraps and nothing but the folder's name and
-   the search field shrinks; the spacer is the window's drag area */
+   the search field shrinks; with several panes the empty part (the spacer) drags the pane elsewhere in the layout */
 .toolbar {
   display: flex;
   align-items: center;

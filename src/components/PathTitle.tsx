@@ -105,7 +105,7 @@ export function PathTitle({
     );
 
   return (
-    <nav className={`crumbs path-title ${onGoTo ? "can-edit" : ""}`} aria-label="Path" ref={nav} data-tauri-drag-region>
+    <nav className={`crumbs path-title ${onGoTo ? "can-edit" : ""}`} aria-label="Path" ref={nav}>
       <button
         type="button"
         className="crumb current path-name"

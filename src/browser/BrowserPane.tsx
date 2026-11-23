@@ -48,6 +48,10 @@ export type BrowserPaneProps = {
   empty: EmptyActions;
   /** the pane was clicked or focused: it becomes the active one */
   onActivate: () => void;
+  /** the header's empty part was pressed: maybe the start of dragging this pane elsewhere (shell/usePaneDrag) */
+  onGrip?: (e: React.PointerEvent<HTMLElement>) => void;
+  /** this pane is being dragged: it dims while the drop overlay shows where it would go */
+  lifted?: boolean;
   style?: CSSProperties;
 };
 
@@ -87,7 +91,7 @@ export function BrowserPane(p: BrowserPaneProps) {
 
   return (
     <section
-      className={`browser-pane ${p.dual ? (active ? "is-active" : "is-inactive") : ""}`}
+      className={`browser-pane ${p.dual ? (active ? "is-active" : "is-inactive") : ""} ${p.lifted ? "lifted" : ""}`}
       data-pane={pane.id}
       data-drop-pane={p.dual ? "" : undefined}
       data-active-pane={active ? "" : undefined}
@@ -139,6 +143,7 @@ export function BrowserPane(p: BrowserPaneProps) {
         onGoTo={here ? (t) => void actions.goToPath(t) : undefined}
         favorite={actions.isFavorite}
         onToggleFavorite={here ? () => actions.toggleFavorite(bucket!, prefix) : undefined}
+        onGrip={p.onGrip}
       />
 
       <PaneBanners pane={pane} />
