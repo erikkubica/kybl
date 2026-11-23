@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { isMenuKey, menuPointFor } from "./Dialogs";
+import { rowStepBlocked } from "./gridHit";
 import type { Entry } from "../types";
 
 /** Folder size as the app reports it (see useFolderSizes). */
@@ -184,6 +185,8 @@ export function useListNav({
     if (delta !== null) {
       ev.preventDefault();
       setKbd(true);
+      // a grid's first row has nothing above it, its last nothing below
+      if ((ev.key === "ArrowUp" || ev.key === "ArrowDown") && rowStepBlocked(activeIndex, delta, cols, entries.length)) return;
       step(delta, ev.shiftKey);
       return;
     }

@@ -411,6 +411,7 @@ function PaneSwitcherView({ items, activeId, onPick }: PaneSwitcher) {
             aria-selected={on}
             className={`ws-pane ${on ? "on" : ""}`}
             title={`Pane ${i + 1}: ${it.name}`}
+            aria-label={`Pane ${i + 1}: ${it.name}`}
             onClick={() => onPick(it.id)}
           >
             <span className="ws-pane-n">{i + 1}</span>

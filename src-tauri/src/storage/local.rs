@@ -26,7 +26,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use super::*;
 
 mod fsops;
-use fsops::{check_not_into_itself, copy_tree, remove_copied, rename_noreplace, through_link, Copied};
+use fsops::{canon_lossy, check_not_into_itself, copy_tree, remove_copied, rename_noreplace, through_link, Copied};
 
 const CHUNK: usize = 256 * 1024;
 /// Clutter the system leaves in folders; never shown.
@@ -689,7 +689,8 @@ impl Storage for LocalBackend {
             return Err(StorageError::other("Source and destination are the same"));
         }
         let (s, d) = (src.clone(), dst.clone());
-        if is_dir && blocking(move || Ok(check_not_into_itself(&s, &d)?)).await? {
+        // (the same folder under another spelling is a case-only rename on a case-blind disk, not a move into itself)
+        if is_dir && blocking(move || Ok(check_not_into_itself(&s, &d)? && std::fs::canonicalize(&s).ok() != Some(canon_lossy(&d)))).await? {
             return Err(StorageError::other("Cannot move a folder into itself"));
         }
         if let Some(parent) = dst.parent() {
@@ -860,6 +861,14 @@ mod tests {
             b.rename(&Loc::new(&root, "docs/"), &Loc::new(&root, "x/docs/"), true).await.unwrap();
             assert!(t.0.join("root/x/docs/deep/c.bin").exists());
             assert!(b.rename(&Loc::new(&root, "x/"), &Loc::new(&root, "x/inner/"), true).await.is_err(), "not into itself");
+            // a case-only rename (on a case-blind disk the new spelling is the folder itself)
+            b.mkdir(&root, "photos/").await.unwrap();
+            b.rename(&Loc::new(&root, "photos/"), &Loc::new(&root, "Photos/"), true).await.unwrap();
+            let names: Vec<_> = std::fs::read_dir(t.0.join("root")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+            assert!(names.contains(&"Photos".to_string()) && !names.contains(&"photos".to_string()), "{names:?}");
+            std::fs::write(t.0.join("root/notes.txt"), b"n").unwrap();
+            b.rename(&Loc::new(&root, "notes.txt"), &Loc::new(&root, "Notes.txt"), false).await.unwrap();
+            assert_eq!(std::fs::read(t.0.join("root/Notes.txt")).unwrap(), b"n");
             b.copy(&Loc::new(&root, "x/docs/"), &Loc::new(&root, "docs2/"), true).await.unwrap();
             assert_eq!(std::fs::read(t.0.join("root/docs2/b.md")).unwrap(), b"# b");
             assert!(b.stat(&root, "x/docs/").await.unwrap().is_some_and(|e| e.is_dir()));

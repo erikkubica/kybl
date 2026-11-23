@@ -6,6 +6,7 @@ import { cachedThumb, canListThumb, loadThumb, onThumbReady } from "../thumbs";
 import { cachedPlaceholder, canPlaceholder, forgetPlaceholderMiss, learnPlaceholder, loadPlaceholder } from "../thumbhash";
 import { imageModeFor } from "../imageMode";
 import { useListNav, useMarquee, type Box, type FolderSizeInfo, type SelectKeys } from "./listNav";
+import { gridHits, trackWidth } from "./gridHit";
 import type { Entry } from "../types";
 import { GitBadge } from "./DevMarks";
 import type { GitMark } from "../browser/useGitStatus";
@@ -272,7 +273,7 @@ export function GridView({
 
   // Only the rows of tiles near the viewport are rendered. Column count, gaps and the grid's
   // padding come from the layout, so they follow the window size, tile size and density.
-  const [layout, setLayout] = useState({ cols: 1, gap: 6, colGap: 6, top: 12, left: 12 });
+  const [layout, setLayout] = useState({ cols: 1, colW: size, gap: 6, colGap: 6, top: 12, left: 12 });
   useLayoutEffect(() => {
     const g = grid.current;
     if (!g) return;
@@ -280,12 +281,13 @@ export function GridView({
       const cs = getComputedStyle(g);
       const next = {
         cols: cs.gridTemplateColumns.split(" ").length || 1,
+        colW: trackWidth(cs.gridTemplateColumns, size),
         gap: parseFloat(cs.rowGap) || 0,
         colGap: parseFloat(cs.columnGap) || 0,
         top: parseFloat(cs.paddingTop) || 0,
         left: parseFloat(cs.paddingLeft) || 0,
       };
-      setLayout((l) => (l.cols === next.cols && l.gap === next.gap && l.colGap === next.colGap && l.top === next.top && l.left === next.left ? l : next));
+      setLayout((l) => (l.cols === next.cols && Math.abs(l.colW - next.colW) < 0.5 && l.gap === next.gap && l.colGap === next.colGap && l.top === next.top && l.left === next.left ? l : next));
     };
     read();
     const ro = new ResizeObserver(read);
@@ -313,27 +315,8 @@ export function GridView({
     onBackgroundContextMenu,
   });
 
-  // tiles are `size` wide on a fixed pitch, so the rectangle maps straight to rows and columns
-  const hitTest = useCallback(
-    (b: Box) => {
-      const pitchX = size + layout.colGap;
-      const out: number[] = [];
-      const r0 = Math.max(0, Math.floor((b.y0 - layout.top) / rowH));
-      const r1 = Math.floor((b.y1 - layout.top) / rowH);
-      for (let r = r0; r <= r1; r++) {
-        const top = layout.top + r * rowH;
-        if (b.y1 < top || b.y0 > top + cardH) continue;
-        for (let c = 0; c < layout.cols; c++) {
-          const left = layout.left + c * pitchX;
-          if (b.x1 < left || b.x0 > left + size) continue;
-          const i = r * layout.cols + c;
-          if (i < entries.length) out.push(i);
-        }
-      }
-      return out;
-    },
-    [size, layout, rowH, cardH, entries.length],
-  );
+  // the columns share out the row's width: the rectangle maps to rows and the drawn columns
+  const hitTest = useCallback((b: Box) => gridHits(b, { ...layout, rowH, cardH }, entries.length), [layout, rowH, cardH, entries.length]);
   const marquee = useMarquee({ scroller, entries, selected, hitTest, onSelectKeys, onMove, onClearSelection });
 
   const { reveal } = win;
@@ -385,7 +368,8 @@ export function GridView({
           const mark = gitMark?.(e);
           return (
             <Card
-              key={e.key}
+              // keyed by content too: a changed file gets a fresh tile, which asks for its new thumbnail
+              key={`${e.key}\n${e.etag ?? ""}\n${e.size}`}
               entry={e}
               id={`${listId}-o${i}`}
               index={i}

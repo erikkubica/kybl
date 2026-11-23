@@ -13,7 +13,7 @@
  * move together. Between two single panes the whole line lights up too. A stretch too short for
  * its button gets none (the pane's "…" menu still has that pair).
  */
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { PaneId } from "../browser/types";
 import { Icon } from "../Icons";
 import type { MenuItem } from "../components/Dialogs";
@@ -99,6 +99,9 @@ type NodeProps = SplitLayoutProps & {
 
 function Node({ node, path, style, w, h, known, ...p }: NodeProps) {
   const el = useRef<HTMLDivElement>(null);
+  /** ends a divider drag under way (unmounted mid-drag: its listeners go too) */
+  const endDrag = useRef<(() => void) | null>(null);
+  useEffect(() => () => endDrag.current?.(), []);
   if (node.t === "pane") return <>{p.pane(node.id, style)}</>;
   const row = node.dir === "row";
   const mins = node.kids.map((k) => (row ? minSize(k).w : minSize(k).h));
@@ -130,6 +133,8 @@ function Node({ node, path, style, w, h, known, ...p }: NodeProps) {
     const before = node.sizes.slice(0, i).reduce((a, b) => a + b, 0) * room + DIVIDER * i;
     document.body.classList.add(row ? "resizing-col" : "resizing-row");
     const move = (e: MouseEvent) => {
+      // the button came up where no mouseup reached us (another app, outside the window)
+      if ((e.buttons & 1) === 0) return up();
       const at = (row ? e.clientX - rect.left : e.clientY - rect.top) - before;
       p.onSizes(path, place(i, at / room, room));
     };
@@ -137,9 +142,14 @@ function Node({ node, path, style, w, h, known, ...p }: NodeProps) {
       document.body.classList.remove("resizing-col", "resizing-row");
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
+      window.removeEventListener("blur", up);
+      endDrag.current = null;
     };
+    endDrag.current?.();
+    endDrag.current = up;
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
+    window.addEventListener("blur", up);
   };
 
   // each child's room as drawn, the way `fit` shared it out

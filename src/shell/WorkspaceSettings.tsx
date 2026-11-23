@@ -52,6 +52,7 @@ export function WorkspaceSettings(p: WorkspaceSettingsProps) {
   rename.current = p.onRename;
   const left = Math.max(8, Math.min(window.innerWidth - WIDTH - 8, p.anchor.left));
   const top = p.anchor.bottom + 6;
+  // (taller than the room below: it scrolls, so Duplicate and Close stay in reach)
 
   // a name typed and then left (a click elsewhere, Escape) is kept
   const commit = () => {
@@ -94,7 +95,7 @@ export function WorkspaceSettings(p: WorkspaceSettingsProps) {
   }, []);
 
   return (
-    <div className="ws-pop" ref={box} role="dialog" aria-label="Workspace settings" style={{ left, top, width: WIDTH }}>
+    <div className="ws-pop" ref={box} role="dialog" aria-label="Workspace settings" style={{ left, top, width: WIDTH, maxHeight: `calc(100vh - ${top + 12}px)` }}>
       <label className="field ws-pop-name">
         <span>Name</span>
         <input

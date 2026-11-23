@@ -4,7 +4,7 @@
  * except the previous place's, dimmed and inert, while the next one loads (`stale`).
  */
 import { useCallback, useMemo, useRef, useState } from "react";
-import { baseName } from "../format";
+import { baseName, entryKind } from "../format";
 import type { Sort } from "../components/FileTable";
 import type { Entry, ObjInfo } from "../types";
 import { sameLoc, useListing, type Loc } from "./useListing";
@@ -115,17 +115,16 @@ export function useEntries(
   const listEntries: Entry[] = useMemo(() => {
     const list = filter ? allEntries.filter((e) => e.name.toLowerCase().includes(filter)) : allEntries.slice();
     const dir = sort.dir === "asc" ? 1 : -1;
+    // by what the Kind column says ("File" for README and dotfiles, "JavaScript" for .js and .mjs), worked out once each
+    const kinds = sort.key === "kind" ? new Map(list.map((e) => [e, e.kind === "folder" ? "" : entryKind(e)])) : null;
     const cmp = (a: Entry, b: Entry): number => {
       switch (sort.key) {
         case "size":
           return (a.size - b.size) * dir;
         case "modified":
           return ((a.modified ?? 0) - (b.modified ?? 0)) * dir;
-        case "kind": {
-          const ka = a.kind === "folder" ? "" : a.name.split(".").pop() ?? "";
-          const kb = b.kind === "folder" ? "" : b.name.split(".").pop() ?? "";
-          return byName.compare(ka, kb) * dir || byName.compare(a.name, b.name);
-        }
+        case "kind":
+          return byName.compare(kinds!.get(a)!, kinds!.get(b)!) * dir || byName.compare(a.name, b.name);
         default:
           return byName.compare(a.name, b.name) * dir;
       }

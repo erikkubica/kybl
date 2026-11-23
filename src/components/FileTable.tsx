@@ -30,7 +30,8 @@ const COLS: Col[] = [
 ];
 const NAME_MIN = 190;
 const GAP = 14;
-const PAD = 36;
+/** the rows' side padding, and the 10px the body keeps for its scrollbar */
+const PAD = 46;
 const WIDTHS_KEY = "s3b.columns";
 /** columns chosen in this window when the app doesn't keep them in settings */
 const LOCAL_COLS_KEY = "s3b.columnsShown";
