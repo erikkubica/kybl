@@ -27,6 +27,14 @@ export function NotificationBell() {
     setOpen(!open);
   };
 
+  // an Undo expires while the list is open too
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!open) return;
+    const t = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [open]);
+
   // what was unread is marked read as it opens (and while it stays open, as new ones arrive)
   useEffect(() => {
     if (open) markAllRead();

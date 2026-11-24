@@ -285,7 +285,7 @@ function KeyedForm({
   const tunnelTab = pick === "sftp" && !PHONE;
   const [shareMore, setShareMore] = useState(false);
   // opened for its tunnels: the keyboard starts there (the first field is on a hidden tab)
-  const focusedStart = useRef(false);
+  const focusedStart = useRef(startTab !== "tunnels" || !(pick === "sftp" && !PHONE));
   useEffect(() => {
     if (focusedStart.current || tab !== "tunnels" || !tunnelsHost) return;
     focusedStart.current = true;
@@ -293,7 +293,8 @@ function KeyedForm({
     return () => cancelAnimationFrame(raf);
   }, [tab, tunnelsHost]);
   // what Options holds that isn't the default: a dot on its tab, so it isn't missed
-  const optionsSet = !!normalizeGroup(group) || photos !== "app" || sharing;
+  const shareShown = photos !== "off" && (photos !== "app" || appImageMode() !== "off");
+  const optionsSet = (!!groups && !!normalizeGroup(group)) || photos !== "app" || (sharing && shareShown);
   // the tab stays where it is: a field that needs fixing brings its own tab forward (draft), and
   // the result shows under every tab
   const test = () => {
@@ -309,7 +310,7 @@ function KeyedForm({
   const tabs: { id: typeof tab; label: React.ReactNode }[] = [
     { id: "main", label: "Connection" },
     ...(tunnelTab ? [{ id: "tunnels" as const, label: <>Tunnels{tunnelCount > 0 && <span className="tab-count">{tunnelCount}</span>}</> }] : []),
-    { id: "options", label: <>Options{optionsSet && <span className="tab-dot" aria-label="(changed)" />}</> },
+    { id: "options", label: <>Options{optionsSet && <span className="tab-dot" role="img" aria-label="(changed)" />}</> },
   ];
   // one stop for the keyboard; the arrows (and Home / End) move between the tabs
   const tabKey = (e: React.KeyboardEvent) => {

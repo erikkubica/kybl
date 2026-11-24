@@ -8,7 +8,7 @@
  * so shortcuts route like the built-in ones), `useActionShortcuts` (the keys) and
  * `useActionPalette` (the ⌘K palette's "Run …" commands, see `customActionCommands`).
  */
-import { inBackground } from "../shell/notifications";
+import { inBackground, mayBeBackground } from "../shell/notifications";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { createElement, useEffect, useRef } from "react";
@@ -654,7 +654,7 @@ export async function runAction(ctx: ActionContext, a: CustomAction, list: Entry
     const stopped = msg === "Cancelled";
     patchRun(runId, { state: stopped ? "stopped" : "failed", status: null, error: stopped ? null : msg, finished: Date.now() });
     ctx.jobs.finish(runId, { error: stopped ? "Cancelled" : msg }, stopped ? undefined : again);
-    if (!stopped && a.output === "silent") dialogs.toast("error", `“${a.name}” couldn’t run. ${msg}`);
+    if (!stopped && a.output === "silent") mayBeBackground(() => dialogs.toast("error", `“${a.name}” couldn’t run. ${msg}`));
   }
 }
 

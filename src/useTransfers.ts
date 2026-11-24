@@ -7,6 +7,7 @@ import { formatBytes } from "./format";
 import { createStore, useStore } from "./store";
 import { stopListings } from "./streamFiles";
 import type { Transfer, TransferEvent } from "./types";
+import { mayBeBackground } from "./shell/notifications";
 
 type NewTransfer = Pick<Transfer, "kind" | "name" | "profileId" | "bucket" | "key" | "local"> & {
   /** downloads: replace a local file of the same name instead of saving next to it as "x (1)" */
@@ -373,7 +374,8 @@ async function start(t: Transfer) {
     noteState(failed);
     settle(failed);
     markDirty();
-    onErrorRef(errMessage(e));
+    // a queued transfer starts long after the drop: the bell then, unless input came just before
+    mayBeBackground(() => onErrorRef(errMessage(e)));
   }
 }
 

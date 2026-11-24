@@ -297,7 +297,9 @@ export function useTerminalPanes(initial: Layout) {
       at = { profileId: LOCAL_PROFILE, bucket: home, prefix: "" };
     }
     // the pane it was asked from may have closed meanwhile: below the active one then
-    return latest.current.open(h.ids.includes(from) ? from : h.activeId, at);
+    // (the host as it is now, after the wait)
+    const now = host.current ?? h;
+    return latest.current.open(now.ids.includes(from) ? from : now.activeId, at);
   };
 
   /** "Open terminal here" / "Open in terminal" for folder `key` of file pane `id`'s root; none where a terminal can't open. */

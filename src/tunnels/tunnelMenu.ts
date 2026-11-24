@@ -9,6 +9,7 @@ import type { MenuItem } from "../components/Dialogs";
 import { PHONE } from "../connections/fields";
 import { registerCommands } from "../palette/commands";
 import type { Profile, TunnelDef } from "../types";
+import { mayBeBackground } from "../shell/notifications";
 import { hostPort, isStarting, localAddress, runningTunnel, startTunnel, stopTunnel, TUNNEL_ERROR_EVENT, tunnelLabel, tunnelsOf, watchTunnels } from "./tunnels";
 
 type Toast = (kind: "success" | "error" | "info", text: string) => void;
@@ -87,7 +88,8 @@ export function useTunnelCommands(profiles: Profile[], toast: Toast) {
       ),
     );
     const unlisten = listen<{ name: string; error: string }>(TUNNEL_ERROR_EVENT, (e) =>
-      latest.current.toast("error", `Tunnel “${e.payload.name}” didn't start: ${e.payload.error.split("\n\n")[0]}`),
+      // auto-start and restarts happen by themselves: the bell, unless it answers a click
+      mayBeBackground(() => latest.current.toast("error", `Tunnel “${e.payload.name}” didn't start: ${e.payload.error.split("\n\n")[0]}`)),
     );
     return () => {
       off();

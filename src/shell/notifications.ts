@@ -65,8 +65,23 @@ const ANSWER_MS = 1500;
 
 export const answersUser = () => bgDepth === 0 && Date.now() - lastInput < ANSWER_MS;
 
-/** Inside `inBackground`: the toast being made reports background work. */
-export const inBackgroundNow = () => bgDepth > 0;
+/** Inside `inBackground` or `mayBeBackground`: an error made now needn't pop up by itself. */
+export const inBackgroundNow = () => bgDepth > 0 || maybeDepth > 0;
+
+/**
+ * Toasts made inside `fn` may or may not answer the user (a transfer that failed to start: right
+ * after the drop, or later from the queue): they pop up only when input came just before, errors
+ * included, and wait in the bell otherwise.
+ */
+let maybeDepth = 0;
+export function mayBeBackground(fn: () => void) {
+  maybeDepth++;
+  try {
+    fn();
+  } finally {
+    maybeDepth--;
+  }
+}
 
 /**
  * An Undo is offered only while its toast would have been up: later, what it puts back may have
