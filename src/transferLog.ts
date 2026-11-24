@@ -63,7 +63,7 @@ function placeOf(t: Transfer, base?: string): string {
 }
 
 /** "X" or "X (bucket)" when the root has a name of its own. */
-function connWithRoot(profileId: string, bucket: string): string {
+export function connWithRoot(profileId: string, bucket: string): string {
   const conn = connLabel(profileId);
   if (!bucket) return conn;
   const r = rootName(profileId, bucket);

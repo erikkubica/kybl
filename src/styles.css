@@ -1844,6 +1844,14 @@ body.resizing-col * {
   font-size: 11px;
   white-space: normal;
 }
+/* where a row goes: one quiet line under its name */
+.tp-route {
+  color: var(--faint);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* a finished transfer's word about what it left out */
 .tp-note {
   color: var(--dim);

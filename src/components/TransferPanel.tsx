@@ -16,6 +16,7 @@ import type { JobSummary } from "../api";
 import { JobsPanel, isActive as migrationActive, jobFilesCount, jobMeta as migrationMeta, migrations as migrationStore, useMigrations } from "../jobs";
 import { useJobs } from "../useJobs";
 import { ON_OS } from "../osNames";
+import { connWithRoot } from "../transferLog";
 
 /** A synced folder that is busy right now (shown read-only). */
 export type SyncActivity = { id: string; name: string; direction: "upload" | "download" | "twoway"; state: "scanning" | "syncing"; done: number; total: number; current: string | null; bytes: number; totalBytes: number };
@@ -38,6 +39,21 @@ function jobMeta(j: Job): string {
 }
 
 const KIND_LABEL: Record<Transfer["kind"], string> = { upload: "Upload", download: "Download", compress: "Compress", extract: "Extract" };
+/**
+ * Where a row goes (an upload: the connection and folder; a download: the folder on this
+ * computer and where from), so a list of relative names says where they land.
+ */
+function routeOf(t: Transfer): string | null {
+  const dirOf = (p: string) => p.replace(/[\\/]+[^\\/]*$/, "");
+  if (t.kind === "upload") {
+    const k = t.key.replace(/\/$/, "");
+    const dir = k.includes("/") ? k.slice(0, k.lastIndexOf("/") + 1) : "";
+    return `to ${connWithRoot(t.profileId, t.bucket)} · /${dir}`;
+  }
+  if (t.kind === "download" && t.local) return `to ${dirOf(t.local)} · from ${connWithRoot(t.profileId, t.bucket)}`;
+  return null;
+}
+
 const KIND_DONE: Record<Transfer["kind"], string> = { upload: "Uploaded", download: "Downloaded", compress: "Compressed", extract: "Extracted" };
 const STATE_ICON: Record<TransferState, IconName> = {
   running: "upload",
@@ -323,15 +339,12 @@ function TransferPanelView({
   const eta = speed > 0 ? (totalBytes - doneBytes) / speed : 0;
 
   const cancelled = transfers.filter((t) => t.state === "cancelled");
-  // the run in counts, and its latest finished rows: a small file is done within one tick, so
-  // without them it would go from "Queued" to the Done tab without ever showing
+  // the run in counts: finished rows are in Done (the header's "done of" counts them as they go)
   const run = runCounts(transfers);
-  const recent = onTab && show("progress") ? run.recent : [];
   const list = [
     ...(show("progress") ? running : []),
     // capped like the others: tens of thousands of failed rows would freeze the window
     ...(show("failed") ? failed.slice(0, FAILED_SHOWN) : []),
-    ...recent,
     ...(show("progress") ? queued.slice(0, QUEUED_SHOWN) : []),
     ...(show("progress") ? paused.slice(0, 40) : []),
     ...(show("done") ? done.slice(-DONE_SHOWN).reverse() : []),
@@ -341,7 +354,6 @@ function TransferPanelView({
   const heads = new Map<string, string>();
   if (onTab && tab === "activity") {
     if (running[0]) heads.set(running[0].id, `Running (${running.length.toLocaleString()})`);
-    if (recent[0]) heads.set(recent[0].id, "Just finished");
     if (queued[0]) heads.set(queued[0].id, `Queued (${queued.length.toLocaleString()})`);
     if (paused[0]) heads.set(paused[0].id, `Paused (${paused.length.toLocaleString()})`);
   }
@@ -713,6 +725,7 @@ function TransferPanelView({
           {list.map((t) => {
             const ctl = transferControls(t.id);
             const head = heads.get(t.id);
+            const route = routeOf(t);
             return (
               <Fragment key={t.id}>
                 {head && <div className="tp-group">{head}</div>}
@@ -720,8 +733,9 @@ function TransferPanelView({
                 <span className="tp-icon" title={KIND_LABEL[t.kind]}>
                   <Icon name={t.state === "running" ? (t.kind === "upload" || t.kind === "download" ? t.kind : "archive") : STATE_ICON[t.state]} size={15} />
                 </span>
-                <div className="tp-name" title={t.key}>
+                <div className="tp-name" title={t.kind === "download" && t.local ? t.local : t.key}>
                   {t.name}
+                  {route && <div className="tp-route">{route}</div>}
                   {t.state === "error" && t.error && (
                     <div className="tp-err">
                       <ErrorText message={t.error} />
