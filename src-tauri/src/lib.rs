@@ -297,6 +297,8 @@ pub fn run() {
             #[cfg(desktop)]
             terminal::terminal_open,
             #[cfg(desktop)]
+            terminal::terminal_shells,
+            #[cfg(desktop)]
             terminal::terminal_write,
             #[cfg(desktop)]
             terminal::terminal_resize,

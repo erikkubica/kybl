@@ -123,6 +123,40 @@ export function shellQuote(s: string): string | null {
   return `'${s.replace(/['\\]/g, (c) => (c === "'" ? `'\\''` : `'\\\\'`))}'`;
 }
 
+/** How a shell on this computer wants a path typed (the backend says, `terminal_open`). */
+export type Quoting = "posix" | "powershell" | "cmd" | "wsl";
+
+/** A Windows path as WSL sees it: `C:\a\b` is `/mnt/c/a/b`; null for one it can't reach that way (a network share). */
+export function wslPath(p: string): string | null {
+  const m = /^([A-Za-z]):[\\/]*(.*)$/.exec(p);
+  if (!m) return null;
+  return `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, "/")}`.replace(/\/+$/, "") || "/";
+}
+
+/**
+ * Path `s` as one word for shell kind `q`: POSIX shells and Git Bash as `shellQuote`; PowerShell in
+ * single quotes with each quote doubled (the curly ones end a string there too); Command Prompt in
+ * double quotes (a name with `%` would expand there, so it is refused); WSL as its /mnt path. Null:
+ * not typeable.
+ */
+export function quoteAs(q: Quoting, s: string): string | null {
+  if (!typeable(s)) return null;
+  if (q === "powershell") return /^[A-Za-z0-9_\-.\\/:]+$/.test(s) ? s : `'${s.replace(/['\u2018\u2019\u201a\u201b]/g, "$&$&")}'`;
+  if (q === "cmd") return s.includes("%") || s.includes('"') ? null : /^[A-Za-z0-9_\-.\\/:]+$/.test(s) ? s : `"${s}"`;
+  if (q === "wsl") {
+    const w = wslPath(s);
+    return w == null ? null : shellQuote(w);
+  }
+  return shellQuote(s);
+}
+
+/** The line that goes to folder `quoted` in shell kind `q` (a leading space keeps it out of a POSIX history). */
+export function cdLine(q: Quoting, quoted: string): string {
+  if (q === "powershell") return ` Set-Location -LiteralPath ${quoted}\r`;
+  if (q === "cmd") return ` cd /d ${quoted}\r`;
+  return ` cd ${quoted}\r`;
+}
+
 /** A remote path for a shell: `base` from the backend ("/var/www", "~", "~/site") joined with `key`, the ~ left unquoted. Null: not typeable. */
 export function remotePath(base: string, key: string): string | null {
   const k = key.replace(/\/+$/, "");

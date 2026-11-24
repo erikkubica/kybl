@@ -136,6 +136,10 @@ block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSObject", "NSOperation", "NSProcessInfo", "NSString", "NSURL", "NSValue"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSApplication", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSEvent", "NSFilePromiseProvider", "NSGraphicsContext", "NSImage", "NSPasteboard", "NSResponder", "NSView", "NSWindow", "NSWorkspace"] }
 
+# Windows: terminals on a ConPTY pseudo console (terminal/pty_win.rs). Already in the tree (0.60).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
+
 # Windows, Linux: items dragged out to other apps as files (platform/drag_out.rs)
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
 drag = "2"

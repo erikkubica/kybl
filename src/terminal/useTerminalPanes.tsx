@@ -37,7 +37,10 @@ import {
   setTermNotice,
   termWriteWhy,
   type PasteAsk,
-  shellQuote,
+  cdLine,
+  quoteAs,
+  terminalQuoting,
+  type Quoting,
   terminalIdle,
   terminalRemoteBase,
   typeIntoTerminal,
@@ -147,9 +150,10 @@ export function useTerminalPanes(initial: Layout) {
     let path: string | null = null;
     // a name with control characters would act as keys when typed: not followed
     let untypeable = false;
+    const q: Quoting = t.profileId === LOCAL_PROFILE ? terminalQuoting(t.sid) : "posix";
     if (t.profileId === LOCAL_PROFILE) {
       const p = await api.localPath(to.profileId, to.bucket, to.prefix.replace(/\/+$/, "")).catch(() => null);
-      if (p) path = shellQuote(p);
+      if (p) path = quoteAs(q, p);
       untypeable = !!p && path == null;
     } else {
       const base = terminalRemoteBase(t.sid);
@@ -162,14 +166,14 @@ export function useTerminalPanes(initial: Layout) {
     if (!path || stale()) return;
     // csh and tcsh expand `!` even inside single quotes, and the shell's kind isn't known here
     // (the backend's remote_cd decides that for a fresh shell): such a name would run as history
-    if (path.includes("!")) return note(t.sid, "not following: `!` in the folder name");
+    if ((q === "posix" || q === "wsl") && path.includes("!")) return note(t.sid, "not following: `!` in the folder name");
     for (let i = 0; ; i++) {
       if (await terminalIdle(t.sid)) break;
       if (stale()) return;
       if (i >= 6) return note(t.sid, "not following: busy");
       await new Promise((r) => setTimeout(r, 120));
     }
-    if (stale() || !typeIntoTerminal(t.sid, ` cd ${path}\r`)) return;
+    if (stale() || !typeIntoTerminal(t.sid, cdLine(q, path))) return;
     note(t.sid, null);
     setTerms((cur) => (cur[id]?.sid === t.sid ? { ...cur, [id]: { ...cur[id]!, bucket: to.bucket, prefix: to.prefix } } : cur));
   };
@@ -415,7 +419,8 @@ export function useTerminalPanes(initial: Layout) {
     let quoted: (string | null)[];
     if (t.profileId === LOCAL_PROFILE) {
       const got = await Promise.all(items.map((e) => api.localPath(from.profileId, from.bucket, e.key.replace(/\/+$/, "")).catch(() => null)));
-      quoted = got.filter((p): p is string => !!p).map(shellQuote);
+      const q = terminalQuoting(t.sid);
+      quoted = got.filter((p): p is string => !!p).map((p) => quoteAs(q, p));
     } else {
       const base = terminalRemoteBase(t.sid);
       if (base == null) return;
@@ -441,7 +446,8 @@ export function useTerminalPanes(initial: Layout) {
     const t = termsRef.current[pane];
     if (!t) return undefined;
     if (t.profileId !== LOCAL_PROFILE) return REMOTE_TERM_DROP;
-    const quoted = paths.map(shellQuote).filter((p): p is string => p != null);
+    const q = terminalQuoting(t.sid);
+    const quoted = paths.map((p) => quoteAs(q, p)).filter((p): p is string => p != null);
     if (!quoted.length) return "That name has control characters, so it isn't pasted into the terminal.";
     if (quoted.length < paths.length) host.current?.toast("info", "Names with control characters were left out.");
     const why = termWriteWhy(writeToTerminal(pane, `${quoted.join(" ")} `));

@@ -3543,6 +3543,7 @@ dependencies = [
  "uuid",
  "walkdir",
  "webpki-root-certs",
+ "windows-sys 0.60.2",
  "zip",
 ]
 

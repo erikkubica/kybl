@@ -14,8 +14,8 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { LS } from "../browser/types";
 import { openLink } from "../openLink";
 import { IS_MAC } from "../components/pointer";
-import { confirmPaste, pasteTrusts, setPasteTrust, setTermImpl, takeFocusWhenShown, takeStartup, termNotice, termWriteWhy, type TermAction, type TermSpec, type TermWrite } from "./api";
-import { cleanPaste, PASTE_ASK_ALWAYS, PASTE_MAX, pasteNeedsConfirm } from "./quote";
+import { confirmPaste, pasteTrusts, setPasteTrust, setTermImpl, takeFocusWhenShown, takeStartup, termNotice, termWriteWhy, terminalShell, type TermAction, type TermSpec, type TermWrite } from "./api";
+import { cleanPaste, PASTE_ASK_ALWAYS, PASTE_MAX, pasteNeedsConfirm, type Quoting } from "./quote";
 
 const SCROLLBACK = 5000;
 const FONT_KEY = "s3b.term.font";
@@ -25,13 +25,14 @@ const FONT_MAX = 24;
 /** acknowledged in steps this big (or after a short pause), not per batch */
 const ACK_STEP = 64 * 1024;
 
-type Info = { id: number; remoteBase: string | null };
+type Info = { id: number; remoteBase: string | null; quoting?: Quoting | null };
 type Msg = ArrayBuffer | { exit: number | null };
 
 const MAC = /Mac/i.test(navigator.platform || navigator.userAgent);
 /** a prompt's end, right before the cursor (see Session.idle) */
 const PROMPT_REMOTE = /[$%#] $/;
-const PROMPT_LOCAL = /[$%#>❯] $/;
+// (Command Prompt: `C:\Users\me>`, no space after)
+const PROMPT_LOCAL = /(?:[$%#>❯] |^[A-Za-z]:\\[^>]*>)$/;
 /** ms after a key is typed before the line counts as known (its echo has come back) */
 const TYPED_LATELY = 500;
 /** Typeahead kept while a shell starts (a few lines of keys; more is dropped). */
@@ -83,6 +84,8 @@ class Session {
   private unacked = 0;
   private ackTimer = 0;
   remoteBase: string | null = null;
+  /** how the shell on this computer wants paths typed */
+  quoting: Quoting | null = null;
   private opened = false;
   /** when a key was last typed (its echo may not be on screen yet) */
   private lastInput = 0;
@@ -233,13 +236,14 @@ class Session {
     const { profileId, bucket, prefix } = this.spec;
     try {
       const { cols, rows } = this.term;
-      const info = await invoke<Info>("terminal_open", { profileId, bucket, prefix, cols, rows, onOutput: ch });
+      const info = await invoke<Info>("terminal_open", { profileId, bucket, prefix, cols, rows, shell: terminalShell() || null, onOutput: ch });
       if (run !== this.run) {
         void invoke("terminal_close", { id: info.id }).catch(() => {});
         return;
       }
       this.id = info.id;
       this.remoteBase = info.remoteBase;
+      this.quoting = info.quoting ?? null;
       this.state = "running";
       // a resize while the shell was starting (onResize skips it without an id) would leave the
       // PTY at the old size: send what the terminal is now if it moved meanwhile
@@ -463,6 +467,7 @@ setTermImpl({
   },
   action: (sid, a) => sessions.get(sid)?.action(a),
   remoteBase: (sid) => sessions.get(sid)?.remoteBase,
+  quoting: (sid) => sessions.get(sid)?.quoting,
   type: (sid, text) => sessions.get(sid)?.type(text) ?? false,
   idle: async (sid) => (await sessions.get(sid)?.idle()) ?? false,
   busy: async (sid) => (sessions.get(sid) ? sessions.get(sid)!.ending() : null),

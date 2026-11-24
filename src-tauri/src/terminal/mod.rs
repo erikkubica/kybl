@@ -10,7 +10,8 @@
 //! Nothing a terminal shows or is sent is ever logged.
 
 mod batch;
-#[cfg(unix)]
+#[cfg_attr(windows, path = "pty_win.rs")]
+#[cfg(any(unix, windows))]
 mod pty;
 
 use std::{
@@ -21,7 +22,6 @@ use std::{
     },
 };
 
-#[cfg(unix)]
 use std::time::Duration;
 
 use serde::Serialize;
@@ -214,6 +214,19 @@ pub struct TermInfo {
     /// SFTP: where the connection's folder is on the server ("/var/www", "~", "~/site"), so the
     /// page can write the path of a dropped file; None on this computer
     remote_base: Option<String>,
+    /// how the shell on this computer wants paths typed: "posix", "powershell", "cmd" or "wsl"
+    /// (None on a server, where `remote_base` says)
+    quoting: Option<&'static str>,
+}
+
+/// The shells a terminal on this computer can run, the default first (Windows; none elsewhere,
+/// where it is the account's login shell).
+#[tauri::command]
+pub fn terminal_shells() -> Vec<serde_json::Value> {
+    #[cfg(windows)]
+    return pty::shells().into_iter().map(|s| serde_json::json!({ "id": s.id, "name": s.name })).collect();
+    #[cfg(not(windows))]
+    Vec::new()
 }
 
 /// Starts a shell in folder `prefix` of root `bucket` of connection `profile_id` (This Mac or an
@@ -229,6 +242,7 @@ pub async fn terminal_open<R: Runtime>(
     prefix: String,
     cols: u16,
     rows: u16,
+    shell: Option<String>,
     on_output: Channel<InvokeResponseBody>,
 ) -> Result<TermInfo, String> {
     let label = webview.label().to_string();
@@ -237,9 +251,12 @@ pub async fn terminal_open<R: Runtime>(
     let (out_tx, out_rx) = mpsc::channel(batch::QUEUE);
     let (exit_tx, exit_rx) = oneshot::channel();
     let mut remote_base = None;
+    let mut quoting = None;
 
     let task = if profile_id == LOCAL_ID {
-        open_local(&app, &state, &bucket, &prefix, cols, rows, cmd_rx, out_tx, exit_tx).await?
+        let (task, q) = open_local(&app, &state, &bucket, &prefix, shell.as_deref(), cols, rows, cmd_rx, out_tx, exit_tx).await?;
+        quoting = Some(q);
+        task
     } else {
         let backend = registry::sftp_for(&app, &state, &profile_id).await?;
         // an account for file transfers only has no shell: say so, rather than open a "terminal"
@@ -274,53 +291,59 @@ pub async fn terminal_open<R: Runtime>(
         }
         close(id);
     });
-    Ok(TermInfo { id, remote_base })
+    Ok(TermInfo { id, remote_base, quoting })
 }
 
-#[cfg(unix)]
+/// A shell on this computer in the pane's folder: the account's login shell (Unix), or shell
+/// `shell` from [`terminal_shells`], else the default one (Windows). Its task, and how it wants
+/// paths typed.
 #[allow(clippy::too_many_arguments)]
 async fn open_local<R: Runtime>(
     app: &AppHandle<R>,
     state: &AppState,
     bucket: &str,
     prefix: &str,
+    #[allow(unused_variables)] shell: Option<&str>,
     cols: u16,
     rows: u16,
     cmds: mpsc::UnboundedReceiver<Cmd>,
     out: mpsc::Sender<Vec<u8>>,
     exit: oneshot::Sender<Option<i32>>,
-) -> Result<tokio::task::AbortHandle, String> {
-    let disk = registry::open(app, state, LOCAL_ID).await?;
-    let cwd = disk
-        .local_path(bucket, prefix)
-        .filter(|p| p.is_dir())
-        .or_else(|| std::env::var_os("HOME").map(Into::into))
-        .unwrap_or_else(|| "/".into());
-    let shell = login_shell();
-    let env = [("TERM", "xterm-256color".to_string()), ("COLORTERM", "truecolor".to_string()), ("LANG", lang()), ("TERM_PROGRAM", "Kybl".to_string())];
-    let (pty, ev) = pty::Pty::spawn(&shell, &[std::ffi::OsStr::new("-l")], &cwd, &env, cols, rows, batch::QUEUE).map_err(|e| format!("Couldn't start {}. {e}", shell.display()))?;
-    Ok(tokio::spawn(run_pty(pty, ev, cmds, out, exit)).abort_handle())
-}
-
-#[cfg(not(unix))]
-#[allow(clippy::too_many_arguments)]
-async fn open_local<R: Runtime>(
-    _app: &AppHandle<R>,
-    _state: &AppState,
-    _bucket: &str,
-    _prefix: &str,
-    _cols: u16,
-    _rows: u16,
-    _cmds: mpsc::UnboundedReceiver<Cmd>,
-    _out: mpsc::Sender<Vec<u8>>,
-    _exit: oneshot::Sender<Option<i32>>,
-) -> Result<tokio::task::AbortHandle, String> {
-    Err("Terminals on this computer aren't available on this system yet. SFTP connections can open one.".into())
+) -> Result<(tokio::task::AbortHandle, &'static str), String> {
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (app, state, bucket, prefix, cols, rows, cmds, out, exit);
+        return Err("Terminals on this computer aren't available on this system. SSH and SFTP connections can open one.".into());
+    }
+    #[cfg(any(unix, windows))]
+    {
+        let home = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let disk = registry::open(app, state, LOCAL_ID).await?;
+        let cwd = disk
+            .local_path(bucket, prefix)
+            .filter(|p| p.is_dir())
+            .or_else(|| std::env::var_os(home).map(Into::into))
+            .unwrap_or_else(|| if cfg!(windows) { r"C:\".into() } else { "/".into() });
+        #[cfg(unix)]
+        let (program, args, quoting, env) = (
+            login_shell(),
+            vec![std::ffi::OsStr::new("-l")],
+            "posix",
+            [("TERM", "xterm-256color".to_string()), ("COLORTERM", "truecolor".to_string()), ("LANG", lang()), ("TERM_PROGRAM", "Kybl".to_string())],
+        );
+        #[cfg(windows)]
+        let (program, args, quoting, env) = {
+            let Some(sh) = pty::pick_shell(shell) else { return Err("No shell was found on this computer (PowerShell or Command Prompt).".into()) };
+            (sh.program, sh.args.into_iter().map(std::ffi::OsStr::new).collect::<Vec<_>>(), sh.quoting, [("TERM", "xterm-256color".to_string()), ("COLORTERM", "truecolor".to_string()), ("TERM_PROGRAM", "Kybl".to_string())])
+        };
+        let (pty, ev) = pty::Pty::spawn(&program, &args, &cwd, &env, cols, rows, batch::QUEUE).map_err(|e| format!("Couldn't start {}. {e}", program.display()))?;
+        Ok((tokio::spawn(run_pty(pty, ev, cmds, out, exit)).abort_handle(), quoting))
+    }
 }
 
 /// A local shell's life: input and size changes in, and once it ends, a moment for the last of its
 /// output before the terminal stops being read (a job left in the background may keep it open).
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 async fn run_pty(mut pty: pty::Pty, ev: pty::PtyEvents, mut cmds: mpsc::UnboundedReceiver<Cmd>, out: mpsc::Sender<Vec<u8>>, exit: oneshot::Sender<Option<i32>>) {
     let pty::PtyEvents { output: mut from_pty, exit: mut ended } = ev;
     // the reader's chunks go on to the pump through here, so this task sees when they stop
@@ -362,7 +385,7 @@ async fn run_pty(mut pty: pty::Pty, ev: pty::PtyEvents, mut cmds: mpsc::Unbounde
 }
 
 /// How the forwarder of a local shell's output is getting on.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[derive(Default)]
 struct Progress {
     /// chunks handed on to the page so far
@@ -373,18 +396,18 @@ struct Progress {
 
 /// After the shell ended: nothing more for this long, and nothing waiting for the page, means a
 /// job left in the background holds the terminal open.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const DRAIN_QUIET: Duration = Duration::from_millis(300);
 /// The page took nothing for this long while output waited for it: given up on.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const DRAIN_STUCK: Duration = Duration::from_secs(5);
 /// At most this long in all (a background job that keeps printing).
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const DRAIN_MAX: Duration = Duration::from_secs(30);
 
 /// Waits for the forwarder to hand on the last of the output: as long as it keeps going, or the
 /// page is still taking chunks (a long `cat` at the end), not a fixed moment. True when it ended.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 async fn drain(forward: &mut tokio::task::JoinHandle<()>, progress: &Progress, quiet: Duration, stuck: Duration) -> bool {
     let mut last = progress.moved.load(Ordering::SeqCst);
     let mut idle = Duration::ZERO;

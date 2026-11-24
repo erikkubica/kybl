@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { askBeforeEveryPaste, onPasteTrustChange, pasteTrustCount } from "../terminal/api";
+import { askBeforeEveryPaste, onPasteTrustChange, pasteTrustCount, setTerminalShell, terminalShell, terminalShells, type ShellChoice } from "../terminal/api";
 import { getVersion } from "@tauri-apps/api/app";
 import { Icon, type IconName } from "../Icons";
 import { SCHEMES, type Palette } from "../schemes";
@@ -224,6 +224,36 @@ function Row({ label, hint, stack, children }: { label: ReactNode; hint?: string
       </div>
       {children}
     </div>
+  );
+}
+
+/** Which shell terminals on this computer run (Windows: PowerShell, Command Prompt, WSL, Git Bash); nothing elsewhere. */
+function ShellRow() {
+  const [list, setList] = useState<ShellChoice[]>([]);
+  const [pick, setPick] = useState(terminalShell);
+  useEffect(() => {
+    void terminalShells().then(setList);
+  }, []);
+  if (list.length < 2) return null;
+  const cur = list.some((x) => x.id === pick) ? pick : "";
+  return (
+    <Row label="Terminal shell" hint="For new terminals on this computer. Open terminals keep their shell until you restart them.">
+      <select
+        value={cur}
+        aria-label="Terminal shell"
+        onChange={(e) => {
+          setPick(e.target.value);
+          setTerminalShell(e.target.value);
+        }}
+      >
+        <option value="">{list[0].name} (default)</option>
+        {list.slice(1).map((x) => (
+          <option key={x.id} value={x.id}>
+            {x.name}
+          </option>
+        ))}
+      </select>
+    </Row>
   );
 }
 
@@ -638,6 +668,7 @@ export function SettingsPage({
                   <Row label="Confirm before deleting" hint={`On most connections a delete cannot be undone. Drives and the ${ON_OS.trash} keep what you delete.`}>
                     <Switch label="Confirm before deleting" on={settings.confirmDelete} onChange={(confirmDelete) => onChange({ confirmDelete })} />
                   </Row>
+                  <ShellRow />
                   <PasteAskRow />
                   <Row label="Secret keys" hint={`Saved encrypted, never in a settings file. The key is in ${ON_OS.keychain}.`}>
                     <span className="set-value">Encrypted</span>

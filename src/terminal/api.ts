@@ -15,7 +15,9 @@
  * fresh shell in the same folder (`sid` is what ties a pane to its running session).
  */
 import { LOCAL_PROFILE, LS, type PaneId } from "../browser/types";
+import { invoke } from "@tauri-apps/api/core";
 import type { Profile } from "../types";
+import type { Quoting } from "./quote";
 
 /**
  * Where a terminal pane opened: a folder of a connection, and the session it shows; `from` is the
@@ -34,14 +36,26 @@ export type TermPlace = {
 /** A terminal pane on screen: always with its session id. */
 export type TermSpec = TermPlace & { sid: string };
 
-const IS_WINDOWS = /Win/i.test(navigator.platform || navigator.userAgent);
-
 export const newSid = () => `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 
-/** Whether a terminal can open on connection `p`: This Mac (not on Windows yet) and SFTP servers. */
+/** Whether a terminal can open on connection `p`: this computer and SSH / SFTP servers. */
 export function canTerminal(p: Pick<Profile, "id" | "kind"> | null | undefined): boolean {
   if (!p) return false;
-  return p.id === LOCAL_PROFILE ? !IS_WINDOWS : p.kind === "sftp";
+  return p.id === LOCAL_PROFILE || p.kind === "sftp";
+}
+
+// ---------------------------------------------------------------- the shell on this computer (Windows)
+
+const SHELL_KEY = "kybl.terminalShell";
+/** The shell new terminals on this computer run ("" = the default), on Windows where there's a choice. */
+export const terminalShell = (): string => LS.get(SHELL_KEY) ?? "";
+export const setTerminalShell = (id: string) => LS.set(SHELL_KEY, id);
+export type ShellChoice = { id: string; name: string };
+let shellList: Promise<ShellChoice[]> | null = null;
+/** The shells installed here, the default first (empty on macOS and Linux: the login shell runs). */
+export function terminalShells(): Promise<ShellChoice[]> {
+  shellList ??= invoke<ShellChoice[]>("terminal_shells").catch(() => []);
+  return shellList;
 }
 
 export function parseTermPlace(v: unknown): TermPlace | undefined {
@@ -58,7 +72,7 @@ export function parseTermPlace(v: unknown): TermPlace | undefined {
   };
 }
 
-export { remotePath, shellQuote, typeable } from "./quote";
+export { cdLine, quoteAs, remotePath, shellQuote, typeable, type Quoting } from "./quote";
 
 // ---------------------------------------------------------------- hooks the shell and the chunk fill in
 
@@ -75,6 +89,8 @@ export type TermImpl = {
   action: (sid: string, a: TermAction) => void;
   /** where the shell's connection folder is on the server (SFTP), once connected */
   remoteBase: (sid: string) => string | null | undefined;
+  /** how the shell on this computer wants paths typed, once started (null on a server) */
+  quoting: (sid: string) => Quoting | null | undefined;
   /** sends `text` to the shell as typed keys (no paste, the keyboard stays where it is) */
   type: (sid: string, text: string) => boolean;
   /** the shell sits at its prompt with nothing typed (see session.ts) */
@@ -194,6 +210,11 @@ export function gcTerminals(keep: Set<string>) {
 
 export function terminalRemoteBase(sid: string) {
   return impl?.remoteBase(sid);
+}
+
+/** How terminal `sid` on this computer wants paths typed ("posix" until it says). */
+export function terminalQuoting(sid: string): Quoting {
+  return impl?.quoting(sid) ?? "posix";
 }
 
 /** Sends `text` to session `sid` as typed keys, without taking the keyboard; false when it isn't running. */
