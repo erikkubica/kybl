@@ -65,6 +65,12 @@ const PATHS: Record<string, ReactNode> = {
   chevron: <path d="m9 6 6 6-6 6" />,
   density: <path d="M4 5.5h16M4 9.8h16M4 14.2h16M4 18.5h16" />,
   "chevron-down": <path d="m6 9 6 6 6-6" />,
+  bell: (
+    <>
+      <path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z" />
+      <path d="M10 20a2 2 0 0 0 4 0" />
+    </>
+  ),
   info: (
     <>
       <circle cx="12" cy="12" r="9" />
