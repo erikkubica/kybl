@@ -32,9 +32,9 @@ const shotSession = (f: Fake) => {
   send(f, " resources/views/checkout.blade.php          |  6 \x1b[32m++\x1b[0m\r\n");
   send(f, " 2 files changed, 41 insertions(+), 3 deletions(-)\r\n");
   send(f, `${P()}sudo systemctl reload php8.3-fpm\r\n`);
-  send(f, `${P()}tail -n 2 storage/logs/laravel.log\r\n`);
-  send(f, "[2026-11-25 09:41:07] production.INFO: Order 10482 paid (card, 129.00 EUR)\r\n");
-  send(f, "[2026-11-25 09:41:12] production.INFO: Order 10483 paid (PayPal, 54.90 EUR)\r\n");
+  send(f, `${P()}tail -2 storage/logs/app.log\r\n`);
+  send(f, "09:41:07 INFO Order 10482 paid, 129.00 EUR\r\n");
+  send(f, "09:41:12 INFO Order 10483 paid, 54.90 EUR\r\n");
 };
 
 function run(id: number, f: Fake, cmd: string) {

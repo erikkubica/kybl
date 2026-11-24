@@ -1202,7 +1202,8 @@ kbd {
   white-space: pre-wrap;
   word-break: break-word;
 }
-.result .err-details summary {
+.result .err-details summary,
+.sync-error .err-details summary {
   margin: 0;
   padding-left: 0;
 }
