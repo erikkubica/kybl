@@ -18,7 +18,7 @@ export type ResolveOpts = {
 
 type Ask = {
   clash: Clash;
-  /** clashes of the same kind (files or folders) still to come after this one */
+  /** clashes still to come after this one (files and folders alike) */
   sameLeft: number;
   /** "Uploading", "Moving", "Copying" */
   verb: string;
@@ -54,14 +54,19 @@ export function useConflictPrompt() {
           out.set(c.key, remembered);
           continue;
         }
-        const sameLeft = clashes.slice(i + 1).filter((x) => x.folder === c.folder).length;
+        // one "all" answers folders and files alike (Replace merges a folder, overwrites a file):
+        // asking once for the folders and again for their files was the same question twice
+        const sameLeft = clashes.length - i - 1;
         const r = await new Promise<{ choice: Choice; all: boolean; remember: boolean } | null>((done) =>
           setAsk({ clash: c, sameLeft, verb, where, more: !!opts.more, remember: opts.remember, done }),
         );
         if (!r) return null;
         out.set(c.key, r.choice);
-        if (r.all || r.remember) sticky[kind] = r.choice;
-        if (r.remember && opts.remember) rememberChoice(opts.remember, c.folder, r.choice);
+        if (r.all || r.remember) sticky.file = sticky.folder = r.choice;
+        if (r.remember && opts.remember) {
+          rememberChoice(opts.remember, false, r.choice);
+          rememberChoice(opts.remember, true, r.choice);
+        }
       }
       return out;
     } finally {
@@ -78,7 +83,7 @@ function ConflictDialog({ ask }: { ask: Ask }) {
   const [remember, setRemember] = useState(false);
   const { clash, verb, where } = ask;
   const folder = clash.folder;
-  // more of the same kind waiting, now or still being found by a listing: the choice can cover
+  // more clashes waiting, now or still being found by a listing: the choice can cover
   // them too. The buttons say "all" rather than a count, because a folder being listed hasn't
   // found every clash yet (a "2" would be wrong once the rest turn up).
   const more = ask.sameLeft > 0 || ask.more;
@@ -98,7 +103,7 @@ function ConflictDialog({ ask }: { ask: Ask }) {
             {folder
               ? "Merge puts everything into the existing folder and replaces files with the same names. Keep both adds a number to the new folder’s name."
               : `Replace overwrites the existing file. Keep both adds a number to the name of the one you’re ${verb.toLowerCase()}.`}
-            {more && ` “All” answers every other ${folder ? "folder" : "file"} that already exists in this ${verb.toLowerCase()}, including ones still being found.`}
+            {more && ` “All” answers every other name that already exists in this ${verb.toLowerCase()}, including ones still being found: Replace all overwrites files and merges folders.`}
           </p>
           {ask.remember && (
             <label className="check conflict-all">
@@ -131,8 +136,8 @@ function ConflictDialog({ ask }: { ask: Ask }) {
             {replace}
           </button>
           {more && (
-            <button className="btn btn-danger-ghost" onClick={() => pick("replace", true)}>
-              {replace} all
+            <button className="btn btn-danger-ghost" onClick={() => pick("replace", true)} title="Overwrite every file and merge every folder that already exists">
+              Replace all
             </button>
           )}
         </div>
