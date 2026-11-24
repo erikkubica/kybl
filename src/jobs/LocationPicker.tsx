@@ -8,6 +8,7 @@ import { Icon } from "../Icons";
 import { FileIcon } from "../components/FileIcon";
 import { deviceIcon, rootIcon } from "../connections/roots";
 import { ProviderBadge } from "../components/Sidebar";
+import { groupKeysHolding, organize, type OrgGroup } from "../connections/organize";
 import { capsFor, forgetCaps } from "../useCaps";
 import { ConnFixButton, connTrouble, trustOnProfile, trustSaved } from "../connections/ConnFix";
 import type { Profile } from "../types";
@@ -48,6 +49,7 @@ type ConnData = { status: "loading" | "ready" | "error"; roots: RootInfo[]; sing
 type DirData = { status: "loading" | "ready" | "error"; folders: string[]; token: string | null; more?: boolean; error?: string };
 
 type Row =
+  | { type: "group"; key: string; depth: number; name: string; count: number }
   | { type: "conn"; key: string; depth: number; pid: string; name: string; provider?: string }
   | { type: "root"; key: string; depth: number; loc: Loc; name: string; rootKind: RootInfo["kind"] }
   | { type: "dir"; key: string; depth: number; loc: Loc; name: string }
@@ -56,6 +58,7 @@ type Row =
   | { type: "new"; key: string; depth: number; loc: Loc };
 
 const connKey = (pid: string) => `c\n${pid}`;
+const groupKey = (key: string) => `g\n${key}`;
 const dirKey = (l: Loc) => `d\n${l.profileId}\n${l.root}\n${l.dir}`;
 const sortNames = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 const nameOf = (dir: string) => dir.replace(/\/$/, "").split("/").pop() ?? dir;
@@ -135,6 +138,16 @@ export function LocationPicker({
     ],
     [profiles],
   );
+  const layout = useMemo(() => organize((profiles ?? []).filter((p) => p.id !== LOCAL_ID && p.kind !== "local"), { recentAfter: Infinity }), [profiles]);
+  // the group holding the starting connection folds open once the connections are known
+  const opened = useRef(false);
+  useEffect(() => {
+    if (opened.current || !value || !profiles) return;
+    opened.current = true;
+    const keys = groupKeysHolding(layout.groups, value.profileId).map(groupKey);
+    if (keys.length) setExpanded((s) => new Set([...s, ...keys]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout]);
   const connName = (pid: string) => connections.find((c) => c.pid === pid)?.name ?? pid;
   const rootName = (pid: string, root: string) => conns.current.get(pid)?.roots.find((r) => r.id === root)?.name ?? root;
 
@@ -197,28 +210,43 @@ export function LocationPicker({
     }
     if (d.token) rows.push({ type: "more", key: `${key}\nmore`, depth, loc });
   };
-  for (const c of connections) {
+  const addConn = (c: { pid: string; name: string; provider?: string }, cd: number) => {
     const ck = connKey(c.pid);
-    rows.push({ type: "conn", key: ck, depth: 0, pid: c.pid, name: c.name, provider: c.provider });
-    if (!expanded.has(ck)) continue;
+    rows.push({ type: "conn", key: ck, depth: cd, pid: c.pid, name: c.name, provider: c.provider });
+    if (!expanded.has(ck)) return;
     const data = conns.current.get(c.pid);
     if (!data) {
       toLoad.push(() => loadConn(c.pid));
-      rows.push({ type: "state", key: `${ck}\nload`, depth: 1, text: "Loading…", spin: true });
-      continue;
+      rows.push({ type: "state", key: `${ck}\nload`, depth: cd + 1, text: "Loading…", spin: true });
+      return;
     }
-    if (data.status === "loading") rows.push({ type: "state", key: `${ck}\nload`, depth: 1, text: "Loading…", spin: true });
-    else if (data.status === "error") rows.push({ type: "state", key: `${ck}\nerr`, depth: 1, text: "Couldn't open this connection.", error: data.error, retry: () => loadConn(c.pid), pid: c.pid });
-    else if (data.roots.length === 0) rows.push({ type: "state", key: `${ck}\nnone`, depth: 1, text: "Nothing here yet." });
-    else if (data.single) addDir({ profileId: c.pid, root: data.roots[0].id, dir: "" }, 1);
+    if (data.status === "loading") rows.push({ type: "state", key: `${ck}\nload`, depth: cd + 1, text: "Loading…", spin: true });
+    else if (data.status === "error") rows.push({ type: "state", key: `${ck}\nerr`, depth: cd + 1, text: "Couldn't open this connection.", error: data.error, retry: () => loadConn(c.pid), pid: c.pid });
+    else if (data.roots.length === 0) rows.push({ type: "state", key: `${ck}\nnone`, depth: cd + 1, text: "Nothing here yet." });
+    else if (data.single) addDir({ profileId: c.pid, root: data.roots[0].id, dir: "" }, cd + 1);
     else
       for (const r of data.roots) {
         const loc = { profileId: c.pid, root: r.id, dir: "" };
         const rk = dirKey(loc);
-        rows.push({ type: "root", key: rk, depth: 1, loc, name: r.name, rootKind: r.kind });
-        if (expanded.has(rk)) addDir(loc, 2);
+        rows.push({ type: "root", key: rk, depth: cd + 1, loc, name: r.name, rootKind: r.kind });
+        if (expanded.has(rk)) addDir(loc, cd + 2);
       }
-  }
+  };
+  // the organizing model (connections/organize.ts): pinned first, then groups as folders (a long
+  // ungrouped list sorted by type), then the rest, this device last
+  const pinnedIds = new Set(layout.pinned.map((p) => p.id));
+  const asConn = (p: Profile) => ({ pid: p.id, name: p.name || p.endpoint, provider: p.provider });
+  const addGroup = (g: OrgGroup, d: number) => {
+    const gk = groupKey(g.key);
+    rows.push({ type: "group", key: gk, depth: d, name: g.name, count: g.count });
+    if (!expanded.has(gk)) return;
+    for (const sub of g.groups) addGroup(sub, d + 1);
+    for (const p of g.items) if (!pinnedIds.has(p.id)) addConn(asConn(p), d + 1);
+  };
+  for (const p of layout.pinned) addConn(asConn(p), 0);
+  for (const g of layout.groups) addGroup(g, 0);
+  for (const p of layout.items) if (!pinnedIds.has(p.id)) addConn(asConn(p), 0);
+  addConn({ pid: LOCAL_ID, name: deviceName(), provider: undefined }, 0);
 
   useEffect(() => {
     for (const run of toLoad) run();
@@ -395,7 +423,7 @@ export function LocationPicker({
 
   const onKey = (e: React.KeyboardEvent) => {
     if ((e.target as HTMLElement).tagName === "INPUT") return;
-    const nav = rows.filter((r) => r.type === "conn" || r.type === "root" || r.type === "dir");
+    const nav = rows.filter((r) => r.type === "group" || r.type === "conn" || r.type === "root" || r.type === "dir");
     const i = nav.findIndex((r) => r.key === selectedKey);
     const cur = nav[i];
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -408,7 +436,7 @@ export function LocationPicker({
           listRef.current?.querySelector(`[data-key="${CSS.escape(nav[j].key)}"]`)?.scrollIntoView({ block: "nearest" });
           break;
         }
-        if (!loc && nav[j].type === "conn") {
+        if (!loc && (nav[j].type === "conn" || nav[j].type === "group")) {
           // a connection with several roots isn't a place itself: open it on the way past
           toggle(nav[j].key, true);
         }
@@ -514,10 +542,12 @@ export function LocationPicker({
               >
                 <Icon name="chevron" size={11} />
               </span>
+              {r.type === "group" && <Icon name="folder" size={15} className="jobs-tree-icon" />}
               {r.type === "conn" && (r.pid === LOCAL_ID ? <DeviceIcon /> : <ProviderBadge provider={r.provider} />)}
               {r.type === "root" && <Icon name={rootIcon(r.loc.profileId, r.loc.root)} size={15} className="jobs-tree-icon" />}
               {r.type === "dir" && <FileIcon entry={{ kind: "folder", key: r.loc.dir, name: r.name, size: 0, modified: null }} size={16} />}
               <span className="jobs-tree-name">{r.name}</span>
+              {r.type === "group" && <span className="jobs-tree-detail">{r.count}</span>}
               {selected && <Icon name="check" size={13} className="jobs-tree-check" />}
             </button>
           );

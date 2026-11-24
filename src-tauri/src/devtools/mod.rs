@@ -26,6 +26,22 @@ pub async fn git_status(app: AppHandle, state: State<'_, AppState>, profile_id: 
     Ok(tauri::async_runtime::spawn_blocking(move || git::status_of(&dir, force.unwrap_or(false))).await.ok().flatten())
 }
 
+/// The newest commit of the repository a folder of this computer is in; None when it isn't in one.
+#[tauri::command]
+pub async fn git_last_commit(app: AppHandle, state: State<'_, AppState>, profile_id: String, bucket: String, prefix: String) -> Result<Option<git::LastCommit>, String> {
+    let s = registry::open(&app, &state, &profile_id).await?;
+    let Some(dir) = s.local_path(&bucket, &prefix) else { return Ok(None) };
+    Ok(tauri::async_runtime::spawn_blocking(move || git::last_commit_of(&dir)).await.ok().flatten())
+}
+
+/// How much of a cloud drive's storage is used, for the folder info panel; None when the drive
+/// doesn't say (or isn't one). One cheap request, asked only while the panel is open.
+#[tauri::command]
+pub async fn storage_quota(app: AppHandle, state: State<'_, AppState>, profile_id: String) -> Result<Option<crate::storage::Quota>, String> {
+    let s = registry::open(&app, &state, &profile_id).await?;
+    Ok(s.quota().await.ok().flatten())
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ContentProgress {

@@ -169,7 +169,7 @@ export default function CommandPalette({
           key: `conn:${p.id}`,
           section: "connections" as const,
           title: p.name,
-          detail: group || undefined,
+          detail: [p.pinned ? "Pinned" : "", group].filter(Boolean).join(" · ") || undefined,
           extra: [group, addr, p.net?.user ? `${p.net.user}@${addr}` : "", kind, p.kind === "sftp" ? "ssh" : ""].filter(Boolean).join(" "),
           hint: kind,
           profile: p,
@@ -432,7 +432,9 @@ export default function CommandPalette({
       };
       if (mode !== "commands") {
         const order = new Map(h.current.recentConnections.map((id, n) => [id, n]));
-        rest("connections", [...connections].sort((x, y) => (order.get(x.profile!.id) ?? 1e9) - (order.get(y.profile!.id) ?? 1e9)));
+        // pinned first, then the ones opened last, then the rest
+        const rank = (it: Item) => (it.profile!.pinned ? -1 : (order.get(it.profile!.id) ?? 1e9));
+        rest("connections", [...connections].sort((x, y) => rank(x) - rank(y)));
       }
       if (mode === "all") rest("places", places);
       if (mode !== "connections") rest("commands", alone ? commands : FIRST_COMMANDS.map((id) => byKey.get(`cmd:${id}`)).filter((x): x is Item => !!x && !x.disabled));

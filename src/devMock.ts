@@ -725,6 +725,9 @@ async function handleLocal(cmd: string, a: any): Promise<unknown> {
     case "git_status":
       await sleep(60);
       return mockGitStatus(HOME, a.bucket, a.prefix);
+    case "git_last_commit":
+      await sleep(60);
+      return (await mockGitStatus(HOME, a.bucket, a.prefix)) ? { hash: "3f9c2ab", subject: "Tidy the settings page", time: Math.floor(Date.now() / 1000) - 5400, top: HOME } : null;
     case "content_search": {
       const files = Object.entries(dirs).filter(([k]) => k.startsWith(a.prefix)).flatMap(([, d]) => d.objects);
       return mockContentSearch(a, files, "ripgrep", () => cancelled.has(a.opId));
@@ -778,6 +781,7 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       return a.profileId === LOCAL ? `${a.bucket.replace(/\/$/, "")}/${a.key}` : null;
     // git marks: this computer only (handleLocal)
     case "git_status":
+    case "git_last_commit":
       return null;
     // searching inside files: this computer (handleLocal) and SFTP servers
     case "content_search": {
@@ -812,6 +816,11 @@ async function handle(cmd: string, a: any): Promise<unknown> {
           .join("/");
         p.group = g || null;
       }
+      return profiles.map((p) => ({ ...p }));
+    case "storage_quota":
+      return { used: 6.4e9, total: 15e9 };
+    case "set_profile_pins":
+      for (const p of profiles) if (p.id in a.pins) p.pinned = !!a.pins[p.id] || undefined;
       return profiles.map((p) => ({ ...p }));
     case "delete_profile":
       profiles.splice(profiles.findIndex((x) => x.id === a.id), 1);

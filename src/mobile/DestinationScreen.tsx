@@ -2,7 +2,7 @@
  * "Upload to…": pick a connection, bucket and folder for files shared into Kybl from another
  * app. The place being looked at (`at`) lives with the caller, so the system back walks up.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, errMessage, errSummary } from "../api";
 import { Icon } from "../Icons";
 import { rootIcon, rootName } from "../connections/roots";
@@ -10,6 +10,7 @@ import { FileIcon } from "../components/FileIcon";
 import { ProviderBadge } from "../components/Sidebar";
 import { baseName, formatBytes } from "../format";
 import type { Profile } from "../types";
+import { groupHint, holdingGroups, isDevice, organize } from "../connections/organize";
 import { nameProblem } from "../itemText";
 import type { Loc } from "./useListing";
 import { connName } from "./connName";
@@ -54,6 +55,14 @@ export function DestinationScreen({
   const [next, setNext] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const gen = useRef(0);
+  // pinned first, then the connections group by group, then the rest (organize.ts)
+  const ordered = useMemo(() => {
+    const org = organize(profiles.filter((p) => !isDevice(p)), { recentAfter: Infinity });
+    const seen = new Set<string>();
+    const out: Profile[] = [];
+    for (const p of [...org.pinned, ...holdingGroups(org.groups).flatMap((g) => g.items), ...org.items]) if (!seen.has(p.id)) (seen.add(p.id), out.push(p));
+    return [...out, ...profiles.filter(isDevice)];
+  }, [profiles]);
   const atProfile = at ? profiles.find((p) => p.id === at.profileId) : undefined;
 
   /** Up to FOLDER_PAGES pages of folders from `token` on ("More folders" reads on). */
@@ -124,10 +133,11 @@ export function DestinationScreen({
               <p>Add a connection first, then share the files to Kybl again.</p>
             </div>
           ) : (
-            profiles.map((p) => (
+            ordered.map((p) => (
               <section key={p.id} className="m-dest-conn">
                 <h2 className="m-section">
                   <ProviderBadge provider={p.provider} /> {connName(p)}
+                  {groupHint(p) && <span className="m-dest-group"> · {groupHint(p)}</span>}
                 </h2>
                 <ul className="m-group">
                   {buckets[p.id]?.loading && !buckets[p.id]?.names.length && (

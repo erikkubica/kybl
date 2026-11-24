@@ -381,6 +381,8 @@ export type MenuItem =
       checked?: boolean;
       /** a picture instead of the icon, such as an app's own icon (a data URL) */
       image?: string;
+      /** dim text after the label: where a found item lives (the group a connection is filed under) */
+      detail?: string;
       onClick: () => void;
     }
   /**
@@ -389,6 +391,12 @@ export type MenuItem =
    */
   | { type: "submenu"; label: string; icon?: IconName; disabled?: boolean; items: () => MenuItem[] | Promise<MenuItem[]> }
   | { type: "sep" }
+  /**
+   * The menu's find field, always there: typing swaps the rows for what `find` returns (plain
+   * items, from every submenu at once), so a long list of groups is searched as one. Not drawn
+   * itself.
+   */
+  | { type: "search"; find: (q: string) => MenuItem[] }
   /** a small grey heading above a group of items */
   | { type: "label"; label: string };
 
@@ -553,6 +561,7 @@ function ScrollArrow({ panel, dir }: { panel: React.RefObject<HTMLDivElement | n
 /** One panel's plain items, separators and headings (submenu rows are drawn by the caller). */
 function PlainRow({ it, onClose, onHover }: { it: Exclude<MenuItem, { type: "submenu" }>; onClose: () => void; onHover?: () => void }) {
   if (it.type === "sep") return <div className="ctx-sep" role="separator" />;
+  if (it.type === "search") return null;
   if (it.type === "label")
     return (
       <div className="ctx-heading" role="presentation">
@@ -578,6 +587,7 @@ function PlainRow({ it, onClose, onHover }: { it: Exclude<MenuItem, { type: "sub
     >
       <ItemIcon it={it} />
       <span className="ctx-label">{it.label}</span>
+      {it.detail && <span className="ctx-detail">{it.detail}</span>}
       {it.hint && <span className="ctx-hint">{keys(it.hint)}</span>}
     </button>
   );
@@ -614,9 +624,16 @@ export function ContextMenu({
   const subSeq = useRef(0);
   const timer = useRef<number | undefined>(undefined);
   const clearTimer = () => window.clearTimeout(timer.current);
-  const finds = rowCount(items) > FIND_AT;
+  const searcher = items.find((it): it is Extract<MenuItem, { type: "search" }> => it.type === "search");
+  const finds = !!searcher || rowCount(items) > FIND_AT;
   const [q, setQ] = useState("");
-  const rows = findRows(items, q);
+  // typing in a menu with a search field lists what it finds in every submenu; the rows' places
+  // are in that list then, not in `items`
+  const found = searcher && q.trim() ? searcher.find(q) : null;
+  const shown = found ?? items;
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
+  const rows = found ? found.map((it, i) => ({ it, i })) : findRows(items, q);
   const edge = useScrollEdges(ref, `${pos.x},${pos.y},${pos.maxH},${rows.length}`);
 
   useEffect(() => {
@@ -694,7 +711,7 @@ export function ContextMenu({
   /** Opens the submenu of row `i` (its items may come later); `focus` moves the keyboard into it. */
   const openSub = (i: number, el: HTMLElement, focus: boolean) => {
     clearTimer();
-    const it = items[i];
+    const it = shownRef.current[i];
     if (it?.type !== "submenu" || it.disabled) return;
     const s = subNow.current;
     if (s?.index === i) {

@@ -195,6 +195,14 @@ const PATHS: Record<string, ReactNode> = {
   list: <path d="M4 7h16M4 12h16M4 17h16" />,
   retry: <path d="M4 12a8 8 0 1 0 3-6.2M4 4v4h4" />,
   external: <path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" />,
+  branch: <path d="M7 4v10a3 3 0 0 0 3 3h4M7 4a1.8 1.8 0 1 0 0 .01M17 17a1.8 1.8 0 1 0 0 .01M7 20a1.8 1.8 0 1 0 0 .01M7 14v6" />,
+  pin: <path d="M9 4h6l-1 5 3 3v1.5H7V12l3-3zM12 13.5V20" />,
+  "panel-right": (
+    <>
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M14.5 5v14" />
+    </>
+  ),
   star: <path d="m12 3.5 2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.9l-5.25 2.7 1-5.8L3.5 9.7l5.9-.9z" />,
   columns: <path d="M4 5h16v14H4zM9.5 5v14M14.5 5v14" />,
   // two files with an arrow each way between them

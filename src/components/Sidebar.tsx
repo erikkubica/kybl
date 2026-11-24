@@ -15,11 +15,14 @@ import { findMount } from "../mount/useMounts";
 import { driveBadgeTitle } from "../mount/driveMenu";
 import { TunnelBadge } from "../tunnels/TunnelBadge";
 import { keys } from "./osText";
+import { useConnectionDrag } from "./useConnectionDrag";
+import { TYPE_FALLBACK_MIN, TYPE_ORDER, isDevice, typeOf } from "../connections/organize";
 import {
   FILTER_MIN,
   RECENT_MIN,
   RECENT_SHOWN,
   findConnections,
+  groupLabel,
   groupName,
   groupOf,
   openKey,
@@ -48,6 +51,8 @@ export function ProviderBadge({ provider, large }: { provider: string | undefine
     </span>
   );
 }
+
+const NO_PICKS = new Set<string>();
 
 const onActivate = (fn: () => void) => (e: React.KeyboardEvent) => {
   if (e.target !== e.currentTarget) return;
@@ -183,6 +188,8 @@ type GroupCtx = {
   activeGroup: string | null;
   onToggle: (key: string) => void;
   onMenu?: (path: string, scope: string, x: number, y: number) => void;
+  /** the group a connection drag is over right now (null: not dragging, or over none) */
+  dropOver: string | null;
 };
 
 /**
@@ -266,21 +273,24 @@ function GroupRow({ node, depth, ctx, renderConnection }: { node: GroupNode; dep
   return (
     <div className="side-group" role="group" aria-label={node.name}>
       <div
-        className={`side-item group-row ${open ? "open" : ""} ${holdsActive ? "holds-active" : ""}`}
+        className={`side-item group-row ${open ? "open" : ""} ${holdsActive ? "holds-active" : ""} ${!node.virtual && ctx.dropOver === node.path ? "drop-over" : ""}`}
+        // connections dragged here are filed in this group (useConnectionDrag)
+        {...(node.virtual ? {} : { "data-conn-drop": node.path })}
         onClick={toggle}
         onKeyDown={foldKeys(open, toggle)}
         onContextMenu={
-          ctx.onMenu &&
-          ((e) => {
-            e.preventDefault();
-            ctx.onMenu!(node.path, ctx.scope, e.clientX, e.clientY);
-          })
+          ctx.onMenu && !node.virtual
+            ? (e) => {
+                e.preventDefault();
+                ctx.onMenu!(node.path, ctx.scope, e.clientX, e.clientY);
+              }
+            : undefined
         }
         role="button"
         tabIndex={0}
         aria-expanded={open}
         aria-label={`${node.name}, ${node.count} ${node.count === 1 ? "connection" : "connections"}`}
-        title={holdsActive ? `${node.path.split("/").join(" › ")}: the connection on screen is in here` : node.path.split("/").join(" › ")}
+        title={holdsActive ? `${groupLabel(node.virtual ? node.name : node.path)}: the connection on screen is in here` : groupLabel(node.virtual ? node.name : node.path)}
       >
         <span className="group-ico" aria-hidden="true">
           <Icon name="folder" size={15} />
@@ -350,6 +360,12 @@ export function Sidebar({
   findSignal = 0,
   findOnMount,
   onFindDone,
+  picked,
+  onTogglePick,
+  onClearPicks,
+  onMoveToGroup,
+  onMoveMenu,
+  onTogglePin,
 }: {
   profiles: Profile[];
   /** connection of the bucket on screen */
@@ -412,6 +428,16 @@ export function Sidebar({
   findOnMount?: boolean;
   /** finding is over (opened one, or Esc with nothing typed): the keyboard goes back to the pane */
   onFindDone?(): void;
+  /** connections picked to organize together (⌘-click): Move to group… and Pin act on them */
+  picked?: Set<string>;
+  onTogglePick?(p: Profile): void;
+  onClearPicks?(): void;
+  /** connections were dropped on a group ("" = the top level) */
+  onMoveToGroup?(ids: string[], group: string): void;
+  /** "Move to group…" for these connections, its menu at the point */
+  onMoveMenu?(ids: string[], x: number, y: number): void;
+  /** pins these connections, or unpins them when all are pinned */
+  onTogglePin?(ids: string[]): void;
 }) {
   // connections whose hidden buckets are on show (to pick which to bring back)
   const [showHidden, setShowHidden] = useState<Set<string>>(new Set());
@@ -499,14 +525,39 @@ export function Sidebar({
     [recent, profiles, activeId],
   );
   const showRecent = profiles.length > RECENT_MIN && recentProfiles.length > 0;
+  // dragging connections onto groups; a connection in the picked set takes the others along
+  const pickedSet = picked ?? NO_PICKS;
+  const drag = useConnectionDrag((ids, group) => onMoveToGroup?.(ids, group));
+  const dragProps = (p: Profile) => {
+    const ids = pickedSet.has(p.id) ? [...pickedSet] : [p.id];
+    return onMoveToGroup && !isDevice(p) ? drag.rowProps(ids, p.name) : {};
+  };
+  // a long list of connections in no group is sorted by type (Servers sections are already
+  // by kind: what is left of them, drives and storage, folds the same way)
+  const typed = useMemo(() => {
+    const loose = layout.top.items.filter((p) => !isDevice(p));
+    if (loose.length <= TYPE_FALLBACK_MIN) return null;
+    const by = new Map<string, Profile[]>();
+    for (const p of loose) by.set(typeOf(p).id, [...(by.get(typeOf(p).id) ?? []), p]);
+    const nodes: GroupNode[] = TYPE_ORDER.filter((id) => by.has(id)).map((id) => {
+      const items = by.get(id)!;
+      return { path: `type:${id}`, name: typeOf(items[0]).label, groups: [], items, count: items.length, virtual: true };
+    });
+    return { nodes, device: layout.top.items.filter(isDevice) };
+  }, [layout]);
   const ctxFor = (scope: string): GroupCtx => ({
     open: openGroups ?? new Set(),
     scope,
     activeGroup: here?.scope === scope ? here.group : null,
     onToggle: (key) => onToggleGroup?.(key),
     onMenu: onGroupMenu,
+    dropOver: drag.over,
   });
   const topCtx = ctxFor("");
+  // the by-type folders hold the connection on screen like any folder: keyed by its type
+  const typeCtx: GroupCtx = { ...topCtx, activeGroup: activeId && here?.scope === "" ? (typed?.nodes.find((n) => n.items.some((p) => p.id === activeId))?.path ?? null) : null };
+  const pinnedProfiles = useMemo(() => profiles.filter((p) => p.pinned && !isDevice(p)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })), [profiles]);
+  const pickedProfiles = profiles.filter((p) => pickedSet.has(p.id));
 
   // ---- where am I: the connection on screen scrolls into view when it changes (and once its
   // group has folded open), without moving a list that already shows it
@@ -554,12 +605,27 @@ export function Sidebar({
       onBucketMenu={onBucketMenu}
       mounts={mounts}
       onDriveMenu={onDriveMenu}
+      picked={pickedSet.has(p.id)}
+      pickMode={pickedSet.size > 0}
+      onPick={onTogglePick}
+      dragProps={dragProps(p)}
     />
   );
 
   return (
     // the web view's own menu (Reload, Inspect) means nothing here
-    <aside className="sidebar" onContextMenu={(e) => e.preventDefault()}>
+    <aside
+      className={`sidebar ${drag.active ? "dragging-conn" : ""}`}
+      onContextMenu={(e) => e.preventDefault()}
+      // Esc lets go of the picked connections (the find field has its own Esc)
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && pickedSet.size && !(e.target instanceof HTMLInputElement)) {
+          e.stopPropagation();
+          onClearPicks?.();
+        }
+      }}
+    >
+      {drag.ghost}
       <div className="sidebar-drag" data-tauri-drag-region>
         {onHide && <SidebarToggle open={!peek} overlay={peek} onToggle={onHide} />}
       </div>
@@ -604,6 +670,27 @@ export function Sidebar({
               {keys("⌥⌘F")}
             </kbd>
           )}
+        </div>
+      )}
+      {pickedProfiles.length > 0 && (
+        <div className="side-picked" role="toolbar" aria-label="Selected connections">
+          <span className="side-picked-n">{pickedProfiles.length} selected</span>
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              onMoveMenu?.(pickedProfiles.map((p) => p.id), Math.round(r.left), Math.round(r.bottom + 2));
+            }}
+          >
+            Move to group…
+          </button>
+          <button type="button" className="btn btn-sm" onClick={() => onTogglePin?.(pickedProfiles.map((p) => p.id))}>
+            {pickedProfiles.every((p) => p.pinned) ? "Unpin" : "Pin"}
+          </button>
+          <button type="button" className="icon-btn" onClick={onClearPicks} title="Clear selection (Esc)" aria-label="Clear selection">
+            <Icon name="x" size={12} />
+          </button>
         </div>
       )}
       <div className="sidebar-scroll" ref={scrollRef}>
@@ -662,6 +749,14 @@ export function Sidebar({
             })}
           </div>
         )}
+        {pinnedProfiles.length > 0 && (
+          <div className="pinned-list">
+            <div className="side-head">
+              <span>Pinned</span>
+            </div>
+            {pinnedProfiles.map(renderConnection)}
+          </div>
+        )}
         {showRecent && (
           <div className="recent-list">
             <div className="side-head">
@@ -692,18 +787,22 @@ export function Sidebar({
           </div>
         )}
         {profiles.length > 0 && (
-          <div className="side-head">
+          // dropping connections on this heading takes them out of their group
+          <div className={`side-head ${drag.over === "" ? "drop-over" : ""}`} {...(onMoveToGroup ? { "data-conn-drop": "" } : {})}>
             <span>Connections</span>
             {many && <span className="side-count">{profiles.length}</span>}
           </div>
         )}
         {/* the connections with buckets and This Mac, then a section per server kind, then the groups */}
-        {layout.top.items.map(renderConnection)}
+        {(typed ? typed.device : layout.top.items).map(renderConnection)}
         {layout.sections.map((s) => (
           <KindSectionRow key={s.key} section={s} ctx={ctxFor(s.key)} onMenu={onSectionMenu} renderConnection={renderConnection} />
         ))}
         {layout.top.groups.map((g) => (
           <GroupRow key={g.path} node={g} depth={0} ctx={topCtx} renderConnection={renderConnection} />
+        ))}
+        {typed?.nodes.map((g) => (
+          <GroupRow key={g.path} node={g} depth={0} ctx={typeCtx} renderConnection={renderConnection} />
         ))}
           </>
         )}
@@ -758,6 +857,10 @@ function SidebarConnection({
   onBucketMenu,
   mounts = [],
   onDriveMenu,
+  picked = false,
+  pickMode = false,
+  onPick,
+  dragProps,
 }: {
   p: Profile;
   active: boolean;
@@ -782,6 +885,13 @@ function SidebarConnection({
   onBucketMenu?(p: Profile, bucket: string, x: number, y: number): void;
   mounts?: MountInfo[];
   onDriveMenu?(m: MountInfo, x: number, y: number): void;
+  /** picked to organize with others (⌘-click) */
+  picked?: boolean;
+  /** some connection is picked: a click picks this one too */
+  pickMode?: boolean;
+  onPick?(p: Profile): void;
+  /** the row's drag handlers (useConnectionDrag) */
+  dragProps?: React.HTMLAttributes<HTMLDivElement>;
 }) {
   const caps = useCaps(p.id);
   const mode = rootsMode(p, caps);
@@ -794,12 +904,18 @@ function SidebarConnection({
   const canOpenByName = !own && mode === "buckets" && !canCreate;
   const here = active && single && bucket === "";
   const activate = () => (single ? onSelectBucket(p, "") : onToggleProfile(p));
+  // ⌘/Ctrl-click (or any click while some are picked) picks the connection instead of opening it
+  const click = (e: React.MouseEvent) => {
+    if (onPick && !own && (e.metaKey || e.ctrlKey || e.shiftKey || pickMode)) return onPick(p);
+    activate();
+  };
   const rootIco = rootIcon(p.id);
   return (
     <div>
       <div
-        className={`side-item conn ${open && !single ? "open" : ""} ${active ? "active" : ""} ${here ? "selected" : ""} ${single ? "single" : ""}`}
-        onClick={activate}
+        className={`side-item conn ${open && !single ? "open" : ""} ${active ? "active" : ""} ${here ? "selected" : ""} ${single ? "single" : ""} ${picked ? "picked" : ""}`}
+        {...dragProps}
+        onClick={click}
         onKeyDown={onActivate(activate)}
         role="button"
         tabIndex={0}
@@ -822,6 +938,7 @@ function SidebarConnection({
         <span className="side-label" title={p.cloud?.accountEmail && p.cloud.accountEmail !== p.name ? `${p.name} · ${p.cloud.accountEmail}` : undefined}>
           {p.name}
         </span>
+        {p.pinned && <Icon name="pin" size={11} className="pin-mark" />}
         <DriveBadge m={findMount(mounts, p.id, "", "")} onMenu={onDriveMenu} />
         {p.kind === "sftp" && <TunnelBadge p={p} />}
         {/* an icon, not a word: the sidebar is narrow and the name must stay readable */}

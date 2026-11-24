@@ -78,6 +78,8 @@ pub async fn save_profile(
     let held = lock_profiles().await;
     let mut profiles = load_profiles(&app)?;
     let saved = profiles.iter().find(|p| p.id == profile.id).cloned();
+    // the edit form doesn't know about pins: an edit keeps the connection pinned (or not)
+    profile.pinned = saved.as_ref().is_some_and(|s| s.pinned);
     // SFTP key sign-in: a passphrase alone goes with the key already saved (an imported key file
     // that has one), under the name the key is read from
     let mut secret = secret;
@@ -239,6 +241,25 @@ pub async fn set_profile_groups(app: AppHandle, groups: std::collections::HashMa
     apply_groups(&mut profiles, &groups);
     save_profiles(&app, &profiles, &held)?;
     Ok(profiles)
+}
+
+/// Pins or unpins connections, by id. Like the group, only this changes: the connections keep
+/// their open clients and cached files.
+#[tauri::command]
+pub async fn set_profile_pins(app: AppHandle, pins: std::collections::HashMap<String, bool>) -> Result<Vec<Profile>, String> {
+    let held = lock_profiles().await;
+    let mut profiles = load_profiles(&app)?;
+    apply_pins(&mut profiles, &pins);
+    save_profiles(&app, &profiles, &held)?;
+    Ok(profiles)
+}
+
+fn apply_pins(profiles: &mut [Profile], pins: &std::collections::HashMap<String, bool>) {
+    for p in profiles.iter_mut() {
+        if let Some(v) = pins.get(&p.id) {
+            p.pinned = *v;
+        }
+    }
 }
 
 fn apply_groups(profiles: &mut [Profile], groups: &std::collections::HashMap<String, Option<String>>) {
@@ -1711,6 +1732,16 @@ mod tests {
         // "" is the top level too
         apply_groups(&mut list, &std::collections::HashMap::from([("a".to_string(), Some(" / ".to_string()))]));
         assert_eq!(list[0].group, None);
+    }
+    #[test]
+    fn pins_change_only_the_named_connections() {
+        let p = |id: &str, pinned: bool| Profile { id: id.into(), name: id.into(), pinned, ..Default::default() };
+        let mut list = vec![p("a", false), p("b", true), p("c", true)];
+        apply_pins(&mut list, &std::collections::HashMap::from([("a".to_string(), true), ("b".to_string(), false), ("gone".to_string(), true)]));
+        assert_eq!(list.iter().map(|p| p.pinned).collect::<Vec<_>>(), [true, false, true]);
+        // an unpinned connection doesn't write the field
+        assert!(!serde_json::to_string(&list[1]).unwrap().contains("pinned"));
+        assert!(serde_json::to_string(&list[0]).unwrap().contains(r#""pinned":true"#));
     }
     use tauri::{test::{mock_builder, mock_context, noop_assets}, Listener};
 
