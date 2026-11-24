@@ -341,8 +341,8 @@ export function useFileOps(c: FileOpsCtx) {
         message: `Keep both, replace ${them}, or skip ${them}${n < items.length ? " and download the rest" : ""}?`,
         items: [
           { icon: "copy", label: "Keep both", run: choose("keep") },
-          { icon: "refresh", label: n === 1 ? "Replace it" : "Replace them", danger: true, run: choose("replace") },
-          { icon: "x", label: n === 1 ? "Skip this one" : "Skip these", run: choose("skip") },
+          { icon: "refresh", label: n === 1 ? "Replace it" : "Replace all", danger: true, run: choose("replace") },
+          { icon: "x", label: n === 1 ? "Skip this one" : "Skip all", run: choose("skip") },
         ],
       });
     } catch (e) {

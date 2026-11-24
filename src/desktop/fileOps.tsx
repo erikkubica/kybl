@@ -295,7 +295,7 @@ export function makeFileOps(c: OpsContext) {
         transfers.add(batch);
       };
       // files already on disk are asked about first (Replace, Keep both, Skip), a batch at a time;
-      // "Do this for all" covers the files the listing finds later too
+      // "Skip all" or "Replace all" covers the files the listing finds later too
       let stopListing: (() => void) | null = null;
       const gate = downloadClashGate({
         ask: c.resolveConflicts,

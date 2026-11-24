@@ -6,7 +6,7 @@ import { rememberChoice, rememberedChoice, type Choice, type Clash, type Directi
 /** What a caller can add to `resolve` for work that goes on while it asks (a streaming download). */
 export type ResolveOpts = {
   /**
-   * The answers given for the rest of this action ("Do this for all"), owned by the caller: a
+   * The answers given for the rest of this action ("Skip all", "Replace all"), owned by the caller: a
    * download that finds files later asks again with the same object and isn't asked twice.
    */
   sticky?: Sticky;
@@ -30,7 +30,7 @@ type Ask = {
 
 /**
  * Asks what to do about each name that already exists: Replace (Merge for folders), Skip or
- * Keep both, with "Do this for the other N" to answer the rest at once. Closing the dialog
+ * Keep both, each with an "all" button that answers the rest at once. Closing the dialog
  * cancels the whole action.
  */
 export function useConflictPrompt() {
@@ -75,14 +75,17 @@ export function useConflictPrompt() {
 }
 
 function ConflictDialog({ ask }: { ask: Ask }) {
-  const [all, setAll] = useState(false);
   const [remember, setRemember] = useState(false);
-  const { clash, sameLeft, verb, where } = ask;
+  const { clash, verb, where } = ask;
   const folder = clash.folder;
-  const pick = (choice: Choice) => ask.done({ choice, all: all || remember, remember });
-  const kind = folder ? (sameLeft === 1 ? "folder" : "folders") : sameLeft === 1 ? "file" : "files";
+  // more of the same kind waiting, now or still being found by a listing: the choice can cover
+  // them too. The buttons say "all" rather than a count, because a folder being listed hasn't
+  // found every clash yet (a "2" would be wrong once the rest turn up).
+  const more = ask.sameLeft > 0 || ask.more;
+  const pick = (choice: Choice, all = false) => ask.done({ choice, all: all || remember, remember });
+  const replace = folder ? "Merge" : "Replace";
   return (
-    <Modal title={folder ? `A folder named “${clash.name}” already exists` : `“${clash.name}” already exists`} onClose={() => ask.done(null)} width={480}>
+    <Modal title={folder ? `A folder named “${clash.name}” already exists` : `“${clash.name}” already exists`} onClose={() => ask.done(null)} width={520}>
       <div className="modal-body conflict-body">
         <div className="conflict-icon" aria-hidden="true">
           <Icon name={folder ? "folder" : "file"} size={22} />
@@ -95,39 +98,43 @@ function ConflictDialog({ ask }: { ask: Ask }) {
             {folder
               ? "Merge puts everything into the existing folder and replaces files with the same names. Keep both adds a number to the new folder’s name."
               : `Replace overwrites the existing file. Keep both adds a number to the name of the one you’re ${verb.toLowerCase()}.`}
+            {more && ` “All” answers every other ${folder ? "folder" : "file"} that already exists in this ${verb.toLowerCase()}, including ones still being found.`}
           </p>
-          {(sameLeft > 0 || ask.more) && (
-            <label className="check conflict-all">
-              <input type="checkbox" checked={all || remember} disabled={remember} onChange={(e) => setAll(e.target.checked)} />
-              <span>
-                {/* a folder being listed still finds files: "all" holds for those too */}
-                {ask.more ? `Do this for all the other ${folder ? "folders" : "files"} in this download` : `Do this for the other ${sameLeft.toLocaleString()} ${kind}`}
-              </span>
-            </label>
-          )}
           {ask.remember && (
             <label className="check conflict-all">
               <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-              <span>Remember until Kybl quits</span>
+              <span>Remember my choice until Kybl quits</span>
             </label>
           )}
         </div>
       </div>
       <div className="modal-foot split">
-        <button className="btn" onClick={() => ask.done(null)}>
-          Cancel
-        </button>
         <div className="btn-row">
-          <button className="btn" onClick={() => pick("skip")}>
+          <button className="btn" onClick={() => ask.done(null)}>
+            Cancel
+          </button>
+          <button className="btn btn-ghost" onClick={() => pick("keep", more)} title={`Keep the existing ${folder ? "folder" : "file"} and add a number to the new one’s name${more ? ", for all of them" : ""}`}>
+            {more ? "Keep both, all" : "Keep both"}
+          </button>
+        </div>
+        <div className="btn-row">
+          {/* Return skips: it neither loses the existing file nor makes a second copy */}
+          <button className="btn btn-primary" autoFocus data-autofocus onClick={() => pick("skip")}>
             Skip
           </button>
-          {/* Return keeps both: the choice that never loses anything */}
+          {more && (
+            <button className="btn" onClick={() => pick("skip", true)}>
+              Skip all
+            </button>
+          )}
           <button className="btn btn-danger-ghost" onClick={() => pick("replace")}>
-            {folder ? "Merge" : "Replace"}
+            {replace}
           </button>
-          <button className="btn btn-primary" autoFocus data-autofocus onClick={() => pick("keep")}>
-            Keep both
-          </button>
+          {more && (
+            <button className="btn btn-danger-ghost" onClick={() => pick("replace", true)}>
+              {replace} all
+            </button>
+          )}
         </div>
       </div>
     </Modal>

@@ -2,7 +2,7 @@
  * Name clashes for downloads. The backend never loses a file by itself: when the local name is
  * taken it writes "photo (1).jpg" instead. That was silent, so downloading a folder twice left a
  * second copy of everything. This asks first, with the same dialog as uploads and moves:
- * Replace, Keep both or Skip, "Do this for all" and "Remember until Kybl quits".
+ * Replace, Keep both or Skip, "Skip all" / "Replace all" and "Remember until Kybl quits".
  *
  * A folder download finds its files while it is still listing, so clashes arrive in batches. The
  * gate checks each batch against the disk in one call and asks once per batch; while a question
