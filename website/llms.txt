@@ -17,7 +17,7 @@ Kybl (pronounced "kibble", from the Czech and Slovak word for bucket) talks to y
 - Object storage: Amazon S3, Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph, any S3-compatible endpoint, Azure Blob Storage, Google Cloud Storage, Kybl Storage
 - Cloud drives: Google Drive, OneDrive, Dropbox
 - Servers: SFTP, SSH (opens as a terminal), FTP and FTPS, WebDAV
-- Desktop: up to six split panes saved as workspaces, commander keys (F5 copy, F6 move), command palette, terminal panes (local shell or SSH), SSH tunnels, custom shell actions, mount as a drive (macOS and Linux)
+- Desktop: up to six split panes saved as workspaces, commander keys (F5 copy, F6 move), command palette, terminal panes (your computer's shell, including PowerShell, Command Prompt, WSL and Git Bash on Windows, or SSH), SSH tunnels, custom shell actions, mount as a drive (macOS and Linux)
 - Import: FileZilla Site Manager and ~/.ssh/config
 - Security: secrets in an encrypted vault, key in macOS Keychain, Windows Credential Manager or Linux Secret Service (Android Keystore on phones)
 - Sync: upload, download or two-way folder sync from the menu bar or system tray; mirror with a dry run; resumable, verified copies and moves between connections

@@ -81,7 +81,7 @@
         "Import sites from FileZilla and hosts from ~/.ssh/config",
         "Secrets stored encrypted, with the key in the system keychain",
         "Up to six split panes, saved as workspaces, with commander keys (F5 copy, F6 move)",
-        "Terminal panes: a local shell (macOS, Linux) or an SSH session on any SFTP or SSH server",
+        "Terminal panes: a shell on your computer (macOS, Windows with PowerShell, Command Prompt, WSL or Git Bash, Linux) or an SSH session on any SSH or SFTP server",
         "SSH connections and SSH tunnels (local port forwards)",
         "Quick Look previews for images, video, audio, PDF and text",
         "Edit remote files in your own app on the computer; saves upload back, and changes made meanwhile can be caught",
@@ -285,7 +285,7 @@
           </ul>
         </div>
         <div class="cg">
-          <h3>This computer</h3>
+          <h3>Your computer</h3>
           <ul class="chips">
           <li><i class="mono" style="--pc:#7c8494">⌂</i><span>Your own folders and drives</span></li>
           </ul>
@@ -445,35 +445,35 @@
       <div class="sec-head">
         <p class="label">What works where</p>
         <h2>Not every connection can do&nbsp;everything.</h2>
-        <p class="body">The basics work everywhere. The rest depends on what each kind of storage allows, so here's what you get with each.</p>
+        <p class="body">The basics work everywhere. Other features depend on the service. Here is what works with each one.</p>
       </div>
       <!-- matrix -->
         <div class="matrix-wrap" tabindex="0" role="region" aria-label="Features by connection type">
         <table class="matrix">
-        <thead><tr><th scope="col"><span class="vh">Feature</span></th><th scope="col">S3-compatible<small>AWS, R2, Hetzner, B2, Wasabi…</small></th><th scope="col">Azure Blob, GCS<small>Google Cloud Storage</small></th><th scope="col">Google Drive</th><th scope="col">OneDrive, Dropbox</th><th scope="col">SFTP, SSH</th><th scope="col">FTP, FTPS</th><th scope="col">WebDAV<small>Nextcloud…</small></th><th scope="col">This computer</th></tr></thead>
+        <thead><tr><th scope="col"><span class="vh">Feature</span></th><th scope="col">S3-compatible<small>AWS, R2, Hetzner, B2, Wasabi…</small></th><th scope="col">Azure Blob, GCS<small>Google Cloud Storage</small></th><th scope="col">Google Drive</th><th scope="col">OneDrive, Dropbox</th><th scope="col">SFTP, SSH</th><th scope="col">FTP, FTPS</th><th scope="col">WebDAV<small>Nextcloud…</small></th><th scope="col">Your computer</th></tr></thead>
         <tbody>
         <tr class="grp"><th scope="rowgroup" colspan="9">Files</th></tr>
         <tr><th scope="row">Browse, upload, download, delete</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
         <tr><th scope="row">Copy and move between connections</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
-        <tr><th scope="row">Rename and move in place</th><td class="p">By copying</td><td class="p">By copying</td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr><th scope="row">Rename and move</th><td class="p">Slower (copies)</td><td class="p">Slower (copies)</td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
         <tr><th scope="row">Copy inside it without downloading</th><td class="y"><span class="vh">Yes</span></td><td class="p">Same container</td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
-        <tr><th scope="row">Uploads resume after a restart</th><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="na"><span class="vh">Not applicable</span></td></tr>
+        <tr><th scope="row">Uploads continue after a restart</th><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="na"><span class="vh">Not applicable</span></td></tr>
         <tr><th scope="row">Thumbnails and Quick Look</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
-        <tr><th scope="row">Zip, unzip, browse archives</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="p">On the server when it can</td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
-        <tr><th scope="row">Expiring share links</th><td class="p">Private link</td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="p">Public link</td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="na"><span class="vh">Not applicable</span></td></tr>
-        <tr><th scope="row">Deleted files go to a trash</th><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr><th scope="row">Zip, unzip, open archives</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr><th scope="row">Share links that expire</th><td class="p">Private link</td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="p">Public link</td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="na"><span class="vh">Not applicable</span></td></tr>
+        <tr><th scope="row">Deleted files can be restored</th><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td></tr>
         <tr><th scope="row">Change permissions</th><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="p">If the server allows</td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td></tr>
         <tr><th scope="row">Tags, storage class, metadata</th><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td></tr>
         <tr class="grp"><th scope="rowgroup" colspan="9">Search</th></tr>
         <tr><th scope="row">Search subfolders by name</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
         <tr><th scope="row">Search inside files</th><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td></tr>
-        <tr class="grp"><th scope="rowgroup" colspan="9">Shell and automation</th></tr>
-        <tr><th scope="row">Terminal</th><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="p">macOS, Linux</td></tr>
+        <tr class="grp"><th scope="rowgroup" colspan="9">Terminal and automation</th></tr>
+        <tr><th scope="row">Terminal</th><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td></tr>
         <tr><th scope="row">SSH tunnels</th><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="na"><span class="vh">Not applicable</span></td></tr>
-        <tr><th scope="row">Your own actions on the server</th><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="na"><span class="vh">Not applicable</span></td></tr>
-        <tr><th scope="row">Your own actions on this computer</th><td class="p">Files</td><td class="p">Files</td><td class="p">Files</td><td class="p">Files</td><td class="p">Files</td><td class="p">Files</td><td class="p">Files</td><td class="y"><span class="vh">Yes</span></td></tr>
-        <tr class="grp"><th scope="rowgroup" colspan="9">On the computer</th></tr>
-        <tr><th scope="row">Edit in your own app, saved back</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr><th scope="row">Your own commands on the server</th><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="na"><span class="vh">Not applicable</span></td></tr>
+        <tr><th scope="row">Your own commands on your computer</th><td class="p">Files only</td><td class="p">Files only</td><td class="p">Files only</td><td class="p">Files only</td><td class="p">Files only</td><td class="p">Files only</td><td class="p">Files only</td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr class="grp"><th scope="rowgroup" colspan="9">Computer app only</th></tr>
+        <tr><th scope="row">Edit in your own app</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
         <tr><th scope="row">Folder sync and mirror</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
         <tr><th scope="row">Mount as a drive (macOS, Linux)</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="na"><span class="vh">Not applicable</span></td></tr>
         </tbody>
@@ -481,9 +481,10 @@
         </div>
         <!-- /matrix -->
       <div class="matrix-notes">
-        <p>Share links on S3 are private signed links. OneDrive links that last longer than an hour and Dropbox links longer than four hours are public until they expire, and an expiry on Dropbox needs a paid plan.</p>
-        <p>Uploads to Azure, Google Cloud Storage and WebDAV start over if Kybl quits mid-way. Your own actions on this computer take files from a server or cloud after downloading them, and folders only from this computer.</p>
-        <p>Phones browse, preview, transfer, share and back up photos with every connection. Terminals, tunnels, folder sync, drives and editing in other apps are on macOS, Windows and Linux only, and drives are not on Windows yet.</p>
+        <p>Share links: on S3 only people with the link can open the file. On OneDrive (links over 1 hour) and Dropbox (links over 4 hours) the link is public until it ends. Dropbox needs a paid plan for links that end.</p>
+        <p>Azure, Google Cloud Storage and WebDAV: if Kybl closes during an upload, the upload starts again.</p>
+        <p>Your own commands run on your computer. Files from a server or cloud are downloaded first. Folders work only if they are on your computer.</p>
+        <p>On the phone you can browse, preview, upload, download, share and back up photos, with every connection. Terminal, tunnels, folder sync, drives and editing in other apps are in the computer app only. Drives are not on Windows yet.</p>
       </div>
     </div>
   </section>
@@ -515,7 +516,7 @@ Updating 3f2a91c..8be04d7
         <h2>Your servers, files and shell&nbsp;together.</h2>
         <p class="body">Add an SSH connection and a click opens a terminal on the server. The Folders button puts its files right above, so you can drag a build in and restart the service without switching apps.</p>
         <ul class="ticks">
-          <li>Terminal panes for this computer or any SFTP or SSH server</li>
+          <li>Terminals on your computer (macOS, Windows, Linux) or on any SSH or SFTP server</li>
           <li>SSH tunnels to reach a database or admin panel behind the server</li>
           <li>Passwords, keys or your SSH agent, with host keys checked</li>
           <li>Zip and unzip run on the server when it can</li>

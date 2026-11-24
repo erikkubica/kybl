@@ -7,7 +7,7 @@ Kybl is a free app for macOS, Windows, Linux, Android and iPhone that puts objec
 - Object storage: Amazon S3 and any S3-compatible endpoint (Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph), Azure Blob Storage, Google Cloud Storage and Kybl Storage.
 - Cloud drives: Google Drive (My Drive, shared drives, Shared with me), OneDrive and Dropbox, signed in through the browser.
 - Servers: SFTP (password, key or SSH agent, host keys checked), SSH (an SFTP connection that opens as a terminal), FTP and FTPS, and WebDAV (Nextcloud, ownCloud, NAS boxes).
-- This computer: your own folders and drives, in the same panes.
+- Your computer: your own folders and drives, in the same panes.
 
 Presets fill in endpoints, regions and each provider's quirks, and every connection can be tested before saving. Import connections reads FileZilla's Site Manager and ~/.ssh/config (LocalForward lines become SSH tunnels); folders become sidebar groups. Passwords and keys are stored in an encrypted vault whose key lives in the operating system keychain (macOS Keychain, Windows Credential Manager, a Linux Secret Service such as GNOME Keyring or KWallet, the Android Keystore on phones). They are never written to a settings file, and Kybl talks to your storage and servers directly.
 
@@ -19,31 +19,31 @@ Presets fill in endpoints, regions and each provider's quirks, and every connect
 - Previews in place: images, video, audio, PDF and text open in Quick Look (Space), with Get Info (Cmd+I).
 - Edit anywhere (desktop): open a remote file in any app; each save uploads back, and with the recommended setting a change on the server meanwhile stops the upload so you can overwrite, keep both or reload. Files up to 100 MB. Kybl also has its own editor.
 - Archives and diffs: zip and unzip (on the server over SSH when it can), open archives like folders, compare two files or two folders.
-- Search that digs: paged loading for folders with 100,000+ items, search through every subfolder, and search inside files on this computer and SFTP servers.
+- Search that digs: paged loading for folders with 100,000+ items, search through every subfolder, and search inside files on your computer and SSH or SFTP servers.
 - Transfer queue: speed and time left, pause, speed limits, retry, resume after a restart on most connections, and optional size or checksum checks.
 - Share links: expiring links on S3, OneDrive and Dropbox.
 - Command palette (Cmd+K) and keyboard shortcuts for everything.
-- Custom actions: your own shell commands on selected files, with placeholders and a shortcut, run on this computer or on an SFTP server.
+- Custom actions: your own shell commands on selected files, with placeholders and a shortcut, run on your computer or on an SSH or SFTP server.
 - Make it yours: light, dark or system theme, colour schemes and accents, fonts, text size and density.
 - On your phone too: the same connections on Android and iPhone with a touch interface, photo backup to any connection, background transfers on Android on Android and an app lock.
 
 ## What works with which connection
 
-- Everywhere: browse, upload, download, delete, copy and move between connections, thumbnails and Quick Look, zip and unzip, search subfolders by name, folder sync and mirror, mounting as a drive (macOS and Linux), editing in your own app (desktop).
-- Rename in place: S3, Azure and Google Cloud Storage rename by copying and deleting; the rest rename natively.
-- Copies within a connection without downloading: S3, Azure and Google Cloud Storage (same container), Google Drive, OneDrive, Dropbox, WebDAV and this computer. Not SFTP or FTP.
-- Uploads that resume after a restart: S3, Google Drive, OneDrive, Dropbox, SFTP and FTP. Not Azure, Google Cloud Storage or WebDAV.
-- Expiring share links: S3 (private signed links), OneDrive and Dropbox (public links once longer than an hour on OneDrive or four hours on Dropbox; Dropbox expiry needs a paid plan). Not Google Drive, Azure, Google Cloud Storage, SFTP, FTP or WebDAV.
-- Deleting to a trash you can restore from: Google Drive, OneDrive, Dropbox and this computer. Elsewhere deleting is permanent.
-- Permissions: SFTP, and FTP servers that allow SITE CHMOD. Tags, storage class and metadata: S3.
-- Search inside files: this computer and SSH or SFTP servers.
-- Terminal: SSH and SFTP servers, and this computer on macOS and Linux. SSH tunnels and your own actions on the server: SSH and SFTP only. Your own actions on this computer take files from any connection (downloaded first).
-- Phones: browse, preview, transfer, share and photo backup with every connection. Terminals, tunnels, folder sync, drives and editing in other apps are desktop only; drives are not on Windows yet.
+- Works with every connection: browse, upload, download, delete, copy and move between connections, thumbnails and Quick Look, zip and unzip, search subfolders by name. In the computer app also: folder sync and mirror, editing in your own app, and mounting as a drive (macOS and Linux).
+- Rename: S3, Azure and Google Cloud Storage rename by copying, so it is slower. The others rename directly.
+- Copy inside a connection without downloading: S3, Azure and Google Cloud Storage (same container), Google Drive, OneDrive, Dropbox, WebDAV and your computer. Not SFTP or FTP.
+- Uploads continue after a restart: S3, Google Drive, OneDrive, Dropbox, SFTP and FTP. On Azure, Google Cloud Storage and WebDAV the upload starts again.
+- Share links that expire: S3 (only people with the link can open it), OneDrive and Dropbox (public until the link ends, if it lasts over 1 hour on OneDrive or 4 hours on Dropbox; Dropbox needs a paid plan for this). Not Google Drive, Azure, Google Cloud Storage, SFTP, FTP or WebDAV.
+- Deleted files can be restored: Google Drive, OneDrive, Dropbox and your computer. On the others, delete is permanent.
+- Change permissions: SFTP, and FTP servers that allow it. Tags, storage class and metadata: S3.
+- Search inside files: your computer and SSH or SFTP servers.
+- Terminal: SSH and SFTP servers, and your computer (macOS, Linux, and Windows with PowerShell, Command Prompt, WSL or Git Bash). SSH tunnels and your own commands on the server: SSH and SFTP only. Your own commands on your computer can use files from any connection (downloaded first).
+- Phone app: browse, preview, upload, download, share and back up photos, with every connection. Terminal, tunnels, folder sync, drives and editing in other apps are in the computer app only. Drives are not on Windows yet.
 
 ## SSH and terminals (desktop)
 
 - An SSH connection opens a terminal on the server with one click; its Folders button opens the server's files above the terminal.
-- Terminal panes for this computer (macOS and Linux) or any SFTP or SSH server, saved with workspaces, with a "follow the folder above" option.
+- Terminal panes on your computer (macOS, Linux, and Windows with PowerShell, Command Prompt, WSL or Git Bash) or any SSH or SFTP server, saved with workspaces, with a "follow the folder above" option.
 - SSH tunnels (local port forwards) to reach a database or admin panel behind the server, with auto-start.
 - Pasting several lines asks first and shows exactly what will run.
 
