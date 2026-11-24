@@ -88,7 +88,11 @@ export function DestinationScreen({
     setNext(null);
     // a folder made here doesn't exist yet (FTP, SFTP, local…): nothing to list, and listing it
     // would only show an error
-    if (made.includes(at.prefix)) setFolders([]);
+    if (made.includes(at.prefix)) {
+      setFolders([]);
+      // the parent listing that was still running is dropped: its finish no longer clears this
+      setBusy(false);
+    }
     else void readFolders(at, null);
     return () => void gen.current++;
     // eslint-disable-next-line react-hooks/exhaustive-deps

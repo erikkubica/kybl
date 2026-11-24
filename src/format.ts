@@ -1,6 +1,9 @@
 import type { Entry } from "./types";
 
 /** "1 folder", "1,204 folders": a count with its noun in the right number. */
+/** A file this big (64 MB) renamed by copy-and-delete takes long enough to run as a job, not in a dialog nobody can leave. */
+export const BIG_RENAME = 64 * 1024 * 1024;
+
 export const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
 /**
