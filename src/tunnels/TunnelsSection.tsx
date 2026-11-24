@@ -4,7 +4,7 @@
  * "Start when the connection opens". A local port that something else already uses is a warning
  * (it may be free again by the time the tunnel starts); everything else must be right to save.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Icon } from "../Icons";
 import { RAW } from "../connections/fields";
 import type { TunnelDef } from "../types";
@@ -102,6 +102,9 @@ function TunnelRow({
 }) {
   const taken = usePortTaken(t.localPort, profileId, t.id);
   const err = problems.local ?? problems.host ?? problems.remote;
+  // the message under the row is what each invalid field is described by
+  const noteId = useId();
+  const noteFor = (bad: boolean) => (bad && err ? noteId : undefined);
   // live: a tunnel started or stopped (autostart, a drop) while the form is open shows here
   const live = useConnectionTunnels(profileId);
   const running = !!(t.id && profileId && live.some((x) => x.tunnelId === t.id));
@@ -125,6 +128,7 @@ function TunnelRow({
             placeholder="5433"
             inputMode="numeric"
             aria-invalid={!!problems.local}
+            aria-describedby={noteFor(!!problems.local) ?? (taken ? noteId : undefined)}
             {...RAW}
           />
           <span className="tunnel-arrow" aria-hidden="true">
@@ -139,6 +143,7 @@ function TunnelRow({
             placeholder="localhost"
             inputMode="url"
             aria-invalid={!!problems.host}
+            aria-describedby={noteFor(!!problems.host)}
             {...RAW}
           />
           <span className="tunnel-colon" aria-hidden="true">
@@ -152,6 +157,7 @@ function TunnelRow({
             placeholder="5432"
             inputMode="numeric"
             aria-invalid={!!problems.remote}
+            aria-describedby={noteFor(!!problems.remote)}
             {...RAW}
           />
         </div>
@@ -167,9 +173,11 @@ function TunnelRow({
         </label>
       </div>
       {err ? (
-        <em className="field-err">{err}</em>
+        <em className="field-err" id={noteId}>
+          {err}
+        </em>
       ) : taken ? (
-        <small className="tunnel-warn">
+        <small className="tunnel-warn" id={noteId}>
           <Icon name="alert" size={12} /> {taken}
         </small>
       ) : null}

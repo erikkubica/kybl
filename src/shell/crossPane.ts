@@ -152,6 +152,9 @@ export async function sendItems(
 async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx, dest: Place, done: () => void): Promise<boolean> {
   const { profileId, bucket } = src;
   const ids: string[] = [];
+  // waiting starts as each file is added: a row that is pruned or cleared while the folder is still
+  // being listed would otherwise be gone before anyone asked about it
+  const ended: Promise<unknown>[] = [];
   const item = (key: string, size: number, rel: string) => {
     const safe = safeRelPath(rel);
     return safe ? [{ kind: "download" as const, name: safe, profileId, bucket, key, local: joinPath(dir, safe), total: size, base: dir }] : [];
@@ -159,7 +162,10 @@ async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx
   const begin = (batch: Parameters<TransferActions["add"]>[0]) => {
     if (!batch.length) return;
     if (!ids.length) c.autoShowActivity();
-    for (const t of c.transfers.add(batch)) ids.push(t.id);
+    for (const t of c.transfers.add(batch)) {
+      ids.push(t.id);
+      ended.push(c.transfers.whenFinished(t.id));
+    }
   };
   let stopped = false;
   let stopNow: (() => void) | null = null;
@@ -256,6 +262,6 @@ async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx
     else if (!stopped) c.dialogs.toast("info", "Nothing to copy");
     return false;
   }
-  void Promise.all(ids.map((id) => c.transfers.whenFinished(id))).then(done);
+  void Promise.all(ended).then(done);
   return true;
 }

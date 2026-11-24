@@ -1,7 +1,7 @@
 // The FTP / SFTP "Server" field splitting pasted URLs (src/connections/serverHost.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { splitServer } from "../../src/connections/serverHost.ts";
+import { splitDavUrl, splitServer } from "../../src/connections/serverHost.ts";
 
 test("a plain name stays as it is", () => {
   assert.deepEqual(splitServer(" nas.lan "), { host: "nas.lan" });
@@ -24,4 +24,16 @@ test("what can't be a server says so", () => {
   assert.equal(splitServer("nas.lan:99999"), "Ports are numbers from 1 to 65535.");
   assert.equal(splitServer("nas.lan:ssh"), "Ports are numbers from 1 to 65535.");
   assert.equal(splitServer("sftp://"), "Enter only the server's name or address, such as server.example.com.");
+});
+
+test("a WebDAV address loses its user name and password, which are returned apart", () => {
+  assert.deepEqual(splitDavUrl("https://alice:pw%40x@cloud.example.com/remote.php/dav/files/alice/"), {
+    href: "https://cloud.example.com/remote.php/dav/files/alice/",
+    user: "alice",
+    password: "pw@x",
+  });
+  assert.deepEqual(splitDavUrl(" https://bob@host:5006 "), { href: "https://host:5006", user: "bob", password: undefined });
+  // an @ in the path is not userinfo
+  assert.deepEqual(splitDavUrl("https://host/files/a@b/"), { href: "https://host/files/a@b/" });
+  assert.deepEqual(splitDavUrl("https://cloud.example.com"), { href: "https://cloud.example.com" });
 });

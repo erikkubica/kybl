@@ -172,7 +172,12 @@ function ShortcutField({ value, selfId, onChange }: { value: string | null; self
         onBlur={() => setRecording(false)}
         onKeyDown={(e) => {
           if (e.key === "Tab") return;
-          if (e.key === "Escape" && !e.metaKey && !e.ctrlKey) return setRecording(false);
+          if (e.key === "Escape" && !e.metaKey && !e.ctrlKey) {
+            // stops recording only: the editor behind it must not hear this Escape (it would close and drop what was typed)
+            e.preventDefault();
+            e.stopPropagation();
+            return e.currentTarget.blur();
+          }
           e.preventDefault();
           e.stopPropagation();
           if ((e.key === "Backspace" || e.key === "Delete") && !e.metaKey && !e.ctrlKey) {
@@ -227,6 +232,10 @@ function ActionEditor({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const cmdRef = useRef<HTMLTextAreaElement>(null);
   const set = (p: Partial<CustomAction>) => setA((cur) => ({ ...cur, ...p }));
+  // Escape, the close button and Cancel ask first when something was changed: a command is costly to retype
+  const [discardAsk, setDiscardAsk] = useState(false);
+  const edited = JSON.stringify(a) !== JSON.stringify(action);
+  const requestClose = () => (edited ? setDiscardAsk(true) : onClose());
 
   // what it turns into for two made-up items
   useEffect(() => {
@@ -267,144 +276,161 @@ function ActionEditor({
   const save = () => valid && onSave({ ...a, name: a.name.trim(), extensions: extList(a.extensions).join(", ") });
 
   return (
-    <Modal title={isNew ? "New action" : "Edit action"} onClose={onClose} width={560}>
-      <form
-        className="modal-body ca-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          save();
-        }}
-      >
-        <label className="field">
-          <span>Name</span>
-          <input value={a.name} onChange={(e) => set({ name: e.target.value })} placeholder="Optimize images" autoFocus={isNew} />
-        </label>
-        <label className="field">
-          <span>Command</span>
-          <textarea
-            ref={cmdRef}
-            className="ca-cmd-input"
-            value={a.command}
-            rows={2}
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            onChange={(e) => set({ command: e.target.value })}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                save();
-              }
-            }}
-            placeholder="sips -Z 2048 {path}"
-          />
-        </label>
-        {cmdProblem && <p className="ca-bad">{cmdProblem}</p>}
-        <div className="ca-chips" aria-label="Placeholders">
-          {PLACEHOLDERS.map((x) => (
-            <button key={x.p} type="button" className="chip" title={x.what} onClick={() => insert(x.p)}>
-              {x.p}
-            </button>
-          ))}
-        </div>
-        {preview.length > 0 && (
-          <div className="ca-preview" aria-label="Preview">
-            {preview.slice(0, 2).map((l, i) => (
-              <code key={i}>{l}</code>
+    <>
+      <Modal title={isNew ? "New action" : "Edit action"} onClose={requestClose} width={560}>
+        <form
+          className="modal-body ca-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            save();
+          }}
+        >
+          <label className="field">
+            <span>Name</span>
+            <input value={a.name} onChange={(e) => set({ name: e.target.value })} placeholder="Optimize images" autoFocus={isNew} />
+          </label>
+          <label className="field">
+            <span>Command</span>
+            <textarea
+              ref={cmdRef}
+              className="ca-cmd-input"
+              value={a.command}
+              rows={2}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              onChange={(e) => set({ command: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  save();
+                }
+              }}
+              placeholder="sips -Z 2048 {path}"
+            />
+          </label>
+          {cmdProblem && <p className="ca-bad">{cmdProblem}</p>}
+          <div className="ca-chips" aria-label="Placeholders">
+            {PLACEHOLDERS.map((x) => (
+              <button key={x.p} type="button" className="chip" title={x.what} onClick={() => insert(x.p)}>
+                {x.p}
+              </button>
             ))}
-            <small>{preview.length > 1 ? "Runs once per item, like this." : "Runs once for all the items, like this."}</small>
           </div>
-        )}
+          {preview.length > 0 && (
+            <div className="ca-preview" aria-label="Preview">
+              {preview.slice(0, 2).map((l, i) => (
+                <code key={i}>{l}</code>
+              ))}
+              <small>{preview.length > 1 ? "Runs once per item, like this." : "Runs once for all the items, like this."}</small>
+            </div>
+          )}
 
-        <div className="ca-grid">
-          <span className="ca-k">Runs</span>
+          <div className="ca-grid">
+            <span className="ca-k">Runs</span>
+            <div>
+              <Seg<ActionWhere>
+                label="Runs"
+                value={a.where}
+                onChange={(where) => set({ where })}
+                options={[
+                  { value: "local", label: LOCAL_LABEL },
+                  { value: "server", label: "On the server" },
+                ]}
+              />
+              <p className="hint">
+                <Icon name="info" size={13} />
+                {a.where === "local"
+                  ? (NEEDS_GIT_SH ? "In sh from Git for Windows (install it first). " : "In your shell (fish and other non-POSIX shells: in sh, with their PATH). ") + "Files of a server or cloud connection are downloaded to a temporary folder first: {path} is that copy, and changes stay there."
+                  : "Over SSH, in the folder on screen, with the server’s login shell. SFTP connections only."}
+              </p>
+            </div>
+
+            <span className="ca-k">Applies to</span>
+            <div className="ca-inline">
+              <Seg<ActionTargets>
+                label="Applies to"
+                value={a.appliesTo}
+                onChange={(appliesTo) => set({ appliesTo })}
+                options={[
+                  { value: "files", label: "Files" },
+                  { value: "folders", label: "Folders" },
+                  { value: "both", label: "Both" },
+                ]}
+              />
+              {a.appliesTo !== "folders" && (
+                <input className="ca-ext" value={a.extensions} onChange={(e) => set({ extensions: e.target.value })} placeholder="Any extension (or jpg, png)" aria-label="Extensions" />
+              )}
+            </div>
+
+            <span className="ca-k">Output</span>
+            <div className="ca-stack">
+              <Seg
+                label="Output"
+                value={a.output}
+                onChange={(output) => set({ output })}
+                options={[
+                  { value: "show", label: "Show output" },
+                  { value: "silent", label: "Run silently, notify when done" },
+                ]}
+              />
+              <label className="check">
+                <input type="checkbox" checked={a.refresh} onChange={(e) => set({ refresh: e.target.checked })} />
+                <span>Refresh the folder afterwards</span>
+              </label>
+            </div>
+
+            <span className="ca-k">Shortcut</span>
+            <ShortcutField
+              value={a.shortcut}
+              selfId={a.id}
+              onChange={(shortcut, problem) => {
+                set({ shortcut });
+                setShortcutBad(problem);
+              }}
+            />
+          </div>
+          <button type="submit" hidden />
+        </form>
+        <div className="modal-foot split">
           <div>
-            <Seg<ActionWhere>
-              label="Runs"
-              value={a.where}
-              onChange={(where) => set({ where })}
-              options={[
-                { value: "local", label: LOCAL_LABEL },
-                { value: "server", label: "On the server" },
-              ]}
-            />
-            <p className="hint">
-              <Icon name="info" size={13} />
-              {a.where === "local"
-                ? (NEEDS_GIT_SH ? "In sh from Git for Windows (install it first). " : "In your shell (fish and other non-POSIX shells: in sh, with their PATH). ") + "Files of a server or cloud connection are downloaded to a temporary folder first: {path} is that copy, and changes stay there."
-                : "Over SSH, in the folder on screen, with the server’s login shell. SFTP connections only."}
-            </p>
+            {!isNew &&
+              (confirmDelete ? (
+                <button className="btn btn-sm btn-danger" onClick={onDelete}>
+                  Delete “{action.name}”
+                </button>
+              ) : (
+                <button className="btn btn-sm btn-danger-ghost" onClick={() => setConfirmDelete(true)}>
+                  Delete…
+                </button>
+              ))}
           </div>
-
-          <span className="ca-k">Applies to</span>
-          <div className="ca-inline">
-            <Seg<ActionTargets>
-              label="Applies to"
-              value={a.appliesTo}
-              onChange={(appliesTo) => set({ appliesTo })}
-              options={[
-                { value: "files", label: "Files" },
-                { value: "folders", label: "Folders" },
-                { value: "both", label: "Both" },
-              ]}
-            />
-            {a.appliesTo !== "folders" && (
-              <input className="ca-ext" value={a.extensions} onChange={(e) => set({ extensions: e.target.value })} placeholder="Any extension (or jpg, png)" aria-label="Extensions" />
-            )}
+          <div className="btn-row">
+            <button className="btn btn-sm" onClick={requestClose}>
+              Cancel
+            </button>
+            <button className="btn btn-sm btn-primary" onClick={save} disabled={!valid}>
+              {isNew ? "Add action" : "Save"}
+            </button>
           </div>
-
-          <span className="ca-k">Output</span>
-          <div className="ca-stack">
-            <Seg
-              label="Output"
-              value={a.output}
-              onChange={(output) => set({ output })}
-              options={[
-                { value: "show", label: "Show output" },
-                { value: "silent", label: "Run silently, notify when done" },
-              ]}
-            />
-            <label className="check">
-              <input type="checkbox" checked={a.refresh} onChange={(e) => set({ refresh: e.target.checked })} />
-              <span>Refresh the folder afterwards</span>
-            </label>
-          </div>
-
-          <span className="ca-k">Shortcut</span>
-          <ShortcutField
-            value={a.shortcut}
-            selfId={a.id}
-            onChange={(shortcut, problem) => {
-              set({ shortcut });
-              setShortcutBad(problem);
-            }}
-          />
         </div>
-        <button type="submit" hidden />
-      </form>
-      <div className="modal-foot split">
-        <div>
-          {!isNew &&
-            (confirmDelete ? (
-              <button className="btn btn-sm btn-danger" onClick={onDelete}>
-                Delete “{action.name}”
-              </button>
-            ) : (
-              <button className="btn btn-sm btn-danger-ghost" onClick={() => setConfirmDelete(true)}>
-                Delete…
-              </button>
-            ))}
+      </Modal>
+    {discardAsk && (
+      <Modal title="Discard changes?" onClose={() => setDiscardAsk(false)} width={400}>
+        <div className="modal-body">
+          <p>What you typed here will be lost.</p>
         </div>
-        <div className="btn-row">
-          <button className="btn btn-sm" onClick={onClose}>
-            Cancel
+        <div className="modal-foot">
+          <button type="button" className="btn" onClick={() => setDiscardAsk(false)} data-autofocus>
+            Keep editing
           </button>
-          <button className="btn btn-sm btn-primary" onClick={save} disabled={!valid}>
-            {isNew ? "Add action" : "Save"}
+          <button type="button" className="btn btn-danger" onClick={onClose}>
+            Discard
           </button>
         </div>
-      </div>
-    </Modal>
+      </Modal>
+    )}
+    </>
   );
 }
 

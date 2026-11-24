@@ -6,7 +6,7 @@ import { Icon } from "../Icons";
 import type { NetConfig, Profile } from "../types";
 import { baseProfile, defaultPort, emptyNet, netTitle, passwordTarget, type NetKind } from "./kinds";
 import { Field, PHONE, RAW, SecretInput, Segmented, Warning, type FormApi } from "./fields";
-import { splitServer } from "./serverHost";
+import { splitDavUrl, splitServer } from "./serverHost";
 import { TunnelsSection, tidyTunnels, tunnelProblem } from "../tunnels/TunnelsSection";
 
 /** A WebDAV address from a profile saved with host and port instead of a URL. */
@@ -133,7 +133,9 @@ export function NetForm({
     placeChanged(parts.host, p);
     onEdit();
   };
-  const davHref = url.trim();
+  // a user name and password typed into the address go to their own fields on Save, and the address is kept without them
+  const dav = kind === "webdav" ? splitDavUrl(url) : { href: "" };
+  const davHref = dav.href;
   const davInsecure = kind === "webdav" && /^(http|dav|webdav):\/\//i.test(davHref);
   // a saved password only goes to the server and user name it was saved for: another one asks
   // for it again (the app refuses it too). Name, folder and other changes keep it.
@@ -187,7 +189,7 @@ export function NetForm({
       const net: NetConfig = {
         host: kind === "webdav" ? "" : (parts?.host ?? host.trim()),
         port: kind === "webdav" ? 0 : portNum,
-        user: user.trim() || (kind === "webdav" ? "" : (parts?.user ?? "")),
+        user: user.trim() || (kind === "webdav" ? (dav.user ?? "") : (parts?.user ?? "")),
         basePath: basePath.trim(),
         tls: kind === "webdav" ? (davInsecure ? "none" : "implicit") : kind === "sftp" ? "none" : tls,
         auth: kind === "sftp" ? auth : "password",
@@ -202,7 +204,7 @@ export function NetForm({
         const k = privateKey.trim();
         // a passphrase alone goes with the saved key (the backend joins them)
         secret = k ? (passphrase ? JSON.stringify({ privateKey: k, passphrase }) : k) : passphrase ? JSON.stringify({ passphrase }) : undefined;
-      } else if (!(kind === "sftp" && auth === "agent")) secret = password || undefined;
+      } else if (!(kind === "sftp" && auth === "agent")) secret = password || (kind === "webdav" ? dav.password : undefined) || undefined;
       return { profile, secret, clearSecret: kind !== "sftp" && clearSecret && !password };
     },
     setHostKey,
@@ -235,7 +237,11 @@ export function NetForm({
           label="Server address"
           wide
           error={show("url")}
-          hint="Nextcloud and ownCloud: the server's address is enough. Synology: include the WebDAV port, such as https://nas.local:5006."
+          hint={
+            dav.user || dav.password
+              ? "The user name and password in this address are saved as User name and Password instead."
+              : "Nextcloud and ownCloud: the server's address is enough. Synology: include the WebDAV port, such as https://nas.local:5006."
+          }
         >
           {(c) => <input {...c} className="mono" value={url} onChange={(e) => {
                 edit(setUrl)(e.target.value);

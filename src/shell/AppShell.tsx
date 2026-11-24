@@ -312,6 +312,20 @@ export function AppShell() {
     setActivityTab((t) => (t === "activity" ? t : "activity"));
     if (settingsRef.current.autoOpenTransfers) setTransfersOpen(true);
   }, []);
+  /** The Activity tab's "Cancel transfers": one click must not throw a whole batch away, partial downloads included. */
+  const cancelAllTransfers = async () => {
+    const n = transfers.activeCount();
+    if (n > 0) {
+      const ok = await dialogs.confirm({
+        title: n === 1 ? "Cancel this transfer?" : `Cancel ${n.toLocaleString()} transfers?`,
+        label: n === 1 ? "Cancel transfer" : "Cancel transfers",
+        danger: true,
+        message: <p>Partly downloaded files are deleted and what was sent of an upload is let go. Finished ones stay. Pause all keeps the progress, to carry on later.</p>,
+      });
+      if (!ok) return;
+    }
+    transfers.cancelAll();
+  };
   /** The Failed tab's "Clear failed": asks first when that throws away what a retry would resume from. */
   const clearFailed = async () => {
     const { partial } = transfers.failedCounts();
@@ -2397,7 +2411,7 @@ export function AppShell() {
             openHere((pane) => pane.go(p, j.spec.dst.root, j.spec.dst.dir));
           }}
           onCancel={transfers.cancel}
-          onCancelAll={transfers.cancelAll}
+          onCancelAll={() => void cancelAllTransfers()}
           onRetry={transfers.retry}
           onRetryAll={() => void transfers.retryAll(true)}
           onOpenLocal={(t) => void openFromConnection(t.local, dialogs.confirm, undefined, t.name).catch((e) => toast("error", `Couldn’t open “${t.name}”. ${errMessage(e)}`))}

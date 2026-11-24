@@ -8,6 +8,7 @@ import { useCallback, useState } from "react";
 import { LS } from "../browser/types";
 import { providerMeta } from "../providers";
 import type { Profile } from "../types";
+import { splitDavUrl } from "./serverHost";
 
 import {
   allGroups,
@@ -237,7 +238,8 @@ export type Found = {
 
 /** Where a connection points, as typed in a search: host, address or account. */
 function hostOf(p: Profile): string {
-  if (p.net) return p.net.url || p.net.host;
+  // never with a user name or password that an older save left in the address
+  if (p.net) return p.net.url ? splitDavUrl(p.net.url).href : p.net.host;
   if (p.blob) return [p.blob.account, p.blob.container].filter(Boolean).join("/");
   if (p.cloud) return p.cloud.accountEmail;
   return p.endpoint.replace(/^\w+:\/\//, "");

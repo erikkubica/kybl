@@ -38,6 +38,8 @@ type Tab = "upload" | "remove" | "skip";
 const n = (c: number) => c.toLocaleString();
 const files = (c: number) => `${n(c)} ${c === 1 ? "file" : "files"}`;
 const ROWS_MAX = 800;
+/** How long a preview may be acted on before it is checked again. */
+const PREVIEW_MS = 5 * 60_000;
 
 /** "Web server › public_html › site" */
 function endLabel(e: MirrorEnd) {
@@ -130,7 +132,17 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
   const config: MirrorConfig | null = src && dst ? { src, dst, deleteExtra, compare, excludes, useGitignore } : null;
   const key = JSON.stringify(config);
   /** the dry run on screen is for these settings */
-  const fresh = !!preview && JSON.stringify(preview.config) === key;
+  // a dry run is only good for a while: the folders change under an open sheet, and the job
+  // deletes exactly what the list says
+  const [expired, setExpired] = useState(false);
+  useEffect(() => {
+    setExpired(false);
+    if (!preview) return;
+    const t = setTimeout(() => setExpired(true), PREVIEW_MS);
+    return () => clearTimeout(t);
+    // the listings are what ages; planning them again for other options doesn't make them newer
+  }, [preview?.lists]);
+  const fresh = !!preview && !expired && JSON.stringify(preview.config) === key;
   const blocked = src && dst ? mirrorBlocked(src, dst) : null;
   const checksumOk = canChecksum(caps.src, caps.dst);
 
@@ -172,9 +184,10 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
     }
   };
 
-  // "also delete" and how changes are decided: planned again from the same listings at once
+  // "also delete" and how changes are decided: planned again from the same listings at once, but
+  // never into a plan that deletes: the old listings may not show what is there now
   useEffect(() => {
-    if (config && preview && !fresh && !busy) {
+    if (config && preview && !expired && !fresh && !busy && !config.deleteExtra) {
       const p = replan(preview, config);
       if (p) setPreview(p);
     }
