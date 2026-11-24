@@ -167,6 +167,7 @@ async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx
     });
   }
   let failed: string | null = null;
+  let failures = 0;
   for (const e of folders) {
     if (stopped) break;
     const base = parentPrefix(e.key);
@@ -179,13 +180,17 @@ async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx
     } catch (err) {
       if (err instanceof ListingStopped) break;
       // one folder that can't be listed doesn't stop the others; it is said once at the end
+      failures++;
       failed = `Couldn't list “${e.name}”: ${errMessage(err)}`;
     } finally {
       release();
     }
   }
   stopNow = null;
-  if (failed) c.dialogs.toast("error", ids.length ? `${failed}. The files found so far are copying.` : failed);
+  if (failed) {
+    const more = failures > 1 ? ` (${failures} of ${folders.length} folders couldn't be listed)` : "";
+    c.dialogs.toast("error", ids.length ? `${failed}${more}. The files found so far are copying.` : `${failed}${more}`);
+  }
   if (!ids.length && failed) return false;
   if (!ids.length) {
     if (!stopped) c.dialogs.toast("info", "Nothing to copy");

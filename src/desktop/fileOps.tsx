@@ -278,6 +278,7 @@ export function makeFileOps(c: OpsContext) {
       }
       let stoppedAt: string | null = null;
       let failed: string | null = null;
+      let failures = 0;
       for (const e of folders) {
         const base = relBase !== null && e.key.startsWith(relBase) ? relBase : parentPrefix(e.key);
         let found = 0;
@@ -297,13 +298,17 @@ export function makeFileOps(c: OpsContext) {
             break;
           }
           // one folder that can't be listed doesn't stop the others; it is said once at the end
+          failures++;
           failed = `Couldn't list “${e.name}”: ${errMessage(err)}`;
         } finally {
           release();
         }
       }
       c.setBusy(null);
-      if (failed) toast("error", started ? `${failed}. The files found so far are downloading.` : failed);
+      if (failed) {
+        const more = failures > 1 ? ` (${failures} of ${folders.length} folders couldn't be listed)` : "";
+        toast("error", started ? `${failed}${more}. The files found so far are downloading.` : `${failed}${more}`);
+      }
       if (stoppedAt !== null) {
         toast("info", started ? `Stopped listing “${stoppedAt}”. ${plural(started, "file")} found so far keep downloading.` : `Stopped listing “${stoppedAt}”`);
         return;
