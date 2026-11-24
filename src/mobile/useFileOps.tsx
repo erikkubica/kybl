@@ -18,6 +18,7 @@ import type { Entry, ObjInfo } from "../types";
 import type { SheetItem } from "./ActionSheet";
 import { clashIndices, findClashes, resolveClashes, type ClashChoice, type Target } from "./clash";
 import { localCopy } from "./localCopy";
+import { safeName } from "../desktop/paths";
 import type { Loc } from "./useListing";
 import type { SharedFile } from "./DestinationScreen";
 
@@ -264,7 +265,7 @@ export function useFileOps(c: FileOpsCtx) {
       const items: Parameters<TransferActions["add"]>[0] = [];
       for (const e of list) {
         if (e.kind === "file") {
-          items.push({ kind: "download", name: e.name, profileId: l.profileId, bucket: l.bucket, key: e.key, local: join(e.name), total: e.size });
+          items.push({ kind: "download", name: e.name, profileId: l.profileId, bucket: l.bucket, key: e.key, local: join(safeName(e.name) || "download"), total: e.size });
           continue;
         }
         const base = parentPrefix(e.key);

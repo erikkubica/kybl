@@ -19,6 +19,14 @@ struct Fs {
     refuse_rest: bool,
     /// the next RETR sends only this many bytes, then closes its data connection and says 226
     cut_next_retr: Option<usize>,
+    /// LIST and MLSD leave out names starting with a dot (pure-ftpd's default)
+    hide_dots: bool,
+    /// RNTO refuses to replace an existing file
+    no_replace: bool,
+    /// SIZE answered with 502
+    no_size: bool,
+    /// the next STOR is refused with this reply (before any data connection)
+    refuse_next_stor: Option<&'static str>,
 }
 
 type Shared = Arc<StdMutex<Fs>>;
@@ -55,6 +63,9 @@ impl Fs {
         out.extend(self.files.iter().filter_map(|(p, b)| under(p).map(|n| (n, Child::File(b.len())))));
         out.extend(self.dirs.iter().filter_map(|p| under(p).map(|n| (n, Child::Dir))));
         out.extend(self.links.iter().filter_map(|(p, t)| under(p).map(|n| (n, Child::Link(t.clone())))));
+        if self.hide_dots {
+            out.retain(|(n, _)| !n.starts_with('.'));
+        }
         out
     }
 
@@ -131,6 +142,7 @@ async fn session(sock: tokio::net::TcpStream, fs: Shared) {
                 data = Some(l);
                 if verb == "PASV" { format!("227 Entering Passive Mode (127,0,0,1,{},{})\r\n", p >> 8, p & 0xff) } else { format!("229 Entering Extended Passive Mode (|||{p}|)\r\n") }
             }
+            "SIZE" if fs.lock().unwrap().no_size => "502 SIZE not implemented\r\n".into(),
             "SIZE" => {
                 let g = fs.lock().unwrap();
                 match g.files.get(&g.resolve(&path)).map(Vec::len) {
@@ -168,6 +180,14 @@ async fn session(sock: tokio::net::TcpStream, fs: Shared) {
                 "226 done\r\n".into()
             }
             "STOR" => {
+                // refused: the data connection is dropped, and (like some servers) a REST
+                // offset stays armed for the next transfer on this connection
+                let refused = fs.lock().unwrap().refuse_next_stor.take();
+                if let Some(no) = refused {
+                    data = None;
+                    let _ = w.write_all(format!("{no}\r\n").as_bytes()).await;
+                    continue;
+                }
                 let Some(l) = data.take() else { return };
                 let _ = w.write_all(b"150 send it\r\n").await;
                 let (mut d, _) = l.accept().await.unwrap();
@@ -175,7 +195,12 @@ async fn session(sock: tokio::net::TcpStream, fs: Shared) {
                 let _ = d.read_to_end(&mut got).await;
                 let mut g = fs.lock().unwrap();
                 let mut now = match rest.take() {
-                    Some(at) => g.files.get(&path).map(|b| b[..at.min(b.len())].to_vec()).unwrap_or_default(),
+                    // written from that byte on: anything missing before it reads as zeros
+                    Some(at) => {
+                        let mut b = g.files.get(&path).map(|b| b[..at.min(b.len())].to_vec()).unwrap_or_default();
+                        b.resize(at, 0);
+                        b
+                    }
                     None => Vec::new(),
                 };
                 now.extend(got);
@@ -207,7 +232,8 @@ async fn session(sock: tokio::net::TcpStream, fs: Shared) {
             }
             "RNTO" => {
                 let mut g = fs.lock().unwrap();
-                match rename_from.take().and_then(|f| g.files.remove(&f)) {
+                let from = rename_from.take();
+                match from.filter(|_| !(g.no_replace && g.files.contains_key(&path))).and_then(|f| g.files.remove(&f)) {
                     Some(b) => {
                         g.files.insert(path, b);
                         "250 renamed\r\n".into()
@@ -379,4 +405,86 @@ fn an_upload_starts_over_where_rest_is_refused() {
         assert_eq!(g.files.len(), 1, "{:?}", g.files.keys().collect::<Vec<_>>());
     });
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Uploads `bytes` to `key` from a local file; `keep`: the caller carries an interrupted upload on.
+async fn upload_bytes(b: &FtpBackend, key: &str, bytes: &[u8], resume: Option<ResumeState>, keep: bool) -> SResult<WriteOutcome> {
+    let dir = std::env::temp_dir().join(format!("kybl-ftp-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("src.bin");
+    std::fs::write(&src, bytes).unwrap();
+    let on_part = |_: PartRecord| {};
+    let opts = WriteOpts { resume, on_part: keep.then_some(&on_part as &(dyn Fn(PartRecord) + Send + Sync)), ..Default::default() };
+    let r = b.write("", key, WriteSource::Path(src), opts, &|_, _| {}, &Arc::new(AtomicBool::new(false))).await;
+    let _ = std::fs::remove_dir_all(dir);
+    r
+}
+
+/// A server that hides dot names from its listings and won't rename over a file: the upload's
+/// temporary file is invisible to a listing, so "the temporary file is gone and the target is
+/// there" must not be taken as a rename that went through. The new file really replaces the old.
+#[test]
+fn a_hidden_temporary_file_is_never_taken_as_replaced() {
+    for no_size in [false, true] {
+        let fs = fs_with(|f| {
+            f.files.insert("/base/a.txt".into(), b"old".to_vec());
+            f.hide_dots = true;
+            f.no_replace = true;
+            // without SIZE the temporary name is a plain one, which the listing shows
+            f.no_size = no_size;
+        });
+        run(async {
+            let b = backend(&fs).await;
+            let r = upload_bytes(&b, "a.txt", b"brand new contents", None, false).await;
+            assert!(matches!(r, Ok(WriteOutcome::Done(_))), "no_size {no_size}: {:?}", r.err());
+            let g = fs.lock().unwrap();
+            assert_eq!(g.files.get("/base/a.txt").map(Vec::as_slice), Some(&b"brand new contents"[..]), "no_size {no_size}");
+            assert_eq!(g.files.len(), 1, "no temporary or backup file left: {:?}", g.files.keys().collect::<Vec<_>>());
+        });
+    }
+}
+
+/// An interrupted upload carries on in its hidden temporary file even where listings hide it.
+#[test]
+fn a_hidden_temporary_file_is_carried_on() {
+    let tmp = temp_key("up.bin");
+    let full: Vec<u8> = (0..60_000u32).map(|i| (i % 249) as u8).collect();
+    let fs = fs_with(|f| {
+        f.files.insert(format!("/base/{tmp}"), full[..20_000].to_vec());
+        f.hide_dots = true;
+    });
+    run(async {
+        let b = backend(&fs).await;
+        let rs = ResumeState { upload_id: tmp.clone(), part_size: 0, parts: vec![] };
+        let r = upload_bytes(&b, "up.bin", &full, Some(rs), true).await;
+        assert!(matches!(r, Ok(WriteOutcome::Done(_))), "{:?}", r.err());
+        let g = fs.lock().unwrap();
+        assert_eq!(g.files.get("/base/up.bin"), Some(&full));
+        assert_eq!(g.files.len(), 1, "{:?}", g.files.keys().collect::<Vec<_>>());
+    });
+}
+
+/// A resumed STOR refused for a passing reason (425: no data connection) keeps the partial file
+/// for the next try, and the connection that got the REST is not used again: a server keeping
+/// the restart offset would otherwise start the next upload in the middle.
+#[test]
+fn a_passing_refusal_keeps_the_partial_and_drops_the_connection() {
+    let tmp = temp_key("up.bin");
+    let full: Vec<u8> = (0..60_000u32).map(|i| (i % 241) as u8).collect();
+    let fs = fs_with(|f| {
+        f.files.insert(format!("/base/{tmp}"), full[..20_000].to_vec());
+        f.refuse_next_stor = Some("425 Can't open data connection");
+    });
+    run(async {
+        let b = backend(&fs).await;
+        let rs = ResumeState { upload_id: tmp.clone(), part_size: 0, parts: vec![] };
+        let r = upload_bytes(&b, "up.bin", &full, Some(rs), true).await;
+        assert!(r.is_err(), "the refusal is reported");
+        assert_eq!(fs.lock().unwrap().files.get(&format!("/base/{tmp}")).map(Vec::len), Some(20_000), "the partial file stays");
+        // a fresh upload right after lands whole, from byte 0
+        let other = vec![9u8; 5_000];
+        let r = upload_bytes(&b, "other.bin", &other, None, false).await;
+        assert!(matches!(r, Ok(WriteOutcome::Done(_))), "{:?}", r.err());
+        assert_eq!(fs.lock().unwrap().files.get("/base/other.bin"), Some(&other));
+    });
 }

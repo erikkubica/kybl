@@ -22,7 +22,7 @@ import { asExport } from "../connections/native";
 import type { TransferActions } from "../useTransfers";
 import type { Entry } from "../types";
 import { syncedPath } from "./openWith";
-import { joinPath, safeRelPath, shortHash } from "./paths";
+import { joinPath, safeName, safeRelPath, shortHash } from "./paths";
 
 export type DragOutContext = {
   profileId: string;
@@ -59,7 +59,7 @@ async function fetchCopy(c: DragOutContext, e: Entry): Promise<string | null> {
   const x = asExport(e);
   if (!x) return null;
   const tmp = await api.tempFolder();
-  const local = joinPath(tmp, `${shortHash(`${c.profileId}\n${c.bucket}\n${x.key}`)}/${safeRelPath(x.name) || "file"}`);
+  const local = joinPath(tmp, `${shortHash(`${c.profileId}\n${c.bucket}\n${x.key}`)}/${safeName(x.name) || "file"}`);
   const [t] = c.transfers.add([
     { kind: "download", name: x.name, profileId: c.profileId, bucket: c.bucket, key: x.key, local, total: x.size, overwrite: true, etag: e.native ? undefined : x.etag },
   ]);

@@ -24,6 +24,16 @@ export function plainRelPath(rel: string): boolean {
   return !!rel && rel.split("/").every((p) => p && p !== "." && p !== ".." && !/[\\\0]/.test(p) && !/^[a-zA-Z]:$/.test(p));
 }
 
+/**
+ * A remote file's name as one local file name, never a path: the last part `safeRelPath` leaves
+ * (a `\` in a bucket, FTP or SFTP name is a separator on Windows and in `safeRelPath`, so
+ * `Documents\evil.docx` must not become a `Documents/` folder, maybe a linked one). "" when
+ * nothing usable is left.
+ */
+export function safeName(name: string): string {
+  return safeRelPath(name).split("/").pop() ?? "";
+}
+
 /** "photo.jpg", 2 → "photo (2).jpg"; folders ("dir/") keep their trailing slash. */
 export function numberedName(name: string, n: number): string {
   const folder = name.endsWith("/");

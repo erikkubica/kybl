@@ -19,7 +19,7 @@ import type { Toast } from "../components/Dialogs";
 import type { TransferActions } from "../useTransfers";
 import type { useJobs } from "../useJobs";
 import { applyChoices, findExisting, freeKeys, type Choice, type Clash } from "./conflicts";
-import { copyName, joinPath, numberedName, safeRelPath, shortHash } from "./paths";
+import { copyName, joinPath, numberedName, safeName, safeRelPath, shortHash } from "./paths";
 import { undoStack, type UndoEntry } from "./undo";
 import { itemClipboard } from "./clipboard";
 import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
@@ -228,13 +228,16 @@ export function makeFileOps(c: OpsContext) {
         let local: string;
         let overwrite = false;
         if (settings.downloadAsk) {
-          const picked = await saveDialog({ defaultPath: f.name, title: "Save as" });
+          const picked = await saveDialog({ defaultPath: safeName(f.name) || "download", title: "Save as" });
           if (!picked) return;
           // the Save dialog already asked about replacing an existing file
           local = picked;
           overwrite = true;
         } else {
-          local = joinPath(await api.downloadFolder(), safeRelPath(f.name) || "download");
+          // one file name right in the Downloads folder, never a path below it (a remote
+          // `Documents\x` would otherwise step into a maybe linked `Documents/`); a file or link
+          // already at that name is kept and the download takes the next free name
+          local = joinPath(await api.downloadFolder(), safeName(f.name) || "download");
         }
         transfers.add([{ kind: "download", name: f.name, profileId: pid, bucket, key: f.key, local, total: f.size, overwrite, etag: f.etag }]);
         c.autoShowActivity();
@@ -296,7 +299,7 @@ export function makeFileOps(c: OpsContext) {
       // the Copy / Open buttons show the progress (see localCopyProgress.ts)
       localCopies.start(pid, bucket, picked.key, verb);
       const tmp = await api.tempFolder();
-      const local = joinPath(tmp, `${shortHash(`${pid}\n${bucket}\n${e.key}`)}/${safeRelPath(e.name) || "file"}`);
+      const local = joinPath(tmp, `${shortHash(`${pid}\n${bucket}\n${e.key}`)}/${safeName(e.name) || "file"}`);
       const [t] = transfers.add([
         { kind: "download", name: e.name, profileId: pid, bucket, key: e.key, local, total: e.size, overwrite: true, etag: picked.native ? undefined : e.etag },
       ]);
@@ -871,7 +874,7 @@ export function makeFileOps(c: OpsContext) {
   const offerCopyUndo = async (pid: string, b: string, items: MoveItem[], label: string, done: string) => {
     let made: string[] | null = items.filter((i) => !i.isPrefix).map((i) => i.to);
     try {
-      for (const i of items.filter((x) => x.isPrefix)) made.push(...(await api.listAllUnder(pid, b, i.to)).map((o) => o.key));
+      for (const i of items.filter((x) => x.isPrefix)) made.push(...(await api.listAllUnder(pid, b, i.to, true)).map((o) => o.key));
     } catch {
       made = null;
     }

@@ -124,8 +124,9 @@ export const api = {
     invoke<void>("put_object_tags", { profileId, bucket, key, tags }),
 
   expandPaths: (paths: string[]) => invoke<LocalFile[]>("expand_paths", { paths }),
-  listAllUnder: (profileId: string, bucket: string, prefix: string) =>
-    invoke<RemoteFile[]>("list_all_under", { profileId, bucket, prefix }),
+  /** Every file under `prefix`; links on this computer only with `includeLinks` (what is there, for an Undo; never for transferring). */
+  listAllUnder: (profileId: string, bucket: string, prefix: string, includeLinks?: boolean) =>
+    invoke<RemoteFile[]>("list_all_under", { profileId, bucket, prefix, includeLinks: includeLinks ?? null }),
 
   startUpload: (
     id: string,

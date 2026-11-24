@@ -73,13 +73,20 @@ const PROBE: &str = r"echo 'kybl'\''sh' 'a!#b' 'c\!d'";
 const PROBE_POSIX: &str = r"kybl'sh a!#b c\!d";
 const PROBE_CSH_END: &str = " c!d";
 
-/// What the probe's output says, from its last line (startup files may print before it); None
-/// when there is no answer at all (nothing printed, or the connection dropped): asked again.
+/// What the probe's output says, from whichever line holds the exact answer: startup files may
+/// print before it, and an exit trap, a login wrapper's footer or a "connection closed" notice
+/// after it. `Other` (kept for the run) only when no line is an answer at all; None when nothing
+/// came back (nothing printed, or the connection dropped): asked again.
 fn read_probe(out: &str, exited: bool) -> Option<Shell> {
-    let last = out.lines().map(|l| l.trim_end_matches('\r')).filter(|l| !l.trim().is_empty()).last();
-    match last {
-        Some(PROBE_POSIX) => Some(Shell::Posix),
-        Some(l) if l.starts_with("kybl'sh ") && l.ends_with(PROBE_CSH_END) && !l.contains(r"\!") => Some(Shell::Csh),
+    let lines: Vec<&str> = out.lines().map(|l| l.trim_end_matches('\r')).filter(|l| !l.trim().is_empty()).collect();
+    let csh = |l: &str| l.starts_with("kybl'sh ") && l.ends_with(PROBE_CSH_END) && !l.contains(r"\!");
+    if lines.iter().rev().any(|l| *l == PROBE_POSIX) {
+        return Some(Shell::Posix);
+    }
+    if lines.iter().rev().any(|l| csh(l)) {
+        return Some(Shell::Csh);
+    }
+    match lines.last() {
         Some(_) if exited => Some(Shell::Other),
         _ => None,
     }
@@ -374,6 +381,9 @@ mod tests {
         assert_eq!(read_probe("kybl'sh a!#b c\\!d\r\n", true), Some(Shell::Posix));
         // startup files that print something first
         assert_eq!(read_probe("Welcome!\nconda: base\n\nkybl'sh a!#b c\\!d\n\n", true), Some(Shell::Posix));
+        // and something printed after it (an EXIT trap, a login wrapper's footer)
+        assert_eq!(read_probe("kybl'sh a!#b c\\!d\nLogged out at 12:00.\n", true), Some(Shell::Posix));
+        assert_eq!(read_probe("motd\nkybl'sh a<words>b c!d\r\nbye\r\n", true), Some(Shell::Csh));
         // cmd.exe prints the line as it is; PowerShell's echo puts each word on its own line
         for not in [r"'kybl'\''sh' 'a!#b' 'c\!d'", "kybl\n\\'sh\na!#b\nc\\!d", "This service allows sftp connections only.\n"] {
             assert_eq!(read_probe(not, true), Some(Shell::Other), "{not:?}");

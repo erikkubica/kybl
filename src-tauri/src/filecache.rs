@@ -395,7 +395,8 @@ pub async fn read_current<R: Runtime>(app: &AppHandle<R>, conn: &Conn, profile: 
     if !cacheable(conn) || !cache.has_any(profile, root, key) {
         return None;
     }
-    let id = current(conn, root, key).await.filter(|id| id.size <= max_bytes)?;
+    // a dead connection must not hold the preview: past the stall limit it is fetched as usual
+    let id = tokio::time::timeout(crate::transfers::STALL, current(conn, root, key)).await.ok()?.filter(|id| id.size <= max_bytes)?;
     let (p, r, k) = (profile.to_string(), root.to_string(), key.to_string());
     tokio::task::spawn_blocking(move || cache.read(&p, &r, &k, &id)).await.ok()?
 }
@@ -451,7 +452,14 @@ pub async fn serve_download<R: Runtime>(
     let (id, src) = match listed.and_then(|l| Some((l.clone(), cache.lookup(profile, root, key, l)?))) {
         Some(hit) => hit,
         None => {
-            let id = current(conn, root, key).await?;
+            // the HEAD / stat races Pause/Cancel and the stall limit as the download's own first
+            // request does: a dead pooled connection (after sleep, a Wi-Fi change) neither keeps
+            // the transfer "running" at 0 nor ignores Pause/Cancel. Stalled: just download.
+            let id = match crate::transfers::race(current(conn, root, key), cancel).await {
+                crate::transfers::Raced::Got(id) => id?,
+                crate::transfers::Raced::Stopped => return Some(Ok(Outcome::Cancelled)),
+                crate::transfers::Raced::Stalled => return None,
+            };
             let src = cache.lookup(profile, root, key, &id)?;
             (id, src)
         }

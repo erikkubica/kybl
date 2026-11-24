@@ -6,6 +6,7 @@
  */
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage } from "../api";
+import { safeName } from "../desktop/paths";
 import type { TransferEvent } from "../types";
 
 type Source = { profileId: string; bucket: string; key: string; name: string; etag?: string | null; size: number; modified?: number | null };
@@ -33,21 +34,36 @@ export type LocalCopy = {
 
 let tempDir: Promise<string> | null = null;
 
+/** Whether a copy made earlier is still a file at `path`. */
+async function stillThere(path: string): Promise<boolean> {
+  try {
+    const found = await api.expandPaths([path]);
+    return found.length === 1 && found[0].path === path;
+  } catch {
+    return false;
+  }
+}
+
 /** Starts fetching; `onProgress` gets 0..1 (or null while the size is unknown). */
 export function localCopy(src: Source, onProgress?: (frac: number | null) => void): LocalCopy {
   watchRemovals();
-  const have = done.get(idOf(src));
-  if (have) return { path: Promise.resolve(have), cancel: () => {} };
   const id = crypto.randomUUID();
   let cancelled = false;
   const path = (async () => {
+    // a copy fetched earlier is used again only while it is still there: "Clear cache" and the
+    // weekly trim remove copies other apps are done with
+    const have = done.get(idOf(src));
+    if (have) {
+      if (await stillThere(have)) return have;
+      done.delete(idOf(src));
+    }
     tempDir ??= api.tempFolder().catch((e) => {
       tempDir = null;
       throw e;
     });
     const dir = (await tempDir).replace(/[\\/]$/, "");
     // a folder per file keeps the original name, which is what the other app shows
-    const dest = `${dir}/share/${id.slice(0, 8)}/${src.name.replace(/[\\/]/g, "_")}`;
+    const dest = `${dir}/share/${id.slice(0, 8)}/${safeName(src.name) || "file"}`;
     let finish: (ok: boolean, err?: string) => void = () => {};
     const ended = new Promise<void>((ok, fail) => {
       finish = (good, err) => (good ? ok() : fail(new Error(err ?? "Download failed")));

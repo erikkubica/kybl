@@ -470,12 +470,23 @@ pub async fn existing_keys(s: &dyn Storage, bucket: &str, keys: Vec<String>, pre
     Ok(Existing { keys: flat(keys)?, prefixes: flat(prefixes)? })
 }
 
+/// Every file under `prefix`, for transferring: a link on this computer is left out, so it is
+/// never followed out of the folder (`local_links`).
 pub async fn list_all_under(s: &dyn Storage, bucket: &str, prefix: &str) -> Result<Vec<RemoteFile>, String> {
+    walk_files(s, bucket, prefix, false).await
+}
+
+/// Everything under `prefix` that isn't a folder, links on this computer included: what is
+/// there, for an Undo that deletes exactly what a copy made (a folder copy copies links as links).
+pub async fn list_all_under_with_links(s: &dyn Storage, bucket: &str, prefix: &str) -> Result<Vec<RemoteFile>, String> {
+    walk_files(s, bucket, prefix, true).await
+}
+
+async fn walk_files(s: &dyn Storage, bucket: &str, prefix: &str, links: bool) -> Result<Vec<RemoteFile>, String> {
     let mut out = Vec::new();
     let mut walk = s.walk(bucket, prefix);
     while let Some(batch) = walk.next().await {
-        // a link on this computer is never followed out of the folder (`local_links`)
-        out.extend(batch?.into_iter().filter(|e| !e.is_dir() && !crate::local_links::skip_listed_link(s.caps(), e)).map(|e| RemoteFile { key: e.key, size: e.size }));
+        out.extend(batch?.into_iter().filter(|e| !e.is_dir() && (links || !crate::local_links::skip_listed_link(s.caps(), e))).map(|e| RemoteFile { key: e.key, size: e.size }));
     }
     Ok(out)
 }
@@ -793,7 +804,7 @@ mod tests {
 
     #[test]
     fn browse_commands_answer_like_s3() {
-        let (_t, b, root) = setup();
+        let (tmp, b, root) = setup();
         futures_executor_block(async {
             let l = list_objects(&b, &root, "", None).await.unwrap();
             assert_eq!(l.folders, vec!["photos/"]);
@@ -833,6 +844,17 @@ mod tests {
             let mut all: Vec<_> = list_all_under(&b, &root, "photos/").await.unwrap().into_iter().map(|f| f.key).collect();
             all.sort();
             assert_eq!(all, vec!["photos/2026/cat.jpg", "photos/2026/report-2.pdf", "photos/Report.pdf"]);
+            // a link is never transferred, but an Undo of a folder copy (which copies links as
+            // links) deletes it too
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(tmp.0.join("root/readme.md"), tmp.0.join("root/photos/2026/link.md")).unwrap();
+                assert!(!list_all_under(&b, &root, "photos/").await.unwrap().iter().any(|f| f.key.ends_with("link.md")));
+                let mut with: Vec<_> = list_all_under_with_links(&b, &root, "photos/").await.unwrap().into_iter().map(|f| f.key).collect();
+                with.sort();
+                assert_eq!(with, vec!["photos/2026/cat.jpg", "photos/2026/link.md", "photos/2026/report-2.pdf", "photos/Report.pdf"]);
+                std::fs::remove_file(tmp.0.join("root/photos/2026/link.md")).unwrap();
+            }
 
             let ex = existing_keys(&b, &root, vec!["nope.txt".into(), "readme.md".into()], vec!["photos/".into(), "empty/".into(), "photos/2026".into()]).await.unwrap();
             assert_eq!(ex, Existing { keys: vec!["readme.md".into()], prefixes: vec!["photos/".into(), "photos/2026".into()] });
