@@ -1,5 +1,5 @@
 //! Custom actions (Settings → Actions): a shell command line with placeholders, run on the
-//! selected files and folders, on this computer (`$SHELL -l -c`, /bin/sh for csh) or on an SFTP
+//! selected files and folders, on this computer (`$SHELL -l -c` for a POSIX shell, else /bin/sh) or on an SFTP
 //! server over SSH.
 //!
 //! Templates are shell commands on purpose, but every placeholder value is shell-quoted (single
@@ -84,10 +84,13 @@ fn arg(s: &str) -> String {
     }
 }
 
-/// The last part of a path, without a trailing slash.
-fn name_of(path: &str) -> &str {
-    let p = path.trim_end_matches(['/', '\\']);
-    p.rsplit(['/', '\\']).next().unwrap_or(p)
+/// The last part of a path, without a trailing separator. A backslash separates only in a path on
+/// this computer under Windows (`windows`): on macOS, Linux and every server it is a character a
+/// name can hold.
+fn name_of(path: &str, windows: bool) -> &str {
+    let seps: &[char] = if windows { &['/', '\\'] } else { &['/'] };
+    let p = path.trim_end_matches(seps);
+    p.rsplit(seps).next().unwrap_or(p)
 }
 
 /// (stem, extension) of a name: "photo.jpg" → ("photo", "jpg"); ".bashrc" and folders have none.
@@ -132,37 +135,73 @@ fn uses(template: &str, word: &str) -> bool {
 /// Every placeholder the template can hold.
 const PLACEHOLDERS: [&str; 6] = ["path", "name", "ext", "stem", "paths", "dir"];
 
-/// Refuses a template that puts a placeholder inside quotes of its own (`"{path}"`, `'{name}'`)
-/// or backticks: the value is quoted already, and inside other quotes that quoting doesn't hold
-/// (`"'$(cmd)'"` runs `cmd`). Read the way sh reads it; `$(…)` starts a fresh, unquoted context
-/// even inside double quotes. The error names the placeholder.
+/// Refuses a template that puts a placeholder anywhere Kybl can't prove its quoting holds. The
+/// value is single-quoted already, and that only keeps it one plain word where the shell reads
+/// commands: outside every quote, or inside `$( … )` (a fresh context, even inside double quotes).
+/// An allow-list: inside quotes, `$'…'`, backticks, `${ … }`, `$(( … ))`, `(( … ))`, `$[ … ]`, a
+/// here-document or a comment, or after something shells read differently (a `#` inside a word,
+/// `case` inside `$( … )`), a placeholder is refused. Mirrored in src/actions/templateCheck.ts;
+/// both run tests/actions/template-vectors.json. The error names the placeholder.
 pub fn check_template(template: &str) -> Result<(), String> {
     #[derive(Clone, Copy, PartialEq)]
     enum Ctx {
         Plain,
         Single,
         Double,
+        /// `$'…'`, where `\` escapes the next character (`\'` too)
+        AnsiC,
         Backtick,
         /// `$( … )`, with how many plain `(` are open inside it
         Subst(u32),
+        /// `${ … }`, with how many plain `{` are open inside it
+        Brace(u32),
+        /// `$(( … ))` or `(( … ))`, with how many `(` are open inside it
+        Arith(u32),
+        /// `$[ … ]`, with how many `[` are open inside it
+        ArithSq(u32),
     }
     let mut stack = vec![Ctx::Plain];
     let b = template.as_bytes();
     let placeholder_at = |i: usize| PLACEHOLDERS.iter().find(|w| template[i..].starts_with(&format!("{{{w}}}")));
+    // where a word can start (a `#` there begins a comment)
+    let word_start = |i: usize| i == 0 || matches!(b[i - 1], b' ' | b'\t' | b'\n' | b'\r' | b';' | b'&' | b'|' | b'(' | b')' | b'<' | b'>');
     // a here-document (`<<`, not bash's `<<<`) seen: its body is read like double quotes
     let mut heredoc = false;
+    // something seen that shells read differently: what follows can't be proven
+    let mut unsure = false;
     let mut i = 0;
     while i < b.len() {
         let ctx = *stack.last().unwrap();
         let c = b[i];
+        // where the shell reads commands (not inside quotes or an expansion)
+        let code = matches!(ctx, Ctx::Plain | Ctx::Subst(_));
         // `\{path}`: the backslash would then sit right before the opening quote of the value
         if c == b'\\' && ctx != Ctx::Single {
             if let Some(w) = placeholder_at(i + 1) {
                 return Err(format!("{{{w}}} comes right after a backslash. Take the backslash away: it would undo Kybl's quoting of the file name."));
             }
         }
-        if matches!(ctx, Ctx::Plain | Ctx::Subst(_)) && b[i..].starts_with(b"<<") && !b[i..].starts_with(b"<<<") && !(i > 0 && b[i - 1] == b'<') {
+        if code && b[i..].starts_with(b"<<") && !b[i..].starts_with(b"<<<") && !(i > 0 && b[i - 1] == b'<') {
             heredoc = true;
+        }
+        if code && c == b'#' {
+            if word_start(i) {
+                // a comment, to the end of the line: a value with a line break would end it
+                let end = b[i..].iter().position(|&x| x == b'\n').map_or(b.len(), |n| i + n);
+                if let Some(w) = (i..end).find_map(|j| if b[j] == b'{' { placeholder_at(j) } else { None }) {
+                    return Err(format!("{{{w}}} is in a comment (after #). Take it out of the comment."));
+                }
+                i = end;
+                continue;
+            }
+            // csh reads a `#` inside a word as a comment too, sh doesn't (`$#` is a variable)
+            if !(i > 0 && b[i - 1] == b'$') {
+                unsure = true;
+            }
+        }
+        // `case` patterns end in a lone `)`, which would seem to close the `$( … )`
+        if matches!(ctx, Ctx::Subst(_)) && word_start(i) && b[i..].starts_with(b"case") && b.get(i + 4).is_none_or(|x| x.is_ascii_whitespace()) {
+            unsure = true;
         }
         // a placeholder here (`${word}` is the shell's)
         if c == b'{' && !(i > 0 && b[i - 1] == b'$') {
@@ -170,62 +209,99 @@ pub fn check_template(template: &str) -> Result<(), String> {
                 if heredoc {
                     return Err(format!("{{{w}}} is in a command with a here-document (<<). Pass it as an argument instead: inside a here-document a file name could run as a command."));
                 }
-                if matches!(ctx, Ctx::Single | Ctx::Double) {
+                if matches!(ctx, Ctx::Single | Ctx::Double | Ctx::AnsiC) {
                     return Err(format!("{{{w}}} is inside quotes. Take the quotes away around it: Kybl quotes every placeholder itself, and inside other quotes a file name could run as a command."));
                 }
                 if stack.contains(&Ctx::Backtick) {
                     return Err(format!("{{{w}}} is inside backticks. Use $( … ) instead: inside backticks a file name could run as a command."));
                 }
+                if stack.iter().any(|c| matches!(c, Ctx::Brace(_))) {
+                    return Err(format!("{{{w}}} is inside ${{ … }}. Use it outside: in there Kybl's quoting of the file name doesn't hold."));
+                }
+                if stack.iter().any(|c| matches!(c, Ctx::Arith(_) | Ctx::ArithSq(_))) {
+                    return Err(format!("{{{w}}} is inside arithmetic ($(( … )) or (( … ))). Use it outside: in there a file name could run as a command."));
+                }
+                if unsure {
+                    return Err(format!("{{{w}}} comes after a part shells read differently (a # inside a word, or case inside $( … )). Put it before that part, or rewrite it."));
+                }
             }
         }
+        // a construct that opens here, and how many bytes start it
+        let opens = |double: bool| -> Option<(Ctx, usize)> {
+            match (c, b.get(i + 1), b.get(i + 2)) {
+                (b'\'', ..) if !double => Some((Ctx::Single, 1)),
+                (b'"', ..) if !double => Some((Ctx::Double, 1)),
+                (b'`', ..) => Some((Ctx::Backtick, 1)),
+                (b'$', Some(b'\''), _) if !double => Some((Ctx::AnsiC, 2)),
+                (b'$', Some(b'('), Some(b'(')) => Some((Ctx::Arith(0), 3)),
+                (b'$', Some(b'('), _) => Some((Ctx::Subst(0), 2)),
+                (b'$', Some(b'{'), _) => Some((Ctx::Brace(0), 2)),
+                (b'$', Some(b'['), _) => Some((Ctx::ArithSq(0), 2)),
+                (b'(', Some(b'('), _) if code => Some((Ctx::Arith(0), 2)),
+                _ => None,
+            }
+        };
         match ctx {
             Ctx::Single => {
                 if c == b'\'' {
                     stack.pop();
                 }
             }
+            Ctx::AnsiC | Ctx::Backtick => match c {
+                b'\\' => i += 1,
+                b'\'' if ctx == Ctx::AnsiC => {
+                    stack.pop();
+                }
+                b'`' if ctx == Ctx::Backtick => {
+                    stack.pop();
+                }
+                _ => {}
+            },
             Ctx::Double => match c {
                 b'\\' => i += 1,
                 b'"' => {
                     stack.pop();
                 }
-                b'`' => stack.push(Ctx::Backtick),
-                b'$' if b.get(i + 1) == Some(&b'(') => {
-                    stack.push(Ctx::Subst(0));
-                    i += 1;
-                }
-                _ => {}
-            },
-            Ctx::Backtick => match c {
-                b'\\' => i += 1,
-                b'`' => {
-                    stack.pop();
-                }
-                _ => {}
-            },
-            Ctx::Plain | Ctx::Subst(_) => match c {
-                b'\\' => i += 1,
-                b'\'' => stack.push(Ctx::Single),
-                b'"' => stack.push(Ctx::Double),
-                b'`' => stack.push(Ctx::Backtick),
-                b'$' if b.get(i + 1) == Some(&b'(') => {
-                    stack.push(Ctx::Subst(0));
-                    i += 1;
-                }
-                b'(' => {
-                    if let Some(Ctx::Subst(n)) = stack.last_mut() {
-                        *n += 1;
+                _ => {
+                    if let Some((next, len)) = opens(true) {
+                        stack.push(next);
+                        i += len - 1;
                     }
                 }
-                b')' => match stack.last_mut() {
-                    Some(Ctx::Subst(0)) => {
-                        stack.pop();
-                    }
-                    Some(Ctx::Subst(n)) => *n -= 1,
-                    _ => {}
-                },
-                _ => {}
             },
+            Ctx::Plain | Ctx::Subst(_) | Ctx::Brace(_) | Ctx::Arith(_) | Ctx::ArithSq(_) => {
+                if c == b'\\' {
+                    i += 1;
+                } else if let Some((next, len)) = opens(false) {
+                    stack.push(next);
+                    i += len - 1;
+                } else {
+                    let top = stack.last_mut().unwrap();
+                    match (*top, c) {
+                        (Ctx::Subst(0), b')') | (Ctx::Brace(0), b'}') | (Ctx::ArithSq(0), b']') => {
+                            stack.pop();
+                        }
+                        (Ctx::Subst(n), b'(') => *top = Ctx::Subst(n + 1),
+                        (Ctx::Subst(n), b')') => *top = Ctx::Subst(n - 1),
+                        (Ctx::Brace(n), b'{') => *top = Ctx::Brace(n + 1),
+                        (Ctx::Brace(n), b'}') => *top = Ctx::Brace(n - 1),
+                        (Ctx::ArithSq(n), b'[') => *top = Ctx::ArithSq(n + 1),
+                        (Ctx::ArithSq(n), b']') => *top = Ctx::ArithSq(n - 1),
+                        (Ctx::Arith(n), b'(') => *top = Ctx::Arith(n + 1),
+                        (Ctx::Arith(0), b')') => {
+                            // `))` ends it; a lone `)` means the shell may have read `$( (…) )`
+                            if b.get(i + 1) == Some(&b')') {
+                                i += 1;
+                            } else {
+                                unsure = true;
+                            }
+                            stack.pop();
+                        }
+                        (Ctx::Arith(n), b')') => *top = Ctx::Arith(n - 1),
+                        _ => {}
+                    }
+                }
+            }
         }
         i += 1;
     }
@@ -233,8 +309,9 @@ pub fn check_template(template: &str) -> Result<(), String> {
 }
 
 /// The command lines to run: one per item when the template uses `{path}`, `{name}`, `{ext}` or
-/// `{stem}`, else one for all of them. `{paths}` is every item, `{dir}` the folder.
-pub fn expand(template: &str, items: &[Item], dir: &str) -> Vec<String> {
+/// `{stem}`, else one for all of them. `{paths}` is every item, `{dir}` the folder. `windows`:
+/// the paths are on this computer under Windows (`\` separates there, see [`name_of`]).
+pub fn expand(template: &str, items: &[Item], dir: &str, windows: bool) -> Vec<String> {
     let paths = items.iter().map(|i| arg(&i.path)).collect::<Vec<_>>().join(" ");
     let common = |w: &str| match w {
         "paths" => Some(paths.clone()),
@@ -247,7 +324,7 @@ pub fn expand(template: &str, items: &[Item], dir: &str) -> Vec<String> {
     items
         .iter()
         .map(|it| {
-            let name = name_of(&it.path);
+            let name = name_of(&it.path, windows);
             let (stem, ext) = split_ext(name, it.is_dir);
             substitute(template, |w| match w {
                 "path" => Some(arg(&it.path)),
@@ -379,14 +456,14 @@ pub async fn custom_action_stop(state: State<'_, AppState>, run_id: String) -> R
 #[tauri::command]
 pub fn custom_action_preview(template: String, items: Vec<Item>, dir: String) -> Result<Vec<String>, String> {
     check_template(&template)?;
-    Ok(expand(&template, &items, &dir))
+    Ok(expand(&template, &items, &dir, cfg!(windows)))
 }
 
 /// The message for an item (or the folder) whose name can't be passed to a shell on a server (see
 /// [`plain_text`]); None when every name can.
 fn unquotable(items: &[Item], dir: &str) -> Option<String> {
     let bad = items.iter().map(|i| i.path.as_str()).chain([dir]).find(|p| !plain_text(p))?;
-    Some(format!("“{}” has a line break or another control character in its name, so it can't be passed to a command.", name_of(bad).escape_debug()))
+    Some(format!("“{}” has a line break or another control character in its name, so it can't be passed to a command.", name_of(bad, false).escape_debug()))
 }
 
 async fn run<R: Runtime>(app: &AppHandle<R>, state: &AppState, spec: &RunSpec, cancel: &AtomicBool) -> Result<RunEnd, String> {
@@ -404,7 +481,7 @@ async fn run<R: Runtime>(app: &AppHandle<R>, state: &AppState, spec: &RunSpec, c
             if let Some(bad) = unquotable(&items, &dir) {
                 return Err(crate::storage::StorageError::other(bad));
             }
-            let lines = expand(&spec.template, &items, &dir);
+            let lines = expand(&spec.template, &items, &dir, false);
             for (i, line) in lines.iter().enumerate() {
                 if cancel.load(Ordering::Relaxed) {
                     end.stopped = true;
@@ -431,7 +508,7 @@ async fn run<R: Runtime>(app: &AppHandle<R>, state: &AppState, spec: &RunSpec, c
         sftp.disconnect().await;
         r?;
     } else {
-        let lines = expand(&spec.template, &spec.items, &spec.dir);
+        let lines = expand(&spec.template, &spec.items, &spec.dir, cfg!(windows));
         for (i, line) in lines.iter().enumerate() {
             if cancel.load(Ordering::Relaxed) {
                 end.stopped = true;
@@ -472,13 +549,19 @@ mod local {
         process::Command,
     };
 
-    /// The shell that runs a line: the user's (`$SHELL`), except csh and tcsh, which expand `!`
-    /// even inside single quotes (`!#` pastes the line's earlier words in raw, so a name could
-    /// end the quoting) and end a command at a newline there: /bin/sh runs it then.
+    /// Shells known to read [`super::quote`] and the template the way [`super::check_template`]
+    /// does (POSIX sh syntax).
+    #[cfg(unix)]
+    const POSIX_SHELLS: [&str; 7] = ["sh", "bash", "zsh", "dash", "ksh", "mksh", "ash"];
+
+    /// The shell that runs a line: the user's (`$SHELL`) when it is a POSIX shell, else /bin/sh.
+    /// An allow-list: csh and tcsh expand `!` even inside single quotes, and nushell, PowerShell,
+    /// xonsh, elvish, fish and the like read quotes or the template's syntax differently, so a
+    /// name could end the quoting there.
     #[cfg(unix)]
     pub fn user_shell(env: Option<String>) -> String {
         env.filter(|s| s.starts_with('/') && Path::new(s).exists())
-            .filter(|s| !s.rsplit('/').next().is_some_and(|n| n.ends_with("csh")))
+            .filter(|s| s.rsplit('/').next().is_some_and(|n| POSIX_SHELLS.contains(&n)))
             .unwrap_or_else(|| "/bin/sh".into())
     }
 
@@ -696,37 +779,41 @@ mod tests {
         assert!(!std::path::Path::new("/tmp/kybl-fish-pwned").exists());
     }
 
+    /// The cases shared with the editor's check (src/actions/templateCheck.ts).
     #[test]
-    fn placeholders_inside_quotes_are_refused() {
-        for bad in [r#"convert "{path}" out.png"#, "echo '{name}'", r#"echo "a {paths} b""#, "echo `basename {path}`", r#"x "$(echo `y {dir}`)""#, r#"echo "it's {stem}""#] {
-            assert!(check_template(bad).is_err(), "{bad}");
+    fn template_vectors() {
+        let v: serde_json::Value = serde_json::from_str(include_str!("../../tests/actions/template-vectors.json")).unwrap();
+        for case in v["bad"].as_array().unwrap() {
+            let (t, want) = (case[0].as_str().unwrap(), case[1].as_str().unwrap());
+            let err = check_template(t).expect_err(t);
+            assert!(err.contains(want), "{t:?}: {err}");
         }
-        for ok in [
-            "convert {path} out.png",
-            r#"echo "$(basename {path})""#,
-            "awk '{print $1}' {path}",
-            r#"echo "${path}" {name}"#,
-            r#"echo "a" {path} 'b'"#,
-            r#"echo \"{path}\""#,
-            "echo $( (cd {dir}) ) {path}",
-            r#"echo "{unknown}" {ext}"#,
-        ] {
-            assert!(check_template(ok).is_ok(), "{ok}");
+        for ok in v["ok"].as_array().unwrap() {
+            let t = ok.as_str().unwrap();
+            assert!(check_template(t).is_ok(), "{t:?}: {:?}", check_template(t));
         }
         assert!(check_template(r#"x "{path}""#).unwrap_err().starts_with("{path} is inside quotes"));
     }
 
-    /// A heredoc body expands `$( … )` in the quoted value; `\{path}` leaves the value half quoted.
+    /// The real shells agree with the vectors: in each `bad` case that the checker refused for
+    /// `${ … }`, `$'…'` or arithmetic, a name with `$(touch …)` does run (so refusing is right).
+    #[cfg(unix)]
     #[test]
-    fn placeholders_in_heredocs_or_after_backslashes_are_refused() {
-        for bad in ["cat <<EOF\n{name}\nEOF", "cat <<-'X'\n{path}\nX", r"echo \{path}", "x $(cat <<E\n{dir}\nE\n)"] {
-            assert!(check_template(bad).is_err(), "{bad:?}");
+    fn refused_constructs_really_run_names() {
+        let dir = std::env::temp_dir().join(format!("kybl-tpl-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("pwned");
+        let evil = format!("{}/$(touch {})", dir.display(), marker.display());
+        for t in [r#"echo "${x:-"{path}"}""#, r"echo $'\' {path} '", "echo $(( 1 + {path} ))"] {
+            assert!(check_template(t).is_err(), "{t}");
+            for sh in ["/bin/bash", "/bin/zsh"].into_iter().filter(|p| std::path::Path::new(p).exists()) {
+                let _ = std::fs::remove_file(&marker);
+                let line = expand(t, &[item(&evil)], "/tmp", false).remove(0);
+                let _ = std::process::Command::new(sh).arg("-c").arg(&line).output().unwrap();
+                assert!(marker.exists(), "{sh}: {t} did not run the name, the test is stale");
+            }
         }
-        assert!(check_template(r"echo \{path}").unwrap_err().contains("backslash"));
-        assert!(check_template("cat <<EOF\n{name}\nEOF").unwrap_err().contains("here-document"));
-        for ok in ["cat <<< {path}", "echo '<<' {path}", r"echo \\ {path}"] {
-            assert!(check_template(ok).is_ok(), "{ok}");
-        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Server scripts never carry a line break or control character (csh would end the command
@@ -773,12 +860,20 @@ mod tests {
         }
     }
 
-    /// A csh or tcsh `$SHELL` never runs an action line (it expands `!#` inside single quotes).
+    /// Only a POSIX `$SHELL` runs an action line: csh expands `!#` inside single quotes, and
+    /// nushell, PowerShell and the like read the quoting differently.
     #[cfg(all(unix, desktop))]
     #[test]
-    fn local_actions_never_run_in_csh() {
+    fn local_actions_run_only_in_posix_shells() {
         assert_eq!(local::user_shell(Some("/bin/tcsh".into())), "/bin/sh");
         assert_eq!(local::user_shell(Some("/bin/csh".into())), "/bin/sh");
+        // an existing program whose name isn't a known shell (stands in for pwsh, nu, xonsh, fish)
+        for other in ["/usr/bin/true", "/bin/ls"].into_iter().filter(|p| std::path::Path::new(p).exists()) {
+            assert_eq!(local::user_shell(Some(other.into())), "/bin/sh", "{other}");
+        }
+        if std::path::Path::new("/bin/zsh").exists() {
+            assert_eq!(local::user_shell(Some("/bin/zsh".into())), "/bin/zsh");
+        }
         if std::path::Path::new("/bin/bash").exists() {
             assert_eq!(local::user_shell(Some("/bin/bash".into())), "/bin/bash");
         }
@@ -808,7 +903,7 @@ mod tests {
         }
         // all of them at once, as {paths}
         let items: Vec<Item> = NASTY.iter().map(|p| item(p)).collect();
-        let line = expand("{paths}", &items, "/tmp");
+        let line = expand("{paths}", &items, "/tmp", false);
         assert_eq!(words(&line[0]), NASTY.to_vec());
     }
 
@@ -819,7 +914,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let marker = dir.join("pwned");
         let evil = format!("{}/$(touch {})`touch {}`;touch {}.jpg", dir.display(), marker.display(), marker.display(), marker.display());
-        for line in expand("printf '%s' {path} {name} {stem} {ext} {dir} {paths} >/dev/null", &[item(&evil)], &evil) {
+        for line in expand("printf '%s' {path} {name} {stem} {ext} {dir} {paths} >/dev/null", &[item(&evil)], &evil, false) {
             let st = std::process::Command::new("/bin/sh").arg("-c").arg(&line).status().unwrap();
             assert!(st.success());
         }
@@ -830,44 +925,55 @@ mod tests {
     #[test]
     fn leading_dashes_get_dot_slash() {
         let it = [item("-rf"), item("/abs/-x.txt")];
-        assert_eq!(expand("rm {path}", &it, "/d"), vec!["rm './-rf'", "rm '/abs/-x.txt'"]);
-        assert_eq!(expand("echo {name}", &it, "/d"), vec!["echo './-rf'", "echo './-x.txt'"]);
-        assert_eq!(expand("echo {stem}", &[item("/a/--help.md")], "/d"), vec!["echo './--help'"]);
-        assert_eq!(expand("cd {dir}", &[], "-dir"), vec!["cd './-dir'"]);
+        assert_eq!(expand("rm {path}", &it, "/d", false), vec!["rm './-rf'", "rm '/abs/-x.txt'"]);
+        assert_eq!(expand("echo {name}", &it, "/d", false), vec!["echo './-rf'", "echo './-x.txt'"]);
+        assert_eq!(expand("echo {stem}", &[item("/a/--help.md")], "/d", false), vec!["echo './--help'"]);
+        assert_eq!(expand("cd {dir}", &[], "-dir", false), vec!["cd './-dir'"]);
     }
 
     #[test]
     fn per_item_placeholders_run_once_per_item() {
         let it = [item("/p/photo.final.JPG"), item("/p/sub/"), item("/p/.bashrc")];
         assert_eq!(
-            expand("x {name} {stem} {ext}", &it, "/p"),
+            expand("x {name} {stem} {ext}", &it, "/p", false),
             vec!["x 'photo.final.JPG' 'photo.final' 'JPG'", "x 'sub' 'sub' ''", "x '.bashrc' '.bashrc' ''"]
         );
-        assert_eq!(expand("sips -Z 2048 {path}", &it[..1], "/p"), vec!["sips -Z 2048 '/p/photo.final.JPG'"]);
+        assert_eq!(expand("sips -Z 2048 {path}", &it[..1], "/p", false), vec!["sips -Z 2048 '/p/photo.final.JPG'"]);
     }
 
     #[test]
     fn all_items_placeholders_run_once() {
         let it = [item("/p/a.txt"), item("/p/b c.txt")];
-        assert_eq!(expand("shasum -a 256 {paths}", &it, "/p"), vec!["shasum -a 256 '/p/a.txt' '/p/b c.txt'"]);
-        assert_eq!(expand("ls {dir}", &it, "/p q"), vec!["ls '/p q'"]);
-        assert_eq!(expand("date", &it, "/p"), vec!["date"]);
+        assert_eq!(expand("shasum -a 256 {paths}", &it, "/p", false), vec!["shasum -a 256 '/p/a.txt' '/p/b c.txt'"]);
+        assert_eq!(expand("ls {dir}", &it, "/p q", false), vec!["ls '/p q'"]);
+        assert_eq!(expand("date", &it, "/p", false), vec!["date"]);
         // {paths} next to a per-item one: every item each time
-        assert_eq!(expand("cmp {path} {paths}", &it, "/p").len(), 2);
+        assert_eq!(expand("cmp {path} {paths}", &it, "/p", false).len(), 2);
     }
 
     #[test]
     fn shell_braces_and_unknown_words_are_left_alone() {
         let it = [item("/p/a.txt")];
-        assert_eq!(expand("echo ${path} {unknown} {} {path", &it, "/p"), vec!["echo ${path} {unknown} {} {path"]);
-        assert_eq!(expand("awk '{print $1}' {path}", &it, "/p"), vec!["awk '{print $1}' '/p/a.txt'"]);
-        assert_eq!(expand("echo {{path}}", &it, "/p"), vec!["echo {'/p/a.txt'}"]);
+        assert_eq!(expand("echo ${path} {unknown} {} {path", &it, "/p", false), vec!["echo ${path} {unknown} {} {path"]);
+        assert_eq!(expand("awk '{print $1}' {path}", &it, "/p", false), vec!["awk '{print $1}' '/p/a.txt'"]);
+        assert_eq!(expand("echo {{path}}", &it, "/p", false), vec!["echo {'/p/a.txt'}"]);
     }
 
     #[test]
     fn windows_paths_name_too() {
-        assert_eq!(name_of(r"C:\Users\me\file.txt"), "file.txt");
-        assert_eq!(name_of("/a/b/"), "b");
+        assert_eq!(name_of(r"C:\Users\me\file.txt", true), "file.txt");
+        assert_eq!(name_of("/a/b/", true), "b");
+        assert_eq!(name_of("/a/b/", false), "b");
+    }
+
+    /// On Unix and servers a backslash is part of the name (B6-1): `{name}` of `/data/a\b.txt`
+    /// is `a\b.txt`, never `b.txt` (which could be another file in the same folder).
+    #[test]
+    fn backslashes_stay_in_unix_names() {
+        assert_eq!(name_of(r"/data/a\b.txt", false), r"a\b.txt");
+        assert_eq!(name_of(r"/data/x\", false), r"x\");
+        let it = [item(r"/data/a\b.txt")];
+        assert_eq!(expand("echo {name} {stem} {ext}", &it, "/data", false), vec![r"echo 'a'\\'b.txt' 'a'\\'b' 'txt'"]);
     }
 
     #[test]

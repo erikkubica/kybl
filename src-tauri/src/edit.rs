@@ -180,11 +180,19 @@ pub(crate) fn edited_key(key: &str, n: u32) -> String {
 
 /// Longest segment `safe_segment` makes, in characters.
 const SEGMENT_MAX: usize = 120;
+/// ... and in UTF-8 bytes: ext4, btrfs and xfs allow 255 bytes per name (85 CJK characters).
+const SEGMENT_MAX_BYTES: usize = 240;
 
 /// A name that is safe as one path segment on every OS. A long one is shortened in the middle, so
 /// it keeps its extension: the app that opens it (and the open guard, which checks this name) sees
 /// the same type as the remote name has (`AAAA….exe.txt` stays a `.txt`).
 pub(crate) fn safe_segment(s: &str, fallback: &str) -> String {
+    safe_segment_for(s, fallback, cfg!(windows))
+}
+
+/// [`safe_segment`], with Windows' device names (CON, NUL, COM1, `aux.txt`…) given a `_` in front
+/// when `windows`: there they open the device, not a file.
+fn safe_segment_for(s: &str, fallback: &str, windows: bool) -> String {
     let cleaned: String = s
         .chars()
         .map(|c| if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
@@ -193,13 +201,29 @@ pub(crate) fn safe_segment(s: &str, fallback: &str) -> String {
     if trimmed.is_empty() {
         return fallback.to_string();
     }
-    if trimmed.chars().count() <= SEGMENT_MAX {
-        return trimmed.to_string();
+    let name = if trimmed.chars().count() <= SEGMENT_MAX && trimmed.len() <= SEGMENT_MAX_BYTES {
+        trimmed.to_string()
+    } else {
+        // the extension (when it has a short one) stays; the stem gives way, whole characters only
+        let ext = trimmed.rfind('.').filter(|&i| i > 0).map(|i| &trimmed[i..]).filter(|e| e.chars().count() <= 24).unwrap_or("");
+        let (max_chars, max_bytes) = (SEGMENT_MAX - ext.chars().count(), SEGMENT_MAX_BYTES - ext.len());
+        let mut stem = String::new();
+        for c in trimmed[..trimmed.len() - ext.len()].chars().take(max_chars) {
+            if stem.len() + c.len_utf8() > max_bytes {
+                break;
+            }
+            stem.push(c);
+        }
+        let stem = stem.trim_end_matches(|c: char| c == '.' || c.is_whitespace());
+        if stem.is_empty() && ext.is_empty() {
+            return fallback.to_string();
+        }
+        format!("{stem}{ext}")
+    };
+    if windows && crate::dest::windows_unfit(&name) {
+        return format!("_{name}");
     }
-    // the extension (when it has a short one) stays; the stem gives way
-    let ext = trimmed.rfind('.').filter(|&i| i > 0).map(|i| &trimmed[i..]).filter(|e| e.chars().count() <= 24).unwrap_or("");
-    let stem: String = trimmed[..trimmed.len() - ext.len()].chars().take(SEGMENT_MAX - ext.chars().count()).collect();
-    format!("{}{}", stem.trim_end(), ext)
+    name
 }
 
 fn base_name(key: &str) -> String {
@@ -747,6 +771,33 @@ mod tests {
         assert_eq!(safe_segment("setup.exe. . ", "f"), "setup.exe");
         assert_eq!(safe_segment("invoice\u{202E}txt.exe", "f"), "invoice\u{202E}txt.exe");
         assert_eq!(safe_segment("Run.EXE", "f"), "Run.EXE");
+    }
+
+    /// Long non-ASCII names fit Linux file systems (255 bytes), the extension kept (B6-2).
+    #[test]
+    fn segments_fit_in_255_bytes() {
+        for long in [format!("{}.txt", "漢".repeat(100)), format!("{}.md", "😀".repeat(70)), "漢".repeat(119)] {
+            let got = safe_segment(&long, "f");
+            assert!(got.len() <= SEGMENT_MAX_BYTES && got.chars().count() <= SEGMENT_MAX, "{} bytes", got.len());
+            assert!(long.starts_with(got.trim_end_matches(".txt").trim_end_matches(".md")));
+            if long.contains('.') {
+                assert_eq!(got.rsplit('.').next(), long.rsplit('.').next());
+            }
+        }
+        // a short one is left alone
+        assert_eq!(safe_segment("漢字.txt", "f"), "漢字.txt");
+    }
+
+    /// Windows device names get a `_` in front there, any case and extension (B6-4).
+    #[test]
+    fn device_names_are_renamed_on_windows() {
+        for dev in ["CON", "nul", "aux.txt", "Com1.log", "LPT9", "prn.tar.gz", "CONIN$"] {
+            assert_eq!(safe_segment_for(dev, "f", true), format!("_{dev}"), "{dev}");
+            assert_eq!(safe_segment_for(dev, "f", false), dev, "{dev}");
+        }
+        for ok in ["console.txt", "auxiliary", "com10", "nul_x"] {
+            assert_eq!(safe_segment_for(ok, "f", true), ok, "{ok}");
+        }
     }
 
     #[test]

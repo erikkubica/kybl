@@ -73,7 +73,11 @@ pub async fn save_profile(
     if profile.id == registry::LOCAL_ID {
         return Err("This connection can't be changed.".into());
     }
+    // what the vault held before a new secret went in, to put back if the list can't be saved
+    let mut replaced: Option<Option<String>> = None;
     if let Some(s) = secret.as_deref().filter(|s| !s.is_empty()) {
+        // unreadable (a refused keychain prompt): nothing is put back then
+        replaced = get_secret(&state, &profile.id).await.ok();
         set_secret(&state, &profile.id, s).await?;
     } else if clear_secret.unwrap_or(false) && matches!(profile.kind, ConnKind::Ftp | ConnKind::Webdav) {
         // "Remove saved password": the server takes an anonymous / password-less sign-in now
@@ -91,7 +95,12 @@ pub async fn save_profile(
     });
     drop(held);
     if let Err(e) = saved {
-        forget_unsaved(&state, &profile.id, was_new).await;
+        // a new connection's secrets all go; an edited one gets its old secret back
+        if was_new {
+            forget_unsaved(&state, &profile.id, true).await;
+        } else if let Some(prev) = replaced {
+            crate::state::undo_secret(&state, &profile.id, prev).await;
+        }
         return Err(e);
     }
     state.clients.lock().await.remove(&profile.id);

@@ -11,7 +11,8 @@ const PER_ITEM = ["path", "name", "ext", "stem"];
 
 const quote = (s: string) => `'${s.replace(/['\\]/g, (c) => (c === "'" ? `'\\''` : `'\\\\'`))}'`;
 const arg = (s: string) => quote(s.startsWith("-") ? `./${s}` : s);
-const nameOf = (p: string) => p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? p;
+// a backslash is part of a Unix or server name (the backend splits on it only for local Windows paths)
+const nameOf = (p: string) => p.replace(/\/+$/, "").split("/").pop() ?? p;
 function splitExt(name: string, dir: boolean): [string, string] {
   const i = name.lastIndexOf(".");
   return !dir && i > 0 && i + 1 < name.length ? [name.slice(0, i), name.slice(i + 1)] : [name, ""];

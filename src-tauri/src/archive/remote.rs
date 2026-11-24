@@ -54,21 +54,25 @@ pub fn compress_script(dir: &str, names: &[String], dest: &str) -> String {
 
 /// The script that unpacks `archive` into `dir`/`folder` (made if missing; merged into when
 /// there, replacing files of the same names), through a temporary folder next to it. Refuses
-/// archives with links, absolute names or `..` (exit [`UNSAFE`]), and archives it can't list (a
-/// listing that fails proves nothing about the entries).
+/// archives with anything but plain files and folders (links, devices, FIFOs), absolute names or
+/// `..` (exit [`UNSAFE`]), and archives it can't list (a listing that fails proves nothing about
+/// the entries). Set-user-ID and set-group-ID bits are never kept (the account may be root).
 pub fn extract_script(archive: &str, format: Format, dir: &str, folder: &str) -> String {
     let tmp = format!("{}/.kybl-extract-{}", dir.trim_end_matches('/'), tag());
     let target = format!("{}/{folder}", dir.trim_end_matches('/'));
     // the listing is kept first, so a lister that fails stops the unpack
-    let listed = |list: &str, pattern: &str| format!("L=$({list} 2>/dev/null) || exit {UNSAFE}; printf '%s\\n' \"$L\" | grep -Eq {pattern} && exit {UNSAFE}");
+    let listed = |list: &str, filter: &str, pattern: &str| format!("L=$({list} 2>/dev/null) || exit {UNSAFE}; printf '%s\\n' \"$L\" {filter}| grep -Eq {pattern} && exit {UNSAFE}");
+    // the mode column of a listing: only "-" (a file) and "d" (a folder) may start an entry line
+    let only_files = "'^[^-d]'";
     let (need, check, unpack) = match format {
         Format::Zip => (
             "unzip",
-            // zipinfo: links show as "l" in the mode column; then every name
+            // zipinfo: an entry line starts with its mode (header and totals lines left out);
+            // then every name
             format!(
                 "{}; {}",
-                listed("unzip -Z \"$A\"", "'^l'"),
-                listed("unzip -Z1 \"$A\"", "'(^/|(^|/)\\.\\.(/|$)|^[A-Za-z]:|\\\\)'")
+                listed("unzip -Z \"$A\"", "| grep -Ev '^(Archive:  |Zip file size: |[0-9]+ files?, )' ", only_files),
+                listed("unzip -Z1 \"$A\"", "", "'(^/|(^|/)\\.\\.(/|$)|^[A-Za-z]:|\\\\)'")
             ),
             waited("unzip -q -o \"$A\" -d \"$T\""),
         ),
@@ -76,10 +80,10 @@ pub fn extract_script(archive: &str, format: Format, dir: &str, folder: &str) ->
             let z = if format == Format::TarGz { "z" } else { "" };
             (
                 "tar",
-                format!("{}; {}", listed("tar -tvf \"$A\"", "'^[lh]'"), listed("tar -tf \"$A\"", "'(^/|(^|/)\\.\\.(/|$)|\\\\)'")),
+                format!("{}; {}", listed("tar -tvf \"$A\"", "", only_files), listed("tar -tf \"$A\"", "", "'(^/|(^|/)\\.\\.(/|$)|\\\\)'")),
                 format!(
                     "{} || {{ {}; }}",
-                    waited(&format!("tar -x{z}f \"$A\" -C \"$T\" --no-same-owner 2>/dev/null")),
+                    waited(&format!("tar -x{z}f \"$A\" -C \"$T\" --no-same-owner --no-same-permissions 2>/dev/null")),
                     waited(&format!("tar -x{z}f \"$A\" -C \"$T\""))
                 ),
             )
@@ -87,6 +91,8 @@ pub fn extract_script(archive: &str, format: Format, dir: &str, folder: &str) ->
     };
     format!(
         "command -v {need} >/dev/null 2>&1 || exit {NO_TOOL}; A={a}; T={t}; D={d}; F={f}; {check}; mkdir -p \"$T\" || exit 1; trap 'rm -rf \"$T\"' EXIT; {stop}; {unpack} || exit 1; \
+         L=$(find \"$T\" ! -type f ! -type d 2>/dev/null) || exit {UNSAFE}; [ -z \"$L\" ] || exit {UNSAFE}; \
+         find \"$T\" -type f \\( -perm -4000 -o -perm -2000 \\) -exec chmod ug-s {{}} + || exit 1; \
          S=\"$T\"; if [ \"$(ls -A \"$T\")\" = {fname} ] && [ -d \"$T\"/{fname} ]; then S=\"$T\"/{fname}; fi; \
          if [ ! -e \"$D\" ]; then mv \"$S\" \"$D\" || exit 1; else L=$(find \"$D\" -type l 2>/dev/null) || exit {UNSAFE}; [ -z \"$L\" ] || exit {UNSAFE}; cp -R \"$S\"/. \"$D\"/ || exit 1; fi",
         a = q(archive),

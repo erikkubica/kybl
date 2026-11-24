@@ -12,7 +12,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { LS } from "../browser/types";
-import { confirmPaste, setTermImpl, takeFocusWhenShown, takeStartup, type TermAction, type TermSpec } from "./api";
+import { confirmPaste, pasteTrustsBracketed, setTermImpl, takeFocusWhenShown, takeStartup, type TermAction, type TermSpec } from "./api";
 import { cleanPaste, pasteNeedsConfirm } from "./quote";
 
 const SCROLLBACK = 5000;
@@ -128,7 +128,7 @@ class Session {
   private async pasteText(t: string) {
     const text = cleanPaste(t);
     if (!text || this.state !== "running") return;
-    if (pasteNeedsConfirm(text, this.term.modes.bracketedPasteMode)) {
+    if (pasteNeedsConfirm(text, this.term.modes.bracketedPasteMode, pasteTrustsBracketed())) {
       const run = this.run;
       if (!(await confirmPaste(text)) || run !== this.run || this.state !== "running") return;
       this.term.focus();

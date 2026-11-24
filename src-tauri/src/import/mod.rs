@@ -531,14 +531,17 @@ pub async fn import_apply(app: AppHandle, state: State<'_, AppState>, source: St
     let (mapped, mut skipped) = plan(&sites, &ids, &profiles);
     let mut imported = Vec::new();
     let mut needs_secret = Vec::new();
+    // profiles whose secret went into the vault in this run
+    let mut stored = Vec::new();
     for m in mapped {
         // the secret goes into the vault first: a profile is only listed once it can sign in as
         // well as it could in the other app
-        if let Some(s) = &m.secret
-            && let Err(e) = set_secret(&state, &m.profile.id, s).await
-        {
-            skipped.push(Skipped { name: m.profile.name.clone(), reason: format!("Couldn't store the password: {e}") });
-            continue;
+        if let Some(s) = &m.secret {
+            if let Err(e) = set_secret(&state, &m.profile.id, s).await {
+                skipped.push(Skipped { name: m.profile.name.clone(), reason: format!("Couldn't store the password: {e}") });
+                continue;
+            }
+            stored.push(m.profile.id.clone());
         }
         if m.needs_secret {
             needs_secret.push(m.profile.name.clone());
@@ -550,9 +553,9 @@ pub async fn import_apply(app: AppHandle, state: State<'_, AppState>, source: St
         && let Err(e) = save_profiles(&app, &profiles, &held)
     {
         drop(held);
-        // the passwords stored for them above go too: none of them is listed
-        for p in &imported {
-            crate::commands::forget_unsaved(&state, &p.id, true).await;
+        // nothing is listed, so every secret stored for them in this run goes again
+        for id in &stored {
+            crate::commands::forget_unsaved(&state, id, true).await;
         }
         return Err(e);
     }

@@ -24,8 +24,11 @@ pub struct SshConfig;
 
 /// The sidebar group imported hosts land in.
 const GROUP: &str = "SSH config";
-/// OpenSSH's own limit on nested `Include`s (it stops loops too).
+/// OpenSSH's own limit on nested `Include`s.
 const MAX_DEPTH: usize = 16;
+/// Most included files read in one import (each `Include` of a file counts): a file that
+/// includes itself or its folder several times would otherwise be read exponentially often.
+const MAX_INCLUDES: usize = 256;
 
 impl Source for SshConfig {
     fn id(&self) -> &'static str {
@@ -81,6 +84,12 @@ struct Reader {
     saw_match: bool,
     /// inside a `Match`: its lines are skipped
     in_match: bool,
+    /// the included files being read right now: one met again is a loop, skipped
+    reading: Vec<PathBuf>,
+    /// included files read so far (see [`MAX_INCLUDES`])
+    included: usize,
+    /// some `Include`s were left out: a loop, too deep, or too many
+    skipped_includes: bool,
 }
 
 impl Reader {
@@ -110,15 +119,24 @@ impl Reader {
                     self.in_match = true;
                 }
                 _ if self.in_match => {}
-                "include" if depth < MAX_DEPTH => {
+                "include" if depth >= MAX_DEPTH => self.skipped_includes = true,
+                "include" => {
                     // the included lines belong to the section the Include is in; a Host or Match
                     // in there ends it only until the file is done (as ssh reads it)
                     // no section yet: the global one (an Include on the very first line)
                     let (outer, was_match) = (self.blocks.last().and_then(|b| b.patterns.clone()), self.in_match);
                     for pattern in &args {
                         for file in expand_include(pattern, env) {
-                            if let Some(t) = load(&file) {
+                            let id = std::fs::canonicalize(&file).unwrap_or(file);
+                            if self.reading.contains(&id) || self.included >= MAX_INCLUDES {
+                                self.skipped_includes = true;
+                                continue;
+                            }
+                            if let Some(t) = load(&id) {
+                                self.included += 1;
+                                self.reading.push(id);
                                 self.read(&t, env, load, depth + 1);
+                                self.reading.pop();
                             }
                         }
                     }
@@ -143,6 +161,9 @@ pub fn parse_str(text: &str, env: &Env, load: &dyn Fn(&Path) -> Option<String>) 
     let mut hints = vec![];
     if r.saw_match {
         hints.push("Match blocks aren't read: settings that only apply through Match don't carry over.".to_string());
+    }
+    if r.skipped_includes {
+        hints.push("Some Include lines weren't read: they loop, nest too deep or name too many files.".to_string());
     }
     (sites, hints)
 }
@@ -538,9 +559,37 @@ Host *
     #[test]
     fn includes_that_loop_stop() {
         let files = [("/nonexistent/.ssh/self", "Include self\nHost looped\n")];
-        let (sites, _) = run("Include self\n", &files);
-        // read MAX_DEPTH times, listed once
+        let (sites, hints) = run("Include self\n", &files);
+        // read once (it is on the stack when it names itself), listed once
         assert_eq!(sites.len(), 1);
+        assert!(hints.iter().any(|h| h.contains("Include")), "{hints:?}");
+    }
+
+    /// Several Includes of itself, or files that include each other, don't multiply (B6-3):
+    /// this would be 4^16 reads without the limits.
+    #[test]
+    fn repeated_includes_dont_blow_up() {
+        let me = "Include self\nInclude self\nInclude self\nInclude self\nInclude b\nHost h1\n";
+        let b = "Include self\nInclude b\nInclude self\nHost h2\n";
+        let files = [("/nonexistent/.ssh/self", me), ("/nonexistent/.ssh/b", b)];
+        let reads = std::cell::Cell::new(0usize);
+        let map: HashMap<PathBuf, String> = files.iter().map(|(p, t)| (PathBuf::from(p), t.to_string())).collect();
+        let t = std::time::Instant::now();
+        let (sites, _) = parse_str(me, &env(), &|p| {
+            reads.set(reads.get() + 1);
+            map.get(p).cloned()
+        });
+        assert!(reads.get() <= MAX_INCLUDES, "{}", reads.get());
+        assert!(t.elapsed() < std::time::Duration::from_secs(2));
+        let names: Vec<&str> = sites.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["h2", "h1"]);
+        // many distinct files: at most MAX_INCLUDES are read
+        let many: Vec<(String, String)> = (0..400).map(|i| (format!("/nonexistent/.ssh/f{i}"), format!("Host h{i}\n"))).collect();
+        let text: String = (0..400).map(|i| format!("Include f{i}\n")).collect();
+        let map: HashMap<PathBuf, String> = many.into_iter().map(|(p, t)| (PathBuf::from(p), t)).collect();
+        let (sites, hints) = parse_str(&text, &env(), &|p| map.get(p).cloned());
+        assert_eq!(sites.len(), MAX_INCLUDES);
+        assert!(hints.iter().any(|h| h.contains("too many")));
     }
 
     #[test]
