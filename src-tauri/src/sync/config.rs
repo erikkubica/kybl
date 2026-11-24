@@ -1,6 +1,6 @@
 //! The synced folders the user set up (`sync.json` in the app's config folder).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Runtime};
@@ -125,14 +125,34 @@ pub fn norm_prefix(p: &str) -> String {
     if t.is_empty() { String::new() } else { format!("{t}/") }
 }
 
+/// True when one folder is the other or inside it. Both are compared as the runs will see them
+/// (`sync_root`: links resolved), because two paths that look unrelated can be the same tree
+/// through a link (`~/Dropbox` and `~/Library/CloudStorage/Dropbox/Docs`). A folder that doesn't
+/// exist yet can't be resolved, so it is compared as typed.
 pub fn overlaps(a: &str, b: &str) -> bool {
-    let (a, b) = (Path::new(a), Path::new(b));
-    a.starts_with(b) || b.starts_with(a)
+    let (a, b) = (super::local::sync_root(a), super::local::sync_root(b));
+    a.starts_with(&b) || b.starts_with(&a)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two folders that are nested only through a link still overlap (B4-4).
+    #[cfg(unix)]
+    #[test]
+    fn folders_nested_through_a_link_overlap() {
+        let dir = std::env::temp_dir().join(format!("kybl-overlap-{}", uuid::Uuid::new_v4()));
+        let real = dir.join("real");
+        std::fs::create_dir_all(real.join("docs")).unwrap();
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let (a, b) = (link.to_string_lossy().to_string(), real.join("docs").to_string_lossy().to_string());
+        assert!(overlaps(&a, &b));
+        assert!(overlaps(&b, &a));
+        assert!(!overlaps(&dir.join("other").to_string_lossy(), &a), "a folder that doesn't exist yet");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// A sync folder this version can't read (a direction a newer Kybl added) doesn't empty the
     /// list, and the next save keeps it (B5-4).

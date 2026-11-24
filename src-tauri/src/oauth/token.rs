@@ -49,6 +49,10 @@ struct Inner {
     /// token, when it expires, how long it was good for
     access: Option<(String, Instant, Duration)>,
     stored: Option<Stored>,
+    /// The token the vault still holds after a save of a renewed one failed. The next save names
+    /// it as the one it replaces; named as the unsaved one in memory, the vault would not match
+    /// and every later renewal would be dropped until restart.
+    in_vault: Option<Stored>,
     needs_auth: bool,
 }
 
@@ -206,8 +210,13 @@ impl TokenSource {
             g.stored = Some(next.clone());
             // a failed save keeps this session going on the new token; Microsoft still takes the
             // previous one for a while, so the next launch can refresh again
-            if let Err(e) = self.store.save(&stored, &next).await {
-                eprintln!("kybl: couldn't save the renewed sign-in for a connection: {}", e.message);
+            let replaces = g.in_vault.take().unwrap_or_else(|| stored.clone());
+            match self.store.save(&replaces, &next).await {
+                Ok(()) => {}
+                Err(e) => {
+                    g.in_vault = Some(replaces);
+                    eprintln!("kybl: couldn't save the renewed sign-in for a connection: {}", e.message);
+                }
             }
         }
         Ok(ans.access_token)

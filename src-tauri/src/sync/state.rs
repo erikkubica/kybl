@@ -474,6 +474,9 @@ impl SyncDb {
 
     /// Everything known about a mapping (it was removed, or now points somewhere else).
     pub fn forget(&self, id: &str) -> Result<(), String> {
+        // the blocked pulls are paths of the old places; kept, a quick run of the new ones would
+        // read them as remote files
+        self.blocked.lock().unwrap_or_else(|p| p.into_inner()).remove(id);
         self.with(|c| {
             let tx = c.transaction()?;
             for t in ["base", "tombstones", "cursors", "pending", "conflicts"] {
