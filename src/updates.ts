@@ -76,7 +76,7 @@ export function ago(ms: number | null): string {
  * Install, then restart, unless transfers are running: then `onBusy` is called and the user
  * restarts when ready. Errors land in the status (`error`).
  */
-export async function installAndRestart(onBusy: () => void) {
+export async function installAndRestart(onBusy: (what: "transfers" | "terminal") => void) {
   let st: UpdateStatus;
   try {
     st = await updatesApi.install();
@@ -87,7 +87,8 @@ export async function installAndRestart(onBusy: () => void) {
   try {
     await updatesApi.restart();
   } catch (e) {
-    if (String(e) === "busy") onBusy();
+    if (String(e) === "busy") onBusy("transfers");
+    else if (String(e) === "busy:terminal") onBusy("terminal");
     else throw new UpdateStepError("restart", errText(e));
   }
 }

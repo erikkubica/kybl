@@ -26,6 +26,9 @@ const CLEANING: u8 = 1;
 const LEAVING: u8 = 2;
 /// A prompt is already on screen; a second ⌘Q doesn't stack another.
 static ASKING: AtomicBool = AtomicBool::new(false);
+/// The terminals are being asked whether a program runs in them (a second ⌘Q meanwhile must not
+/// start a second round, or two exits clean up at once).
+static CHECKING: AtomicBool = AtomicBool::new(false);
 
 /// Documents open in the editor with changes not saved yet, as the page last reported.
 static UNSAVED: AtomicUsize = AtomicUsize::new(0);
@@ -175,6 +178,9 @@ fn request_busy(app: &AppHandle) {
         request_busy_with(app, 0);
         return;
     }
+    if CHECKING.swap(true, Ordering::SeqCst) {
+        return;
+    }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let terminals = crate::terminal::busy_sessions().await;
@@ -183,6 +189,7 @@ fn request_busy(app: &AppHandle) {
 }
 
 fn request_busy_with(app: &AppHandle, terminals: usize) {
+    CHECKING.store(false, Ordering::SeqCst);
     // WP-B1: copy/move jobs between connections count as copies (they resume on the next start)
     let (transfers, jobs, drives) = busy_quitting(app);
     if transfers + jobs + drives + terminals == 0 {

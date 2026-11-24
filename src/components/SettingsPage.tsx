@@ -128,11 +128,11 @@ const SHORTCUTS: { label: string; keys: string[] }[] = [
 function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info", text: string) => void }) {
   const st = useUpdates();
   // transfers are running: "Restart now" asks once more before it stops them
-  const [busyAsk, setBusyAsk] = useState(false);
+  const [busyAsk, setBusyAsk] = useState<"transfers" | "terminal" | null>(null);
   // once the transfers end, the next click is a plain restart again (it asks anew if still busy)
   const transfersActive = useTransfersActive();
   useEffect(() => {
-    if (!transfersActive) setBusyAsk(false);
+    if (!transfersActive) setBusyAsk((b) => (b === "transfers" ? null : b));
   }, [transfersActive]);
   if (!st) return null;
   const rel = st.available;
@@ -145,7 +145,9 @@ function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info"
         ? `Installing Kybl ${rel?.version}…`
         : st.phase === "ready"
           ? busyAsk
-            ? "Transfers are still running. Restarting now stops them."
+            ? busyAsk === "terminal"
+              ? "A program is still running in a terminal. Restarting now stops it."
+              : "Transfers are still running. Restarting now stops them."
             : `Kybl ${rel?.version} is installed. Restart to use it.`
           : st.error
             ? st.error
@@ -175,8 +177,9 @@ function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info"
             <button
               className={`btn btn-sm ${busyAsk ? "btn-danger" : "btn-primary"}`}
               onClick={() =>
-                updatesApi.restart(busyAsk).catch((e) => {
-                  if (String(e) === "busy") setBusyAsk(true);
+                updatesApi.restart(!!busyAsk).catch((e) => {
+                  if (String(e) === "busy") setBusyAsk("transfers");
+                  else if (String(e) === "busy:terminal") setBusyAsk("terminal");
                   else onToast("error", String(e));
                 })
               }
@@ -189,7 +192,7 @@ function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info"
               disabled={working}
               onClick={() =>
                 rel.how === "install"
-                  ? installAndRestart(() => setBusyAsk(true)).catch((e) =>
+                  ? installAndRestart(setBusyAsk).catch((e) =>
                       onToast("error", e instanceof UpdateStepError && e.step === "restart" ? `Kybl couldn't restart: ${e.message}` : `The update didn't install: ${errMessage(e)}`),
                     )
                   : updatesApi.install().catch((e) => onToast("error", String(e)))

@@ -42,11 +42,15 @@ codesign -dvv "$APP" 2>&1 | grep -E "Identifier=|Authority|TeamIdentifier"
 
 if [ "${1:-}" = "--install" ]; then
   # only the installed app counts: other Kybl bundles on this machine (the one just built, a
-  # worktree's) are not ours to touch
+  # worktree's) are not ours to touch. A Kybl still running from a bundle an earlier install
+  # moved aside (/Applications/.Kybl.app.old*) is the installed app too, and ps comm shows the
+  # real path it runs from
   installed_running() {
     local pid
     for pid in $(pgrep -x kybl 2>/dev/null); do
-      case "$(ps -o comm= -p "$pid" 2>/dev/null)" in /Applications/Kybl.app/Contents/MacOS/kybl) return 0 ;; esac
+      case "$(ps -o comm= -p "$pid" 2>/dev/null)" in
+        /Applications/Kybl*.app/Contents/MacOS/kybl | /Applications/.Kybl.app.old*/Contents/MacOS/kybl) return 0 ;;
+      esac
     done
     return 1
   }

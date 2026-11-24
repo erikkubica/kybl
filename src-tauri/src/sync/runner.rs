@@ -455,7 +455,9 @@ impl Engine<'_> {
     /// Deletes (or moves to the remote trash) the given paths on the other side. Answers the
     /// paths that are gone. With `base` (a two-way run), a file is deleted only if it is still
     /// what was synced: another device may have changed it since the plan saw it (a quick run
-    /// never lists the remote), and that change wins and is pulled next run.
+    /// never lists the remote), and that change wins and is pulled next run. A run that listed
+    /// the remote passes no `base`: its plan was made from that fresh listing, and a stat per file
+    /// would cost thousands of requests (an FTP LIST each) on a big folder.
     async fn delete_remote(&self, items: &[(String, String)], base: Option<&HashMap<String, BaseEntry>>, errors: &mut Vec<String>) -> Vec<String> {
         let mut gone = Vec::new();
         if items.is_empty() || self.cancelled() {
@@ -466,13 +468,17 @@ impl Engine<'_> {
             Some(base) => {
                 let md5 = self.md5();
                 let mut keep = Vec::new();
-                for (rel, key) in items {
-                    match self.remote.stat(&self.root, key).await {
-                        // already gone
-                        Ok(None) => gone.push(rel.clone()),
-                        Ok(Some(e)) if base.get(rel).is_some_and(|b| b.remote_matches(&remote::remote_meta(&e, md5))) => keep.push((rel.clone(), key.clone())),
-                        Ok(Some(_)) => {}
-                        Err(e) => errors.push(format!("{rel}: {}", e.message)),
+                // a few at a time: a folder of thousands shouldn't wait on one answer after another
+                for chunk in items.chunks(8) {
+                    let answers = futures_util::future::join_all(chunk.iter().map(|(_, key)| self.remote.stat(&self.root, key))).await;
+                    for ((rel, key), st) in chunk.iter().zip(answers) {
+                        match st {
+                            // already gone
+                            Ok(None) => gone.push(rel.clone()),
+                            Ok(Some(e)) if base.get(rel).is_some_and(|b| b.remote_matches(&remote::remote_meta(&e, md5))) => keep.push((rel.clone(), key.clone())),
+                            Ok(Some(_)) => {}
+                            Err(e) => errors.push(format!("{rel}: {}", e.message)),
+                        }
                     }
                 }
                 unchanged = keep;
@@ -1014,7 +1020,7 @@ impl Engine<'_> {
                     self.db.put_tombstone(&self.id, p, Side::Remote, b, now)?;
                 }
             }
-            let gone = self.delete_remote(&del_remote, Some(&base), &mut errors).await;
+            let gone = self.delete_remote(&del_remote, (!listed).then_some(&base), &mut errors).await;
             let failed: Vec<(String, Side)> = del_remote.iter().filter(|(p, _)| !gone.contains(p)).map(|(p, _)| (p.clone(), Side::Remote)).collect();
             // a file changed there since the plan is kept, without an error
             left_alone |= !failed.is_empty();

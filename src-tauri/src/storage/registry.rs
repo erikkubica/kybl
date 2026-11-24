@@ -5,10 +5,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, LazyLock, Mutex,
-    },
+    sync::{Arc, LazyLock, Mutex},
 };
 
 use tauri::{AppHandle, Runtime};
@@ -21,9 +18,15 @@ pub const LOCAL_ID: &str = "local";
 
 static OPEN: LazyLock<Mutex<HashMap<String, Arc<dyn Storage>>>> = LazyLock::new(Default::default);
 
-/// Bumped by every [`forget`]: an open that read the settings before one must not keep what it
-/// built from them (a save, a delete or "Try again" came in between).
-static FORGOTTEN: AtomicU64 = AtomicU64::new(0);
+/// Bumped by every [`forget`] of that connection: an open that read its settings before one must
+/// not keep what it built from them (a save, a delete or "Try again" came in between). Per
+/// connection, so forgetting one never makes another's open (an archive download, an OAuth
+/// build) throw its work away.
+static FORGOTTEN: LazyLock<Mutex<HashMap<String, u64>>> = LazyLock::new(Default::default);
+
+fn generation(profile_id: &str) -> u64 {
+    FORGOTTEN.lock().unwrap().get(profile_id).copied().unwrap_or(0)
+}
 
 /// The backend of a connection, opened once and then reused.
 pub async fn open<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id: &str) -> Result<Arc<dyn Storage>, String> {
@@ -39,7 +42,7 @@ async fn open_once<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id:
     if let Some(s) = OPEN.lock().unwrap().get(profile_id) {
         return Ok(Some(s.clone()));
     }
-    let before = FORGOTTEN.load(Ordering::SeqCst);
+    let before = generation(profile_id);
     let (s, profile): (Arc<dyn Storage>, Option<Profile>) = if profile_id == LOCAL_ID {
         (Arc::new(LocalBackend::system(app).await?), None)
     } else if profile_id.starts_with(crate::archive::PREFIX) {
@@ -59,7 +62,7 @@ async fn open_once<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id:
         if let Some(first) = open.get(profile_id) {
             return Ok(Some(first.clone()));
         }
-        if FORGOTTEN.load(Ordering::SeqCst) != before {
+        if generation(profile_id) != before {
             return Ok(None);
         }
         open.insert(profile_id.to_string(), s.clone());
@@ -207,6 +210,6 @@ pub async fn open_sftp<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile
 /// Drops the open backend of a connection (saved with new settings, or deleted).
 pub fn forget(profile_id: &str) {
     let mut open = OPEN.lock().unwrap();
-    FORGOTTEN.fetch_add(1, Ordering::SeqCst);
+    *FORGOTTEN.lock().unwrap().entry(profile_id.to_string()).or_default() += 1;
     open.remove(profile_id);
 }

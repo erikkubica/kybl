@@ -1187,6 +1187,9 @@ async fn spawn_transfer(
             check_stopped,
             check_pending: state == "paused" && check_pending,
         };
+        // the id is free before the last event goes out: a Resume or Retry answering that event
+        // (an automatic one, a notification action) must not be refused as "already running"
+        app.state::<AppState>().cancels.lock().await.remove(&id);
         let _ = app.emit(
             "transfer",
             match result {
@@ -1196,7 +1199,6 @@ async fn spawn_transfer(
                 Err(e) => ev("error", 0, 0, Some(e)),
             },
         );
-        app.state::<AppState>().cancels.lock().await.remove(&id);
     });
     Ok(())
 }
