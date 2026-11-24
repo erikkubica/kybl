@@ -79,7 +79,7 @@ export type TermImpl = {
   type: (sid: string, text: string) => boolean;
   /** the shell sits at its prompt with nothing typed (see session.ts) */
   idle: (sid: string) => Promise<boolean>;
-  /** a program runs in the foreground (This Mac); null when that can't be told */
+  /** closing it would end a program: This Mac's foreground program, a server's shell away from its prompt; null when unknown */
   busy: (sid: string) => Promise<boolean | null>;
 };
 export type TermAction = "clear" | "restart" | "copy" | "paste" | "font+" | "font-" | "font0";

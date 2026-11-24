@@ -14,6 +14,7 @@ import { tidyMenu } from "../desktop/menus";
 import { menuFromKey } from "../desktop/menuKeyWatch";
 import { onTrustSaved, trustOnProfile } from "../connections/ConnFix";
 import { splitDavUrl } from "../connections/serverHost";
+import { flushSync } from "react-dom";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { REMOTE_TERM_DROP, useTerminalPanes } from "../terminal/useTerminalPanes";
 import { canTerminal, terminalBusy } from "../terminal/api";
@@ -665,6 +666,15 @@ export function AppShell() {
     conns.dropProfile(id);
     for (const p of allPanes.current) p.forgetProfile(id);
     term.forget(id);
+    // and its terminals in the other workspaces: gone from them, so their shells end (gc)
+    setWs((cur) => ({
+      ...cur,
+      list: cur.list.map((w) =>
+        w.id === cur.active || !Object.values(w.panes).some((x) => x?.term?.profileId === id)
+          ? w
+          : { ...w, panes: Object.fromEntries(Object.entries(w.panes).map(([k, x]) => [k, x?.term?.profileId === id ? { ...x, term: undefined } : x])) },
+      ),
+    }));
   };
 
   // initial load
@@ -1087,10 +1097,12 @@ export function AppShell() {
     p.ent.setQuery("");
     p.applyView(s?.view ?? DEFAULT_VIEW);
     opened.current.add(id);
-    term.assign(id, s?.term);
-    const at = s?.loc ?? (empty ? null : fallback);
+    // a terminal on a connection that no longer exists comes back as an empty file pane
+    const t = s?.term && (s.term.profileId === LOCAL_PROFILE || profiles.some((x) => x.id === s.term!.profileId)) ? s.term : undefined;
+    term.assign(id, t);
+    const at = s?.loc ?? (empty || (s?.term && !t) ? null : fallback);
     const prof = at ? profiles.find((x) => x.id === at.profileId) : null;
-    if (s?.term) {
+    if (t) {
       // a terminal pane: its slot shows no files
       p.showConnection(null);
       p.history.load(null, null);
@@ -2555,9 +2567,10 @@ export function AppShell() {
           onSaved={(p) => {
             forgetCaps(p.id);
             clearAuthNeeded(p.id);
-            conns.upsertProfile(p);
-            // an SSH connection opens as its terminal (once the saved profile is in the list)
-            if (isShellConn(p)) requestAnimationFrame(() => openShell(p));
+            // rendered at once: an SSH connection opens as its terminal, which looks the new
+            // profile up in the list
+            flushSync(() => conns.upsertProfile(p));
+            if (isShellConn(p)) openShell(p);
             else openHere((pane) => void connectIn(pane.id, p));
           }}
           onDeleted={forgetProfile}

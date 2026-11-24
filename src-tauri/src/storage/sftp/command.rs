@@ -97,8 +97,10 @@ fn read_probe(out: &str, exited: bool, quiet_ok: bool) -> Option<Shell> {
     }
     match lines.last() {
         Some(_) if exited => Some(Shell::Other),
-        // it ended without a word: what ran was no shell (any shell prints the echo)
-        None if exited && quiet_ok && out.trim().is_empty() => Some(Shell::FilesOnly),
+        // ended without a word on stdout: what ran was no shell (any shell prints the echo). A
+        // clean exit is an SFTP server (no shell at all); a complaint or a failure is a wrapper that
+        // wants a terminal (rssh, a tmux ForceCommand): no commands, but a terminal may still open
+        None if exited && out.trim().is_empty() => Some(if quiet_ok { Shell::FilesOnly } else { Shell::Other }),
         _ => None,
     }
 }
@@ -461,8 +463,8 @@ mod tests {
         // an account for file transfers only: the SFTP server ran, said nothing and ended
         assert_eq!(read_probe("", true, true), Some(Shell::FilesOnly));
         // a wrapper that ran something needing a terminal: it complained on stderr or failed, so
-        // it isn't taken for an account without a shell (asked again)
-        assert_eq!(read_probe("", true, false), None);
+        // it isn't taken for an account without a shell (no commands, the terminal may open)
+        assert_eq!(read_probe("", true, false), Some(Shell::Other));
         assert_eq!(read_probe("This service allows sftp connections only.\r\n", true, true), Some(Shell::FilesOnly));
         // nothing because the connection dropped: asked again
         assert_eq!(read_probe("", false, true), None);

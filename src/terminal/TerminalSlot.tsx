@@ -98,7 +98,7 @@ export function TerminalSlot(p: TerminalSlotProps) {
               p.onSwitch(r.left, r.bottom + 4);
             }}
             title={`${p.connName} · switch connection`}
-            aria-label="Switch connection"
+            aria-label={`${p.connName}, switch connection`}
             aria-haspopup="menu"
           >
             <span className="pbadge term-badge" aria-hidden>

@@ -296,6 +296,15 @@ class Session {
   }
 
   /**
+   * Whether closing it would end a program: This Mac asks the terminal; a server can't say, so
+   * a shell that isn't waiting at its prompt counts as busy (an `apt upgrade`, a `vim`).
+   */
+  async ending(): Promise<boolean | null> {
+    if (this.remoteBase == null) return this.busy();
+    return this.state === "running" && !(await this.idle());
+  }
+
+  /**
    * Whether the shell waits at its prompt with nothing typed: the screen isn't a full-screen
    * program's, the line up to the cursor ends in a prompt ("$ ", "% ", "# ", and on This Mac,
    * where the terminal also says no program runs, "> " and "❯ "), nothing was typed a moment
@@ -456,5 +465,5 @@ setTermImpl({
   remoteBase: (sid) => sessions.get(sid)?.remoteBase,
   type: (sid, text) => sessions.get(sid)?.type(text) ?? false,
   idle: async (sid) => (await sessions.get(sid)?.idle()) ?? false,
-  busy: async (sid) => (sessions.get(sid) ? sessions.get(sid)!.busy() : null),
+  busy: async (sid) => (sessions.get(sid) ? sessions.get(sid)!.ending() : null),
 });

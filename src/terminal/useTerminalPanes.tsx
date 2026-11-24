@@ -242,7 +242,7 @@ export function useTerminalPanes(initial: Layout) {
       if (back) {
         h.setActive(back);
         h.focus(back);
-      }
+      } else showFiles(h.activeId); // no file pane on screen (a pane that became a terminal): its files above
       return;
     }
     openFor(h.activeId);
@@ -326,7 +326,7 @@ export function useTerminalPanes(initial: Layout) {
     const at = { profileId, bucket: "", prefix: "" };
     // a file pane becomes the terminal, as it would show another connection's files (its files
     // are a click away: Folders); a terminal stays, with this one below it
-    if (ts[h.activeId] || !canTerminal(profileOf(profileId))) return open(h.activeId, at);
+    if (another || ts[h.activeId] || !canTerminal(profileOf(profileId))) return open(h.activeId, at);
     return shellIn(h.activeId, profileId);
   };
 
@@ -334,13 +334,25 @@ export function useTerminalPanes(initial: Layout) {
   const shellIn = (id: PaneId, profileId: string): PaneId => {
     const sid = newSid();
     focusWhenShown(sid);
-    host.current?.slot(id).showConnection(null);
-    assign(id, { profileId, bucket: "", prefix: "", sid });
+    // its file side is put away as a workspace's terminal pane has it: no Back / Forward behind it
+    const p = host.current?.slot(id);
+    p?.closeQuick();
+    p?.ent.setQuery("");
+    p?.showConnection(null);
+    p?.history.load(null, null);
+    setTerms((cur) => {
+      const next = { ...cur, [id]: { profileId, bucket: "", prefix: "", sid } };
+      // a terminal that followed this pane has nothing to follow now
+      for (const [k, t] of Object.entries(next)) if (t && k !== id && t.from === id && t.follow) next[k as PaneId] = { ...t, follow: false };
+      return next;
+    });
     return id;
   };
 
   /** The connection badge in a terminal's header: pane `id` gets a new shell on `profileId` (this computer: in the home folder). */
   const switchTo = async (id: PaneId, profileId: string) => {
+    // the terminal it replaces: another pick or a workspace switch meanwhile wins over this one
+    const was = termsRef.current[id]?.sid;
     let at: Loc = { profileId, bucket: "", prefix: "" };
     if (profileId === LOCAL_PROFILE) {
       const home = (await api.listRoots(LOCAL_PROFILE).catch(() => []))[0]?.id;
@@ -350,7 +362,7 @@ export function useTerminalPanes(initial: Layout) {
       }
       at = { profileId, bucket: home, prefix: "" };
     }
-    if (!termsRef.current[id]) return; // closed meanwhile
+    if (!was || termsRef.current[id]?.sid !== was) return; // closed, switched again or another workspace meanwhile
     const sid = newSid();
     focusWhenShown(sid);
     assign(id, { ...at, sid });
