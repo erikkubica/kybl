@@ -1294,6 +1294,11 @@ async fn copy_many<R: tauri::Runtime>(
             if same_bucket && it.to.starts_with(&it.from) {
                 return Err("Cannot copy a folder into itself".into());
             }
+            // onto a folder it is inside (`a/b/b/` to `a/b/`): its copies would land on its own
+            // files, and a move would then delete them
+            if same_bucket && it.from.starts_with(&it.to) {
+                return Err("Can't copy a folder over a folder it is inside".into());
+            }
             for o in list_all(client, bucket, &it.from).await? {
                 let rest = o.key[it.from.len()..].to_string();
                 jobs.push((o.key.clone(), format!("{}{rest}", it.to), o.size));

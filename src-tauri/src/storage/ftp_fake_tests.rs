@@ -32,6 +32,10 @@ struct Fs {
     /// listings running right now, and the most there were at once
     listing_now: usize,
     listing_peak: usize,
+    /// the next SIZE is answered only after this long
+    slow_next_size: Option<std::time::Duration>,
+    /// SIZE of a dot name answered 550, as if it weren't there (pure-ftpd without dot reads)
+    size_denies_dots: bool,
 }
 
 type Shared = Arc<StdMutex<Fs>>;
@@ -148,7 +152,12 @@ async fn session(sock: tokio::net::TcpStream, fs: Shared) {
                 if verb == "PASV" { format!("227 Entering Passive Mode (127,0,0,1,{},{})\r\n", p >> 8, p & 0xff) } else { format!("229 Entering Extended Passive Mode (|||{p}|)\r\n") }
             }
             "SIZE" if fs.lock().unwrap().no_size => "502 SIZE not implemented\r\n".into(),
+            "SIZE" if fs.lock().unwrap().size_denies_dots && path.rsplit('/').next().is_some_and(|n| n.starts_with('.')) => "550 Permission denied\r\n".into(),
             "SIZE" => {
+                let slow = fs.lock().unwrap().slow_next_size.take();
+                if let Some(d) = slow {
+                    tokio::time::sleep(d).await;
+                }
                 let g = fs.lock().unwrap();
                 match g.files.get(&g.resolve(&path)).map(Vec::len) {
                     Some(n) => format!("213 {n}\r\n"),
@@ -532,5 +541,63 @@ fn a_tree_is_listed_several_folders_at_once() {
         assert_eq!(seen.iter().filter(|k| k.ends_with('/')).count(), 16);
         let peak = fs.lock().unwrap().listing_peak;
         assert!(peak >= 2, "folders were listed one at a time (peak {peak})");
+    });
+}
+
+/// A command whose future is dropped before its answer came (Pause, Cancel, a time limit) leaves
+/// its connection out of step: it is closed, never handed to the next command, which would read
+/// the old answer as its own.
+#[test]
+fn a_connection_dropped_mid_command_is_not_reused() {
+    let fs = fs_with(|f| {
+        f.files.insert("/base/a.txt".into(), b"hello".to_vec());
+    });
+    run(async {
+        let body = async {
+            let b = backend(&fs).await;
+            // signed in and back in the pool, so the time limit below falls on SIZE itself
+            b.list("", "", None).await.unwrap();
+            assert_eq!(fs.lock().unwrap().logins, 1);
+            fs.lock().unwrap().slow_next_size = Some(Duration::from_millis(1500));
+            let r = tokio::time::timeout(Duration::from_millis(500), b.read("", "a.txt", None, None)).await;
+            assert!(r.is_err(), "stopped while SIZE waits for its answer");
+            let armed = fs.lock().unwrap().slow_next_size;
+            assert!(armed.is_none(), "SIZE was sent on the pooled connection");
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            // the late "213 5" must not be taken as the answer to anything that follows
+            let page = b.list("", "", None).await.unwrap();
+            assert_eq!(page.objects.iter().map(|f| f.key.as_str()).collect::<Vec<_>>(), vec!["a.txt"]);
+            let r = b.read("", "a.txt", None, None).await.unwrap();
+            let mut body = r.body;
+            let mut got = Vec::new();
+            while let Some(c) = body.next().await {
+                got.extend_from_slice(&c.unwrap());
+            }
+            assert_eq!(got, b"hello");
+            let logins = fs.lock().unwrap().logins;
+            assert_eq!(logins, 2, "the dropped one was replaced, not reused");
+        };
+        // never hangs the test run, whatever goes wrong
+        tokio::time::timeout(Duration::from_secs(30), body).await.expect("finished in time");
+    });
+}
+
+/// A server that answers SIZE 550 for dot names ("permission denied") and won't rename over a
+/// file: a new file of the same size as the old one really replaces it, and is never reported
+/// done with the old content still there.
+#[test]
+fn a_same_size_upload_is_never_passed_off_by_a_denied_size() {
+    let fs = fs_with(|f| {
+        f.files.insert("/base/conf.ini".into(), b"old-old".to_vec());
+        f.no_replace = true;
+        f.size_denies_dots = true;
+    });
+    run(async {
+        let b = backend(&fs).await;
+        let r = tokio::time::timeout(Duration::from_secs(30), upload_bytes(&b, "conf.ini", b"new-new", None, false)).await.expect("finished in time");
+        assert!(matches!(r, Ok(WriteOutcome::Done(_))), "{:?}", r.err());
+        let g = fs.lock().unwrap();
+        assert_eq!(g.files.get("/base/conf.ini").map(Vec::as_slice), Some(&b"new-new"[..]));
+        assert_eq!(g.files.len(), 1, "{:?}", g.files.keys().collect::<Vec<_>>());
     });
 }

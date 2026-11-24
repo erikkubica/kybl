@@ -360,6 +360,11 @@ pub(crate) async fn move_with<R: Runtime>(
         if it.is_prefix && same_root && it.to.starts_with(&it.from) {
             return Err("Cannot copy a folder into itself".into());
         }
+        // onto a folder it is inside (`a/b/b/` to `a/b/`): its copies would land on its own
+        // files, and a move would then delete them
+        if it.is_prefix && same_root && it.from.starts_with(&it.to) {
+            return Err("Can't copy a folder over a folder it is inside".into());
+        }
     }
     let total = items.len() as u64;
     let mut done = 0u64;
@@ -540,6 +545,8 @@ pub(crate) async fn download(
     progress: Progress<'_>,
     hold: crate::transfers::Hold<'_>,
 ) -> Result<Outcome, String> {
+    // held like any download's name: never two writers on one file (sync runs several at once)
+    let _held = dest::hold_exact(dest)?;
     let mut dl = Dl { replace: true, ..Default::default() };
     download_resumable(s, bucket, key, dest, None, false, cancel, progress, hold, &mut dl).await
 }
@@ -719,23 +726,28 @@ pub(crate) async fn download_resumable(
     }
     .await;
     let _ = file.flush().await;
-    drop(file);
+    // still held while it is renamed into place, so no other download takes it for a leftover
+    let held = file.into_std().await;
     let paused = dl.pause.is_some_and(|p| p.load(Ordering::Relaxed));
     match result {
         Ok(true) => {
-            dl.finish(&part, dest).map_err(|e| e.to_string())?;
+            let r = dl.finish(&part, dest);
+            drop(held);
+            r.map_err(|e| e.to_string())?;
             crate::leftovers::partial_ended(&part);
             Ok(Outcome::Done)
         }
         // paused: what arrived stays, to carry on from
         Ok(false) if paused && can_resume => Err(crate::multipart::PAUSED.into()),
         Ok(false) => {
-            let _ = tokio::fs::remove_file(&part).await;
+            drop(held);
+            dest::remove_part(&part);
             Ok(Outcome::Cancelled)
         }
         Err(e) => {
+            drop(held);
             if !(keep_partial && can_resume) {
-                let _ = tokio::fs::remove_file(&part).await;
+                dest::remove_part(&part);
             }
             Err(e.into())
         }

@@ -40,15 +40,19 @@ fn on_stop(cleanup: &str) -> String {
 /// The script that zips `names` (in folder `dir`) into `dest` there, via a temporary name. One
 /// line: csh would read a line break inside the quotes as the end of the command.
 pub fn compress_script(dir: &str, names: &[String], dest: &str) -> String {
-    let tmp = format!(".{dest}.kybl-{}.part", tag());
+    // cut to the name limit (".", ".kybl-", the tag and ".part" around it)
+    let tmp = format!(".{}.kybl-{}.part", crate::storage::net::fit_name(dest, 1 + 6 + 8 + 5), tag());
     let list = names.iter().map(|n| q(n)).collect::<Vec<_>>().join(" ");
     format!(
-        "command -v zip >/dev/null 2>&1 || exit {NO_TOOL}; cd {d} || exit 1; T={t}; {stop}; {zip} || {{ rm -f \"$T\"; exit 1; }}; if [ -d {f} ]; then rm -f \"$T\"; echo \"A folder has that name.\" >&2; exit 1; fi; mv -f \"$T\" {f}",
+        "command -v zip >/dev/null 2>&1 || exit {NO_TOOL}; cd {d} || exit 1; T={t}; {stop}; {zip} || {{ rm -f \"$T\"; exit 1; }}; if [ -d {f} ]; then rm -f \"$T\"; echo \"A folder has that name.\" >&2; exit 1; fi; {gone}; if ln \"$T\" {f} 2>/dev/null; then rm -f \"$T\"; else {gone}; mv \"$T\" {f}; fi",
         d = q(dir),
         t = q(&tmp),
         f = q(dest),
         stop = on_stop("rm -f \"$T\""),
         zip = waited(&format!("zip -q -r -y \"$T\" -- {list}")),
+        // never over a file that turned up while it packed: a hard link refuses a name that is
+        // there; a disk without hard links gets a look first
+        gone = format!("if [ -e {f} ] || [ -L {f} ]; then rm -f \"$T\"; echo \"A file has that name.\" >&2; exit 1; fi", f = q(dest)),
     )
 }
 

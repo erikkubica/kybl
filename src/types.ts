@@ -207,7 +207,7 @@ export type TransferEvent = {
   /** it had got somewhere before but had to start over */
   restarted?: boolean;
   verified?: string;
-  /** the download landed under this name instead: a file turned up at its own while it ran */
+  /** a download as it ends: the path it really is at ("x (1).jpg" when given a free name) */
   local?: string;
   /** done, but Cancel stopped its check */
   checkStopped?: boolean;
@@ -215,4 +215,6 @@ export type TransferEvent = {
   checkPending?: boolean;
   /** what a running task is doing now ("Finding files… 312 found"), compress and extract */
   phase?: string;
+  /** it moved to `local` because a file turned up at its own name while it ran */
+  moved?: boolean;
 };

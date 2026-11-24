@@ -284,7 +284,7 @@ fn remove_partial(part: &Path) {
     };
     let gone = dest::unless_in_use(&target, || {
         if std::fs::symlink_metadata(part).is_ok_and(|m| m.is_file()) {
-            let _ = std::fs::remove_file(part);
+            dest::remove_part(part);
         }
     });
     if gone {
