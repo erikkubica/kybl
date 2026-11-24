@@ -229,6 +229,7 @@ pub fn run() {
             commands::move_many,
             commands::expand_paths,
             commands::list_all_under,
+            commands::stream_files_under,
             objects::existing_keys,
             objects::update_object_props,
             objects::get_object_tags,

@@ -944,6 +944,56 @@ pub fn walk_by_listing<'a, S: Storage + ?Sized>(s: &'a S, root: &'a str, dir: &'
     }))
 }
 
+/// [`walk_by_listing`] with up to `n` folders listed at once, for servers where every listing
+/// is a round trip of its own (FTP: a data connection per folder). Batches come as listings
+/// finish, so not in name order; a folder's own entry still comes before anything inside it.
+pub fn walk_parallel<'a, S: Storage + ?Sized>(s: &'a S, root: &'a str, dir: &'a str, n: usize) -> BoxStream<'a, SResult<Vec<Entry>>> {
+    use futures_util::{stream::FuturesUnordered, StreamExt};
+    type Listed<'a> = BoxFuture<'a, (String, SResult<Page>)>;
+    struct St<'a> {
+        // what is left to list (a stack: one part of the tree is finished before the next)
+        todo: Vec<(String, Option<String>)>,
+        running: FuturesUnordered<Listed<'a>>,
+        failed: bool,
+    }
+    let start = St { todo: vec![(dir.to_string(), None)], running: FuturesUnordered::new(), failed: false };
+    Box::pin(futures_util::stream::unfold(start, move |mut st| async move {
+        if st.failed {
+            return None;
+        }
+        while st.running.len() < n.max(1) {
+            let Some((d, token)) = st.todo.pop() else { break };
+            st.running.push(Box::pin(async move {
+                let r = s.list(root, &d, token).await;
+                (d, r)
+            }));
+        }
+        let (d, r) = st.running.next().await?;
+        match r {
+            Ok(mut page) => {
+                if let Some(next) = page.next_token.take() {
+                    st.todo.push((d, Some(next)));
+                }
+                let mut batch: Vec<Entry> = page
+                    .folders
+                    .iter()
+                    .map(|f| {
+                        let link = page.folder_info.iter().find(|e| e.key == *f && e.link.is_some());
+                        link.cloned().unwrap_or_else(|| Entry { key: f.clone(), ..Default::default() })
+                    })
+                    .collect();
+                st.todo.extend(page.folders.iter().rev().filter(|f| page.folder_link(f).is_none()).map(|f| (f.clone(), None)));
+                batch.extend(page.objects);
+                Some((Ok(batch), st))
+            }
+            Err(e) => {
+                st.failed = true;
+                Some((Err(e), st))
+            }
+        }
+    }))
+}
+
 // ---------------------------------------------------------------- dispatch
 
 /// What a command works with: the S3 client (the existing code path, unchanged) or another

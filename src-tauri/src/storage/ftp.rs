@@ -927,6 +927,12 @@ impl Storage for FtpBackend {
         Ok(vec![root_info(self.name.clone())])
     }
 
+    /// Each folder is its own round trip (a data connection, on FTPS with its own TLS handshake):
+    /// several are listed at once, leaving a connection for the transfers already running.
+    fn walk<'a>(&'a self, root: &'a str, dir: &'a str) -> BoxStream<'a, SResult<Vec<Entry>>> {
+        super::walk_parallel(self, root, dir, MAX_CONNS - 1)
+    }
+
     async fn list(&self, _root: &str, dir: &str, token: Option<String>) -> SResult<Page> {
         let prefix = dir_prefix(dir);
         let path = self.path(&prefix).await?;

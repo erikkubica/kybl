@@ -1500,6 +1500,76 @@ pub async fn list_all_under(
         .collect())
 }
 
+/// [`list_all_under`] as the files are found: each batch goes to `on_batch` while the walk goes
+/// on, so a folder download starts with the first files instead of after the whole tree was
+/// listed (thousands of folders on an FTP server take minutes). `op_id` stops it
+/// (`cancel_transfer`); answers the number of files sent.
+#[tauri::command]
+pub async fn stream_files_under(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+    bucket: String,
+    prefix: String,
+    op_id: String,
+    on_batch: tauri::ipc::Channel<Vec<RemoteFile>>,
+) -> Result<u64, String> {
+    let flag = Arc::new(AtomicBool::new(false));
+    state.cancels.lock().await.insert(op_id.clone(), flag.clone());
+    let r = stream_files(&app, &state, &profile_id, &bucket, &prefix, &flag, &|batch| on_batch.send(batch).map_err(|e| e.to_string())).await;
+    state.cancels.lock().await.remove(&op_id);
+    r
+}
+
+async fn stream_files(
+    app: &AppHandle,
+    state: &AppState,
+    profile_id: &str,
+    bucket: &str,
+    prefix: &str,
+    cancel: &AtomicBool,
+    send: &(dyn Fn(Vec<RemoteFile>) -> Result<(), String> + Send + Sync),
+) -> Result<u64, String> {
+    let stopped = || cancel.load(Ordering::Relaxed);
+    let mut sent = 0u64;
+    match storage::connect(app, state, profile_id).await? {
+        Conn::S3(client) => {
+            let mut token: Option<String> = None;
+            loop {
+                if stopped() {
+                    return Err(storage::StorageError::cancelled().into());
+                }
+                let out = client.list_objects_v2().bucket(bucket).prefix(prefix).set_continuation_token(token.take()).send().await.map_err(sdk_err)?;
+                let batch: Vec<RemoteFile> = out.contents().iter().map(obj_info).filter(|o| !o.key.ends_with('/')).map(|o| RemoteFile { key: o.key, size: o.size }).collect();
+                sent += batch.len() as u64;
+                if !batch.is_empty() {
+                    send(batch)?;
+                }
+                token = out.next_continuation_token().map(str::to_string).filter(|_| out.is_truncated().unwrap_or(false));
+                if token.is_none() {
+                    break;
+                }
+            }
+        }
+        Conn::Other(s) => {
+            use futures_util::StreamExt;
+            let mut walk = s.walk(bucket, prefix);
+            while let Some(batch) = walk.next().await {
+                if stopped() {
+                    return Err(storage::StorageError::cancelled().into());
+                }
+                let files: Vec<RemoteFile> =
+                    batch?.into_iter().filter(|e| !e.is_dir() && !crate::local_links::skip_listed_link(s.caps(), e)).map(|e| RemoteFile { key: e.key, size: e.size }).collect();
+                sent += files.len() as u64;
+                if !files.is_empty() {
+                    send(files)?;
+                }
+            }
+        }
+    }
+    Ok(sent)
+}
+
 /// Runs against a throwaway S3 server; see the sync tests for how to start one.
 #[cfg(test)]
 mod tests {
