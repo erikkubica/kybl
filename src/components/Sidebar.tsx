@@ -332,6 +332,7 @@ export function Sidebar({
   onOpenSettings,
   syncState,
   onOpenSync,
+  onTerminal,
   onSelectBucket,
   onOpenBucketByName,
   onNewBucket,
@@ -380,6 +381,8 @@ export function Sidebar({
   onOpenSettings: () => void;
   syncState: SyncState | null;
   onOpenSync: () => void;
+  /** a terminal on this computer, from wherever you are (none where terminals can't run) */
+  onTerminal?: () => void;
   onSelectBucket: (p: Profile, b: string) => void;
   onOpenBucketByName: (p: Profile) => void;
   /** Kybl Storage only: make a bucket in the account */
@@ -812,6 +815,11 @@ export function Sidebar({
           <Icon name="plus" size={15} />
           <span className="side-label">New connection</span>
         </button>
+        {onTerminal && (
+          <button className="icon-btn" onClick={onTerminal} title={keys("Terminal on this computer (⌘J)")} aria-label="Terminal on this computer">
+            <Icon name="terminal" size={15} />
+          </button>
+        )}
         <button
           className={`icon-btn sync-ind ${syncState ?? "none"}`}
           onClick={onOpenSync}
@@ -1103,6 +1111,7 @@ export function SidebarRail({
   onOpenFavorite,
   onNewProfile,
   onOpenSync,
+  onTerminal,
   onOpenSettings,
   onConnectionMenu,
   onHover,
@@ -1128,6 +1137,8 @@ export function SidebarRail({
   onOpenFavorite?(f: Favorite): void;
   onNewProfile: () => void;
   onOpenSync: () => void;
+  /** a terminal on this computer, from wherever you are (none where terminals can't run) */
+  onTerminal?: () => void;
   onOpenSettings: () => void;
   onConnectionMenu?(p: Profile, x: number, y: number): void;
   /** the pointer rests on (or leaves) an icon: the whole sidebar comes in over the panes */
@@ -1227,6 +1238,11 @@ export function SidebarRail({
         <button type="button" className="icon-btn" onClick={onNewProfile} title="New connection" aria-label="New connection">
           <Icon name="plus" size={16} />
         </button>
+        {onTerminal && (
+          <button type="button" className="icon-btn" onClick={onTerminal} title={keys("Terminal on this computer (⌘J)")} aria-label="Terminal on this computer">
+            <Icon name="terminal" size={15} />
+          </button>
+        )}
         <button
           type="button"
           className={`icon-btn sync-ind ${syncState ?? "none"}`}

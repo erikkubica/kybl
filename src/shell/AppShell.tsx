@@ -14,7 +14,8 @@ import { menuFromKey } from "../desktop/menuKeyWatch";
 import { onTrustSaved, trustOnProfile } from "../connections/ConnFix";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { REMOTE_TERM_DROP, useTerminalPanes } from "../terminal/useTerminalPanes";
-import { terminalBusy } from "../terminal/api";
+import { canTerminal, terminalBusy } from "../terminal/api";
+import { LOCAL_PROFILE } from "../browser/types";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage, errSummary } from "../api";
@@ -2226,6 +2227,7 @@ export function AppShell() {
           onPick={(p, x, y) => void railPick(p, x, y)}
           onOpenFavorite={openFavorite}
           onNewProfile={() => setConnDialog({ profile: null })}
+          onTerminal={canTerminal({ id: LOCAL_PROFILE, kind: "local" }) ? () => void term.openLocal() : undefined}
           onOpenSync={() => openSettings("sync")}
           onOpenSettings={() => openSettings()}
           onConnectionMenu={connectionMenu}
@@ -2256,7 +2258,8 @@ export function AppShell() {
             onNewProfile={() => setConnDialog({ profile: null })}
             onOpenSettings={() => openSettings()}
             syncState={syncState}
-            onOpenSync={() => openSettings("sync")}
+            onTerminal={canTerminal({ id: LOCAL_PROFILE, kind: "local" }) ? () => void term.openLocal() : undefined}
+          onOpenSync={() => openSettings("sync")}
             onSelectBucket={(p, b) => openHere((pane) => pane.openBucket(p, b))}
             onOpenBucketByName={(p) => askBucketName(p)}
             onNewBucket={(p) => askNewBucket(p)}

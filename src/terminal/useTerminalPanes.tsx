@@ -1,6 +1,6 @@
 /**
  * The shell's side of terminal panes: which pane slots show a terminal (and in which folder), the
- * ways to open one (⌃`, the pane's ⋯ and folder menus, the command palette, `openTerminal`),
+ * ways to open one (⌘J or ⌃`, the sidebar button, the pane's ⋯ and folder menus, the command palette, `openTerminal`),
  * files dropped on one, following the folder of the pane it opened from, and ending the shells of
  * panes no workspace has any more.
  *
@@ -224,7 +224,7 @@ export function useTerminalPanes(initial: Layout) {
     return made;
   };
 
-  /** ⌃`: from a file pane to its terminal (opening one below it the first time), from a terminal back to its file pane. */
+  /** ⌘J or ⌃`: from a file pane to its terminal (opening one below it the first time), from a terminal back to its file pane. */
   const toggle = () => {
     const h = host.current;
     if (!h) return;
@@ -243,7 +243,39 @@ export function useTerminalPanes(initial: Layout) {
     if (mine) {
       h.setActive(mine);
       h.focus(mine);
-    } else open(h.activeId);
+    } else {
+      const here = h.slot(h.activeId).here;
+      if (here && canTerminal(profileOf(here.profileId))) open(h.activeId);
+      // a pane where no shell can run (FTP, a cloud, nothing open yet): a shell on this computer
+      // instead of a refusal, so a terminal is always one key away
+      else void openLocal(h.activeId);
+    }
+  };
+
+  /**
+   * A terminal on this computer below pane `src` (the active one by default): in the folder a pane
+   * of this computer shows, when one is open, else in the home folder. No file pane is needed first.
+   */
+  const openLocal = async (src?: PaneId): Promise<PaneId | null> => {
+    const h = host.current;
+    if (!h) return null;
+    const mac = profileOf(LOCAL_PROFILE) ?? { id: LOCAL_PROFILE, kind: "local" as const };
+    if (!canTerminal(mac)) {
+      h.toast("info", `${terminalsWhere()}.`);
+      return null;
+    }
+    const from = src ?? h.activeId;
+    const shown = [from, ...h.ids].map((id) => h.slot(id).here).find((l) => l?.profileId === LOCAL_PROFILE);
+    let at: Loc | null = shown ?? null;
+    if (!at) {
+      const home = (await api.listRoots(LOCAL_PROFILE).catch(() => []))[0]?.id;
+      if (home == null) {
+        h.toast("info", "Couldn't find your home folder for the terminal.");
+        return null;
+      }
+      at = { profileId: LOCAL_PROFILE, bucket: home, prefix: "" };
+    }
+    return latest.current.open(from, at);
   };
 
   /** "Open terminal here" / "Open in terminal" for folder `key` of file pane `id`'s root; none where a terminal can't open. */
@@ -251,7 +283,7 @@ export function useTerminalPanes(initial: Layout) {
     const p = host.current?.slot(id);
     if (!p?.here || !canTerminal(p.profile)) return [];
     const at = { ...p.here, prefix: key };
-    return [{ type: "item", label, icon: "terminal", hint: label === "Open terminal here" ? "⌃`" : undefined, onClick: () => void open(id, at) }];
+    return [{ type: "item", label, icon: "terminal", hint: label === "Open terminal here" ? "⌘J" : undefined, onClick: () => void open(id, at) }];
   };
 
   /** Files dropped on terminal pane `pane`: what it does (undefined: not a terminal; null: these can't go there). */
@@ -362,6 +394,8 @@ export function useTerminalPanes(initial: Layout) {
   };
 
   // the hooks for later features (api.ts) and the command palette
+  const openLocalRef = useRef(openLocal);
+  openLocalRef.current = openLocal;
   const latest = useRef({ open, toggle });
   latest.current = { open, toggle };
   useEffect(() => {
@@ -378,7 +412,7 @@ export function useTerminalPanes(initial: Layout) {
       const mac = profileOf(LOCAL_PROFILE) ?? { id: LOCAL_PROFILE, kind: "local" as const };
       return [
         { id: "terminal:here", title: "Open Terminal Here", group: "Terminal", icon: "terminal", keywords: "shell console command line ssh", disabled: why, run: () => void (h.fileId && latest.current.open(h.fileId)) },
-        { id: "terminal:toggle", title: "Toggle Terminal", group: "Terminal", icon: "terminal", shortcut: "⌃`", keywords: "shell console focus", run: () => latest.current.toggle() },
+        { id: "terminal:toggle", title: "Toggle Terminal", group: "Terminal", icon: "terminal", shortcut: "⌘J", keywords: "shell console focus ctrl backtick", run: () => latest.current.toggle() },
         {
           id: "terminal:new-local",
           title: `New Terminal on ${ON_OS.device}`,
@@ -386,10 +420,7 @@ export function useTerminalPanes(initial: Layout) {
           icon: "terminal",
           keywords: "shell console home",
           hidden: !canTerminal(mac),
-          run: async () => {
-            const home = (await api.listRoots(LOCAL_PROFILE).catch(() => []))[0]?.id;
-            if (home != null) latest.current.open(host.current?.activeId ?? h.activeId, { profileId: LOCAL_PROFILE, bucket: home, prefix: "" });
-          },
+          run: () => void openLocalRef.current(),
         },
         {
           id: "terminal:paste-ask",
@@ -412,7 +443,7 @@ export function useTerminalPanes(initial: Layout) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { terms, setTerms, assign, host, open, toggle, items, dropTarget, drop, dropPaths, nameOf, gc, render };
+  return { terms, setTerms, assign, host, open, openLocal, toggle, items, dropTarget, drop, dropPaths, nameOf, gc, render };
 }
 
 /**

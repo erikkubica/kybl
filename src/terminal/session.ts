@@ -361,8 +361,10 @@ class Session {
   }
 }
 
-/** ⌃`: back and forth between a terminal and its file pane. */
-export const isToggleKey = (e: KeyboardEvent) => e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.code === "Backquote" || e.key === "`");
+/** ⌃` or ⌘J: back and forth between a terminal and its file pane. */
+export const isToggleKey = (e: KeyboardEvent) =>
+  (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.code === "Backquote" || e.key === "`")) ||
+  (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.code === "KeyJ");
 
 /** App shortcuts the shell never gets: ⌃Tab / ⌃⇧Tab (next / previous workspace). */
 const passKey = (e: KeyboardEvent) => e.ctrlKey && !e.metaKey && !e.altKey && e.key === "Tab";

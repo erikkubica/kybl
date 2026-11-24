@@ -355,7 +355,7 @@ export type TransferPrefs = {
  *   Workspaces (Window menu): "new-workspace" (⌘T), "prev-workspace" (⇧⌘[), "next-workspace" (⇧⌘]),
  *   "move-workspace-left", "move-workspace-right", "rename-workspace", "workspace-settings",
  *   "close-workspace". "command-palette" (⌘K, View menu): handled by palette/usePalette.tsx.
- *   "toggle-terminal" (⌃`, View menu): a terminal below the active pane, or back and forth to it.
+ *   "toggle-terminal" (⌘J or ⌃`, View menu): a terminal below the active pane, or back and forth to it.
  * - `shared-files`: see `takeSharedFiles`.
  * - `open-transfers` (null): a transfer notification was tapped (phones).
  * - `app-resumed` (null): the app came back to the foreground (phones; desktop on window focus).

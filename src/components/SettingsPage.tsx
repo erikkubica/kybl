@@ -110,7 +110,7 @@ const SHORTCUTS: { label: string; keys: string[] }[] = [
   { label: "Split the pane right / down", keys: ["⌘\\", "⇧⌘\\"] },
   { label: "Close the pane", keys: ["⌘", "W"] },
   { label: "Go to the pane on that side", keys: ["⌥", "⌘", "arrow"] },
-  { label: "Terminal below the pane", keys: ["⌃", "`"] },
+  { label: "Terminal below the pane (on this computer where the pane can't have one)", keys: ["⌘J", "⌃`"] },
   { label: "Two panes: switch pane", keys: ["Tab"] },
   { label: "Two panes: copy / move to the other pane", keys: ["F5", "F6"] },
   { label: "Two panes: quick look, new folder, delete", keys: ["F3", "F7", "F8"] },

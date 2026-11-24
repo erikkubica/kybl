@@ -164,7 +164,9 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &item("pane-move", "Move to Other Pane", None)?,
             // a terminal pane below the active one, or back and forth to it (the page takes ⌃`
             // first while a terminal has the keyboard)
-            &item("toggle-terminal", "Terminal", Some("Ctrl+Backquote"))?,
+            // ⌘J on a Mac: ⌃` needs a key many layouts (Slovak, German) don't have plain; the
+            // page still takes ⌃` itself
+            &item("toggle-terminal", "Terminal", Some(if cfg!(target_os = "macos") { "Cmd+J" } else { "Ctrl+Backquote" }))?,
             &sep()?,
             &PredefinedMenuItem::fullscreen(app, None)?,
         ],
