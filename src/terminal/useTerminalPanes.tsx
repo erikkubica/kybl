@@ -20,7 +20,7 @@ import type { Layout, WorkspaceStore } from "../shell/workspaces";
 import { registerCommands } from "../palette/commands";
 import type { Entry, Profile } from "../types";
 import { TerminalSlot } from "./TerminalSlot";
-import { pastePreview } from "./quote";
+import { PASTE_ASK_ALWAYS, pasteView } from "./quote";
 import { ON_OS } from "../osNames";
 import {
   canTerminal,
@@ -31,9 +31,12 @@ import {
   focusWhenShown,
   setTerminalOpener,
   setTerminalPanes,
-  pasteTrustsBracketed,
+  askBeforeEveryPaste,
+  pasteTrustCount,
   setPasteConfirm,
-  setPasteTrustsBracketed,
+  setTermNotice,
+  termWriteWhy,
+  type PasteAsk,
   shellQuote,
   terminalIdle,
   terminalRemoteBase,
@@ -85,13 +88,16 @@ export function useTerminalPanes(initial: Layout) {
   termsRef.current = terms;
   useEffect(() => setTerminalPanes(terms), [terms]);
   useEffect(() => {
-    setPasteConfirm(async (text) => {
+    setPasteConfirm(async (a) => {
       const choice = { trust: false };
-      const ok = (await host.current?.confirm(pasteDialog(text, choice))) ?? false;
-      if (ok && choice.trust) setPasteTrustsBracketed(true);
-      return ok;
+      const ok = (await host.current?.confirm(pasteDialog(a, choice))) ?? false;
+      return { ok, trust: ok && choice.trust };
     });
-    return () => setPasteConfirm(null);
+    setTermNotice((text) => host.current?.toast("info", text));
+    return () => {
+      setPasteConfirm(null);
+      setTermNotice(null);
+    };
   }, []);
 
   /** Slot `id` shows terminal `place` (a pane brought back by a workspace), or files (undefined). */
@@ -274,10 +280,11 @@ export function useTerminalPanes(initial: Layout) {
     if (paths.length < quoted.length) {
       host.current?.toast("info", paths.length ? "Names with control characters were left out." : "That name has control characters, so it isn't pasted into the terminal.");
     }
-    if (paths.length && writeToTerminal(pane, `${paths.join(" ")} `)) {
-      host.current?.setActive(pane);
-      host.current?.focus(pane);
-    }
+    if (!paths.length) return;
+    const why = termWriteWhy(writeToTerminal(pane, `${paths.join(" ")} `));
+    if (why) return host.current?.toast("info", why);
+    host.current?.setActive(pane);
+    host.current?.focus(pane);
   };
 
   /**
@@ -291,10 +298,10 @@ export function useTerminalPanes(initial: Layout) {
     const quoted = paths.map(shellQuote).filter((p): p is string => p != null);
     if (!quoted.length) return "That name has control characters, so it isn't pasted into the terminal.";
     if (quoted.length < paths.length) host.current?.toast("info", "Names with control characters were left out.");
-    if (writeToTerminal(pane, `${quoted.join(" ")} `)) {
-      host.current?.setActive(pane);
-      host.current?.focus(pane);
-    }
+    const why = termWriteWhy(writeToTerminal(pane, `${quoted.join(" ")} `));
+    if (why) return why;
+    host.current?.setActive(pane);
+    host.current?.focus(pane);
     return null;
   };
 
@@ -386,9 +393,9 @@ export function useTerminalPanes(initial: Layout) {
           group: "Terminal",
           icon: "terminal",
           keywords: "paste confirm multi-line bracketed",
-          hidden: !pasteTrustsBracketed(),
+          hidden: !pasteTrustCount(),
           run: () => {
-            setPasteTrustsBracketed(false);
+            askBeforeEveryPaste();
             h.toast("info", "Kybl asks again before pasting several lines.");
           },
         },
@@ -405,22 +412,43 @@ export function useTerminalPanes(initial: Layout) {
 }
 
 /**
- * The question before a paste with line breaks (see `pasteNeedsConfirm`): the whole text, as it
- * will be typed (scrolls, never cut), invisible characters shown. `choice.trust` is set when the
- * user ticks the box to skip it in shells that take a paste whole.
+ * The question before a paste with line breaks (see `pasteNeedsConfirm`): the text as it will be
+ * typed, invisible characters and every line break shown. A big paste shows its start and end with
+ * what's between counted, so the window never has to lay out megabytes; the line count and the list
+ * of invisible characters always cover all of it. `choice.trust` is set when the user ticks "Don't
+ * ask again in this terminal" (offered only while its shell has bracketed paste on).
  */
-function pasteDialog(text: string, choice: { trust: boolean }): ConfirmOptions {
-  const lines = text.replace(/[\r\n]+$/, "").split(/\r\n|\r|\n/).length;
+function pasteDialog({ text, canTrust }: PasteAsk, choice: { trust: boolean }): ConfirmOptions {
+  const v = pasteView(text);
+  const n = (x: number) => x.toLocaleString();
+  const big = text.length > PASTE_ASK_ALWAYS;
   return {
-    title: lines > 1 ? `Paste ${lines} lines?` : "Paste and run?",
+    title: v.lines > 1 ? `Paste ${n(v.lines)} lines?` : big ? `Paste ${n(text.length)} characters?` : "Paste and run?",
     message: (
       <>
         <p>Some shells run each line as soon as it is pasted. Check the text first: a copy from a web page can hold lines you didn’t see.</p>
-        <pre className="toast-detail paste-preview selectable">{pastePreview(text)}</pre>
-        <label className="check paste-trust">
-          <input type="checkbox" onChange={(e) => (choice.trust = e.target.checked)} />
-          <span>Don’t ask in shells that wait for Enter after a paste (zsh, bash 5.1+, fish)</span>
-        </label>
+        {v.hidden.length > 0 && (
+          <p className="paste-hidden">
+            Hidden characters, shown as {"<U+…>"}: {v.hidden.slice(0, 6).map(([c, k]) => (k > 1 ? `${c} ×${n(k)}` : c)).join(", ")}
+            {v.hidden.length > 6 ? ` and ${v.hidden.length - 6} more kinds` : ""}.
+          </p>
+        )}
+        <pre className="toast-detail paste-preview selectable">
+          {v.head}
+          {v.cutChars > 0 && (
+            <span className="paste-cut">
+              {"\n… "}
+              {n(v.cutChars)} more characters{v.cutLines ? `, ${n(v.cutLines)} line breaks` : ""} not shown{" …\n"}
+            </span>
+          )}
+          {v.tail}
+        </pre>
+        {canTrust && (
+          <label className="check paste-trust">
+            <input type="checkbox" onChange={(e) => (choice.trust = e.target.checked)} />
+            <span>Don’t ask again in this terminal</span>
+          </label>
+        )}
       </>
     ),
     label: "Paste",

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTransfersActive } from "../useTransfers";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openLink } from "../openLink";
 import { Icon } from "../Icons";
 import { formatBytes } from "../format";
 import { actionLabel, installAndRestart, UpdateStepError, updatesApi, type UpdateStatus } from "../updates";
@@ -99,7 +99,7 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
               <button className="btn btn-sm btn-primary" onClick={go}>
                 Try again
               </button>
-              <button className="btn btn-sm" onClick={() => openUrl(rel.page).catch(() => {})}>
+              <button className="btn btn-sm" onClick={() => openLink(rel.page).catch(() => {})}>
                 Release page
               </button>
               <button className="btn btn-sm btn-ghost" onClick={hide}>
@@ -112,7 +112,7 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
             <b>Kybl {rel.version} is available</b>
             <small>
               You have {st.current}.{" "}
-              <button className="update-link" onClick={() => openUrl(rel.page).catch(() => {})}>
+              <button className="update-link" onClick={() => openLink(rel.page).catch(() => {})}>
                 What's new
               </button>
             </small>

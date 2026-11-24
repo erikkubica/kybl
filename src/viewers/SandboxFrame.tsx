@@ -14,6 +14,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { watchMenuKeysIn } from "../desktop/menuKeyWatch";
+import { openLink } from "../openLink";
 
 type Theme = Record<"bg" | "text" | "dim" | "border" | "accent" | "panel" | "font" | "mono" | "code", string>;
 
@@ -100,7 +101,9 @@ export function SandboxFrame({
     const el = frame.current;
     if (!el) return;
     const onClick = (ev: MouseEvent) => {
-      const a = (ev.target as Element | null)?.closest?.("a");
+      // an image map's <area href> is a link too (sanitizers drop maps, but the frame must never
+      // follow one itself: nothing but this handler decides where a click goes)
+      const a = (ev.target as Element | null)?.closest?.("a, area");
       if (!a) return;
       ev.preventDefault();
       const href = a.getAttribute("href") ?? "";
@@ -117,9 +120,8 @@ export function SandboxFrame({
         (find(id) ?? find(`user-content-${id}`))?.scrollIntoView({ block: "start" });
         return;
       }
-      if (/^(https?:|mailto:)/i.test(href)) {
-        import("@tauri-apps/plugin-opener").then(({ openUrl }) => openUrl(href)).catch(() => {});
-      }
+      // opened as parsed (see openLink), never the raw attribute text
+      void openLink(href).catch(() => {});
     };
     const fit = () => {
       const d = el.contentDocument;

@@ -12,8 +12,8 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { LS } from "../browser/types";
-import { confirmPaste, pasteTrustsBracketed, setTermImpl, takeFocusWhenShown, takeStartup, type TermAction, type TermSpec } from "./api";
-import { cleanPaste, pasteNeedsConfirm } from "./quote";
+import { confirmPaste, pasteTrusts, setPasteTrust, setTermImpl, takeFocusWhenShown, takeStartup, termNotice, termWriteWhy, type TermAction, type TermSpec, type TermWrite } from "./api";
+import { cleanPaste, PASTE_ASK_ALWAYS, PASTE_MAX, pasteNeedsConfirm } from "./quote";
 
 const SCROLLBACK = 5000;
 const FONT_KEY = "s3b.term.font";
@@ -34,6 +34,8 @@ const PROMPT_LOCAL = /[$%#>❯] $/;
 const TYPED_LATELY = 500;
 /** Typeahead kept while a shell starts (a few lines of keys; more is dropped). */
 const TYPEAHEAD_MAX = 4096;
+/** Pasted (or dropped) text kept while a shell starts. */
+const PASTE_QUEUE_MAX = PASTE_ASK_ALWAYS;
 
 let fontSize = clampFont(Number(LS.get(FONT_KEY)) || FONT_DEFAULT);
 function clampFont(n: number) {
@@ -82,8 +84,10 @@ class Session {
   private opened = false;
   /** when a key was last typed (its echo may not be on screen yet) */
   private lastInput = 0;
-  /** Keys typed while the shell starts, sent once it runs (terminals keep typeahead). */
-  private typeahead = "";
+  /** Keys typed and text pasted while the shell starts, in order, sent once it runs (terminals keep typeahead). */
+  private pending: { text: string; paste: boolean }[] = [];
+  private queuedKeys = 0;
+  private queuedPaste = 0;
 
   constructor(readonly spec: TermSpec) {
     this.host = document.createElement("div");
@@ -126,14 +130,46 @@ class Session {
 
   /** Clipboard text into the shell: control characters gone, and a yes first when its lines would run at once. */
   private async pasteText(t: string) {
+    if (t.length > PASTE_MAX) return termNotice("That’s too much text to paste into a terminal.");
     const text = cleanPaste(t);
-    if (!text || this.state !== "running") return;
-    if (pasteNeedsConfirm(text, this.term.modes.bracketedPasteMode, pasteTrustsBracketed())) {
+    if (!text) return;
+    const why = this.state === "running" || this.state === "starting" ? null : termWriteWhy(this.state === "ended" ? "ended" : "none");
+    if (why) return termNotice(why);
+    // the flag only counts for a shell that is running now (a new one starts without it)
+    const bracketed = this.state === "running" && this.term.modes.bracketedPasteMode;
+    const sid = this.spec.sid;
+    if (pasteNeedsConfirm(text, bracketed, pasteTrusts(sid))) {
       const run = this.run;
-      if (!(await confirmPaste(text)) || run !== this.run || this.state !== "running") return;
+      const canTrust = bracketed && text.length <= PASTE_ASK_ALWAYS;
+      const a = await confirmPaste({ text, canTrust });
+      if (!a.ok) return;
+      if (run !== this.run) return termNotice("That terminal restarted, so nothing was pasted.");
+      if (a.trust && canTrust) setPasteTrust(sid, true);
       this.term.focus();
     }
-    this.term.paste(text);
+    const after = termWriteWhy(this.deliver(text, true));
+    if (after) termNotice(after);
+  }
+
+  /** Text to the shell, pasted or as keys; kept in order while it starts. */
+  private deliver(text: string, paste: boolean): TermWrite {
+    if (this.state === "running") {
+      if (paste) this.term.paste(text);
+      else this.send(text);
+      return "typed";
+    }
+    if (this.state === "starting") {
+      if (paste ? this.queuedPaste + text.length > PASTE_QUEUE_MAX : this.queuedKeys + text.length > TYPEAHEAD_MAX) return "full";
+      if (paste) this.queuedPaste += text.length;
+      else this.queuedKeys += text.length;
+      this.pending.push({ text, paste });
+      return "queued";
+    }
+    return this.state === "ended" ? "ended" : "none";
+  }
+  private clearPending() {
+    this.pending = [];
+    this.queuedKeys = this.queuedPaste = 0;
   }
 
   /** Shows the terminal in `box` (first time: starts the shell, sized to it). */
@@ -165,7 +201,9 @@ class Session {
     const run = ++this.run;
     this.state = "starting";
     this.unacked = 0;
-    this.typeahead = "";
+    this.clearPending();
+    // "don't ask again" was for the shell that ran before
+    setPasteTrust(this.spec.sid, false);
     const ch = new Channel<Msg>();
     ch.onmessage = (m) => {
       if (run !== this.run) return;
@@ -190,12 +228,13 @@ class Session {
       if (this.term.cols !== cols || this.term.rows !== rows)
         void invoke("terminal_resize", { id: info.id, cols: this.term.cols, rows: this.term.rows }).catch(() => {});
       for (const line of takeStartup(this.spec.sid)) this.send(`${line}\r`);
-      if (this.typeahead) this.send(this.typeahead);
-      this.typeahead = "";
+      const queued = this.pending;
+      this.clearPending();
+      for (const q of queued) this.deliver(q.text, q.paste);
     } catch (e) {
       if (run !== this.run) return;
       this.state = "ended";
-      this.typeahead = "";
+      this.clearPending();
       const msg = typeof e === "string" ? e : String((e as Error)?.message ?? e);
       // the first paragraph says it; details (protocol text) stay out of the terminal
       this.term.write(`\r\n\x1b[31m${msg.split("\n\n")[0].replace(/\n/g, "\r\n")}\x1b[0m\r\n\x1b[2m[Press Enter to try again]\x1b[0m\r\n`);
@@ -260,19 +299,15 @@ class Session {
   private input(d: string, binary: boolean) {
     this.lastInput = Date.now();
     if (this.state === "running") return this.send(d, binary);
-    if (this.state === "starting" && !binary) {
-      if (this.typeahead.length + d.length <= TYPEAHEAD_MAX) this.typeahead += d;
-      return;
-    }
+    if (this.state === "starting" && !binary) return void this.deliver(d, false);
     if (this.state === "ended" && d.includes("\r")) this.restart();
   }
 
-  /** Types `text` as if pasted (bracketed paste when the shell asks for it). */
-  write(text: string): boolean {
-    if (this.state !== "running") return false;
-    this.term.paste(cleanPaste(text));
-    this.term.focus();
-    return true;
+  /** Types `text` as if pasted (bracketed paste when the shell asks for it); while the shell starts, once it runs. */
+  write(text: string): TermWrite {
+    const r = this.deliver(cleanPaste(text), true);
+    if (r === "typed" || r === "queued") this.term.focus();
+    return r;
   }
 
   restart() {
@@ -320,6 +355,7 @@ class Session {
 
   dispose() {
     this.closeBackend();
+    setPasteTrust(this.spec.sid, false);
     this.term.dispose();
     this.host.remove();
   }
@@ -385,7 +421,7 @@ new MutationObserver(() => {
 }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-accent", "data-font", "style"] });
 
 setTermImpl({
-  write: (sid, text) => sessions.get(sid)?.write(text) ?? false,
+  write: (sid, text) => sessions.get(sid)?.write(text),
   gc: (keep) => {
     for (const [sid, s] of sessions) {
       if (keep.has(sid)) continue;

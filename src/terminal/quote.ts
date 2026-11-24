@@ -25,20 +25,91 @@ export const cleanPaste = (s: string) => s.replace(PASTE_CONTROL, "");
 /**
  * Whether pasting `s` needs a yes first: it has a line break, and a shell without bracketed paste
  * would run each line as soon as it arrives (text hidden on a web page rides along in a copy, a
- * hidden "\ncurl … | sh\n" included). Asked every time by default: the terminal's
- * "bracketed paste is on" flag is set by whatever the shell's programs print (`cat` of a file
- * holding ESC[?2004h turns it on in sh), so it only counts when the user chose to trust it.
+ * hidden "\ncurl … | sh\n" included). Asked every time unless the user said not to for this one
+ * terminal (`trusted`, per running shell) and its shell has bracketed paste on. Program output can
+ * set that flag (`cat` of a file holding ESC[?2004h), so on its own it never skips the question;
+ * it only narrows the user's own choice. A very big paste is always asked about.
  */
-export const pasteNeedsConfirm = (s: string, bracketed: boolean, trustBracketed = false) => /[\r\n]/.test(s) && !(trustBracketed && bracketed);
+export const pasteNeedsConfirm = (s: string, bracketed: boolean, trusted = false) =>
+  s.length > PASTE_ASK_ALWAYS || (/[\r\n]/.test(s) && !(trusted && bracketed));
 
-// eslint-disable-next-line no-misleading-character-class
-const INVISIBLE = /[​-‏‪-‮⁠-⁩﻿]/g;
+/** Pastes longer than this (characters) are asked about even on one line; longer than the cap, refused. */
+export const PASTE_ASK_ALWAYS = 1_000_000;
+export const PASTE_MAX = 16_000_000;
 
 /**
- * Pasted text for the confirm box: zero-width and text-direction characters shown as their code
- * (`<U+202E>`), so they can't hide or reorder what will be typed.
+ * Characters that don't show, or that change how the text around them looks, marked in the paste
+ * question as `<U+…>`: every format character (Cf: zero-width, bidi controls and marks such as
+ * U+061C, soft hyphen, tag characters U+E0000–E007F), line and paragraph separators (a browser
+ * breaks the line there, a shell doesn't), the Hangul fillers, the grapheme joiner and the
+ * variation selectors that aren't the emoji ones.
  */
-export const pastePreview = (s: string) => s.replace(INVISIBLE, (c) => `<U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}>`);
+const INVISIBLE = /[\p{Cf}\u2028\u2029\u034F\u115F\u1160\u17B4\u17B5\u3164\uFFA0\uFE00-\uFE0D\u{E0100}-\u{E01EF}]/gu;
+const code = (c: string) => `U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`;
+
+/**
+ * Pasted text as the confirm box shows it: invisible and direction characters as their code
+ * (`<U+202E>`), so they can't hide or reorder what will be typed, and every line break (a lone CR
+ * too, which the terminal sends as Enter) as a line break, so the lines seen are the lines run.
+ */
+export const pastePreview = (s: string) => s.replace(/\r\n?/g, "\n").replace(INVISIBLE, (c) => `<${code(c)}>`);
+
+/** Lines the terminal gets: CRLF, CR and LF each end one; breaks at the very end don't start another. */
+export function pasteLines(s: string): number {
+  let end = s.length;
+  while (end > 0 && (s[end - 1] === "\n" || s[end - 1] === "\r")) end--;
+  let n = 1;
+  for (let i = 0; i < end; i++) {
+    const c = s.charCodeAt(i);
+    if (c === 10) n++;
+    else if (c === 13) {
+      n++;
+      if (s.charCodeAt(i + 1) === 10) i++;
+    }
+  }
+  return n;
+}
+
+/** What the paste question shows: the start and end of a big paste, with what's left out counted. */
+export type PasteView = {
+  /** the whole text when small; else its start */
+  head: string;
+  /** the end of a big paste ("" when small) */
+  tail: string;
+  /** characters and line breaks between head and tail, not shown */
+  cutChars: number;
+  cutLines: number;
+  /** lines in the whole paste */
+  lines: number;
+  /** invisible characters anywhere in the text, shown or not: [code, how many], most first */
+  hidden: [string, number][];
+};
+
+const HEAD = 48 * 1024;
+const TAIL = 16 * 1024;
+/** a cut that doesn't split a surrogate pair or a CRLF */
+const safeCut = (s: string, i: number) => (i > 0 && i < s.length && (/[\uDC00-\uDFFF]/.test(s[i]) || (s[i] === "\n" && s[i - 1] === "\r")) ? i - 1 : i);
+
+/** The paste question's view of `s` (already cleaned): bounded however long `s` is, every invisible character counted. */
+export function pasteView(s: string): PasteView {
+  const counts = new Map<string, number>();
+  for (const m of s.matchAll(INVISIBLE)) {
+    const k = code(m[0]);
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  const hidden = [...counts].sort((a, b) => b[1] - a[1]);
+  const lines = pasteLines(s);
+  if (s.length <= HEAD + TAIL) return { head: pastePreview(s), tail: "", cutChars: 0, cutLines: 0, lines, hidden };
+  const a = safeCut(s, HEAD);
+  const b = safeCut(s, s.length - TAIL);
+  const mid = s.slice(a, b);
+  let cutLines = 0;
+  for (let i = 0; i < mid.length; i++) {
+    const c = mid.charCodeAt(i);
+    if (c === 10 || (c === 13 && mid.charCodeAt(i + 1) !== 10)) cutLines++;
+  }
+  return { head: pastePreview(s.slice(0, a)), tail: pastePreview(s.slice(b)), cutChars: b - a, cutLines, lines, hidden };
+}
 
 /**
  * `s` as one word for any shell (POSIX, fish, csh): as it is when plain, else in single quotes with

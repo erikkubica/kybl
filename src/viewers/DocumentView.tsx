@@ -19,6 +19,7 @@ import { isArchiveId } from "../archive/archive";
 import { useDocument } from "./useDocument";
 import { ConflictDialog, UnsavedDialog } from "./ConflictDialog";
 import { Note } from "./ui";
+import { openLink } from "../openLink";
 import type { ViewerProps } from "./types";
 import "./viewers.css";
 
@@ -264,6 +265,13 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
   useEffect(() => {
     if (!full) return;
     const onKey = (e: KeyboardEvent) => {
+      // a dialog or Compare over the editor owns the keys: ⌘S must not save, ⌘W not close, Esc not
+      // close the document behind it (the dialog takes its own Esc)
+      if (document.querySelector(".modal-backdrop, .dif-host")) {
+        const mod = (e.metaKey || e.ctrlKey) && !e.altKey;
+        if (mod && (e.key.toLowerCase() === "s" || e.key.toLowerCase() === "w")) e.preventDefault();
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "s") {
         // already handled by the editor's own ⌘S
         if (e.defaultPrevented && !e.shiftKey) return;
@@ -401,7 +409,7 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
         <div className="dv-banner">
           <span>{readOnlyWhy}</span>
           {native && gdriveUrl && (
-            <button className="btn btn-sm" onClick={() => void import("@tauri-apps/plugin-opener").then(({ openUrl }) => openUrl(gdriveUrl)).catch(() => window.open(gdriveUrl, "_blank", "noopener"))}>
+            <button className="btn btn-sm" onClick={() => void openLink(gdriveUrl).catch(() => window.open(gdriveUrl, "_blank", "noopener"))}>
               <Icon name="external" size={13} /> Open in Google Drive
             </button>
           )}

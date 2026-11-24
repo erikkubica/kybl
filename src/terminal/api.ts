@@ -65,8 +65,11 @@ export { remotePath, shellQuote, typeable } from "./quote";
 export type OpenTerminalArgs = { paneId: PaneId; profileId: string; cwd: string; bucket?: string; startup?: string[] };
 
 /** The running sessions' side (session.ts, once loaded). */
+/** What became of text written to a terminal (see `writeToTerminal`); "full": starting, and its queue is full. */
+export type TermWrite = "typed" | "queued" | "ended" | "full" | "none";
+
 export type TermImpl = {
-  write: (sid: string, text: string) => boolean;
+  write: (sid: string, text: string) => TermWrite | undefined;
   /** ends every session not in `keep` */
   gc: (keep: Set<string>) => void;
   action: (sid: string, a: TermAction) => void;
@@ -97,17 +100,53 @@ export function setTerminalOpener(fn: typeof opener) {
 export function setTerminalPanes(p: Partial<Record<PaneId, TermSpec>>) {
   panes = p;
 }
-const PASTE_TRUST_KEY = "s3b.term.pasteTrustBracketed";
-/** The user chose to skip the paste question in shells that turned on bracketed paste (see `pasteNeedsConfirm`). */
-export const pasteTrustsBracketed = () => LS.get(PASTE_TRUST_KEY) === "1";
-export const setPasteTrustsBracketed = (v: boolean) => LS.set(PASTE_TRUST_KEY, v ? "1" : "0");
+// an older build kept one "don't ask" for every terminal, for good: gone (now per running shell)
+if (LS.get("s3b.term.pasteTrustBracketed") != null) LS.set("s3b.term.pasteTrustBracketed", "");
+
+/**
+ * Running shells whose user said "Don't ask again in this terminal" for multi-line pastes (see
+ * `pasteNeedsConfirm`). Kept in memory only: it ends when that shell restarts, its pane closes or
+ * the app reloads, and Settings (or the palette) can end it for all at once.
+ */
+const pasteTrusted = new Set<string>();
+const trustListeners = new Set<() => void>();
+const trustChanged = () => trustListeners.forEach((f) => f());
+export const pasteTrusts = (sid: string) => pasteTrusted.has(sid);
+export function setPasteTrust(sid: string, on: boolean) {
+  if (on === pasteTrusted.has(sid)) return;
+  if (on) pasteTrusted.add(sid);
+  else pasteTrusted.delete(sid);
+  trustChanged();
+}
+/** How many open terminals skip the paste question (for Settings). */
+export const pasteTrustCount = () => pasteTrusted.size;
+export function onPasteTrustChange(f: () => void) {
+  trustListeners.add(f);
+  return () => void trustListeners.delete(f);
+}
+/** Asks before pasting several lines in every terminal again. */
+export function askBeforeEveryPaste() {
+  if (!pasteTrusted.size) return;
+  pasteTrusted.clear();
+  trustChanged();
+}
+
+/** What the paste question gets: the text, and whether it may offer "Don't ask again in this terminal". */
+export type PasteAsk = { text: string; canTrust: boolean };
 /** asks before clipboard text with line breaks goes to a shell that might run each line at once */
-let pasteConfirm: ((text: string) => Promise<boolean>) | null = null;
+let pasteConfirm: ((a: PasteAsk) => Promise<{ ok: boolean; trust: boolean }>) | null = null;
 export function setPasteConfirm(fn: typeof pasteConfirm) {
   pasteConfirm = fn;
 }
-/** True when `text` may be pasted (asked first; no one to ask: no). */
-export const confirmPaste = (text: string): Promise<boolean> => pasteConfirm?.(text) ?? Promise.resolve(false);
+/** The user's answer to pasting `a.text` (no one to ask: no). */
+export const confirmPaste = (a: PasteAsk) => pasteConfirm?.(a) ?? Promise.resolve({ ok: false, trust: false });
+
+/** a short note from a terminal to the user (a paste that couldn't go in) */
+let notice: ((text: string) => void) | null = null;
+export function setTermNotice(fn: typeof notice) {
+  notice = fn;
+}
+export const termNotice = (text: string) => notice?.(text);
 export function setStartup(sid: string, lines: string[] | undefined) {
   if (lines?.length) startups.set(sid, lines);
 }
@@ -127,10 +166,21 @@ export function openTerminal(a: OpenTerminalArgs): PaneId | null {
   return opener?.(a) ?? null;
 }
 
-/** Types `text` into the terminal shown in pane `paneId`; false when there is none (or it isn't running). */
-export function writeToTerminal(paneId: PaneId, text: string): boolean {
+/**
+ * Types `text` into the terminal shown in pane `paneId`: "typed", "queued" (its shell is starting:
+ * typed once it runs), "ended" (its shell exited), or "none" (no terminal there, or still loading).
+ */
+export function writeToTerminal(paneId: PaneId, text: string): TermWrite {
   const t = panes[paneId];
-  return !!(t && impl?.write(t.sid, text));
+  return (t && impl?.write(t.sid, text)) || "none";
+}
+
+/** Why a write to a terminal didn't go in; null when it did (or will once the shell runs). */
+export function termWriteWhy(r: TermWrite): string | null {
+  if (r === "ended") return "That terminal’s shell has ended. Press Enter in it to start a new one, then try again.";
+  if (r === "none") return "That terminal is still opening. Try again in a moment.";
+  if (r === "full") return "That terminal is still starting. Try again once it shows a prompt.";
+  return null;
 }
 
 export function terminalAction(sid: string, a: TermAction) {
