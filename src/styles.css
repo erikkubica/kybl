@@ -5740,6 +5740,22 @@ input[type="range"]:focus-visible {
 .info-tunnels .tunnel-pop-sep {
   display: none;
 }
+/* the panel is narrow: Start / Stop sits at the top right beside the name only, and the lines
+   under it use the whole width and wrap instead of being cut off */
+.info-tunnels .tunnel-row {
+  position: relative;
+}
+.info-tunnels .tunnel-row > .btn {
+  position: absolute;
+  top: 1px;
+  right: -6px;
+}
+.info-tunnels .tunnel-name {
+  padding-right: 52px;
+}
+.info-tunnels .tunnel-stats {
+  white-space: normal;
+}
 .info-tunnels .info-add {
   margin: 4px 0 0 -8px;
   gap: 5px;
