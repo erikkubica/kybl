@@ -6,7 +6,8 @@
 import { menuByKey } from "./menus";
 
 let cmdHeld = false;
-let lastCmdDown = 0;
+/** when ⌘ (or Ctrl) was last seen down: its keydowns and its release */
+let lastCmd = 0;
 let watching = false;
 
 function watch() {
@@ -18,14 +19,18 @@ function watch() {
       // our own handed-back keydowns don't count
       if (!ev.isTrusted || !(ev.metaKey || ev.ctrlKey)) return;
       cmdHeld = true;
-      lastCmdDown = performance.now();
+      lastCmd = performance.now();
     },
     true,
   );
   window.addEventListener(
     "keyup",
     (ev) => {
-      if (ev.key === "Meta" || ev.key === "Control" || !(ev.metaKey || ev.ctrlKey)) cmdHeld = false;
+      if (!cmdHeld) return;
+      if (ev.key === "Meta" || ev.key === "Control" || !(ev.metaKey || ev.ctrlKey)) {
+        cmdHeld = false;
+        lastCmd = performance.now();
+      }
     },
     true,
   );
@@ -41,5 +46,5 @@ export function watchMenuKeys(): void {
 /** True when the `menu` event arriving now came from its accelerator key, false for a click. */
 export function menuFromKey(): boolean {
   watch();
-  return menuByKey(cmdHeld, lastCmdDown, performance.now());
+  return menuByKey(cmdHeld, lastCmd, performance.now());
 }

@@ -50,6 +50,18 @@ export type DocumentViewProps = {
   ref?: Ref<DocumentHandle>;
 };
 
+/**
+ * The viewer's key: a fresh one per loaded file (new bytes), known at render time, so the viewer
+ * mounts once. A key set from an effect remounted it right after its first mount, parsing twice.
+ */
+const loadKeys = new WeakMap<Uint8Array, number>();
+let lastLoadKey = 0;
+function loadKey(bytes: Uint8Array): number {
+  let k = loadKeys.get(bytes);
+  if (k === undefined) loadKeys.set(bytes, (k = ++lastLoadKey));
+  return k;
+}
+
 const baseName = (key: string) => key.slice(key.lastIndexOf("/") + 1);
 
 /** "notes.md" → "notes (copy).md", "notes (copy 2).md", … */
@@ -98,7 +110,6 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
   const info = useMemo(() => viewerFor(entry.name, entry.mime ?? null, entry.size), [entry.name, entry.mime, entry.size]);
   const { state, reload, saved } = useDocument(profileId, bucket, source, source === entry.key ? entry.size : 0, info, mode);
 
-  const [loadId, setLoadId] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
@@ -136,7 +147,6 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
     getText.current = null;
     rev.current = 0;
     setDirty(false);
-    setLoadId((n) => n + 1);
     // only when new bytes arrive, not when a save updates the metadata
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready?.bytes]);
@@ -333,7 +343,7 @@ export default function DocumentView({ profileId, bucket, entry: given, mode, on
     };
     body = (
       <Suspense fallback={<Note spinner />}>
-        <Viewer key={loadId} {...props} />
+        <Viewer key={ready ? loadKey(ready.bytes) : 0} {...props} />
       </Suspense>
     );
   }

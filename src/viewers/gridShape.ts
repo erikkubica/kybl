@@ -31,3 +31,28 @@ export function usedExtent(data: readonly (readonly DenseCell[] | null | undefin
   }
   return { r, c };
 }
+
+/** At most this many rows, columns and cells of a sheet are sent to the page. */
+export const XLSX_MAX_ROWS = 200_000;
+export const XLSX_MAX_COLS = 1_000;
+export const XLSX_MAX_CELLS = 2_000_000;
+
+/**
+ * The last row and column to read of a sheet whose data ends at `last`: columns capped first,
+ * then rows cut so the total stays under the cell cap (each cell is one string in the worker,
+ * cloned again to the page, so 200k x 1,000 would be 200M strings).
+ */
+export function sheetCut(last: { r: number; c: number }): { r: number; c: number } {
+  const c = Math.min(last.c, XLSX_MAX_COLS - 1);
+  const rowsFit = Math.max(1, Math.floor(XLSX_MAX_CELLS / (c + 1)));
+  return { r: Math.min(last.r, XLSX_MAX_ROWS - 1, rowsFit - 1), c };
+}
+
+/** The "only the first …" note for a cut sheet, naming only the axes that were cut. */
+export function cutNote(shown: { rows: number; cols: number }, total: { rows: number; cols: number } | null): string | undefined {
+  if (!total) return undefined;
+  const parts: string[] = [];
+  if (total.rows > shown.rows) parts.push(`${shown.rows.toLocaleString()} of ${total.rows.toLocaleString()} rows`);
+  if (total.cols > shown.cols) parts.push(`${shown.cols.toLocaleString()} of ${total.cols.toLocaleString()} columns`);
+  return parts.length ? `only the first ${parts.join(" and ")}` : undefined;
+}

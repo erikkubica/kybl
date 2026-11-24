@@ -23,9 +23,10 @@ test("every accelerator maps, click-only items don't", () => {
   assert.equal(menuKeydown("refresh"), null);
 });
 
-test("a menu event is the key while ⌘ is held or just pressed, else a click", () => {
+test("a menu event is the key while ⌘ is held or just let go, else a click", () => {
   assert.equal(menuByKey(true, 0, 50_000), true);
   assert.equal(menuByKey(false, 49_800, 50_000), true);
+  assert.equal(menuByKey(false, 49_600, 50_000), false);
   assert.equal(menuByKey(false, 40_000, 50_000), false);
   assert.equal(menuByKey(false, 0, 50_000), false);
 });
