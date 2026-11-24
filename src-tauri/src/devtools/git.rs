@@ -498,7 +498,12 @@ fn clean_remote(url: &str) -> String {
         let authority = rest.split('/').next().unwrap_or(rest);
         let after = match authority.rfind('@') {
             Some(i) => &rest[i + 1..],
-            None => rest.rfind('@').map_or(rest, |i| &rest[i + 1..]),
+            // a password (after a `:`) may hold anything, so the last `@` anywhere; otherwise only
+            // an `@` before the query counts: one in a query (`?token=a@b`) is not userinfo (R13 Q-1)
+            None => {
+                let scope = if authority.contains(':') { rest } else { rest.split(['?', '#']).next().unwrap_or(rest) };
+                scope.rfind('@').map_or(rest, |i| &rest[i + 1..])
+            }
         };
         // a query or fragment could be a token and is never part of the address
         after.split(['?', '#']).next().unwrap_or("").to_string()
@@ -626,6 +631,9 @@ mod tests {
             ("https://user:pa#ss@host/o/r.git", "host/o/r"),
             ("https://user:pa/ss@host/o/r.git", "host/o/r"),
             ("https://user:pa%2Fss%3F%23@host/o/r.git", "host/o/r"),
+            // a token with a `/` and no password; an `@` that only sits in the query
+            ("https://ghp_a/b@host/o/r.git", "host/o/r"),
+            ("https://host/o/r.git?token=a@b", "host/o/r"),
         ] {
             let got = clean_remote(url);
             assert_eq!(got, want, "{url}");

@@ -1627,9 +1627,16 @@ fn ftp_error_at(e: FtpError, host: &str, path: &str) -> StorageError {
             // the path the server repeats is never its own wording: the one given, and any word
             // of the reply that starts with a `/` or holds the given path (the server's own words
             // joined by a slash, like `Permission/denied`, stay)
+            // a short relative path ("ed") is only matched as a whole word, quotes and colons
+            // trimmed: a substring match would take `allowed` along with it
+            let bare = path.trim_start_matches('/');
+            let echoes = |w: &str| {
+                let core = w.trim_matches(|c: char| matches!(c, '"' | '\'' | ':' | ',' | '.' | '(' | ')'));
+                !bare.is_empty() && (core == bare || core.ends_with(&format!("/{bare}")) || (bare.contains('/') && w.contains(bare)))
+            };
             let echoed = text
                 .split_whitespace()
-                .filter(|w| w.starts_with('/') || (path.trim_start_matches('/').chars().count() >= 2 && w.contains(path)))
+                .filter(|w| w.starts_with('/') || echoes(w))
                 .collect::<Vec<_>>()
                 .join(" ");
             let path = format!("{path} {echoed}");
@@ -2025,6 +2032,15 @@ mod tests {
         assert_eq!(at(Status::FileUnavailable, "550 /x/Permissions/a: Permission denied", "/x/Permissions/a").kind, ErrKind::PermissionDenied);
         assert_eq!(at(Status::FileUnavailable, "550 /x/Locked/a: Permission denied", "").kind, ErrKind::PermissionDenied);
         assert_eq!(at(Status::FileUnavailable, "550 a: File exists", "/x/a").kind, ErrKind::Exists);
+    }
+
+    /// A short relative path is an echo only as a whole word (R13 Q-2).
+    #[test]
+    fn a_short_relative_path_is_matched_as_a_whole_word() {
+        let at = |text: &str| ftp_error_at(FtpError::UnexpectedResponse(suppaftp::types::Response::new(Status::FileUnavailable, text.as_bytes().to_vec())), "h", "ed");
+        // `allowed` holds "ed" but is the server's own word
+        assert_eq!(at("550 Not allowed").kind, ErrKind::PermissionDenied);
+        assert_eq!(at("550 \"ed\": No such file or directory").kind, ErrKind::NotFound);
     }
 
     /// The server's own words joined by a slash are not an echoed path (R11 SB-6).
