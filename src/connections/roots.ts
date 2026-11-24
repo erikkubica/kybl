@@ -6,8 +6,9 @@
  * sidebar, breadcrumbs, favorites, the Move dialog and the phone's headers all agree.
  */
 import { useSyncExternalStore } from "react";
-import { LOCAL_ID, type Capabilities, type RootInfo } from "../api";
+import { LOCAL_ID, api, type Capabilities, type RootInfo } from "../api";
 import { peekCaps } from "../useCaps";
+import { fixedRootName, rootIdLeaf } from "./fixedRoots";
 import type { IconName } from "../Icons";
 import type { ConnKind, Profile } from "../types";
 
@@ -39,7 +40,34 @@ export function setConnectionNames(profiles: Pick<Profile, "id" | "name" | "kind
 export function rootName(profileId: string, root: string): string {
   // "" is only ever the one root of a server or single-container connection
   if (root === "") return connNames.get(profileId) || names.get(profileId)?.[""] || "Files";
-  return names.get(profileId)?.[root] ?? root;
+  const kind = connKinds.get(profileId);
+  return names.get(profileId)?.[root] ?? fixedRootName(kind, root) ?? root;
+}
+
+/**
+ * A root's name in a one-line "where" (Settings › Drives, Synced folders, Mount as drive): its
+ * name when known, else the last part of a path id, else the id.
+ */
+export function rootLabel(profileId: string, root: string): string {
+  const n = rootName(profileId, root);
+  if (n !== root || !root) return n;
+  return rootIdLeaf(root);
+}
+
+const asked = new Set<string>();
+/**
+ * Lists the roots of these connections once per run, for screens that show places on many
+ * connections without browsing them (a shared drive's id has no name until then). Quiet on failure.
+ */
+export function loadRootNames(profiles: Pick<Profile, "id" | "kind">[]) {
+  for (const p of profiles) {
+    if (!usesListRoots(p) || names.has(p.id) || asked.has(p.id)) continue;
+    asked.add(p.id);
+    api.listRoots(p.id).then(
+      (roots) => setRootNames(p.id, roots),
+      () => asked.delete(p.id),
+    );
+  }
 }
 
 /** Phones and tablets: "On this phone"; computers: "This Mac" (or this PC). */

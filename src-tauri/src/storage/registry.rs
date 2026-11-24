@@ -132,12 +132,18 @@ pub async fn sftp_for<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_
 async fn net_secrets(state: &AppState, profile: &Profile, cfg: &NetConfig, secret: Option<String>) -> Result<net::Secrets, String> {
     let given = secret.filter(|s| !s.is_empty());
     if profile.kind == ConnKind::Sftp && cfg.auth == NetAuth::Key {
-        let raw = match given {
+        // a passphrase alone (testing an edit) goes with the saved key
+        let pass_only = given.as_deref().and_then(net::SshKey::passphrase_only);
+        let raw = match given.filter(|_| pass_only.is_none()) {
             Some(s) => Some(s),
             None => match get_secret(state, &secret_key(&profile.id, "ssh")).await? {
                 Some(s) => Some(s),
                 None => get_secret(state, &profile.id).await?,
             },
+        };
+        let raw = match (raw, pass_only) {
+            (Some(stored), Some(p)) => net::SshKey::with_passphrase(&stored, &p).or(Some(stored)),
+            (raw, _) => raw,
         };
         return Ok(net::Secrets { password: None, ssh: raw.as_deref().and_then(net::SshKey::parse) });
     }

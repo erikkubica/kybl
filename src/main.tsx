@@ -52,11 +52,16 @@ async function boot() {
   }
   // the tag that marks Kybl's own trust questions (a host key, a certificate, plain FTP), before
   // any error can ask one
-  try {
-    setTrustTag(await api.trustTag());
-  } catch {
-    /* no trust questions this run: a connection that needs one shows its error */
-  }
+  // A failed read is tried again a few times in the background, so a trust question asked later
+  // still gets its button (until then, a connection that needs one shows its error)
+  const readTag = async (left: number): Promise<void> => {
+    try {
+      setTrustTag(await api.trustTag());
+    } catch {
+      if (left > 0) setTimeout(() => void readTag(left - 1), (6 - left) * 2000);
+    }
+  };
+  await readTag(5);
   // Phones get their own touch UI over the same backend. `?mobile` forces it in a desktop browser.
   const phone =
     /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || new URLSearchParams(location.search).has("mobile");

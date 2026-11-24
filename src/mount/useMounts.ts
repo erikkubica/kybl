@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { MOUNT_STATUS_EVENT, mountApi, type MountInfo } from "../api";
 import { createStore, useStore } from "../store";
 import { ON_OS } from "../osNames";
+import { rootLabel } from "../connections/roots";
 
 type MountData = { loaded: boolean; mounts: MountInfo[] };
 
@@ -49,10 +50,10 @@ export function fileManagerName(): string {
   return ON_OS.fileManager;
 }
 
-/** "media-prod › photos/2026" — where a drive points, for people. */
-export function mountWhere(m: Pick<MountInfo, "bucket" | "prefix">, connection: string): string {
+/** "media-prod › photos/2026", "Google Drive › My Drive › Photos" — where a drive points, for people. */
+export function mountWhere(m: Pick<MountInfo, "profileId" | "bucket" | "prefix">, connection: string): string {
   const parts = [connection];
-  if (m.bucket) parts.push(m.bucket.split(/[\\/]/).filter(Boolean).pop() ?? m.bucket);
+  if (m.bucket) parts.push(rootLabel(m.profileId, m.bucket));
   if (m.prefix) parts.push(m.prefix.replace(/\/$/, ""));
   return parts.join(" › ");
 }

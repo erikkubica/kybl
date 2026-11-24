@@ -20,7 +20,7 @@ import { registerCommands, type PaletteCommand } from "../palette/commands";
 import { createStore, useStore } from "../store";
 import type { MenuItem } from "../components/Dialogs";
 import type { Dialogs } from "../shell/useDialogs";
-import type { TransferActions } from "../useTransfers";
+import { finishedOk, type TransferActions } from "../useTransfers";
 import type { useJobs } from "../useJobs";
 import type { Entry, Profile, Transfer } from "../types";
 import { OutputSheet } from "./OutputSheet";
@@ -556,8 +556,8 @@ async function localItems(ctx: ActionContext, runId: string, targets: Entry[]): 
   } finally {
     preparing.delete(runId);
   }
-  const bad = done.find((t) => t.state !== "done");
-  if (bad) throw new Error(bad.state === "cancelled" ? "Cancelled" : `Couldn’t get “${bad.name}”. ${bad.error ?? ""}`.trim());
+  const bad = done.find((t) => !finishedOk(t));
+  if (bad) throw new Error(bad.state === "cancelled" || bad.checkStopped ? "Cancelled" : `Couldn’t get “${bad.name}”. ${bad.error ?? ""}`.trim());
   return { items: done.map((t) => ({ path: t.local, isDir: false })), dir };
 }
 

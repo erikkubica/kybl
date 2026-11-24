@@ -46,6 +46,13 @@ struct TransferEvent {
     /// the download landed under this name instead (a file turned up at its own while it ran)
     #[serde(skip_serializing_if = "Option::is_none")]
     local: Option<String>,
+    /// done, but Cancel (or Quit) stopped the check the settings ask for: the data is in place,
+    /// unverified, and the user asked for it to stop
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    check_stopped: bool,
+    /// paused with the download's whole file in place, only its check left (Resume checks it)
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    check_pending: bool,
 }
 
 fn emit(app: &AppHandle, id: &str, state: &'static str, bytes: u64, total: u64, error: Option<String>) {
@@ -786,6 +793,7 @@ async fn spawn_transfer(
         let first = AtomicU64::new(0);
         let mut verify_part_size: Option<u64> = None;
         let mut checked: Option<&'static str> = None;
+        let mut check_stopped = false;
         let mut local_done: Option<PathBuf> = None;
         // a download's version is written down as soon as it is known
         let seen = |v: Option<&str>| {
@@ -963,6 +971,7 @@ async fn spawn_transfer(
                     StoppedCheck::DoneUnverified => {
                         to_cache = false;
                         checked = None;
+                        check_stopped = true;
                     }
                 },
                 Some(Ok(c)) => checked = c,
@@ -1079,6 +1088,8 @@ async fn spawn_transfer(
             &app,
             &id,
             match result {
+                // stopped on purpose: no "done" notice for it
+                Ok(Outcome::Done) if check_stopped => None,
                 Ok(Outcome::Done) => Some(true),
                 _ if paused_now => None,
                 Ok(Outcome::Cancelled) => None,
@@ -1086,6 +1097,8 @@ async fn spawn_transfer(
             },
         );
         let (resumed_from, restarted) = resume_note(prior, kept_now, first.load(Ordering::Relaxed));
+        // as kept for Resume above: a paused download whose file came in whole
+        let check_pending = paused_now && matches!(kind, Kind::Download { .. }) && unverified.is_some();
         let ev = |state: &'static str, bytes: u64, total: u64, error: Option<String>| TransferEvent {
             id: id.clone(),
             state,
@@ -1096,6 +1109,8 @@ async fn spawn_transfer(
             restarted,
             verified: checked,
             local: moved_to.clone(),
+            check_stopped,
+            check_pending: state == "paused" && check_pending,
         };
         let _ = app.emit(
             "transfer",

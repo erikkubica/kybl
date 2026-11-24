@@ -704,7 +704,8 @@ function TransferPanelView({
                       {t.speed > 0 && ` · ${formatSpeed(t.speed)}`}
                     </>
                   )}
-                  {t.state === "paused" && (t.total > 0 ? `Paused · ${formatBytes(t.bytes)} of ${formatBytes(t.total)}` : "Paused")}
+                  {t.state === "paused" &&
+                    (t.checkPending ? `Downloaded, check paused · ${formatBytes(t.total)}` : t.total > 0 ? `Paused · ${formatBytes(t.bytes)} of ${formatBytes(t.total)}` : "Paused")}
                   {t.state !== "running" && t.state !== "paused" && (t.total || (t.state === "done" ? t.bytes : 0)) > 0 && formatBytes(t.total || t.bytes)}
                 </div>
                 {t.state === "running" || t.state === "queued" || t.state === "paused" ? (
@@ -717,6 +718,11 @@ function TransferPanelView({
                     {t.state === "done" && t.verified && (
                       <span className="tp-verified" title={`Verified: ${VERIFIED[t.verified] ?? "it matches"}`} aria-label="Verified">
                         <Icon name="check" size={11} /> verified
+                      </span>
+                    )}
+                    {t.state === "done" && t.checkStopped && (
+                      <span className="tp-unverified" title="Cancel stopped the check after copying. The file is there, but it wasn't checked.">
+                        · not checked
                       </span>
                     )}
                     {t.state === "cancelled" && "Cancelled"}
@@ -735,12 +741,17 @@ function TransferPanelView({
                     </button>
                   )}
                   {t.state === "paused" && (
-                    <button className="icon-btn" onClick={() => transferActions.resume(t.id)} title="Resume from where it stopped" aria-label={`Resume ${t.name}`}>
+                    <button
+                      className="icon-btn"
+                      onClick={() => transferActions.resume(t.id)}
+                      title={t.checkPending ? "Check it now" : "Resume from where it stopped"}
+                      aria-label={t.checkPending ? `Check ${t.name}` : `Resume ${t.name}`}
+                    >
                       <Icon name="play" size={13} />
                     </button>
                   )}
                   {(t.state === "running" || t.state === "queued" || t.state === "paused") && ctl.manage && (
-                    <button className="icon-btn" onClick={() => onCancel(t.id)} title={t.state === "paused" ? "Cancel and drop what was done" : "Cancel"} aria-label="Cancel">
+                    <button className="icon-btn" onClick={() => onCancel(t.id)} title={t.state !== "paused" ? "Cancel" : t.checkPending ? "Keep the file, skip the check" : "Cancel and drop what was done"} aria-label="Cancel">
                       <Icon name="x" size={13} />
                     </button>
                   )}
@@ -749,7 +760,7 @@ function TransferPanelView({
                       <Icon name="retry" size={13} />
                     </button>
                   )}
-                  {t.state === "done" && t.kind === "download" && t.local && (
+                  {(t.state === "done" || t.checkPending) && t.kind === "download" && t.local && (
                     <>
                       <button className="icon-btn" onClick={() => openLocal(t)} title="Open" aria-label={`Open ${t.name}`}>
                         <Icon name="external" size={13} />

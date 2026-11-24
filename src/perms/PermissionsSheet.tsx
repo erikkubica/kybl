@@ -207,7 +207,7 @@ export function PermissionsSheet({
           </div>
         )}
         {error && (
-          <p className="hint error">
+          <p className="hint error" role="alert">
             <ErrorText message={error} />
           </p>
         )}

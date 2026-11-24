@@ -83,7 +83,11 @@ export function CloudPanel({
     ownOpen && clientId.trim()
       ? { clientId: clientId.trim(), clientSecret: kind === "gdrive" && clientSecret ? clientSecret : null, tenant: kind === "onedrive" && tenant.trim() ? tenant.trim() : null }
       : null;
-  const canStart = builtin !== null && (!needsOwn || !!client);
+  // Google's desktop apps need their secret at the token exchange: ask for it before the browser
+  // opens (a saved one is kept for the same client ID)
+  const keepsSecret = !!initial?.cloud?.clientId && clientId.trim() === initial.cloud.clientId;
+  const secretMissing = kind === "gdrive" && !!client && !clientSecret && !keepsSecret;
+  const canStart = builtin !== null && (!needsOwn || !!client) && !secretMissing;
   // editing: a changed app only takes effect through a new sign-in, so Save signs in again
   const appChanged =
     !!initial && ownOpen && (clientId.trim() !== (initial.cloud?.clientId ?? "") || tenant.trim() !== (initial.cloud?.tenant ?? "") || !!clientSecret);
@@ -219,8 +223,12 @@ export function CloudPanel({
                 {(c) => <input {...c} className="mono" value={clientId} onChange={(e) => setClientId(e.target.value)} disabled={waiting} {...RAW} />}
               </Field>
               {kind === "gdrive" && (
-                <Field label="Client secret" optional hint="Google shows one for desktop apps too. It isn't really secret, but it's needed.">
-                  {(c) => <SecretInput control={c} value={clientSecret} onChange={setClientSecret} editing={!!initial?.cloud?.clientId && clientId.trim() === initial.cloud.clientId} label="client secret" />}
+                <Field
+                  label="Client secret"
+                  error={secretMissing ? "Enter the client secret too." : null}
+                  hint={secretMissing ? undefined : "Google shows one for desktop apps too. It isn't really secret, but it's needed."}
+                >
+                  {(c) => <SecretInput control={c} value={clientSecret} onChange={setClientSecret} editing={keepsSecret} label="client secret" />}
                 </Field>
               )}
               {kind === "onedrive" && (

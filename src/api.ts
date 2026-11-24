@@ -319,6 +319,8 @@ export type KeptTransfer = {
   total: number;
   state: "paused" | "error";
   error: string | null;
+  /** a download whose whole file is in place, unchecked: what it was like (size, modified) */
+  stamp?: [number, number | null] | null;
 };
 
 export type TransferPrefs = {

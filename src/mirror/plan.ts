@@ -151,8 +151,15 @@ export function planMirror(src: Listing, dst: Listing, o: PlanOptions): MirrorPl
   // side (SFTP resolves a path through a link on the server: deleting "uploads/a.jpg" under a
   // linked "uploads" would delete the real file wherever the link points)
   const linkNames = new Map<string, "source" | "destination">();
-  for (const [side, l] of [["source", src.links], ["destination", dst.links]] as const) for (const rel of l ?? []) linkNames.set(fold(rel.replace(/\/$/, "")), side);
-  for (const [name, side] of linkNames) out.links.push({ rel: name, size: 0, why: "kept", note: `a link at the ${side}: left alone` });
+  // the names as listed, for the Skip list (the folded key is only for matching)
+  const shown = new Map<string, string>();
+  for (const [side, l] of [["source", src.links], ["destination", dst.links]] as const)
+    for (const rel of l ?? []) {
+      const name = rel.replace(/\/$/, "");
+      linkNames.set(fold(name), side);
+      shown.set(fold(name), name);
+    }
+  for (const [key, side] of linkNames) out.links.push({ rel: shown.get(key) ?? key, size: 0, why: "kept", note: `a link at the ${side}: left alone` });
   const linkOf = (rel: string): "source" | "destination" | undefined => {
     if (!linkNames.size) return undefined;
     const parts = fold(rel.replace(/\/$/, "")).split("/");

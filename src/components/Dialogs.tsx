@@ -162,7 +162,7 @@ export function Modal({
         <div className="modal-head">
           {icon}
           <h2>{title}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close (Esc)">
+          <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close (Esc)" data-new-folder="cancel">
             <Icon name="x" />
           </button>
         </div>

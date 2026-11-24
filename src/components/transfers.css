@@ -51,6 +51,12 @@
   opacity: 1;
 }
 
+.tp-unverified {
+  margin-left: 4px;
+  color: var(--warn);
+  font-size: 11px;
+}
+
 .tp-verified {
   display: inline-flex;
   align-items: center;

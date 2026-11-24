@@ -17,7 +17,7 @@ import { ActionsSection } from "../actions/ActionsSection";
 import { syncApi, type AppPrefs } from "../sync";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { actionLabel, ago, installAndRestart, UpdateStepError, updatesApi, useUpdates } from "../updates";
-import { formatBytes, mbpsToKbps } from "../format";
+import { customLimitProblem, formatBytes, mbpsInput, mbpsToKbps, parseMbps } from "../format";
 import { useTransfersActive } from "../useTransfers";
 import { spellKeys } from "./shortcutKeys";
 import { keys, TRAY } from "./osText";
@@ -309,25 +309,29 @@ const VERIFY: { value: TransferPrefs["verify"]; label: string }[] = [
 /** One direction's speed limit: presets, or a number of MB/s of your own. */
 function LimitPicker({ label, kbps, onSet }: { label: string; kbps: number; onSet: (kbps: number) => void }) {
   const mb = kbps / MBPS;
-  const fits = LIMITS.some((l) => Math.abs(l - mb) < 0.05);
+  // a preset only when it is exactly the preset's value (0.97 MB/s is not "1 MB/s")
+  const fits = LIMITS.some((l) => Math.round(l * MBPS) === kbps);
   const [custom, setCustom] = useState(!fits);
-  const [customText, setCustomText] = useState(fits || kbps === 0 ? "" : String(Math.round(mb * 10) / 10));
-  // changed elsewhere (the Activity panel's speed menu): follow it
+  // the field shows the limit precise to 1 KB/s, so leaving it never changes the limit in force
+  const [customText, setCustomText] = useState(fits || kbps === 0 ? "" : mbpsInput(mb));
+  // focus the field only when the user picks "Custom", not when the page opens on it
+  const [focusField, setFocusField] = useState(false);
+  // changed elsewhere (the Activity panel's speed menu): follow it, unless the field already says it
   useEffect(() => {
     if (fits) setCustom(false);
     else {
       setCustom(true);
-      setCustomText(String(Math.round(mb * 10) / 10));
+      setCustomText((t) => (typedKbps(t) === kbps ? t : mbpsInput(mb)));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kbps]);
-  const preset = custom ? "custom" : LIMITS.find((l) => Math.abs(l - mb) < 0.05) ?? "custom";
-  const customValue = Number(customText.replace(",", "."));
-  const customBad = custom && customText.trim() !== "" && !(customValue > 0 && customValue <= 10_000);
+  const preset = custom ? "custom" : LIMITS.find((l) => Math.round(l * MBPS) === kbps) ?? "custom";
+  const problem = custom ? customLimitProblem(customText) : null;
   const applyCustom = () => {
-    if (customBad || !customText.trim()) return;
-    // a tiny limit stays a limit (1 KB/s at least), never "Unlimited"
-    onSet(mbpsToKbps(customValue));
+    if (problem || !customText.trim()) return;
+    const next = typedKbps(customText);
+    // a tiny limit stays a limit (1 KB/s at least), never "Unlimited"; the same value saves nothing
+    if (next !== null && next !== kbps) onSet(next);
   };
   return (
     <div className="set-limit">
@@ -338,7 +342,8 @@ function LimitPicker({ label, kbps, onSet }: { label: string; kbps: number; onSe
         onChange={(v) => {
           if (v === "custom") {
             setCustom(true);
-            setCustomText(mb > 0 ? String(Math.round(mb * 10) / 10) : "");
+            setFocusField(true);
+            setCustomText(mb > 0 ? mbpsInput(mb) : "");
           } else {
             setCustom(false);
             onSet(Math.round((v as number) * MBPS));
@@ -356,20 +361,26 @@ function LimitPicker({ label, kbps, onSet }: { label: string; kbps: number; onSe
           <input
             inputMode="decimal"
             aria-label={`${label} in MB/s`}
-            aria-invalid={customBad}
+            aria-invalid={problem !== null}
             value={customText}
             onChange={(e) => setCustomText(e.target.value)}
             onBlur={applyCustom}
             placeholder="e.g. 2.5"
-            autoFocus
+            autoFocus={focusField}
             onFocus={(e) => e.currentTarget.select()}
           />
           <span>MB/s</span>
-          {customBad && <em className="pe-err">Enter a number above 0.</em>}
+          {problem && <em className="pe-err">{problem}</em>}
         </form>
       )}
     </div>
   );
+}
+
+/** A typed custom limit as KiB/s, or null when it is not a number. */
+function typedKbps(text: string): number | null {
+  const v = parseMbps(text);
+  return typeof v === "number" ? mbpsToKbps(v) : null;
 }
 
 /** Transfer tuning (backend prefs) plus where downloads go (a desktop setting). */
