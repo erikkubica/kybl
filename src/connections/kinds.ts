@@ -8,7 +8,7 @@ import { splitDavUrl } from "./serverHost.ts";
 import type { BlobConfig, ConnKind, NetConfig, Profile } from "../types";
 
 /** What the picker offers: Kybl Storage has its own sign-in flow, S3 its presets. */
-export type PickId = "kybl" | "s3" | CloudKind | "webdav" | "sftp" | "ftp" | "azblob" | "gcs";
+export type PickId = "kybl" | "s3" | CloudKind | "webdav" | "ssh" | "sftp" | "ftp" | "azblob" | "gcs";
 
 export type KindInfo = {
   id: PickId;
@@ -29,7 +29,8 @@ export const KINDS: KindInfo[] = [
   { id: "onedrive", provider: "onedrive", label: "OneDrive", blurb: "Personal or work account", group: "drives" },
   { id: "dropbox", provider: "dropbox", label: "Dropbox", blurb: "Your whole Dropbox", group: "drives" },
   { id: "webdav", provider: "webdav", label: "WebDAV", blurb: "Nextcloud, ownCloud, Synology", group: "servers" },
-  { id: "sftp", provider: "sftp", label: "SFTP", blurb: "Any server you can SSH into", group: "servers" },
+  { id: "ssh", provider: "ssh", label: "SSH", blurb: "A terminal on a server, and its files", group: "servers" },
+  { id: "sftp", provider: "sftp", label: "SFTP", blurb: "Files on a server, over SSH", group: "servers" },
   { id: "ftp", provider: "ftp", label: "FTP / FTPS", blurb: "Web hosts and older servers", group: "servers" },
 ];
 
@@ -47,9 +48,16 @@ export const SIGN_IN_WITH: Record<CloudKind, string> = { gdrive: "Google", onedr
 
 export const kindInfo = (id: PickId) => KINDS.find((k) => k.id === id)!;
 
+/**
+ * An SSH connection: an SFTP one (the same sign-in, host key, tunnels and files) that opens as a
+ * terminal on the server. Told apart by its provider, so the backend sees a plain SFTP profile.
+ */
+export const isShellConn = (p: Pick<Profile, "kind" | "provider">) => p.kind === "sftp" && p.provider === "ssh";
+
 /** The picker entry a saved profile belongs to (Kybl Storage is an S3 profile with its own flow). */
 export function pickOf(p: Profile): PickId {
   if (p.provider === "kybl") return "kybl";
+  if (isShellConn(p)) return "ssh";
   const k = p.kind ?? "s3";
   return (KINDS.some((x) => x.id === k) ? k : "s3") as PickId;
 }

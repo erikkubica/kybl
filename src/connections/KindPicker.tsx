@@ -2,6 +2,7 @@
 import { Icon } from "../Icons";
 import { ProviderBadge } from "../components/Sidebar";
 import { GROUPS, KINDS, type PickId } from "./kinds";
+import { PHONE } from "./fields";
 
 export function KindPicker({
   onPick,
@@ -28,7 +29,7 @@ export function KindPicker({
         </button>
       )}
       {GROUPS.map((g) => {
-        const kinds = KINDS.filter((k) => k.group === g.id && (k.id !== "kybl" || (kybl && !kyblFirst)));
+        const kinds = KINDS.filter((k) => k.group === g.id && (k.id !== "kybl" || (kybl && !kyblFirst)) && (k.id !== "ssh" || !PHONE));
         return (
           <section key={g.id} className="kind-group" aria-labelledby={`kind-${g.id}`}>
             <h3 id={`kind-${g.id}`}>{g.label}</h3>

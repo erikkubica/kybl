@@ -52,7 +52,7 @@ import { asExport } from "../connections/native";
 import type { DocumentHandle } from "../viewers/DocumentView";
 import type { Entry } from "../types";
 import type { Profile } from "../types";
-import type { PickId } from "../connections/kinds";
+import { isShellConn, type PickId } from "../connections/kinds";
 import { useDialogs } from "./useDialogs";
 import type { MenuItem } from "../components/Dialogs";
 import { photoMenuItems } from "./photoMenu";
@@ -636,8 +636,15 @@ export function AppShell() {
     [conns.expand, conns.loadBuckets],
   );
 
+  /** An SSH connection opens as a terminal on the server (`another`: a new one beside an open one). */
+  const openShell = (p: Profile, another = false) => {
+    if (sideHidden) sidePeek.close();
+    term.openRemote(p.id, another);
+  };
+
   /** Sidebar click on a connection: folds it open or shut, without leaving what is on screen. */
   const toggleConnection = (p: Profile) => {
+    if (isShellConn(p)) return openShell(p);
     if (fileId == null || !active.profile) return openHere((pane) => void connectIn(pane.id, p));
     const open = !conns.expanded.has(p.id);
     conns.setExpandedSaved((cur) => {
@@ -1709,6 +1716,7 @@ export function AppShell() {
 
   /** A found or recent connection opens in the pane in use (or just takes the keyboard there, if it's already on screen). */
   const openConnection = (p: Profile) => {
+    if (isShellConn(p)) return openShell(p);
     if (sideHidden) sidePeek.close();
     if (fileId == null) return openHere((pane) => void connectIn(pane.id, p));
     showFilePane();
@@ -1887,7 +1895,17 @@ export function AppShell() {
     const single = rootsMode(p, peekCaps(p.id)) === "single";
     dialogs.menu(x, y, tidyMenu([
       ...(authNeeded.has(p.id) ? [{ type: "item" as const, label: "Sign in again…", icon: "refresh" as const, onClick: () => setConnDialog({ profile: p, reconnect: true }) }] : []),
-      single
+      // an SSH connection: its terminal first, its files on request
+      ...(isShellConn(p)
+        ? [
+            { type: "item" as const, label: "Open terminal", icon: "terminal" as const, onClick: () => openShell(p) },
+            { type: "item" as const, label: "New terminal", icon: "plus" as const, onClick: () => openShell(p, true) },
+            { type: "item" as const, label: "Browse files", icon: "folder" as const, onClick: () => openHere((pane) => pane.openBucket(p, "")) },
+          ]
+        : []),
+      isShellConn(p)
+        ? null
+        : single
         ? { type: "item" as const, label: "Open", icon: "folder" as const, onClick: () => openHere((pane) => pane.openBucket(p, "")) }
         : { type: "item" as const, label: conns.expanded.has(p.id) ? "Collapse" : "Expand", icon: "chevron" as const, onClick: () => toggleConnection(p) },
       // all of this computer is too much to copy in one go: its folders have their own menus
@@ -1932,6 +1950,7 @@ export function AppShell() {
   };
   /** The folded sidebar: a connection's icon lists its buckets (a server's one root just opens). */
   const railPick = async (p: Profile, x: number, y: number) => {
+    if (isShellConn(p)) return openShell(p);
     if (fileId == null || !active.profile) return openHere((pane) => void connectIn(pane.id, p));
     if (rootsMode(p, peekCaps(p.id)) === "single") {
       return openHere((pane) => pane.openBucket(p, ""));
@@ -2082,7 +2101,7 @@ export function AppShell() {
       panes: panesRef.current,
       paneCount: ids.length,
       route: (id) => routeRef.current(id),
-      openConnection: (p, newPane) => (newPane ? inNewPane((fresh) => void connectIn(fresh, p)) : openConnection(p)),
+      openConnection: (p, newPane) => (isShellConn(p) ? openShell(p, newPane) : newPane ? inNewPane((fresh) => void connectIn(fresh, p)) : openConnection(p)),
       openPlace: (loc, newPane, selectKey) => {
         const p = profiles.find((x) => x.id === loc.profileId);
         if (!p) return toast("error", "That connection no longer exists.");
@@ -2476,7 +2495,9 @@ export function AppShell() {
           onConnected={(p) => {
             forgetCaps(p.id);
             conns.upsertProfile(p);
-            openHere((pane) => void connectIn(pane.id, p));
+            // an SSH connection opens as its terminal (once the saved profile is in the list)
+            if (isShellConn(p)) requestAnimationFrame(() => openShell(p));
+            else openHere((pane) => void connectIn(pane.id, p));
           }}
           onDeleted={forgetProfile}
         />

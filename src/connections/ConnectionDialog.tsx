@@ -278,14 +278,16 @@ function KeyedForm({
 
   // the connection's own fields first; where it sits and how photos show under Options. Both stay
   // mounted (hidden), so what was typed survives a switch
-  const [tab, setTab] = useState<"main" | "options" | "tunnels">(pick === "sftp" && !PHONE && startTab ? startTab : "main");
+  // SSH is SFTP that opens as a terminal: the same form
+  const sftp = pick === "sftp" || pick === "ssh";
+  const [tab, setTab] = useState<"main" | "options" | "tunnels">(sftp && !PHONE && startTab ? startTab : "main");
   // SFTP: the tunnel list lives in its own tab; NetForm draws it there and says how many
   const [tunnelsHost, setTunnelsHost] = useState<HTMLDivElement | null>(null);
   const [tunnelCount, setTunnelCount] = useState(() => initial?.net?.tunnels?.length ?? 0);
-  const tunnelTab = pick === "sftp" && !PHONE;
+  const tunnelTab = sftp && !PHONE;
   const [shareMore, setShareMore] = useState(false);
   // opened for its tunnels: the keyboard starts there (the first field is on a hidden tab)
-  const focusedStart = useRef(startTab !== "tunnels" || !(pick === "sftp" && !PHONE));
+  const focusedStart = useRef(startTab !== "tunnels" || !(sftp && !PHONE));
   useEffect(() => {
     if (focusedStart.current || tab !== "tunnels" || !tunnelsHost) return;
     focusedStart.current = true;
@@ -391,8 +393,8 @@ function KeyedForm({
         <div className="conn-tab" data-tab="main" role="tabpanel" id="conn-panel-main" aria-labelledby="conn-tab-main" style={{ display: tab === "main" ? "contents" : "none" }}>
         {pick === "s3" ? (
           <S3Form {...common} />
-        ) : pick === "webdav" || pick === "ftp" || pick === "sftp" ? (
-          <NetForm kind={pick as NetKind} {...common} tunnelsHost={tunnelsHost} onTunnelCount={setTunnelCount} />
+        ) : pick === "webdav" || pick === "ftp" || sftp ? (
+          <NetForm kind={(sftp ? "sftp" : pick) as NetKind} shell={pick === "ssh"} {...common} tunnelsHost={tunnelsHost} onTunnelCount={setTunnelCount} />
         ) : (
           <BlobForm kind={pick as BlobKind} {...common} />
         )}
@@ -518,7 +520,7 @@ function KeyedForm({
           </button>
           <button type="submit" form="conn-form" className="btn btn-primary" disabled={busy !== null}>
             {busy === "save" && <span className="spinner" />}
-            {busy === "save" ? (pick === "sftp" ? "Connecting…" : "Saving…") : "Save"}
+            {busy === "save" ? (sftp ? "Connecting…" : "Saving…") : "Save"}
           </button>
         </div>
       </div>

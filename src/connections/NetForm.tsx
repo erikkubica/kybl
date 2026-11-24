@@ -27,7 +27,10 @@ export function NetForm({
   onEdit,
   tunnelsHost,
   onTunnelCount,
+  shell,
 }: {
+  /** SFTP: saved as an SSH connection (opens as a terminal; see `isShellConn`) */
+  shell?: boolean;
   kind: NetKind;
   /** SFTP: where the tunnel list goes (the dialog's Tunnels tab) */
   tunnelsHost?: HTMLElement | null;
@@ -198,7 +201,7 @@ export function NetForm({
         url: kind === "webdav" ? davHref : null,
         tunnels: kind === "sftp" ? tidyTunnels(tunnels) : [],
       };
-      const profile: Profile = { ...baseProfile(initial?.id ?? "", name.trim() || netTitle(kind, net), kind), net };
+      const profile: Profile = { ...baseProfile(initial?.id ?? "", name.trim() || netTitle(kind, net), kind), ...(shell ? { provider: "ssh" } : {}), net };
       let secret: string | undefined;
       if (kind === "sftp" && auth === "key") {
         const k = privateKey.trim();

@@ -305,6 +305,23 @@ export function useTerminalPanes(initial: Layout) {
     return latest.current.open(now.ids.includes(from) ? from : now.activeId, at);
   };
 
+  /**
+   * An SSH connection opened: to its terminal when one is open (unless `another`), else a new one
+   * below the active pane, in the server's start folder.
+   */
+  const openRemote = (profileId: string, another = false): PaneId | null => {
+    const h = host.current;
+    if (!h) return null;
+    const ts = termsRef.current;
+    const there = another ? undefined : h.ids.find((x) => ts[x]?.profileId === profileId);
+    if (there) {
+      h.setActive(there);
+      h.focus(there);
+      return there;
+    }
+    return open(h.activeId, { profileId, bucket: "", prefix: "" });
+  };
+
   /** "Open terminal here" / "Open in terminal" for folder `key` of file pane `id`'s root; none where a terminal can't open. */
   const items = (id: PaneId, key: string, label = "Open terminal here"): MenuItem[] => {
     const p = host.current?.slot(id);
@@ -470,7 +487,7 @@ export function useTerminalPanes(initial: Layout) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { terms, setTerms, assign, host, open, openLocal, openFor, toggle, items, dropTarget, drop, dropPaths, nameOf, gc, render };
+  return { terms, setTerms, assign, host, open, openLocal, openFor, openRemote, toggle, items, dropTarget, drop, dropPaths, nameOf, gc, render };
 }
 
 /**
