@@ -352,6 +352,22 @@ async fn account(kind: ConnKind, access: &str) -> Result<(String, String), Strin
     })
 }
 
+/// Which own app a sign-in uses. `None` keeps the saved one (or the built-in app when there is
+/// none); an empty client ID asks for the built-in app; the same client ID without a secret keeps
+/// the saved secret (the form never shows it, so it can't send it back).
+fn own_client(client: Option<ClientOverride>, saved: Option<ClientOverride>) -> Option<ClientOverride> {
+    match client {
+        None => saved,
+        Some(c) if c.client_id.trim().is_empty() => None,
+        Some(mut c) => {
+            if c.client_secret.as_deref().is_none_or(|s| s.trim().is_empty()) {
+                c.client_secret = saved.filter(|s| s.client_id.trim() == c.client_id.trim()).and_then(|s| s.client_secret);
+            }
+            Some(c)
+        }
+    }
+}
+
 // ---------------------------------------------------------------- commands
 
 /// Signs in to a cloud drive in the browser and saves the connection (new, or `replace_id`
@@ -373,17 +389,15 @@ pub async fn oauth_start(
         return Err("Connection not found".into());
     }
     // the user's own client: given now, or kept from the connection being reconnected
-    let own = match client.filter(|c| !c.client_id.trim().is_empty()) {
-        Some(c) => Some(c),
-        None => match replacing.as_ref().and_then(|r| r.cloud.as_ref()).and_then(|c| c.client_id.clone()).filter(|s| !s.is_empty()) {
-            Some(id) => {
-                let old = get_secret(&state, &secret_key(&replacing.as_ref().unwrap().id, "oauth")).await?.and_then(|s| token::parse_stored(&s));
-                let tenant = replacing.as_ref().and_then(|r| r.cloud.as_ref()).and_then(|c| c.tenant.clone());
-                Some(ClientOverride { client_id: id, client_secret: old.and_then(|o| o.client_secret), tenant })
-            }
-            None => None,
-        },
+    let saved = match replacing.as_ref().and_then(|r| r.cloud.as_ref()).and_then(|c| c.client_id.clone()).filter(|s| !s.is_empty()) {
+        Some(id) => {
+            let old = get_secret(&state, &secret_key(&replacing.as_ref().unwrap().id, "oauth")).await?.and_then(|s| token::parse_stored(&s));
+            let tenant = replacing.as_ref().and_then(|r| r.cloud.as_ref()).and_then(|c| c.tenant.clone());
+            Some(ClientOverride { client_id: id, client_secret: old.and_then(|o| o.client_secret), tenant })
+        }
+        None => None,
     };
+    let own = own_client(client, saved);
     let (client_id, secret) = match &own {
         Some(c) => (c.client_id.trim().to_string(), c.client_secret.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())),
         None => builtin_client(kind).ok_or_else(|| {
@@ -609,6 +623,24 @@ mod tests {
         assert_eq!(redirect_for(ConnKind::Dropbox, "key", false, false, true), Redirect::Loopback { host: "localhost", ports: DROPBOX_PORTS });
         assert_eq!(reversed_client_id("123-abc.apps.googleusercontent.com").unwrap(), "com.googleusercontent.apps.123-abc");
         assert_eq!(reversed_client_id("nope"), None);
+    }
+
+    #[test]
+    fn own_client_keeps_the_saved_secret_and_can_go_back_to_built_in() {
+        let app = |id: &str, secret: Option<&str>| ClientOverride { client_id: id.into(), client_secret: secret.map(str::to_string), tenant: None };
+        let saved = || Some(app("mine", Some("s3cret")));
+        // nothing given: the saved app, secret included
+        assert_eq!(own_client(None, saved()).unwrap().client_secret.as_deref(), Some("s3cret"));
+        // the same id without a secret keeps the saved one
+        assert_eq!(own_client(Some(app("mine", None)), saved()).unwrap().client_secret.as_deref(), Some("s3cret"));
+        assert_eq!(own_client(Some(app(" mine ", Some(" "))), saved()).unwrap().client_secret.as_deref(), Some("s3cret"));
+        // a new secret wins
+        assert_eq!(own_client(Some(app("mine", Some("new"))), saved()).unwrap().client_secret.as_deref(), Some("new"));
+        // another app never gets the old secret
+        assert_eq!(own_client(Some(app("other", None)), saved()).unwrap().client_secret, None);
+        // an empty id: the built-in app
+        assert!(own_client(Some(app("", None)), saved()).is_none());
+        assert!(own_client(None, None).is_none());
     }
 
     #[test]

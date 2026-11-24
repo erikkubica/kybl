@@ -2,7 +2,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { connTrouble } from "../../src/connections/connTrouble.ts";
+import { keepsSavedSecret } from "../../src/connections/kinds.ts";
 import type { Profile } from "../../src/types.ts";
+
+test("an empty secret keeps the saved one only for the same key ID or account", () => {
+  assert.equal(keepsSavedSecret("AKIA1", "AKIA1"), true);
+  assert.equal(keepsSavedSecret("AKIA1", " AKIA1 "), true);
+  assert.equal(keepsSavedSecret("AKIA1", "AKIA2"), false);
+  assert.equal(keepsSavedSecret(undefined, "AKIA1"), false);
+});
 
 const net = { name: "nas", id: "p1", net: { host: "nas.lan" } } as unknown as Profile;
 const s3 = { name: "s3", id: "p2" } as unknown as Profile;

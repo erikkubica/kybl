@@ -23,7 +23,10 @@ export function fieldsAfterProvider(from: PresetShape, to: PresetShape, cur: S3F
   const region = cur.region.trim();
   const listed = (p: PresetShape) => !!p.regions?.some((r) => r.value === region);
   const fromPreset = !region || region === from.defaultRegion || listed(from);
-  const nextRegion = fromPreset || (to.regions && !listed(to)) ? to.defaultRegion : cur.region;
+  // a region typed for one provider means nothing to another (AWS's eu-west-2 at Backblaze); only
+  // a generic S3 server (no endpoint of its own) on either side keeps it
+  const generic = (p: PresetShape) => p.endpoint(p.defaultRegion) === "";
+  const nextRegion = fromPreset || (to.regions && !listed(to)) || !(generic(from) || generic(to)) ? to.defaultRegion : cur.region;
   const ep = cur.endpoint.trim();
   const endpoint = ep === "" || ep === from.endpoint(cur.region) ? to.endpoint(nextRegion) : cur.endpoint;
   const pathStyle = cur.pathStyle === from.pathStyle ? to.pathStyle : cur.pathStyle;

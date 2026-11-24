@@ -2,7 +2,7 @@
 import { useImperativeHandle, useRef, useState } from "react";
 import { Icon } from "../Icons";
 import type { BlobConfig, Profile } from "../types";
-import { baseProfile, emptyBlob, type BlobKind } from "./kinds";
+import { baseProfile, emptyBlob, keepsSavedSecret, type BlobKind } from "./kinds";
 import { Field, RAW, SecretInput, type FormApi } from "./fields";
 
 export function BlobForm({ kind, initial, tried, formApi, onEdit }: { kind: BlobKind; initial: Profile | null; tried: boolean; formApi: React.Ref<FormApi>; onEdit: () => void }) {
@@ -14,8 +14,9 @@ export function BlobForm({ kind, initial, tried, formApi, onEdit }: { kind: Blob
   const [secret, setSecret] = useState("");
   const [fileNote, setFileNote] = useState<string | null>(null);
   const jsonFile = useRef<HTMLInputElement>(null);
-  const editing = !!initial;
   const azure = kind === "azblob";
+  // Azure: the saved key belongs to the saved account; a new account needs its own
+  const editing = !!initial && (!azure || keepsSavedSecret(initial.blob?.account, account));
 
   const edit =
     <T,>(set: (v: T) => void) =>
@@ -32,7 +33,9 @@ export function BlobForm({ kind, initial, tried, formApi, onEdit }: { kind: Blob
     secret:
       !secret.trim() && !editing
         ? azure
-          ? "Enter the account key or a SAS token."
+          ? initial
+            ? "Enter the key for the new account."
+            : "Enter the account key or a SAS token."
           : "Paste the service account key or choose its file."
         : !azure && secret.trim() && !/"private_key"/.test(secret)
           ? "This doesn't look like a service account key. It's a JSON file with a “private_key” in it."

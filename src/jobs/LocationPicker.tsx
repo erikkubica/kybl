@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, errMessage, errSummary, LOCAL_ID, type RootInfo } from "../api";
 import { Icon } from "../Icons";
 import { FileIcon } from "../components/FileIcon";
+import { THIS_COMPUTER } from "../components/osText";
 import { deviceIcon, rootIcon } from "../connections/roots";
 import { ProviderBadge } from "../components/Sidebar";
 import { capsFor } from "../useCaps";
@@ -23,9 +24,7 @@ export function deviceName(): string {
   // iPadOS asks for the desktop site: a Mac with a touch screen is an iPad
   if (/iPad/i.test(ua) || (/Macintosh/.test(ua) && typeof navigator !== "undefined" && navigator.maxTouchPoints > 1)) return "On this iPad";
   if (/Android|iPhone|iPod/i.test(ua) || new URLSearchParams(location.search).has("mobile")) return "On this phone";
-  if (/Macintosh|Mac OS X/i.test(ua)) return "This Mac";
-  if (/Windows/i.test(ua)) return "This PC";
-  return "This computer";
+  return THIS_COMPUTER;
 }
 
 /** A folder path for people: "media-prod / photos / 2026". */

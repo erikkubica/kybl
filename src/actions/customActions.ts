@@ -596,10 +596,14 @@ export async function runAction(ctx: ActionContext, a: CustomAction, list: Entry
     finished: null,
   };
   runsStore.set((all) => {
-    const keep = Object.values(all)
+    // runs still going are never dropped (their output and end would be lost); finished ones
+    // make room, oldest first
+    const live = Object.values(all).filter((r) => r.state === "preparing" || r.state === "running");
+    const ended = Object.values(all)
+      .filter((r) => !live.includes(r))
       .sort((x, y) => y.started - x.started)
-      .slice(0, KEEP_RUNS - 1);
-    return { ...Object.fromEntries(keep.map((r) => [r.id, r])), [runId]: run };
+      .slice(0, Math.max(0, KEEP_RUNS - 1 - live.length));
+    return { ...Object.fromEntries([...live, ...ended].map((r) => [r.id, r])), [runId]: run };
   });
   if (a.output === "show") showOutput(dialogs, runId);
 

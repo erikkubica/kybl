@@ -1,7 +1,14 @@
 // Settings › Keyboard shortcuts: Mac glyphs spelled for Windows and Linux. Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ariaKeys, keyLabel, keysInText, spellKeys, trayName } from "../../src/components/shortcutKeys.ts";
+import { ariaKeys, computerName, keyLabel, keysInText, spellKeys, trayName } from "../../src/components/shortcutKeys.ts";
+
+test("this computer's name follows the system", () => {
+  assert.equal(computerName("MacIntel"), "This Mac");
+  assert.equal(computerName("Win32"), "This PC");
+  assert.equal(computerName("Mozilla/5.0 (Windows NT 10.0; Win64; x64)"), "This PC");
+  assert.equal(computerName("Linux x86_64"), "This computer");
+});
 
 test("shortcuts inside sentences: tooltips, toasts, menu hints", () => {
   assert.equal(keysInText("Upload or create (⌘U, ⇧⌘N)", true), "Upload or create (⌘U, ⇧⌘N)");

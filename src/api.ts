@@ -162,7 +162,8 @@ export const api = {
 
   clearThumbnailCache: () => invoke<number>("clear_thumbnail_cache"),
   /** Bytes in the thumbnail cache and in the cache of recently opened files. */
-  cacheUsage: () => invoke<{ thumbnails: number; files: number }>("cache_usage"),
+  /** `inUse`: part of `files`, copies another app may still have open (Clear cache keeps them) */
+  cacheUsage: () => invoke<{ thumbnails: number; files: number; inUse?: number }>("cache_usage"),
   /** Clears both caches; resolves to the bytes freed. */
   clearCaches: () => invoke<number>("clear_caches"),
 
@@ -636,7 +637,9 @@ export const CONNECTION_AUTH_EVENT = "connection-auth";
 /**
  * Signs in to a cloud drive in the browser and saves the connection. Resolves with the new profile
  * (or, with `replaceId`, the same profile updated: Reconnect keeps the id, open tabs and sync
- * folders). Rejects with "Cancelled" after `oauthCancel(flowId)`.
+ * folders). Rejects with "Cancelled" after `oauthCancel(flowId)`. `client`: null keeps the
+ * connection's saved app (or the built-in one); an empty `clientId` asks for the built-in app; the
+ * saved app's id without a secret keeps the saved secret.
  */
 export const oauthStart = (kind: CloudKind, flowId: string, client?: OAuthClient | null, replaceId?: string | null) =>
   invoke<Profile>("oauth_start", { kind, flowId, client: client ?? null, replaceId: replaceId ?? null });

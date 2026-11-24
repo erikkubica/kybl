@@ -45,3 +45,16 @@ test("typed values are kept", () => {
   assert.equal(fieldsAfterProvider(awsP, hetzner, { region: "us-west-2", endpoint: "", pathStyle: false }).region, "nbg1");
   assert.equal(fieldsAfterProvider(awsP, other, { region: "us-west-2", endpoint: "", pathStyle: false }).region, "us-west-2");
 });
+
+test("a region typed for one provider doesn't carry over to another", () => {
+  const b2 = { endpoint: (r: string) => `https://s3.${r}.backblazeb2.com`, defaultRegion: "eu-central-003", pathStyle: false };
+  const r2P = { endpoint: r2, defaultRegion: "auto", pathStyle: false };
+  assert.deepEqual(fieldsAfterProvider(awsP, b2, { region: "eu-west-2", endpoint: aws("eu-west-2"), pathStyle: false }), {
+    region: "eu-central-003",
+    endpoint: b2.endpoint("eu-central-003"),
+    pathStyle: false,
+  });
+  assert.equal(fieldsAfterProvider(awsP, r2P, { region: "eu-west-2", endpoint: aws("eu-west-2"), pathStyle: false }).region, "auto");
+  // a generic server's typed region may well be meant for the provider picked next
+  assert.equal(fieldsAfterProvider(other, b2, { region: "us-west-004", endpoint: "", pathStyle: true }).region, "us-west-004");
+});

@@ -5,6 +5,7 @@
  * connection is just another profile, with the reserved id below.
  */
 import { LOCAL_ID } from "../api";
+import { THIS_COMPUTER } from "../components/osText";
 import type { Profile } from "../types";
 import type { Settings } from "../settings";
 
@@ -53,7 +54,7 @@ export const LOCAL_PROFILE = LOCAL_ID;
 /** The sidebar's "This Mac": built in, never saved, edited or deleted. */
 export const THIS_MAC: Profile = {
   id: LOCAL_ID,
-  name: "This Mac",
+  name: THIS_COMPUTER,
   kind: "local",
   provider: "local",
   endpoint: "",

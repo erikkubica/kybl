@@ -20,9 +20,12 @@ export function ejectLabel(): string {
 export function driveBadgeTitle(m: MountInfo): string | null {
   if (m.state === "mounted") return `Mounted as the drive “${m.name}”`;
   if (m.state === "mounting") return `Mounting “${m.name}”…`;
-  if (m.state === "error") return m.error?.startsWith("Another copy of Kybl") ? `Another copy of Kybl has the drive “${m.name}”` : `The drive “${m.name}” couldn't be mounted`;
+  if (m.state === "error") return heldElsewhere(m) ? `Another copy of Kybl has the drive “${m.name}”` : `The drive “${m.name}” couldn't be mounted`;
   return null;
 }
+
+/** A drive in error because another running Kybl has the drives (not a fault to fix here). */
+const heldElsewhere = (m: MountInfo) => !!m.error?.startsWith("Another copy of Kybl");
 
 async function run(fn: () => Promise<unknown>, toast: Toast) {
   try {
@@ -76,7 +79,7 @@ export function driveItems(m: MountInfo | undefined, o: { ask: () => void; toast
     case "error":
       return [
         { type: "sep" },
-        { type: "label", label: "Drive couldn't be mounted" },
+        { type: "label", label: heldElsewhere(m) ? "Another copy of Kybl has this drive" : "Drive couldn't be mounted" },
         { type: "item", label: "Try mounting again", icon: "retry", onClick: () => void mountAgain(m, o.toast) },
         ...settings,
         { type: "sep" },

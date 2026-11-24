@@ -16,11 +16,11 @@ import { MountsSection } from "../mount/MountsSection";
 import { ActionsSection } from "../actions/ActionsSection";
 import { syncApi, type AppPrefs } from "../sync";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { actionLabel, ago, installAndRestart, updatesApi, useUpdates } from "../updates";
-import { formatBytes } from "../format";
+import { actionLabel, ago, installAndRestart, UpdateStepError, updatesApi, useUpdates } from "../updates";
+import { formatBytes, mbpsToKbps } from "../format";
 import { useTransfersActive } from "../useTransfers";
 import { spellKeys } from "./shortcutKeys";
-import { keys, TRAY } from "./osText";
+import { keys, THIS_COMPUTER, TRAY } from "./osText";
 
 /** Shortcut keys show Mac glyphs on a Mac, Ctrl, Alt and Shift elsewhere. */
 const MAC = /Mac/i.test(navigator.userAgent);
@@ -103,7 +103,7 @@ const SHORTCUTS: { label: string; keys: string[] }[] = [
   { label: "Delete selection", keys: ["⌘⌫", "⌦"] },
   { label: "Clear selection / close dialog", keys: ["Esc"] },
   { label: "Settings", keys: ["⌘", ","] },
-  { label: "This Mac: show or hide hidden files", keys: ["⇧", "⌘", "."] },
+  { label: `${THIS_COMPUTER}: show or hide hidden files`, keys: ["⇧", "⌘", "."] },
   { label: "Grid view: bigger / smaller tiles", keys: ["⌘+", "⌘−"] },
   { label: "Split the pane right / down", keys: ["⌘\\", "⇧⌘\\"] },
   { label: "Close the pane", keys: ["⌘", "W"] },
@@ -187,7 +187,9 @@ function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info"
               disabled={working}
               onClick={() =>
                 rel.how === "install"
-                  ? installAndRestart(() => setBusyAsk(true)).catch((e) => onToast("error", errMessage(e)))
+                  ? installAndRestart(() => setBusyAsk(true)).catch((e) =>
+                      onToast("error", e instanceof UpdateStepError && e.step === "restart" ? `Kybl couldn't restart: ${e.message}` : `The update didn't install: ${errMessage(e)}`),
+                    )
                   : updatesApi.install().catch((e) => onToast("error", String(e)))
               }
             >
@@ -222,13 +224,13 @@ function Row({ label, hint, stack, children }: { label: ReactNode; hint?: string
 
 /** Thumbnails and recently opened files, with what they take on disk; one button clears both. */
 function CacheRow({ onToast }: { onToast: (kind: "success" | "error" | "info", text: string) => void }) {
-  const [usage, setUsage] = useState<{ thumbnails: number; files: number } | null>(null);
+  const [usage, setUsage] = useState<{ thumbnails: number; files: number; inUse?: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const load = () =>
     api
       .cacheUsage()
-      .then(setUsage)
-      .catch(() => setUsage(null));
+      .then((u) => (setUsage(u), u))
+      .catch(() => (setUsage(null), null));
   useEffect(() => {
     void load();
   }, []);
@@ -236,17 +238,22 @@ function CacheRow({ onToast }: { onToast: (kind: "success" | "error" | "info", t
     setBusy(true);
     try {
       const freed = await api.clearCaches();
-      onToast("success", freed ? `Cache cleared (${formatBytes(freed)} freed)` : "The cache was already empty");
+      const kept = (await load())?.inUse ?? 0;
+      const keptText = kept ? `${formatBytes(kept)} open in other apps is kept` : "";
+      onToast(
+        "success",
+        freed ? `Cache cleared (${formatBytes(freed)} freed${kept ? `; ${keptText}` : ""})` : kept ? `Nothing to clear; ${keptText}` : "The cache was already empty",
+      );
     } catch (e) {
       onToast("error", errMessage(e));
+      void load();
     } finally {
       setBusy(false);
-      void load();
     }
   };
   const hint =
-    "Thumbnails, photo placeholders and recently opened files are kept on this computer, so folders and documents reopen without downloading again. Clearing is safe; they are fetched again when needed." +
-    (usage ? ` Now: ${formatBytes(usage.thumbnails)} of thumbnails, ${formatBytes(usage.files)} of files.` : "");
+    "Thumbnails, photo placeholders and recently opened files are kept on this computer, so folders and documents reopen without downloading again. Clearing is safe; they are fetched again when needed. Files opened in other apps in the last hour are kept." +
+    (usage ? ` Now: ${formatBytes(usage.thumbnails)} of thumbnails, ${formatBytes(usage.files)} of files${usage.inUse ? ` (${formatBytes(usage.inUse)} in use)` : ""}.` : "");
   return (
     <Row label="Cache" hint={hint}>
       <button className="btn btn-sm" onClick={clear} disabled={busy}>
@@ -318,7 +325,8 @@ function LimitPicker({ label, kbps, onSet }: { label: string; kbps: number; onSe
   const customBad = custom && customText.trim() !== "" && !(customValue > 0 && customValue <= 10_000);
   const applyCustom = () => {
     if (customBad || !customText.trim()) return;
-    onSet(Math.round(customValue * MBPS));
+    // a tiny limit stays a limit (1 KB/s at least), never "Unlimited"
+    onSet(mbpsToKbps(customValue));
   };
   return (
     <div className="set-limit">

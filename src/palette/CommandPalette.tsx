@@ -19,7 +19,7 @@ import { registeredCommands, type PaletteCommand } from "./commands";
 import { matchWords, runs } from "./fuzzy";
 import { notePick, recentPicks, recentPlaces } from "./recent";
 import { shellCommands } from "./shellCommands";
-import { keys } from "../components/osText";
+import { keys, THIS_COMPUTER } from "../components/osText";
 import type { PaletteHost } from "./types";
 import "./palette.css";
 
@@ -343,7 +343,7 @@ export default function CommandPalette({
       key: `path:${expanded}`,
       section: "path",
       title: frag ? `${shownDir}${frag}` : shownDir || "/",
-      detail: got?.error ?? (local ? "This Mac" : `${a.profile?.name ?? ""}${a.bucket ? ` · ${h.current.rootLabel(a.profile!.id, a.bucket)}` : ""}`),
+      detail: got?.error ?? (local ? THIS_COMPUTER : `${a.profile?.name ?? ""}${a.bucket ? ` · ${h.current.rootLabel(a.profile!.id, a.bucket)}` : ""}`),
       icon: "arrow-right",
       alt: "new pane",
       run: (alt) => {
