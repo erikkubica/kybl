@@ -54,7 +54,10 @@ if [ "${1:-}" = "--install" ]; then
   old="/Applications/.Kybl.app.old"
   rm -rf "$stage"
   # an earlier build moved aside is removed only when nothing still runs from it
-  pgrep -f ".Kybl.app.old/Contents/MacOS/kybl" >/dev/null || rm -rf "$old"
+  for prev in /Applications/.Kybl.app.old*; do
+    [ -e "$prev" ] || continue
+    pgrep -f "$prev/Contents/MacOS/kybl" >/dev/null || rm -rf "$prev"
+  done
   [ -e "$old" ] && old="/Applications/.Kybl.app.old.$$"
   cp -R "$APP" "$stage"
   [ -e /Applications/Kybl.app ] && mv /Applications/Kybl.app "$old"

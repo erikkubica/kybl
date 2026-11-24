@@ -483,8 +483,9 @@ function TransferPanelView({
         <div className="tp-summary">
           {active > 0 && (
             <>
-              <span className="tp-run" title="Running now, waiting for a turn, and finished, out of everything started in this run">
+              <span className="tp-run" title="Running now, waiting for a turn, finished and failed, out of everything started in this run">
                 {running.length.toLocaleString()} running · {queued.length.toLocaleString()} queued · {run.done.toLocaleString()} done of {run.total.toLocaleString()}
+                {run.failed > 0 && ` · ${run.failed.toLocaleString()} failed`}
               </span>
               <span>
                 {running.some((t) => !t.total) ? formatBytes(doneBytes) : `${formatBytes(doneBytes)} of ${formatBytes(totalBytes)}`}

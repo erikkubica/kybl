@@ -674,7 +674,7 @@ export function Sidebar({
       )}
       {pickedProfiles.length > 0 && (
         <div className="side-picked" role="toolbar" aria-label="Selected connections">
-          <span className="side-picked-n">{pickedProfiles.length} selected</span>
+          <span className="side-picked-n" title="Space picks or lets go of the focused connection. Esc clears.">{pickedProfiles.length} selected</span>
           <button
             type="button"
             className="btn btn-sm"
@@ -916,7 +916,14 @@ function SidebarConnection({
         className={`side-item conn ${open && !single ? "open" : ""} ${active ? "active" : ""} ${here ? "selected" : ""} ${single ? "single" : ""} ${picked ? "picked" : ""}`}
         {...dragProps}
         onClick={click}
-        onKeyDown={onActivate(activate)}
+        // Space picks (or lets go of) this connection while any are picked; Enter still opens it
+        onKeyDown={(e) => {
+          if (pickMode && onPick && !own && e.key === " " && e.target === e.currentTarget) {
+            e.preventDefault();
+            return onPick(p);
+          }
+          onActivate(activate)(e);
+        }}
         role="button"
         tabIndex={0}
         aria-expanded={single ? undefined : open}

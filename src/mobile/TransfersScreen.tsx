@@ -190,6 +190,7 @@ export function TransfersScreen({
               {run.total > 0 && active && (
                 <li className="m-xfer-summary" aria-live="off">
                   {run.running.toLocaleString()} running · {run.queued.toLocaleString()} queued · {run.done.toLocaleString()} done of {run.total.toLocaleString()}
+                  {run.failed > 0 && ` · ${run.failed.toLocaleString()} failed`}
                 </li>
               )}
               {sorted.map((t, i) => {

@@ -129,8 +129,9 @@ export default function InfoPanel({ pane }: { pane: Pane }) {
         </div>
         <Rows
           facts={[
-            { label: "Items", value: `${entries.length.toLocaleString()}${more ? "+" : ""}` },
-            ...(files.length ? [{ label: "Size", value: `${formatBytes(bytes)}${more ? " so far" : ""}` }] : []),
+            // search results are not the folder's own items
+            ...(ent.search ? [] : [{ label: "Items", value: `${entries.length.toLocaleString()}${more ? "+" : ""}` }]),
+            ...(!ent.search && files.length ? [{ label: "Size of files here", value: `${formatBytes(bytes)}${more ? " so far" : ""}` }] : []),
             ...(whole?.state === "done" ? [{ label: "Whole folder", value: `${formatBytes(whole.bytes)} in ${whole.objects.toLocaleString()}` }] : []),
           ]}
         />
@@ -160,10 +161,18 @@ export default function InfoPanel({ pane }: { pane: Pane }) {
             <ul className="info-changes">
               {shown.slice(0, LIST_MAX).map((c) => (
                 <li key={c.path}>
-                  <button type="button" onClick={() => open(c.path)} title={`Open ${c.path}`}>
-                    <span className={`info-mark ${c.kind}`}>{LETTER[c.kind] ?? ""}</span>
-                    <span className="info-file">{c.path}</span>
-                  </button>
+                  {/* a deleted file is no longer there to open */}
+                  {c.kind === "deleted" ? (
+                    <span className="info-static" title={`${c.path} was deleted`}>
+                      <span className={`info-mark ${c.kind}`}>{LETTER[c.kind] ?? ""}</span>
+                      <span className="info-file">{c.path}</span>
+                    </span>
+                  ) : (
+                    <button type="button" onClick={() => open(c.path)} title={`Open ${c.path}`}>
+                      <span className={`info-mark ${c.kind}`}>{LETTER[c.kind] ?? ""}</span>
+                      <span className="info-file">{c.path}</span>
+                    </button>
+                  )}
                 </li>
               ))}
               {shown.length > LIST_MAX && <li className="info-more">and {(shown.length - LIST_MAX).toLocaleString()} more</li>}

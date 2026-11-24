@@ -1625,8 +1625,13 @@ fn ftp_error_at(e: FtpError, host: &str, path: &str) -> StorageError {
             // file with these; asking again a moment later works, so they must not read as a
             // wrong password or a missing file
             // the path the server repeats is never its own wording: the one given, and any word
-            // of the reply that looks like a path (it has a `/`)
-            let echoed = text.split_whitespace().filter(|w| w.contains('/')).collect::<Vec<_>>().join(" ");
+            // of the reply that starts with a `/` or holds the given path (the server's own words
+            // joined by a slash, like `Permission/denied`, stay)
+            let echoed = text
+                .split_whitespace()
+                .filter(|w| w.starts_with('/') || (!path.is_empty() && w.contains(path)))
+                .collect::<Vec<_>>()
+                .join(" ");
             let path = format!("{path} {echoed}");
             let words = text_words(&text, &path);
             let has = |w: &str| words.contains(w);
@@ -2020,6 +2025,14 @@ mod tests {
         assert_eq!(at(Status::FileUnavailable, "550 /x/Permissions/a: Permission denied", "/x/Permissions/a").kind, ErrKind::PermissionDenied);
         assert_eq!(at(Status::FileUnavailable, "550 /x/Locked/a: Permission denied", "").kind, ErrKind::PermissionDenied);
         assert_eq!(at(Status::FileUnavailable, "550 a: File exists", "/x/a").kind, ErrKind::Exists);
+    }
+
+    /// The server's own words joined by a slash are not an echoed path (R11 SB-6).
+    #[test]
+    fn slash_joined_server_words_still_count() {
+        let at = |text: &str| ftp_error_at(FtpError::UnexpectedResponse(suppaftp::types::Response::new(Status::FileUnavailable, text.as_bytes().to_vec())), "h", "/x/a");
+        assert_eq!(at("550 Permission/denied").kind, ErrKind::PermissionDenied);
+        assert_eq!(at("550 Not allowed/denied").kind, ErrKind::PermissionDenied);
     }
 
     /// The path's own words and look-alike words ("unlocked", "blocked", "busybox") don't make a

@@ -81,7 +81,6 @@ function FolderSizeCell({ info, onCalc, onStop }: { info: FolderSizeInfo | undef
           <button
             type="button"
             className="fsize-calc"
-            tabIndex={-1}
             title="Stop adding up this folder"
             onMouseDown={(ev) => ev.stopPropagation()}
             onDoubleClick={(ev) => ev.stopPropagation()}

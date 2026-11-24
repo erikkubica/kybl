@@ -120,6 +120,7 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
   const { selected, selectedEntries } = sel;
   const totalSize = sumSizes(entries);
   const hereSize = pane.folderSizes.get(prefix);
+  const folderOpen = !!pane.profile && pane.bucket != null;
   return (
     <footer className="statusbar">
       {stale ? (
@@ -179,10 +180,12 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
       {/* the folder's info panel (connection, path, git), remembered for this pane */}
       <button
         type="button"
-        className={`statusbar-btn ${pane.infoOpen ? "on" : ""}`}
+        className={`statusbar-btn ${pane.infoOpen && folderOpen ? "on" : ""}`}
         onClick={() => pane.setInfoOpen(!pane.infoOpen)}
-        aria-pressed={pane.infoOpen}
-        title={pane.infoOpen ? "Hide folder info" : "Show folder info"}
+        // the panel only shows inside a folder: a connection's bucket list has none
+        disabled={!folderOpen}
+        aria-pressed={pane.infoOpen && folderOpen}
+        title={!folderOpen ? "Open a folder to see its info" : pane.infoOpen ? "Hide folder info" : "Show folder info"}
         aria-label="Folder info"
       >
         <Icon name="panel-right" size={14} />

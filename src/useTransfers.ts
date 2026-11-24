@@ -685,8 +685,9 @@ export function runTotals(list: Transfer[]): { total: number; done: number } {
  * `recent` is the latest few finished ones of this run, so a small file that was done within one
  * tick still shows up in In progress for a moment instead of vanishing.
  */
-export function runCounts(list: Transfer[], recentMax = 5): { total: number; running: number; queued: number; done: number; recent: Transfer[] } {
+export function runCounts(list: Transfer[], recentMax = 5): { total: number; running: number; queued: number; done: number; failed: number; recent: Transfer[] } {
   let running = 0;
+  let failed = 0;
   let queued = 0;
   let done = runPrunedCount;
   let total = runPrunedCount;
@@ -699,10 +700,11 @@ export function runCounts(list: Transfer[], recentMax = 5): { total: number; run
       done++;
       recent.push(t);
       if (recent.length > recentMax) recent.shift();
-    } else continue;
+    } else if (t.state === "error") failed++;
+    // paused and cancelled rows are part of the run too, so the total doesn't shrink or read as finished
     total++;
   }
-  return { total, running, queued, done, recent: recent.reverse() };
+  return { total, running, queued, done, failed, recent: recent.reverse() };
 }
 
 /** How many successful transfers were pruned off the list (the list keeps the latest `KEEP_DONE`). */

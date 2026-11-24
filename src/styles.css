@@ -5619,7 +5619,8 @@ input[type="range"]:focus-visible {
   margin: 8px 0 0;
   padding: 0;
 }
-.info-changes button {
+.info-changes button,
+.info-changes .info-static {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -5632,6 +5633,10 @@ input[type="range"]:focus-visible {
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+.info-changes .info-static {
+  color: var(--muted);
+  cursor: default;
 }
 .info-changes button:hover {
   background: var(--hover, rgb(127 127 127 / 0.14));
