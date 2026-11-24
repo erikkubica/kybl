@@ -36,6 +36,12 @@ export function useListing(limit: number) {
   const [listing, setListing] = useState<Listing>(EMPTY);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * When the rows on screen were last read from the server by a real load (null: a listing kept
+   * earlier and shown by `seed`, or nothing yet). A paste or upload trusts the rows as proof that
+   * a name is free only while this is young (see `shownKeys`).
+   */
+  const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const reqId = useRef(0);
   const current = useRef(listing);
   current.current = listing;
@@ -53,10 +59,12 @@ export function useListing(limit: number) {
       const res = await listPage(loc, null);
       if (id !== reqId.current) return null;
       setListing({ loc, folders: res.folders, objects: res.objects, next: res.nextToken, folderInfo: res.folderInfo });
+      setLoadedAt(Date.now());
       return res;
     } catch (e) {
       if (id !== reqId.current) return null;
       setListing({ ...EMPTY, loc });
+      setLoadedAt(null);
       setError(errMessage(e));
       return null;
     } finally {
@@ -73,6 +81,8 @@ export function useListing(limit: number) {
     // read by refresh() right after, before the next render
     current.current = l;
     setListing(l);
+    // not authoritative until the quiet refresh that follows has succeeded
+    setLoadedAt(null);
     setLoading(false);
     setError(null);
   }, []);
@@ -80,9 +90,11 @@ export function useListing(limit: number) {
   /**
    * Reloads the place on screen without blanking it: pages are gathered until there are at least
    * as many items as before, then swapped in at once, so the scroll position and selection stay.
+   * A quiet refresh makes no noise when it fails, unless `report` (the one after `seed`: the rows
+   * came from memory, so a failure says so, and the rows stay).
    */
   const refresh = useCallback(
-    async (loc: Loc, quiet = false): Promise<ListResult | null> => {
+    async (loc: Loc, quiet = false, report = false): Promise<ListResult | null> => {
       const before = current.current;
       if (!sameLoc(before.loc, loc)) return open(loc);
       const id = ++reqId.current;
@@ -108,10 +120,12 @@ export function useListing(limit: number) {
           next = res.nextToken;
         } while (next && folders.length + objects.length < want);
         setListing({ loc, folders, objects, next, folderInfo });
+        setLoadedAt(Date.now());
+        if (quiet && report) setError(null);
         return first;
       } catch (e) {
         if (id !== reqId.current) return null;
-        if (!quiet) setError(errMessage(e));
+        if (!quiet || report) setError(errMessage(e));
         return null;
       } finally {
         if (!quiet && id === reqId.current) setLoading(false);
@@ -203,6 +217,7 @@ export function useListing(limit: number) {
   const clear = useCallback(() => {
     reqId.current++;
     setListing(EMPTY);
+    setLoadedAt(null);
     setLoading(false);
     setError(null);
   }, []);
@@ -214,5 +229,5 @@ export function useListing(limit: number) {
     if (pulling && !loading) loadRest(limit);
   }, [pulling, loading, limit, loadRest]);
 
-  return { listing, loading, error, count, pulling, open, seed, refresh, loadMore, clear };
+  return { listing, loading, error, loadedAt, count, pulling, open, seed, refresh, loadMore, clear };
 }

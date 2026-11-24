@@ -61,17 +61,15 @@ export function DialogsProvider({ children }: { children: ReactNode }) {
   const [menu, setMenu] = useState<null | { x: number; y: number; items: MenuItem[] }>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [modals, setModals] = useState<{ id: number; render: (close: () => void) => ReactNode }[]>([]);
-  const conflicts = useConflictPrompt();
-
-  const open = useRef(false);
-  open.current = !!(confirm || prompt || menu || modals.length || conflicts.open);
-
   // each toast leaves by itself (see Toasts: longer for errors, held while hovered or focused)
   const toast = useCallback((kind: Toast["kind"], text: string, action?: ToastAction) => {
     const id = Date.now() + Math.random();
     logMessage(kind, text);
     setToasts((t) => [...t.slice(-3), { id, kind, text, action }]);
   }, []);
+  const conflicts = useConflictPrompt(toast);
+  const open = useRef(false);
+  open.current = !!(confirm || prompt || menu || modals.length || conflicts.open);
   // one confirm at a time: a newer question cancels an older one still up (its promise says false)
   const current = useRef<ConfirmState | null>(null);
   const confirmAsync = useCallback(

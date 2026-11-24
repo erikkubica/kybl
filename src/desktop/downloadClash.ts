@@ -73,6 +73,13 @@ export function downloadClashGate<T extends Item>(o: {
         }
         if (go.length) o.start(go);
       }
+    } catch (e) {
+      // the dialog or the transfer store failed: stop the listing with the failure rather than
+      // dropping this batch and carrying on with the next
+      state.cancelled = true;
+      pending = [];
+      o.onCancel?.();
+      throw e;
     } finally {
       running = null;
     }

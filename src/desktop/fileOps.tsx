@@ -10,7 +10,7 @@ import { peekCaps } from "../useCaps";
 import type { ReactNode } from "react";
 import type { ConfirmOptions, PromptOptions } from "../shell/useDialogs";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { api, errMessage, errSummary, type OpResult } from "../api";
+import { api, errMessage, errSummary, LOCAL_ID, type OpResult } from "../api";
 import { formatBytes, parentPrefix, sumSizes } from "../format";
 import { destKey, entryParent, placeLabel } from "../moving";
 import type { Settings } from "../settings";
@@ -51,7 +51,7 @@ export type OpsContext = {
   /** names of the folders in the listing on screen (for a free "New folder" name) */
   folderKeys: Set<string>;
   /** every key of the folder on screen, when all of it is loaded: name clashes there need no server */
-  shownKeys?: { loc: { profileId: string; bucket: string; prefix: string }; keys: Set<string> } | null;
+  shownKeys?: { loc: { profileId: string; bucket: string; prefix: string }; keys: Set<string>; at: number } | null;
   settings: Settings;
   transfers: TransferActions;
   jobs: ReturnType<typeof useJobs>;
@@ -87,6 +87,9 @@ export type OpsContext = {
   sendItems?: (src: Place, items: Entry[], mode: "copy" | "move", dst: Place, dest: string, onStarted?: () => void) => void;
 };
 
+/** How long the folder on screen counts as proof that a name is free (see `existing`). */
+const SHOWN_KEYS_MAX_AGE = 10_000;
+
 /** Undo of a copy deletes the copied objects; past this many it asks first. */
 const UNDO_CONFIRM_OVER = 100;
 
@@ -106,13 +109,19 @@ export function makeFileOps(c: OpsContext) {
     if (!targets.length) return new Set();
     // names going into the folder on screen are looked up in its listing, with no request (the
     // way FileZilla answers at once); only the rest are asked of the server
-    const shown = c.shownKeys;
+    // ...but only rows a real load read from the server a moment ago: older rows may miss what
+    // someone else added since, and a replace would then go through without a question
+    const shown = c.shownKeys && Date.now() - c.shownKeys.at < SHOWN_KEYS_MAX_AGE ? c.shownKeys : null;
+    // this computer's disk treats names that differ only in case or Unicode form as one file
+    const disk = pid === LOCAL_ID;
+    const fold = (k: string) => (disk ? k.normalize("NFC").toLowerCase() : k);
+    const shownSet = shown ? new Set(disk ? [...shown.keys].map(fold) : shown.keys) : null;
     const parentOf = (k: string) => k.slice(0, k.replace(/\/$/, "").lastIndexOf("/") + 1);
     const local = shown && shown.loc.profileId === pid && shown.loc.bucket === b ? targets.filter((t) => parentOf(t.key) === shown.loc.prefix) : [];
     const found = new Set<string>();
     for (const t of local) {
       const probe = t.folder && !t.key.endsWith("/") ? `${t.key}/` : t.key;
-      if (shown!.keys.has(probe) || shown!.keys.has(probe.replace(/\/$/, ""))) found.add(t.key);
+      if (shownSet!.has(fold(probe)) || shownSet!.has(fold(probe.replace(/\/$/, "")))) found.add(t.key);
     }
     const rest = targets.filter((t) => !local.includes(t));
     if (!rest.length) return found;

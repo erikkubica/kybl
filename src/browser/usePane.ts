@@ -196,10 +196,10 @@ function usePaneCore(env: PaneEnv) {
       setCursor(null, true);
       pendingSelect.current = opts.selectKey ? { profileId: p.id, bucket: b, key: opts.selectKey } : null;
       // a workspace coming back shows the listing it left with at once, then
-      // refreshes it quietly: no spinner, and a failure keeps the rows (a manual refresh shows it)
+      // refreshes it quietly: no spinner, and a failure shows the error line above the kept rows
       if (opts.seed && sameLoc(opts.seed.loc, to)) {
         lst.seed(opts.seed);
-        void lst.refresh(to, true);
+        void lst.refresh(to, true, true);
       } else void lst.open(to);
       envRef.current.onNavigated?.(from, to);
     },
