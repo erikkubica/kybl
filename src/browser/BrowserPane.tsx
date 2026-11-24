@@ -161,6 +161,7 @@ export function BrowserPane(p: BrowserPaneProps) {
       style={p.style}
     >
       <Toolbar
+        onLeaveDown={() => sel.selected.size === 0 && sel.moveSelection(1, false)}
         bucket={bucket}
         bucketLabel={pane.bucketLabel}
         bucketIcon={pane.profile ? rootIcon(pane.profile.id, bucket ?? "") : undefined}

@@ -26,6 +26,8 @@ export type PromptOptions = {
   initial: string;
   confirmLabel: string;
   note?: string;
+  /** select the whole name, not only the part before the last dot (a folder has no extension) */
+  selectAll?: boolean;
   check?: (v: string) => string | null;
   run: (v: string) => PromptResult | Promise<PromptResult>;
 };
@@ -130,6 +132,7 @@ export function DialogsProvider({ children }: { children: ReactNode }) {
           initial={prompt.initial}
           confirmLabel={prompt.confirmLabel}
           note={prompt.note}
+          selectAll={prompt.selectAll}
           check={prompt.check}
           onSubmit={prompt.run}
           onClose={() => setPrompt((p) => (p?.seq === prompt.seq ? null : p))}

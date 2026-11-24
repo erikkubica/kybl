@@ -182,6 +182,23 @@
 .search:has(.search-modes):focus-within {
   width: 380px;
 }
+/* a narrow pane: the field shrinks to a plain box and drops its switches, so Terminal, Panes and
+   the field's own clear button stay on the row (Return still searches the subfolders) */
+@container (max-width: 420px) {
+  .toolbar:is(.search-open, :has(.search:focus-within)) > .search:is(:has(.search-modes), :has(.search-opt)) {
+    min-width: 110px;
+    width: auto;
+  }
+  .toolbar:is(.search-open, :has(.search:focus-within)) > .search:focus-within {
+    width: auto;
+  }
+  .toolbar:is(.search-open, :has(.search:focus-within)) .search :is(.search-modes, .search-opt) {
+    display: none;
+  }
+  .toolbar:is(.search-open, :has(.search:focus-within)) > :is(.conn-name, .conn-sep, .crumb-up) {
+    display: none;
+  }
+}
 .search-seg {
   display: inline-flex;
   padding: 1px;

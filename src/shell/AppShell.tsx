@@ -929,7 +929,9 @@ export function AppShell() {
     for (const id of ids) {
       const p = slot(id);
       const l = p.ent.listing;
-      if (term.terms[id] || !p.ent.fresh || p.ent.listError || !l.loc || l.folders.length + l.objects.length > KEEP_LISTING_MAX) continue;
+      // (one still being pulled is listed again: coming back, the pull would bump the request id and
+      // the quiet refresh after `seed` would never land, leaving stale rows)
+      if (term.terms[id] || !p.ent.fresh || p.ent.listError || !l.loc || l.next || l.folders.length + l.objects.length > KEEP_LISTING_MAX) continue;
       keptListings.current.set(`${wsId}\n${id}`, l);
     }
   };

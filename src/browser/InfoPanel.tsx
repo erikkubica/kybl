@@ -9,7 +9,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../Icons";
-import { formatBytes } from "../format";
+import { formatBytes, plural } from "../format";
 import { addressOf, kindInfo, pickOf } from "../connections/kinds";
 import { providerMeta } from "../providers";
 import { devtoolsApi, type GitCommit, type GitOverview } from "./devtoolsApi";
@@ -72,7 +72,8 @@ export default function InfoPanel({ pane }: { pane: Pane }) {
   }, [local, root, prefix]);
 
   // ---- the folder
-  const entries = ent.search ? [] : ent.entries;
+  // the whole folder, not the rows a name filter leaves
+  const entries = ent.search ? [] : ent.allEntries;
   const files = entries.filter((e) => e.kind === "file");
   const bytes = files.reduce((n, e) => n + (e.size || 0), 0);
   const whole = pane.folderSizes.get(prefix);
@@ -195,7 +196,7 @@ export default function InfoPanel({ pane }: { pane: Pane }) {
             // search results are not the folder's own items
             ...(ent.search ? [] : [{ label: "Items", value: `${entries.length.toLocaleString()}${more ? "+" : ""}` }]),
             ...(!ent.search && files.length ? [{ label: "Size of files here", value: `${formatBytes(bytes)}${more ? " so far" : ""}` }] : []),
-            ...(whole?.state === "done" ? [{ label: "Whole folder", value: `${formatBytes(whole.bytes)} in ${whole.objects.toLocaleString()}` }] : []),
+            ...(whole?.state === "done" ? [{ label: "Whole folder", value: `${formatBytes(whole.bytes)} in ${plural(whole.objects, "object")}` }] : []),
           ]}
         />
       </section>

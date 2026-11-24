@@ -688,6 +688,7 @@ ${picked.etag ?? ""}` : null;
       label: "New name",
       initial: e.name,
       confirmLabel: "Rename",
+      selectAll: isFolder,
       note: slow ? (isFolder ? "Renaming a folder here copies every file in it, so it can take a while." : "Renaming a big file here copies it, so it can take a while. It carries on in Activity.") : undefined,
       check: nameProblem,
       // what stops the rename (a name taken, the server refusing) shows in the dialog, with the name kept

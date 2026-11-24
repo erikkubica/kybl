@@ -154,6 +154,9 @@ export function useTerminalPanes(initial: Layout) {
     }
     if (untypeable && !stale()) return note(t.sid, "not following: the folder name has control characters");
     if (!path || stale()) return;
+    // csh and tcsh expand `!` even inside single quotes, and the shell's kind isn't known here
+    // (the backend's remote_cd decides that for a fresh shell): such a name would run as history
+    if (path.includes("!")) return note(t.sid, "not following: `!` in the folder name");
     for (let i = 0; ; i++) {
       if (await terminalIdle(t.sid)) break;
       if (stale()) return;
