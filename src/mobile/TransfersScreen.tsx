@@ -5,6 +5,7 @@ import { baseName, formatBytes, formatEta, formatSpeed } from "../format";
 import { useJobList, useJobs } from "../useJobs";
 import { runCounts, usePrunedDone, useTransferList, type TransferActions } from "../useTransfers";
 import type { Transfer } from "../types";
+import type { Confirm } from "./useFileOps";
 import { JobsPanel, useActiveJobCount, useMigrations } from "../jobs";
 
 /** Transfers still queued or running, bucket jobs and copies between connections in progress (for the badge). */
@@ -49,6 +50,7 @@ export function TransfersScreen({
   savedWhere,
   onOpenFile,
   onOpenPlace,
+  confirm,
 }: {
   onBack: () => void;
   transfers: TransferActions;
@@ -57,6 +59,8 @@ export function TransfersScreen({
   onOpenFile: (path: string) => void;
   /** a finished copy between connections: show where it went */
   onOpenPlace?: (dst: { profileId: string; root: string; dir: string }) => void;
+  /** asks before something is thrown away (the app's one confirm sheet) */
+  confirm: (q: Confirm) => void;
 }) {
   const list = useTransferList();
   const jobs = useJobList();
@@ -72,8 +76,9 @@ export function TransfersScreen({
   const run = runCounts(list);
   const firstQueued = sorted.findIndex((t) => t.state === "queued");
   const active = list.some((t) => t.state === "queued" || t.state === "running");
-  // paused: kept across a restart; they resume, or are stopped (what they kept is dropped)
+  // paused: kept across a restart; they resume, or are cancelled (what they kept is dropped)
   const paused = list.filter((t) => t.state === "paused");
+  const runningJobs = jobs.filter((j) => j.state === "running");
   const failed = list.filter((t) => t.state === "error").length;
   const failedJobs = jobs.some((j) => j.state === "error");
   // "Clear finished" takes done and cancelled items; failed ones stay until retried
@@ -95,15 +100,26 @@ export function TransfersScreen({
         <div className="m-title">
           <h1>Transfers</h1>
         </div>
-        {(active || paused.length > 0) && (
+        {(active || paused.length > 0 || runningJobs.length > 0) && (
           <button
             className="m-text-btn danger"
             onClick={() => {
-              transfers.cancelAll();
-              for (const t of paused) transfers.cancel(t.id);
+              const n = transfers.activeCount() + paused.length + runningJobs.length;
+              confirm({
+                title: n === 1 ? "Cancel this transfer?" : `Cancel ${n.toLocaleString()} transfers?`,
+                message: <p>Partly downloaded files are deleted, paused ones too. Finished ones stay. Pause keeps the progress, to carry on later.</p>,
+                label: n === 1 ? "Cancel transfer" : "Cancel all",
+                danger: true,
+                run: () => {
+                  transfers.cancelAll();
+                  for (const t of paused) transfers.cancel(t.id);
+                  // bucket jobs are in the same list: the button says all
+                  for (const j of runningJobs) api.cancelTransfer(j.id).catch(() => {});
+                },
+              });
             }}
           >
-            Stop all
+            Cancel all
           </button>
         )}
       </header>
@@ -164,13 +180,13 @@ export function TransfersScreen({
                     <span className="m-row-text">
                       <span className="m-row-name">{j.title}</span>
                       <span className="m-row-sub">
-                        {j.state === "running" ? (j.total ? `${j.done.toLocaleString()} of ${j.total.toLocaleString()}${j.eta ? ` · ${j.eta}` : ""}` : "Finding objects…") : j.state === "error" ? errSummary(j.error ?? "Failed") : j.state === "cancelled" ? "Stopped" : "Done"}
+                        {j.state === "running" ? (j.total ? `${j.done.toLocaleString()} of ${j.total.toLocaleString()}${j.eta ? ` · ${j.eta}` : ""}` : "Finding objects…") : j.state === "error" ? errSummary(j.error ?? "Failed") : j.state === "cancelled" ? "Cancelled" : "Done"}
                       </span>
                       {j.state === "running" && <Progress frac={j.frac} />}
                     </span>
                   </span>
                   {j.state === "running" ? (
-                    <button className="m-icon" onClick={() => api.cancelTransfer(j.id).catch(() => {})} aria-label="Stop">
+                    <button className="m-icon" onClick={() => api.cancelTransfer(j.id).catch(() => {})} aria-label="Cancel">
                       <Icon name="x" size={18} />
                     </button>
                   ) : (
@@ -244,7 +260,7 @@ const TransferRow = memo(function TransferRow({ t, transfers, onOpenFile }: { t:
     sub = `${t.total ? `${formatBytes(t.bytes)} of ${formatBytes(t.total)}` : formatBytes(t.bytes)}${t.speed ? ` · ${formatSpeed(t.speed)}` : ""}${left ? ` · ${formatEta(left)}` : ""}`;
   } else if (t.state === "queued") sub = t.total ? `Waiting · ${formatBytes(t.total)}` : "Waiting";
   else if (t.state === "done") sub = t.kind === "upload" ? `Uploaded${t.checkStopped ? " · not checked" : ""} · ${formatBytes(t.total)}` : `${renamed ? `Saved as “${savedAs}”` : "Saved"}${t.checkStopped ? " · not checked" : ""} · ${formatBytes(t.total || t.bytes)} · Tap to open`;
-  else if (t.state === "cancelled") sub = "Stopped · Tap to retry";
+  else if (t.state === "cancelled") sub = "Cancelled · Tap to retry";
   else if (t.state === "paused" && t.checkPending) sub = `Downloaded, check paused · ${formatBytes(t.total)} · Tap to check`;
   else if (t.state === "paused") sub = `Paused${t.total ? ` · ${formatBytes(t.bytes)} of ${formatBytes(t.total)}` : ""} · Tap to resume`;
   else sub = `${errSummary(t.error ?? "Failed")} · Tap to retry`;
@@ -276,7 +292,7 @@ const TransferRow = memo(function TransferRow({ t, transfers, onOpenFile }: { t:
         <span className="m-xfer-main">{body}</span>
       )}
       {t.state === "running" || t.state === "queued" ? (
-        <button className="m-icon" onClick={() => transfers.cancel(t.id)} aria-label={`Stop ${t.name}`}>
+        <button className="m-icon" onClick={() => transfers.cancel(t.id)} aria-label={`Cancel ${t.name}`}>
           <Icon name="x" size={18} />
         </button>
       ) : t.state === "paused" ? (
@@ -284,7 +300,7 @@ const TransferRow = memo(function TransferRow({ t, transfers, onOpenFile }: { t:
           <button className="m-icon" onClick={() => transfers.resume(t.id)} aria-label={`Resume ${t.name}`}>
             <Icon name="play" size={17} />
           </button>
-          <button className="m-icon" onClick={() => transfers.cancel(t.id)} aria-label={`Stop ${t.name}`}>
+          <button className="m-icon" onClick={() => transfers.cancel(t.id)} aria-label={`Cancel ${t.name}`}>
             <Icon name="x" size={18} />
           </button>
         </>

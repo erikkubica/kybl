@@ -40,3 +40,32 @@ export function splitServer(text: string): ServerParts | string {
   }
   return { host, ...(user ? { user } : {}) };
 }
+
+/** A WebDAV address with its user name and password taken out (`https://me:pw@host/dav/` → `https://host/dav/`). */
+export type DavAddress = { href: string; user?: string; password?: string };
+
+const decode = (s: string) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
+
+/**
+ * Splits a pasted WebDAV address: Nextcloud and hosting panels hand out `https://user:app-password@host/…`.
+ * The address must not keep the password (it would be saved in clear and shown in lists), so the
+ * parts go to the fields that are kept safely. Nothing to split: the address as it is.
+ */
+export function splitDavUrl(text: string): DavAddress {
+  const href = text.trim();
+  const m = /^([a-z][a-z0-9+.-]*:\/\/)([^/?#]*)(.*)$/is.exec(href);
+  if (!m) return { href };
+  const at = m[2].lastIndexOf("@");
+  if (at < 0) return { href };
+  const info = m[2].slice(0, at);
+  const colon = info.indexOf(":");
+  const user = decode(colon < 0 ? info : info.slice(0, colon));
+  const password = colon < 0 ? "" : decode(info.slice(colon + 1));
+  return { href: m[1] + m[2].slice(at + 1) + m[3], user: user || undefined, password: password || undefined };
+}

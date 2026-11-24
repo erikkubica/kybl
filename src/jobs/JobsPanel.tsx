@@ -186,7 +186,9 @@ function JobRow({ job, onOpenDest }: { job: JobSummary; onOpenDest?: (j: JobSumm
   const meta = jobMeta(job);
   const finished = isFinished(job);
   const canPause = p.state === "running" || p.state === "planning" || p.state === "waitingNetwork";
-  const canResume = p.state === "paused" || p.state === "needsAuth" || (p.state === "failed" && p.filesDone + p.filesSkipped < p.filesTotal);
+  // a failed one resumes when nothing in it failed on its own (it stopped while listing, or while
+  // removing originals after every file was copied: no count shows that) or when files are left
+  const canResume = p.state === "paused" || p.state === "needsAuth" || (p.state === "failed" && (p.filesFailed === 0 || p.filesDone + p.filesSkipped < p.filesTotal));
 
   useEffect(() => {
     if (!confirmStop) return;

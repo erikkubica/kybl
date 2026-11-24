@@ -1742,6 +1742,7 @@ export default function MobileApp() {
           onBack={() => backRef.current()}
           transfers={transfers}
           savedWhere={savedWhere}
+          confirm={setConfirm}
           onOpenFile={(p) => api.openLocal(p).catch((e) => toast("error", errSummary(errMessage(e))))}
           onOpenPlace={(l) => {
             setTransfersOpen(false);

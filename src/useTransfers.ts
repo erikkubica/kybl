@@ -92,6 +92,14 @@ function settle(t: Transfer) {
   for (const w of list) w(t);
 }
 
+/** Frees what waits for a row that leaves the list, with the state it had. */
+function settleGone(t: Transfer) {
+  const list = waiters.get(t.id);
+  if (!list) return;
+  waiters.delete(t.id);
+  for (const w of list) w(t);
+}
+
 /** Uploads of the current batch: when all of them have finished, `settledListeners` hear about it. */
 const batch = new Set<string>();
 /** Uploads of the batch that finished fine and were already pruned off the list (still counted). */
@@ -207,6 +215,8 @@ function forget(id: string) {
   const gone = byId.get(id);
   if (gone) noteState(gone, true);
   byId.delete(id);
+  // nobody may keep waiting for a row that is no longer listed: it ended here (done when pruned)
+  if (gone) settleGone(gone);
   overwriteIds.delete(id);
   requested.delete(id);
   listed.delete(id);
@@ -638,6 +648,12 @@ const actions = {
   /** Clears failed transfers, and what the backend kept to resume them. */
   clearFailed() {
     clearWhere((t) => t.state === "error");
+  },
+  /** How many transfers `cancelAll` would cancel (queued and running), for the question before it. */
+  activeCount(): number {
+    let n = 0;
+    for (const t of byId.values()) if (t.state === "queued" || t.state === "running") n++;
+    return n;
   },
   /** How many transfers failed, and how many of those are uploads that sent part of the file (kept to resume). */
   failedCounts(): { failed: number; partial: number } {
