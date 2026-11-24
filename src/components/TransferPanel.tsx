@@ -699,6 +699,7 @@ function TransferPanelView({
                 <div className="tp-meta">
                   {t.state === "running" && (
                     <>
+                      {t.phase && `${t.phase} · `}
                       {/* total 0: a Google Docs export, whose size isn't known until it's done */}
                       {t.total > 0 ? `${formatBytes(t.bytes)} of ${formatBytes(t.total)}` : formatBytes(t.bytes)}
                       {t.speed > 0 && ` · ${formatSpeed(t.speed)}`}

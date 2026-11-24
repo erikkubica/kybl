@@ -33,12 +33,28 @@ pub struct PackItem {
 /// met inside a folder on this computer (never followed out of it, see `local_links`) and names
 /// no extractor should be handed (`..`, `.`, empty parts, a backslash: a bucket allows the key
 /// `a/../../../.bashrc`, which a careless unzip would write outside its folder).
+#[cfg(test)]
 pub async fn plan_pack(s: &dyn Storage, root: &str, items: &[String]) -> SResult<(Vec<PackItem>, Vec<String>)> {
-    let Some(first) = items.first() else { return Ok((vec![], vec![])) };
-    let base = parent_of(first).to_string();
-    let rel = |k: &str| k.strip_prefix(base.as_str()).unwrap_or(k).to_string();
     let mut out = Vec::new();
     let mut left_out = Vec::new();
+    plan_pack_into(s, root, items, &mut |i| out.push(i), &mut left_out).await?;
+    Ok((out, left_out))
+}
+
+/// [`plan_pack`] handing each item to `emit` as it is found, so packing can start while a big
+/// folder on a slow server is still being listed.
+pub async fn plan_pack_into(s: &dyn Storage, root: &str, items: &[String], emit: &mut (dyn FnMut(PackItem) + Send), left_out: &mut Vec<String>) -> SResult<()> {
+    let Some(first) = items.first() else { return Ok(()) };
+    let base = parent_of(first).to_string();
+    let rel = |k: &str| k.strip_prefix(base.as_str()).unwrap_or(k).to_string();
+    // a store that lists files of a folder before the folder itself (prefix stores) may name a
+    // folder twice: once is enough
+    let mut seen = HashSet::new();
+    let mut put = |i: PackItem, emit: &mut (dyn FnMut(PackItem) + Send)| {
+        if seen.insert(i.name.clone()) {
+            emit(i);
+        }
+    };
     for key in items {
         // the picked items' own names go through the same check as what is found inside them
         if !zip_name_ok(&rel(key)) {
@@ -46,7 +62,7 @@ pub async fn plan_pack(s: &dyn Storage, root: &str, items: &[String]) -> SResult
             continue;
         }
         if key.ends_with('/') {
-            out.push(PackItem { name: rel(key), key: key.clone(), size: 0, modified: None });
+            put(PackItem { name: rel(key), key: key.clone(), size: 0, modified: None }, emit);
             let mut walk = s.walk(root, key);
             while let Some(batch) = walk.next().await {
                 for e in batch? {
@@ -57,18 +73,15 @@ pub async fn plan_pack(s: &dyn Storage, root: &str, items: &[String]) -> SResult
                         left_out.push(e.key);
                         continue;
                     }
-                    out.push(PackItem { name: rel(&e.key), size: if e.is_dir() { 0 } else { e.size.max(0) as u64 }, modified: e.modified, key: e.key });
+                    put(PackItem { name: rel(&e.key), size: if e.is_dir() { 0 } else { e.size.max(0) as u64 }, modified: e.modified, key: e.key }, emit);
                 }
             }
         } else {
             let e = s.stat(root, key).await?.ok_or_else(StorageError::not_found)?;
-            out.push(PackItem { name: rel(key), key: key.clone(), size: e.size.max(0) as u64, modified: e.modified });
+            put(PackItem { name: rel(key), key: key.clone(), size: e.size.max(0) as u64, modified: e.modified }, emit);
         }
     }
-    // a store that lists files of a folder before the folder itself (prefix stores): folders first
-    let mut seen = BTreeSet::new();
-    out.retain(|i| seen.insert(i.name.clone()));
-    Ok((out, left_out))
+    Ok(())
 }
 
 /// A name that is safe inside a zip: relative, every part a plain name of at most 255 bytes, and
@@ -134,10 +147,39 @@ fn zip_err(e: zip::result::ZipError) -> StorageError {
 }
 
 /// Writes `items` read from `s` into a new zip at `out`. `progress` gets the bytes read so far.
+#[cfg(test)]
 pub async fn pack_to_file(
     s: Arc<dyn Storage>,
     root: &str,
     items: &[PackItem],
+    out: &Path,
+    progress: &(dyn Fn(u64) + Send + Sync),
+    cancel: &AtomicBool,
+) -> SResult<()> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    for i in items {
+        let _ = tx.send(i.clone());
+    }
+    drop(tx);
+    pack_stream_to_file(s, root, rx, out, progress, cancel).await
+}
+
+/// Files up to this size are fetched whole, a few at once: on a server where every file is its
+/// own round trip (FTP), small files are mostly waiting.
+const PREFETCH_MAX: u64 = 4 << 20;
+const PREFETCH: usize = 3;
+
+/// The body of one zip entry: read ahead (a small file), or still to be streamed.
+enum Body {
+    Read(Vec<Bytes>),
+    Stream(crate::storage::ByteStream),
+}
+
+/// [`pack_to_file`] for items that are still being found (`items` ends when the listing does).
+pub async fn pack_stream_to_file(
+    s: Arc<dyn Storage>,
+    root: &str,
+    items: tokio::sync::mpsc::UnboundedReceiver<PackItem>,
     out: &Path,
     progress: &(dyn Fn(u64) + Send + Sync),
     cancel: &AtomicBool,
@@ -170,29 +212,58 @@ pub async fn pack_to_file(
     });
     let feed = async {
         let mut done = 0u64;
-        for it in items {
+        // in order, with the next few small files already on their way
+        let fetch = |it: PackItem| {
+            let s = s.clone();
+            async move {
+                if it.name.ends_with('/') {
+                    return Ok::<_, StorageError>((it, None));
+                }
+                let body = s.read(root, &it.key, None, None).await?.body;
+                if it.size > PREFETCH_MAX {
+                    return Ok((it, Some(Body::Stream(body))));
+                }
+                let chunks: Vec<Bytes> = body.try_collect().await?;
+                Ok((it, Some(Body::Read(chunks))))
+            }
+        };
+        let mut ahead = tokio_stream_of(items).map(fetch).buffered(PREFETCH);
+        while let Some(r) = ahead.next().await {
             if cancel.load(Ordering::Relaxed) {
                 return Err(StorageError::cancelled());
             }
-            if it.name.ends_with('/') {
+            let (it, body) = r?;
+            let Some(body) = body else {
                 if tx.send(Msg::Dir(it.name.clone(), it.modified)).await.is_err() {
                     return Ok(());
                 }
                 continue;
-            }
+            };
             if tx.send(Msg::File(it.name.clone(), it.modified, it.size)).await.is_err() {
                 return Ok(());
             }
-            let mut body = s.read(root, &it.key, None, None).await?.body;
-            while let Some(chunk) = body.next().await {
-                if cancel.load(Ordering::Relaxed) {
-                    return Err(StorageError::cancelled());
+            match body {
+                Body::Read(chunks) => {
+                    for chunk in chunks {
+                        done += chunk.len() as u64;
+                        progress(done);
+                        if tx.send(Msg::Data(chunk)).await.is_err() {
+                            return Ok(());
+                        }
+                    }
                 }
-                let chunk = chunk?;
-                done += chunk.len() as u64;
-                progress(done);
-                if tx.send(Msg::Data(chunk)).await.is_err() {
-                    return Ok(());
+                Body::Stream(mut body) => {
+                    while let Some(chunk) = body.next().await {
+                        if cancel.load(Ordering::Relaxed) {
+                            return Err(StorageError::cancelled());
+                        }
+                        let chunk = chunk?;
+                        done += chunk.len() as u64;
+                        progress(done);
+                        if tx.send(Msg::Data(chunk)).await.is_err() {
+                            return Ok(());
+                        }
+                    }
                 }
             }
         }
@@ -206,6 +277,11 @@ pub async fn pack_to_file(
         let _ = tokio::fs::remove_file(out).await;
     }
     res
+}
+
+/// A receiver as a stream (no tokio-stream dependency).
+fn tokio_stream_of<T: Send + 'static>(mut rx: tokio::sync::mpsc::UnboundedReceiver<T>) -> impl futures_util::Stream<Item = T> + Send {
+    futures_util::stream::poll_fn(move |cx| rx.poll_recv(cx))
 }
 
 /// What an extraction writes: each file with the key it gets at the destination, and folders.

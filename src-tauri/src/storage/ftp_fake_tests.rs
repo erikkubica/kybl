@@ -27,6 +27,11 @@ struct Fs {
     no_size: bool,
     /// the next STOR is refused with this reply (before any data connection)
     refuse_next_stor: Option<&'static str>,
+    /// every listing takes this long (a slow server far away)
+    list_delay_ms: u64,
+    /// listings running right now, and the most there were at once
+    listing_now: usize,
+    listing_peak: usize,
 }
 
 type Shared = Arc<StdMutex<Fs>>;
@@ -243,10 +248,14 @@ async fn session(sock: tokio::net::TcpStream, fs: Shared) {
             }
             "MLSD" | "LIST" | "NLST" => {
                 let dir = if arg.is_empty() || verb != "MLSD" { cwd.clone() } else { path };
-                let out = {
-                    let g = fs.lock().unwrap();
-                    if verb == "MLSD" { g.mlsd(&dir) } else { g.list(&dir) }
+                let (out, delay) = {
+                    let mut g = fs.lock().unwrap();
+                    g.listing_now += 1;
+                    g.listing_peak = g.listing_peak.max(g.listing_now);
+                    (if verb == "MLSD" { g.mlsd(&dir) } else { g.list(&dir) }, g.list_delay_ms)
                 };
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                fs.lock().unwrap().listing_now -= 1;
                 let Some(l) = data.take() else { return };
                 let _ = w.write_all(b"150 listing\r\n").await;
                 let (mut d, _) = l.accept().await.unwrap();
@@ -486,5 +495,42 @@ fn a_passing_refusal_keeps_the_partial_and_drops_the_connection() {
         let r = upload_bytes(&b, "other.bin", &other, None, false).await;
         assert!(matches!(r, Ok(WriteOutcome::Done(_))), "{:?}", r.err());
         assert_eq!(fs.lock().unwrap().files.get("/base/other.bin"), Some(&other));
+    });
+}
+
+/// A folder tree is listed several folders at a time (each FTP listing is a round trip of its
+/// own), and every folder still comes before what is inside it, with nothing missed.
+#[test]
+fn a_tree_is_listed_several_folders_at_once() {
+    let fs = fs_with(|f| {
+        f.list_delay_ms = 40;
+        for a in 0..4 {
+            f.dirs.insert(format!("/base/top/d{a}"));
+            for b in 0..3 {
+                f.dirs.insert(format!("/base/top/d{a}/e{b}"));
+                f.files.insert(format!("/base/top/d{a}/e{b}/f.txt"), b"x".to_vec());
+            }
+        }
+        f.dirs.insert("/base/top".into());
+        f.files.insert("/base/top/readme".into(), b"hi".to_vec());
+    });
+    run(async {
+        use futures_util::StreamExt;
+        let b = backend(&fs).await;
+        let mut seen: Vec<String> = Vec::new();
+        let mut walk = b.walk("", "top/");
+        while let Some(batch) = walk.next().await {
+            for e in batch.unwrap() {
+                // a folder's parent was listed (and so seen) before it
+                let parent = crate::storage::net::parent_key(e.key.trim_end_matches('/'));
+                assert!(parent == "top/" || seen.contains(&parent), "{} came before its folder {parent}", e.key);
+                seen.push(e.key);
+            }
+        }
+        let files = seen.iter().filter(|k| !k.ends_with('/')).count();
+        assert_eq!(files, 13, "every file is found: {seen:?}");
+        assert_eq!(seen.iter().filter(|k| k.ends_with('/')).count(), 16);
+        let peak = fs.lock().unwrap().listing_peak;
+        assert!(peak >= 2, "folders were listed one at a time (peak {peak})");
     });
 }

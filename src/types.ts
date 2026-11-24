@@ -192,6 +192,8 @@ export type Transfer = {
   checkStopped?: boolean;
   /** paused with a download's whole file in place, only its check left (Resume checks it) */
   checkPending?: boolean;
+  /** what a running task is doing now (TransferEvent.phase) */
+  phase?: string;
 };
 
 export type TransferEvent = {
@@ -211,4 +213,6 @@ export type TransferEvent = {
   checkStopped?: boolean;
   /** paused with the whole file in place, only its check left */
   checkPending?: boolean;
+  /** what a running task is doing now ("Finding files… 312 found"), compress and extract */
+  phase?: string;
 };

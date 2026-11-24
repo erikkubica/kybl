@@ -273,6 +273,9 @@ struct TransferEvent<'a> {
     bytes: u64,
     total: u64,
     error: Option<String>,
+    /// what it is doing now, for the row ("Finding files… 312 found")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phase: Option<String>,
 }
 
 struct Task<R: Runtime> {
@@ -282,11 +285,18 @@ struct Task<R: Runtime> {
     last: Mutex<Instant>,
     /// said with "done": what was left out
     note: Mutex<Option<String>>,
+    /// sent with every "running" event (see `TransferEvent::phase`)
+    phase: Mutex<Option<String>>,
 }
 
 impl<R: Runtime> Task<R> {
     fn emit(&self, state: &'static str, bytes: u64, total: u64, error: Option<String>) {
-        let _ = self.app.emit("transfer", TransferEvent { id: &self.id, state, bytes, total, error });
+        let phase = if state == "running" { self.phase.lock().unwrap().clone() } else { None };
+        let _ = self.app.emit("transfer", TransferEvent { id: &self.id, state, bytes, total, error, phase });
+    }
+    /// Says what it is doing now; shown with the next progress event.
+    fn set_phase(&self, phase: impl Into<String>) {
+        *self.phase.lock().unwrap() = Some(phase.into());
     }
     /// Progress, at most ~8 a second.
     fn tick(&self, bytes: u64, total: u64) {
@@ -315,7 +325,7 @@ where
         }
         c.insert(id.clone(), cancel.clone());
     }
-    let task = Arc::new(Task { app: app.clone(), id: id.clone(), cancel, last: Mutex::new(Instant::now() - Duration::from_secs(1)), note: Mutex::new(None) });
+    let task = Arc::new(Task { app: app.clone(), id: id.clone(), cancel, last: Mutex::new(Instant::now() - Duration::from_secs(1)), note: Mutex::new(None), phase: Mutex::new(None) });
     task.emit("running", 0, 0, None);
     tauri::async_runtime::spawn(async move {
         let res = work(task.clone()).await;
@@ -442,24 +452,74 @@ pub async fn archive_compress(app: AppHandle, state: State<'_, AppState>, id: St
         if let Some(sftp) = src.as_sftp() {
             if job.items.iter().all(|k| parent_of(k) == dir) {
                 let names: Vec<String> = job.items.iter().map(|k| base_name(k).to_string()).collect();
+                task.set_phase("Zipping on the server");
+                task.emit("running", 0, 0, None);
                 if remote::compress(sftp, &dir, &names, base_name(&job.dest_key), &task.cancel).await? {
                     return Ok(0);
                 }
             }
         }
 
-        let (plan, left_out) = ops::plan_pack(&*src, &job.root, &job.items).await?;
-        if !left_out.is_empty() {
-            *task.note.lock().unwrap() = Some(ops::left_out_note(&left_out));
-        }
-        let total: u64 = plan.iter().map(|i| i.size).sum();
+        // found while it packs: the zip starts with the first files instead of after the whole
+        // tree was listed (thousands of folders on a slow server take minutes)
+        let found = Arc::new(Mutex::new((0u64, 0u64, false)));
         let t = task.clone();
-        let tick = move |n: u64| t.tick(n, total);
+        let f = found.clone();
+        let say = move |done: u64| {
+            let (files, bytes, listed) = *f.lock().unwrap();
+            if listed {
+                t.set_phase(if files == 1 { "Zipping 1 file".to_string() } else { format!("Zipping {files} files") });
+            } else {
+                t.set_phase(format!("Finding files… {} found", files));
+            }
+            t.tick(done, bytes);
+        };
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let plan = {
+            let (src, found, say) = (src.clone(), found.clone(), say.clone());
+            let (root, items) = (job.root.clone(), job.items.clone());
+            async move {
+                let mut left_out = Vec::new();
+                let r = ops::plan_pack_into(
+                    &*src,
+                    &root,
+                    &items,
+                    &mut |i| {
+                        {
+                            let mut g = found.lock().unwrap();
+                            if !i.name.ends_with('/') {
+                                g.0 += 1;
+                            }
+                            g.1 += i.size;
+                        }
+                        let _ = tx.send(i);
+                    },
+                    &mut left_out,
+                )
+                .await;
+                found.lock().unwrap().2 = true;
+                say(0);
+                r.map(|()| left_out)
+            }
+        };
+        let packed_bytes = || found.lock().unwrap().1;
+        task.set_phase("Finding files…");
+        task.emit("running", 0, 0, None);
         // on this computer: written next to the result and renamed in; elsewhere: zipped in the
         // cache, then uploaded
         if let Some(final_path) = src.local_path(&job.root, &job.dest_key) {
             let tmp = final_path.with_file_name(format!(".{}.kybl-{tid}.part", base_name(&job.dest_key)));
-            ops::pack_to_file(src.clone(), &job.root, &plan, &tmp, &tick, &task.cancel).await?;
+            let (left_out, packed) = tokio::join!(plan, ops::pack_stream_to_file(src.clone(), &job.root, rx, &tmp, &say, &task.cancel));
+            let left_out = match (left_out, packed) {
+                (Ok(l), Ok(())) => l,
+                (Err(e), _) | (_, Err(e)) => {
+                    let _ = tokio::fs::remove_file(&tmp).await;
+                    return Err(e);
+                }
+            };
+            if !left_out.is_empty() {
+                *task.note.lock().unwrap() = Some(ops::left_out_note(&left_out));
+            }
             // never over a file that is there (or turned up while it packed), in one step
             let (t, f) = (tmp.clone(), final_path.clone());
             let placed = tokio::task::spawn_blocking(move || crate::storage::local::fsops::rename_noreplace(&t, &f)).await.map_err(|e| StorageError::other(e.to_string()))?;
@@ -467,14 +527,20 @@ pub async fn archive_compress(app: AppHandle, state: State<'_, AppState>, id: St
                 let _ = tokio::fs::remove_file(&tmp).await;
                 return Err(if e.kind() == std::io::ErrorKind::AlreadyExists { StorageError::exists() } else { e.into() });
             }
-            return Ok(total);
+            return Ok(packed_bytes());
         }
         let work = work_dir(&a)?;
         tokio::fs::create_dir_all(&work).await?;
         let tmp = work.join(format!("pack-{tid}.zip"));
         let res = async {
-            ops::pack_to_file(src.clone(), &job.root, &plan, &tmp, &tick, &task.cancel).await?;
+            let (left_out, packed) = tokio::join!(plan, ops::pack_stream_to_file(src.clone(), &job.root, rx, &tmp, &say, &task.cancel));
+            packed?;
+            let left_out = left_out?;
+            if !left_out.is_empty() {
+                *task.note.lock().unwrap() = Some(ops::left_out_note(&left_out));
+            }
             let size = tokio::fs::metadata(&tmp).await?.len();
+            task.set_phase("Uploading the zip");
             let t = task.clone();
             let up = move |n: u64, _: u64| t.tick(n, size);
             let opts = WriteOpts { content_type: Some("application/zip".into()), parts_in_flight: 4, ..Default::default() };

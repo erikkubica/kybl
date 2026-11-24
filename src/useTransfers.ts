@@ -244,6 +244,7 @@ function listenOnce() {
       checkStopped: ev.state === "done" ? ev.checkStopped : undefined,
       checkPending: ev.state === "paused" ? ev.checkPending : undefined,
       local: ev.local ?? cur.local,
+      phase: ev.state === "running" ? (ev.phase ?? cur.phase) : undefined,
     };
     // just finished: to the end of the list, so Done lists (and pruning drops) rows by finish
     // order, not by when they started
