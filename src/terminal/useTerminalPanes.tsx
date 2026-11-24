@@ -229,7 +229,6 @@ export function useTerminalPanes(initial: Layout) {
     const h = host.current;
     if (!h) return;
     const ts = termsRef.current;
-    const on = h.ids.filter((id) => ts[id]);
     const cur = ts[h.activeId];
     if (cur) {
       const back = cur.from && h.ids.includes(cur.from) && !ts[cur.from] ? cur.from : h.fileId;
@@ -239,17 +238,27 @@ export function useTerminalPanes(initial: Layout) {
       }
       return;
     }
-    const mine = on.find((id) => ts[id]!.from === h.activeId);
+    openFor(h.activeId);
+  };
+
+  /**
+   * The terminal for file pane `id`: to the one it already has, else a new one below it, in its
+   * folder where a shell can run there, else on this computer (FTP, a cloud, nothing open yet), so
+   * a terminal is always one key or click away.
+   */
+  const openFor = (id: PaneId) => {
+    const h = host.current;
+    if (!h) return;
+    const ts = termsRef.current;
+    const mine = h.ids.find((x) => ts[x]?.from === id);
     if (mine) {
       h.setActive(mine);
       h.focus(mine);
-    } else {
-      const here = h.slot(h.activeId).here;
-      if (here && canTerminal(profileOf(here.profileId))) open(h.activeId);
-      // a pane where no shell can run (FTP, a cloud, nothing open yet): a shell on this computer
-      // instead of a refusal, so a terminal is always one key away
-      else void openLocal(h.activeId);
+      return;
     }
+    const here = h.slot(id).here;
+    if (here && canTerminal(profileOf(here.profileId))) open(id);
+    else void openLocal(id);
   };
 
   /**
@@ -443,7 +452,7 @@ export function useTerminalPanes(initial: Layout) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { terms, setTerms, assign, host, open, openLocal, toggle, items, dropTarget, drop, dropPaths, nameOf, gc, render };
+  return { terms, setTerms, assign, host, open, openLocal, openFor, toggle, items, dropTarget, drop, dropPaths, nameOf, gc, render };
 }
 
 /**

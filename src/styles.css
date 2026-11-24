@@ -619,11 +619,16 @@ kbd {
   display: none;
 }
 /* folded: just the magnifier until it's clicked or focused (⌘F), so the path gets the room */
+/* sized and rounded like the icon buttons beside it, with no gap for the hidden input, so the
+   magnifier sits centred in its hover background */
 .search.folded:not(:focus-within) {
   flex: none;
-  width: 30px;
-  min-width: 30px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  gap: 0;
   padding: 0;
+  border-radius: var(--r-sm);
   justify-content: center;
   background: transparent;
   color: var(--dim);

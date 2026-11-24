@@ -2174,6 +2174,7 @@ export function AppShell() {
     onSwitchConnection: (x: number, y: number) => switchMenu(p.id, x, y),
     // always the menu, so where the new pane goes is a choice (⌘\ still splits right at once)
     onPanes: (x: number, y: number) => panesMenu(p.id, x, y),
+    onTerminal: canTerminal({ id: LOCAL_PROFILE, kind: "local" }) ? () => term.openFor(p.id) : undefined,
     panesItems: () => panesItems(p.id),
     onActivate: () => {
       if (dual && activeId !== p.id) setActiveId(p.id);

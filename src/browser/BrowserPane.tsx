@@ -42,6 +42,8 @@ export type BrowserPaneProps = {
   updateSettings: (patch: Partial<Settings>) => void;
   /** the panes button: split, or the panes menu */
   onPanes?: (x: number, y: number) => void;
+  /** the terminal button: this pane's terminal (a shell on this computer where it can't have one) */
+  onTerminal?: () => void;
   /** the panes menu's items, for "…" when a narrow pane has no room for the panes button */
   panesItems?: () => MenuItem[];
   /** the badge before the path: another connection or bucket in this pane */
@@ -196,6 +198,7 @@ export function BrowserPane(p: BrowserPaneProps) {
         onClearSearch={actions.clearSearch}
         dual={p.dual}
         onPanes={p.onPanes}
+        onTerminal={p.onTerminal}
         panesItems={p.panesItems}
         provider={pane.profile?.provider}
         connName={pane.profile?.name}

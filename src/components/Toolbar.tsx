@@ -52,6 +52,7 @@ export function Toolbar({
   onClearSearch,
   dual = false,
   onPanes,
+  onTerminal,
   panesItems,
   provider,
   connName,
@@ -115,6 +116,8 @@ export function Toolbar({
   dual?: boolean;
   /** the panes button (shows only with this): opens the panes menu (split four ways, size, close) */
   onPanes?: (x: number, y: number) => void;
+  /** a terminal for this pane: in its folder, or on this computer where it can't have one */
+  onTerminal?: () => void;
   /** the panes menu's items, for "⋯" when the panes button had to fold away */
   panesItems?: () => MenuItem[];
   /** the pane's connection kind, shown as the switcher's badge */
@@ -351,6 +354,12 @@ export function Toolbar({
             <kbd>{keys("⌘F")}</kbd>
           )}
         </div>
+
+        {onTerminal && (
+          <button className="icon-btn tb-terminal" onClick={onTerminal} title={keys("Terminal (⌘J)")} aria-label="Terminal">
+            <Icon name="terminal" />
+          </button>
+        )}
 
         {onPanes && (
           <button
