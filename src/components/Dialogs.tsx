@@ -884,7 +884,7 @@ function SubPanel({
 
 /**
  * A short message. With `action`, the toast shows a button (Undo, Retry, Show…) that runs it and
- * dismisses the toast; callers should keep such toasts up longer (about 8 s).
+ * dismisses the toast; such toasts stay up longer (TOAST_MS.action).
  */
 export type Toast = {
   id: number;
@@ -896,7 +896,7 @@ export type Toast = {
 /**
  * How long a toast stays when nobody touches it. Errors stay longer, and no toast leaves while
  * the pointer or keyboard focus is on it, so there is time to read the details. The toasts
- * dismiss themselves after this; a caller's own shorter timer still wins.
+ * dismiss themselves after this; callers leave the timing to them.
  */
 const TOAST_MS = { info: 3200, success: 3200, error: 12000, action: 8000 };
 

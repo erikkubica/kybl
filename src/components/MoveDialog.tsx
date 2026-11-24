@@ -7,6 +7,7 @@ import { ErrorText } from "./ErrorText";
 import { FileIcon } from "./FileIcon";
 import { entryParent, isValidDest } from "../moving";
 import type { Entry } from "../types";
+import { nameProblem } from "../itemText";
 
 const MAX_PAGES = 5;
 
@@ -91,17 +92,19 @@ export function MoveDialog({
   // a folder name still being typed counts as the destination, so "Move here" finishes the job
   // without a separate confirm step (touch keyboards can be dismissed without pressing Return)
   const pending = creating ? newName.trim().replace(/\/+$/, "") : "";
-  const dest = pending && !pending.includes("/") ? `${path}${pending}/` : path;
+  // a name that can't be a folder ("a/b", "..") is said under the list and moves nothing
+  const pendingBad = pending ? nameProblem(pending) : null;
+  const dest = pending && !pendingBad ? `${path}${pending}/` : path;
   const allHere = !other && items.every((e) => entryParent(e) === dest);
   // copying into the folder the items are in makes copies next to them ("photo (1).jpg")
-  const valid = other || isValidDest(items, dest) || (mode === "copy" && allHere && !items.some((e) => e.kind === "folder" && dest.startsWith(e.key)));
+  const valid = !pendingBad && (other || isValidDest(items, dest) || (mode === "copy" && allHere && !items.some((e) => e.kind === "folder" && dest.startsWith(e.key))));
   const what = items.length === 1 ? `“${items[0].name}”` : `${items.length} items`;
   const verb = mode === "move" ? "Move" : "Copy";
 
   /** a "new" folder that is already in the list is just opened (it has folders of its own to list) */
   const exists = (f: string) => !!folders?.includes(f);
   const createFolder = () => {
-    if (dest === path) return;
+    if (pendingBad || dest === path) return;
     if (!exists(dest)) made.current.add(dest);
     setCreating(false);
     setNewName("");
@@ -239,7 +242,9 @@ export function MoveDialog({
           )}
         </div>
         <p className="hint move-hint">
-          {allHere && mode === "copy"
+          {pendingBad
+            ? pendingBad
+            : allHere && mode === "copy"
             ? `${items.length === 1 ? "It’s" : "They’re"} already in this folder: the ${items.length === 1 ? "copy gets" : "copies get"} a new name next to the ${items.length === 1 ? "original" : "originals"}.`
             : allHere
             ? `${items.length === 1 ? "It’s" : "They’re"} already in this folder. Pick another one.`

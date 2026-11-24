@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { backupApi, errMessage, errSummary, type BackupFailure, type BackupPermission, type BackupSet, type BackupSetStatus } from "../../api";
 import { Icon } from "../../Icons";
 import type { Toast } from "../../components/Dialogs";
-import { countsLine, HONEST, isRoll, PermissionNote, Progress, Seg, SetIcon, stateLine, Toggle, type Platform } from "./parts";
+import { countsLine, HONEST, isRoll, PermissionNote, Progress, Seg, SetIcon, SignInNote, stateLine, Toggle, type Platform } from "./parts";
 import { example, templatesFor } from "./SetupFlow";
 
 export function SetDetail({
@@ -15,6 +15,7 @@ export function SetDetail({
   put,
   onRemoved,
   toast,
+  onSignIn,
 }: {
   st: BackupSetStatus;
   platform: Platform;
@@ -24,6 +25,8 @@ export function SetDetail({
   put: (s: BackupSetStatus) => void;
   onRemoved: (id: string) => void;
   toast: (kind: Toast["kind"], text: string) => void;
+  /** opens the sign-in of the connection with this id */
+  onSignIn?: (profileId: string) => void;
 }) {
   const s = st.set;
   const roll = isRoll(s);
@@ -125,6 +128,7 @@ export function SetDetail({
         </button>
       </div>
 
+      {st.state === "needsAuth" && onSignIn && <SignInNote onSignIn={() => onSignIn(s.profileId)} />}
       {roll && <PermissionNote perm={perm} platform={platform} onRequest={onRequest} onManage={onManage} />}
 
       {st.failed > 0 && (

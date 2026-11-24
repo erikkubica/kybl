@@ -76,6 +76,7 @@ test("new names: checked in the dialog, before anything runs", () => {
   assert.equal(nameProblem("  "), "Type a name.");
   assert.match(nameProblem("a/b")!, /“\/”/);
   assert.ok(nameProblem(".."));
+  assert.ok(nameProblem("."));
   assert.equal(takenName("Photos", true), "There’s already a folder named “Photos” here.");
 });
 

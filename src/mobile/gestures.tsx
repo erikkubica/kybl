@@ -206,6 +206,11 @@ export function useEdgeSwipe(supported: boolean, enabled: boolean, onBack: () =>
               reset(g.el);
               g.el.style.opacity = "";
             }
+            // a screen whose back asked first (unsaved changes, "Don't upload?") or only went up a
+            // folder is still there once the app has drawn: it slides back instead of jumping back
+            window.setTimeout(() => {
+              if (g.overlay && g.el.isConnected && !g.el.closest(".m-leaving")) g.el.style.transform = "translate3d(0, 0, 0)";
+            }, 60);
             window.setTimeout(() => {
               reset(g.el);
             }, 400);

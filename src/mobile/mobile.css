@@ -2872,6 +2872,12 @@ input[type="checkbox"].m-switch:checked {
   align-items: center;
   gap: 8px;
   padding: 8px 4px 8px 18px;
+  flex-wrap: wrap;
+}
+
+.m-dest-new-err {
+  flex-basis: 100%;
+  margin: 0;
 }
 
 .m-dest-new input {

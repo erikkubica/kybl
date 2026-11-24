@@ -10,6 +10,7 @@ import { FileIcon } from "../components/FileIcon";
 import { ProviderBadge } from "../components/Sidebar";
 import { baseName, formatBytes } from "../format";
 import type { Profile } from "../types";
+import { nameProblem } from "../itemText";
 import type { Loc } from "./useListing";
 import { connName } from "./connName";
 import { ConnFixRow, hasConnFix, type ConnFixes } from "./ConnFixRow";
@@ -48,6 +49,7 @@ export function DestinationScreen({
   const [made, setMade] = useState<string[]>([]);
   const [naming, setNaming] = useState(false);
   const [newName, setNewName] = useState("");
+  const [nameErr, setNameErr] = useState<string | null>(null);
   /** where the listing goes on (folders can come on any page, after the files before them) */
   const [next, setNext] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -208,8 +210,10 @@ export function DestinationScreen({
                   className="m-dest-new"
                   onSubmit={(e) => {
                     e.preventDefault();
-                    const n = newName.trim().replace(/^\/+|\/+$/g, "");
+                    const n = newName.trim().replace(/\/+$/, "");
                     if (!n) return;
+                    const bad = nameProblem(n);
+                    if (bad) return setNameErr(bad);
                     const prefix = `${at.prefix}${n}/`;
                     setMade((m) => [...m, prefix]);
                     setNewName("");
@@ -217,10 +221,27 @@ export function DestinationScreen({
                     onAt({ ...at, prefix });
                   }}
                 >
-                  <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Folder name" enterKeyHint="done" autoCapitalize="off" />
+                  <input
+                    autoFocus
+                    value={newName}
+                    onChange={(e) => {
+                      setNewName(e.target.value);
+                      setNameErr(null);
+                    }}
+                    placeholder="Folder name"
+                    enterKeyHint="done"
+                    autoCapitalize="off"
+                    aria-invalid={!!nameErr}
+                    aria-describedby={nameErr ? "m-dest-new-err" : undefined}
+                  />
                   <button className="m-text-btn" type="submit">
                     Create
                   </button>
+                  {nameErr && (
+                    <p id="m-dest-new-err" className="hint error m-dest-new-err" role="alert">
+                      {nameErr}
+                    </p>
+                  )}
                 </form>
               ) : (
                 <button className="m-row-main m-accent" onClick={() => setNaming(true)}>

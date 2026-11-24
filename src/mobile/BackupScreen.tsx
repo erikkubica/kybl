@@ -29,6 +29,7 @@ export function BackupScreen({
   toast,
   handle,
   startSetup = false,
+  onSignIn,
 }: {
   backup: BackupState;
   onBack: () => void;
@@ -36,6 +37,8 @@ export function BackupScreen({
   handle: MutableRefObject<BackupHandle | null>;
   /** open straight into setting one up (the home card, when there is no backup yet) */
   startSetup?: boolean;
+  /** a set needs its connection signed in again: opens that sign-in */
+  onSignIn?: (profileId: string) => void;
 }) {
   const { overview, error, refresh, put, remove } = backup;
   const [page, setPage] = useState<Page>(startSetup ? { kind: "setup" } : { kind: "list" });
@@ -137,6 +140,7 @@ export function BackupScreen({
             setPage({ kind: "list" });
           }}
           toast={toast}
+          onSignIn={onSignIn}
         />
       ) : (
         <div className="m-scroll bk-body">
@@ -175,7 +179,7 @@ export function BackupScreen({
               {hasRoll && <PermissionNote perm={perm} platform={platform} onRequest={() => void request()} onManage={() => void manage()} />}
               <ul className="bk-list">
                 {sets.map((st) => (
-                  <SetCard key={st.set.id} st={st} onOpen={() => setPage({ kind: "set", id: st.set.id })} toast={toast} put={put} />
+                  <SetCard key={st.set.id} st={st} onOpen={() => setPage({ kind: "set", id: st.set.id })} toast={toast} put={put} onSignIn={onSignIn} />
                 ))}
               </ul>
               <ul className="m-group bk-gap">
@@ -206,11 +210,13 @@ function SetCard({
   onOpen,
   toast,
   put,
+  onSignIn,
 }: {
   st: BackupSetStatus;
   onOpen: () => void;
   toast: (kind: Toast["kind"], text: string) => void;
   put: (s: BackupSetStatus) => void;
+  onSignIn?: (profileId: string) => void;
 }) {
   const line = stateLine(st);
   const running = st.state === "running";
@@ -230,6 +236,11 @@ function SetCard({
       </button>
       <Progress st={st} />
       <div className="bk-card-acts">
+        {st.state === "needsAuth" && onSignIn && (
+          <button className="bk-mini" onClick={() => onSignIn(st.set.profileId)}>
+            <Icon name="refresh" size={15} /> Sign in again
+          </button>
+        )}
         {running ? (
           <button className="bk-mini" onClick={() => backupApi.cancel(st.set.id).catch(fail)}>
             <Icon name="x" size={15} /> Stop
