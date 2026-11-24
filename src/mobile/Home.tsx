@@ -204,10 +204,10 @@ export function Connections({
         />
   );
   // the organizing model (connections/organize.ts): pinned first, groups as folders that fold
-  // open, a long ungrouped list sorted by type, this phone's own folder last
+  // open (a pinned connection shows under Pinned and in its group, like the desktop sidebar), a long
+  // ungrouped list sorted by type, this phone's own folder last
   const org = organize(profiles.filter((p) => !isLocal(p)), { recentAfter: Infinity });
   const device = profiles.filter(isLocal);
-  const pinnedIds = new Set(org.pinned.map((p) => p.id));
   const holding = current ? groupKeysHolding(org.groups, current.profileId) : [];
   const folder = (g: OrgGroup, depth: number): React.ReactNode => {
     const open = folded[g.key] ?? holding.includes(g.key);
@@ -222,7 +222,7 @@ export function Connections({
         {open && (
           <>
             {g.groups.map((x) => folder(x, depth + 1))}
-            {g.items.filter((p) => !pinnedIds.has(p.id)).map(card)}
+            {g.items.map(card)}
           </>
         )}
       </div>
@@ -234,7 +234,7 @@ export function Connections({
       {org.pinned.map(card)}
       {org.pinned.length > 0 && org.groups.length + org.items.length > 0 && <h2 className="m-conn-head">All connections</h2>}
       {org.groups.map((g) => folder(g, 0))}
-      {org.items.filter((p) => !pinnedIds.has(p.id)).map(card)}
+      {org.items.map(card)}
       {device.map(card)}
     </>
   );

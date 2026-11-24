@@ -193,15 +193,14 @@ async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx
     c.dialogs.toast(
       "info",
       `${what} here. Files start as they're found.`,
-      setBusy
-        ? undefined
-        : {
-            label: "Stop listing",
-            run: () => {
-              stopped = true;
-              stopNow?.();
-            },
-          },
+      // always offered: a newer listing can take the busy line from this one, and then its Stop is gone
+      {
+        label: "Stop listing",
+        run: () => {
+          stopped = true;
+          stopNow?.();
+        },
+      },
     );
   }
   let failed: string | null = null;

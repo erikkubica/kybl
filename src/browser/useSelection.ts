@@ -84,11 +84,10 @@ export function useSelection(entries: Entry[], stale: boolean) {
     [entries, setCursor],
   );
 
-  // the cursor goes too: otherwise the ring stays on the item that was selected
+  // only the selection goes: the cursor stays as the arrow keys' starting point
   const clear = useCallback(() => {
     setSelected(new Set());
-    setCursor(null, true);
-  }, [setCursor]);
+  }, []);
   const deselect = useCallback(
     (keys: string[]) =>
       setSelected((sel) => {

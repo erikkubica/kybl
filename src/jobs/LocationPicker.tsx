@@ -232,20 +232,20 @@ export function LocationPicker({
         if (expanded.has(rk)) addDir(loc, cd + 2);
       }
   };
-  // the organizing model (connections/organize.ts): pinned first, then groups as folders (a long
+  // the organizing model (connections/organize.ts): pinned first (and again in their group, like the
+  // desktop sidebar, so a group's count matches its rows), then groups as folders (a long
   // ungrouped list sorted by type), then the rest, this device last
-  const pinnedIds = new Set(layout.pinned.map((p) => p.id));
   const asConn = (p: Profile) => ({ pid: p.id, name: p.name || p.endpoint, provider: p.provider });
   const addGroup = (g: OrgGroup, d: number) => {
     const gk = groupKey(g.key);
     rows.push({ type: "group", key: gk, depth: d, name: g.name, count: g.count });
     if (!expanded.has(gk)) return;
     for (const sub of g.groups) addGroup(sub, d + 1);
-    for (const p of g.items) if (!pinnedIds.has(p.id)) addConn(asConn(p), d + 1);
+    for (const p of g.items) addConn(asConn(p), d + 1);
   };
   for (const p of layout.pinned) addConn(asConn(p), 0);
   for (const g of layout.groups) addGroup(g, 0);
-  for (const p of layout.items) if (!pinnedIds.has(p.id)) addConn(asConn(p), 0);
+  for (const p of layout.items) addConn(asConn(p), 0);
   addConn({ pid: LOCAL_ID, name: deviceName(), provider: undefined }, 0);
 
   useEffect(() => {
