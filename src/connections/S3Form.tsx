@@ -2,7 +2,6 @@
 import { useImperativeHandle, useState } from "react";
 import { Icon } from "../Icons";
 import { providerMeta } from "../providers";
-import { ProviderBadge } from "../components/Sidebar";
 import type { Profile } from "../types";
 import { Field, RAW, SecretInput, type FormApi } from "./fields";
 import { endpointAfterRegion, fieldsAfterProvider } from "./s3Endpoint";
@@ -151,25 +150,18 @@ export function S3Form({ initial, tried, formApi, onEdit }: { initial: Profile |
 
   return (
     <>
-      <div className="field span2">
-        <span>Provider</span>
-        <div className="provider-grid" role="radiogroup" aria-label="Provider">
-          {PRESETS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              role="radio"
-              aria-checked={provider === p.id}
-              className={`provider-tile ${provider === p.id ? "on" : ""}`}
-              title={p.label}
-              onClick={() => pickProvider(p.id)}
-            >
-              <ProviderBadge provider={p.id} large />
-              {providerMeta(p.id).short}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* a plain list: the provider only fills in the region list, the endpoint and path style */}
+      <Field label="Provider" wide>
+        {(c) => (
+          <select {...c} value={provider} onChange={(e) => pickProvider(e.target.value)}>
+            {PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {providerMeta(p.id).short}
+              </option>
+            ))}
+          </select>
+        )}
+      </Field>
 
       <Field label="Name" optional wide>
         {(c) => <input {...c} value={name} onChange={(e) => edit(setName)(e.target.value)} placeholder={preset.label} />}

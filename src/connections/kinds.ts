@@ -21,7 +21,7 @@ export type KindInfo = {
 
 export const KINDS: KindInfo[] = [
   { id: "kybl", provider: "kybl", label: "Kybl Storage", blurb: "Sign in, no keys to copy", group: "storage" },
-  { id: "s3", provider: "aws", label: "S3-compatible", blurb: "Hetzner, AWS, R2, MinIO…", group: "storage" },
+  { id: "s3", provider: "aws", label: "S3 Compatible", blurb: "Any S3 storage, with access keys", group: "storage" },
   { id: "azblob", provider: "azblob", label: "Azure Blob Storage", blurb: "One container, with a key or SAS", group: "storage" },
   { id: "gcs", provider: "gcs", label: "Google Cloud Storage", blurb: "One bucket, with a service key", group: "storage" },
   { id: "gdrive", provider: "gdrive", label: "Google Drive", blurb: "My Drive and shared drives", group: "drives" },

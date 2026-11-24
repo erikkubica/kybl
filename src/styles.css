@@ -2160,39 +2160,6 @@ input[type="checkbox"] {
   background: var(--danger-soft);
   color: var(--danger);
 }
-.provider-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-}
-.provider-tile {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: transparent;
-  color: var(--dim);
-  font-size: 11.5px;
-  font-weight: 500;
-  line-height: 1.2;
-  text-align: center;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
-}
-.provider-tile:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-.provider-tile.on {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: 0 0 0 1px var(--accent);
-  color: var(--text);
-  font-weight: 600;
-}
-
 /* ---------------------------------------------------------------- menus & toasts */
 .ctx-menu {
   position: fixed;
@@ -5761,12 +5728,19 @@ input[type="range"]:focus-visible {
   }
 }
 
-/* an SFTP server's tunnels in the info panel: the popover's rows, flush with the panel */
+/* an SFTP server's tunnels in the info panel: plain rows like the panel's other lists (no hover
+   card, no separator), the same quiet buttons as Start / Stop */
 .info-tunnels .tunnel-row {
-  padding-left: 0;
-  padding-right: 0;
+  padding: 5px 0;
+  border-radius: 0;
+}
+.info-tunnels .tunnel-row:hover {
+  background: none;
+}
+.info-tunnels .tunnel-pop-sep {
+  display: none;
 }
 .info-tunnels .info-add {
-  margin-top: 8px;
+  margin: 4px 0 0 -8px;
   gap: 5px;
 }

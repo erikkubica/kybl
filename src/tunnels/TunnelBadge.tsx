@@ -204,7 +204,7 @@ function Running({ t, copied, busy, error, onCopy, onStop }: { t: TunnelInfo; co
         </div>
         {note && <div className="tunnel-note">{note}</div>}
       </div>
-      <button type="button" className="btn btn-sm" onClick={onStop} disabled={busy}>
+      <button type="button" className="btn btn-sm btn-ghost" onClick={onStop} disabled={busy}>
         Stop
       </button>
     </div>
