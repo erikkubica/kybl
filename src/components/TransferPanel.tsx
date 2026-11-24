@@ -1,7 +1,7 @@
 import { Icon, type IconName } from "../Icons";
 import { errMessage } from "../api";
 import { ErrorText } from "./ErrorText";
-import { formatBytes, formatEta, formatSpeed, mbpsInput, parseMbps, plural } from "../format";
+import { formatBytes, formatEta, formatSpeed, mbpsInput, mbpsToKbps, parseMbps, plural } from "../format";
 import type { Transfer, TransferState } from "../types";
 import { useJobList, type Job, type JobKind } from "../useJobs";
 import { runTotals, transferActions, transferControls, useTransferList } from "../useTransfers";
@@ -12,7 +12,7 @@ import { MBPS, limitLabel, saveTransferPrefs, useTransferPrefsStore } from "../t
 import "./transfers.css";
 import { clearLog, logMessage, useActivityLog } from "../activityLog";
 import type { JobSummary } from "../api";
-import { JobsPanel, isActive as migrationActive, migrations as migrationStore, useMigrations } from "../jobs";
+import { JobsPanel, isActive as migrationActive, jobFilesCount, jobMeta as migrationMeta, migrations as migrationStore, useMigrations } from "../jobs";
 import { useJobs } from "../useJobs";
 import { ON_OS } from "../osNames";
 
@@ -128,7 +128,7 @@ function SpeedMenu() {
           onSubmit={(v) => {
             const mb = parseMbps(v);
             // a tiny limit stays a limit (1 KB/s at least), never "none"
-            if (typeof mb === "number") set(mb === 0 ? 0 : Math.max(1, Math.round(mb * MBPS)));
+            if (typeof mb === "number") set(mbpsToKbps(mb));
           }}
           onClose={() => setCustom(false)}
         />
@@ -324,7 +324,7 @@ function TransferPanelView({
     ...(show("progress") ? queued.slice(0, 40) : []),
     ...(show("progress") ? paused.slice(0, 40) : []),
     ...(show("done") ? done.slice(-40).reverse() : []),
-    ...(show("done") ? cancelled.slice(-20) : []),
+    ...(show("done") ? cancelled.slice(-20).reverse() : []),
   ];
   const shownJobs = jobList.filter((j) => (j.state === "running" ? show("progress") : j.state === "error" ? show("failed") : show("done")));
   const shownSyncs = show("progress") ? syncs : [];
@@ -337,6 +337,9 @@ function TransferPanelView({
     failed: failed.length + jobsFailed.length + migrationsFailed.length,
     done: done.length + cancelled.length + jobsDone.length + jobsCancelled.length + migrationsDone.length,
   };
+  // finished rows past the caps above: said, like the other capped lists
+  const doneHidden =
+    counts.done - Math.min(done.length, 40) - Math.min(cancelled.length, 20) - Math.min(jobsDone.length + jobsCancelled.length, 30) - (onTab ? Math.min(migrationsDone.length, 30) : migrationsDone.length);
   const onLog = !!onTab && tab === "log";
   const tabEmpty = shownJobs.length + shownSyncs.length + shownMigs.length + list.length === 0;
   const EMPTY_NOTE: Record<string, string> = {
@@ -577,10 +580,9 @@ function TransferPanelView({
                           ? "Sign in again to continue"
                           : p.state === "done" && p.filesFailed > 0
                             ? `${p.filesFailed.toLocaleString()} of ${plural(p.filesTotal, "file")} couldn’t be ${verb}`
-                            : p.state === "done"
-                              ? `${p.filesTotal.toLocaleString()} ${p.filesTotal === 1 ? "file" : "files"}` + (p.bytesTotal > 0 ? ` · ${formatBytes(p.bytesTotal)}` : "")
-                              : `${(p.filesDone + p.filesSkipped).toLocaleString()} of ${plural(p.filesTotal, "file")}` +
-                                (p.bytesTotal > 0 ? ` · ${formatBytes(p.bytesDone)} of ${formatBytes(p.bytesTotal)}` : "")}
+                            : p.state === "done" || p.state === "cancelled"
+                              ? migrationMeta(m)
+                              : jobFilesCount(p) + (p.bytesTotal > 0 ? ` · ${formatBytes(p.bytesDone)} of ${formatBytes(p.bytesTotal)}` : "")}
                 </div>
                 {bad ? (
                   <div className="tp-state">{p.state === "needsAuth" ? "Needs sign-in" : p.state === "done" ? "Some failed" : "Failed"}</div>
@@ -764,6 +766,7 @@ function TransferPanelView({
           {show("failed") && failed.length > FAILED_SHOWN && <div className="tp-more">+ {(failed.length - FAILED_SHOWN).toLocaleString()} more failed</div>}
           {show("progress") && queued.length > 40 && <div className="tp-more">+ {(queued.length - 40).toLocaleString()} more waiting</div>}
           {show("progress") && paused.length > 40 && <div className="tp-more">+ {(paused.length - 40).toLocaleString()} more paused</div>}
+          {show("done") && doneHidden > 0 && <div className="tp-more">+ {doneHidden.toLocaleString()} more finished</div>}
         </div>
       )}
     </section>
@@ -773,10 +776,12 @@ function TransferPanelView({
 /** The Log tab: every message the app showed this session, newest at the bottom. */
 function MessageLog() {
   const log = useActivityLog();
-  const end = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  // follow new messages while the view is at the bottom; scrolling up to read holds it
+  const follow = useRef(true);
   useEffect(() => {
-    // braces: newer engines return a Promise from scrollIntoView, which React would take for a clean-up
-    end.current?.scrollIntoView({ block: "end" });
+    const el = box.current;
+    if (el && follow.current) el.scrollTop = el.scrollHeight;
   }, [log[log.length - 1]?.id]);
   if (!log.length)
     return (
@@ -786,7 +791,17 @@ function MessageLog() {
       </div>
     );
   return (
-    <div className="tp-list tp-log" id="tp-list" role="log" aria-live="off">
+    <div
+      ref={box}
+      className="tp-list tp-log"
+      id="tp-list"
+      role="log"
+      aria-live="off"
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+      }}
+    >
       {log.map((m) => (
         <div key={m.id} className={`tp-log-row k-${m.kind}`}>
           <time dateTime={new Date(m.at).toISOString()}>{new Date(m.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
@@ -799,7 +814,6 @@ function MessageLog() {
           Clear log
         </button>
       </div>
-      <div ref={end} />
     </div>
   );
 }

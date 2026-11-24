@@ -95,6 +95,17 @@ first line being `ftp-plain-unconfirmed`. "Connect without encryption" calls
 `ftp_allow_plain({ net })` and connects again. A server that encrypted a connection before, or
 lists AUTH TLS in FEAT, is never used unencrypted, agreed or not.
 
+### Trust questions come from Kybl only
+
+The trust errors here (`ErrKind::UnknownHost`, `HostKeyChanged`, `UntrustedCert`, `CertChanged`,
+`Unencrypted`) reach the UI as "message\n\n<tag> <first detail line>…", where `<tag>` is
+`kybl:` and 32 hex digits, made fresh each run (`storage::trust_tag`, read once with the
+`trust_tag` command). Servers can put text into errors (FTP replies, status messages, names), but
+they can't know the tag, so the UI (`src/connections/kinds.ts`) reads a question only from a
+detail that starts with it: its first line, then the certificate's `key: value` lines up to `tls:`.
+The host shown is the connection's, never the error's. FTP reply text in a detail is made one line
+(`storage::one_line`). The examples here leave the tag out.
+
 ## SFTP (`kind: "sftp"`)
 
 | field | meaning |
@@ -127,8 +138,8 @@ Kybl hasn't connected to this server before. Check that the server's fingerprint
 host-key-unknown SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8
 ```
 
-Parse the fingerprint with `/host-key-unknown (SHA256:\S+)/`, show it with a "Trust this server?"
-prompt, and on yes set `profile.net.hostKey` to it and save/test again.
+Show the fingerprint with a "Trust this server?" prompt, and on yes set `profile.net.hostKey` to it
+and save/test again.
 
 When the saved key doesn't match, the error is a hard stop, with no way to continue from it:
 

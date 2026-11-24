@@ -87,6 +87,11 @@ export function CloudPanel({
   // editing: a changed app only takes effect through a new sign-in, so Save signs in again
   const appChanged =
     !!initial && ownOpen && (clientId.trim() !== (initial.cloud?.clientId ?? "") || tenant.trim() !== (initial.cloud?.tenant ?? "") || !!clientSecret);
+  // the own app emptied while editing: back to Kybl's app
+  const toBuiltin = appChanged && !client;
+  // what oauth_start gets: null keeps the saved app (and its secret, which the form never shows),
+  // an empty client ID asks for the built-in app
+  const sent: OAuthClient | null = !initial ? client : !appChanged ? null : (client ?? { clientId: "", clientSecret: null, tenant: null });
 
   const start = async () => {
     if (!canStart || waiting) return;
@@ -95,12 +100,22 @@ export function CloudPanel({
     setWaiting(true);
     setError(null);
     try {
-      let p = await oauthStart(kind, id, client, initial?.id ?? null);
+      const p = await oauthStart(kind, id, sent, initial?.id ?? null);
       if (flow.current !== id) return;
       flow.current = null;
-      // a name typed while editing wins over the account's
-      if (initial && name.trim() && name.trim() !== p.name) p = await api.saveProfile({ ...p, name: name.trim() });
-      onSaved(p);
+      // a name typed while editing wins over the account's; the sign-in already counts, so a
+      // failed rename is shown without leaving the panel waiting
+      if (initial && name.trim() && name.trim() !== p.name) {
+        try {
+          const renamed = await api.saveProfile({ ...p, name: name.trim() });
+          onSaved(renamed);
+        } catch (e) {
+          onSaved(p);
+          setWaiting(false);
+          setError(`Signed in, but the name wasn't saved: ${errMessage(e)}`);
+          return;
+        }
+      } else onSaved(p);
       onClose();
     } catch (e) {
       if (flow.current !== id) return;
@@ -205,7 +220,7 @@ export function CloudPanel({
               </Field>
               {kind === "gdrive" && (
                 <Field label="Client secret" optional hint="Google shows one for desktop apps too. It isn't really secret, but it's needed.">
-                  {(c) => <SecretInput control={c} value={clientSecret} onChange={setClientSecret} editing={!!initial?.cloud?.clientId} label="client secret" />}
+                  {(c) => <SecretInput control={c} value={clientSecret} onChange={setClientSecret} editing={!!initial?.cloud?.clientId && clientId.trim() === initial.cloud.clientId} label="client secret" />}
                 </Field>
               )}
               {kind === "onedrive" && (
@@ -213,7 +228,7 @@ export function CloudPanel({
                   {(c) => <input {...c} className="mono" value={tenant} onChange={(e) => setTenant(e.target.value)} placeholder="contoso.onmicrosoft.com" disabled={waiting} {...RAW} />}
                 </Field>
               )}
-              {appChanged && <p className="hint span2">Save signs in again with this app.</p>}
+              {appChanged && <p className="hint span2">{toBuiltin ? "Save signs in again with Kybl's app." : "Save signs in again with this app."}</p>}
             </div>
           )}
         </div>

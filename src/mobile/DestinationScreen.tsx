@@ -12,7 +12,7 @@ import { baseName, formatBytes } from "../format";
 import type { Profile } from "../types";
 import type { Loc } from "./useListing";
 import { connName } from "./connName";
-import { ConnFixRow, type ConnFixes } from "./ConnFixRow";
+import { ConnFixRow, hasConnFix, type ConnFixes } from "./ConnFixRow";
 
 export type SharedFile = { path: string; name: string; size: number };
 
@@ -27,16 +27,19 @@ export function DestinationScreen({
   onAt,
   onPick,
   onBack,
+  onRetry,
   fixes,
 }: {
   files: SharedFile[];
   at: Loc | null;
   profiles: Profile[];
   /** bucket names per connection, as the home screen has them */
-  buckets: Record<string, { names: string[]; loading: boolean; note?: string | null }>;
+  buckets: Record<string, { names: string[]; loading: boolean; note?: string | null; error?: string; revoked?: boolean }>;
   onAt: (l: Loc | null) => void;
   onPick: (l: Loc) => void;
   onBack: () => void;
+  /** lists a connection's buckets again, after its list failed */
+  onRetry?: (p: Profile) => void;
   /** trust a certificate or server key, allow plain FTP: what a connection's error offers */
   fixes?: ConnFixes;
 }) {
@@ -123,8 +126,23 @@ export function DestinationScreen({
                       <span className="spinner" /> Loading…
                     </li>
                   )}
-                  {!buckets[p.id]?.loading && !buckets[p.id]?.names.length && (
-                    <li className="m-bucket-note">{buckets[p.id]?.note ?? "Nothing here yet."}</li>
+                  {!buckets[p.id]?.loading && buckets[p.id]?.note ? (
+                    // the list failed: the fix it needs (a certificate, a server key) or Retry
+                    <li className="m-bucket-note">
+                      <span>{buckets[p.id]?.note}</span>
+                      {fixes && hasConnFix(p, buckets[p.id]?.error) ? (
+                        <ConnFixRow profile={p} error={buckets[p.id]?.error} fixes={fixes} then={(q) => onRetry?.(q)} className="btn btn-primary btn-sm" bare />
+                      ) : (
+                        onRetry &&
+                        !buckets[p.id]?.revoked && (
+                          <button className="btn btn-sm" onClick={() => onRetry(p)}>
+                            Retry
+                          </button>
+                        )
+                      )}
+                    </li>
+                  ) : (
+                    !buckets[p.id]?.loading && !buckets[p.id]?.names.length && <li className="m-bucket-note">Nothing here yet.</li>
                   )}
                   {(buckets[p.id]?.names ?? []).map((b) => (
                     <li key={b}>

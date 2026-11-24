@@ -55,8 +55,9 @@ fn plan(items: &[DragOutItem], promises: bool) -> Vec<Planned> {
     for (index, it) in items.iter().enumerate() {
         if let Some(p) = it.path.as_deref().filter(|p| !p.is_empty()) {
             let path = PathBuf::from(p);
-            // only absolute paths: a relative one would be read against the app's working folder
-            if path.is_absolute()
+            // only absolute paths (a relative one would be read against the app's working folder),
+            // and none with ".." parts (built from a remote name, it could point anywhere)
+            if super::plain_path(p)
                 && let Ok(meta) = std::fs::metadata(&path)
             {
                 out.push(Planned::File { path, dir: meta.is_dir() });
@@ -127,6 +128,10 @@ fn answer(token: &str, index: usize, result: Answer) -> bool {
 /// this drag in the `drag-out-promise` and `drag-out-ended` events.
 #[tauri::command]
 pub async fn start_drag_out(window: tauri::WebviewWindow, token: String, items: Vec<DragOutItem>, image: Option<String>) -> Result<(), String> {
+    // the receiving app may copy the file later (a chat uploading it): "Clear cache" leaves it
+    for p in items.iter().filter_map(|i| i.path.as_deref()) {
+        crate::open_copies::handed_out(p);
+    }
     #[cfg(target_os = "macos")]
     {
         let planned = plan(&items, true);

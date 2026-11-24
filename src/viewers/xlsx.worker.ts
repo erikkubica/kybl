@@ -3,11 +3,7 @@
  * to parse). The workbook stays here; the page asks for one sheet's rows at a time.
  */
 import { read, utils, type WorkBook } from "xlsx";
-import { usedExtent } from "./gridShape";
-
-/** At most this many rows and columns of a sheet are sent to the page (import types only from here). */
-const XLSX_MAX_ROWS = 200_000;
-const XLSX_MAX_COLS = 1_000;
+import { sheetCut, usedExtent } from "./gridShape";
 
 export type XlsxRequest = { id: number; open: Uint8Array } | { id: number; sheet: string };
 export type XlsxResponse =
@@ -36,7 +32,7 @@ self.onmessage = (ev: MessageEvent<XlsxRequest>) => {
     const used = ws["!data"] ? usedExtent(ws["!data"] as Parameters<typeof usedExtent>[0]) : declared.e;
     const last = { r: Math.min(used.r, declared.e.r), c: Math.min(used.c, declared.e.c) };
     if (last.r < 0 || last.c < 0) return post({ id: req.id, rows: [], cut: null });
-    const e = { r: Math.min(last.r, XLSX_MAX_ROWS - 1), c: Math.min(last.c, XLSX_MAX_COLS - 1) };
+    const e = sheetCut(last);
     const rows = utils.sheet_to_json<string[]>(ws, { header: 1, raw: false, defval: "", blankrows: true, range: { s: { r: 0, c: 0 }, e } });
     const cut = e.r < last.r || e.c < last.c ? { rows: last.r + 1, cols: last.c + 1 } : null;
     post({ id: req.id, rows, cut });

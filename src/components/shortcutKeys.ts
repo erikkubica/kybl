@@ -63,3 +63,4 @@ export function ariaKeys(keys: string | undefined, mac: boolean): string | undef
 
 /** Where the app's tray icon lives: the menu bar on a Mac, the system tray elsewhere. */
 export const trayName = (mac: boolean) => (mac ? "menu bar" : "system tray");
+

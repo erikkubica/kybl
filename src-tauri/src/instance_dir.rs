@@ -20,8 +20,17 @@ const LOCK: &str = "lock";
 /// A lock file this new may be one another run just made and is about to lock: left alone.
 const YOUNG: Duration = Duration::from_secs(10);
 
-/// base → (this run's folder, its held lock file)
-static HELD: LazyLock<Mutex<HashMap<PathBuf, (PathBuf, File)>>> = LazyLock::new(Default::default);
+/// A base this run claimed.
+struct Held {
+    /// this run's folder below it
+    dir: PathBuf,
+    /// its lock file, locked while this run lives
+    _lock: File,
+    /// claimed with [`claim`]: what ended runs left is only removed, never taken over
+    plain: bool,
+}
+
+static HELD: LazyLock<Mutex<HashMap<PathBuf, Held>>> = LazyLock::new(Default::default);
 
 #[cfg(unix)]
 fn private(dir: &Path) {
@@ -34,7 +43,7 @@ fn private(_dir: &Path) {}
 /// This run's own folder below `base` (made private to this user), claimed on first use. The
 /// first claim also removes what ended runs left below `base`.
 pub fn claim(base: &Path) -> io::Result<PathBuf> {
-    claim_adopting(base, |_, _| true)
+    claim_with(base, true, |_, _| true)
 }
 
 /// [`claim`], handing each folder an ended run left to `adopt(this run's folder, that folder)`
@@ -42,11 +51,15 @@ pub fn claim(base: &Path) -> io::Result<PathBuf> {
 /// be taken over into this run's folder first. `adopt` returning false keeps that folder for a
 /// later start. This run's folder and lock exist before the sweep, so what `adopt` writes into
 /// it is never lost to a crash in between.
-pub fn claim_adopting(base: &Path, mut adopt: impl FnMut(&Path, &Path) -> bool) -> io::Result<PathBuf> {
+pub fn claim_adopting(base: &Path, adopt: impl FnMut(&Path, &Path) -> bool) -> io::Result<PathBuf> {
+    claim_with(base, false, adopt)
+}
+
+fn claim_with(base: &Path, plain: bool, mut adopt: impl FnMut(&Path, &Path) -> bool) -> io::Result<PathBuf> {
     let mut held = HELD.lock().unwrap();
-    if let Some((dir, _)) = held.get(base) {
-        std::fs::create_dir_all(dir)?;
-        return Ok(dir.clone());
+    if let Some(h) = held.get(base) {
+        std::fs::create_dir_all(&h.dir)?;
+        return Ok(h.dir.clone());
     }
     std::fs::create_dir_all(base)?;
     private(base);
@@ -57,15 +70,40 @@ pub fn claim_adopting(base: &Path, mut adopt: impl FnMut(&Path, &Path) -> bool) 
     std::fs::create_dir_all(&dir)?;
     private(&dir);
     sweep_adopting(base, Some(&name), &mut |gone| adopt(&dir, gone));
-    held.insert(base.to_path_buf(), (dir.clone(), lock));
+    held.insert(base.to_path_buf(), Held { dir: dir.clone(), _lock: lock, plain });
     Ok(dir)
 }
 
 /// Empties this run's folder below `base` (quitting). It is made again on the next use.
 pub fn clear(base: &Path) {
-    if let Some((dir, _)) = HELD.lock().unwrap().get(base) {
-        let _ = std::fs::remove_dir_all(dir);
+    if let Some(h) = HELD.lock().unwrap().get(base) {
+        let _ = std::fs::remove_dir_all(&h.dir);
     }
+}
+
+/// (base, this run's folder below it) of every base this run claimed (`plain_only`: only those
+/// claimed with [`claim`]).
+fn held_bases(plain_only: bool) -> Vec<(PathBuf, PathBuf)> {
+    HELD.lock().unwrap().iter().filter(|(_, h)| h.plain || !plain_only).map(|(b, h)| (b.clone(), h.dir.clone())).collect()
+}
+
+/// Sweeps again every base this run claimed with [`claim`]: what runs that ended since started
+/// (another copy of Kybl that quit or crashed while this one keeps running, maybe for weeks)
+/// is removed now, not only by the next start (B5-3). Blocking.
+pub fn sweep_ended_runs() {
+    for (base, dir) in held_bases(true) {
+        let Some(own) = dir.file_name().map(|n| n.to_string_lossy().into_owned()) else { continue };
+        sweep_adopting(&base, Some(&own), &mut |_| true);
+    }
+}
+
+/// [`sweep_ended_runs`] for one base claimed with [`claim_adopting`]: each folder an ended run
+/// left is handed to `adopt(this run's folder, that folder)` first (false: it stays). Nothing
+/// when this run hasn't claimed `base`. Blocking.
+pub fn sweep_ended_adopting(base: &Path, mut adopt: impl FnMut(&Path, &Path) -> bool) {
+    let Some((_, dir)) = held_bases(false).into_iter().find(|(b, _)| b == base) else { return };
+    let Some(own) = dir.file_name().map(|n| n.to_string_lossy().into_owned()) else { return };
+    sweep_adopting(base, Some(&own), &mut |gone| adopt(&dir, gone));
 }
 
 /// Removes the folders below `base` that no running Kybl holds (`own`: a name to keep regardless).
@@ -163,5 +201,45 @@ mod tests {
         clear(&base);
         assert!(!mine.exists());
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// A run that ends while this one keeps running is cleaned up (or taken over) without
+    /// waiting for this one to start again (B5-3).
+    #[test]
+    fn runs_that_end_meanwhile_are_swept_while_running() {
+        let ended = |base: &Path, name: &str| {
+            std::fs::create_dir_all(base.join(name).join("s")).unwrap();
+            let f = File::create(base.join(format!("{name}.lock"))).unwrap();
+            f.set_modified(SystemTime::now() - Duration::from_secs(3600)).unwrap();
+        };
+        let base = std::env::temp_dir().join(format!("kybl-instance-{}", uuid::Uuid::new_v4().simple()));
+        let mine = claim(&base).unwrap();
+        std::fs::write(mine.join("open.pdf"), "in use").unwrap();
+        ended(&base, "other");
+        sweep_ended_runs();
+        assert!(!base.join("other").exists() && !base.join("other.lock").exists(), "an ended run's folder stays");
+        assert!(mine.join("open.pdf").exists(), "this run's own folder is never swept");
+
+        // a base whose ended folders are taken over first: kept when the take-over fails
+        let adopting = std::env::temp_dir().join(format!("kybl-instance-{}", uuid::Uuid::new_v4().simple()));
+        let own = claim_adopting(&adopting, |_, _| true).unwrap();
+        ended(&adopting, "gone");
+        sweep_ended_runs();
+        assert!(adopting.join("gone").exists(), "only a plain base is swept without asking");
+        sweep_ended_adopting(&adopting, |into, from| {
+            assert_eq!(into, own);
+            assert_eq!(from, adopting.join("gone"));
+            false
+        });
+        assert!(adopting.join("gone").exists(), "a failed take-over keeps the folder");
+        let mut took = 0;
+        sweep_ended_adopting(&adopting, |_, _| {
+            took += 1;
+            true
+        });
+        assert_eq!(took, 1);
+        assert!(!adopting.join("gone").exists());
+        std::fs::remove_dir_all(&base).ok();
+        std::fs::remove_dir_all(&adopting).ok();
     }
 }

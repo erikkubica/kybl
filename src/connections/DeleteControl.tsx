@@ -1,5 +1,6 @@
 /** "Delete" in a connection's footer, with an inline "Delete connection / Keep" confirmation. */
 import { useState } from "react";
+import { message } from "@tauri-apps/plugin-dialog";
 import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
 import type { Profile } from "../types";
@@ -22,15 +23,19 @@ export function DeleteControl<B extends string>({
   const [confirm, setConfirm] = useState(false);
   const remove = async () => {
     setBusy("delete");
+    let note: string | null;
     try {
-      await api.deleteProfile(profile.id);
-      onDeleted(profile.id);
-      onClose();
+      note = await api.deleteProfile(profile.id);
     } catch (e) {
       onError(`Couldn’t delete this connection.\n\n${errMessage(e)}`);
       setConfirm(false);
       setBusy(null);
+      return;
     }
+    // deleted; a note says its secrets are only removed at the next start
+    onDeleted(profile.id);
+    onClose();
+    if (note) void message(note, { title: "Connection deleted", kind: "warning" }).catch(() => {});
   };
   return confirm ? (
     <>

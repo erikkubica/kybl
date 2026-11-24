@@ -53,10 +53,13 @@ function icon(j: JobSummary): IconName {
 }
 
 /** One line on how far it got. */
+/** "7 of 10 files": every file dealt with so far (copied, already there or failed), Jobs and Activity alike. */
+export const jobFilesCount = (p: JobProgress) => `${n(p.filesDone + p.filesSkipped + p.filesFailed)} of ${files(p.filesTotal)}`;
+
 export function jobMeta(j: JobSummary): string {
   const p = j.progress;
   const moved = j.spec.mode === "move" ? "moved" : "copied";
-  const counts = p.filesTotal > 0 ? `${n(p.filesDone + p.filesSkipped + p.filesFailed)} of ${files(p.filesTotal)}` : "";
+  const counts = p.filesTotal > 0 ? jobFilesCount(p) : "";
   const bytes = p.bytesTotal > 0 ? `${formatBytes(p.bytesDone)} of ${formatBytes(p.bytesTotal)}` : "";
   switch (p.state) {
     case "planning":
@@ -105,24 +108,32 @@ function Failures({ job }: { job: JobSummary }) {
   // more problems came while a page was loading: once it is in, fetch what it missed
   const inFlight = useRef(false);
   const recheck = useRef(false);
+  // each load's number: a page that comes back after a newer load started (a retry reloading from
+  // the top while "Show more" was out) is dropped, not appended to the fresh list
+  const seq = useRef(0);
   const load = async (offset: number) => {
+    const my = ++seq.current;
     setLoading(true);
     inFlight.current = true;
     let reached: number | null = null;
     try {
       const page = await migrations.failures(job.id, offset, PAGE);
+      if (my !== seq.current) return;
       setList((cur) => (offset === 0 ? page : [...(cur ?? []), ...page]));
       setEnd(page.length < PAGE);
       setError(null);
       if (page.length < PAGE) reached = offset + page.length;
     } catch (e) {
-      setError(errMessage(e));
+      if (my === seq.current) setError(errMessage(e));
     } finally {
-      setLoading(false);
-      inFlight.current = false;
-      if (recheck.current) {
-        recheck.current = false;
-        if (reached !== null && reached < seen.current.failed) void load(reached);
+      // a newer load owns the busy state and the catch-up
+      if (my === seq.current) {
+        setLoading(false);
+        inFlight.current = false;
+        if (recheck.current) {
+          recheck.current = false;
+          if (reached !== null && reached < seen.current.failed) void load(reached);
+        }
       }
     }
   };

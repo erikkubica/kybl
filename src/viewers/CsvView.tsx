@@ -3,7 +3,7 @@
  * the plain text to edit. Edits made as text show up in the table when switching back.
  */
 import { keys } from "../components/osText";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CodeEditor, type CodeEditorApi } from "./CodeEditor";
 import { DataGrid } from "./DataGrid";
 import { Note, Segmented, ToolButton } from "./ui";
@@ -15,7 +15,7 @@ type Tab = "table" | "text";
 export default function CsvView({ name, text, editable, mode, onEdit, onSave }: ViewerProps) {
   const full = mode === "full";
   const [tab, setTab] = useState<Tab>("table");
-  const [parsed, setParsed] = useState<{ rows: string[][]; error: string | null } | null>(null);
+  const [parsed, setParsed] = useState<{ rows: string[][]; error: string | null; id: number } | null>(null);
   const [headerRow, setHeaderRow] = useState(true);
   const current = useRef<() => string>(() => text ?? "");
   const parsedFrom = useRef<string | null>(null);
@@ -48,9 +48,9 @@ export default function CsvView({ name, text, editable, mode, onEdit, onSave }: 
     const w = worker.current;
     w.onmessage = (ev: MessageEvent<CsvResponse>) => {
       if (ev.data.id !== seq.current) return;
-      setParsed({ rows: ev.data.rows, error: ev.data.error });
+      setParsed({ rows: ev.data.rows, error: ev.data.error, id });
     };
-    w.onerror = () => setParsed({ rows: [], error: "This file couldn't be read as a table." });
+    w.onerror = () => setParsed({ rows: [], error: "This file couldn't be read as a table.", id });
     const delimiter = /\.tsv$/i.test(name) ? "\t" : "";
     w.postMessage({ id, text: src, delimiter } satisfies CsvRequest);
   }, [tab, name]);
@@ -60,8 +60,10 @@ export default function CsvView({ name, text, editable, mode, onEdit, onSave }: 
     onEdit?.(get);
   };
 
-  const rows = parsed?.rows ?? [];
+  const rows = useMemo(() => parsed?.rows ?? [], [parsed]);
   const header = headerRow && rows.length > 1 ? rows[0] : null;
+  // not a fresh array per render: the grid measures every row when its rows change
+  const body = useMemo(() => (header ? rows.slice(1) : rows), [rows, header]);
 
   return (
     <div className="dv-viewer dv-csv">
@@ -88,7 +90,8 @@ export default function CsvView({ name, text, editable, mode, onEdit, onSave }: 
       {tab === "table" &&
         (parsed ? (
           rows.length ? (
-            <DataGrid label={name} rows={header ? rows.slice(1) : rows} header={header} />
+            // a new parse or header choice moves the rows: the selected cell starts over
+            <DataGrid key={`${parsed.id}-${header ? 1 : 0}`} label={name} rows={body} header={header} />
           ) : (
             <Note icon="text">This file is empty.</Note>
           )

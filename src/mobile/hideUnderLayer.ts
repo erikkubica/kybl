@@ -13,6 +13,9 @@ export function hideUnderLayer(top: string | undefined): (() => void) | undefine
   // (the tablet's details panel is in the stack but sits beside the files, not over them)
   const layer = app.querySelector<HTMLElement>(`:scope > [data-layer="${top}"]:not(.m-leaving)`);
   if (!layer || app.querySelector(":scope > .m-lock")) return;
+  // what had the keyboard when the layer opened (the row's "…" button): it gets it back (read
+  // before `inert` below can take the focus away from it)
+  const opener = layer.contains(document.activeElement) ? null : document.activeElement;
   const marked: Element[] = [];
   for (const el of Array.from(app.children)) {
     if (el === layer || el.matches(KEEP) || el.hasAttribute("inert")) continue;
@@ -27,5 +30,11 @@ export function hideUnderLayer(top: string | undefined): (() => void) | undefine
   return () => {
     // a layer closing now animates out inert (Presence): that stays
     for (const el of marked) if (!el.classList.contains("m-leaving")) el.removeAttribute("inert");
+    // only when this layer went away (not when another opened over it, which takes the focus)
+    const gone = !layer.isConnected || layer.classList.contains("m-leaving");
+    if (gone && opener instanceof HTMLElement && opener.isConnected && opener !== document.body && !opener.closest("[inert]")) {
+      const now = document.activeElement;
+      if (!now || now === document.body || layer.contains(now) || !now.isConnected) opener.focus({ preventScroll: true });
+    }
   };
 }

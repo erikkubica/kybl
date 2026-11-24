@@ -95,8 +95,8 @@ export function useEdit({
       // already on this computer: it opens where it is, and its app saves it in place
       return app === undefined ? void place.ops.openInApp(e) : void place.ops.openWith(e, app.path);
     }
-    // a program or script opened in its default app (or a terminal) runs: asked first, as on
-    // Open; a script going to an editor the person picked is only read, so it isn't
+    // a program or script opened in its default app (or any app but a known text editor) may
+    // run: asked first, as on Open; a script going to a text editor is only read, so it isn't
     if (!(await okToRun([e.name], dialogs.confirm, app?.path))) return;
     const rule = await askRule(e.name, app?.name);
     if (!rule) return;

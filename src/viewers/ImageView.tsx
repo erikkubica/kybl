@@ -96,16 +96,21 @@ export default function ImageView({ name, bytes, mode }: ViewerProps) {
   const pts = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<{ d0: number; s0: number } | null>(null);
   const lastTap = useRef(0);
+  // a touch double-tap is handled in onDown; the dblclick the browser may add after it is ignored
+  const lastTouch = useRef(-Infinity);
   const onDown = (e: React.PointerEvent) => {
     if (e.pointerType !== "touch") return;
+    lastTouch.current = performance.now();
     pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pts.current.size === 2) {
       const [a, b] = [...pts.current.values()];
       pinch.current = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, s0: s };
     } else {
       const now = performance.now();
-      if (now - lastTap.current < 300) toggle(e.clientX, e.clientY);
-      lastTap.current = now;
+      if (now - lastTap.current < 300) {
+        toggle(e.clientX, e.clientY);
+        lastTap.current = 0;
+      } else lastTap.current = now;
     }
   };
   const onMove = (e: React.PointerEvent) => {
@@ -141,7 +146,7 @@ export default function ImageView({ name, bytes, mode }: ViewerProps) {
       <div
         ref={stage}
         className={`dv-image-stage ${s > fit + 0.001 ? "zoomed" : ""}`}
-        onDoubleClick={(e) => full && toggle(e.clientX, e.clientY)}
+        onDoubleClick={(e) => full && performance.now() - lastTouch.current > 600 && toggle(e.clientX, e.clientY)}
         onPointerDown={full ? onDown : undefined}
         onPointerMove={full ? onMove : undefined}
         onPointerUp={onUp}

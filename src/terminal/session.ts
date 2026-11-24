@@ -32,6 +32,8 @@ const PROMPT_REMOTE = /[$%#] $/;
 const PROMPT_LOCAL = /[$%#>❯] $/;
 /** ms after a key is typed before the line counts as known (its echo has come back) */
 const TYPED_LATELY = 500;
+/** Typeahead kept while a shell starts (a few lines of keys; more is dropped). */
+const TYPEAHEAD_MAX = 4096;
 
 let fontSize = clampFont(Number(LS.get(FONT_KEY)) || FONT_DEFAULT);
 function clampFont(n: number) {
@@ -80,6 +82,8 @@ class Session {
   private opened = false;
   /** when a key was last typed (its echo may not be on screen yet) */
   private lastInput = 0;
+  /** Keys typed while the shell starts, sent once it runs (terminals keep typeahead). */
+  private typeahead = "";
 
   constructor(readonly spec: TermSpec) {
     this.host = document.createElement("div");
@@ -161,6 +165,7 @@ class Session {
     const run = ++this.run;
     this.state = "starting";
     this.unacked = 0;
+    this.typeahead = "";
     const ch = new Channel<Msg>();
     ch.onmessage = (m) => {
       if (run !== this.run) return;
@@ -185,9 +190,12 @@ class Session {
       if (this.term.cols !== cols || this.term.rows !== rows)
         void invoke("terminal_resize", { id: info.id, cols: this.term.cols, rows: this.term.rows }).catch(() => {});
       for (const line of takeStartup(this.spec.sid)) this.send(`${line}\r`);
+      if (this.typeahead) this.send(this.typeahead);
+      this.typeahead = "";
     } catch (e) {
       if (run !== this.run) return;
       this.state = "ended";
+      this.typeahead = "";
       const msg = typeof e === "string" ? e : String((e as Error)?.message ?? e);
       // the first paragraph says it; details (protocol text) stay out of the terminal
       this.term.write(`\r\n\x1b[31m${msg.split("\n\n")[0].replace(/\n/g, "\r\n")}\x1b[0m\r\n\x1b[2m[Press Enter to try again]\x1b[0m\r\n`);
@@ -252,6 +260,10 @@ class Session {
   private input(d: string, binary: boolean) {
     this.lastInput = Date.now();
     if (this.state === "running") return this.send(d, binary);
+    if (this.state === "starting" && !binary) {
+      if (this.typeahead.length + d.length <= TYPEAHEAD_MAX) this.typeahead += d;
+      return;
+    }
     if (this.state === "ended" && d.includes("\r")) this.restart();
   }
 

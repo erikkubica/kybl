@@ -658,9 +658,32 @@ pub fn unsupported<T>() -> SResult<T> {
     Err(StorageError::unsupported())
 }
 
+impl ErrKind {
+    /// Errors the UI turns into a trust question (a host key, a certificate, plain FTP).
+    pub fn asks_trust(self) -> bool {
+        matches!(self, ErrKind::UnknownHost | ErrKind::HostKeyChanged | ErrKind::UntrustedCert | ErrKind::CertChanged | ErrKind::Unencrypted)
+    }
+}
+
+/// A per-run tag that starts the detail of a trust error as the UI gets it ("message\n\n<tag>
+/// host-key-unknown …"). Servers can put text into error details (a reply, a status message, a
+/// name), but they can't know this tag, so the UI asks "Trust this server?" only for questions
+/// Kybl itself raised. The UI reads it once with the `trust_tag` command.
+pub fn trust_tag() -> &'static str {
+    static TAG: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TAG.get_or_init(|| format!("kybl:{}", uuid::Uuid::new_v4().simple()))
+}
+
+/// Text from a server, made one line (control characters, newlines among them, become spaces),
+/// so it can't add lines of its own to an error's detail.
+pub fn one_line(s: &str) -> String {
+    s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect::<String>().trim().to_string()
+}
+
 impl fmt::Display for StorageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.detail {
+            Some(d) if self.kind.asks_trust() => write!(f, "{}\n\n{} {d}", self.message, trust_tag()),
             Some(d) => write!(f, "{}\n\n{d}", self.message),
             None => f.write_str(&self.message),
         }
@@ -954,6 +977,19 @@ pub async fn connect<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_i
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_trust_errors_carry_the_tag() {
+        let tag = trust_tag();
+        assert!(tag.starts_with("kybl:") && tag.len() == 37, "{tag}");
+        assert_eq!(tag, trust_tag(), "one tag per run");
+        let e = StorageError::new(ErrKind::UnknownHost, "New server.").with_detail("host-key-unknown SHA256:x");
+        assert_eq!(e.to_string(), format!("New server.\n\n{tag} host-key-unknown SHA256:x"));
+        let e = StorageError::new(ErrKind::Other, "Failed.").with_detail("host-key-unknown SHA256:x");
+        assert_eq!(e.to_string(), "Failed.\n\nhost-key-unknown SHA256:x");
+        assert_eq!(StorageError::new(ErrKind::Unencrypted, "No TLS.").to_string(), "No TLS.");
+        assert_eq!(one_line(" a\r\nb\u{1b}c\n"), "a  b c");
+    }
 
     #[test]
     fn kinds_read_old_and_unknown_profiles() {

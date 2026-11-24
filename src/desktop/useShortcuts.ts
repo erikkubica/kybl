@@ -87,7 +87,9 @@ export function useShortcuts(opts: ShortcutOptions) {
       // by code: Option turns "s" into "ß"
       else if (mod && ev.altKey && ev.code === "KeyS") id = own("toggle-sidebar");
       // grid view tile size (the list ignores them)
-      else if (mod && (k === "=" || k === "+")) id = own("tiles-bigger");
+      // "+" is never the menu's ⌘= (a shifted or a layout's own plus key): the page runs it
+      else if (mod && k === "+") id = "tiles-bigger";
+      else if (mod && k === "=") id = own("tiles-bigger");
       else if (mod && k === "-") id = own("tiles-smaller");
       else if (settingsOpen) {
         // a dialog open on top of settings handles its own Escape

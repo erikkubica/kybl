@@ -220,6 +220,9 @@ function listenOnce() {
       verified: ev.state === "done" ? ev.verified : undefined,
       local: ev.local ?? cur.local,
     };
+    // just finished: to the end of the list, so Done lists (and pruning drops) rows by finish
+    // order, not by when they started
+    if ((ev.state === "done" || ev.state === "cancelled") && cur.state !== ev.state) byId.delete(ev.id);
     byId.set(ev.id, next);
     if (ev.local) logMessage("info", `${cur.name}: a file with that name turned up while it downloaded, so it was saved as ${ev.local}.`);
     if (ev.resumedFrom) logMessage("info", `${cur.name}: carried on from ${formatBytes(ev.resumedFrom)} instead of starting over.`);
@@ -282,7 +285,9 @@ async function start(t: Transfer) {
       // really writes, so Open and Show in Finder point at the right file
       const local = await api.startDownload(t.id, t.profileId, t.bucket, t.key, requested.get(t.id) ?? t.local, overwriteIds.has(t.id), listed.get(t.id), bases.get(t.id));
       const cur = byId.get(t.id);
-      if (cur && typeof local === "string" && local && local !== cur.local) {
+      // only while it hasn't ended: a `done` event that came first already carries the path it
+      // really landed at ("photo (1).jpg"), which must not go back to the reserved one
+      if (cur && (cur.state === "queued" || cur.state === "running") && typeof local === "string" && local && local !== cur.local) {
         byId.set(t.id, { ...cur, local });
         markDirty();
       }
@@ -292,6 +297,9 @@ async function start(t: Transfer) {
     // Cancel or Pause came while the backend didn't know it yet: now it does
     const want = held.get(t.id);
     held.delete(t.id);
+    // stopped after a Retry during the start: that Retry is void (left set, the next Retry would
+    // start the row twice)
+    if (want) again.delete(t.id);
     if (want === "cancel") api.cancelTransfer(t.id).catch(() => {});
     else if (want === "pause") api.pauseTransfer(t.id).catch(() => {});
     else if (startAgain(t.id)) return;
@@ -351,7 +359,9 @@ function requeue(id: string): Transfer | null {
   }
   const t = byId.get(id);
   if (!t || t.state === "queued" || t.state === "running" || t.state === "done") return null;
-  const fresh: Transfer = { ...t, state: "queued", error: null, speed: 0, verified: undefined };
+  // a cancelled run kept nothing (the backend dropped its partial), so it starts from 0; paused
+  // and failed ones carry on from what they kept
+  const fresh: Transfer = { ...t, state: "queued", error: null, speed: 0, verified: undefined, bytes: t.state === "cancelled" ? 0 : t.bytes };
   // to the end of the list: it finishes after the rest, so Done and pruning see it as the newest
   byId.delete(id);
   byId.set(id, fresh);

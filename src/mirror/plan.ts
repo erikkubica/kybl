@@ -164,7 +164,9 @@ export function planMirror(src: Listing, dst: Listing, o: PlanOptions): MirrorPl
   };
   const underLink = (rel: string, sideOf: MFile | null) => {
     const side = linkOf(rel);
-    if (side && sideOf) out.links.push({ rel, size: sideOf.size, why: "kept", note: `behind a link at the ${side}: left alone` });
+    // the link's own name is listed once already ("a link at the …"): a file of that name on the
+    // other side isn't listed again
+    if (side && sideOf && !linkNames.has(fold(rel.replace(/\/$/, "")))) out.links.push({ rel, size: sideOf.size, why: "kept", note: `behind a link at the ${side}: left alone` });
     return !!side;
   };
   // the destination's names as it tells them apart

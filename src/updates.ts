@@ -77,12 +77,29 @@ export function ago(ms: number | null): string {
  * restarts when ready. Errors land in the status (`error`).
  */
 export async function installAndRestart(onBusy: () => void) {
-  const st = await updatesApi.install();
+  let st: UpdateStatus;
+  try {
+    st = await updatesApi.install();
+  } catch (e) {
+    throw new UpdateStepError("install", errText(e));
+  }
   if (st.phase !== "ready") return;
   try {
     await updatesApi.restart();
   } catch (e) {
     if (String(e) === "busy") onBusy();
-    else throw e;
+    else throw new UpdateStepError("restart", errText(e));
   }
 }
+
+/** Which step of `installAndRestart` failed: the download/install, or the restart after it. */
+export class UpdateStepError extends Error {
+  constructor(
+    readonly step: "install" | "restart",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+const errText = (e: unknown) => (e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e));

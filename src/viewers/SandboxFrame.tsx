@@ -13,6 +13,7 @@
  * script running inside the frame, sharing the origin gives the content nothing it could use.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { watchMenuKeysIn } from "../desktop/menuKeyWatch";
 
 type Theme = Record<"bg" | "text" | "dim" | "border" | "accent" | "panel" | "font" | "mono" | "code", string>;
 
@@ -150,10 +151,16 @@ export function SandboxFrame({
       });
       if (!el.dispatchEvent(copy)) ev.preventDefault();
     };
+    // ⌘ pressed in the frame never reaches the app's window: watched here too, so a menu
+    // accelerator taken by macOS while the preview has focus goes back to it as the key and
+    // doesn't run the command behind it (menuKeyWatch.ts)
+    let unwatch: (() => void) | null = null;
     const onLoad = () => {
       shown.current = latest.current;
       el.contentDocument?.addEventListener("click", onClick);
       el.contentDocument?.addEventListener("keydown", onKey);
+      unwatch?.();
+      unwatch = el.contentWindow ? watchMenuKeysIn(el.contentWindow) : null;
       fit();
     };
     el.addEventListener("load", onLoad);
@@ -163,6 +170,7 @@ export function SandboxFrame({
       el.removeEventListener("load", onLoad);
       el.contentDocument?.removeEventListener("click", onClick);
       el.contentDocument?.removeEventListener("keydown", onKey);
+      unwatch?.();
       ro.disconnect();
     };
   }, [fitWidth]);

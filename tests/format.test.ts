@@ -1,7 +1,13 @@
 // Sizes, times and kinds (src/format.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatBytes, formatEta, kindLabel, mbpsInput, parseMbps, plural, setByteUnits } from "../src/format.ts";
+import { formatBytes, formatEta, kindLabel, mbpsInput, mbpsToKbps, parseMbps, plural, setByteUnits } from "../src/format.ts";
+
+test("a tiny speed limit stays a limit", () => {
+  assert.equal(mbpsToKbps(0), 0);
+  assert.equal(mbpsToKbps(0.0004), 1);
+  assert.equal(mbpsToKbps(1), Math.round(1_000_000 / 1024));
+});
 
 test("sizes pick their unit after rounding", () => {
   setByteUnits(false);

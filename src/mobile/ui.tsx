@@ -41,6 +41,28 @@ export function Layer({ id, z, children }: { id: string; z: number; children: Re
 }
 
 /**
+ * The dimmed area behind a bottom sheet: a tap on it closes the sheet. A hidden Close button
+ * does the same for screen readers, Switch Control and keyboards (they can't tap the dim area).
+ */
+export function SheetBackdrop({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  return (
+    <div className="m-sheet-backdrop" onClick={onClose}>
+      {children}
+      <button
+        type="button"
+        className="m-sr-only"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+      >
+        Close
+      </button>
+    </div>
+  );
+}
+
+/**
  * Tablets: wide enough for a sidebar next to the files, and tall enough for it to be useful. The
  * height keeps big phones on the phone layout when turned sideways (a Pro Max is ~930 pt wide
  * but only ~430 pt tall in landscape).

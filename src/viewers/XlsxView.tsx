@@ -6,6 +6,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { DataGrid } from "./DataGrid";
+import { columnCount, cutNote } from "./gridShape";
 import { Note } from "./ui";
 import type { XlsxRequest, XlsxResponse } from "./xlsx.worker";
 import type { ViewerProps } from "./types";
@@ -73,11 +74,10 @@ export default function XlsxView({ name, bytes, mode }: ViewerProps) {
 
   if (error) return <Note icon="alert">This spreadsheet couldn't be read. It may be damaged or password-protected.</Note>;
   if (!sheets) return <Note spinner>Reading the spreadsheet…</Note>;
+  if (!sheets.length) return <Note icon="text">This workbook has no sheets.</Note>;
   const rows = data?.sheet === sheet ? data : null;
   const cut = rows?.cut;
-  const note = cut
-    ? `only the first ${rows.rows.length.toLocaleString()} of ${cut.rows.toLocaleString()} rows${cut.cols > (rows.rows[0]?.length ?? 0) ? ` and ${(rows.rows[0]?.length ?? 0).toLocaleString()} of ${cut.cols.toLocaleString()} columns` : ""}`
-    : undefined;
+  const note = rows && cut ? cutNote({ rows: rows.rows.length, cols: columnCount(rows.rows) }, cut) : undefined;
   return (
     <div className="dv-viewer dv-xlsx">
       {!rows ? (

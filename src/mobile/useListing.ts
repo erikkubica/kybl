@@ -10,6 +10,7 @@
 import { useCallback, useRef, useState } from "react";
 import { api, errMessage } from "../api";
 import type { ObjInfo } from "../types";
+import { isNetworkError } from "./net";
 
 export type Loc = { profileId: string; bucket: string; prefix: string };
 export type Listing = { folders: string[]; objects: ObjInfo[]; next: string | null; pages: number };
@@ -35,6 +36,14 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
   /** the last "load more" / "load all" failed (a later page working clears it, not a refresh's) */
   const [pageError, setPageError] = useState<string | null>(null);
   const error = refreshError ?? pageError;
+  /**
+   * A page that arrived proves the storage answers: a refresh that failed for the network is
+   * over (the pill and auto-paging come back). Any other refresh failure stays on the banner.
+   */
+  const pageCame = useCallback(() => {
+    setPageError(null);
+    setRefreshError((e) => (e && isNetworkError(e) ? null : e));
+  }, []);
   /** "load every page" for sorting: how many items so far, null when not running */
   const [loadingAll, setLoadingAll] = useState<number | null>(null);
   const cache = useRef(new Map<string, Cached>());
@@ -205,7 +214,7 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
       try {
         const res = await api.listObjects(l.profileId, l.bucket, l.prefix, had.next);
         if (id !== reqId.current) return;
-        setPageError(null);
+        pageCame();
         setListing({
           folders: [...had.folders, ...res.folders],
           objects: [...had.objects, ...res.objects],
@@ -220,7 +229,7 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
     } finally {
       more.current = false;
     }
-  }, [loading, afterRefresh, setListing]);
+  }, [loading, afterRefresh, setListing, pageCame]);
 
   /** Every remaining page, for sorting the whole folder. `stopAll` (or leaving) stops it. */
   const loadAll = useCallback(async () => {
@@ -246,8 +255,9 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
           // show progress in the list every few pages, not on every one (each is a full re-sort)
           if (acc.pages % 5 === 0 || !acc.next) setListing(acc);
         }
-        // every page came: an earlier page's failure is over (a failed refresh's isn't)
-        setPageError(null);
+        // every page came: an earlier page's failure is over (a failed refresh's only when the
+        // network was its cause)
+        pageCame();
       } catch (e) {
         if (id === reqId.current) setPageError(errMessage(e));
       } finally {
@@ -260,7 +270,7 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
         setLoadingAll(null);
       }
     }
-  }, [afterRefresh, setListing]);
+  }, [afterRefresh, setListing, pageCame]);
 
   const stopAll = useCallback(() => {
     endAll();
@@ -290,5 +300,5 @@ export function useListing(settle: (l: Loc, ok: boolean) => void) {
     }
   }, []);
 
-  return { listing, loading, refreshing, error, refreshError, loadingAll, moreWaiting, open, reload, loadMore, loadAll, stopAll, saveScroll, scrollOf, forget };
+  return { listing, loading, refreshing, error, refreshError, pageError, loadingAll, moreWaiting, open, reload, loadMore, loadAll, stopAll, saveScroll, scrollOf, forget };
 }

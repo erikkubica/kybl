@@ -12,7 +12,7 @@ import { peekSyncMappings } from "../sync";
 import type { MenuItem, Toast } from "../components/Dialogs";
 import type { Entry } from "../types";
 import type { FileOps } from "./fileOps";
-import { joinPath } from "./paths";
+import { joinPath, plainRelPath } from "./paths";
 import { openOwnFile } from "./openGuard";
 
 import { ON_OS, OS } from "../osNames";
@@ -33,7 +33,11 @@ export function syncedPath(profileId: string, bucket: string, key: string): stri
     .sort((a, b) => b.prefix.length - a.prefix.length)[0];
   if (!m) return null;
   const rel = key.slice(m.prefix.length).replace(/\/+$/, "");
-  return rel ? joinPath(m.localPath, rel) : m.localPath;
+  if (!rel) return m.localPath;
+  // S3, GCS and Azure keys may hold "..": "docs/../../../.ssh/id_rsa" must not become a real
+  // file outside the synced folder. Such a key (or ".", an empty part, "\", a drive letter) has
+  // no copy here; Open and drag-out fetch it like any other remote file.
+  return plainRelPath(rel) ? joinPath(m.localPath, rel) : null;
 }
 
 export type OpenInContext = {

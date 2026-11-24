@@ -76,6 +76,12 @@ export const emptyNet = (kind: NetKind): NetConfig => ({
   url: kind === "webdav" ? "" : null,
 });
 
+/**
+ * Editing: whether an empty secret field may keep the saved secret. Only while the identity it
+ * belongs to (S3 access key ID, Azure account) is unchanged; a new one needs its own secret.
+ */
+export const keepsSavedSecret = (saved: string | null | undefined, now: string) => saved != null && saved.trim() === now.trim();
+
 export const emptyBlob = (): BlobConfig => ({ account: "", endpoint: "", container: "" });
 
 /** A profile of a non-S3 kind: the S3 fields stay empty, `provider` is the kind (its badge). */
@@ -111,20 +117,52 @@ export function addressOf(p: Profile): string {
   return p.endpoint;
 }
 
+// ---------------------------------------------------------------- trust questions
+/*
+ * A trust error (a new or changed SSH host key, a server's own certificate, plain FTP) reads
+ * "sentence\n\n<tag> <mark line>\n<key: value lines>…", where <tag> is a per-run secret only
+ * the backend knows (`trust_tag`, see src-tauri/src/storage/mod.rs). Servers can put text into
+ * errors (a reply, a status message, a file name), so only a detail that starts with the tag is
+ * read, and only its first line and the `key: value` lines right after it.
+ */
+let tag: string | null = null;
+/** The backend's per-run trust tag (read once at start-up); until it's set nothing is trusted. */
+export function setTrustTag(t: string | null) {
+  tag = t && /^kybl:[0-9a-f]{32}$/.test(t) ? t : null;
+}
+
+/** Kybl's own trust lines in an error: the mark line, then its `key: value` fields. */
+function trustLines(msg: string): { mark: string; fields: Map<string, string> } | null {
+  if (!tag) return null;
+  const i = msg.indexOf("\n\n");
+  if (i < 0 || !msg.startsWith(`${tag} `, i + 2)) return null;
+  const [mark, ...rest] = msg.slice(i + 2 + tag.length + 1).split("\n");
+  const fields = new Map<string, string>();
+  for (const l of rest) {
+    // the certificate's fields, in the order certtrust.rs writes them; its `tls:` line (with
+    // the TLS library's own text) and anything after it don't count
+    const m = l.match(/^(reason|host|name|issuer|valid-from|valid-until): (.*)$/);
+    if (!m || fields.has(m[1])) break;
+    fields.set(m[1], m[2].trim());
+  }
+  return { mark: mark.trim(), fields };
+}
+
 // ---------------------------------------------------------------- host keys (SFTP)
 /** First connection to an SFTP server: its fingerprint, for "Trust this server?". */
 export function hostKeyUnknown(msg: string): string | null {
-  return msg.match(/host-key-unknown (SHA256:\S+)/)?.[1] ?? null;
+  return trustLines(msg)?.mark.match(/^host-key-unknown (SHA256:\S+)$/)?.[1] ?? null;
 }
 /** The server's key changed since it was trusted: `{ now, saved }` fingerprints. */
 export function hostKeyChanged(msg: string): { now: string; saved: string } | null {
-  const m = msg.match(/host-key-changed (SHA256:\S+) expected (SHA256:\S+)/);
+  const m = trustLines(msg)?.mark.match(/^host-key-changed (SHA256:\S+) expected (SHA256:\S+)$/);
   return m ? { now: m[1], saved: m[2] } : null;
 }
 
 // ---------------------------------------------------------------- certificates (FTPS, WebDAV)
 /** A server certificate that didn't check out, as the error's details describe it (see
- *  src-tauri/src/storage/BACKENDS.md). "changed": another certificate was trusted before. */
+ *  src-tauri/src/storage/BACKENDS.md). "changed": another certificate was trusted before. The
+ *  host it was for comes from the connection, never from the error. */
 export type CertTrouble = {
   kind: "untrusted" | "changed";
   /** the certificate's SHA-256 fingerprint, "AB:CD:…" */
@@ -133,8 +171,6 @@ export type CertTrouble = {
   saved: string | null;
   /** self-signed, unknown-issuer, wrong-name, expired, not-yet-valid, other */
   reasons: string[];
-  /** the name Kybl connected to */
-  host: string | null;
   /** who it's made out to, who signed it, "YYYY-MM-DD" dates */
   name: string | null;
   issuer: string | null;
@@ -145,19 +181,19 @@ export type CertTrouble = {
 /** FTP "encrypt if available": the server offered no encryption and the user hasn't agreed to
  *  plain FTP for it yet (nothing was sent in clear); see src-tauri/src/storage/BACKENDS.md. */
 export function plainFtpUnconfirmed(msg: string): boolean {
-  return /^ftp-plain-unconfirmed\s*$/m.test(msg);
+  return trustLines(msg)?.mark === "ftp-plain-unconfirmed";
 }
 
 export function certTrouble(msg: string): CertTrouble | null {
-  const m = msg.match(/^cert-(untrusted|changed) ([0-9A-Fa-f:]+)(?: expected (\S+))?\s*$/m);
-  if (!m) return null;
-  const field = (k: string) => msg.match(new RegExp(`^${k}: (.*)$`, "m"))?.[1].trim() || null;
+  const t = trustLines(msg);
+  const m = t?.mark.match(/^cert-(untrusted|changed) ([0-9A-Fa-f:]+)(?: expected (\S+))?$/);
+  if (!t || !m) return null;
+  const field = (k: string) => t.fields.get(k) || null;
   return {
     kind: m[1] as CertTrouble["kind"],
     fp: m[2],
     saved: m[3] ?? null,
     reasons: (field("reason") ?? "other").split(/,\s*/).filter(Boolean),
-    host: field("host"),
     name: field("name"),
     issuer: field("issuer"),
     validFrom: field("valid-from"),

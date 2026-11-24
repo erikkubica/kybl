@@ -143,13 +143,21 @@ pub fn run() {
             let handle = app.handle().clone();
             // the app's own folders hold copies of remote files (opened, previews, archives,
             // drive caches, pending drive saves): only this account may look inside (on a Linux
-            // box whose home is 0755 they would otherwise be readable by everyone)
-            for dir in [handle.path().app_cache_dir(), handle.path().app_data_dir()].into_iter().flatten() {
+            // box whose home is 0755 they would otherwise be readable by everyone). The config
+            // folder too: connections, drives with their path tokens, settings (on Linux it is not
+            // the data folder, and earlier builds wrote files in it 0644).
+            for dir in [handle.path().app_cache_dir(), handle.path().app_data_dir(), handle.path().app_config_dir()].into_iter().flatten() {
                 let _ = filecache::private_dir(&dir);
             }
             if let Ok(dir) = handle.path().app_data_dir() {
                 storage::ftp::tls_memory::init(dir.join("ftp-tls-seen.json"));
                 let _ = handle.state::<state::AppState>().vault_dir.set(dir);
+                // secrets of connections deleted while they couldn't be removed
+                let h = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let Ok(saved) = state::load_profiles(&h) else { return };
+                    state::retry_left_secrets(&h.state::<state::AppState>(), |id| saved.iter().any(|p| p.id == id)).await;
+                });
             }
             prefs::load_transfers(&handle);
             // before leftovers: what a kept transfer left behind is not to be cleaned up
@@ -203,6 +211,7 @@ pub fn run() {
             import::import_apply,
             commands::test_connection,
             storage::ftp::ftp_allow_plain,
+            storage::ftp::trust_tag,
             commands::list_buckets,
             commands::create_bucket,
             commands::list_objects,

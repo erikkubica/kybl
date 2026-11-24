@@ -24,7 +24,9 @@ backends are `storage/gdrive/`, `storage/onedrive.rs` and `storage/dropbox.rs`.
    = any account). For a kind that is `true`, keep those fields under a collapsed **"Use your own
    OAuth app"** (optional).
 3. "Sign in with Google" (etc.) → `oauthStart(kind, flowId, client)` where `client` is
-   `{clientId, clientSecret, tenant}` or `null`. While it waits, show "Finish signing in in your
+   `{clientId, clientSecret, tenant}` or `null`. With `replaceId`: `null` keeps the connection's
+   saved app, an empty `clientId` goes back to the built-in app, and the saved client ID without a
+   secret keeps the saved secret. While it waits, show "Finish signing in in your
    browser" with a Cancel button → `oauthCancel(flowId)`.
 4. It resolves with the saved profile (`kind`, `provider` = kind, `name` = "Google Drive
    (me@gmail.com)", `cloud.accountEmail`). Refresh the connection list and open it. Signing in to

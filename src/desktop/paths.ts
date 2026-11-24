@@ -15,6 +15,15 @@ export function safeRelPath(rel: string): string {
     .join("/");
 }
 
+/**
+ * Whether a key's part below a folder already names a path under it as it is: no "..", ".",
+ * empty or drive-letter parts, no "\" or NUL. Where Kybl reads an existing file (a synced copy)
+ * instead of writing one, a key that isn't has no copy at all rather than a cleaned-up one.
+ */
+export function plainRelPath(rel: string): boolean {
+  return !!rel && rel.split("/").every((p) => p && p !== "." && p !== ".." && !/[\\\0]/.test(p) && !/^[a-zA-Z]:$/.test(p));
+}
+
 /** "photo.jpg", 2 → "photo (2).jpg"; folders ("dir/") keep their trailing slash. */
 export function numberedName(name: string, n: number): string {
   const folder = name.endsWith("/");

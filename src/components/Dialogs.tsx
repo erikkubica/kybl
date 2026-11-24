@@ -32,7 +32,33 @@ function restoreFocus(prev: Element | null, fallback = true) {
 }
 
 /** Open dialogs, oldest first: only the topmost one answers Escape and traps Tab. */
-const modalStack: symbol[] = [];
+const modalStack: { id: symbol; close: () => void; free: boolean }[] = [];
+const modalWatchers = new Set<() => void>();
+const modalsChanged = () => modalWatchers.forEach((f) => f());
+
+/**
+ * Dialogs open outside the phone's layer stack (no `[data-layer]` around them: the trust sheets
+ * portaled from a connection's error). The phone counts them so back (Android's button, the
+ * history) closes them first instead of leaving the screen under them.
+ */
+export function useFreeModals(): number {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    const on = () => setN(modalStack.filter((m) => m.free).length);
+    on();
+    modalWatchers.add(on);
+    return () => void modalWatchers.delete(on);
+  }, []);
+  return n;
+}
+
+/** Closes the topmost dialog when it is outside the layer stack (as Escape would); false when none. */
+export function closeFreeModal(): boolean {
+  const top = modalStack[modalStack.length - 1];
+  if (!top?.free) return false;
+  top.close();
+  return true;
+}
 
 export function Modal({
   title,
@@ -62,8 +88,9 @@ export function Modal({
 
   useEffect(() => {
     const id = Symbol(title);
-    modalStack.push(id);
     const el = box.current;
+    modalStack.push({ id, close: () => closeRef.current(), free: !el?.closest("[data-layer]") });
+    modalsChanged();
     // First focus: whatever the content focused itself (autoFocus), else the button it marks as
     // the default (data-autofocus), else the first field, else the main button, else the dialog
     // itself so screen readers start at its title.
@@ -74,7 +101,7 @@ export function Modal({
       const primary = el.querySelector<HTMLElement>(".btn-primary:not(:disabled), .btn-danger:not(:disabled)");
       (field && visible(field) ? field : primary && !coarse() ? primary : el).focus({ preventScroll: true });
     }
-    const top = () => modalStack[modalStack.length - 1] === id;
+    const top = () => modalStack[modalStack.length - 1]?.id === id;
     const onKey = (e: KeyboardEvent) => {
       if (!top() || !box.current) return;
       if (e.key === "Escape") {
@@ -106,8 +133,9 @@ export function Modal({
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
-      const i = modalStack.indexOf(id);
+      const i = modalStack.findIndex((m) => m.id === id);
       if (i >= 0) modalStack.splice(i, 1);
+      modalsChanged();
       // back to what had focus; the file list only when no other dialog is still open
       restoreFocus(prev, modalStack.length === 0);
     };
