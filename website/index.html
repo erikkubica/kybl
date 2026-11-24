@@ -32,7 +32,7 @@
 
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Kybl · Every bucket, drive and server in one window">
-<meta name="twitter:description" content="One fast, free file manager for buckets, cloud drives and servers, with an SSH terminal and folder sync."
+<meta name="twitter:description" content="One fast, free file manager for buckets, cloud drives and servers, with an SSH terminal and folder sync.">
 <meta name="twitter:image" content="https://kybl.app/assets/og.jpg">
 <meta name="twitter:image:alt" content="Kybl, a red polka-dot bucket, next to the app window with a bucket, a server's files and an SSH terminal side by side.">
 
@@ -81,14 +81,14 @@
         "Import sites from FileZilla and hosts from ~/.ssh/config",
         "Secrets stored encrypted, with the key in the system keychain",
         "Up to six split panes, saved as workspaces, with commander keys (F5 copy, F6 move)",
-        "Terminal panes: a local shell or an SSH session on any server",
+        "Terminal panes: a local shell (macOS, Linux) or an SSH session on any SFTP or SSH server",
         "SSH connections and SSH tunnels (local port forwards)",
         "Quick Look previews for images, video, audio, PDF and text",
-        "Edit remote files in any app; saves upload back, conflicts are caught",
+        "Edit remote files in your own app on the computer; saves upload back, and changes made meanwhile can be caught",
         "Zip, unzip and browse archives; compare files and folders",
-        "Transfer queue with pause, resume after restart, retry and checksums",
+        "Transfer queue with pause, retry, resume after a restart on most connections, and optional size or checksum checks",
         "Copy and move whole folders between connections as resumable jobs",
-        "Folder sync (upload, download or two-way) running from the menu bar",
+        "Folder sync (upload, download or two-way) running from the menu bar or system tray",
         "Mirror a folder with a dry run first, saved for one-click re-runs",
         "Mount any connection as a drive in Finder (macOS and Linux)",
         "Custom shell actions on selected files, locally or on the server",
@@ -103,15 +103,15 @@
       "@type": "FAQPage",
       "@id": "https://kybl.app/#faq",
       "mainEntity": [
-        { "@type": "Question", "name": "What can Kybl connect to?", "acceptedAnswer": { "@type": "Answer", "text": "Object storage: Amazon S3 and every S3-compatible service (Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph), Azure Blob Storage and Google Cloud Storage. Cloud drives: Google Drive, OneDrive and Dropbox. Servers: SFTP, SSH, FTP and FTPS, and WebDAV (Nextcloud, ownCloud, NAS boxes). And the files on your own computer or phone, all side by side." } },
+        { "@type": "Question", "name": "What can Kybl connect to?", "acceptedAnswer": { "@type": "Answer", "text": "Object storage: Amazon S3 and any S3-compatible endpoint (Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph), Azure Blob Storage and Google Cloud Storage. Cloud drives: Google Drive, OneDrive and Dropbox. Servers: SFTP, SSH, FTP and FTPS, and WebDAV (Nextcloud, ownCloud, NAS boxes). And the files on your own computer or phone, all side by side." } },
         { "@type": "Question", "name": "Is Kybl free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Kybl is a free download for macOS, Windows, Linux, Android and iPhone. Use your own storage and servers as usual, or start with 10 GB free on Kybl Storage." } },
         { "@type": "Question", "name": "Can I use Kybl as an SSH client?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Add an SSH connection and a click opens a terminal on the server, with a Folders button for its files. Any SFTP connection can also open a terminal, start SSH tunnels (local port forwards) and run your own commands on the server. Terminals are on the desktop apps; on Windows they work for servers, not yet for the computer itself." } },
-        { "@type": "Question", "name": "Can I bring my FileZilla sites or SSH hosts?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Import connections reads FileZilla's Site Manager and your ~/.ssh/config (including LocalForward lines, which become tunnels). Folders become sidebar groups, and saved passwords and key files go straight into Kybl's encrypted vault." } },
-        { "@type": "Question", "name": "Can Kybl sync a folder?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, with any connection: upload, download or two-way. Kybl watches for changes, skips what your ignore rules say, asks before big deletions, keeps both versions when a file changed on both sides, and keeps syncing from the menu bar with the window closed. For deploys, Mirror shows a dry run before it touches anything." } },
+        { "@type": "Question", "name": "Can I bring my FileZilla sites or SSH hosts?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Import connections reads FileZilla's Site Manager and your ~/.ssh/config (including LocalForward lines, which become tunnels). Folders become sidebar groups, and FileZilla's saved passwords and key files go straight into Kybl's encrypted vault (an SSH config holds no passwords; its keys are used where they are)." } },
+        { "@type": "Question", "name": "Can Kybl sync a folder?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, with any connection: upload, download or two-way. Changes on your computer go up within seconds and the other side is checked every few minutes; Kybl skips what your ignore rules say, asks before big deletions, keeps both versions when a file changed on both sides, and keeps syncing from the menu bar or system tray with the window closed (unless you turn that off). For deploys, Mirror shows a dry run before it touches anything." } },
         { "@type": "Question", "name": "Where are my passwords and keys stored?", "acceptedAnswer": { "@type": "Answer", "text": "In an encrypted vault on your device, with its key in the operating system keychain: the macOS Keychain, Windows Credential Manager or a Secret Service such as GNOME Keyring on Linux (the Android Keystore on phones). Never in a settings file, and Kybl talks to your storage and servers directly." } },
         { "@type": "Question", "name": "What is Kybl Storage?", "acceptedAnswer": { "@type": "Answer", "text": "S3 storage run by Kybl for people without a bucket of their own. Sign in with your email, approve the app in the browser and it connects itself, with no access keys to copy. The free plan has 10 GB, stored in the EU, and your dashboard can make access keys for any other S3 tool." } },
         { "@type": "Question", "name": "Are my files on Kybl Storage encrypted?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, at rest. Every file is encrypted with its bucket's own key (AES-256) before it is written to disk, so the storage provider, its staff and its backups only ever see ciphertext. It is not end-to-end: Kybl's servers encrypt files as they pass through, so for data only you should read, encrypt it before uploading." } },
-        { "@type": "Question", "name": "Does Kybl handle very large files and folders?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Large files go up in parts and resume after a restart, folders with hundreds of thousands of items load page by page, and search looks through every subfolder, or inside files on your computer and SFTP servers." } }
+        { "@type": "Question", "name": "Does Kybl handle very large files and folders?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Large files go up in parts on S3 and cloud drives, uploads resume after a restart on S3, cloud drives, SFTP and FTP, folders with hundreds of thousands of items load page by page, and search looks through every subfolder, or inside files on your computer and SSH or SFTP servers." } }
       ]
     }
   ]
@@ -249,7 +249,7 @@
       <div class="split-copy">
         <p class="label">Connections</p>
         <h2>One app instead of&nbsp;five.</h2>
-        <p class="body">Your buckets, your cloud drives, the web server and the NAS, side by side in the same window. Copy from one to another by dragging. Pick a preset, sign in once, and Kybl fills in endpoints, regions and each provider's quirks.</p>
+        <p class="body">Your buckets, your cloud drives, the web server and the NAS, side by side in the same window. Copy from one to another by dragging. <a href="#support">See what works with which</a>. Pick a preset or paste any S3-compatible endpoint, sign in once, and Kybl fills in endpoints, regions and each provider's quirks.</p>
         <div class="conn-groups" aria-label="What Kybl connects to">
         <div class="cg">
           <h3>Object storage</h3>
@@ -329,7 +329,7 @@
           </div>
           <div class="card-copy">
             <h3>Thumbnails in a blink</h3>
-            <p>JPEGs use the photo's own EXIF thumbnail, read from the first 256&nbsp;KB, wherever the photo lives, and everything is cached on disk. A folder you've seen opens instantly.</p>
+            <p>Cloud drives hand over their own thumbnails. Elsewhere a JPEG's built-in EXIF thumbnail is read from its first 256&nbsp;KB when it has one, and everything is cached on disk. A folder you've seen opens instantly.</p>
           </div>
         </article>
 
@@ -344,7 +344,7 @@
           </div>
           <div class="card-copy">
             <h3>Share links in one click</h3>
-            <p>Expiring links for S3 buckets, OneDrive and Dropbox. Nothing to make public.</p>
+            <p>Expiring links for S3 buckets, OneDrive and Dropbox. On S3 they're private signed links, so nothing is made public.</p>
           </div>
         </article>
 
@@ -357,7 +357,7 @@
           </div>
           <div class="card-copy">
             <h3>Drag, drop, done</h3>
-            <p>Files or whole folders, from Finder, Explorer or another pane. Big files go up in parts and pick up where they stopped.</p>
+            <p>Files or whole folders, from Finder, Explorer or another pane. Big uploads to S3 and cloud drives go up in parts, and most connections pick up where they stopped.</p>
           </div>
         </article>
 
@@ -382,7 +382,7 @@
           </div>
           <div class="card-copy">
             <h3>A transfer queue that talks</h3>
-            <p>Speed and time left for every file. Pause, set a speed limit, retry what failed. Transfers carry on after a restart and are checked when they land.</p>
+            <p>Speed and time left for every file. Pause, set a speed limit, retry what failed. Transfers carry on after a restart on most connections, and can be checked by size or checksum when they land.</p>
           </div>
         </article>
 
@@ -393,23 +393,23 @@
         </article>
         <article class="card card-small">
           <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg></span>
-          <h3>Previews without downloading</h3>
+          <h3>Previews in place</h3>
           <p>Images, video, audio, PDF and text open in Quick Look with Space, from any connection, with the file's details beside them.</p>
         </article>
         <article class="card card-small">
           <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
           <h3>Edit anywhere</h3>
-          <p>Open a file on a server in your own editor. Every save goes back up, and if someone changed it meanwhile, Kybl shows you both.</p>
+          <p>On your computer, open a file from any connection in your own editor. Every save goes back up. With the recommended setting, a change made on the server meanwhile stops it, and you pick: overwrite, keep both or reload.</p>
         </article>
         <article class="card card-small">
           <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/></svg></span>
           <h3>Archives and diffs</h3>
-          <p>Zip, unzip, or open an archive like a folder. Compare two files side by side, or two folders to see what's missing where.</p>
+          <p>Zip, unzip, or open an archive like a folder. Compare two text files side by side, or two folders to see what's missing where.</p>
         </article>
         <article class="card card-small">
           <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg></span>
           <h3>Search that digs</h3>
-          <p>Lazy paging keeps 100,000-file folders smooth. Search every subfolder, or inside files on your computer and SFTP servers.</p>
+          <p>Lazy paging keeps 100,000-file folders smooth. Search every subfolder, or inside files on your computer and SSH or SFTP servers.</p>
         </article>
         <article class="card card-small card-keys">
           <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg></span>
@@ -434,8 +434,56 @@
         <article class="card card-small">
           <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg></span>
           <h3>On your phone too</h3>
-          <p>The same app on Android and iPhone, made for touch. Back up your photos to any connection, and transfers keep going in the background.</p>
+          <p>The same app on Android and iPhone, made for touch. Back up your photos to any connection. On Android transfers keep going in the background.</p>
         </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="support" class="sec">
+    <div class="wrap gut">
+      <div class="sec-head">
+        <p class="label">What works where</p>
+        <h2>Not every connection can do&nbsp;everything.</h2>
+        <p class="body">The basics work everywhere. The rest depends on what each kind of storage allows, so here's what you get with each.</p>
+      </div>
+      <!-- matrix -->
+        <div class="matrix-wrap" tabindex="0" role="region" aria-label="Features by connection type">
+        <table class="matrix">
+        <thead><tr><th scope="col"><span class="vh">Feature</span></th><th scope="col">S3-compatible<small>AWS, R2, Hetzner, B2, Wasabi…</small></th><th scope="col">Azure Blob, GCS<small>Google Cloud Storage</small></th><th scope="col">Google Drive</th><th scope="col">OneDrive, Dropbox</th><th scope="col">SFTP, SSH</th><th scope="col">FTP, FTPS</th><th scope="col">WebDAV<small>Nextcloud…</small></th><th scope="col">This computer</th></tr></thead>
+        <tbody>
+        <tr class="grp"><th scope="rowgroup" colspan="9">Files</th></tr>
+        <tr><th scope="row">Browse, upload, download, delete</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr><th scope="row">Copy and move between connections</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr><th scope="row">Rename and move in place</th><td class="p">By copying</td><td class="p">By copying</td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr><th scope="row">Copy inside it without downloading</th><td class="y"><span class="vh">Yes</span></td><td class="p">Same container</td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr><th scope="row">Uploads resume after a restart</th><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="na"><span class="vh">Not applicable</span></td></tr>
+        <tr><th scope="row">Thumbnails and Quick Look</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr><th scope="row">Zip, unzip, browse archives</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="p">On the server when it can</td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr><th scope="row">Expiring share links</th><td class="p">Private link</td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="p">Public link</td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="na"><span class="vh">Not applicable</span></td></tr>
+        <tr><th scope="row">Deleted files go to a trash</th><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr><th scope="row">Change permissions</th><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="p">If the server allows</td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td></tr>
+        <tr><th scope="row">Tags, storage class, metadata</th><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td></tr>
+        <tr class="grp"><th scope="rowgroup" colspan="9">Search</th></tr>
+        <tr><th scope="row">Search subfolders by name</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr><th scope="row">Search inside files</th><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr class="grp"><th scope="rowgroup" colspan="9">Shell and automation</th></tr>
+        <tr><th scope="row">Terminal</th><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="p">macOS, Linux</td></tr>
+        <tr><th scope="row">SSH tunnels</th><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="na"><span class="vh">Not applicable</span></td></tr>
+        <tr><th scope="row">Your own actions on the server</th><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="y"><span class="vh">Yes</span></td><td class="n"><span class="vh">No</span></td><td class="n"><span class="vh">No</span></td><td class="na"><span class="vh">Not applicable</span></td></tr>
+        <tr><th scope="row">Your own actions on this computer</th><td class="p">Files</td><td class="p">Files</td><td class="p">Files</td><td class="p">Files</td><td class="p">Files</td><td class="p">Files</td><td class="p">Files</td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr class="grp"><th scope="rowgroup" colspan="9">On the computer</th></tr>
+        <tr><th scope="row">Edit in your own app, saved back</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr><th scope="row">Folder sync and mirror</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td></tr>
+        <tr><th scope="row">Mount as a drive (macOS, Linux)</th><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="y"><span class="vh">Yes</span></td><td class="na"><span class="vh">Not applicable</span></td></tr>
+        </tbody>
+        </table>
+        </div>
+        <!-- /matrix -->
+      <div class="matrix-notes">
+        <p>Share links on S3 are private signed links. OneDrive links that last longer than an hour and Dropbox links longer than four hours are public until they expire, and an expiry on Dropbox needs a paid plan.</p>
+        <p>Uploads to Azure, Google Cloud Storage and WebDAV start over if Kybl quits mid-way. Your own actions on this computer take files from a server or cloud after downloading them, and folders only from this computer.</p>
+        <p>Phones browse, preview, transfer, share and back up photos with every connection. Terminals, tunnels, folder sync, drives and editing in other apps are on macOS, Windows and Linux only, and drives are not on Windows yet.</p>
       </div>
     </div>
   </section>
@@ -613,15 +661,15 @@ Updating 3f2a91c..8be04d7
         <h2>Good to know before you grab Kybl.</h2>
       </div>
       <div class="faq">
-        <details open><summary>What can Kybl connect to?</summary><p>Object storage: Amazon S3 and every S3-compatible service (Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph), Azure Blob Storage and Google Cloud Storage. Cloud drives: Google Drive, OneDrive and Dropbox. Servers: SFTP, SSH, FTP and FTPS, and WebDAV (Nextcloud, ownCloud, NAS boxes). And the files on your own computer or phone, all side by side.</p></details>
+        <details open><summary>What can Kybl connect to?</summary><p>Object storage: Amazon S3 and any S3-compatible endpoint (Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph), Azure Blob Storage and Google Cloud Storage. Cloud drives: Google Drive, OneDrive and Dropbox. Servers: SFTP, SSH, FTP and FTPS, and WebDAV (Nextcloud, ownCloud, NAS boxes). And the files on your own computer or phone, all side by side.</p></details>
         <details><summary>Is Kybl free?</summary><p>Yes. Kybl is a free download for macOS, Windows, Linux, Android and iPhone. Use your own storage and servers as usual, or start with 10&nbsp;GB free on Kybl Storage.</p></details>
         <details><summary>Can I use Kybl as an SSH client?</summary><p>Yes. Add an SSH connection and a click opens a terminal on the server, with a Folders button for its files. Any SFTP connection can also open a terminal, start SSH tunnels (local port forwards) and run your own commands on the server. Terminals are on the desktop apps; on Windows they work for servers, not yet for the computer itself.</p></details>
-        <details><summary>Can I bring my FileZilla sites or SSH hosts?</summary><p>Yes. Import connections reads FileZilla&#x27;s Site Manager and your ~/.ssh/config (including LocalForward lines, which become tunnels). Folders become sidebar groups, and saved passwords and key files go straight into Kybl&#x27;s encrypted vault.</p></details>
-        <details><summary>Can Kybl sync a folder?</summary><p>Yes, with any connection: upload, download or two-way. Kybl watches for changes, skips what your ignore rules say, asks before big deletions, keeps both versions when a file changed on both sides, and keeps syncing from the menu bar with the window closed. For deploys, Mirror shows a dry run before it touches anything.</p></details>
+        <details><summary>Can I bring my FileZilla sites or SSH hosts?</summary><p>Yes. Import connections reads FileZilla&#x27;s Site Manager and your ~/.ssh/config (including LocalForward lines, which become tunnels). Folders become sidebar groups, and FileZilla&#x27;s saved passwords and key files go straight into Kybl&#x27;s encrypted vault (an SSH config holds no passwords; its keys are used where they are).</p></details>
+        <details><summary>Can Kybl sync a folder?</summary><p>Yes, with any connection: upload, download or two-way. Changes on your computer go up within seconds and the other side is checked every few minutes; Kybl skips what your ignore rules say, asks before big deletions, keeps both versions when a file changed on both sides, and keeps syncing from the menu bar or system tray with the window closed (unless you turn that off). For deploys, Mirror shows a dry run before it touches anything.</p></details>
         <details><summary>Where are my passwords and keys stored?</summary><p>In an encrypted vault on your device, with its key in the operating system keychain: the macOS Keychain, Windows Credential Manager or a Secret Service such as GNOME Keyring on Linux (the Android Keystore on phones). Never in a settings file, and Kybl talks to your storage and servers directly.</p></details>
         <details><summary>What is Kybl Storage?</summary><p>S3 storage run by Kybl for people without a bucket of their own. Sign in with your email, approve the app in the browser and it connects itself, with no access keys to copy. The free plan has 10&nbsp;GB, stored in the EU, and your dashboard can make access keys for any other S3 tool.</p></details>
         <details><summary>Are my files on Kybl Storage encrypted?</summary><p>Yes, at rest. Every file is encrypted with its bucket&#x27;s own key (AES-256) before it is written to disk, so the storage provider, its staff and its backups only ever see ciphertext. It is not end-to-end: Kybl&#x27;s servers encrypt files as they pass through, so for data only you should read, encrypt it before uploading.</p></details>
-        <details><summary>Does Kybl handle very large files and folders?</summary><p>Yes. Large files go up in parts and resume after a restart, folders with hundreds of thousands of items load page by page, and search looks through every subfolder, or inside files on your computer and SFTP servers.</p></details>
+        <details><summary>Does Kybl handle very large files and folders?</summary><p>Yes. Large files go up in parts on S3 and cloud drives, uploads resume after a restart on S3, cloud drives, SFTP and FTP, folders with hundreds of thousands of items load page by page, and search looks through every subfolder, or inside files on your computer and SSH or SFTP servers.</p></details>
       </div>
     </div>
   </section>

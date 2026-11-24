@@ -4,7 +4,7 @@ Kybl is a free app for macOS, Windows, Linux, Android and iPhone that puts objec
 
 ## Connections
 
-- Object storage: Amazon S3 and every S3-compatible service (Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph), Azure Blob Storage, Google Cloud Storage and Kybl Storage.
+- Object storage: Amazon S3 and any S3-compatible endpoint (Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph), Azure Blob Storage, Google Cloud Storage and Kybl Storage.
 - Cloud drives: Google Drive (My Drive, shared drives, Shared with me), OneDrive and Dropbox, signed in through the browser.
 - Servers: SFTP (password, key or SSH agent, host keys checked), SSH (an SFTP connection that opens as a terminal), FTP and FTPS, and WebDAV (Nextcloud, ownCloud, NAS boxes).
 - This computer: your own folders and drives, in the same panes.
@@ -14,18 +14,31 @@ Presets fill in endpoints, regions and each provider's quirks, and every connect
 ## Features
 
 - Panes and workspaces: up to six panes split any way, with commander keys (F5 copy, F6 move, F7 new folder, F8 delete) and synchronized browsing. Each layout is a workspace tab, and a layout can be saved as a recipe.
-- Copy between anything: drag files from one connection to another, or start a copy or move job for whole folders. Jobs are checked, keep their place across restarts and use server-side copies where the provider has them.
-- Thumbnails in a blink: JPEGs use the photo's embedded EXIF thumbnail, read from only the first 256 KB, on any connection. Thumbnails are cached on disk.
-- Previews without downloading: images, video, audio, PDF and text open in Quick Look (Space), with Get Info (Cmd+I).
-- Edit anywhere: open a remote file in any app; each save uploads back, and a change on the server meanwhile is caught and shown side by side. Kybl also has its own editor.
+- Copy between anything: drag files from one connection to another, or start a copy or move job for whole folders. Jobs check sizes, keep their place across restarts and use server-side copies where the provider has them.
+- Thumbnails in a blink: Cloud drives hand over their own thumbnails; elsewhere a JPEG's embedded EXIF thumbnail is read from only the first 256 KB when it has one, otherwise the image is fetched and resized. Thumbnails are cached on disk.
+- Previews in place: images, video, audio, PDF and text open in Quick Look (Space), with Get Info (Cmd+I).
+- Edit anywhere (desktop): open a remote file in any app; each save uploads back, and with the recommended setting a change on the server meanwhile stops the upload so you can overwrite, keep both or reload. Files up to 100 MB. Kybl also has its own editor.
 - Archives and diffs: zip and unzip (on the server over SSH when it can), open archives like folders, compare two files or two folders.
 - Search that digs: paged loading for folders with 100,000+ items, search through every subfolder, and search inside files on this computer and SFTP servers.
-- Transfer queue: speed and time left, pause, speed limits, retry, resume after a restart, and checksum checks where the provider gives one.
+- Transfer queue: speed and time left, pause, speed limits, retry, resume after a restart on most connections, and optional size or checksum checks.
 - Share links: expiring links on S3, OneDrive and Dropbox.
 - Command palette (Cmd+K) and keyboard shortcuts for everything.
 - Custom actions: your own shell commands on selected files, with placeholders and a shortcut, run on this computer or on an SFTP server.
 - Make it yours: light, dark or system theme, colour schemes and accents, fonts, text size and density.
-- On your phone too: the same connections on Android and iPhone with a touch interface, photo backup to any connection, background transfers and an app lock.
+- On your phone too: the same connections on Android and iPhone with a touch interface, photo backup to any connection, background transfers on Android on Android and an app lock.
+
+## What works with which connection
+
+- Everywhere: browse, upload, download, delete, copy and move between connections, thumbnails and Quick Look, zip and unzip, search subfolders by name, folder sync and mirror, mounting as a drive (macOS and Linux), editing in your own app (desktop).
+- Rename in place: S3, Azure and Google Cloud Storage rename by copying and deleting; the rest rename natively.
+- Copies within a connection without downloading: S3, Azure and Google Cloud Storage (same container), Google Drive, OneDrive, Dropbox, WebDAV and this computer. Not SFTP or FTP.
+- Uploads that resume after a restart: S3, Google Drive, OneDrive, Dropbox, SFTP and FTP. Not Azure, Google Cloud Storage or WebDAV.
+- Expiring share links: S3 (private signed links), OneDrive and Dropbox (public links once longer than an hour on OneDrive or four hours on Dropbox; Dropbox expiry needs a paid plan). Not Google Drive, Azure, Google Cloud Storage, SFTP, FTP or WebDAV.
+- Deleting to a trash you can restore from: Google Drive, OneDrive, Dropbox and this computer. Elsewhere deleting is permanent.
+- Permissions: SFTP, and FTP servers that allow SITE CHMOD. Tags, storage class and metadata: S3.
+- Search inside files: this computer and SSH or SFTP servers.
+- Terminal: SSH and SFTP servers, and this computer on macOS and Linux. SSH tunnels and your own actions on the server: SSH and SFTP only. Your own actions on this computer take files from any connection (downloaded first).
+- Phones: browse, preview, transfer, share and photo backup with every connection. Terminals, tunnels, folder sync, drives and editing in other apps are desktop only; drives are not on Windows yet.
 
 ## SSH and terminals (desktop)
 
@@ -36,7 +49,7 @@ Presets fill in endpoints, regions and each provider's quirks, and every connect
 
 ## Sync, mirror and drives (desktop)
 
-- Folder sync between a folder on your computer and any connection: upload, download or two-way. Changes are picked up within seconds, ignore rules skip node_modules, .DS_Store and friends, big deletions ask first, and a file changed on both sides keeps both versions. It keeps running from the menu bar with the window closed.
+- Folder sync between a folder on your computer and any connection: upload, download or two-way. Changes on your computer are picked up within seconds and the other side is checked every few minutes (5 by default), ignore rules skip node_modules, .DS_Store and friends, big deletions ask first, and a file changed on both sides keeps both versions. It keeps running from the menu bar or system tray with the window closed, unless you turn that off.
 - Mirror: deploy a folder to a server (or pull one down) with a dry run first, then re-run a saved mirror in one click.
 - Mount as a drive: any connection, bucket or folder appears in Finder (macOS) or the Linux file manager.
 
@@ -59,7 +72,7 @@ On first launch on a Mac, open System Settings > Privacy & Security and click Op
 ## FAQ
 
 Q: What can Kybl connect to?
-A: Object storage: Amazon S3 and every S3-compatible service (Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph), Azure Blob Storage and Google Cloud Storage. Cloud drives: Google Drive, OneDrive and Dropbox. Servers: SFTP, SSH, FTP and FTPS, and WebDAV (Nextcloud, ownCloud, NAS boxes). And the files on your own computer or phone, all side by side.
+A: Object storage: Amazon S3 and any S3-compatible endpoint (Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph), Azure Blob Storage and Google Cloud Storage. Cloud drives: Google Drive, OneDrive and Dropbox. Servers: SFTP, SSH, FTP and FTPS, and WebDAV (Nextcloud, ownCloud, NAS boxes). And the files on your own computer or phone, all side by side.
 
 Q: Is Kybl free?
 A: Yes. Kybl is a free download for macOS, Windows, Linux, Android and iPhone. Use your own storage and servers as usual, or start with 10 GB free on Kybl Storage.
@@ -68,10 +81,10 @@ Q: Can I use Kybl as an SSH client?
 A: Yes. Add an SSH connection and a click opens a terminal on the server, with a Folders button for its files. Any SFTP connection can also open a terminal, start SSH tunnels (local port forwards) and run your own commands on the server. Terminals are on the desktop apps; on Windows they work for servers, not yet for the computer itself.
 
 Q: Can I bring my FileZilla sites or SSH hosts?
-A: Yes. Import connections reads FileZilla's Site Manager and your ~/.ssh/config (including LocalForward lines, which become tunnels). Folders become sidebar groups, and saved passwords and key files go straight into Kybl's encrypted vault.
+A: Yes. Import connections reads FileZilla's Site Manager and your ~/.ssh/config (including LocalForward lines, which become tunnels). Folders become sidebar groups, and FileZilla's saved passwords and key files go straight into Kybl's encrypted vault (an SSH config holds no passwords; its keys are used where they are).
 
 Q: Can Kybl sync a folder?
-A: Yes, with any connection: upload, download or two-way. Kybl watches for changes, skips what your ignore rules say, asks before big deletions, keeps both versions when a file changed on both sides, and keeps syncing from the menu bar with the window closed. For deploys, Mirror shows a dry run before it touches anything.
+A: Yes, with any connection: upload, download or two-way. Changes on your computer go up within seconds and the other side is checked every few minutes; Kybl skips what your ignore rules say, asks before big deletions, keeps both versions when a file changed on both sides, and keeps syncing from the menu bar or system tray with the window closed (unless you turn that off). For deploys, Mirror shows a dry run before it touches anything.
 
 Q: Where are my passwords and keys stored?
 A: In an encrypted vault on your device, with its key in the operating system keychain: the macOS Keychain, Windows Credential Manager or a Secret Service such as GNOME Keyring on Linux (the Android Keystore on phones). Never in a settings file, and Kybl talks to your storage and servers directly.
@@ -83,4 +96,4 @@ Q: Are my files on Kybl Storage encrypted?
 A: Yes, at rest. Every file is encrypted with its bucket's own key (AES-256) before it is written to disk, so the storage provider, its staff and its backups only ever see ciphertext. It is not end-to-end: Kybl's servers encrypt files as they pass through, so for data only you should read, encrypt it before uploading.
 
 Q: Does Kybl handle very large files and folders?
-A: Yes. Large files go up in parts and resume after a restart, folders with hundreds of thousands of items load page by page, and search looks through every subfolder, or inside files on your computer and SFTP servers.
+A: Yes. Large files go up in parts on S3 and cloud drives, uploads resume after a restart on S3, cloud drives, SFTP and FTP, folders with hundreds of thousands of items load page by page, and search looks through every subfolder, or inside files on your computer and SSH or SFTP servers.

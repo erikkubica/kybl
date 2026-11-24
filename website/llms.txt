@@ -1,6 +1,6 @@
 # Kybl
 
-> Kybl is a free, fast file manager (macOS, Windows, Linux, Android, and iPhone by sideloading) for object storage, cloud drives and servers: Amazon S3 and every S3-compatible service, Azure Blob Storage, Google Cloud Storage, Google Drive, OneDrive, Dropbox, SFTP, SSH, FTP/FTPS, WebDAV and the local disk, side by side. It adds split panes, workspaces, terminals and an SSH client, folder sync, mirroring and copies between any two connections. Built with Rust and Tauri.
+> Kybl is a free, fast file manager (macOS, Windows, Linux, Android, and iPhone by sideloading) for object storage, cloud drives and servers: Amazon S3 and any S3-compatible endpoint, Azure Blob Storage, Google Cloud Storage, Google Drive, OneDrive, Dropbox, SFTP, SSH, FTP/FTPS, WebDAV and the local disk, side by side. It adds split panes, workspaces, terminals and an SSH client, folder sync, mirroring and copies between any two connections. Built with Rust and Tauri.
 
 Kybl (pronounced "kibble", from the Czech and Slovak word for bucket) talks to your storage and servers directly and keeps passwords and keys in an encrypted vault whose key lives in the operating system keychain. Or use Kybl Storage: S3 storage run by Kybl, 10 GB free, encrypted at rest, connected from the app without copying keys.
 
@@ -20,8 +20,8 @@ Kybl (pronounced "kibble", from the Czech and Slovak word for bucket) talks to y
 - Desktop: up to six split panes saved as workspaces, commander keys (F5 copy, F6 move), command palette, terminal panes (local shell or SSH), SSH tunnels, custom shell actions, mount as a drive (macOS and Linux)
 - Import: FileZilla Site Manager and ~/.ssh/config
 - Security: secrets in an encrypted vault, key in macOS Keychain, Windows Credential Manager or Linux Secret Service (Android Keystore on phones)
-- Sync: upload, download or two-way folder sync from the menu bar; mirror with a dry run; resumable, verified copies and moves between connections
-- Phones: same connections, photo backup to any connection, background transfers
+- Sync: upload, download or two-way folder sync from the menu bar or system tray; mirror with a dry run; resumable, verified copies and moves between connections
+- Phones: same connections, photo backup to any connection, background transfers on Android
 - Kybl Storage: 10 GB free, stored in the EU, every file encrypted at rest (AES-256, SSE-C) with a key per bucket; not end-to-end, Kybl's servers encrypt files on the way in
 - Account site: https://app.kybl.app/
 
