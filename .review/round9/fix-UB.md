@@ -1,0 +1,9 @@
+| id | verdict | what changed or why |
+|----|---------|---------------------|
+| UB-1 | fixed | An ownerless busy writer now marks the line with an ANON owner while its text shows and clears the mark when it ends, so a running folder listing repaints its text and Stop on its next batch whenever nobody holds the line. The listing takes the line at its first folder, and at later folders only if nobody else holds it. A `listing` flag stops a late batch repainting after the download is done. |
+| UB-2 | fixed | The FTP "in use" check (`in_use_reply`) strips the path's words from the reply and matches whole words only, so "blocked", "unlocked" and "busybox" no longer count. Commands about a path use the new `ftp_error_at`, which passes the path in. `crowded_login` is whole-word too. Tests added. |
+| UB-3 | fixed | `rest_refused` returns false for an in-use reply, so a resumed upload keeps its partial file. |
+| UB-4 | fixed | Job planning treats `RateLimited` like `Network` (wait and retry). Job open waits and retries on `RateLimited` too, and a Stop during that wait ends cleanly (`stopped_at` with no ctx). |
+| UB-5 | fixed | The `catch` branch of the phone `runMove` now uses `o.failed` ("Couldn't rename ...") when nothing moved. |
+| UB-6 | fixed | Not touching zipCheck.ts: `refusalKind` in refused.ts tells a damaged file ("bad local header", "part runs past the end", "unreadable zip", or a zip with no end record anywhere) from a refused one, from the reason `zipTooBig`/`plainForSheetJS` already return. Docx, Pptx and Xlsx show a new damaged message for the first group. Test added. |
+| UB-7 | fixed | A busy 550 to SIZE in `read()` now returns the in-use error instead of NotFound, so the resume loop retries. `size_probe` treats a busy 550 as "no answer" (the listing settles it) instead of "missing". |

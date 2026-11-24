@@ -148,12 +148,28 @@ async fn run(inner: &Arc<Inner>, id: &str, ctl: &Arc<Ctl>) {
 async fn work(r: &mut Runner<'_>, spec: &Arc<JobSpec>, ctl: &Arc<Ctl>) -> JobState {
     let inner = r.inner;
     let id = r.id.to_string();
-    let open = async {
-        let src = inner.host.open(&spec.src.profile_id).await?;
-        let dst = if spec.dst.profile_id == spec.src.profile_id { src.clone() } else { inner.host.open(&spec.dst.profile_id).await? };
-        SResult::Ok((src, dst))
+    let mut open_backoff = Duration::from_secs(5);
+    let opened = loop {
+        let open = async {
+            let src = inner.host.open(&spec.src.profile_id).await?;
+            let dst = if spec.dst.profile_id == spec.src.profile_id { src.clone() } else { inner.host.open(&spec.dst.profile_id).await? };
+            SResult::Ok((src, dst))
+        };
+        match open.await {
+            // a server that still counts a dropped session ("too many clients") lets go in a
+            // moment: wait and ask again, as planning does, instead of failing the job
+            Err(e) if e.kind == ErrKind::RateLimited && !ctl.stop.load(Ordering::Relaxed) => {
+                r.set(JobState::WaitingNetwork, Phase::Copying, Some(e.to_string()));
+                nap(inner, &ctl.stop, open_backoff).await;
+                open_backoff = (open_backoff * 2).min(Duration::from_secs(120));
+                if ctl.stop.load(Ordering::Relaxed) {
+                    return stopped_at(r, ctl, None).await;
+                }
+            }
+            other => break other,
+        }
     };
-    let (src, dst) = match open.await {
+    let (src, dst) = match opened {
         Ok(c) => c,
         Err(e) if e.kind == ErrKind::NeedsAuth => {
             r.set(JobState::NeedsAuth, Phase::Copying, Some(e.to_string()));
@@ -200,7 +216,7 @@ async fn work(r: &mut Runner<'_>, spec: &Arc<JobSpec>, ctl: &Arc<Ctl>) -> JobSta
                     r.set(JobState::NeedsAuth, Phase::Planning, Some(e.to_string()));
                     return JobState::NeedsAuth;
                 }
-                Err(e) if e.kind == ErrKind::Network => {
+                Err(e) if matches!(e.kind, ErrKind::Network | ErrKind::RateLimited) => {
                     r.set(JobState::WaitingNetwork, Phase::Planning, Some(e.to_string()));
                     nap(inner, &ctl.stop, backoff).await;
                     backoff = (backoff * 2).min(Duration::from_secs(120));
@@ -655,13 +671,20 @@ async fn remove_if_empty(src: &dyn Storage, root: &str, dir: &str) {
 
 /// The runner was asked to stop: record why.
 async fn stopped(r: &mut Runner<'_>, ctl: &Arc<Ctl>, ctx: &Ctx) -> JobState {
+    stopped_at(r, ctl, Some(ctx)).await
+}
+
+/// `stopped` before the connections are open (no `ctx` yet: nothing of this run to abort).
+async fn stopped_at(r: &mut Runner<'_>, ctl: &Arc<Ctl>, ctx: Option<&Ctx>) -> JobState {
     let inner = r.inner;
     let _ = db::reset_running(&inner.db.lock().unwrap(), Some(r.id));
     r.live.current.lock().unwrap().clear();
     match ctl.want.load(Ordering::SeqCst) {
         WANT_CANCEL | WANT_DELETE => {
             let uploads = db::open_uploads(&inner.db.lock().unwrap(), r.id).unwrap_or_default();
-            if let Some(s3) = ctx.dst.as_s3() {
+            if let Some(ctx) = ctx
+                && let Some(s3) = ctx.dst.as_s3()
+            {
                 for (key, upload_id) in &uploads {
                     crate::storage::s3_stream::abort(s3, &ctx.spec.dst.root, key, upload_id).await;
                 }

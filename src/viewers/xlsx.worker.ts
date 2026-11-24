@@ -4,13 +4,14 @@
  */
 import { read, utils, type WorkBook } from "xlsx";
 import { sheetCut, usedExtent } from "./gridShape";
+import { refusalKind } from "./refused";
 import { plainForSheetJS } from "./zipCheck";
 
 export type XlsxRequest = { id: number; open: Uint8Array } | { id: number; sheet: string };
 export type XlsxResponse =
   | { id: number; sheets: { name: string; hidden: boolean }[] }
   | { id: number; rows: string[][]; cut: { rows: number; cols: number } | null }
-  | { id: number; error: true; refused?: true };
+  | { id: number; error: true; refused?: "refused" | "damaged" };
 
 let book: WorkBook | null = null;
 
@@ -27,7 +28,7 @@ self.onmessage = async (ev: MessageEvent<XlsxRequest>) => {
       // uploaded zip: every part is inflated here under a cap and SheetJS gets a plain zip
       // rebuilt from those bytes. This holds for .xlsx and .ods alike; an old .xls isn't a zip.
       const plain = await plainForSheetJS(req.open);
-      if ("refused" in plain) return post({ id: req.id, error: true, refused: true });
+      if ("refused" in plain) return post({ id: req.id, error: true, refused: refusalKind(plain.refused, req.open) });
       book = read(plain.bytes, { type: "array", dense: true, cellHTML: false, cellStyles: false, bookVBA: false });
       const b = book;
       post({ id: req.id, sheets: b.SheetNames.map((name, i) => ({ name, hidden: !!b.Workbook?.Sheets?.[i]?.Hidden })) });

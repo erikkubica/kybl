@@ -9,7 +9,7 @@ import { baseName, parentPrefix } from "../format";
 import { localParent } from "../connections/roots";
 import { useFolderSizes } from "../useFolderSizes";
 import { peekCaps, useCaps } from "../useCaps";
-import { busyOwner, makeFileOps, type FileOps } from "../desktop/fileOps";
+import { ANON, busyOwner, makeFileOps, type FileOps } from "../desktop/fileOps";
 import type { Place } from "../shell/crossPane";
 import type { Sort } from "../components/FileTable";
 import type { MenuItem } from "../components/Dialogs";
@@ -140,8 +140,11 @@ function usePaneCore(env: PaneEnv) {
   const [busyStop, setBusyStop] = useState<(() => void) | null>(null);
   const setBusy = useCallback(function setBusy(text: string | null, stop?: () => void, owner?: symbol) {
     // a writer that doesn't say who it is takes the line from whoever had it, so a download
-    // listing that ends later doesn't clear this writer's text
+    // listing that ends later doesn't clear this writer's text. While that text shows, the line is
+    // marked taken (ANON); when the writer clears it the mark goes, so a listing still running
+    // can paint its busy text and Stop again on its next batch
     if (owner) busyOwner.set(setBusy, owner);
+    else if (text !== null) busyOwner.set(setBusy, ANON);
     else busyOwner.delete(setBusy);
     setBusyText(text);
     setBusyStop(() => (text && stop ? stop : null));

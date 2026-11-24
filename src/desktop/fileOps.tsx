@@ -29,6 +29,8 @@ import { holdBatch } from "../transferLog";
 
 /** Which folder download owns each pane's busy line (keyed by the pane's setBusy). */
 export const busyOwner = new WeakMap<object, symbol>();
+/** Marks the line as taken by a writer that gave no owner (its text is showing). */
+export const ANON = Symbol("anon");
 /** `localCopy` calls under way, by file and version: a second one waits for the first. */
 const inFlightCopies = new Map<string, Promise<string | null>>();
 import { parentOf, renameRounds } from "../batchRename";
@@ -234,7 +236,15 @@ export function makeFileOps(c: OpsContext) {
     // while it still has it, so an earlier one that ends first doesn't wipe a later text and Stop
     const setBusy = c.setBusy;
     const mine = Symbol();
+    // false once this download is done listing, so a late batch can't bring the line back
+    let listing = true;
+    // the line is ours to paint when we hold it or nobody does (another writer finished)
+    const mayPaint = () => {
+      const o = busyOwner.get(setBusy);
+      return listing && (o === mine || o === undefined);
+    };
     const clearBusy = () => {
+      listing = false;
       if (busyOwner.get(setBusy) === mine) setBusy(null);
     };
     try {
@@ -294,9 +304,10 @@ export function makeFileOps(c: OpsContext) {
           found += files.length;
           start(files.flatMap((f) => item(f.key, f.size, f.key.slice(base.length))));
           // an older listing keeps quiet once a later download (or another writer) has the line
-          if (busyOwner.get(setBusy) === mine) setBusy(`Listing ${e.name}… ${plural(found, "file")} found`, run.stop, mine);
+          if (mayPaint()) setBusy(`Listing ${e.name}… ${plural(found, "file")} found`, run.stop, mine);
         });
-        setBusy(`Listing ${e.name}…`, run.stop, mine);
+        // a new download takes the line; a later folder only does when nobody else holds it
+        if (i === 0 || mayPaint()) setBusy(`Listing ${e.name}…`, run.stop, mine);
         // the Activity log keeps this download as one while files are still being found
         const release = holdBatch(pid, bucket, dir);
         try {
