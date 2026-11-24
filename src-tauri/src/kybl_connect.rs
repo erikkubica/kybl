@@ -31,8 +31,6 @@ use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Notify;
 // the loopback page helpers also serve the cloud sign-in on phones (see oauth/mod.rs)
-#[cfg(any(desktop, test))]
-use tokio::net::TcpListener;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -340,8 +338,6 @@ async fn finish(app: &AppHandle, state: &AppState, tok: TokenResponse, replace_i
 
 #[cfg(any(desktop, test))]
 const PAGE_OK: &str = "You're connected. You can close this tab and go back to Kybl.";
-#[cfg(any(desktop, test))]
-const PAGE_DENIED: &str = "The connection was cancelled. You can close this tab.";
 
 pub(crate) fn page(msg: &str) -> String {
     format!(
@@ -389,28 +385,6 @@ pub(crate) fn query(target: &str) -> HashMap<String, String> {
         .collect()
 }
 
-#[cfg(any(desktop, test))]
-/// Waits for the browser to come back with a code for our `state`. Stray requests (a favicon, a
-/// wrong or replayed state) get an error page and the wait goes on.
-async fn wait_for_code(listener: &TcpListener, state: &str) -> Result<String, String> {
-    loop {
-        let (mut stream, _) = listener.accept().await.map_err(err)?;
-        let Some(target) = read_target(&mut stream).await else { continue };
-        if target.split('?').next() != Some("/callback") {
-            respond(&mut stream, "404 Not Found", "").await;
-            continue;
-        }
-        let q = query(&target);
-        if q.get("state").map(String::as_str) != Some(state) {
-            respond(&mut stream, "400 Bad Request", &page("This sign-in link doesn't belong to the Kybl window that's waiting. Start again from the app.")).await;
-            continue;
-        }
-        let r = code_from_redirect(&q, state);
-        respond(&mut stream, "200 OK", &page(if r.is_ok() { PAGE_OK } else { PAGE_DENIED })).await;
-        return r;
-    }
-}
-
 /// What came back from the browser: the code for our `state`, or why there is none.
 pub(crate) fn code_from_redirect(q: &HashMap<String, String>, state: &str) -> Result<String, String> {
     if q.get("state").map(String::as_str) != Some(state) {
@@ -442,14 +416,16 @@ const NOTHING_BACK: &str = "Nothing came back from the browser. Try again, or us
 /// Desktop: loopback listener + the default browser.
 #[cfg(desktop)]
 async fn browser_code(app: &AppHandle, flow: &Flow, base: &str, verifier: &str, state: &str) -> Result<String, String> {
-    let listener = TcpListener::bind("127.0.0.1:0").await.map_err(|e| format!("Couldn't start the sign-in listener: {e}"))?;
-    let redirect = format!("http://127.0.0.1:{}/callback", listener.local_addr().map_err(err)?.port());
+    // the cloud sign-in's listener: several connections at once, so a browser's idle spare one
+    // (or a stray local one) can't hold the callback up
+    let listener = crate::oauth::loopback::listen(&[]).await?;
+    let redirect = format!("http://127.0.0.1:{}/callback", listener.port().map_err(err)?);
     let url = connect_url(base, verifier, &redirect, &device_name(app).await, state);
     app.opener()
         .open_url(&url, None::<&str>)
         .map_err(|e| format!("Couldn't open the browser: {e}. Use a code instead."))?;
     let code = tokio::select! {
-        r = wait_for_code(&listener, state) => r?,
+        r = crate::oauth::loopback::wait(&listener, state, crate::oauth::loopback::Reply::Page(PAGE_OK)) => r?,
         _ = flow.cancel.notified() => return Err(CANCELLED.into()),
         _ = tokio::time::sleep(BROWSER_TIMEOUT) => return Err(NOTHING_BACK.into()),
     };
@@ -691,8 +667,8 @@ mod tests {
 
     #[tokio::test]
     async fn loopback_ignores_strays_and_returns_the_code() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
+        let listener = crate::oauth::loopback::listen(&[]).await.unwrap();
+        let addr = ("127.0.0.1", listener.port().unwrap());
         let send = move |path: &'static str| async move {
             let mut s = TcpStream::connect(addr).await.unwrap();
             s.write_all(format!("GET {path} HTTP/1.1\r\nhost: x\r\n\r\n").as_bytes()).await.unwrap();
@@ -705,7 +681,8 @@ mod tests {
             assert!(send("/callback?code=c&state=wrong").await.starts_with("HTTP/1.1 400"));
             assert!(send("/callback?code=the-code&state=good").await.contains("You're connected"));
         });
-        assert_eq!(wait_for_code(&listener, "good").await.unwrap(), "the-code");
+        let reply = crate::oauth::loopback::Reply::Page(PAGE_OK);
+        assert_eq!(crate::oauth::loopback::wait(&listener, "good", reply).await.unwrap(), "the-code");
         client.await.unwrap();
     }
 }

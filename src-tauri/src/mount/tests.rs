@@ -289,6 +289,17 @@ async fn finder_clutter_stays_local() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn clutter_written_far_past_the_limit_isnt_allocated() {
+    let d = drive(false).await;
+    // a ranged PUT to 1 TiB used to resize a Vec that far and abort the process
+    let r = d.req("PUT", "._far").await.header("Content-Range", "bytes 1099511627776-1099511627776/*").body("x").send().await.unwrap();
+    assert!(r.status().is_success() || r.status().is_client_error(), "{}", r.status());
+    // an ordinary write is still kept, and the drive still answers
+    assert!(d.req("PUT", "._ok").await.body("fine").send().await.unwrap().status().is_success());
+    assert_eq!(d.get("._ok").await.1, b"fine");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn only_our_host_and_token_get_in() {
     let d = drive(false).await;
     let r = d.req("GET", "a.txt").await.header("Host", "evil.example:80").send().await.unwrap();

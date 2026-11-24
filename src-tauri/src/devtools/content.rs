@@ -204,7 +204,7 @@ pub fn search_local(dir: &Path, prefix: &str, q: &Query, cancel: &AtomicBool, em
         Some((bin, engine, args)) => {
             let mut cmd = command(&bin);
             cmd.args(&args).current_dir(dir);
-            let mut lines = Lines::default();
+            let mut lines = Lines::records(0);
             let mut bytes = 0usize;
             let is_grep = engine == "grep";
             let skip_dots = is_grep && !q.hidden;
@@ -334,7 +334,8 @@ pub async fn search_sftp(s: &SftpBackend, prefix: &str, q: &Query, cancel: &Atom
     });
 
     let mut col = Collector::new(prefix, &m, MAX_FILES);
-    let mut lines = Lines::default();
+    // the first line names the engine; the rest are `--null` records
+    let mut lines = Lines::records(1);
     let mut engine: Option<String> = None;
     let mut err_tail: Vec<u8> = Vec::new();
     let (mut bytes, mut stopped) = (0usize, false);

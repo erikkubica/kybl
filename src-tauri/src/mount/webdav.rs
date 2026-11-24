@@ -46,7 +46,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use super::{
     cache::{BlockCache, FileVersion, BLOCK},
-    junk::{is_junk_dir, is_junk_path, JunkStore},
+    junk::{is_junk_dir, is_junk_path, JunkStore, LIMIT as JUNK_LIMIT},
     link,
     writeback::{BaseState, Event, Listener, WriteBack},
 };
@@ -700,7 +700,7 @@ impl Inner {
             let data = if o.truncate { Vec::new() } else { existing.unwrap_or_default() };
             let pos = if o.append { data.len() as u64 } else { 0 };
             self.junk.put(&rel, data.clone());
-            return Ok(Box::new(JunkWriter { fs: self.clone(), rel, data, pos }));
+            return Ok(Box::new(JunkWriter { fs: self.clone(), rel, data, pos, over: false }));
         }
         let (root, key) = self.file_node(&rel).await?;
         let found = self.lookup(&root, &key).await?;
@@ -1473,6 +1473,9 @@ struct JunkWriter {
     rel: String,
     data: Vec<u8>,
     pos: u64,
+    /// something was written past the memory limit (or a ranged write jumped there): the clutter
+    /// is dropped, as the store does with too much of it, and nothing more is kept
+    over: bool,
 }
 
 impl fmt::Debug for JunkWriter {
@@ -1483,6 +1486,14 @@ impl fmt::Debug for JunkWriter {
 
 impl JunkWriter {
     fn put(&mut self, b: &[u8]) {
+        // the end is checked before anything is allocated: a ranged PUT can seek to any offset
+        let end = self.pos.saturating_add(b.len() as u64);
+        if self.over || end > JUNK_LIMIT as u64 {
+            self.over = true;
+            self.data = Vec::new();
+            self.pos = end;
+            return;
+        }
         let pos = self.pos as usize;
         if self.data.len() < pos + b.len() {
             self.data.resize(pos + b.len(), 0);
@@ -1520,7 +1531,7 @@ impl DavFile for JunkWriter {
         async move { r }.boxed()
     }
     fn flush(&mut self) -> FsFuture<'_, ()> {
-        self.fs.junk.put(&self.rel, self.data.clone());
+        self.fs.junk.put(&self.rel, if self.over { Vec::new() } else { self.data.clone() });
         async { Ok(()) }.boxed()
     }
 }

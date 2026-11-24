@@ -61,7 +61,7 @@ pub fn is_junk_path(rel: &str) -> bool {
 }
 
 /// The most clutter kept in memory per drive; past it, writes are accepted and dropped.
-const LIMIT: usize = 16 * 1024 * 1024;
+pub const LIMIT: usize = 16 * 1024 * 1024;
 
 pub struct JunkFile {
     pub data: Vec<u8>,

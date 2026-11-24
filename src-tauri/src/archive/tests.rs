@@ -65,6 +65,11 @@ fn safe_keys_never_leave_the_folder() {
     }
     // `..` inside a name is just a name
     assert_eq!(safe_key("a..b/c", false).as_deref(), Some("a..b/c"));
+    // Windows can't hold these below the first folder either: left out, not extracted partway
+    for bad in ["logs/12:30.txt", "src/aux.c", "lib/con.js", "notes/draft."] {
+        assert_eq!(super::index::safe_key_for(bad, false, true), None, "{bad}");
+        assert_eq!(super::index::safe_key_for(bad, false, false).as_deref(), Some(bad), "{bad}");
+    }
 }
 
 #[test]
