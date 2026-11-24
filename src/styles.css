@@ -5388,3 +5388,12 @@ input[type="range"]:focus-visible {
 .conn-switch .pbadge {
   pointer-events: none;
 }
+/* a drop the pane under the pointer won't take (a terminal on a server) */
+.drop-card.refused {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.drop-card.refused svg {
+  animation: none;
+}

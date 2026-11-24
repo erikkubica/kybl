@@ -79,7 +79,7 @@ export function MountDialog({
   };
 
   return (
-    <Modal title="Mount as drive" onClose={onClose} width={440}>
+    <Modal title="Mount as drive" onClose={onClose} width={440} locked={busy}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -125,7 +125,7 @@ export function MountDialog({
             </button>
           )}
           <span className="spacer" />
-          <button type="button" className="btn" onClick={onClose}>
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>
             {error && !existing ? "Close" : "Cancel"}
           </button>
           {existing ? (

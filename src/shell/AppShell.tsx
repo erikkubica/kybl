@@ -107,6 +107,7 @@ import {
   type Workspace,
   type WorkspaceStore,
 } from "./workspaces";
+import { dropPlace } from "./recipes";
 import type { HistorySnap } from "../browser/useHistory";
 import { sameLoc } from "../browser/useListing";
 import { PaneContext } from "./PaneContext";
@@ -1431,13 +1432,11 @@ export function AppShell() {
   // ------------------------------------------------------------ dragging files
   // Items dragged from a list (useFileDrag): onto folders and panes, the sidebar, and other
   // workspaces (their tabs: dropped there, or resting there to open them and drop inside).
-  /** A workspace not on screen: its name and the place of its active pane (where a drop on its tab lands). */
+  /** A workspace not on screen: its name and the place of its last-used file pane (where a drop on its tab lands). */
   const wsDest = (id: string) => {
     const w = ws.list.find((x) => x.id === id);
     if (!w) return null;
-    const ls = leaves(w.tree);
-    const act = w.recent.find((x) => ls.includes(x)) ?? ls[0];
-    return { name: w.name, loc: w.panes[act]?.loc ?? null };
+    return { name: w.name, loc: dropPlace(w) };
   };
   const fileDrag = useFileDrag({
     activeWs: ws.active,
@@ -1503,7 +1502,12 @@ export function AppShell() {
   );
 
   // ------------------------------------------------------------ sidebar
-  const askBucketName = (p: Profile | null = active.profile, id: PaneId = active.id) => {
+  /** Opens a bucket in the pane that asked (an empty pane), or from the sidebar where "open here" goes. */
+  const openBucketIn = (id: PaneId | undefined, p: Profile, name: string) => {
+    if (id != null) paneById(id).openBucket(p, name);
+    else openHere((pane) => pane.openBucket(p, name));
+  };
+  const askBucketName = (p: Profile | null = active.profile, id?: PaneId) => {
     if (!p) return;
     dialogs.prompt({
       title: "Open bucket",
@@ -1512,13 +1516,13 @@ export function AppShell() {
       confirmLabel: "Open",
       run: (name) => {
         conns.rememberBucket(p, name);
-        paneById(id).openBucket(p, name);
+        openBucketIn(id, p, name);
       },
     });
   };
 
   /** Kybl Storage: the account owns its buckets, so it can make new ones. */
-  const askNewBucket = (p: Profile | null = active.profile, id: PaneId = active.id) => {
+  const askNewBucket = (p: Profile | null = active.profile, id?: PaneId) => {
     if (!p) return;
     dialogs.prompt({
       title: "New bucket",
@@ -1535,7 +1539,7 @@ export function AppShell() {
         }
         await conns.loadBuckets(p, true);
         conns.setBucketHidden(p, name, false);
-        paneById(id).openBucket(p, name);
+        openBucketIn(id, p, name);
         toast("success", `Created ${name}`);
       },
     });
@@ -1986,9 +1990,12 @@ export function AppShell() {
   const dropOnArchive = useRef(false);
   /** why a drop on a terminal can't go there (one on a server: these are paths of this computer) */
   const dropOnTermWhy = useRef<string | null>(null);
-  const { over: dropOver, tab: finderTab } = useFinderDrop({
+  /** the server terminal under the pointer (it shows that it takes no files) */
+  const dropOnTerm = useRef<PaneId | null>(null);
+  const { over: dropOver, refused: dropRefused, tab: finderTab } = useFinderDrop({
     target: (x, y) => {
       dropOnTermWhy.current = null;
+      dropOnTerm.current = null;
       dropOnArchive.current = false;
       // a dialog owns the screen: nothing lands behind it
       if (overlayUp()) return null;
@@ -1999,6 +2006,7 @@ export function AppShell() {
       if (under && t) {
         if (t.profileId === THIS_MAC.id) return under;
         dropOnTermWhy.current = REMOTE_TERM_DROP;
+        dropOnTerm.current = under;
         return null;
       }
       const p = under ? paneById(under) : activeRef.current;
@@ -2006,6 +2014,7 @@ export function AppShell() {
       dropOnArchive.current = !!p.profile && p.archive.inArchive;
       return p.profile && p.bucket != null && !p.archive.inArchive ? p.id : null;
     },
+    refusedPane: () => dropOnTerm.current,
     onDrop: (id, paths) => {
       const why = term.dropPaths(id, paths);
       if (why === undefined) void paneById(id).ops.uploadPaths(paths);
@@ -2095,7 +2104,14 @@ export function AppShell() {
   /** Pane slot `id` on screen: a file pane, or a terminal. */
   const paneView = (id: PaneId, style?: React.CSSProperties) =>
     term.terms[id] ? (
-      term.render(id, { style, active: id === activeId, dual, onGrip: paneDrag.grip?.(id), lifted: paneDrag.dragging === id && !dragAway() })
+      term.render(id, {
+        style,
+        active: id === activeId,
+        dual,
+        onGrip: paneDrag.grip?.(id),
+        lifted: paneDrag.dragging === id && !dragAway(),
+        drop: dropOver === id ? "paste" : dropRefused === id ? "refuse" : null,
+      })
     ) : (
       // keyed by slot: a cramped window draws one pane at a time in the same place, and each
       // must be its own (its list's scroll, open menus, a name being edited)

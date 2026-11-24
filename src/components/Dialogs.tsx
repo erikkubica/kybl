@@ -67,6 +67,7 @@ export function Modal({
   width = 440,
   icon,
   dismissOnBackdrop = false,
+  locked = false,
 }: {
   title: string;
   onClose: () => void;
@@ -79,10 +80,15 @@ export function Modal({
    * never throws away a half-filled form; Escape and the close button always work.
    */
   dismissOnBackdrop?: boolean;
+  /**
+   * Work started here is running and can't be stopped: Escape, the close button and a click
+   * outside do nothing, so the dialog stays up until the answer (and any error) arrives.
+   */
+  locked?: boolean;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
-  closeRef.current = onClose;
+  closeRef.current = locked ? () => {} : onClose;
   // what had focus before: read while rendering, before a child's autoFocus moves it
   const [prev] = useState(() => document.activeElement);
 
@@ -146,7 +152,7 @@ export function Modal({
     <div
       className="modal-backdrop"
       onMouseDown={(e) => {
-        if (dismissOnBackdrop && e.target === e.currentTarget) onClose();
+        if (dismissOnBackdrop && !locked && e.target === e.currentTarget) onClose();
       }}
     >
       <div
@@ -162,7 +168,7 @@ export function Modal({
         <div className="modal-head">
           {icon}
           <h2>{title}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close (Esc)">
+          <button className="icon-btn" onClick={onClose} disabled={locked} aria-label="Close" title="Close (Esc)">
             <Icon name="x" />
           </button>
         </div>
@@ -239,6 +245,7 @@ export function PromptDialog({
   check,
   onSubmit,
   onClose,
+  onLostError,
 }: {
   title: string;
   label: string;
@@ -256,6 +263,8 @@ export function PromptDialog({
    */
   onSubmit: (value: string) => PromptResult | Promise<PromptResult>;
   onClose: () => void;
+  /** what went wrong after this dialog was already gone (a newer question replaced it): shown elsewhere, a toast */
+  onLostError?: (why: string) => void;
 }) {
   const [value, setValue] = useState(initial);
   const [problem, setProblem] = useState<string | null>(null);
@@ -293,14 +302,17 @@ export function PromptDialog({
       } catch (e) {
         got = e instanceof Error ? e.message : String(e);
       }
-      if (!live.current) return;
+      if (!live.current) {
+        if (typeof got === "string" && got) onLostError?.(got);
+        return;
+      }
       setBusy(false);
       if (typeof got === "string") return refuse(got);
     } else if (typeof out === "string") return refuse(out);
     onClose();
   };
   return (
-    <Modal title={title} onClose={onClose}>
+    <Modal title={title} onClose={onClose} locked={busy}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -337,7 +349,7 @@ export function PromptDialog({
           )}
         </div>
         <div className="modal-foot">
-          <button type="button" className="btn" onClick={onClose}>
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>
             Cancel
           </button>
           <button type="submit" className="btn btn-primary" disabled={!value.trim() || busy}>
@@ -946,7 +958,8 @@ function ToastItem({ toast: t, dismiss }: { toast: Toast; dismiss: (id: number) 
     >
       <Icon name={t.kind === "error" ? "alert" : t.kind === "success" ? "check-circle" : "info"} size={16} />
       <div className="toast-body">
-        <span>{keys(errSummary(t.text))}</span>
+        {/* as given: callers spell shortcuts in their own words (keys()), never inside names */}
+        <span>{errSummary(t.text)}</span>
         {detail && open && <pre className="toast-detail selectable">{detail}</pre>}
       </div>
       {detail && (

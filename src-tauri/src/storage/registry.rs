@@ -118,7 +118,14 @@ pub async fn sftp_for<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_
         .find(|p| p.id == profile_id)
         .ok_or_else(|| "Connection not found".to_string())?;
     if profile.kind != ConnKind::Sftp {
-        return Err("Terminals open on This Mac and on SFTP connections.".into());
+        let msg = if cfg!(windows) {
+            "Terminals open on SFTP connections."
+        } else if cfg!(target_os = "macos") {
+            "Terminals open on This Mac and on SFTP connections."
+        } else {
+            "Terminals open on This computer and on SFTP connections."
+        };
+        return Err(msg.into());
     }
     let cfg = net::net_config(profile.net.as_ref())?;
     let secrets = net_secrets(state, &profile, &cfg, None).await?;

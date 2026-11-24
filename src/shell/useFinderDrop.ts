@@ -17,6 +17,7 @@ export function useFinderDrop({
   target,
   onDrop,
   onRefused,
+  refusedPane,
   tabs,
 }: {
   /** the pane at this point (CSS pixels) that accepts uploads, or null */
@@ -24,6 +25,8 @@ export function useFinderDrop({
   onDrop: (pane: PaneId, paths: string[]) => void;
   /** files were dropped where nothing takes them (no bucket open, or a dialog is up) */
   onRefused?: () => void;
+  /** where `target` just said no, a pane that should show it refuses (a terminal on a server), or null */
+  refusedPane?: () => PaneId | null;
   /** workspace tabs: the one under the point (not the one on screen), whether it takes files, resting on it, letting go there */
   tabs?: {
     at: (x: number, y: number) => string | null;
@@ -33,9 +36,10 @@ export function useFinderDrop({
   };
 }) {
   const [over, setOver] = useState<PaneId | null>(null);
+  const [refused, setRefused] = useState<PaneId | null>(null);
   const [tab, setTab] = useState<TabDropTarget | null>(null);
-  const cbs = useRef({ target, onDrop, onRefused, tabs });
-  cbs.current = { target, onDrop, onRefused, tabs };
+  const cbs = useRef({ target, onDrop, onRefused, refusedPane, tabs });
+  cbs.current = { target, onDrop, onRefused, refusedPane, tabs };
 
   useEffect(() => {
     let un: (() => void) | undefined;
@@ -59,17 +63,24 @@ export function useFinderDrop({
         if (isDraggingOut()) {
           spring.cancel();
           setTab(null);
+          setRefused(null);
           return setOver(null);
         }
         // positions come in physical pixels
         const at = "position" in p && p.position ? [p.position.x / devicePixelRatio, p.position.y / devicePixelRatio] : [null, null];
-        if (p.type === "enter" || p.type === "over") setOver(tabAt(at[0], at[1]) ? null : cbs.current.target(at[0], at[1]));
-        else if (p.type === "leave") {
+        if (p.type === "enter" || p.type === "over") {
+          const onTab = tabAt(at[0], at[1]);
+          const id = onTab ? null : cbs.current.target(at[0], at[1]);
+          setOver(id);
+          setRefused(onTab || id ? null : (cbs.current.refusedPane?.() ?? null));
+        } else if (p.type === "leave") {
           spring.cancel();
           setTab(null);
           setOver(null);
+          setRefused(null);
         } else if (p.type === "drop") {
           setOver(null);
+          setRefused(null);
           const ws = tabAt(at[0], at[1]);
           spring.cancel();
           setTab(null);
@@ -95,5 +106,5 @@ export function useFinderDrop({
     };
   }, []);
 
-  return { over, tab };
+  return { over, refused, tab };
 }

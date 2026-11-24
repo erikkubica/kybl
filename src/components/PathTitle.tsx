@@ -114,7 +114,7 @@ export function PathTitle({
       <button
         type="button"
         className="crumb current path-name"
-        title={keys(onGoTo ? `${full}\nClick to type a path (⇧⌘G) · right-click or ⌘-click for the enclosing folders` : `${full}\nRight-click or ⌘-click for the enclosing folders`)}
+        title={`${full}\n${keys(onGoTo ? "Click to type a path (⇧⌘G) · right-click or ⌘-click for the enclosing folders" : "Right-click or ⌘-click for the enclosing folders")}`}
         aria-label={onGoTo ? `${full}. Type a path` : full}
         onClick={(e) => {
           // ⌘-click lists the enclosing folders, as on a Finder window's title

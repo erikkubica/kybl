@@ -257,7 +257,7 @@ export function Toolbar({
               onClick={onUp}
               // dropping items on it moves them up a level
               data-drop={!disabled ? parentPrefix(prefix) : undefined}
-              title={keys(`${parts[parts.length - 2]} (⌘↑)`)}
+              title={`${parts[parts.length - 2]} (${keys("⌘↑")})`}
               aria-label={`Enclosing folder, ${parts[parts.length - 2]}`}
             >
               …

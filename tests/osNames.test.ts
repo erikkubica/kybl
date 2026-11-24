@@ -1,7 +1,7 @@
 // What each system calls its computer, file manager and trash (src/osNames.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { deleteLabel, osNames, osOf, trashName } from "../src/osNames.ts";
+import { deleteLabel, osNames, osOf, terminalsWhere, trashName } from "../src/osNames.ts";
 
 test("osOf: the system a user agent names", () => {
   assert.equal(osOf("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15"), "mac");
@@ -34,4 +34,10 @@ test("trash and delete labels: the system's bin only for files on its disk", () 
   assert.equal(deleteLabel(true, true, "win"), "Move to Recycle Bin");
   assert.equal(deleteLabel(true, false, "win"), "Move to Trash");
   assert.equal(deleteLabel(false, true, "win"), "Delete");
+});
+
+test("terminal refusal: never names the computer where terminals can't open", () => {
+  assert.equal(terminalsWhere("win"), "Terminals open on SFTP connections");
+  assert.equal(terminalsWhere("mac"), "Terminals open on This Mac and on SFTP connections");
+  assert.equal(terminalsWhere("linux"), "Terminals open on This computer and on SFTP connections");
 });

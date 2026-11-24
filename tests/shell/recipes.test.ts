@@ -1,7 +1,7 @@
 // Workspace recipes (src/shell/recipes.ts): saving a layout, opening it again. Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { captureRecipe, freeName, layoutOnly, matchesRecipe, openRecipe, startupLines, terminalPanes } from "../../src/shell/recipes.ts";
+import { captureRecipe, dropPlace, freeName, layoutOnly, matchesRecipe, openRecipe, startupLines, terminalPanes } from "../../src/shell/recipes.ts";
 import type { Layout } from "../../src/shell/workspaces.ts";
 
 const view = { view: "list" as const, sort: null, hidden: null, compact: null, tile: null };
@@ -116,4 +116,13 @@ test("layoutOnly: a whole workspace's name, color and start mode stay out of an 
   const w = { ...l, id: "w1", name: "Old", color: "red", start: "saved", recipe: "r1" };
   assert.deepEqual(Object.keys(layoutOnly(w)).sort(), ["links", "panes", "recent", "tree"]);
   assert.equal(layoutOnly(w).tree, l.tree);
+});
+
+test("dropPlace: a drop on a workspace's tab goes to its last-used file pane, never a terminal's empty place", () => {
+  assert.deepEqual(dropPlace(layout), site);
+  // the terminal was active when the workspace was left: still the file pane's folder
+  assert.deepEqual(dropPlace({ ...layout, recent: ["c", "right", "left", "d"] }), live);
+  assert.deepEqual(dropPlace({ ...layout, recent: ["d", "c"] }), site);
+  // no file pane with a folder open: nowhere
+  assert.equal(dropPlace({ ...layout, panes: { c: layout.panes.c, d: layout.panes.d, left: { loc: null, view }, right: { loc: null, view } } }), null);
 });
