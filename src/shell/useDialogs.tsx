@@ -14,7 +14,7 @@ import type { Choice, Clash } from "../desktop/conflicts";
 import type { IconName } from "../Icons";
 
 /** `danger`: red button, focus starts on Cancel; `icon`: the title's icon (a danger confirm shows the trash unless given). */
-export type ConfirmOptions = { title: string; message: ReactNode; label: string; danger?: boolean; icon?: IconName };
+export type ConfirmOptions = { title: string; message: ReactNode; label: string; cancelLabel?: string; danger?: boolean; icon?: IconName };
 /**
  * `check`: what is wrong with a name, at once (the dialog stays open, the message under the field);
  * `run`: a string back, also from its promise, is what went wrong there (the server refused, say): the
@@ -113,6 +113,7 @@ export function DialogsProvider({ children }: { children: ReactNode }) {
           title={confirm.title}
           message={confirm.message}
           confirmLabel={confirm.label}
+          cancelLabel={confirm.cancelLabel}
           danger={!!confirm.danger}
           icon={confirm.icon}
           onConfirm={() => confirm.resolve(true)}

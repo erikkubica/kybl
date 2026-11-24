@@ -107,19 +107,21 @@ export function TransfersScreen({
               const n = transfers.activeCount() + paused.length + runningJobs.length;
               confirm({
                 title: n === 1 ? "Cancel this transfer?" : `Cancel ${n.toLocaleString()} transfers?`,
-                message: <p>Partly downloaded files are deleted, paused ones too. Finished ones stay. Pause keeps the progress, to carry on later.</p>,
-                label: n === 1 ? "Cancel transfer" : "Cancel all",
+                message: <p>Partly downloaded files are deleted, paused ones too. Finished ones stay.</p>,
+                label: n === 1 ? "Cancel transfer" : "Cancel transfers",
+                cancelLabel: n === 1 ? "Keep transfer" : "Keep transfers",
                 danger: true,
                 run: () => {
                   transfers.cancelAll();
                   for (const t of paused) transfers.cancel(t.id);
-                  // bucket jobs are in the same list: the button says all
+                  // bucket jobs are in the same list as the downloads (copies between connections
+                  // have their own Stop in their section)
                   for (const j of runningJobs) api.cancelTransfer(j.id).catch(() => {});
                 },
               });
             }}
           >
-            Cancel all
+            Cancel transfers
           </button>
         )}
       </header>

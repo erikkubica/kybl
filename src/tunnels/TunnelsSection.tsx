@@ -128,7 +128,7 @@ function TunnelRow({
             placeholder="5433"
             inputMode="numeric"
             aria-invalid={!!problems.local}
-            aria-describedby={noteFor(!!problems.local) ?? (taken ? noteId : undefined)}
+            aria-describedby={noteFor(!!problems.local) ?? (taken && !err ? noteId : undefined)}
             {...RAW}
           />
           <span className="tunnel-arrow" aria-hidden="true">

@@ -4,6 +4,7 @@
  * formats).
  */
 import type { CloudKind } from "../api";
+import { splitDavUrl } from "./serverHost.ts";
 import type { BlobConfig, ConnKind, NetConfig, Profile } from "../types";
 
 /** What the picker offers: Kybl Storage has its own sign-in flow, S3 its presets. */
@@ -188,7 +189,8 @@ export function netTitle(kind: NetKind, n: NetConfig): string {
 export function addressOf(p: Profile): string {
   const n = p.net;
   if (n) {
-    if (p.kind === "webdav" && n.url) return n.url;
+    // never with a user name or password that an older save left in the address
+    if (p.kind === "webdav" && n.url) return splitDavUrl(n.url).href;
     const port = n.port ? `:${n.port}` : "";
     const scheme = p.kind === "ftp" ? (n.tls === "none" || n.tls === "auto" ? "ftp" : "ftps") : (p.kind ?? "");
     return `${scheme}://${n.host}${port}${n.basePath ? `/${n.basePath.replace(/^\//, "")}` : ""}`;

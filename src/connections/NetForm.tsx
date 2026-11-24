@@ -6,7 +6,7 @@ import { Icon } from "../Icons";
 import type { NetConfig, Profile } from "../types";
 import { baseProfile, defaultPort, emptyNet, netTitle, passwordTarget, type NetKind } from "./kinds";
 import { Field, PHONE, RAW, SecretInput, Segmented, Warning, type FormApi } from "./fields";
-import { splitDavUrl, splitServer } from "./serverHost";
+import { splitDavUrl, splitServer, type DavAddress } from "./serverHost";
 import { TunnelsSection, tidyTunnels, tunnelProblem } from "../tunnels/TunnelsSection";
 
 /** A WebDAV address from a profile saved with host and port instead of a URL. */
@@ -134,7 +134,7 @@ export function NetForm({
     onEdit();
   };
   // a user name and password typed into the address go to their own fields on Save, and the address is kept without them
-  const dav = kind === "webdav" ? splitDavUrl(url) : { href: "" };
+  const dav = kind === "webdav" ? splitDavUrl(url, user) : ({ href: "" } as DavAddress);
   const davHref = dav.href;
   const davInsecure = kind === "webdav" && /^(http|dav|webdav):\/\//i.test(davHref);
   // a saved password only goes to the server and user name it was saved for: another one asks
@@ -153,7 +153,7 @@ export function NetForm({
   const savedPassword = kind === "sftp" ? sftpSaved("password") && !moved : !!hasSecret && !clearSecret && !moved;
 
   const problems = {
-    url: kind !== "webdav" ? null : !davHref ? "Enter the server's address." : !/^(https?|(web)?davs?):\/\/[^\s/]+/i.test(davHref) ? "Start with https:// (for example https://cloud.example.com)." : null,
+    url: kind !== "webdav" ? null : !davHref ? "Enter the server's address." : !/^(https?|(web)?davs?):\/\/[^\s/]+/i.test(davHref) ? "Start with https:// (for example https://cloud.example.com)." : (dav.error ?? null),
     host: kind === "webdav" ? null : typeof server === "string" ? server : null,
     port: kind === "webdav" || !port.trim() ? null : Number.isInteger(portNum) && portNum > 0 && portNum < 65536 ? null : "Ports are numbers from 1 to 65535.",
     user: kind === "sftp" && !user.trim() && !parts?.user ? "Enter your user name on the server." : null,
@@ -238,8 +238,10 @@ export function NetForm({
           wide
           error={show("url")}
           hint={
-            dav.user || dav.password
-              ? "The user name and password in this address are saved as User name and Password instead."
+            dav.error
+              ? dav.error
+              : dav.user || dav.password
+              ?"The user name and password in this address are saved as User name and Password instead."
               : "Nextcloud and ownCloud: the server's address is enough. Synology: include the WebDAV port, such as https://nas.local:5006."
           }
         >

@@ -105,8 +105,16 @@ class Session {
       macOptionClickForcesSelection: true,
       rightClickSelectsWord: MAC,
       theme: theme(),
-      // links the server prints (OSC 8) open in the system browser, never in a window of the app
-      linkHandler: { activate: (_e, uri) => void openLink(uri).catch(() => termNotice("That link can't be opened.")) },
+      // links the server prints (OSC 8) open in the system browser, never in a window of the app, and
+      // only on a deliberate ⌘/Ctrl-click: a plain click just focuses the terminal, and the real
+      // address is shown first since the text it hides can say anything
+      linkHandler: {
+        activate: (e, uri) => {
+          if (!(e.metaKey || e.ctrlKey)) return termNotice(`${MAC ? "⌘" : "Ctrl"}-click opens ${uri}`);
+          void openLink(uri).catch(() => termNotice("That link can't be opened."));
+        },
+        hover: (_e, uri) => termNotice(`${MAC ? "⌘" : "Ctrl"}-click opens ${uri}`),
+      },
     });
     this.term.loadAddon(this.fit);
     this.term.onData((d) => this.input(d, false));

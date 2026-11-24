@@ -91,8 +91,8 @@ export function NotificationBell() {
             {list.length > 0 && (
               <button type="button" className="notif-clear" onClick={() => {
                   clearNotifications();
-                  // the button goes with the list: keep the keyboard on the bell, not on the page
-                  btn.current?.focus();
+                  // the button goes with the list: keep the keyboard in the popup, which stays open, not on the page
+                  box.current?.focus();
                 }}>
                 Clear all
               </button>
