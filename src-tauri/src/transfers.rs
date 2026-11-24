@@ -262,10 +262,11 @@ pub(crate) async fn download_file(
     dest: &str,
     cancel: &AtomicBool,
     progress: Progress<'_>,
+    expect: Option<dest::Stamp>,
 ) -> Result<Outcome, String> {
     // held like any download's name: never two writers on one file (sync runs several at once)
     let _held = dest::hold_exact(Path::new(dest))?;
-    let mut dl = Dl { replace: true, ..Default::default() };
+    let mut dl = Dl { replace: true, expect, ..Default::default() };
     download_to(client, bucket, key, Path::new(dest), None, false, cancel, progress, None, &mut dl).await
 }
 
@@ -735,15 +736,35 @@ async fn spawn_transfer(
     resume_etag: Option<String>,
     listed: Option<crate::filecache::Ident>,
 ) -> Result<(), String> {
-    // S3 goes the way it always did; other kinds of connection read and write through their backend
-    let conn = storage::connect(&app, state, &profile_id).await?;
-    let source = match kind {
-        Kind::Upload => Some(open_source(&app, &local).await?),
-        Kind::Download { .. } => None,
-    };
+    // the id is claimed before anything is awaited: Retry pressed twice (or the page and a
+    // notification action) must not start two transfers under one id, of which Pause and Cancel
+    // would reach only one
     let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut running = state.cancels.lock().await;
+        if running.contains_key(&id) {
+            return Err(format!("This {} is already running.", if matches!(kind, Kind::Upload) { "upload" } else { "download" }));
+        }
+        running.insert(id.clone(), cancel.clone());
+    }
+    // S3 goes the way it always did; other kinds of connection read and write through their backend
+    let opened = async {
+        let conn = storage::connect(&app, state, &profile_id).await?;
+        let source = match kind {
+            Kind::Upload => Some(open_source(&app, &local).await?),
+            Kind::Download { .. } => None,
+        };
+        Ok::<_, String>((conn, source))
+    }
+    .await;
+    let (conn, source) = match opened {
+        Ok(c) => c,
+        Err(e) => {
+            state.cancels.lock().await.remove(&id);
+            return Err(e);
+        }
+    };
     let pause = Arc::new(AtomicBool::new(false));
-    state.cancels.lock().await.insert(id.clone(), cancel.clone());
     PAUSES.lock().unwrap().insert(id.clone(), pause.clone());
     let slots = state.transfer_slots(&profile_id).await;
     emit(&app, &id, "queued", 0, 0, None);
@@ -1000,7 +1021,7 @@ async fn spawn_transfer(
         if let (Ok(Outcome::Done), Some(path)) = (&result, &local_done) {
             // the check races Cancel (a server that never answers would hold the transfer and its
             // turn). Stopped there, the transfer itself still went through: see `stopped_check`.
-            let check = race_unlimited(crate::verify::check(&app, &conn, &profile_id, &bucket, &key, path, verify_part_size), &cancel).await;
+            let check = race_unlimited(crate::verify::check(&app, &conn, &profile_id, &bucket, &key, path, verify_part_size, dl.etag.as_deref().filter(|_| matches!(kind, Kind::Download { .. }))), &cancel).await;
             match check {
                 None => match stopped_check(&kind, pause.load(Ordering::Relaxed)) {
                     // a download paused (or the app quit) mid-check: paused with the file kept
@@ -1494,7 +1515,7 @@ mod tests {
             let last = Mutex::new((0u64, 0u64));
             let r = download_file(&client, "b", "file.bin", dest.to_str().unwrap(), &AtomicBool::new(false), &|d, t| {
                 *last.lock().unwrap() = (d, t);
-            })
+            }, None)
             .await;
             assert!(matches!(r, Ok(Outcome::Done)), "download failed: {:?}", r.err());
             assert_eq!(std::fs::read(&dest).unwrap(), data, "the resumed file is whole and in order");

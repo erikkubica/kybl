@@ -408,9 +408,14 @@ async fn copy_file(ctx: &Ctx, item: &Item, inflight: &Arc<AtomicU64>) -> SResult
         {
             return Err(changed(now.size.max(0) as u64, size));
         }
-        // don't leave a bad copy behind (it would look like a finished one)
-        let never = AtomicBool::new(false);
-        let _ = ctx.dst.delete(&spec.dst.root, std::slice::from_ref(&dst_path), &[], &never, &|_, _| {}).await;
+        // don't leave a bad copy behind (it would look like a finished one), unless what is at
+        // that path isn't this job's write any more (another job wrote its own file there)
+        if let Ok(Some(now)) = ctx.dst.stat(&spec.dst.root, &dst_path).await
+            && still_written(&entry, &now)
+        {
+            let never = AtomicBool::new(false);
+            let _ = ctx.dst.delete(&spec.dst.root, std::slice::from_ref(&dst_path), &[], &never, &|_, _| {}).await;
+        }
         return Err(e);
     }
     crate::platform::quarantine::mark_arrival(!ctx.src.caps().local_paths, &*ctx.dst, &spec.dst.root, &dst_path);
@@ -421,6 +426,18 @@ async fn copy_file(ctx: &Ctx, item: &Item, inflight: &Arc<AtomicU64>) -> SResult
         db::record_dst(&ctx.db.lock().unwrap(), &ctx.job_id, &item.src_path, now.etag.as_deref(), now.size, now.modified).map_err(StorageError::other)?;
     }
     Ok(Outcome::Ended(if mv { End::Copied } else { End::Done }))
+}
+
+/// Whether the file at the destination is still the one a job wrote (`wrote`: what its write
+/// answered): the same size, and the same ETag or time where both sides tell.
+fn still_written(wrote: &Entry, now: &Entry) -> bool {
+    if wrote.size != now.size {
+        return false;
+    }
+    if let (Some(a), Some(b)) = (&wrote.etag, &now.etag) {
+        return a.trim_matches('"') == b.trim_matches('"');
+    }
+    !matches!((wrote.modified, now.modified), (Some(a), Some(b)) if a != b)
 }
 
 /// Whether the file is still what was planned (size, and ETag or time where there are some).
@@ -655,6 +672,16 @@ mod tests {
 
     fn entry(size: i64, modified: Option<i64>) -> Entry {
         Entry { key: "d/a.txt".into(), size, modified, ..Default::default() }
+    }
+
+    #[test]
+    fn a_bad_copy_is_deleted_only_while_it_is_the_one_written() {
+        let wrote = Entry { key: "x".into(), size: 5, etag: Some("\"a\"".into()), ..Default::default() };
+        assert!(still_written(&wrote, &Entry { key: "x".into(), size: 5, etag: Some("a".into()), ..Default::default() }));
+        assert!(!still_written(&wrote, &Entry { key: "x".into(), size: 5, etag: Some("b".into()), ..Default::default() }), "another job's file of the same size");
+        assert!(!still_written(&wrote, &Entry { key: "x".into(), size: 6, ..Default::default() }));
+        assert!(still_written(&entry(5, Some(9)), &entry(5, None)));
+        assert!(!still_written(&entry(5, Some(9)), &entry(5, Some(10))));
     }
 
     #[test]

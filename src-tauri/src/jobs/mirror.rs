@@ -15,7 +15,7 @@ use super::{
     types::{JobSpec, Mirror},
     JobManager,
 };
-use crate::{state::AppState, storage::registry};
+use crate::{state::AppState, storage::{registry, Storage}};
 
 /// Starts the `src_path` of a deletion row.
 pub const DEL_MARK: char = '\u{1}';
@@ -61,7 +61,13 @@ pub fn mirror_items(src_dir: &str, dst_dir: &str, m: &Mirror) -> Result<Vec<NewI
 /// its deletions could reach the source. This device's roots are folders on one disk, so there
 /// the full paths count, whichever roots they are under.
 pub fn overlaps(spec: &JobSpec, src_dir: &str) -> bool {
-    if spec.src.profile_id != spec.dst.profile_id {
+    overlaps_in(spec, src_dir, false)
+}
+
+/// `overlaps`, where `one_place`: two saved connections reach the same store (the same S3
+/// endpoint), so their folders overlap as if they were one connection's.
+fn overlaps_in(spec: &JobSpec, src_dir: &str, one_place: bool) -> bool {
+    if spec.src.profile_id != spec.dst.profile_id && !one_place {
         return false;
     }
     let inside = |a: &str, b: &str| a.starts_with(b) || b.starts_with(a);
@@ -70,6 +76,21 @@ pub fn overlaps(spec: &JobSpec, src_dir: &str) -> bool {
         return inside(&local_folder(&spec.src.root, src_dir, fold), &local_folder(&spec.dst.root, &spec.dst.dir, fold));
     }
     spec.src.root == spec.dst.root && inside(src_dir, &spec.dst.dir)
+}
+
+/// A job whose two connections are saved separately but reach one store, and whose folders
+/// overlap: a copy would go into itself, a mirror's deletions could reach its source. Known only
+/// once both are open (`Storage::place_id`).
+pub fn overlaps_in_one_place(spec: &JobSpec, src: &dyn Storage, dst: &dyn Storage) -> bool {
+    let one_place = src.kind() == dst.kind() && src.place_id().is_some() && src.place_id() == dst.place_id();
+    if spec.src.profile_id == spec.dst.profile_id || !one_place {
+        return false;
+    }
+    if spec.mirror.is_some() {
+        return spec.src.items.first().is_some_and(|i| overlaps_in(spec, &plan::normalize_dir(&i.path), true));
+    }
+    let dst_dir = plan::normalize_dir(&spec.dst.dir);
+    spec.src.root == spec.dst.root && spec.src.items.iter().filter(|i| i.is_dir).any(|i| dst_dir.starts_with(&plan::normalize_dir(&i.path)))
 }
 
 /// A root that is a Windows path (`C:\…`, `\\server\share`): its disk ignores letter case.

@@ -209,9 +209,25 @@ pub fn judge(r: &Remote, l: &Local, local_size: u64) -> Result<Checked, String> 
     Ok("size")
 }
 
+/// Why a download can't be compared with the server's file: it was replaced meanwhile. That is
+/// no mismatch (the copy may be exactly what was downloaded), so it only means "couldn't check".
+const CHANGED: &str = "The file on the server changed since it was downloaded.";
+
+/// Whether the server's ETag now is another version than the one downloaded. Unknown on either
+/// side is no change: only two ETags that both say something can disagree.
+fn moved_on(downloaded: Option<&str>, now: Option<&str>) -> bool {
+    let plain = |t: &str| t.trim().trim_start_matches("W/").trim_matches('"').to_ascii_lowercase();
+    match (downloaded.map(plain), now.map(plain)) {
+        (Some(a), Some(b)) => !a.is_empty() && !b.is_empty() && a != b,
+        _ => false,
+    }
+}
+
 /// What the other side says about the file at `bucket`/`key`, hashes only for a checksum check.
 /// `part_size`: the part size of our own multipart upload of it.
-async fn remote(app: &AppHandle, conn: &Conn, profile_id: &str, bucket: &str, key: &str, checksum: bool, part_size: Option<u64>) -> Result<Remote, String> {
+/// `downloaded`: the version (ETag) the local copy was downloaded from; when the server has
+/// another one now, the copy can't be compared with it.
+async fn remote(app: &AppHandle, conn: &Conn, profile_id: &str, bucket: &str, key: &str, checksum: bool, part_size: Option<u64>, downloaded: Option<&str>) -> Result<Remote, String> {
     let state = app.state::<AppState>();
     match conn {
         Conn::S3(client) => {
@@ -221,6 +237,9 @@ async fn remote(app: &AppHandle, conn: &Conn, profile_id: &str, bucket: &str, ke
                 .await
                 .map_err(|_| "The server didn't answer in time.".to_string())?
                 .map_err(crate::state::sdk_err)?;
+            if moved_on(downloaded, head.e_tag()) {
+                return Err(CHANGED.into());
+            }
             let mut r = Remote { size: head.content_length().map(|n| n.max(0) as u64), ..Default::default() };
             // KMS and customer-key encryption make ETags that aren't MD5s of the content, and so
             // do providers encrypting at rest (Kybl Storage: its capabilities say no MD5s)
@@ -237,6 +256,9 @@ async fn remote(app: &AppHandle, conn: &Conn, profile_id: &str, bucket: &str, ke
         }
         Conn::Other(s) => {
             let e = s.stat(bucket, key).await?.ok_or("The file isn't on the server.")?;
+            if moved_on(downloaded, e.etag.as_deref()) {
+                return Err(CHANGED.into());
+            }
             let mut r = Remote { size: Some(e.size.max(0) as u64), ..Default::default() };
             if !checksum {
                 return Ok(r);
@@ -280,7 +302,9 @@ impl std::fmt::Display for CheckErr {
 }
 
 /// Checks a transferred file as the settings ask. Ok(None): not checked (verify is off).
-pub async fn check(app: &AppHandle, conn: &Conn, profile_id: &str, bucket: &str, key: &str, local: &Path, part_size: Option<u64>) -> Result<Option<Checked>, CheckErr> {
+/// `downloaded`: for a download, the ETag of the version it fetched.
+#[allow(clippy::too_many_arguments)]
+pub async fn check(app: &AppHandle, conn: &Conn, profile_id: &str, bucket: &str, key: &str, local: &Path, part_size: Option<u64>, downloaded: Option<&str>) -> Result<Option<Checked>, CheckErr> {
     let mode = crate::tuning::verify_mode();
     if mode == VerifyMode::Off {
         return Ok(None);
@@ -288,7 +312,7 @@ pub async fn check(app: &AppHandle, conn: &Conn, profile_id: &str, bucket: &str,
     let checksum = mode == VerifyMode::Checksum;
     let unverified = |e: String| CheckErr::Unverified(e);
     let local_size = tokio::fs::metadata(local).await.map_err(|e| unverified(e.to_string()))?.len();
-    let r = remote(app, conn, profile_id, bucket, key, checksum, part_size).await.map_err(unverified)?;
+    let r = remote(app, conn, profile_id, bucket, key, checksum, part_size, downloaded).await.map_err(unverified)?;
     let l = if checksum {
         let (path, rr) = (local.to_path_buf(), r.clone());
         tokio::task::spawn_blocking(move || hash_file(&path, &rr)).await.map_err(|e| unverified(e.to_string()))?.map_err(|e| unverified(e.to_string()))?
@@ -320,6 +344,16 @@ mod tests {
         let p = std::env::temp_dir().join(format!("kybl-verify-{}", uuid::Uuid::new_v4()));
         std::fs::write(&p, data).unwrap();
         p
+    }
+
+    #[test]
+    fn a_replaced_object_is_no_mismatch() {
+        assert!(moved_on(Some("\"aa\""), Some("\"bb\"")));
+        assert!(!moved_on(Some("\"aa\""), Some("AA")));
+        assert!(!moved_on(Some("W/\"aa\""), Some("\"aa\"")));
+        assert!(!moved_on(None, Some("\"bb\"")));
+        assert!(!moved_on(Some("\"aa\""), None));
+        assert!(!moved_on(Some(""), Some("\"bb\"")));
     }
 
     #[test]

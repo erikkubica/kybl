@@ -460,17 +460,39 @@ pub async fn upload_stream(
         return Err(StorageError::other("The file changed while it was being copied.").with_detail(format!("expected {n} bytes, sent {total}")));
     }
     let completed: Vec<CompletedPart> = parts.iter().map(|(n, (_, etag))| CompletedPart::builder().e_tag(etag).part_number(*n).build()).collect();
-    let out = client
+    let etags: Vec<String> = parts.values().map(|p| p.1.clone()).collect();
+    // what tells a lost answer apart from an earlier upload of the same size: the ETag these
+    // parts make (servers that hash parts with MD5), or else the object that was there before
+    let expected = if etag_is_md5 { multipart_etag(&etags) } else { None };
+    let before = match expected {
+        Some(_) => None,
+        None => client.head_object().bucket(bucket).key(key).send().await.ok().map(|h| h.e_tag().unwrap_or_default().to_string()),
+    };
+    let asked = std::time::SystemTime::now();
+    let sent = client
         .complete_multipart_upload()
         .bucket(bucket)
         .key(key)
         .upload_id(&id)
         .multipart_upload(CompletedMultipartUpload::builder().set_parts(Some(completed)).build())
         .send()
-        .await
-        .map_err(|e| StorageError::from(sdk_err(e)))?;
+        .await;
+    let out = match sent {
+        Ok(out) => out,
+        Err(e) => {
+            // The answer can be lost (a timeout, a retry on a dropped connection that then
+            // finds the upload gone) after the server put the file together: look before the
+            // file is sent all over again.
+            let e = StorageError::from(sdk_err(e));
+            let ours = crate::multipart::Ours { total, parts: parts.len(), expected: expected.as_deref(), before: before.as_deref(), asked };
+            if crate::multipart::completed_anyway(&client, bucket, key, &ours).await {
+                progress(total, total);
+                return Ok(WriteOutcome::Done(done_entry(s3, bucket, key, total, String::new()).await));
+            }
+            return Err(e);
+        }
+    };
     let etag = out.e_tag().map(bare).unwrap_or_default();
-    let etags: Vec<String> = parts.values().map(|p| p.1.clone()).collect();
     if etag_is_md5
         && !sse_etag(out.server_side_encryption(), None)
         && let Some(expected) = multipart_etag(&etags)

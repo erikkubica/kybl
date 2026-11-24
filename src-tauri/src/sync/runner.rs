@@ -224,13 +224,24 @@ async fn exec_transfer(job: Job, ctx: &JobCtx, progress: &(dyn Fn(u64, u64) + Se
             if !still {
                 return Ok(Done::Skipped);
             }
+            // the file must still be what the plan saw when the download is whole: the check
+            // above is long gone by then (nothing is there once the local copy is set aside)
+            let mut stamp = match expect {
+                Expect::Absent => crate::dest::Stamp::Absent,
+                Expect::Matches(s, m) => crate::dest::Stamp::Matches(s, m),
+            };
             if keep_local && now.is_some() {
                 std::fs::rename(&dest, local::local_copy_path(&dest)).map_err(|e| format!("could not keep the local copy: {e}"))?;
+                stamp = crate::dest::Stamp::Absent;
             }
-            let out = match ctx.remote.as_s3() {
+            let got = match ctx.remote.as_s3() {
                 // S3 keeps its own download path: it carries on after a dropped connection
-                Some(s3) => crate::transfers::download_file(s3.client(), &ctx.root, &key, &dest.to_string_lossy(), &ctx.cancel, progress).await?,
-                None => generic_cmds::download(&*ctx.remote, &ctx.root, &key, &dest, &ctx.cancel, progress, None).await?,
+                Some(s3) => crate::transfers::download_file(s3.client(), &ctx.root, &key, &dest.to_string_lossy(), &ctx.cancel, progress, Some(stamp)).await,
+                None => generic_cmds::download(&*ctx.remote, &ctx.root, &key, &dest, &ctx.cancel, progress, None, Some(stamp)).await,
+            };
+            let out = match got {
+                Err(e) if e == crate::dest::CHANGED => return Ok(Done::Skipped),
+                other => other?,
             };
             match out {
                 Outcome::Done => {
@@ -442,12 +453,33 @@ impl Engine<'_> {
     }
 
     /// Deletes (or moves to the remote trash) the given paths on the other side. Answers the
-    /// paths that are gone.
-    async fn delete_remote(&self, items: &[(String, String)], errors: &mut Vec<String>) -> Vec<String> {
+    /// paths that are gone. With `base` (a two-way run), a file is deleted only if it is still
+    /// what was synced: another device may have changed it since the plan saw it (a quick run
+    /// never lists the remote), and that change wins and is pulled next run.
+    async fn delete_remote(&self, items: &[(String, String)], base: Option<&HashMap<String, BaseEntry>>, errors: &mut Vec<String>) -> Vec<String> {
         let mut gone = Vec::new();
         if items.is_empty() || self.cancelled() {
             return gone;
         }
+        let unchanged: Vec<(String, String)>;
+        let items = match base {
+            Some(base) => {
+                let md5 = self.md5();
+                let mut keep = Vec::new();
+                for (rel, key) in items {
+                    match self.remote.stat(&self.root, key).await {
+                        // already gone
+                        Ok(None) => gone.push(rel.clone()),
+                        Ok(Some(e)) if base.get(rel).is_some_and(|b| b.remote_matches(&remote::remote_meta(&e, md5))) => keep.push((rel.clone(), key.clone())),
+                        Ok(Some(_)) => {}
+                        Err(e) => errors.push(format!("{rel}: {}", e.message)),
+                    }
+                }
+                unchanged = keep;
+                &unchanged[..]
+            }
+            None => items,
+        };
         // on a folder on this computer, nothing reached through a link is deleted (B4-1)
         let kept: Vec<(String, String)>;
         let items = if self.remote.caps().local_paths {
@@ -658,7 +690,7 @@ impl Engine<'_> {
         let (uploaded, _, _) = self.run_jobs(jobs, total, &mut errors, &mut notices).await;
         errors.extend(notices.into_iter().map(|(rel, why)| format!("{rel}: {why}")));
         let dels: Vec<(String, String)> = p.delete_remote.iter().map(|rel| (rel.clone(), self.push_key(rel, &local, rs))).collect();
-        let deleted = self.delete_remote(&dels, &mut errors).await;
+        let deleted = self.delete_remote(&dels, None, &mut errors).await;
         self.db.drop_base_many(&self.id, &deleted)?;
         self.finish(confirmed_used)?;
         let mut parts = Vec::new();
@@ -982,8 +1014,10 @@ impl Engine<'_> {
                     self.db.put_tombstone(&self.id, p, Side::Remote, b, now)?;
                 }
             }
-            let gone = self.delete_remote(&del_remote, &mut errors).await;
+            let gone = self.delete_remote(&del_remote, Some(&base), &mut errors).await;
             let failed: Vec<(String, Side)> = del_remote.iter().filter(|(p, _)| !gone.contains(p)).map(|(p, _)| (p.clone(), Side::Remote)).collect();
+            // a file changed there since the plan is kept, without an error
+            left_alone |= !failed.is_empty();
             self.db.clear_tombstones(&self.id, &failed)?;
             self.db.drop_base_many(&self.id, &gone)?;
             deleted += gone.len();
