@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import JSZip from "jszip";
 import { Note } from "./ui";
 import type { ViewerProps } from "./types";
+import { zipTooBig } from "./zipCheck";
 
 const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const P = "http://schemas.openxmlformats.org/presentationml/2006/main";
@@ -46,15 +47,22 @@ function normalize(path: string): string {
   return out.join("/");
 }
 
-async function imageUrl(zip: JSZip, path: string): Promise<string | null> {
+/** A picture of the deck as an object URL; one per picture, however many slides show it (`made`). */
+async function imageUrl(zip: JSZip, path: string, made: Map<string, string | null>): Promise<string | null> {
+  if (made.has(path)) return made.get(path)!;
   const type = IMAGE_TYPES[path.slice(path.lastIndexOf(".") + 1).toLowerCase()];
   const f = zip.file(path);
-  if (!type || !f) return null;
-  return URL.createObjectURL(new Blob([await f.async("uint8array") as BlobPart], { type }));
+  const url = type && f ? URL.createObjectURL(new Blob([(await f.async("uint8array")) as BlobPart], { type })) : null;
+  made.set(path, url);
+  return url;
 }
 
-async function readDeck(bytes: Uint8Array): Promise<Deck> {
+/** The deck's outline; slide pictures only for the full view (the side pane and Quick Look show none). */
+async function readDeck(bytes: Uint8Array, pictures: boolean): Promise<Deck> {
+  // a few MB can inflate to GBs: refused before anything is inflated for real
+  if (await zipTooBig(bytes)) throw new Error("too big to preview");
   const zip = await JSZip.loadAsync(bytes);
+  const made = new Map<string, string | null>();
   // slide order comes from presentation.xml, not from the file names
   const pres = await zip.file("ppt/presentation.xml")?.async("string");
   const presRels = await rels(zip, "ppt/presentation.xml");
@@ -102,13 +110,13 @@ async function readDeck(bytes: Uint8Array): Promise<Deck> {
     let picture: string | null = null;
     const blip = doc.getElementsByTagNameNS(A, "blip")[0];
     const embed = blip?.getAttributeNS(R, "embed");
-    if (embed) {
+    if (embed && pictures) {
       const target = (await rels(zip, part)).get(embed);
-      if (target) picture = await imageUrl(zip, target);
+      if (target) picture = await imageUrl(zip, target, made);
     }
     slides.push({ n: i + 1, title, paras, picture });
   }
-  const cover = (await imageUrl(zip, "docProps/thumbnail.jpeg")) ?? (await imageUrl(zip, "docProps/thumbnail.png"));
+  const cover = (await imageUrl(zip, "docProps/thumbnail.jpeg", made)) ?? (await imageUrl(zip, "docProps/thumbnail.png", made));
   return { cover, slides };
 }
 
@@ -121,9 +129,9 @@ export default function PptxView({ bytes, mode }: ViewerProps) {
     let made: Deck | null = null;
     // the pictures are object URLs: free them with the view
     const free = (d: Deck) => {
-      for (const u of [d.cover, ...d.slides.map((s) => s.picture)]) if (u) URL.revokeObjectURL(u);
+      for (const u of new Set([d.cover, ...d.slides.map((s) => s.picture)])) if (u) URL.revokeObjectURL(u);
     };
-    readDeck(bytes)
+    readDeck(bytes, mode === "full")
       .then((d) => {
         // closed (or another file) before the deck was read: nothing will show these
         if (!live) return free(d);
@@ -135,7 +143,7 @@ export default function PptxView({ bytes, mode }: ViewerProps) {
       live = false;
       if (made) free(made);
     };
-  }, [bytes]);
+  }, [bytes, mode]);
 
   if (error) return <Note icon="alert">This presentation couldn't be read. It may be damaged, or saved in the older .ppt format.</Note>;
   if (!deck) return <Note spinner>Reading the slides…</Note>;

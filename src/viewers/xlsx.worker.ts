@@ -4,6 +4,7 @@
  */
 import { read, utils, type WorkBook } from "xlsx";
 import { sheetCut, usedExtent } from "./gridShape";
+import { zipTooBig } from "./zipCheck";
 
 export type XlsxRequest = { id: number; open: Uint8Array } | { id: number; sheet: string };
 export type XlsxResponse =
@@ -15,10 +16,14 @@ let book: WorkBook | null = null;
 
 const post = (m: XlsxResponse) => (self as unknown as Worker).postMessage(m);
 
-self.onmessage = (ev: MessageEvent<XlsxRequest>) => {
+self.onmessage = async (ev: MessageEvent<XlsxRequest>) => {
   const req = ev.data;
   try {
     if ("open" in req) {
+      book = null;
+      // a few MB can inflate to GBs, and a worker out of memory takes the whole web view with it:
+      // refused before SheetJS inflates anything (it even allocates what a part's header claims)
+      if (await zipTooBig(req.open)) return post({ id: req.id, error: true });
       book = read(req.open, { type: "array", dense: true, cellHTML: false, cellStyles: false, bookVBA: false });
       const b = book;
       post({ id: req.id, sheets: b.SheetNames.map((name, i) => ({ name, hidden: !!b.Workbook?.Sheets?.[i]?.Hidden })) });

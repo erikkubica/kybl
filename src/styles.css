@@ -4443,6 +4443,14 @@ body.dragging-items * {
 .paste-trust {
   margin-top: 10px;
 }
+.paste-hidden {
+  color: var(--warn);
+  font-weight: 500;
+}
+.paste-cut {
+  color: var(--dim);
+  font-style: italic;
+}
 .toast-more {
   flex: none;
   padding: 1px 6px;

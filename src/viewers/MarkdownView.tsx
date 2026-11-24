@@ -40,8 +40,9 @@ export function renderMarkdown(src: string): string {
   return DOMPurify.sanitize(html, {
     FORCE_BODY: true,
     SANITIZE_NAMED_PROPS: true,
-    FORBID_TAGS: ["form", "input", "button", "textarea", "select", "style"],
-    FORBID_ATTR: ["style"],
+    // image maps too: an <area href> is a link SandboxFrame must catch, and Markdown needs none
+    FORBID_TAGS: ["form", "input", "button", "textarea", "select", "style", "map", "area"],
+    FORBID_ATTR: ["style", "usemap"],
   });
 }
 

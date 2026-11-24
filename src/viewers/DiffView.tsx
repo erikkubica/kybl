@@ -21,6 +21,8 @@ import "./diff.css";
 const CONTEXT = 3;
 /** Rows drawn before "Show the rest" (whole-file rewrites of huge files stay responsive). */
 const FIRST_ROWS = 4000;
+/** time per render for marking changed words (see `pieces`) */
+const WORDS_BUDGET_MS = 150;
 const MAX_LINES = 250_000;
 const PREFS = "kybl.diff";
 const macWindow = /Macintosh|Mac OS X/.test(navigator.userAgent) && !window.matchMedia("(pointer: coarse)").matches;
@@ -150,11 +152,27 @@ export function DiffView({ left, right, title, onClose }: { left: DiffSide; righ
     setOpen(new Set());
     setAll(false);
   }, [diff]);
-  const pieces = (i: number, a: string, b: string) => {
+  // changed words are worked out during render, row by row (each up to its own deadline): a total
+  // budget per render keeps thousands of long, very different lines from freezing the window;
+  // rows past it show unmarked and get their marks over the next renders
+  const [, setWordsTick] = useState(0);
+  const wordsUntil = performance.now() + WORDS_BUDGET_MS;
+  let wordsLeft = false;
+  const pieces = (i: number, a: string, b: string): [Piece[], Piece[]] | null => {
     let w = words.current.get(i);
-    if (!w) words.current.set(i, (w = wordDiff(a, b)));
+    if (w) return w;
+    if (performance.now() > wordsUntil) {
+      wordsLeft = true;
+      return null;
+    }
+    words.current.set(i, (w = wordDiff(a, b)));
     return w;
   };
+  useEffect(() => {
+    if (!wordsLeft) return;
+    const t = window.setTimeout(() => setWordsTick((n) => n + 1), 0);
+    return () => window.clearTimeout(t);
+  });
 
   const hunks = diff && !("tooMany" in diff) ? diff.hunks : [];
   const jump = (to: number) => {

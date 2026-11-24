@@ -12,6 +12,7 @@ import { parseAsync, renderDocument } from "docx-preview";
 import { SandboxFrame } from "./SandboxFrame";
 import { Note } from "./ui";
 import type { ViewerProps } from "./types";
+import { zipTooBig } from "./zipCheck";
 
 /** A Word page (8.5in) plus the gap around it, in CSS pixels. */
 const PAGE_W = 816 + 40;
@@ -43,12 +44,20 @@ export default function DocxView({ name, bytes }: ViewerProps) {
         trimXmlDeclaration: true,
         ignoreLastRenderedPageBreak: true,
       };
+      // a few MB can inflate to GBs (on this thread): refused before anything is inflated for real
+      if (await zipTooBig(bytes)) throw new Error("too big to preview");
       const doc = await parseAsync(new Blob([bytes as BlobPart]), options);
       const nodes = await renderDocument(doc, options);
       // the nodes were made by docx-preview but never attached to the page
       const holder = document.createElement("div");
       for (const n of nodes) holder.appendChild(n);
-      const clean = DOMPurify.sanitize(holder.innerHTML, { FORCE_BODY: true, ADD_TAGS: ["style"] });
+      const clean = DOMPurify.sanitize(holder.innerHTML, {
+        FORCE_BODY: true,
+        ADD_TAGS: ["style"],
+        // no image maps (Word output has none; an <area href> would be a link the frame must never follow)
+        FORBID_TAGS: ["map", "area", "form", "input", "button", "textarea", "select"],
+        FORBID_ATTR: ["usemap"],
+      });
       if (live) setHtml(clean);
     })().catch((e) => live && setError(String((e as Error)?.message ?? e)));
     return () => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openLink } from "../openLink";
 import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
 import { ON_PHONE, THIS_DEVICE, kyblApi, saveAppUrl, savedAppUrl, type DeviceStart } from "../kybl";
@@ -218,7 +218,7 @@ export function KyblConnectDialog({
                   href={step.d.verificationUriComplete}
                   onClick={(e) => {
                     e.preventDefault();
-                    openUrl(step.d.verificationUriComplete).catch(() => {});
+                    openLink(step.d.verificationUriComplete).catch(() => {});
                   }}
                 >
                   {step.d.verificationUri.replace(/^https?:\/\//, "")}

@@ -56,6 +56,8 @@ export function EditingChip({
     };
     const esc = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // a dialog opened from here ("Stop editing?", a conflict) sits on top: its Esc, not ours
+        if (document.querySelector(".modal-backdrop")) return;
         e.stopPropagation();
         setOpen(false);
       }

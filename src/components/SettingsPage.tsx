@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { askBeforeEveryPaste, onPasteTrustChange, pasteTrustCount } from "../terminal/api";
 import { getVersion } from "@tauri-apps/api/app";
 import { Icon, type IconName } from "../Icons";
 import { SCHEMES, type Palette } from "../schemes";
@@ -15,7 +16,7 @@ import { SyncSection } from "./SyncSection";
 import { MountsSection } from "../mount/MountsSection";
 import { ActionsSection } from "../actions/ActionsSection";
 import { syncApi, type AppPrefs } from "../sync";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openLink } from "../openLink";
 import { actionLabel, ago, installAndRestart, UpdateStepError, updatesApi, useUpdates } from "../updates";
 import { formatBytes, mbpsToKbps } from "../format";
 import { useTransfersActive } from "../useTransfers";
@@ -166,7 +167,7 @@ function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info"
       <Row label="Updates" hint={status}>
         <div className="set-actions">
           {rel && (
-            <button className="btn btn-sm" onClick={() => openUrl(rel.page).catch(() => {})}>
+            <button className="btn btn-sm" onClick={() => openLink(rel.page).catch(() => {})}>
               What's new
             </button>
           )}
@@ -220,6 +221,25 @@ function Row({ label, hint, stack, children }: { label: ReactNode; hint?: string
       </div>
       {children}
     </div>
+  );
+}
+
+/** The terminal paste question: always asked, unless turned off for one running terminal; this turns it back on for all. */
+function PasteAskRow() {
+  const skipped = useSyncExternalStore(onPasteTrustChange, pasteTrustCount);
+  return (
+    <Row
+      label="Ask before pasting several lines in a terminal"
+      hint={
+        skipped
+          ? `Turned off in ${skipped === 1 ? "1 open terminal" : `${skipped} open terminals`} until it closes or restarts.`
+          : "On in every terminal. “Don’t ask again” in the question turns it off for that terminal until it closes or restarts."
+      }
+    >
+      <button className="btn btn-sm" disabled={!skipped} onClick={askBeforeEveryPaste}>
+        Ask in all terminals
+      </button>
+    </Row>
   );
 }
 
@@ -604,6 +624,7 @@ export function SettingsPage({
                   <Row label="Confirm before deleting" hint={`On most connections a delete cannot be undone. Drives and the ${ON_OS.trash} keep what you delete.`}>
                     <Switch label="Confirm before deleting" on={settings.confirmDelete} onChange={(confirmDelete) => onChange({ confirmDelete })} />
                   </Row>
+                  <PasteAskRow />
                   <Row label="Secret keys" hint={`Saved encrypted, never in a settings file. The key is in ${ON_OS.keychain}.`}>
                     <span className="set-value">Encrypted</span>
                   </Row>
