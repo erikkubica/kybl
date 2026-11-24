@@ -419,7 +419,7 @@ export function PropsEditor({
       )}
 
       {error && (
-        <div className="result bad">
+        <div className="result bad" role="alert">
           <Icon name="alert" size={15} />
           <ErrorText message={error} />
         </div>

@@ -188,6 +188,10 @@ export type Transfer = {
   local: string;
   /** done and checked after copying: what was compared ("size", "md5", "etag", "sha256", "quickxor", "dropbox") */
   verified?: string;
+  /** done, but Cancel stopped the check after copying: the file is there, unverified */
+  checkStopped?: boolean;
+  /** paused with a download's whole file in place, only its check left (Resume checks it) */
+  checkPending?: boolean;
 };
 
 export type TransferEvent = {
@@ -203,4 +207,8 @@ export type TransferEvent = {
   verified?: string;
   /** the download landed under this name instead: a file turned up at its own while it ran */
   local?: string;
+  /** done, but Cancel stopped its check */
+  checkStopped?: boolean;
+  /** paused with the whole file in place, only its check left */
+  checkPending?: boolean;
 };

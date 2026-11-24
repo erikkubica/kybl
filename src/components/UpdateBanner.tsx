@@ -3,6 +3,7 @@ import { useTransfersActive } from "../useTransfers";
 import { openLink } from "../openLink";
 import { Icon } from "../Icons";
 import { formatBytes } from "../format";
+import { errMessage } from "../api";
 import { actionLabel, installAndRestart, UpdateStepError, updatesApi, type UpdateStatus } from "../updates";
 
 /** Versions the user put off with "Later": not shown again until the next launch. */
@@ -37,8 +38,8 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
     setRestartError(null);
     setInstallError(null);
     if (rel.how !== "install") {
-      updatesApi.install().catch(() => {});
-      hide();
+      // the download page opens in the browser: hidden once it did, else the reason shows here
+      updatesApi.install().then(hide, (e) => setInstallError(errMessage(e)));
       return;
     }
     installAndRestart(() => setBusy(true)).catch((e) =>
@@ -93,8 +94,10 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
           </>
         ) : failed ? (
           <>
-            <b>{restartError ? "Kybl couldn't restart" : "The update didn't install"}</b>
-            <small className="update-err">{failText}</small>
+            <b>{restartError ? "Kybl couldn't restart" : rel.how !== "install" ? "Couldn't open the download" : "The update didn't install"}</b>
+            <small className="update-err" role="alert">
+              {failText}
+            </small>
             <div className="update-actions">
               <button className="btn btn-sm btn-primary" onClick={go}>
                 Try again

@@ -1837,6 +1837,8 @@ export default function MobileApp() {
               loadBuckets(p);
             }}
             onDeleted={async (id) => {
+              forgetCaps(id);
+              clearAuthNeeded(id);
               if (loc?.profileId === id) go(null, "out");
               await reloadProfiles();
             }}

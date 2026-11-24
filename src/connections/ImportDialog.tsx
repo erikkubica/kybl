@@ -155,7 +155,7 @@ export function ImportDialog({ onClose, onImported, toast }: Props) {
           <p>Bring the sites you saved in another app into Kybl. Passwords go straight into Kybl's encrypted vault.</p>
           {!sources && !error && <p className="hint">Looking for apps…</p>}
           {error && (
-            <p className="hint error">
+            <p className="hint error" role="alert">
               <ErrorText message={error} />
             </p>
           )}
@@ -207,7 +207,7 @@ export function ImportDialog({ onClose, onImported, toast }: Props) {
       ) : (
         <>
           <div className="modal-body">
-            <p className="hint error">
+            <p className="hint error" role="alert">
               <ErrorText message={error ?? "Couldn't read the file."} />
             </p>
           </div>
@@ -338,7 +338,7 @@ function SiteList({
           </>
         )}
         {error && (
-          <p className="hint error">
+          <p className="hint error" role="alert">
             <ErrorText message={error} />
           </p>
         )}

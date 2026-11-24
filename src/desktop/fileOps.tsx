@@ -16,7 +16,7 @@ import { destKey, entryParent, placeLabel } from "../moving";
 import type { Settings } from "../settings";
 import type { Entry, LocalFile, Profile } from "../types";
 import type { Toast } from "../components/Dialogs";
-import type { TransferActions } from "../useTransfers";
+import { finishedOk, type TransferActions } from "../useTransfers";
 import type { useJobs } from "../useJobs";
 import { applyChoices, findExisting, freeKeys, type Choice, type Clash } from "./conflicts";
 import { copyName, joinPath, numberedName, safeName, safeRelPath, shortHash } from "./paths";
@@ -24,6 +24,9 @@ import { undoStack, type UndoEntry } from "./undo";
 import { itemClipboard } from "./clipboard";
 import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
 import { localCopies, type LocalCopyVerb } from "../localCopyProgress";
+
+/** `localCopy` calls under way, by file and version: a second one waits for the first. */
+const inFlightCopies = new Map<string, Promise<string | null>>();
 import { parentOf, renameRounds } from "../batchRename";
 import { BatchRenameDialog } from "./BatchRenameDialog";
 import { OS } from "./openWith";
@@ -282,7 +285,22 @@ export function makeFileOps(c: OpsContext) {
    * listing's ETag finds it without asking the server), else downloaded. Null when it failed
    * (already said so).
    */
-  const localCopy = async (picked: Entry, verb: LocalCopyVerb): Promise<string | null> => {
+  const localCopy = (picked: Entry, verb: LocalCopyVerb): Promise<string | null> => {
+    // a second Open / Copy of the same file while it downloads joins the first one
+    const k = c.profile && c.bucket != null ? `${c.profile.id}
+${c.bucket}
+${picked.key}
+${picked.etag ?? ""}` : null;
+    const going = k ? inFlightCopies.get(k) : undefined;
+    if (going) return going;
+    const p = fetchLocalCopy(picked, verb);
+    if (k) {
+      inFlightCopies.set(k, p);
+      void p.finally(() => inFlightCopies.delete(k));
+    }
+    return p;
+  };
+  const fetchLocalCopy = async (picked: Entry, verb: LocalCopyVerb): Promise<string | null> => {
     const { profile, bucket } = c;
     if (!profile || bucket == null || picked.kind !== "file") return null;
     const e = asExport(picked);
@@ -305,7 +323,7 @@ export function makeFileOps(c: OpsContext) {
       ]);
       localCopies.transfer(pid, bucket, picked.key, t.id);
       const done = await transfers.whenFinished(t.id);
-      if (done.state === "done") return done.local;
+      if (finishedOk(done)) return done.local;
       if (done.state === "error") toast("error", `Couldn’t get “${e.name}”. ${done.error ?? ""}`, showAction);
     } catch (err) {
       toast("error", errMessage(err));
@@ -735,7 +753,7 @@ export function makeFileOps(c: OpsContext) {
           label: "Try again",
           message: (
             <>
-              <p className="hint error">{err.split("\n\n")[0]}</p>
+              <p className="hint error" role="alert">{err.split("\n\n")[0]}</p>
               <ul className="br-failed">
                 {left.slice(0, 200).map((m) => (
                   <li key={m.from}>

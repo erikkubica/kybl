@@ -2,10 +2,10 @@
  * Setting a backup up: what (the camera roll or a folder), where (any connection, picked in the
  * same folder tree copies use), then how (folder names, which items, when it runs).
  */
-import { useEffect, useState, type MutableRefObject } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { backupApi, errMessage, errSummary, LOCAL_ID, type BackupPermission, type BackupSetDraft, type BackupSetStatus, type BackupSource } from "../../api";
 import { Icon } from "../../Icons";
-import { LocationPicker, locLabel, type Loc, type PickedLocation } from "../../jobs/LocationPicker";
+import { LocationPicker, locLabel, type Loc, type NewFolderCommit, type PickedLocation } from "../../jobs/LocationPicker";
 import type { Toast } from "../../components/Dialogs";
 import { HONEST, PermissionNote, Seg, Toggle, type Platform } from "./parts";
 
@@ -62,6 +62,7 @@ export function SetupFlow({
   const [step, setStep] = useState<Step>("source");
   const [source, setSource] = useState<BackupSource | null>(null);
   const [dest, setDest] = useState<PickedLocation | null>(null);
+  const newFolder = useRef<NewFolderCommit>(null);
   const [asking, setAsking] = useState(false);
   // "New folder" in the destination picker
   const [creating, setCreating] = useState(false);
@@ -201,11 +202,25 @@ export function SetupFlow({
             onChange={setDest}
             creating={creating}
             onCreatingDone={() => setCreating(false)}
+            commitRef={newFolder}
             blocked={(l: Loc) => (l.profileId === LOCAL_ID ? "Backups go to one of your connections, not to this phone." : null)}
           />
         </div>
         <nav className="m-actionbar bk-bar-bottom">
-          <button className="btn btn-primary m-big-btn" disabled={!dest || dest.profileId === LOCAL_ID} onClick={() => setStep("options")}>
+          <button
+            className="btn btn-primary m-big-btn"
+            disabled={!dest || dest.profileId === LOCAL_ID}
+            data-new-folder="commit"
+            onClick={async () => {
+              // a folder name typed and not created yet: create it and back up there
+              if (creating) {
+                const made = await newFolder.current?.commit();
+                if (made === false) return;
+                if (made) setDest(made);
+              }
+              setStep("options");
+            }}
+          >
             <span className="bk-btn-label">{dest && dest.profileId !== LOCAL_ID ? `Back up to ${dest.dir ? dest.dir.replace(/\/$/, "").split("/").pop() : dest.rootName} on ${dest.connectionName}` : "Choose a folder"}</span>
           </button>
         </nav>

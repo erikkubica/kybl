@@ -2,7 +2,7 @@
  * A folder tree across every connection and this device: connection → root (bucket, drive,
  * folder) → folders, loaded as they are opened. Used to pick where a copy or move goes.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { api, errMessage, errSummary, LOCAL_ID, type RootInfo } from "../api";
 import { Icon } from "../Icons";
 import { FileIcon } from "../components/FileIcon";
@@ -19,6 +19,14 @@ import "./jobs.css";
 export type Loc = { profileId: string; root: string; dir: string };
 /** A picked folder with the names to show for it. */
 export type PickedLocation = Loc & { connectionName: string; rootName: string };
+
+/**
+ * A folder name typed in the "new folder" field and not created yet. A dialog's main button
+ * (marked `data-new-folder="commit"`) awaits `commit()` before it goes on: the new folder's place,
+ * null when no name is pending, or false when it couldn't be created (the field says why). A
+ * button marked `data-new-folder="cancel"` drops the name instead of creating it.
+ */
+export type NewFolderCommit = { commit: () => Promise<PickedLocation | null | false> };
 
 /** How this device is called: "This Mac", "This PC", and on phones "On this phone" like their home screen. */
 export function deviceName(): string {
@@ -66,6 +74,7 @@ export function LocationPicker({
   blocked,
   creating = false,
   onCreatingDone,
+  commitRef,
   className = "",
 }: {
   value: Loc | null;
@@ -75,6 +84,8 @@ export function LocationPicker({
   /** show a "new folder" field inside the picked folder */
   creating?: boolean;
   onCreatingDone?: () => void;
+  /** lets the dialog's main button create a typed folder name first (see `NewFolderCommit`) */
+  commitRef?: React.Ref<NewFolderCommit>;
   className?: string;
 }) {
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
@@ -271,26 +282,71 @@ export function LocationPicker({
     else toggle(r.key, true);
   };
 
-  const createFolder = async () => {
-    if (!value) return;
-    const name = newName.trim().replace(/\/+$/, "");
-    if (!name) return onCreatingDone?.();
-    const bad = nameProblem(name);
-    if (bad) return setNewError(bad);
-    const dir = `${value.dir}${name}/`;
-    setBusy(true);
-    try {
-      await api.createFolder(value.profileId, value.root, dir);
-      const key = dirKey(value);
-      const d = dirs.current.get(key);
-      dirs.current.set(key, { status: "ready", token: d?.token ?? null, folders: [...new Set([...(d?.folders ?? []), dir])].sort(sortNames) });
-      onCreatingDone?.();
-      pick({ ...value, dir });
-    } catch (e) {
-      setNewError(errSummary(errMessage(e)));
-    } finally {
-      setBusy(false);
-    }
+  // one creation at a time: the field's Enter, its blur and a dialog's main button share it
+  const inFlight = useRef<Promise<PickedLocation | null | false> | null>(null);
+  const createFolder = (): Promise<PickedLocation | null | false> => {
+    if (inFlight.current) return inFlight.current;
+    const run = async (): Promise<PickedLocation | null | false> => {
+      if (!value) return null;
+      const name = newName.trim().replace(/\/+$/, "");
+      if (!name) {
+        onCreatingDone?.();
+        return null;
+      }
+      const bad = nameProblem(name);
+      if (bad) {
+        setNewError(bad);
+        return false;
+      }
+      const dir = `${value.dir}${name}/`;
+      setBusy(true);
+      try {
+        await api.createFolder(value.profileId, value.root, dir);
+        const key = dirKey(value);
+        const d = dirs.current.get(key);
+        dirs.current.set(key, { status: "ready", token: d?.token ?? null, folders: [...new Set([...(d?.folders ?? []), dir])].sort(sortNames) });
+        setNewName("");
+        onCreatingDone?.();
+        const loc = { ...value, dir };
+        pick(loc);
+        return { ...loc, connectionName: connName(loc.profileId), rootName: rootName(loc.profileId, loc.root) };
+      } catch (e) {
+        setNewError(errSummary(errMessage(e)));
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    };
+    const p = run().finally(() => {
+      inFlight.current = null;
+    });
+    inFlight.current = p;
+    return p;
+  };
+  const pendingName = creating && !!value && !!newName.trim();
+  useImperativeHandle(commitRef, () => ({ commit: () => (pendingName || inFlight.current ? createFolder() : Promise.resolve(null)) }));
+
+  // what the pointer went down on, read when the field loses focus (WebKit doesn't focus a
+  // clicked button, so the blur's relatedTarget can't say)
+  const pressed = useRef<Element | null>(null);
+  useEffect(() => {
+    if (!creating) return;
+    const down = (e: PointerEvent) => {
+      pressed.current = e.target instanceof Element ? e.target : null;
+    };
+    document.addEventListener("pointerdown", down, true);
+    return () => document.removeEventListener("pointerdown", down, true);
+  }, [creating]);
+  const onNewBlur = (e: React.FocusEvent) => {
+    const to = pressed.current ?? (e.relatedTarget instanceof Element ? e.relatedTarget : null);
+    pressed.current = null;
+    const role = to?.closest("[data-new-folder]")?.getAttribute("data-new-folder");
+    // the main button creates it and then goes on
+    if (role === "commit") return;
+    // Cancel, or another folder picked in the tree: the typed name is dropped
+    if (role === "cancel" || (to && listRef.current?.contains(to))) return onCreatingDone?.();
+    if (newName.trim()) void createFolder();
+    else onCreatingDone?.();
   };
 
   /** The trust button for a row's error (a server's own certificate, an SFTP key, plain FTP), or nothing. */
@@ -410,7 +466,7 @@ export function LocationPicker({
                     if (e.key === "Enter") void createFolder();
                     if (e.key === "Escape") onCreatingDone?.();
                   }}
-                  onBlur={() => (newName.trim() ? void createFolder() : onCreatingDone?.())}
+                  onBlur={onNewBlur}
                 />
                 {newError && <span className="jobs-tree-detail error">{newError}</span>}
               </div>

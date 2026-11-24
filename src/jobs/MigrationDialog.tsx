@@ -3,12 +3,12 @@
  * happens to files that are already there, and start a job that runs in the background. A dialog
  * on desktop; on phones (`variant="screen"`) a full-screen layer of the app's screen stack.
  */
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { errMessage, type JobConflict, type JobSpec } from "../api";
 import { Icon } from "../Icons";
 import { Modal } from "../components/Dialogs";
 import { ErrorText } from "../components/ErrorText";
-import { LocationPicker, locLabel, type Loc, type PickedLocation } from "./LocationPicker";
+import { LocationPicker, locLabel, type Loc, type NewFolderCommit, type PickedLocation } from "./LocationPicker";
 import { jobTitle, parentDir, useSourceSummary, type MigrationItem, type MigrationSource } from "./useSourceSummary";
 import { migrations } from "./useMigrations";
 import "./jobs.css";
@@ -152,7 +152,8 @@ export function MigrationDialog({
 }) {
   const [mode, setMode] = useState(initialMode);
   const [opts, setOpts] = useState<JobOptions>(loadJobOptions);
-  const [dest, setDest] = useState<PickedLocation | null>(null);
+  const [destState, setDest] = useState<PickedLocation | null>(null);
+  const dest = destState;
   const [startAt] = useState<Loc | null>(() => {
     // a folder handed in (the one on screen) is where the tree opens, even when it can't be picked
     if (initialDest?.profileId) return initialDest;
@@ -191,8 +192,20 @@ export function MigrationDialog({
   const title = `${verb} ${s.multi || s.whole ? "everything" : s.what} to…`;
   const conflict = CONFLICTS.find((c) => c.id === opts.conflict) ?? CONFLICTS[0];
 
+  const folder = useRef<NewFolderCommit>(null);
   const start = async () => {
-    if (!dest || why) return;
+    if (starting) return;
+    // a folder name typed and not created yet: create it, then go there (not to its parent)
+    let dest = destState;
+    if (creating) {
+      setStarting(true);
+      const made = await folder.current?.commit();
+      setStarting(false);
+      if (made === false) return;
+      if (made) dest = made;
+    }
+    if (!dest || blocked(dest)) return;
+    const fast = direct(dest);
     if (fast && relocate) {
       relocate.run({ profileId: dest.profileId, root: dest.root, dir: dest.dir }, mode);
       rememberDest(dest);
@@ -222,7 +235,14 @@ export function MigrationDialog({
         </button>
       </div>
 
-      <LocationPicker value={dest ?? startAt} onChange={setDest} blocked={blocked} creating={creating} onCreatingDone={() => setCreating(false)} />
+      <LocationPicker
+        value={dest ?? startAt}
+        onChange={setDest}
+        blocked={blocked}
+        creating={creating}
+        onCreatingDone={() => setCreating(false)}
+        commitRef={folder}
+      />
 
       {!fast && (
       <button className="jobs-options-toggle" onClick={() => setShowOptions((v) => !v)} aria-expanded={showOptions}>
@@ -308,7 +328,7 @@ export function MigrationDialog({
     return (
       <section className="m-screen m-overlay jobs-screen" aria-label={title}>
         <header className="m-bar solid">
-          <button className="m-icon" onClick={onClose} aria-label="Back">
+          <button className="m-icon" onClick={onClose} aria-label="Back" data-new-folder="cancel">
             <Icon name="arrow-left" size={22} />
           </button>
           <div className="m-title">
@@ -320,7 +340,7 @@ export function MigrationDialog({
         </header>
         <div className="jobs-screen-body jobs-dialog">{body}</div>
         <nav className="m-actionbar jobs-screen-bar">
-          <button className="btn btn-primary m-big-btn" disabled={!canStart} onClick={() => void start()}>
+          <button className="btn btn-primary m-big-btn" disabled={!canStart} onClick={() => void start()} data-new-folder="commit">
             <Icon name={mode === "move" ? "move" : "copy"} size={16} /> {label}
           </button>
         </nav>
@@ -335,10 +355,10 @@ export function MigrationDialog({
           <Icon name="folder-plus" size={14} /> New folder
         </button>
         <div className="btn-row">
-          <button className="btn" onClick={onClose}>
+          <button className="btn" onClick={onClose} data-new-folder="cancel">
             Cancel
           </button>
-          <button className="btn btn-primary" disabled={!canStart} onClick={() => void start()}>
+          <button className="btn btn-primary" disabled={!canStart} onClick={() => void start()} data-new-folder="commit">
             {label}
           </button>
         </div>

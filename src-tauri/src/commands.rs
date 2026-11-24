@@ -78,12 +78,30 @@ pub async fn save_profile(
     let held = lock_profiles().await;
     let mut profiles = load_profiles(&app)?;
     let saved = profiles.iter().find(|p| p.id == profile.id).cloned();
+    // SFTP key sign-in: a passphrase alone goes with the key already saved (an imported key file
+    // that has one), under the name the key is read from
+    let mut secret = secret;
+    let mut secret_name = profile.id.clone();
+    let key_auth = profile.kind == ConnKind::Sftp && profile.net.as_ref().is_some_and(|n| n.auth == crate::state::NetAuth::Key);
+    if let Some(pass) = secret.as_deref().filter(|_| key_auth).and_then(storage::net::SshKey::passphrase_only) {
+        let ssh = crate::state::secret_key(&profile.id, "ssh");
+        let (name, stored) = match get_secret(&state, &ssh).await? {
+            Some(s) => (ssh, Some(s)),
+            None => (profile.id.clone(), get_secret(&state, &profile.id).await?),
+        };
+        let merged = stored
+            .as_deref()
+            .and_then(|s| storage::net::SshKey::with_passphrase(s, &pass))
+            .ok_or_else(|| "There is no saved key to add the passphrase to. Choose the key file again.".to_string())?;
+        secret = Some(merged);
+        secret_name = name;
+    }
     // what the vault held before this save changed it, and what it left there, to put back if
     // the list can't be saved (an unreadable "before", a refused keychain prompt: nothing is)
     let mut undo: Option<(Option<String>, Option<String>)> = None;
     if let Some(s) = secret.filter(|s| !s.is_empty()) {
-        let before = get_secret(&state, &profile.id).await.ok();
-        set_secret(&state, &profile.id, &s).await?;
+        let before = get_secret(&state, &secret_name).await.ok();
+        set_secret(&state, &secret_name, &s).await?;
         undo = before.map(|b| (b, Some(s)));
     } else if clear_secret.unwrap_or(false) && matches!(profile.kind, ConnKind::Ftp | ConnKind::Webdav) {
         // "Remove saved password": the server takes an anonymous / password-less sign-in now
@@ -105,7 +123,7 @@ pub async fn save_profile(
             forget_unsaved(&state, &profile.id, true, e).await
         } else {
             if let Some((before, wrote)) = undo {
-                crate::state::undo_secret(&state, &profile.id, wrote.as_deref(), before).await;
+                crate::state::undo_secret(&state, &secret_name, wrote.as_deref(), before).await;
             }
             e
         };
@@ -181,7 +199,11 @@ async fn password_moved(state: &AppState, saved: Option<&Profile>, now: &Profile
 /// "Unchanged" only when there is one.
 #[tauri::command]
 pub async fn profile_has_secret(state: State<'_, AppState>, id: String) -> Result<bool, String> {
-    Ok(get_secret(&state, &id).await?.is_some_and(|s| !s.is_empty()))
+    if get_secret(&state, &id).await?.is_some_and(|s| !s.is_empty()) {
+        return Ok(true);
+    }
+    // an SFTP key saved by older versions
+    Ok(get_secret(&state, &crate::state::secret_key(&id, "ssh")).await?.is_some_and(|s| !s.is_empty()))
 }
 
 /// Files connections under sidebar groups (`None` or "": the top level), by id. Only the group

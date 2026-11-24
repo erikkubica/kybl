@@ -11,6 +11,7 @@ import { ago, prettyPath, syncApi, type PendingDelete, type SyncConflict, type S
 import type { Profile } from "../types";
 import { SyncDialog } from "./SyncDialog";
 import "./sync.css";
+import { loadRootNames, rootLabel, useRootName } from "../connections/roots";
 import { useDialogs } from "../shell/useDialogs";
 import { baseName as leafOf, okToRun, openFromConnection } from "../desktop/openGuard";
 
@@ -292,6 +293,9 @@ export function SyncSection({
   };
 
   const profileName = (id: string) => profiles.find((p) => p.id === id)?.name ?? "Missing connection";
+  // Drive and OneDrive roots are ids ("root", a shared drive's 0AB…): show their names
+  useRootName();
+  useEffect(() => loadRootNames(profiles.filter((p) => sync.mappings.some((m) => m.profileId === p.id))), [profiles, sync.mappings]);
 
   return (
     <>
@@ -325,7 +329,7 @@ export function SyncSection({
                       {prettyPath(m.localPath)}
                       <span className="sync-arrow">{DIR_ARROW[m.direction]}</span>
                       {/* single-root connections (SFTP, WebDAV…) have no bucket: the connection name follows */}
-                      {m.bucket ? `${m.bucket}/${m.prefix}` : `/${m.prefix}`}
+                      {m.bucket ? `${rootLabel(m.profileId, m.bucket)}/${m.prefix}` : `/${m.prefix}`}
                       <span className="dim"> · {profileName(m.profileId)}</span>
                     </small>
                   </div>

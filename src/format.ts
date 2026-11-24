@@ -15,6 +15,17 @@ export function parseMbps(text: string): number | string {
   return mb;
 }
 
+/**
+ * What is wrong with a typed custom limit (Settings' "Custom" field, where "Unlimited" is its own
+ * choice), or null. Empty is not a problem: nothing is applied yet.
+ */
+export function customLimitProblem(text: string): string | null {
+  if (!text.trim()) return null;
+  const mb = parseMbps(text);
+  if (typeof mb === "string" || mb === 0) return "Enter a number from 0.001 to 10,000.";
+  return null;
+}
+
 /** A typed limit in MB/s as the backend's KiB/s: 0 is "none", anything else at least 1 KB/s (never rounded to "none"). */
 export const mbpsToKbps = (mb: number) => (mb === 0 ? 0 : Math.max(1, Math.round((mb * 1_000_000) / 1024)));
 

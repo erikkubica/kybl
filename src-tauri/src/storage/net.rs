@@ -162,6 +162,30 @@ impl SshKey {
         }
         Some(Self { private_key: t.to_string(), passphrase: None })
     }
+
+    /// The form's "new passphrase for the saved key" (JSON `{"passphrase"}` with no key): the
+    /// passphrase, or None for anything else.
+    pub fn passphrase_only(s: &str) -> Option<String> {
+        let t = s.trim();
+        if !t.starts_with('{') {
+            return None;
+        }
+        let v: serde_json::Value = serde_json::from_str(t).ok()?;
+        if v.get("privateKey").is_some() || v.get("key").is_some() {
+            return None;
+        }
+        v.get("passphrase").and_then(|p| p.as_str()).filter(|p| !p.is_empty()).map(str::to_string)
+    }
+
+    /// A stored key with this passphrase, as the vault keeps it; None when `stored` is no key
+    /// (empty, or a password left from password sign-in).
+    pub fn with_passphrase(stored: &str, passphrase: &str) -> Option<String> {
+        let k = Self::parse(stored)?;
+        if !(k.private_key.contains("PRIVATE KEY-----") || k.private_key.starts_with("PuTTY-User-Key-File-")) {
+            return None;
+        }
+        Some(serde_json::json!({ "privateKey": k.private_key, "passphrase": passphrase }).to_string())
+    }
 }
 
 impl std::fmt::Debug for SshKey {
@@ -719,6 +743,25 @@ mod tests {
         assert!(k.passphrase.is_none());
         assert!(SshKey::parse("  ").is_none());
         assert_eq!(format!("{k:?}"), "SshKey(..)");
+    }
+
+    #[test]
+    fn a_passphrase_joins_the_saved_key() {
+        assert_eq!(SshKey::passphrase_only(r#"{"passphrase":"pw"}"#).as_deref(), Some("pw"));
+        assert!(SshKey::passphrase_only(r#"{"privateKey":"-----BEGIN","passphrase":"pw"}"#).is_none());
+        assert!(SshKey::passphrase_only(r#"{"passphrase":""}"#).is_none());
+        assert!(SshKey::passphrase_only("hunter2").is_none());
+        let pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----";
+        let merged = SshKey::with_passphrase(pem, "pw").unwrap();
+        let k = SshKey::parse(&merged).unwrap();
+        assert_eq!((k.private_key.as_str(), k.passphrase.as_deref()), (pem, Some("pw")));
+        // a key saved with an old passphrase gets the new one
+        let again = SshKey::parse(&SshKey::with_passphrase(&merged, "new").unwrap()).unwrap();
+        assert_eq!(again.passphrase.as_deref(), Some("new"));
+        assert!(SshKey::with_passphrase("PuTTY-User-Key-File-3: ssh-ed25519\n", "pw").is_some());
+        // a password left from password sign-in is not a key
+        assert!(SshKey::with_passphrase("hunter2", "pw").is_none());
+        assert!(SshKey::with_passphrase("", "pw").is_none());
     }
 
     #[test]

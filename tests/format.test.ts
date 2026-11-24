@@ -1,7 +1,7 @@
 // Sizes, times and kinds (src/format.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatBytes, formatEta, kindLabel, mbpsInput, mbpsToKbps, parseMbps, plural, setByteUnits } from "../src/format.ts";
+import { customLimitProblem, formatBytes, formatEta, kindLabel, mbpsInput, mbpsToKbps, parseMbps, plural, setByteUnits } from "../src/format.ts";
 
 test("a tiny speed limit stays a limit", () => {
   assert.equal(mbpsToKbps(0), 0);
@@ -42,6 +42,20 @@ test("counts take the right number", () => {
   assert.equal(plural(0, "item"), "0 items");
   assert.equal(plural(1204, "file"), `${(1204).toLocaleString()} files`);
   assert.equal(plural(2, "copy", "copies"), "2 copies");
+});
+
+test("the custom limit field takes 0.001 to 10,000 MB/s and keeps 0.75 as typed", () => {
+  assert.equal(customLimitProblem(""), null);
+  assert.equal(customLimitProblem("0.75"), null);
+  assert.equal(customLimitProblem("0,01"), null);
+  assert.equal(customLimitProblem("10000"), null);
+  assert.equal(customLimitProblem("0"), "Enter a number from 0.001 to 10,000.");
+  assert.equal(customLimitProblem("20000"), "Enter a number from 0.001 to 10,000.");
+  assert.equal(customLimitProblem("abc"), "Enter a number from 0.001 to 10,000.");
+  // what Settings shows for 0.75 MB/s maps back to the same limit (no silent 0.7)
+  const MBPS = 1_000_000 / 1024;
+  assert.equal(mbpsInput(mbpsToKbps(0.75) / MBPS), "0.75");
+  assert.equal(mbpsInput(mbpsToKbps(0.01) / MBPS), "0.01");
 });
 
 test("a custom speed limit survives being shown and saved again", () => {

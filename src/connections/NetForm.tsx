@@ -5,6 +5,7 @@ import { Icon } from "../Icons";
 import type { NetConfig, Profile } from "../types";
 import { baseProfile, defaultPort, emptyNet, netTitle, passwordTarget, type NetKind } from "./kinds";
 import { Field, PHONE, RAW, SecretInput, Segmented, Warning, type FormApi } from "./fields";
+import { splitServer } from "./serverHost";
 import { TunnelsSection, tidyTunnels, tunnelProblem } from "../tunnels/TunnelsSection";
 
 /** A WebDAV address from a profile saved with host and port instead of a URL. */
@@ -54,11 +55,12 @@ export function NetForm({
   // SFTP: SSH tunnels through the server (src/tunnels)
   const [tunnels, setTunnels] = useState(start.tunnels ?? []);
   const editing = !!initial;
-  // FTP / WebDAV: a password is optional, so ask the vault whether one is saved (null: not known yet)
+  // ask the vault whether a password or key is saved (null: not known yet). FTP / WebDAV: a
+  // password is optional; SFTP: an imported connection may have none yet
   const [hasSecret, setHasSecret] = useState<boolean | null>(null);
   const [clearSecret, setClearSecret] = useState(false);
   useEffect(() => {
-    if (!initial || kind === "sftp") return;
+    if (!initial || (kind === "sftp" && initial.net?.auth === "agent")) return;
     let live = true;
     api
       .profileHasSecret(initial.id)
@@ -68,6 +70,8 @@ export function NetForm({
       live = false;
     };
   }, [initial, kind]);
+  // SFTP: "Unchanged" only for what was saved with the same sign-in, and is in the vault
+  const sftpSaved = (a: NetConfig["auth"]) => editing && initial?.net?.auth === a && hasSecret !== false;
 
   const edit =
     <T,>(set: (v: T) => void) =>
@@ -105,8 +109,20 @@ export function NetForm({
   };
 
   // the saved key stays unless a new one is pasted; a connection that had none needs one now
-  const hadKey = editing && initial?.net?.auth === "key";
-  const portNum = port.trim() ? Number(port.trim()) : 0;
+  const hadKey = sftpSaved("key");
+  // a pasted sftp://me@host:2222 fills Port and User name (on leaving the field, and on Save)
+  const server = splitServer(host);
+  const parts = typeof server === "string" ? null : server;
+  const portNum = port.trim() ? Number(port.trim()) : (parts?.port ?? 0);
+  const tidyServer = () => {
+    if (!parts || (parts.host === host.trim() && !parts.port && !parts.user)) return;
+    const p = parts.port ? String(parts.port) : port;
+    setHost(parts.host);
+    setPort(p);
+    if (parts.user && !user.trim()) setUser(parts.user);
+    placeChanged(parts.host, p);
+    onEdit();
+  };
   const davHref = url.trim();
   const davInsecure = kind === "webdav" && /^(http|dav|webdav):\/\//i.test(davHref);
   // a saved password only goes to the server and user name it was saved for: another one asks
@@ -122,13 +138,13 @@ export function NetForm({
   };
   const target = passwordTarget(kind, nowNet);
   const moved = editing && target !== null && target !== passwordTarget(kind, start);
-  const savedPassword = kind === "sftp" ? editing && initial?.net?.auth === "password" && !moved : !!hasSecret && !clearSecret && !moved;
+  const savedPassword = kind === "sftp" ? sftpSaved("password") && !moved : !!hasSecret && !clearSecret && !moved;
 
   const problems = {
     url: kind !== "webdav" ? null : !davHref ? "Enter the server's address." : !/^(https?|(web)?davs?):\/\/[^\s/]+/i.test(davHref) ? "Start with https:// (for example https://cloud.example.com)." : null,
-    host: kind === "webdav" ? null : host.trim() ? null : "Enter the server's name or address.",
+    host: kind === "webdav" ? null : typeof server === "string" ? server : null,
     port: kind === "webdav" || !port.trim() ? null : Number.isInteger(portNum) && portNum > 0 && portNum < 65536 ? null : "Ports are numbers from 1 to 65535.",
-    user: kind === "sftp" && !user.trim() ? "Enter your user name on the server." : null,
+    user: kind === "sftp" && !user.trim() && !parts?.user ? "Enter your user name on the server." : null,
     password:
       password || clearSecret
         ? null
@@ -146,9 +162,7 @@ export function NetForm({
         ? null
         : !privateKey.trim()
           ? hadKey
-            ? passphrase
-              ? "Paste the key again to change its passphrase."
-              : null
+            ? null
             : "Paste your private key or choose its file."
           : looksLikeKey(privateKey)
             ? null
@@ -161,9 +175,9 @@ export function NetForm({
     draft: () => {
       if (Object.values(problems).some(Boolean)) return null;
       const net: NetConfig = {
-        host: kind === "webdav" ? "" : host.trim(),
+        host: kind === "webdav" ? "" : (parts?.host ?? host.trim()),
         port: kind === "webdav" ? 0 : portNum,
-        user: user.trim(),
+        user: user.trim() || (kind === "webdav" ? "" : (parts?.user ?? "")),
         basePath: basePath.trim(),
         tls: kind === "webdav" ? (davInsecure ? "none" : "implicit") : kind === "sftp" ? "none" : tls,
         auth: kind === "sftp" ? auth : "password",
@@ -176,7 +190,8 @@ export function NetForm({
       let secret: string | undefined;
       if (kind === "sftp" && auth === "key") {
         const k = privateKey.trim();
-        secret = k ? (passphrase ? JSON.stringify({ privateKey: k, passphrase }) : k) : undefined;
+        // a passphrase alone goes with the saved key (the backend joins them)
+        secret = k ? (passphrase ? JSON.stringify({ privateKey: k, passphrase }) : k) : passphrase ? JSON.stringify({ passphrase }) : undefined;
       } else if (!(kind === "sftp" && auth === "agent")) secret = password || undefined;
       return { profile, secret, clearSecret: kind !== "sftp" && clearSecret && !password };
     },
@@ -223,7 +238,7 @@ export function NetForm({
             {(c) => <input {...c} className="mono" value={host} onChange={(e) => {
                   edit(setHost)(e.target.value);
                   placeChanged(e.target.value, port);
-                }} placeholder={placeholderHost} inputMode="url" {...RAW} />}
+                }} onBlur={tidyServer} placeholder={placeholderHost} inputMode="url" {...RAW} />}
           </Field>
           <Field label="Port" optional error={show("port")}>
             {(c) => (

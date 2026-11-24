@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { openLink } from "../openLink";
+import { message } from "@tauri-apps/plugin-dialog";
 import { api, errMessage } from "../api";
 import { Icon } from "../Icons";
 import { ON_PHONE, THIS_DEVICE, kyblApi, saveAppUrl, savedAppUrl, type DeviceStart } from "../kybl";
@@ -42,7 +43,8 @@ export function KyblConnectDialog({
   const [url, setUrl] = useState(savedAppUrl() ?? "");
   const [showServer, setShowServer] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [copied, setCopied] = useState<"yes" | "failed" | null>(null);
   const [now, setNow] = useState(Date.now());
   const flow = useRef<string | null>(null);
 
@@ -131,17 +133,38 @@ export function KyblConnectDialog({
   };
 
   const remove = async () => {
-    if (!existing) return;
-    await api.deleteProfile(existing.id);
+    if (!existing || removing) return;
+    setRemoving(true);
+    let note: string | null;
+    try {
+      note = await api.deleteProfile(existing.id);
+    } catch (e) {
+      setError(`Couldn’t remove this connection.\n\n${errMessage(e)}`);
+      setConfirmDelete(false);
+      setRemoving(false);
+      return;
+    }
+    // removed; a note says its saved key is only cleared at the next start
+    stop();
     onDeleted?.(existing.id);
     onClose();
+    if (note) void message(note, { title: "Connection removed", kind: "warning" }).catch(() => {});
   };
 
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
   const copyCode = (code: string) => {
-    navigator.clipboard?.writeText(code).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
+    const flash = (v: "yes" | "failed") => {
+      setCopied(v);
+      clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopied(null), v === "yes" ? 1500 : 4000);
+    };
+    const write = navigator.clipboard?.writeText(code);
+    if (!write) return flash("failed");
+    write.then(
+      () => flash("yes"),
+      () => flash("failed"),
+    );
   };
 
   const server = savedAppUrl() || defaultUrl;
@@ -227,8 +250,13 @@ export function KyblConnectDialog({
               </p>
               <button className="kybl-code mono selectable" onClick={() => copyCode(step.d.userCode)} title="Copy the code">
                 {step.d.userCode}
-                <Icon name={copied ? "check" : "copy"} size={14} />
+                <Icon name={copied === "yes" ? "check" : "copy"} size={14} />
               </button>
+              {copied === "failed" && (
+                <p className="hint error" role="alert">
+                  Couldn’t copy. Type the code instead.
+                </p>
+              )}
               <p className="kybl-poll">
                 <span className="spinner" /> Waiting for approval · {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}
               </p>
@@ -237,7 +265,7 @@ export function KyblConnectDialog({
         )}
 
         {error && (
-          <div className="result bad">
+          <div className="result bad" role="alert">
             <Icon name="alert" size={15} />
             <ErrorText message={error} />
           </div>
@@ -271,15 +299,23 @@ export function KyblConnectDialog({
           {existing &&
             (confirmDelete ? (
               <>
-                <button className="btn btn-danger" onClick={remove}>
-                  Remove connection
+                <button className="btn btn-danger" onClick={remove} disabled={removing}>
+                  {removing && <span className="spinner" />}
+                  {removing ? "Removing…" : "Remove connection"}
                 </button>
-                <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}>
+                {/* focus starts on Keep, so a second Return doesn't remove the connection */}
+                <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)} disabled={removing} autoFocus>
                   Keep
                 </button>
               </>
             ) : (
-              <button className="btn btn-danger-ghost" onClick={() => setConfirmDelete(true)}>
+              <button
+                className="btn btn-danger-ghost"
+                onClick={() => {
+                  setError(null);
+                  setConfirmDelete(true);
+                }}
+              >
                 <Icon name="trash" size={14} /> Remove
               </button>
             ))}

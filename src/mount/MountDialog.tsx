@@ -4,7 +4,7 @@ import { Modal } from "../components/Dialogs";
 import { ErrorText } from "../components/ErrorText";
 import { Icon } from "../Icons";
 import { fileManagerName, findMount, mountWhere, reloadMounts, useMounts } from "./useMounts";
-import { rootName } from "../connections/roots";
+import { rootName, useRootName } from "../connections/roots";
 import "./mount.css";
 
 type Toast = (kind: "success" | "error" | "info", text: string) => void;
@@ -42,6 +42,7 @@ export function MountDialog({
   onOpenSettings?: () => void;
 }) {
   const { mounts } = useMounts();
+  useRootName(); // re-render when the root's name arrives
   const existing = findMount(mounts, profileId, bucket, prefix);
   const [name, setName] = useState(() => suggestedDriveName(connection, bucket ? rootName(profileId, bucket) : "", prefix));
   const [busy, setBusy] = useState(false);
@@ -89,7 +90,7 @@ export function MountDialog({
       >
         <div className="modal-body mount-dialog">
           <p className="mount-where">
-            <Icon name="server" size={14} /> <span className="selectable">{mountWhere({ bucket, prefix }, connection)}</span>
+            <Icon name="server" size={14} /> <span className="selectable">{mountWhere({ profileId, bucket, prefix }, connection)}</span>
           </p>
           {existing ? (
             <p>
@@ -106,7 +107,7 @@ export function MountDialog({
             </>
           )}
           {error && (
-            <p className="sync-error selectable">
+            <p className="sync-error selectable" role="alert">
               <Icon name="alert" size={13} /> <ErrorText message={error} />
             </p>
           )}

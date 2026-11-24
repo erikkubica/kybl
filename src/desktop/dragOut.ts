@@ -19,7 +19,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage } from "../api";
 import { asExport } from "../connections/native";
-import type { TransferActions } from "../useTransfers";
+import { finishedOk, type TransferActions } from "../useTransfers";
 import type { Entry } from "../types";
 import { syncedPath } from "./openWith";
 import { joinPath, safeName, safeRelPath, shortHash } from "./paths";
@@ -64,7 +64,7 @@ async function fetchCopy(c: DragOutContext, e: Entry): Promise<string | null> {
     { kind: "download", name: x.name, profileId: c.profileId, bucket: c.bucket, key: x.key, local, total: x.size, overwrite: true, etag: e.native ? undefined : x.etag },
   ]);
   const done = await c.transfers.whenFinished(t.id);
-  return done.state === "done" ? done.local : null;
+  return finishedOk(done) ? done.local : null;
 }
 
 // The app removed copies nobody used for long ("Clear cache", the weekly trim): a path remembered
@@ -153,7 +153,7 @@ async function fulfil(c: DragOutContext, e: Entry, path: string) {
   const started = c.transfers.add(items);
   c.autoShowActivity();
   const done = await Promise.all(started.map((t) => c.transfers.whenFinished(t.id)));
-  const failed = done.filter((t) => t.state !== "done");
+  const failed = done.filter((t) => !finishedOk(t));
   if (failed.length === 1 && done.length === 1) throw new Error(failed[0].error ?? "The download didn’t finish");
   if (failed.length) throw new Error(`${failed.length} of ${plural(done.length, "file")} didn’t download`);
 }

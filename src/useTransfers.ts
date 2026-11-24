@@ -72,6 +72,12 @@ const sent = new Set<string>();
 const held = new Map<string, "cancel" | "pause">();
 /** Resume or Retry pressed while the start command was under way: started again once it returns. */
 const again = new Set<string>();
+/**
+ * Finished so its file can be used: done, and not stopped by Cancel during its check (the user
+ * asked it to stop, so Open, Copy, drag-out and actions don't carry on with it).
+ */
+export const finishedOk = (t: Transfer) => t.state === "done" && !t.checkStopped;
+
 /** Callers waiting for a transfer to end (see `whenFinished`). */
 const waiters = new Map<string, ((t: Transfer) => void)[]>();
 
@@ -99,7 +105,19 @@ let runPrunedBytes = 0;
 type Settled = (ok: number, failed: number, where: { profileId: string; bucket: string }[]) => void;
 const settledListeners = new Set<Settled>();
 
+/** No progress for this long: the speed drops to 0, so the header and row stop showing an old speed and time left. */
+const STALL_MS = 3000;
+
 function flush() {
+  const now = performance.now();
+  for (const [id, s] of lastSample) {
+    if (now - s.t < STALL_MS) continue;
+    const t = byId.get(id);
+    if (t?.state === "running" && t.speed > 0) {
+      byId.set(id, { ...t, speed: 0 });
+      dirty = true;
+    }
+  }
   if (!dirty) return;
   dirty = false;
   let anyActive = false;
@@ -151,15 +169,20 @@ function prune() {
   for (const [id, t] of byId) {
     if (done <= KEEP_DONE) break;
     if (t.state === "done") {
-      if (batch.delete(id)) {
-        batchPrunedOk++;
-        batchPrunedWhere.set(`${t.profileId}\n${t.bucket}`, { profileId: t.profileId, bucket: t.bucket });
-      }
-      if (currentRun.delete(id)) runPrunedBytes += t.total;
+      pruneDone(id, t);
       forget(id);
       done--;
     }
   }
+}
+
+/** Keeps a done row's part in the current run and batch once it leaves the list. */
+function pruneDone(id: string, t: Transfer) {
+  if (batch.delete(id)) {
+    batchPrunedOk++;
+    batchPrunedWhere.set(`${t.profileId}\n${t.bucket}`, { profileId: t.profileId, bucket: t.bucket });
+  }
+  if (currentRun.delete(id)) runPrunedBytes += t.total;
 }
 
 /** Takes a row off the list with everything kept about it. */
@@ -218,6 +241,8 @@ function listenOnce() {
       error: ev.error,
       speed,
       verified: ev.state === "done" ? ev.verified : undefined,
+      checkStopped: ev.state === "done" ? ev.checkStopped : undefined,
+      checkPending: ev.state === "paused" ? ev.checkPending : undefined,
       local: ev.local ?? cur.local,
     };
     // just finished: to the end of the list, so Done lists (and pruning drops) rows by finish
@@ -258,8 +283,8 @@ function adoptRunning() {
     .then((list) => {
       for (const k of list) {
         if (byId.has(k.id)) continue;
-        const { requested: asked, overwrite, state, ...t } = k;
-        byId.set(k.id, { ...t, state, speed: 0 });
+        const { requested: asked, overwrite, state, stamp, ...t } = k;
+        byId.set(k.id, { ...t, state, speed: 0, checkPending: k.kind === "download" && state === "paused" && !!stamp });
         if (k.kind === "download") requested.set(k.id, asked || k.local);
         if (overwrite) overwriteIds.add(k.id);
       }
@@ -344,6 +369,9 @@ function clearWhere(pick: (t: Transfer) => boolean) {
     // a failed or stopped one can't be retried once it is off the list: let the backend drop
     // what it kept to resume it (a partial download, an open multipart upload)
     if (t.state !== "done" && !external.has(id)) api.cancelTransfer(id).catch(() => {});
+    // a done one still counts in the run's totals and its batch's "Uploaded N files", as when
+    // pruning takes it off
+    if (t.state === "done") pruneDone(id, t);
     forget(id);
   }
   dirty = true;
@@ -361,7 +389,7 @@ function requeue(id: string): Transfer | null {
   if (!t || t.state === "queued" || t.state === "running" || t.state === "done") return null;
   // a cancelled run kept nothing (the backend dropped its partial), so it starts from 0; paused
   // and failed ones carry on from what they kept
-  const fresh: Transfer = { ...t, state: "queued", error: null, speed: 0, verified: undefined, bytes: t.state === "cancelled" ? 0 : t.bytes };
+  const fresh: Transfer = { ...t, state: "queued", error: null, speed: 0, verified: undefined, checkPending: undefined, checkStopped: undefined, bytes: t.state === "cancelled" ? 0 : t.bytes };
   // to the end of the list: it finishes after the rest, so Done and pruning see it as the newest
   byId.delete(id);
   byId.set(id, fresh);
@@ -395,7 +423,14 @@ function stopOne(id: string, what: "cancel" | "pause", backendDone = false): boo
   if (sending.has(id)) held.set(id, what);
   // a paused one isn't running, so no event comes back: it ends here (what it kept is dropped)
   if (!(notStarted(t) || (what === "cancel" && t?.state === "paused"))) return false;
-  const next: Transfer = { ...t!, state: what === "cancel" ? "cancelled" : "paused", speed: 0 };
+  // a paused download whose whole file is in place: Cancel keeps the file and skips its check
+  // (the backend drops only what it kept to resume)
+  const next: Transfer =
+    what === "cancel" && t?.checkPending
+      ? { ...t, state: "done", bytes: t.total, speed: 0, checkPending: undefined, checkStopped: true }
+      : { ...t!, state: what === "cancel" ? "cancelled" : "paused", speed: 0 };
+  // ended: to the end of the list, in finish order (as the event path does)
+  if (next.state !== "paused") byId.delete(id);
   byId.set(id, next);
   settle(next);
   return true;

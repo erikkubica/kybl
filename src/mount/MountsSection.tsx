@@ -1,6 +1,8 @@
 import { TRAY } from "../components/osText";
-import { useState } from "react";
-import { errMessage, mountApi, type MountInfo } from "../api";
+import { useEffect, useState } from "react";
+import { LOCAL_ID, errMessage, mountApi, type MountInfo } from "../api";
+import { loadRootNames, useRootName } from "../connections/roots";
+import { ON_OS } from "../osNames";
 import { ErrorText } from "../components/ErrorText";
 import { formatBytes } from "../format";
 import { Icon } from "../Icons";
@@ -81,7 +83,9 @@ export function MountsSection({ profiles, onToast }: { profiles: Profile[]; onTo
       reloadMounts();
     }
   };
-  const connection = (id: string) => (id === "local" ? "This device" : (profiles.find((p) => p.id === id)?.name ?? "Missing connection"));
+  useRootName(); // re-render when root names arrive
+  useEffect(() => loadRootNames(profiles.filter((p) => mounts.some((m) => m.profileId === p.id))), [profiles, mounts]);
+  const connection = (id: string) => (id === LOCAL_ID ? ON_OS.device : (profiles.find((p) => p.id === id)?.name ?? "Missing connection"));
 
   return (
     <>

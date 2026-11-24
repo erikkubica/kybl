@@ -11,6 +11,12 @@ const listing = (files: Record<string, MFile>, dirs: string[] = [], excluded = 0
 const opts = (o: Partial<PlanOptions> = {}): PlanOptions => ({ deleteExtra: false, compare: "time", toleranceMs: 2000, ...o });
 const rels = (xs: { rel: string }[]) => xs.map((x) => x.rel);
 
+test("a link keeps its own name in the Skip list on a case-insensitive destination", () => {
+  const src: Listing = { ...listing({ "a.txt": f(1) }), links: new Set(["Photos"]) };
+  const p = planMirror(src, listing({}), opts({ caseInsensitive: true }));
+  assert.deepEqual(rels(p.links), ["Photos"]);
+});
+
 test("a link's name is listed once, also when the other side has a file of that name", () => {
   const src: Listing = { ...listing({ "a.txt": f(1) }), links: new Set(["x", "dir/"]) };
   const dst = listing({ x: f(5), "dir/inner.txt": f(2), "a.txt": f(1) }, ["dir/"]);
