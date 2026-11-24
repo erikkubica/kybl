@@ -9,7 +9,7 @@ import type { ObjInfo, Profile } from "./types";
 import type { Capabilities, JobSpec, RootInfo } from "./api";
 import type { ImportSite } from "./connections/importApi";
 import { S3_CAPS } from "./useCaps";
-import { mockContentSearch, mockDocOpen, mockGitStatus, repoTree } from "./browser/devDevtools";
+import { mockContentSearch, mockDocOpen, mockGitOverview, mockGitStatus, repoTree } from "./browser/devDevtools";
 import { installArchiveMock } from "./archive/devArchive";
 
 const HOUR = 3600_000;
@@ -725,9 +725,9 @@ async function handleLocal(cmd: string, a: any): Promise<unknown> {
     case "git_status":
       await sleep(60);
       return mockGitStatus(HOME, a.bucket, a.prefix);
-    case "git_last_commit":
+    case "git_overview":
       await sleep(60);
-      return (await mockGitStatus(HOME, a.bucket, a.prefix)) ? { hash: "3f9c2ab", subject: "Tidy the settings page", time: Math.floor(Date.now() / 1000) - 5400, top: HOME } : null;
+      return mockGitStatus(HOME, a.bucket, a.prefix) ? mockGitOverview(a.file ?? undefined) : null;
     case "content_search": {
       const files = Object.entries(dirs).filter(([k]) => k.startsWith(a.prefix)).flatMap(([, d]) => d.objects);
       return mockContentSearch(a, files, "ripgrep", () => cancelled.has(a.opId));
@@ -781,7 +781,7 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       return a.profileId === LOCAL ? `${a.bucket.replace(/\/$/, "")}/${a.key}` : null;
     // git marks: this computer only (handleLocal)
     case "git_status":
-    case "git_last_commit":
+    case "git_overview":
       return null;
     // searching inside files: this computer (handleLocal) and SFTP servers
     case "content_search": {

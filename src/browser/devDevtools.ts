@@ -5,7 +5,7 @@
  */
 import { emit } from "@tauri-apps/api/event";
 import type { ObjInfo } from "../types";
-import type { ContentHit, ContentResult, GitChange, GitInfo } from "./devtoolsApi";
+import type { ContentHit, ContentResult, GitChange, GitInfo, GitOverview } from "./devtoolsApi";
 
 type Dir = { folders: string[]; objects: ObjInfo[] };
 
@@ -85,6 +85,33 @@ export function mockGitStatus(home: string, root: string, prefix: string): GitIn
 
 const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
 const TEXTY = /\.(md|txt|ts|tsx|js|json|csv|ya?ml|toml|html|css|gitignore)$|^\.gitignore$/i;
+
+/** A made-up overview of the mock repository: ten commits, a tracking branch, a tag, a stash. */
+export function mockGitOverview(file?: string): GitOverview {
+  const now = Math.floor(Date.now() / 1000);
+  const log: [string, string, string, number][] = [
+    ["3f9c2ab", "Tidy the settings page", "Erik", 1.5],
+    ["a81d4e0", "Search: debounce the field and keep the caret where it was when results arrive", "Erik", 5],
+    ["9be07c1", "Fix the merge mode name", "Sam", 26],
+    ["c2d5f98", "Bump dependencies", "Erik", 70],
+    ["07ab3de", "Header: open on click", "Sam", 130],
+    ["e4410b7", "Add the API wrapper", "Erik", 300],
+    ["5d9a2f3", "Button component", "Sam", 600],
+    ["1c7e8aa", "Configure vite", "Erik", 900],
+    ["f0a63b2", "Add a README", "Erik", 1500],
+    ["2b8c1d4", "First commit", "Erik", 1600],
+  ];
+  const commits = log.map(([hash, subject, author, hours]) => ({ hash, subject, author, time: now - Math.round(hours * 3600) }));
+  return {
+    upstream: "origin/main",
+    fetchedAt: now - 2 * 3600,
+    remote: "github.com/kybl/kybl-web",
+    commits,
+    tag: "v0.4.0",
+    stashes: 1,
+    file: file ? commits[file.endsWith(".md") ? 8 : 1] : null,
+  };
+}
 
 /** A content search over the files the mock lists (`files`), streaming like the backend. */
 export async function mockContentSearch(

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ago, connectionFacts, gitCounts } from "../../src/browser/infoFacts.ts";
+import { ago, connectionFacts, gitChips, gitCounts } from "../../src/browser/infoFacts.ts";
 import type { Profile } from "../../src/types.ts";
 
 const base: Profile = { id: "x", name: "x", kind: "s3", provider: "aws", endpoint: "https://s3.eu.example.com", region: "eu-1", accessKeyId: "", pathStyle: false };
@@ -46,4 +46,10 @@ test("commit age reads plainly", () => {
   assert.equal(ago(1_000_000 - 60, now), "1 minute ago");
   assert.equal(ago(1_000_000 - 7200, now), "2 hours ago");
   assert.equal(ago(1_000_000 - 86400 * 3, now), "3 days ago");
+});
+
+test("this computer adds no fact of its own, and chips hide zeros", () => {
+  assert.deepEqual(connectionFacts({ ...base, kind: "local" }, ""), []);
+  assert.deepEqual(gitChips({ changed: 2, staged: 0, untracked: 3 }), ["2 changed", "3 untracked"]);
+  assert.deepEqual(gitChips({ changed: 0, staged: 0, untracked: 0 }), []);
 });

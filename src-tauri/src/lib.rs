@@ -218,7 +218,7 @@ pub fn run() {
             commands::list_objects,
             commands::search_objects,
             devtools::git_status,
-            devtools::git_last_commit,
+            devtools::git_overview,
             devtools::storage_quota,
             devtools::content_search,
             commands::head_object,
