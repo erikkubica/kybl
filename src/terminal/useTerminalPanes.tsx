@@ -20,6 +20,7 @@ import type { Layout, WorkspaceStore } from "../shell/workspaces";
 import { registerCommands } from "../palette/commands";
 import type { Entry, Profile } from "../types";
 import { TerminalSlot } from "./TerminalSlot";
+import { pastePreview } from "./quote";
 import {
   canTerminal,
   gcTerminals,
@@ -29,7 +30,9 @@ import {
   focusWhenShown,
   setTerminalOpener,
   setTerminalPanes,
+  pasteTrustsBracketed,
   setPasteConfirm,
+  setPasteTrustsBracketed,
   shellQuote,
   terminalIdle,
   terminalRemoteBase,
@@ -78,7 +81,12 @@ export function useTerminalPanes(initial: Layout) {
   termsRef.current = terms;
   useEffect(() => setTerminalPanes(terms), [terms]);
   useEffect(() => {
-    setPasteConfirm((text) => host.current?.confirm(pasteDialog(text)) ?? Promise.resolve(false));
+    setPasteConfirm(async (text) => {
+      const choice = { trust: false };
+      const ok = (await host.current?.confirm(pasteDialog(text, choice))) ?? false;
+      if (ok && choice.trust) setPasteTrustsBracketed(true);
+      return ok;
+    });
     return () => setPasteConfirm(null);
   }, []);
 
@@ -350,6 +358,18 @@ export function useTerminalPanes(initial: Layout) {
             if (home != null) latest.current.open(host.current?.activeId ?? h.activeId, { profileId: LOCAL_PROFILE, bucket: home, prefix: "" });
           },
         },
+        {
+          id: "terminal:paste-ask",
+          title: "Always Ask Before Pasting Several Lines",
+          group: "Terminal",
+          icon: "terminal",
+          keywords: "paste confirm multi-line bracketed",
+          hidden: !pasteTrustsBracketed(),
+          run: () => {
+            setPasteTrustsBracketed(false);
+            h.toast("info", "Kybl asks again before pasting several lines.");
+          },
+        },
       ];
     });
     return () => {
@@ -362,16 +382,23 @@ export function useTerminalPanes(initial: Layout) {
   return { terms, setTerms, assign, host, open, toggle, items, dropTarget, drop, nameOf, gc, render };
 }
 
-/** The question before a paste whose lines would run at once (see `pasteNeedsConfirm`): the whole text, as it will be typed. */
-function pasteDialog(text: string): ConfirmOptions {
+/**
+ * The question before a paste with line breaks (see `pasteNeedsConfirm`): the whole text, as it
+ * will be typed (scrolls, never cut), invisible characters shown. `choice.trust` is set when the
+ * user ticks the box to skip it in shells that take a paste whole.
+ */
+function pasteDialog(text: string, choice: { trust: boolean }): ConfirmOptions {
   const lines = text.replace(/[\r\n]+$/, "").split(/\r\n|\r|\n/).length;
-  const shown = text.length > 4000 ? `${text.slice(0, 4000)}\n…` : text;
   return {
     title: lines > 1 ? `Paste ${lines} lines?` : "Paste and run?",
     message: (
       <>
-        <p>This shell runs each line as soon as it is pasted. Check the text first: a copy from a web page can hold lines you didn’t see.</p>
-        <pre className="toast-detail selectable">{shown}</pre>
+        <p>Some shells run each line as soon as it is pasted. Check the text first: a copy from a web page can hold lines you didn’t see.</p>
+        <pre className="toast-detail paste-preview selectable">{pastePreview(text)}</pre>
+        <label className="check paste-trust">
+          <input type="checkbox" onChange={(e) => (choice.trust = e.target.checked)} />
+          <span>Don’t ask in shells that wait for Enter after a paste (zsh, bash 5.1+, fish)</span>
+        </label>
       </>
     ),
     label: "Paste",

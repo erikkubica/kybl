@@ -681,6 +681,16 @@ pub async fn set_secret(state: &AppState, profile_id: &str, secret: &str) -> Res
     Ok(())
 }
 
+/// Undoes a [`set_secret`] whose profile list then couldn't be saved: `prev` goes back, or with
+/// none (a new connection) the secret is removed, since no listed connection would ever show or
+/// remove it. Best effort: the save's error is what the user sees.
+pub async fn undo_secret(state: &AppState, profile_id: &str, prev: Option<String>) {
+    let _ = match prev {
+        Some(p) => set_secret(state, profile_id, &p).await,
+        None => remove_main_secret(state, profile_id).await,
+    };
+}
+
 /// Removes the oldest kind of item (one per connection) for a secret removed on purpose. One that
 /// is there and can't be removed (a refused keychain prompt) is an error: `get_secret` would
 /// take it back into the vault on the next read, and send the removed password again (S3-3).

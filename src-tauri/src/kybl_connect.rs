@@ -302,12 +302,22 @@ async fn finish(app: &AppHandle, state: &AppState, tok: TokenResponse, replace_i
         group: existing.and_then(|i| profiles[i].group.clone()),
         ..Default::default()
     };
+    // what the vault held before, to put back if the list can't be saved (None: unreadable)
+    let replaced = match existing {
+        Some(_) => crate::state::get_secret(state, &profile.id).await.ok(),
+        None => Some(None),
+    };
     set_secret(state, &profile.id, &tok.secret_access_key).await?;
     match existing {
         Some(i) => profiles[i] = profile.clone(),
         None => profiles.push(profile.clone()),
     }
-    save_profiles(app, &profiles, &held)?;
+    if let Err(e) = save_profiles(app, &profiles, &held) {
+        if let Some(prev) = replaced {
+            crate::state::undo_secret(state, &profile.id, prev).await;
+        }
+        return Err(e);
+    }
     drop(held);
     state.clients.lock().await.remove(&profile.id);
     crate::storage::registry::forget(&profile.id);

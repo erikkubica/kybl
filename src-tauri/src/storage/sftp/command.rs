@@ -93,7 +93,8 @@ fn for_csh(command: &str) -> String {
     let mut prev = '\0';
     let mut chars = command.chars().peekable();
     while let Some(c) = chars.next() {
-        let pid = prev == '$' && chars.peek().is_none_or(|n| n.is_whitespace() || matches!(n, ';' | '"' | '\'' | ')' | '&' | '|'));
+        // only ASCII blanks: csh reads `!` before a Unicode space (U+00A0, U+3000…) as an event
+        let pid = prev == '$' && chars.peek().is_none_or(|n| matches!(n, ' ' | '\t' | ';' | '"' | '\'' | ')' | '&' | '|'));
         if c == '!' && !pid {
             out.push('\\');
         }
@@ -117,12 +118,15 @@ enum HashRun {
     ThisFile,
 }
 
-fn read_hash_run(out: &str) -> HashRun {
+/// `code` is the exit status. The shell probe has already shown the server runs commands, so
+/// a run without the closing line means /bin/sh is missing only when the shell said "not found"
+/// (127). Anything else (csh refusing one odd name, say) is this file only: one name must not
+/// turn checking off for the whole server.
+fn read_hash_run(out: &str, code: Option<u32>) -> HashRun {
     if let Some((kind, hex)) = parse_hash(out) {
         return HashRun::Hash(kind, hex);
     }
-    // without the closing line our script never ran (a forced `internal-sftp`, a menu shell)
-    if out.contains(NO_TOOL) || !out.contains(RAN) {
+    if out.contains(NO_TOOL) || (!out.contains(RAN) && code == Some(127)) {
         return HashRun::NoCommands;
     }
     HashRun::ThisFile
@@ -262,7 +266,7 @@ impl SftpBackend {
             // the channel closed with no exit status (the connection dropped mid-way, perhaps
             // after part of the output): this file only, never "no commands here"
             Ok(end) if !ended_properly(&end) => HashRun::ThisFile,
-            Ok(end) if !end.stopped => read_hash_run(&String::from_utf8_lossy(&out)),
+            Ok(end) if !end.stopped => read_hash_run(&String::from_utf8_lossy(&out), end.code),
             // out of time (a slow disk, a huge file): this file only
             Ok(_) => HashRun::ThisFile,
             Err(e) => failed_run(&e),
@@ -306,13 +310,15 @@ mod tests {
     #[test]
     fn only_missing_tools_turn_hashing_off() {
         let sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-        assert_eq!(read_hash_run(&format!("{sha}  a\n{RAN}\n")), HashRun::Hash(HashKind::Sha256, sha.into()));
+        assert_eq!(read_hash_run(&format!("{sha}  a\n{RAN}\n"), Some(0)), HashRun::Hash(HashKind::Sha256, sha.into()));
         // unreadable or deleted file: the tool ran and printed nothing
-        assert_eq!(read_hash_run(&format!("{RAN}\n")), HashRun::ThisFile);
-        assert_eq!(read_hash_run(&format!("{NO_TOOL}\n{RAN}\n")), HashRun::NoCommands);
-        // a forced sftp-only account answers with its own text, never our closing line
-        assert_eq!(read_hash_run("This service allows sftp connections only.\n"), HashRun::NoCommands);
-        assert_eq!(read_hash_run(""), HashRun::NoCommands);
+        assert_eq!(read_hash_run(&format!("{RAN}\n"), Some(0)), HashRun::ThisFile);
+        assert_eq!(read_hash_run(&format!("{NO_TOOL}\n{RAN}\n"), Some(0)), HashRun::NoCommands);
+        // no /bin/sh to run the script: "not found"
+        assert_eq!(read_hash_run("", Some(127)), HashRun::NoCommands);
+        // csh refusing a line ("Event not found", exit 1) or no exit status: this file only
+        assert_eq!(read_hash_run("", Some(1)), HashRun::ThisFile);
+        assert_eq!(read_hash_run("", None), HashRun::ThisFile);
         // the exec request refused outright: no commands; a channel that couldn't open (all
         // sessions busy with transfers) or a dropped connection: only this file
         assert_eq!(failed_run(&StorageError::new(ErrKind::Unsupported, "refused")), HashRun::NoCommands);
@@ -343,7 +349,7 @@ mod tests {
         std::fs::write(&file, b"").unwrap();
         let run = |path: &std::path::Path| {
             let out = std::process::Command::new("sh").arg("-c").arg(hash_command(&path.to_string_lossy()).unwrap()).output().unwrap();
-            read_hash_run(&String::from_utf8_lossy(&out.stdout))
+            read_hash_run(&String::from_utf8_lossy(&out.stdout), out.status.code().map(|c| c as u32))
         };
         match run(&file) {
             HashRun::Hash(_, hex) => assert!(hex == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" || hex == "d41d8cd98f00b204e9800998ecf8427e"),
@@ -409,6 +415,12 @@ mod tests {
             // and ripgrep's `!.git` in a search script reaches sh as written
             let out = std::process::Command::new(sh).arg("-f").arg("-c").arg(for_csh(&crate::actions::sh_c("printf '%s\\n' '!.git'").unwrap())).output().unwrap();
             assert_eq!(String::from_utf8_lossy(&out.stdout), "!.git\n", "{sh}");
+            // `$!` before a Unicode space is escaped too (csh would look it up as an event)
+            for name in ["a$!\u{a0}b", "a$!\u{3000}b", "a$!\u{2003}b"] {
+                let cmd = for_csh(&crate::actions::sh_c(&format!("printf '%s\\n' {}", quote(name))).unwrap());
+                let out = std::process::Command::new(sh).arg("-f").arg("-c").arg(&cmd).output().unwrap();
+                assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{name}\n"), "{sh} {name:?}: {}", String::from_utf8_lossy(&out.stderr));
+            }
         }
         std::fs::remove_dir_all(dir).ok();
     }

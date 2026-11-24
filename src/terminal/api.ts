@@ -14,7 +14,7 @@
  * running (and its scrollback), closing the pane or its workspace ends it, and a reload starts a
  * fresh shell in the same folder (`sid` is what ties a pane to its running session).
  */
-import { LOCAL_PROFILE, type PaneId } from "../browser/types";
+import { LOCAL_PROFILE, LS, type PaneId } from "../browser/types";
 import type { Profile } from "../types";
 
 /**
@@ -97,7 +97,11 @@ export function setTerminalOpener(fn: typeof opener) {
 export function setTerminalPanes(p: Partial<Record<PaneId, TermSpec>>) {
   panes = p;
 }
-/** asks before clipboard text with line breaks goes to a shell that would run each line at once */
+const PASTE_TRUST_KEY = "s3b.term.pasteTrustBracketed";
+/** The user chose to skip the paste question in shells that turned on bracketed paste (see `pasteNeedsConfirm`). */
+export const pasteTrustsBracketed = () => LS.get(PASTE_TRUST_KEY) === "1";
+export const setPasteTrustsBracketed = (v: boolean) => LS.set(PASTE_TRUST_KEY, v ? "1" : "0");
+/** asks before clipboard text with line breaks goes to a shell that might run each line at once */
 let pasteConfirm: ((text: string) => Promise<boolean>) | null = null;
 export function setPasteConfirm(fn: typeof pasteConfirm) {
   pasteConfirm = fn;

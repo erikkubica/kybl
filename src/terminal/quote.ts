@@ -23,11 +23,22 @@ const PASTE_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
 export const cleanPaste = (s: string) => s.replace(PASTE_CONTROL, "");
 
 /**
- * Whether pasting `s` needs a yes first: it has a line break and the shell hasn't turned on
- * bracketed paste, so each line would run as soon as it arrives (text hidden on a web page rides
- * along in a copy, a hidden "\ncurl … | sh\n" included).
+ * Whether pasting `s` needs a yes first: it has a line break, and a shell without bracketed paste
+ * would run each line as soon as it arrives (text hidden on a web page rides along in a copy, a
+ * hidden "\ncurl … | sh\n" included). Asked every time by default: the terminal's
+ * "bracketed paste is on" flag is set by whatever the shell's programs print (`cat` of a file
+ * holding ESC[?2004h turns it on in sh), so it only counts when the user chose to trust it.
  */
-export const pasteNeedsConfirm = (s: string, bracketed: boolean) => !bracketed && /[\r\n]/.test(s);
+export const pasteNeedsConfirm = (s: string, bracketed: boolean, trustBracketed = false) => /[\r\n]/.test(s) && !(trustBracketed && bracketed);
+
+// eslint-disable-next-line no-misleading-character-class
+const INVISIBLE = /[​-‏‪-‮⁠-⁩﻿]/g;
+
+/**
+ * Pasted text for the confirm box: zero-width and text-direction characters shown as their code
+ * (`<U+202E>`), so they can't hide or reorder what will be typed.
+ */
+export const pastePreview = (s: string) => s.replace(INVISIBLE, (c) => `<U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}>`);
 
 /**
  * `s` as one word for any shell (POSIX, fish, csh): as it is when plain, else in single quotes with

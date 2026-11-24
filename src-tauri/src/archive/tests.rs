@@ -200,6 +200,26 @@ fn refuses_decompression_bombs() {
     assert!(err.to_string().contains("decompression bomb"), "{err}");
 }
 
+/// A .tar.gz never takes more than half the free disk space to open (B6-5): refused while it is
+/// written, the partial file removed.
+#[test]
+fn tar_gz_open_stays_within_free_space() {
+    let s = Scratch::new();
+    let p = s.0.join("big.tar.gz");
+    let mut gz = flate2::write::GzEncoder::new(std::fs::File::create(&p).unwrap(), flate2::Compression::fast());
+    gz.write_all(&vec![0u8; 8 << 20]).unwrap();
+    gz.finish().unwrap();
+    let len = std::fs::metadata(&p).unwrap().len();
+    let work = s.0.join("work");
+    // 4 MB free: 2 MB may be used, the 8 MB tar doesn't fit
+    let err = super::index::gunzip_with(&p, &work, len, Some(4 << 20), &no()).err().expect("refused");
+    assert!(err.to_string().contains("free disk space"), "{err}");
+    assert_eq!(std::fs::read_dir(&work).unwrap().count(), 0, "the partial file stayed");
+    // plenty of room: it opens
+    assert!(super::index::gunzip_with(&p, &work, len, Some(1 << 40), &no()).is_ok());
+    assert!(super::index::free_space(&s.0).is_some_and(|f| f > 0) || cfg!(not(any(unix, windows))));
+}
+
 #[tokio::test]
 async fn backend_lists_reads_and_stays_read_only() {
     let s = Scratch::new();
@@ -344,7 +364,7 @@ fn server_scripts_quote_everything() {
     let ex = remote::extract_script("/srv/site.zip", Format::Zip, "/srv/", "site");
     assert!(ex.contains("unzip -Z1") && ex.contains("exit 125") && ex.contains("D='/srv/site'"));
     let ex = remote::extract_script("/srv/a.tgz", Format::TarGz, "/srv", "a");
-    assert!(ex.contains("tar -xzf") && ex.contains("^[lh]"));
+    assert!(ex.contains("tar -xzf") && ex.contains("'^[^-d]'") && ex.contains("--no-same-permissions"));
 }
 
 /// A rebuilt archive at the same path (a re-zipped file, a newer download to the same place) is
@@ -442,9 +462,23 @@ impl FakeServer {
         let s = Scratch::new();
         std::fs::create_dir_all(s.0.join("bin")).unwrap();
         let slow = r#"[ -n "$SLOW" ] && { echo $$ > "$PIDFILE"; exec sleep 30; }"#;
+        // what "unpacking" leaves: a file `ok` (set-user-ID with SUID), plus a FIFO with FIFO
+        let made = |d: &str| format!(": > \"{d}/ok\"\n[ -n \"$SUID\" ] && chmod 4755 \"{d}/ok\"\n[ -n \"$FIFO\" ] && mkfifo \"{d}/pipe\"\nexit 0\n");
         let tools = [
-            ("unzip", format!("case \"$1\" in\n-Z) [ -n \"$FAIL\" ] && exit 9; echo '-rw-r--r--  3.0 unx 2 tx stor 24-Jan-01 00:00 x'; exit 0;;\n-Z1) [ -n \"$FAIL\" ] && exit 9; printf '%s\\n' \"$N\"; exit 0;;\nesac\n{slow}\n: > \"$5/ok\"\n")),
-            ("tar", format!("case \"$1\" in\n-tvf) [ -n \"$FAIL\" ] && exit 9; echo '-rw-r--r--  0 0 0 2 Jan  1  2024 x'; exit 0;;\n-tf) [ -n \"$FAIL\" ] && exit 9; printf '%s\\n' \"$N\"; exit 0;;\nesac\n{slow}\n: > \"$4/ok\"\n")),
+            (
+                "unzip",
+                format!(
+                    "case \"$1\" in\n-Z) [ -n \"$FAIL\" ] && exit 9; echo 'Archive:  a'; echo 'Zip file size: 9 bytes, number of entries: 1'; echo \"${{MODE:--rw-r--r--}}  3.0 unx 2 tx stor 24-Jan-01 00:00 x\"; echo '1 file, 2 bytes uncompressed, 2 bytes compressed:  0.0%'; exit 0;;\n-Z1) [ -n \"$FAIL\" ] && exit 9; printf '%s\\n' \"$N\"; exit 0;;\nesac\n{slow}\n{}",
+                    made("$5")
+                ),
+            ),
+            (
+                "tar",
+                format!(
+                    "case \"$1\" in\n-tvf) [ -n \"$FAIL\" ] && exit 9; echo \"${{MODE:--rw-r--r--}}  0 0 0 2 Jan  1  2024 x\"; exit 0;;\n-tf) [ -n \"$FAIL\" ] && exit 9; printf '%s\\n' \"$N\"; exit 0;;\nesac\n{slow}\n{}",
+                    made("$4")
+                ),
+            ),
             ("zip", format!(": > \"$4\"\n{slow}\nexit 0\n")),
         ];
         for (name, body) in tools {
@@ -536,6 +570,61 @@ fn server_name_checks_refuse_unsafe_names() {
         assert_eq!(f.run(sh, &script(Format::Zip), &[("N", "C:x")]), Some(125));
         assert!(f.leftovers().is_empty(), "{:?}", f.leftovers());
     }
+}
+
+/// Only plain files and folders come out of a server-side unpack: links, devices and FIFOs in the
+/// listing (or turning up anyway) stop it, and set-user-ID bits are dropped (S1-6).
+#[cfg(unix)]
+#[test]
+fn server_unpack_keeps_only_plain_files() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = FakeServer::new();
+    let out = format!("{}/out", f.dir());
+    let script = |format| remote::extract_script(&format!("{}/a", f.dir()), format, &f.dir(), "out");
+    for sh in shells() {
+        for format in [Format::Zip, Format::Tar] {
+            for mode in ["lrwxrwxrwx", "hrw-r--r--", "crw-rw-rw-", "brw-rw----", "prw-r--r--", "srwxr-xr-x", "?rw-r--r--"] {
+                let _ = std::fs::remove_dir_all(&out);
+                assert_eq!(f.run(sh, &script(format), &[("N", "x"), ("MODE", mode)]), Some(125), "{sh} {format:?} {mode}");
+                assert!(!Path::new(&out).exists());
+            }
+            for mode in ["-rw-r--r--", "drwxr-xr-x"] {
+                let _ = std::fs::remove_dir_all(&out);
+                assert_eq!(f.run(sh, &script(format), &[("N", "x"), ("MODE", mode)]), Some(0), "{sh} {format:?} {mode}");
+            }
+            // a FIFO that the listing didn't show
+            let _ = std::fs::remove_dir_all(&out);
+            assert_eq!(f.run(sh, &script(format), &[("N", "x"), ("FIFO", "1")]), Some(125), "{sh} {format:?}");
+            assert!(!Path::new(&out).exists());
+            // set-user-ID is dropped
+            let _ = std::fs::remove_dir_all(&out);
+            assert_eq!(f.run(sh, &script(format), &[("N", "x"), ("SUID", "1")]), Some(0), "{sh} {format:?}");
+            let m = std::fs::metadata(format!("{out}/ok")).unwrap().permissions().mode();
+            assert_eq!(m & 0o6000, 0, "{sh} {format:?}: {m:o}");
+            assert!(f.leftovers().is_empty(), "{:?}", f.leftovers());
+        }
+    }
+}
+
+/// With the real tar: a FIFO entry is refused before anything is written.
+#[cfg(unix)]
+#[test]
+fn server_unpack_refuses_a_real_fifo_entry() {
+    let s = Scratch::new();
+    let src = s.0.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("a.txt"), b"x").unwrap();
+    if !std::process::Command::new("mkfifo").arg(src.join("pipe")).status().is_ok_and(|s| s.success()) {
+        return;
+    }
+    let tar = s.0.join("a.tar");
+    assert!(std::process::Command::new("tar").arg("-cf").arg(&tar).arg("-C").arg(&src).arg(".").output().unwrap().status.success());
+    let dir = s.0.join("srv");
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = remote::extract_script(&tar.to_string_lossy(), Format::Tar, &dir.to_string_lossy(), "out");
+    let st = std::process::Command::new("/bin/sh").arg("-c").arg(&script).status().unwrap();
+    assert_eq!(st.code(), Some(125));
+    assert!(!dir.join("out").exists());
 }
 
 /// A listing that fails proves nothing: the server-side unpack is not done (the app's own path,

@@ -4433,6 +4433,13 @@ body.dragging-items * {
   word-break: break-word;
   cursor: text;
 }
+.paste-preview {
+  max-height: 45vh;
+  overflow-wrap: anywhere;
+}
+.paste-trust {
+  margin-top: 10px;
+}
 .toast-more {
   flex: none;
   padding: 1px 6px;

@@ -473,6 +473,12 @@ pub fn human(n: u64) -> String {
 /// write more than the bomb limits allow.
 fn gunzip(path: &Path, work: &Path, archive_len: u64, cancel: &AtomicBool) -> io::Result<PathBuf> {
     std::fs::create_dir_all(work)?;
+    gunzip_with(path, work, archive_len, free_space(work), cancel)
+}
+
+/// [`gunzip`] with the disk's free space given (None: not known).
+pub(crate) fn gunzip_with(path: &Path, work: &Path, archive_len: u64, free: Option<u64>, cancel: &AtomicBool) -> io::Result<PathBuf> {
+    std::fs::create_dir_all(work)?;
     let meta = std::fs::metadata(path)?;
     let stamp = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis()).unwrap_or(0);
     let id = fnv(&format!("{}|{}|{stamp}", path.display(), meta.len()));
@@ -481,6 +487,10 @@ fn gunzip(path: &Path, work: &Path, archive_len: u64, cancel: &AtomicBool) -> io
         return Ok(out);
     }
     let limit = MAX_TOTAL.min(BOMB_FLOOR.max(archive_len.saturating_mul(BOMB_RATIO)));
+    // never more than half the disk's free space: a bomb (or a huge honest archive) must not
+    // fill the disk before it is refused
+    let room = free.map(|f| f / 2);
+    let cap = room.map_or(limit, |r| limit.min(r));
     // a name of its own: two opens of one archive at once never write into each other's file
     let part = part_path(&out);
     let res = (|| {
@@ -500,6 +510,9 @@ fn gunzip(path: &Path, work: &Path, archive_len: u64, cancel: &AtomicBool) -> io
             if done > limit {
                 return Err(bad(format!("This archive unpacks to more than {} from {}, which looks like a decompression bomb. Kybl won't open it.", human(limit), human(archive_len))));
             }
+            if done > cap {
+                return Err(bad(format!("This archive unpacks to more than {}, over half the free disk space. Free up space to open it.", human(cap))));
+            }
             w.write_all(&buf[..n])?;
         }
         w.flush()?;
@@ -515,6 +528,40 @@ fn gunzip(path: &Path, work: &Path, archive_len: u64, cancel: &AtomicBool) -> io
             Err(e)
         }
     }
+}
+
+/// Bytes free for this user on the disk holding `dir`; None when the system doesn't say.
+#[cfg(unix)]
+pub fn free_space(dir: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    // SAFETY: a valid C string and a zeroed out-struct the call fills in
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    #[allow(clippy::unnecessary_cast)]
+    Some((st.f_bavail as u64).saturating_mul(st.f_frsize as u64))
+}
+
+/// Bytes free for this user on the disk holding `dir`; None when the system doesn't say.
+#[cfg(windows)]
+pub fn free_space(dir: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetDiskFreeSpaceExW(dir: *const u16, avail: *mut u64, total: *mut u64, free: *mut u64) -> i32;
+    }
+    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain([0]).collect();
+    let mut avail = 0u64;
+    // SAFETY: a NUL-terminated wide string; null for the totals it may leave out
+    let ok = unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut avail, std::ptr::null_mut(), std::ptr::null_mut()) };
+    (ok != 0).then_some(avail)
+}
+
+#[cfg(not(any(unix, windows)))]
+pub fn free_space(_dir: &Path) -> Option<u64> {
+    None
 }
 
 /// A temporary name next to `out` that no other write of this run uses (`<out>.<n>.part`).
