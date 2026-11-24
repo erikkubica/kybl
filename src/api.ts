@@ -112,6 +112,8 @@ export const api = {
    * move and copy. A prefix "exists" when at least one key starts with it. At most a few
    * thousand entries per call; the backend checks them concurrently.
    */
+  /** Which of these paths on this computer already have a file (checked before a download picks a free name). */
+  existingLocalPaths: (paths: string[]) => invoke<string[]>("existing_local_paths", { paths }),
   existing: (profileId: string, bucket: string, keys: string[], prefixes: string[] = []) =>
     read<{ keys: string[]; prefixes: string[] }>("existing_keys", { profileId, bucket, keys, prefixes }),
 

@@ -17,6 +17,7 @@ import type { useJobs } from "../useJobs";
 import type { Entry, ObjInfo } from "../types";
 import type { SheetItem } from "./ActionSheet";
 import { clashIndices, findClashes, resolveClashes, type ClashChoice, type Target } from "./clash";
+import { findExistingLocal } from "../desktop/conflicts";
 import { localCopy } from "./localCopy";
 import { safeName } from "../desktop/paths";
 import type { Loc } from "./useListing";
@@ -298,20 +299,52 @@ export function useFileOps(c: FileOpsCtx) {
         c.toast("info", "Nothing to download");
         return;
       }
-      const created = c.transfers.add(items);
-      c.toast("info", `Saving ${items.length === 1 ? `“${items[0].name}”` : plural(items.length, "file")} to ${c.savedWhere}`, {
-        label: "Show",
-        run: c.openTransfers,
+      const startAll = (final: typeof items) => {
+        if (!final.length) return;
+        const created = c.transfers.add(final);
+        c.toast("info", `Saving ${final.length === 1 ? `“${final[0].name}”` : plural(final.length, "file")} to ${c.savedWhere}`, {
+          label: "Show",
+          run: c.openTransfers,
+        });
+        // say where it landed once it has: a kept file gets a free name
+        c.watchDownloads(
+          created.map((t) => t.id),
+          (ok, failed) => {
+            if (failed) c.toast("error", `${plural(failed, "download")} failed`, { label: "Retry", run: c.openTransfers });
+            else if (ok.length === 1) c.toast("success", `Saved “${baseName(ok[0].replace(/\\/g, "/"))}”`, { label: "Open", run: () => api.openLocal(ok[0]).catch(toastErr) });
+            else if (ok.length > 1) c.toast("success", `Saved ${plural(ok.length, "file")} to ${c.savedWhere}`);
+          },
+        );
+      };
+      // files already saved here are asked about, like the desktop: Keep both, Replace or Skip
+      let there = new Set<string>();
+      try {
+        there = await findExistingLocal(items.map((t) => t.local));
+      } catch {
+        // couldn't look: a clashing file still gets a free name, so nothing is lost
+      }
+      const clashing = items.filter((t) => there.has(t.local));
+      if (!clashing.length) {
+        startAll(items);
+        return;
+      }
+      const n = clashing.length;
+      const them = n === 1 ? "it" : "them";
+      const choose = (choice: "keep" | "replace" | "skip") => () =>
+        startAll(
+          choice === "skip"
+            ? items.filter((t) => !there.has(t.local))
+            : items.map((t) => (choice === "replace" && there.has(t.local) ? { ...t, overwrite: true } : t)),
+        );
+      c.setSheet({
+        title: n === 1 ? `“${baseName(clashing[0].local.replace(/\\/g, "/"))}” is already in ${c.savedWhere}` : `${plural(n, "file")} are already in ${c.savedWhere}`,
+        message: `Keep both, replace ${them}, or skip ${them}${n < items.length ? " and download the rest" : ""}?`,
+        items: [
+          { icon: "copy", label: "Keep both", run: choose("keep") },
+          { icon: "refresh", label: n === 1 ? "Replace it" : "Replace them", danger: true, run: choose("replace") },
+          { icon: "x", label: n === 1 ? "Skip this one" : "Skip these", run: choose("skip") },
+        ],
       });
-      // say where it landed once it has: an existing file is kept and the download gets a free name
-      c.watchDownloads(
-        created.map((t) => t.id),
-        (ok, failed) => {
-          if (failed) c.toast("error", `${plural(failed, "download")} failed`, { label: "Retry", run: c.openTransfers });
-          else if (ok.length === 1) c.toast("success", `Saved “${baseName(ok[0].replace(/\\/g, "/"))}”`, { label: "Open", run: () => api.openLocal(ok[0]).catch(toastErr) });
-          else if (ok.length > 1) c.toast("success", `Saved ${plural(ok.length, "file")} to ${c.savedWhere}`);
-        },
-      );
     } catch (e) {
       if (!stopped) toastErr(e);
     } finally {

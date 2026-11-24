@@ -1,7 +1,20 @@
 import { useCallback, useRef, useState } from "react";
 import { Icon } from "../Icons";
 import { Modal } from "./Dialogs";
-import type { Choice, Clash } from "../desktop/conflicts";
+import { rememberChoice, rememberedChoice, type Choice, type Clash, type Direction, type Sticky } from "../desktop/conflicts";
+
+/** What a caller can add to `resolve` for work that goes on while it asks (a streaming download). */
+export type ResolveOpts = {
+  /**
+   * The answers given for the rest of this action ("Do this for all"), owned by the caller: a
+   * download that finds files later asks again with the same object and isn't asked twice.
+   */
+  sticky?: Sticky;
+  /** more clashes may come after these (files still being found): "all" then covers them too */
+  more?: boolean;
+  /** offers "Remember until Kybl quits" for this direction, and applies what was remembered */
+  remember?: Direction;
+};
 
 type Ask = {
   clash: Clash;
@@ -10,7 +23,9 @@ type Ask = {
   /** "Uploading", "Moving", "Copying" */
   verb: string;
   where: string;
-  done: (r: { choice: Choice; all: boolean } | null) => void;
+  more: boolean;
+  remember?: Direction;
+  done: (r: { choice: Choice; all: boolean; remember: boolean } | null) => void;
 };
 
 /**
@@ -23,26 +38,30 @@ export function useConflictPrompt() {
   const busy = useRef(false);
 
   /** Resolves with a choice per clashing key, or null when the user cancelled. */
-  const resolve = useCallback(async (clashes: Clash[], verb: string, where: string): Promise<Map<string, Choice> | null> => {
+  const resolve = useCallback(async (clashes: Clash[], verb: string, where: string, opts: ResolveOpts = {}): Promise<Map<string, Choice> | null> => {
     const out = new Map<string, Choice>();
     if (!clashes.length) return out;
     if (busy.current) return null;
     busy.current = true;
     try {
-      const sticky: { file?: Choice; folder?: Choice } = {};
+      const sticky: Sticky = opts.sticky ?? {};
       for (let i = 0; i < clashes.length; i++) {
         const c = clashes[i];
         const kind = c.folder ? "folder" : "file";
-        const remembered = sticky[kind];
+        // "Remember until Kybl quits" first, then "all" of this action
+        const remembered = (opts.remember && rememberedChoice(opts.remember, c.folder)) || sticky[kind];
         if (remembered) {
           out.set(c.key, remembered);
           continue;
         }
         const sameLeft = clashes.slice(i + 1).filter((x) => x.folder === c.folder).length;
-        const r = await new Promise<{ choice: Choice; all: boolean } | null>((done) => setAsk({ clash: c, sameLeft, verb, where, done }));
+        const r = await new Promise<{ choice: Choice; all: boolean; remember: boolean } | null>((done) =>
+          setAsk({ clash: c, sameLeft, verb, where, more: !!opts.more, remember: opts.remember, done }),
+        );
         if (!r) return null;
         out.set(c.key, r.choice);
-        if (r.all) sticky[kind] = r.choice;
+        if (r.all || r.remember) sticky[kind] = r.choice;
+        if (r.remember && opts.remember) rememberChoice(opts.remember, c.folder, r.choice);
       }
       return out;
     } finally {
@@ -57,9 +76,11 @@ export function useConflictPrompt() {
 
 function ConflictDialog({ ask }: { ask: Ask }) {
   const [all, setAll] = useState(false);
+  const [remember, setRemember] = useState(false);
   const { clash, sameLeft, verb, where } = ask;
   const folder = clash.folder;
-  const pick = (choice: Choice) => ask.done({ choice, all });
+  const pick = (choice: Choice) => ask.done({ choice, all: all || remember, remember });
+  const kind = folder ? (sameLeft === 1 ? "folder" : "folders") : sameLeft === 1 ? "file" : "files";
   return (
     <Modal title={folder ? `A folder named “${clash.name}” already exists` : `“${clash.name}” already exists`} onClose={() => ask.done(null)} width={480}>
       <div className="modal-body conflict-body">
@@ -75,12 +96,19 @@ function ConflictDialog({ ask }: { ask: Ask }) {
               ? "Merge puts everything into the existing folder and replaces files with the same names. Keep both adds a number to the new folder’s name."
               : `Replace overwrites the existing file. Keep both adds a number to the name of the one you’re ${verb.toLowerCase()}.`}
           </p>
-          {sameLeft > 0 && (
+          {(sameLeft > 0 || ask.more) && (
             <label className="check conflict-all">
-              <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} />
+              <input type="checkbox" checked={all || remember} disabled={remember} onChange={(e) => setAll(e.target.checked)} />
               <span>
-                Do this for the other {sameLeft.toLocaleString()} {folder ? (sameLeft === 1 ? "folder" : "folders") : sameLeft === 1 ? "file" : "files"}
+                {/* a folder being listed still finds files: "all" holds for those too */}
+                {ask.more ? `Do this for all the other ${folder ? "folders" : "files"} in this download` : `Do this for the other ${sameLeft.toLocaleString()} ${kind}`}
               </span>
+            </label>
+          )}
+          {ask.remember && (
+            <label className="check conflict-all">
+              <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+              <span>Remember until Kybl quits</span>
             </label>
           )}
         </div>

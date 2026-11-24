@@ -425,7 +425,7 @@ function TransferRows({ settings, onChange, onToast }: { settings: Settings; onC
     <>
       <h3 className="set-title">Downloads</h3>
       <div className="set-card">
-        <Row label="Ask where to save downloads" hint={settings.downloadAsk ? "Each download asks for a folder first." : `Downloads go straight to ${folder ?? "your Downloads folder"}. A file with the same name is kept and the new one gets a number.`}>
+        <Row label="Ask where to save downloads" hint={settings.downloadAsk ? "Each download asks for a folder first." : `Downloads go straight to ${folder ?? "your Downloads folder"}. A file with the same name asks first: replace it, keep both, or skip.`}>
           <Switch label="Ask where to save downloads" on={settings.downloadAsk} onChange={(downloadAsk) => onChange({ downloadAsk })} />
         </Row>
         <Row label="Download folder" hint="Used when Kybl doesn’t ask, and as the starting folder when it does.">
