@@ -280,6 +280,8 @@ function KeyedForm({
   // mounted (hidden), so what was typed survives a switch
   // SSH is SFTP that opens as a terminal: the same form
   const sftp = pick === "sftp" || pick === "ssh";
+  // what a click on it opens; switchable later, so an SFTP server can become an SSH one
+  const [opensAs, setOpensAs] = useState<"files" | "terminal">(pick === "ssh" ? "terminal" : "files");
   const [tab, setTab] = useState<"main" | "options" | "tunnels">(sftp && !PHONE && startTab ? startTab : "main");
   // SFTP: the tunnel list lives in its own tab; NetForm draws it there and says how many
   const [tunnelsHost, setTunnelsHost] = useState<HTMLDivElement | null>(null);
@@ -394,7 +396,7 @@ function KeyedForm({
         {pick === "s3" ? (
           <S3Form {...common} />
         ) : pick === "webdav" || pick === "ftp" || sftp ? (
-          <NetForm kind={(sftp ? "sftp" : pick) as NetKind} shell={pick === "ssh"} {...common} tunnelsHost={tunnelsHost} onTunnelCount={setTunnelCount} />
+          <NetForm kind={(sftp ? "sftp" : pick) as NetKind} shell={opensAs === "terminal"} {...common} tunnelsHost={tunnelsHost} onTunnelCount={setTunnelCount} />
         ) : (
           <BlobForm kind={pick as BlobKind} {...common} />
         )}
@@ -425,6 +427,25 @@ function KeyedForm({
               </>
             )}
           </Field>
+        )}
+
+        {sftp && !PHONE && (
+          <div className="field span2">
+            <span>Opens as</span>
+            <Segmented
+              label="Opens as"
+              value={opensAs}
+              onChange={(v) => {
+                setOpensAs(v);
+                onDirty();
+              }}
+              options={[
+                { value: "files", label: "Files" },
+                { value: "terminal", label: "Terminal" },
+              ]}
+            />
+            <small className="field-hint">{opensAs === "terminal" ? "A click opens a terminal on the server; its files are in the connection's menu." : "A click shows the server's files."}</small>
+          </div>
         )}
 
         <div className="field span2">
