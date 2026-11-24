@@ -152,6 +152,7 @@ impl SftpBackend {
             keepalive_max: 3,
             inactivity_timeout: None,
             nodelay: true,
+            preferred: russh::Preferred { kex: std::borrow::Cow::Borrowed(KEX_ORDER), ..Default::default() },
             ..Default::default()
         });
         let (check, seen) = HostCheck::new(self.host_key.clone());
@@ -1105,6 +1106,27 @@ fn sftp_error(e: SftpError) -> StorageError {
     }
 }
 
+/// Key exchanges, best first: russh's own list, with the fixed Diffie-Hellman groups and NIST
+/// ECDH ahead of group exchange. ProFTPD's mod_sftp (Hetzner Storage Boxes, many shared hosts)
+/// offers no curve25519, and its group exchange fails with russh ("Key exchange init failed"),
+/// while group 16/18/14 work. Every one of these is still a strong choice.
+const KEX_ORDER: &[russh::kex::Name] = &[
+    russh::kex::MLKEM768X25519_SHA256,
+    russh::kex::CURVE25519,
+    russh::kex::CURVE25519_PRE_RFC_8731,
+    russh::kex::DH_G16_SHA512,
+    russh::kex::DH_G18_SHA512,
+    russh::kex::DH_G14_SHA256,
+    russh::kex::ECDH_SHA2_NISTP256,
+    russh::kex::ECDH_SHA2_NISTP384,
+    russh::kex::ECDH_SHA2_NISTP521,
+    russh::kex::DH_GEX_SHA256,
+    russh::kex::DH_G17_SHA512,
+    russh::kex::DH_G15_SHA512,
+    russh::kex::EXTENSION_SUPPORT_AS_CLIENT,
+    russh::kex::EXTENSION_OPENSSH_STRICT_KEX_AS_CLIENT,
+];
+
 fn ssh_error(e: russh::Error, host: &str) -> StorageError {
     use russh::Error as E;
     match e {
@@ -1139,6 +1161,23 @@ fn no_agent(detail: String) -> StorageError {
 
 #[cfg(test)]
 mod tests {
+    /// Against a real server (env KYBL_SSH_HELLO="host port"): only the handshake, no sign-in. A
+    /// server whose key isn't saved yet ends in the "unknown host key" question, which means the
+    /// key exchange itself went through. Ignored by default.
+    #[test]
+    #[ignore]
+    fn real_server_handshake() {
+        let hp = std::env::var("KYBL_SSH_HELLO").unwrap();
+        let (host, port) = hp.split_once(' ').unwrap();
+        let cfg = NetConfig { host: host.into(), port: port.parse().unwrap(), user: "kybl-handshake-only".into(), ..Default::default() };
+        let b = SftpBackend::new(&cfg, Secrets { password: Some("-".into()), ssh: None }).unwrap();
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        let r = rt.block_on(b.sign_in_connection()).map(|_| ());
+        let e = r.unwrap_err();
+        eprintln!("HANDSHAKE -> {} | {}", e.message, e.detail.as_deref().unwrap_or(""));
+        assert!(!e.message.contains("agree on encryption"), "key exchange failed");
+    }
+
     use super::*;
 
     #[test]

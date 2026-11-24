@@ -90,7 +90,7 @@ export function ActionsSection({ onToast }: { onToast: ToastFn }) {
     <>
       <h3 className="set-title">Actions</h3>
       <p className="ca-intro">
-        Your own commands for files and folders, in the right-click menu under Actions. They run {NEEDS_GIT_SH ? `in sh ${LOCAL_PHRASE} (Git for Windows has it, install that first)` : `in your shell ${LOCAL_PHRASE}`}, or over SSH on SFTP servers. Names are always passed safely quoted.
+        Your own commands for files and folders, in the right-click menu under Actions. They run {NEEDS_GIT_SH ? `in sh ${LOCAL_PHRASE} (Git for Windows has it, install that first)` : `in your shell ${LOCAL_PHRASE}`}, or on SSH and SFTP servers. Names are always passed safely quoted.
       </p>
       <div className="set-card">
         {actions.length === 0 && <div className="set-row"><div className="set-label">No actions yet<small>Add one to run a command on the selected items.</small></div></div>}
@@ -347,7 +347,7 @@ function ActionEditor({
                 <Icon name="info" size={13} />
                 {a.where === "local"
                   ? (NEEDS_GIT_SH ? "In sh from Git for Windows (install it first). " : "In your shell (fish and other non-POSIX shells: in sh, with their PATH). ") + "Files of a server or cloud connection are downloaded to a temporary folder first: {path} is that copy, and changes stay there."
-                  : "Over SSH, in the folder on screen, with the server’s login shell. SFTP connections only."}
+                  : "Over SSH, in the folder on screen, with the server’s login shell. SSH and SFTP connections only."}
               </p>
             </div>
 

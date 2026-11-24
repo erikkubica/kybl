@@ -37,7 +37,7 @@ test("trash and delete labels: the system's bin only for files on its disk", () 
 });
 
 test("terminal refusal: never names the computer where terminals can't open", () => {
-  assert.equal(terminalsWhere("win"), "Terminals open on SFTP connections");
-  assert.equal(terminalsWhere("mac"), "Terminals open on This Mac and on SFTP connections");
-  assert.equal(terminalsWhere("linux"), "Terminals open on This computer and on SFTP connections");
+  assert.equal(terminalsWhere("win"), "Terminals open on SSH and SFTP connections");
+  assert.equal(terminalsWhere("mac"), "Terminals open on This Mac and on SSH and SFTP connections");
+  assert.equal(terminalsWhere("linux"), "Terminals open on This computer and on SSH and SFTP connections");
 });

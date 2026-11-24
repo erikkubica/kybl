@@ -251,7 +251,7 @@ export function actionCommandMap(ctx: ActionContext): Record<string, () => void>
 function refusal(a: CustomAction, ctx: ActionContext, list: Entry[]): string | null {
   if (!ctx.profile || ctx.bucket == null) return "Open a folder first";
   if (templateProblem(a.command)) return "Its command needs fixing in Settings → Actions";
-  if (placeProblem(a, ctx) !== undefined) return "Runs on SFTP servers only";
+  if (placeProblem(a, ctx) !== undefined) return "Runs on SSH and SFTP servers only";
   if (!list.length) return "Select the items to run it on";
   const { targets, why } = targetsFor(a, ctx, list);
   if (targets.length) return null;
@@ -298,7 +298,7 @@ export function useActionPalette(active: () => ActionContext | null) {
 
 async function runFromCommand(ctx: ActionContext, a: CustomAction) {
   const p = placeProblem(a, ctx);
-  if (p !== undefined) return void ctx.dialogs.toast("info", p ?? (a.where === "server" ? `“${a.name}” runs on SFTP servers only.` : `“${a.name}” can’t run here.`));
+  if (p !== undefined) return void ctx.dialogs.toast("info", p ?? (a.where === "server" ? `“${a.name}” runs on SSH and SFTP servers only.` : `“${a.name}” can’t run here.`));
   const list = ctx.selection();
   if (!list.length) return void ctx.dialogs.toast("info", `Select the items to run “${a.name}” on.`);
   await runAction(ctx, a, list);

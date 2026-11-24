@@ -133,7 +133,7 @@ function usePaneCore(env: PaneEnv) {
   // this computer's folders in a git work tree: the branch and the items' status marks
   const git = useGitStatus(here, !!caps?.localPaths, ent.listing);
   /** why this connection can't search inside files (null: it can, on this computer and SFTP servers) */
-  const contentsOff = caps?.localPaths || profile?.kind === "sftp" ? null : "Searching inside files works on this computer and on SFTP servers";
+  const contentsOff = caps?.localPaths || profile?.kind === "sftp" ? null : "Searching inside files works on this computer and on SSH and SFTP servers";
   // another kind of connection opened in the pane: back to names
   const { mode: searchMode, configure: configureSearch } = sr;
   useEffect(() => {

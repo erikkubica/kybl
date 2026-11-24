@@ -42,4 +42,4 @@ export const trashName = (onDisk: boolean, os: Os = OS) => (onDisk ? osNames(os)
 export const deleteLabel = (trash: boolean, onDisk: boolean, os: Os = OS) => (trash ? `Move to ${trashName(onDisk, os)}` : "Delete");
 
 /** Where terminals open, for a refusal: this computer (not on Windows yet) and SFTP servers. */
-export const terminalsWhere = (os: Os = OS) => (os === "win" ? "Terminals open on SFTP connections" : `Terminals open on ${osNames(os).device} and on SFTP connections`);
+export const terminalsWhere = (os: Os = OS) => (os === "win" ? "Terminals open on SSH and SFTP connections" : `Terminals open on ${osNames(os).device} and on SSH and SFTP connections`);
