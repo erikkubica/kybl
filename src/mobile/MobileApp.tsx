@@ -10,7 +10,7 @@
 import { asExport } from "../connections/native";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { api, errMessage, errSummary } from "../api";
+import { api, backupApi, errMessage, errSummary } from "../api";
 import { baseName, classify, isPlayableVideo, isWebImage, parentPrefix, plural } from "../format";
 import { useTransfers, useTransferList } from "../useTransfers";
 import { useJobs } from "../useJobs";
@@ -48,7 +48,8 @@ import { DestinationScreen, type SharedFile } from "./DestinationScreen";
 import { PullIndicator, useEdgeSwipe, usePullToRefresh } from "./gestures";
 import { MIcon, type MIconName } from "./icons";
 import { isNetworkError, syncThumbPause, useNetwork, useTransferPrefs } from "./net";
-import { useFileOps, type Pill, type ToastAction } from "./useFileOps";
+import { useFileOps, type Confirm, type Pill, type Prompt, type ToastAction } from "./useFileOps";
+import { nameProblem } from "../itemText";
 import { locKey, useListing, type Loc } from "./useListing";
 import { useKeyboardFit, useSystemBack } from "./useSystemBack";
 import { SHEETS, SWIPEABLE, layerElement, layerZ, useLayerStack, type LayerId } from "./layers";
@@ -64,7 +65,7 @@ import { MigrationDialog, type MigrationSource } from "../jobs";
 import { useMigrate } from "./useMigrate";
 import { ConnFixRow, hasConnFix, type ConnFixes } from "./ConnFixRow";
 import { hideUnderLayer } from "./hideUnderLayer";
-import { trustOnProfile } from "../connections/ConnFix";
+import { onTrustSaved, trustOnProfile } from "../connections/ConnFix";
 import "../styles.css";
 import "./mobile.css";
 
@@ -217,8 +218,8 @@ export default function MobileApp() {
   const signInAgain = useCallback((p: Profile) => setConnDialog({ profile: p, reconnect: true }), []);
   const authNeeded = useAuthNeeded();
   const connectKybl = useCallback(() => setKyblDialog({ existing: null }), []);
-  const [confirm, setConfirm] = useState<null | { title: string; message: React.ReactNode; label: string; danger?: boolean; run: () => void }>(null);
-  const [prompt, setPrompt] = useState<null | { title: string; label: string; initial: string; confirmLabel: string; note?: string; run: (v: string) => void }>(null);
+  const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [moveDialog, setMoveDialog] = useState<null | { items: Entry[]; mode: "move" | "copy" }>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -254,7 +255,7 @@ export default function MobileApp() {
   const toast = useCallback((kind: Toast["kind"], text: string, action?: ToastAction) => {
     const id = Date.now() + Math.random();
     setToasts((t) => [...t.slice(-2), { id, kind, text, action }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 8000 : kind === "error" ? 6000 : 2800);
+    // the toast goes by itself (TOAST_MS), not while it is focused or its details are open
   }, []);
   const onError = useCallback((m: string) => toast("error", errSummary(m)), [toast]);
   const transfers = useTransfers(onError);
@@ -423,6 +424,9 @@ export default function MobileApp() {
       },
     };
   }, [reloadProfiles]);
+
+  // trusted from a destination picker (copy to another connection, backup): the list picks it up
+  useEffect(() => onTrustSaved(() => void reloadProfiles()), [reloadProfiles]);
 
   const startup = useCallback(async (restore: boolean) => {
     const list = await reloadProfiles();
@@ -621,7 +625,10 @@ export default function MobileApp() {
   useEffect(() => hideUnderLayer(top), [top, stack.length, wide, locked]);
   /** How each layer closes when back reaches it. */
   const closeLayer: Record<LayerId, () => void> = {
-    confirm: () => setConfirm(null),
+    confirm: () => {
+      confirm?.cancel?.();
+      setConfirm(null);
+    },
     prompt: () => setPrompt(null),
     kybl: () => setKyblDialog(null),
     // something typed into the form asks first; the dialog closes itself through onClose
@@ -702,8 +709,9 @@ export default function MobileApp() {
   }, [layerUp, backRef]);
   useKeyboardFit(IOS);
   // iPhone: swipe from the left edge (Android has its own back gesture). It moves the screen on
-  // top of the stack, or the folder page when nothing is open; never a sheet, dialog or the viewer.
-  const swipeable = !wide && !locked && depth > 0 && (!top || SWIPEABLE.has(top));
+  // top of the stack, or the folder page when nothing is open; never a sheet, dialog or the viewer
+  // (a trust sheet over a screen too: back closes the sheet, the screen would slide for nothing).
+  const swipeable = !wide && !locked && depth > 0 && freeModals === 0 && (!top || SWIPEABLE.has(top));
   const swipeTarget = () => {
     if (top) {
       const el = layerElement(top);
@@ -1406,18 +1414,18 @@ export default function MobileApp() {
       label: `Bucket name in ${p.name || p.endpoint}`,
       initial: "",
       confirmLabel: "Create",
-      run: (raw) => {
-        const name = raw.trim();
-        if (!name) return;
-        api
-          .createBucket(p.id, name)
-          .then(async () => {
-            await loadBuckets(p);
-            setBucketHidden(p, name, false);
-            go({ profileId: p.id, bucket: name, prefix: "" });
-            toast("success", `Created ${name}`);
-          })
-          .catch((e) => toast("error", errSummary(errMessage(e))));
+      check: nameProblem,
+      // the server refusing the name shows in the sheet, with the name kept
+      run: async (name) => {
+        try {
+          await api.createBucket(p.id, name);
+        } catch (e) {
+          return errSummary(errMessage(e));
+        }
+        await loadBuckets(p);
+        setBucketHidden(p, name, false);
+        go({ profileId: p.id, bucket: name, prefix: "" });
+        toast("success", `Created ${name}`);
       },
     });
   }
@@ -1429,10 +1437,8 @@ export default function MobileApp() {
       label: `Bucket name in ${p.name || p.endpoint}`,
       initial: "",
       confirmLabel: "Open",
-      run: (raw) => {
-        const name = raw.trim();
-        if (!name) return;
-        if (name.includes("/")) return toast("error", "A bucket name cannot contain “/”");
+      check: nameProblem,
+      run: (name) => {
         setBuckets((m) => {
           const cur = m[p.id] ?? { names: [], note: null, loading: false };
           if (cur.names.includes(name)) return m;
@@ -1709,7 +1715,19 @@ export default function MobileApp() {
       </Presence>
       <Presence show={!!backupOpen} layer="backup" z={z("backup")}>
         {backupOpen && (
-          <BackupScreen backup={backup} handle={backupHandle} startSetup={backupOpen === "setup"} onBack={() => backRef.current()} toast={toast} />
+          <BackupScreen
+            backup={backup}
+            handle={backupHandle}
+            startSetup={backupOpen === "setup"}
+            onBack={() => backRef.current()}
+            toast={toast}
+            onSignIn={(id) => {
+              const p = profiles?.find((x) => x.id === id);
+              if (!p) return toast("error", "This backup's connection was removed.");
+              if (p.provider === KYBL) setKyblDialog({ existing: p, reconnect: true });
+              else signInAgain(p);
+            }}
+          />
         )}
       </Presence>
 
@@ -1789,6 +1807,8 @@ export default function MobileApp() {
               setConnDialog(null);
               forgetCaps(p.id);
               clearAuthNeeded(p.id);
+              // backups that stopped for this sign-in go on now, not at their next run
+              for (const s of backup.overview?.sets ?? []) if (s.set.profileId === p.id && s.state === "needsAuth") void backupApi.runNow(s.set.id).catch(() => {});
               await reloadProfiles();
               await loadBuckets(p);
               // a server has one root: open it, as the desktop does after saving
@@ -1835,7 +1855,11 @@ export default function MobileApp() {
               setConfirm(null);
               run();
             }}
-            onClose={() => setConfirm(null)}
+            onClose={() => {
+              // (after a confirm too, where it does nothing: the question was answered)
+              confirm.cancel?.();
+              setConfirm(null);
+            }}
           />
         </Layer>
       )}
@@ -1847,11 +1871,9 @@ export default function MobileApp() {
             initial={prompt.initial}
             confirmLabel={prompt.confirmLabel}
             note={prompt.note}
-            onSubmit={(v) => {
-              const run = prompt.run;
-              setPrompt(null);
-              run(v);
-            }}
+            check={prompt.check}
+            // a problem keeps the sheet open with the name as typed; it closes itself when done
+            onSubmit={prompt.run}
             onClose={() => setPrompt(null)}
           />
         </Layer>

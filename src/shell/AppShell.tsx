@@ -10,7 +10,7 @@ import { findMount, useMounts } from "../mount/useMounts";
 import type { MountInfo } from "../api";
 import { tidyMenu } from "../desktop/menus";
 import { menuFromKey } from "../desktop/menuKeyWatch";
-import { trustOnProfile } from "../connections/ConnFix";
+import { onTrustSaved, trustOnProfile } from "../connections/ConnFix";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { REMOTE_TERM_DROP, useTerminalPanes } from "../terminal/useTerminalPanes";
 import { terminalBusy } from "../terminal/api";
@@ -152,6 +152,9 @@ export function AppShell() {
   const dialogs = useDialogs();
   const { toast } = dialogs;
   const conns = useConnections();
+  // trusted from a destination picker (copy to another connection, mirror): the sidebar's copy follows
+  const { upsertProfile } = conns;
+  useEffect(() => onTrustSaved(upsertProfile), [upsertProfile]);
   // sign-in connections whose access ended: "Sign in again" in the sidebar
   const authNeeded = useAuthNeeded();
   // drives ("Mount as drive"): the sidebar marks mounted places, the menus offer Eject

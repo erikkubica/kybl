@@ -17,6 +17,20 @@ export function trustOnProfile(p: Profile, what: { certFingerprint: string } | {
   return api.saveProfile({ ...p, net: { ...p.net, ...what } });
 }
 
+const trustListeners = new Set<(p: Profile) => void>();
+/**
+ * Hears a connection saved by a trust fix made away from the app's own screens (the destination
+ * picker), so the app's copy of it picks up what was trusted. Returns the undo.
+ */
+export function onTrustSaved(fn: (p: Profile) => void): () => void {
+  trustListeners.add(fn);
+  return () => void trustListeners.delete(fn);
+}
+/** Tells the app a trust fix saved `p` (see onTrustSaved). */
+export function trustSaved(p: Profile) {
+  for (const fn of trustListeners) fn(p);
+}
+
 /** The one button for `trouble`; each handler does the fix and then tries again. */
 export function ConnFixButton({
   trouble,

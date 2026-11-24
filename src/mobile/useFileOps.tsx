@@ -4,14 +4,14 @@
  * files shared from other apps). MobileApp owns the state; these are the actions on it.
  */
 import { NO_EXPORT, exportable } from "../connections/native";
-import { deleteWording } from "../itemText";
+import { deleteWording, nameProblem, takenName } from "../itemText";
 import { useRef } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, errMessage, errSummary, type Capabilities } from "../api";
 import { baseName, classify, parentPrefix } from "../format";
 import { destKey, destLabel, entryParent } from "../moving";
 import type { Settings } from "../settings";
-import type { Toast } from "../components/Dialogs";
+import type { PromptResult, Toast } from "../components/Dialogs";
 import type { TransferActions } from "../useTransfers";
 import type { useJobs } from "../useJobs";
 import type { Entry, ObjInfo } from "../types";
@@ -26,8 +26,22 @@ export type ToastAction = NonNullable<Toast["action"]>;
 export type ToastFn = (kind: Toast["kind"], text: string, action?: ToastAction) => void;
 /** A progress pill: "Getting “photo.heic” 40%", with Cancel. One per running operation. */
 export type Pill = { text: string; frac: number | null; cancel?: () => void };
-type Confirm = { title: string; message: React.ReactNode; label: string; danger?: boolean; run: () => void };
-type Prompt = { title: string; label: string; initial: string; confirmLabel: string; note?: string; run: (v: string) => void };
+/** `cancel` runs when the question is closed without confirming. */
+export type Confirm = { title: string; message: React.ReactNode; label: string; danger?: boolean; run: () => void; cancel?: () => void };
+/**
+ * A name asked for. `check` refuses a bad name under the field; `run` gets the trimmed value and
+ * may answer with what went wrong (a string, now or later): the sheet then stays open with the name
+ * as typed ("" stays open quietly, a question cancelled).
+ */
+export type Prompt = {
+  title: string;
+  label: string;
+  initial: string;
+  confirmLabel: string;
+  note?: string;
+  check?: (v: string) => string | null;
+  run: (v: string) => PromptResult | Promise<PromptResult>;
+};
 type Sheet = { title?: string; message?: string; items: SheetItem[] };
 
 export type FileOpsCtx = {
@@ -96,6 +110,8 @@ export function useFileOps(c: FileOpsCtx) {
   const listing = useRef(new Map<string, object>());
 
   const toastErr = (e: unknown) => c.toast("error", errSummary(errMessage(e)));
+  /** A question on top of a prompt: true when confirmed, false when closed (the prompt stays). */
+  const ask = (q: Omit<Confirm, "run" | "cancel">) => new Promise<boolean>((res) => c.setConfirm({ ...q, run: () => res(true), cancel: () => res(false) }));
 
   /** A pill of its own for one operation, so two at once don't overwrite each other's progress. */
   const newPill = () => {
@@ -419,14 +435,26 @@ export function useFileOps(c: FileOpsCtx) {
     b: string,
     items: Target[],
     mode: "move" | "copy",
-    o: { title: string; done: string; dest: string; isUndo?: boolean; noUndo?: boolean; onUndone?: () => void },
+    o: {
+      title: string;
+      done: string;
+      dest: string;
+      isUndo?: boolean;
+      noUndo?: boolean;
+      onUndone?: () => void;
+      /** a refusal that moved nothing goes here (the rename sheet shows it) instead of a toast */
+      refused?: (why: string) => void;
+    },
   ) => {
     const id = c.jobs.start({ kind: mode, title: o.title, dest: o.dest, profileId: pid, bucket: b });
     let ok = false;
     try {
       const r = await api.moveMany(pid, b, items, mode === "move", id);
       c.jobs.finish(id, r);
-      if (r.error && r.error !== "Cancelled") c.toast("error", errSummary(r.error));
+      if (r.error && r.error !== "Cancelled") {
+        if (o.refused && !r.done) o.refused(errSummary(r.error));
+        else c.toast("error", errSummary(r.error));
+      }
       else if (r.error !== "Cancelled") {
         ok = true;
         const back = items.map((t) => ({ from: t.to, to: t.from, isPrefix: t.isPrefix }));
@@ -449,7 +477,8 @@ export function useFileOps(c: FileOpsCtx) {
       }
     } catch (err) {
       c.jobs.finish(id, { error: errMessage(err) });
-      toastErr(err);
+      if (o.refused) o.refused(errSummary(errMessage(err)));
+      else toastErr(err);
     }
     const scope = c.loc?.prefix ?? "";
     /** where a key went: moved itself, or inside a moved folder */
@@ -500,22 +529,25 @@ export function useFileOps(c: FileOpsCtx) {
     const l = c.loc;
     if (!l) return;
     const { profileId: pid, bucket: b } = l;
+    const isFolder = e.kind === "folder";
+    // folders that are key prefixes (S3, Azure, GCS) have no rename: every file is copied
+    const slow = isFolder && c.caps?.rename === "copy-delete";
     c.setPrompt({
-      title: e.kind === "folder" ? "Rename folder" : "Rename file",
+      title: isFolder ? "Rename folder" : "Rename file",
       label: "New name",
       initial: e.name,
       confirmLabel: "Rename",
-      // folders that are key prefixes (S3, Azure, GCS) have no rename: every file is copied
-      note: e.kind === "folder" && c.caps?.rename === "copy-delete" ? "Renaming a folder here copies every file in it, so it can take a while." : undefined,
-      run: async (raw) => {
-        const name = raw.trim();
-        if (name.includes("/")) return c.toast("error", "A name cannot contain “/”");
-        if (!name || name === e.name) return;
-        const isFolder = e.kind === "folder";
+      note: slow ? "Renaming a folder here copies every file in it, so it can take a while." : undefined,
+      check: nameProblem,
+      // what stops the rename (a name taken and not replaced, the server refusing) shows in the
+      // sheet, with the name kept
+      run: async (name) => {
+        if (name === e.name) return;
         const parent = entryParent(e);
         const to = isFolder ? `${parent}${name}/` : `${parent}${name}`;
         const item: Target = { from: e.key, to, isPrefix: isFolder };
-        const run = async (replaced: boolean) => {
+        const run = async (replaced: boolean, inSheet: boolean) => {
+          let refused: string | undefined;
           const ok = await runMove(pid, b, [item], "move", {
             title: `Renaming “${e.name}” to “${name}”`,
             done: `Renamed to “${name}”`,
@@ -523,25 +555,31 @@ export function useFileOps(c: FileOpsCtx) {
             noUndo: replaced,
             // the detail screen follows the file back to its old name
             onUndone: () => c.renamedDetail(to, e),
+            refused: inSheet ? (why) => (refused = why) : undefined,
           });
           if (ok) c.renamedDetail(e.key, { ...e, key: to, name });
+          return refused;
+        };
+        // a slow folder rename goes on in the background (its pill); a quick one answers in the sheet
+        const start = (replaced: boolean) => {
+          if (!slow) return run(replaced, true);
+          void run(replaced, false);
         };
         // renaming onto an existing name would replace that file (or merge that folder) without a word
         let taken: Set<string>;
         try {
           taken = await findClashes(pid, b, [item]);
         } catch {
-          c.setConfirm({
+          const go = await ask({
             title: "Couldn't check for existing files",
             label: "Rename anyway",
             danger: false,
             message: <p>Continue anyway? If something called “{name}” is already in this folder, renaming {isFolder ? "merges the two folders" : "replaces it"}.</p>,
-            run: () => void run(true),
           });
-          return;
+          return go ? start(true) : "";
         }
-        if (!taken.size) return run(false);
-        c.setConfirm({
+        if (!taken.size) return start(false);
+        const go = await ask({
           title: isFolder ? `Merge with “${name}”?` : `Replace “${name}”?`,
           label: isFolder ? "Merge" : "Replace",
           danger: true,
@@ -550,8 +588,8 @@ export function useFileOps(c: FileOpsCtx) {
           ) : (
             <p>Something called “{name}” is already in this folder. Renaming replaces it.</p>
           ),
-          run: () => void run(true),
         });
+        return go ? start(true) : "";
       },
     });
   };
@@ -564,14 +602,17 @@ export function useFileOps(c: FileOpsCtx) {
       label: "Folder name",
       initial: "",
       confirmLabel: "Create",
+      // a bad or taken name, or the server refusing, shows in the sheet with the name kept
+      check: nameProblem,
       run: async (name) => {
-        const n = name.trim().replace(/^\/+|\/+$/g, "");
-        if (!n) return;
+        const key = `${l.prefix}${name}/`;
         try {
-          await api.createFolder(l.profileId, l.bucket, `${l.prefix}${n}/`);
+          const found = await findClashes(l.profileId, l.bucket, [{ from: key, to: key, isPrefix: true }]).catch(() => new Set<string>());
+          if (found.has(key)) return takenName(name, true);
+          await api.createFolder(l.profileId, l.bucket, key);
           c.changed(l.profileId, l.bucket);
         } catch (e) {
-          toastErr(e);
+          return errSummary(errMessage(e));
         }
       },
     });

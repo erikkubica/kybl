@@ -146,6 +146,21 @@ export function PermissionNote({
   );
 }
 
+/** A set that stopped because its connection's sign-in ended: the way to sign in again. */
+export function SignInNote({ onSignIn }: { onSignIn: () => void }) {
+  return (
+    <div className="bk-note warn" role="status">
+      <Icon name="alert" size={18} />
+      <div className="bk-note-body">
+        <p>Kybl is no longer signed in to this connection, so nothing is backed up until you sign in again.</p>
+        <button className="btn bk-note-btn" onClick={onSignIn}>
+          Sign in again
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /**
  * The home screen's way in: an offer to set backup up (people can hide it), or how the backup is
  * doing once there is one.

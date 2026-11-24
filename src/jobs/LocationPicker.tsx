@@ -8,9 +8,11 @@ import { Icon } from "../Icons";
 import { FileIcon } from "../components/FileIcon";
 import { deviceIcon, rootIcon } from "../connections/roots";
 import { ProviderBadge } from "../components/Sidebar";
-import { capsFor } from "../useCaps";
+import { capsFor, forgetCaps } from "../useCaps";
+import { ConnFixButton, connTrouble, trustOnProfile, trustSaved } from "../connections/ConnFix";
 import type { Profile } from "../types";
 import { ON_OS } from "../osNames";
+import { nameProblem } from "../itemText";
 import "./jobs.css";
 
 /** A folder somewhere: `dir` is "" for the top of the root, else ends with "/". */
@@ -41,7 +43,7 @@ type Row =
   | { type: "conn"; key: string; depth: number; pid: string; name: string; provider?: string }
   | { type: "root"; key: string; depth: number; loc: Loc; name: string; rootKind: RootInfo["kind"] }
   | { type: "dir"; key: string; depth: number; loc: Loc; name: string }
-  | { type: "state"; key: string; depth: number; text: string; error?: string; retry?: () => void; spin?: boolean }
+  | { type: "state"; key: string; depth: number; text: string; error?: string; retry?: () => void; spin?: boolean; pid?: string }
   | { type: "more"; key: string; depth: number; loc: Loc }
   | { type: "new"; key: string; depth: number; loc: Loc };
 
@@ -175,7 +177,7 @@ export function LocationPicker({
     }
     if (creating && value && dirKey(value) === key) rows.push({ type: "new", key: `${key}\nnew`, depth, loc });
     if (d.status === "loading") rows.push({ type: "state", key: `${key}\nload`, depth, text: "Loading folders…", spin: true });
-    if (d.status === "error") rows.push({ type: "state", key: `${key}\nerr`, depth, text: "Couldn't list the folders here.", error: d.error, retry: () => void loadDir(loc) });
+    if (d.status === "error") rows.push({ type: "state", key: `${key}\nerr`, depth, text: "Couldn't list the folders here.", error: d.error, retry: () => void loadDir(loc), pid: loc.profileId });
     for (const f of d.folders) {
       const child = { ...loc, dir: f };
       const ck = dirKey(child);
@@ -195,7 +197,7 @@ export function LocationPicker({
       continue;
     }
     if (data.status === "loading") rows.push({ type: "state", key: `${ck}\nload`, depth: 1, text: "Loading…", spin: true });
-    else if (data.status === "error") rows.push({ type: "state", key: `${ck}\nerr`, depth: 1, text: "Couldn't open this connection.", error: data.error, retry: () => loadConn(c.pid) });
+    else if (data.status === "error") rows.push({ type: "state", key: `${ck}\nerr`, depth: 1, text: "Couldn't open this connection.", error: data.error, retry: () => loadConn(c.pid), pid: c.pid });
     else if (data.roots.length === 0) rows.push({ type: "state", key: `${ck}\nnone`, depth: 1, text: "Nothing here yet." });
     else if (data.single) addDir({ profileId: c.pid, root: data.roots[0].id, dir: "" }, 1);
     else
@@ -273,7 +275,8 @@ export function LocationPicker({
     if (!value) return;
     const name = newName.trim().replace(/\/+$/, "");
     if (!name) return onCreatingDone?.();
-    if (name.includes("/")) return setNewError("A folder name can't contain “/”.");
+    const bad = nameProblem(name);
+    if (bad) return setNewError(bad);
     const dir = `${value.dir}${name}/`;
     setBusy(true);
     try {
@@ -288,6 +291,33 @@ export function LocationPicker({
     } finally {
       setBusy(false);
     }
+  };
+
+  /** The trust button for a row's error (a server's own certificate, an SFTP key, plain FTP), or nothing. */
+  const fixFor = (r: Extract<Row, { type: "state" }>) => {
+    const p = r.pid ? profiles?.find((x) => x.id === r.pid) : undefined;
+    const trouble = p && r.retry ? connTrouble(p, r.error) : null;
+    if (!p || !trouble || !r.retry) return null;
+    const again = r.retry;
+    const saved = (np: Profile) => {
+      forgetCaps(np.id);
+      setProfiles((ps) => ps && ps.map((x) => (x.id === np.id ? np : x)));
+      trustSaved(np);
+      again();
+    };
+    return (
+      <ConnFixButton
+        trouble={trouble}
+        className={trouble.kind === "plain" ? "btn btn-sm" : "btn btn-primary btn-sm"}
+        onTrustCert={async (fp) => saved(await trustOnProfile(p, { certFingerprint: fp }))}
+        onTrustHostKey={async (fp) => saved(await trustOnProfile(p, { hostKey: fp }))}
+        onAllowPlain={async () => {
+          if (p.net) await api.ftpAllowPlain(p.net);
+          forgetCaps(p.id);
+          again();
+        }}
+      />
+    );
   };
 
   const onKey = (e: React.KeyboardEvent) => {
@@ -331,12 +361,14 @@ export function LocationPicker({
       {profiles !== null &&
         rows.map((r) => {
           const pad = { paddingLeft: 8 + r.depth * 16 };
-          if (r.type === "state")
+          if (r.type === "state") {
+            const fix = fixFor(r);
             return (
               <div key={r.key} className={`jobs-tree-state ${r.error ? "error" : ""}`} style={pad}>
                 {r.spin && <span className="spinner" />}
                 <span>{r.text}</span>
                 {r.error && <span className="jobs-tree-detail" title={r.error}>{errSummary(r.error)}</span>}
+                {fix}
                 {r.retry && (
                   <button className="btn btn-ghost btn-sm" onClick={r.retry}>
                     Try again
@@ -344,6 +376,7 @@ export function LocationPicker({
                 )}
               </div>
             );
+          }
           if (r.type === "more") {
             const d = dirs.current.get(dirKey(r.loc));
             return (

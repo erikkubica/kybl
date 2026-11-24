@@ -16,6 +16,7 @@ import { playableUrl } from "../media";
 import type { Entry } from "../types";
 import { MIcon, type MIconName } from "./icons";
 import { releaseOnUnmount } from "../releaseMedia";
+import { videoErrorStep } from "./viewerRetry";
 
 type Props = {
   items: Entry[];
@@ -51,8 +52,10 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onlin
   const [failed, setFailed] = useState<Record<string, string>>({});
   /** bumped by Retry and when the network comes back: originals that failed are asked again */
   const [retryTick, setRetryTick] = useState(0);
-  /** videos the web view couldn't play */
+  /** videos the web view couldn't play, even after asking again */
   const [unplayable, setUnplayable] = useState<Record<string, boolean>>({});
+  /** how often each video failed to play: a first failure may be the network or an expired link */
+  const videoErrors = useRef<Record<string, number>>({});
   /** originals that finished loading (their thumbnail can go) */
   const [ready, setReady] = useState<Record<string, boolean>>({});
   const [chrome, setChrome] = useState(true);
@@ -120,9 +123,11 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onlin
 
   const failedRef = useRef(failed);
   failedRef.current = failed;
+  const unplayableRef = useRef(unplayable);
+  unplayableRef.current = unplayable;
   /** Asks for originals that failed again (`key`, or all of them), with a fresh link. */
   const retry = useCallback((key?: string) => {
-    const keys = key === undefined ? Object.keys(failedRef.current) : [key];
+    const keys = key === undefined ? [...Object.keys(failedRef.current), ...Object.keys(unplayableRef.current)] : [key];
     if (!keys.length) return;
     const drop = <T,>(m: Record<string, T>) => {
       const rest = { ...m };
@@ -132,6 +137,7 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onlin
     setFailed(drop);
     setUrls(drop);
     setReady(drop);
+    setUnplayable(drop);
     setRetryTick((t) => t + 1);
   }, []);
   // a failure while offline (a tunnel, a lift) is over when the network is back
@@ -340,6 +346,12 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onlin
       ? `translate3d(${dx + zoom.x}px, ${dy + zoom.y}px, 0) scale(${zoom.s * (1 - Math.min(dy, 400) / 1600)})`
       : `translate3d(calc(${offset * 100}% + ${offset * 16}px + ${dx}px), 0, 0)`;
     const cantPlay = isVideo(e) && (!isPlayableVideo(e.name) || unplayable[e.key]);
+    const videoFailed = () => {
+      const n = (videoErrors.current[e.key] ?? 0) + 1;
+      videoErrors.current[e.key] = n;
+      if (videoErrorStep(n) === "fallback") setUnplayable((m) => ({ ...m, [e.key]: true }));
+      else setFailed((m) => ({ ...m, [e.key]: "This video couldn’t be loaded." }));
+    };
     return (
       <div key={e.key} className={`m-vslide ${anim ? "anim" : ""}`} style={{ transform: t }}>
         {failed[e.key] ? (
@@ -352,6 +364,11 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onlin
               <button className="btn btn-sm" onClick={() => retry(e.key)}>
                 <Icon name="retry" size={14} /> Try again
               </button>
+              {isVideo(e) && (
+                <button className="btn btn-sm" onClick={() => onOpenIn(e)}>
+                  <MIcon name="open" size={14} /> Open in…
+                </button>
+              )}
             </div>
           </>
         ) : cantPlay ? (
@@ -362,6 +379,11 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onlin
             <button className="btn btn-primary" onClick={() => onOpenIn(e)}>
               <MIcon name="open" size={15} /> Open in…
             </button>
+            {unplayable[e.key] && (
+              <button className="btn btn-sm" onClick={() => retry(e.key)}>
+                <Icon name="retry" size={14} /> Try again
+              </button>
+            )}
           </div>
         ) : isVideo(e) ? (
           here && url ? (
@@ -371,7 +393,9 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onlin
               controls
               playsInline
               preload="metadata"
-              onError={() => setUnplayable((m) => ({ ...m, [e.key]: true }))}
+              // a dropped connection or an expired link looks the same as a format the web view
+              // can't play: the first failure offers Try again (a fresh link), a repeat the other app
+              onError={videoFailed}
             />
           ) : here ? (
             <span className="spinner" />
