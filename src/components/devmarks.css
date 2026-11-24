@@ -182,8 +182,8 @@
 .search:has(.search-modes):focus-within {
   width: 380px;
 }
-/* a narrow pane: the field shrinks to a plain box and drops its switches, so Terminal, Panes and
-   the field's own clear button stay on the row (Return still searches the subfolders) */
+/* a narrow pane: the field shrinks to a plain box and drops its switches (Names mode: Return still
+   searches the subfolders), so Terminal, Panes and the field's own clear button stay on the row */
 @container (max-width: 420px) {
   .toolbar:is(.search-open, :has(.search:focus-within)) > .search:is(:has(.search-modes), :has(.search-opt)) {
     min-width: 110px;
@@ -192,8 +192,12 @@
   .toolbar:is(.search-open, :has(.search:focus-within)) > .search:focus-within {
     width: auto;
   }
-  .toolbar:is(.search-open, :has(.search:focus-within)) .search :is(.search-modes, .search-opt) {
+  .toolbar:is(.search-open, :has(.search:focus-within)) .search :is(.search-modes:not(.contents), .search-opt) {
     display: none;
+  }
+  /* in Contents mode the Names / Contents switch stays, or there would be no way back to Names */
+  .toolbar:is(.search-open, :has(.search:focus-within)) > .search:has(.search-modes.contents) {
+    min-width: 200px;
   }
   .toolbar:is(.search-open, :has(.search:focus-within)) > :is(.conn-name, .conn-sep, .crumb-up) {
     display: none;

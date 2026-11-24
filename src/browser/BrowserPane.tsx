@@ -161,7 +161,8 @@ export function BrowserPane(p: BrowserPaneProps) {
       style={p.style}
     >
       <Toolbar
-        onLeaveDown={() => sel.selected.size === 0 && sel.moveSelection(1, false)}
+        // the first match, not one step from the cursor a cleared selection left behind
+        onLeaveDown={() => sel.selected.size === 0 && entries.length > 0 && sel.selectOnly(entries[0].key)}
         bucket={bucket}
         bucketLabel={pane.bucketLabel}
         bucketIcon={pane.profile ? rootIcon(pane.profile.id, bucket ?? "") : undefined}

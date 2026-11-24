@@ -182,6 +182,7 @@ export function ConfirmDialog({
   title,
   message,
   confirmLabel,
+  cancelLabel = "Cancel",
   danger,
   icon = danger ? "trash" : undefined,
   onConfirm,
@@ -190,6 +191,8 @@ export function ConfirmDialog({
   title: string;
   message: ReactNode;
   confirmLabel: string;
+  /** the button that changes nothing; where "Cancel" would read as yes, it is named instead */
+  cancelLabel?: string;
   danger?: boolean;
   /** the title's icon; a danger confirm shows the trash unless another is given */
   icon?: IconName;
@@ -215,7 +218,7 @@ export function ConfirmDialog({
       <div className="modal-foot">
         {/* a destructive confirm starts on Cancel, so Return twice never deletes or overwrites */}
         <button className="btn" onClick={onClose} autoFocus={!!danger} data-autofocus={danger ? "" : undefined}>
-          Cancel
+          {cancelLabel}
         </button>
         <button
           className={`btn ${danger ? "btn-danger" : "btn-primary"}`}

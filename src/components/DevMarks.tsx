@@ -100,7 +100,7 @@ export function SearchModes({
 }) {
   const keep = (e: MouseEvent) => e.preventDefault();
   return (
-    <span className="search-modes" onMouseDown={keep}>
+    <span className={`search-modes ${mode === "contents" ? "contents" : ""}`} onMouseDown={keep}>
       {mode === "contents" && (
         <>
           <button

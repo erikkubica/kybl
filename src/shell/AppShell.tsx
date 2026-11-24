@@ -13,6 +13,7 @@ import type { MountInfo } from "../api";
 import { tidyMenu } from "../desktop/menus";
 import { menuFromKey } from "../desktop/menuKeyWatch";
 import { onTrustSaved, trustOnProfile } from "../connections/ConnFix";
+import { splitDavUrl } from "../connections/serverHost";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { REMOTE_TERM_DROP, useTerminalPanes } from "../terminal/useTerminalPanes";
 import { canTerminal, terminalBusy } from "../terminal/api";
@@ -319,6 +320,7 @@ export function AppShell() {
       const ok = await dialogs.confirm({
         title: n === 1 ? "Cancel this transfer?" : `Cancel ${n.toLocaleString()} transfers?`,
         label: n === 1 ? "Cancel transfer" : "Cancel transfers",
+        cancelLabel: n === 1 ? "Keep transfer" : "Keep transfers",
         danger: true,
         message: <p>Partly downloaded files are deleted and what was sent of an upload is let go. Finished ones stay. Pause all keeps the progress, to carry on later.</p>,
       });
@@ -663,6 +665,14 @@ export function AppShell() {
       .listProfiles()
       .then((list) => {
         conns.setProfiles(list);
+        // a WebDAV profile saved before addresses were split still has "user:password@" in profiles.json:
+        // one save through the backend moves the password to the vault. Once per launch, never retried,
+        // so a failure can't loop.
+        for (const p of list) {
+          if (p.kind === "webdav" && p.net?.url && splitDavUrl(p.net.url).href !== p.net.url.trim()) {
+            api.saveProfile(p).then(conns.upsertProfile, () => {});
+          }
+        }
         const all = [...list, THIS_MAC];
         // opened from its recipe: a pane whose connection isn't on this device stays empty, and says so
         const gone = startSaved.current ? rec.missingAtLaunch(wsNow, (pid) => all.some((x) => x.id === pid)) : {};
@@ -943,9 +953,10 @@ export function AppShell() {
     for (const id of ids) {
       const p = slot(id);
       const l = p.ent.listing;
-      // (one still being pulled is listed again: coming back, the pull would bump the request id and
-      // the quiet refresh after `seed` would never land, leaving stale rows)
-      if (term.terms[id] || !p.ent.fresh || p.ent.listError || !l.loc || l.next || l.folders.length + l.objects.length > KEEP_LISTING_MAX) continue;
+      // (one whose pages are still being pulled is listed again: coming back, the pull would bump the
+      // request id and the quiet refresh after `seed` would never land, leaving stale rows. A big one
+      // that stopped at the cap and waits for scrolling is idle, so it is kept)
+      if (term.terms[id] || !p.ent.fresh || p.ent.listError || !l.loc || (l.next && p.ent.pulling) || l.folders.length + l.objects.length > KEEP_LISTING_MAX) continue;
       keptListings.current.set(`${wsId}\n${id}`, l);
     }
   };

@@ -1917,6 +1917,7 @@ export default function MobileApp() {
             title={confirm.title}
             message={confirm.message}
             confirmLabel={confirm.label}
+            cancelLabel={confirm.cancelLabel}
             danger={confirm.danger ?? true}
             onConfirm={() => {
               const run = confirm.run;

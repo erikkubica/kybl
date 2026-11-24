@@ -201,6 +201,8 @@ export function useEntries(
     shownKeys,
     refresh,
     leaveSearch,
+    /** more pages are still being pulled in the background (not just waiting for a scroll) */
+    pulling: lst.pulling,
     moreOnServer: !search && fresh && !!listing.next,
     listError: fresh ? lst.error : null,
   };

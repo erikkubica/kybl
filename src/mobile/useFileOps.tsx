@@ -28,7 +28,7 @@ export type ToastFn = (kind: Toast["kind"], text: string, action?: ToastAction) 
 /** A progress pill: "Getting “photo.heic” 40%", with Cancel. One per running operation. */
 export type Pill = { text: string; frac: number | null; cancel?: () => void };
 /** `cancel` runs when the question is closed without confirming. */
-export type Confirm = { title: string; message: React.ReactNode; label: string; danger?: boolean; run: () => void; cancel?: () => void };
+export type Confirm = { title: string; message: React.ReactNode; label: string; cancelLabel?: string; danger?: boolean; run: () => void; cancel?: () => void };
 /**
  * A name asked for. `check` refuses a bad name under the field; `run` gets the trimmed value and
  * may answer with what went wrong (a string, now or later): the sheet then stays open with the name

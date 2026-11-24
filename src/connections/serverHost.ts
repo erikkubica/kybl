@@ -42,7 +42,7 @@ export function splitServer(text: string): ServerParts | string {
 }
 
 /** A WebDAV address with its user name and password taken out (`https://me:pw@host/dav/` → `https://host/dav/`). */
-export type DavAddress = { href: string; user?: string; password?: string };
+export type DavAddress = { href: string; user?: string; password?: string; error?: string };
 
 const decode = (s: string) => {
   try {
@@ -56,16 +56,30 @@ const decode = (s: string) => {
  * Splits a pasted WebDAV address: Nextcloud and hosting panels hand out `https://user:app-password@host/…`.
  * The address must not keep the password (it would be saved in clear and shown in lists), so the
  * parts go to the fields that are kept safely. Nothing to split: the address as it is.
+ * `typedUser` is the User name field: an address for another user is an error and gives nothing
+ * to the vault, as the app's own split does. `error` also says when the address can't be read.
  */
-export function splitDavUrl(text: string): DavAddress {
+export function splitDavUrl(text: string, typedUser = ""): DavAddress {
   const href = text.trim();
-  const m = /^([a-z][a-z0-9+.-]*:\/\/)([^/?#]*)(.*)$/is.exec(href);
+  // the authority ends at / ? # and, as in a browser's parser, at a backslash
+  const m = /^([a-z][a-z0-9+.-]*:\/\/)([^/?#\\]*)(.*)$/is.exec(href);
   if (!m) return { href };
   const at = m[2].lastIndexOf("@");
-  if (at < 0) return { href };
+  if (at < 0) {
+    // "alice:my#pass@host": the password's own # or / cut the address short, so the host is not what it looks like
+    if (m[3].includes("@") && /:(?!\d*$)/.test(m[2].replace(/^\[[^\]]*\]/, ""))) {
+      return { href, error: "Put the password in the Password field, or write its # / ? as %23 %2F %3F in the address." };
+    }
+    return { href };
+  }
   const info = m[2].slice(0, at);
   const colon = info.indexOf(":");
   const user = decode(colon < 0 ? info : info.slice(0, colon));
   const password = colon < 0 ? "" : decode(info.slice(colon + 1));
-  return { href: m[1] + m[2].slice(at + 1) + m[3], user: user || undefined, password: password || undefined };
+  const clean = m[1] + m[2].slice(at + 1) + m[3];
+  const typed = typedUser.trim();
+  if (typed && user && typed !== user) {
+    return { href: clean, error: "The address has another user name than User name. Remove it from the address." };
+  }
+  return { href: clean, user: user || undefined, password: password || undefined };
 }

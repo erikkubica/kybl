@@ -170,13 +170,18 @@ function ShortcutField({ value, selfId, onChange }: { value: string | null; self
         className={`ca-keys ${recording ? "rec" : ""} ${problem ? "bad" : ""}`}
         onFocus={() => setRecording(true)}
         onBlur={() => setRecording(false)}
+        // Enter or Space on the button starts recording again after an Escape
+        onClick={() => setRecording(true)}
         onKeyDown={(e) => {
           if (e.key === "Tab") return;
+          // not recording (after an Escape): keys do their usual thing, and a second Escape reaches the editor
+          if (!recording) return;
           if (e.key === "Escape" && !e.metaKey && !e.ctrlKey) {
-            // stops recording only: the editor behind it must not hear this Escape (it would close and drop what was typed)
+            // stops recording only, focus stays on the button: the editor behind it must not hear this
+            // Escape (it would close and drop what was typed)
             e.preventDefault();
             e.stopPropagation();
-            return e.currentTarget.blur();
+            return setRecording(false);
           }
           e.preventDefault();
           e.stopPropagation();
