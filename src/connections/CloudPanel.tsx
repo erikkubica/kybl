@@ -255,7 +255,7 @@ export function CloudPanel({
           ) : (
             onBack && (
               <button type="button" className="btn btn-ghost" onClick={onBack} disabled={waiting}>
-                <Icon name="arrow-left" size={14} /> All kinds
+                <Icon name="arrow-left" size={14} /> Back
               </button>
             )
           )}

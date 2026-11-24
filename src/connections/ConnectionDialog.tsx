@@ -61,7 +61,7 @@ const editable = (p: Profile) => p.provider === "kybl" || KINDS.some((k) => k.id
 export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl, kyblFirst, startKind, reconnect, onImport, groups, ref }: ConnectionDialogProps) {
   const [pick, setPick] = useState<PickId | null>(initial ? pickOf(initial) : (startKind ?? null));
   // the keyboard follows the step: the form's first field after a kind is chosen, the first kind
-  // again after "All kinds" or a discard (the dialog box can stay the same, so it won't refocus by itself)
+  // again after "Back" or a discard (the dialog box can stay the same, so it won't refocus by itself)
   const firstPick = useRef(true);
   useEffect(() => {
     if (firstPick.current) {
@@ -85,7 +85,7 @@ export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl,
     else setPick(id);
   };
 
-  // Something typed into the form: leaving it (close, Escape, back, "All kinds") asks first, so a
+  // Something typed into the form: leaving it (close, Escape, Back) asks first, so a
   // stray click doesn't throw away a half-filled connection.
   const dirty = useRef(false);
   const [ask, setAsk] = useState<{ then: () => void } | null>(null);
@@ -453,7 +453,7 @@ function KeyedForm({
           ) : (
             onBack && (
               <button type="button" className="btn btn-ghost" onClick={onBack} disabled={busy !== null}>
-                <Icon name="arrow-left" size={14} /> All kinds
+                <Icon name="arrow-left" size={14} /> Back
               </button>
             )
           )}
