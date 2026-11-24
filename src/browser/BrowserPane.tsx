@@ -283,6 +283,7 @@ export function BrowserPane(p: BrowserPaneProps) {
                   onBackgroundContextMenu={actions.onBackgroundContext}
                   folderSize={pane.folderSizes.view}
                   onCalcSize={(k) => actions.calcSizes([k])}
+                  onCancelSize={pane.folderSizes.cancel}
                   gitMark={gitMark}
                   hitOf={hitOf}
                   onHitOpen={previewHit}
@@ -331,6 +332,7 @@ export function BrowserPane(p: BrowserPaneProps) {
             onChanged: ent.refresh,
             folderSize: pane.folderSizes.view,
             onCalcSize: (k) => actions.calcSizes([k]),
+            onCancelSize: pane.folderSizes.cancel,
             onPermissions: actions.askPermissions,
             onShowOriginal: actions.showOriginal && ((e) => (pane.closeQuick(), void actions.showOriginal!(e))),
             onEdit: actions.editMenuAt,

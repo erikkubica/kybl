@@ -280,51 +280,54 @@ Opened by right-click, Ctrl+click on a Mac, the menu key, or Shift+F10 (from the
 #### Right-click on a file or folder (one item, or several selected)
 If the clicked item is already part of the selection the menu works on the whole selection; otherwise the click first selects only that item. Inside an opened archive (read-only) every item that writes is removed: Cut, Duplicate, Rename, Delete / Move to Trash, Move to, Paste, Sync, Keep on this device, Mount as drive, Copy or move to…, Copy share link, Copy to another connection.
 
-In order, top to bottom:
+In order, top to bottom, in groups divided by lines (like Finder or Explorer). Inside an opened archive every item that writes is removed, and the "Keep & sync" submenu disappears when nothing in it is left.
 
 | Item | When it appears |
 |---|---|
 | **Open** (↵ for a folder, ⌘O for a file) | Always. For several files it reads "Open N files" (greyed if only folders are selected). A folder opens in the list. A file opens in Kybl's viewer or editor (text, code, Markdown, CSV, JSON, Word, Excel, PowerPoint, Google Docs exports) or in its default app. |
 | **Open in default app** | One file that Kybl would otherwise open in its own viewer (not on This computer, where files already open in their own app). |
-| **Quick Look** (Space) | One file. |
-| **Get Info** (⌘I) | Always. |
-| **Show original** | One symbolic link, on SFTP. Jumps to the folder the link points into and selects the target. |
-| **Permissions…** (or "Permissions of N items…") | SFTP and FTP. |
-| **Make link…** | One item, on SFTP. Makes a symbolic link next to it ("report link.pdf"). |
-| **Show in folder** | One item, only inside search results. |
-| **Open in terminal** | One folder, on This computer or an SFTP server. |
-| **Show in Finder / Show in Explorer** | One item on This computer, or inside a folder kept on this device by sync (its copy on disk). |
 | **Open with ▸** | One file (any connection; the file is downloaded to a temporary copy first), or a folder on This computer or in a synced folder. Lists the apps for that file type, the default one first and marked "default", icons shown. Ends with "Other…" (macOS, pick any .app) or "Choose another app…" (Windows). Programs, scripts and installers from a connection ask "Run …?" before opening. A Google Doc opens as what it exports to. |
-| **Actions ▸** | Only when at least one enabled custom action takes the selection. Each entry shows a server icon or laptop icon, the shortcut as a hint, and "(n of m)" when it takes only part of the selection. Entries are greyed with "Fix it in Settings" when the command template is invalid. See Custom actions. |
 | **Edit** (⌘E) | One file on a connection other than This computer (not a Google Doc). Opens a private copy in the default app and uploads each save. |
 | **Edit with ▸** | Same condition. Lists apps like Open with, plus Other…/Choose another app…. |
 | **Edit in Kybl** | One text-like file (text, code, JSON, Markdown, CSV) on any connection including This computer. Greyed with "over 5 MB" for larger files. This is the only edit item shown on This computer, where Open and Open with already edit in place. |
+| **Quick Look** (Space) | One file. |
+| **Show in folder** | One item, only inside search results. |
+| separator | |
+| **Cut** (⌘X) | Always. |
+| **Copy** (⌘C) | Always. |
+| **Paste into “folder”** | One folder, when something is on the clipboard from the same connection. |
+| **Duplicate** (⌘D) | Always. |
+| separator | |
+| **Copy to “<other pane>”** (F5) | Several panes open. Greyed when both panes show the same folder. |
+| **Move to “<other pane>”** (F6) | Several panes open, except between This computer and a cloud (those only copy). |
+| **Copy or move to…** | Always. Opens the destination picker (a tree of every connection, opened at this folder). Copy/Move is chosen in the picker. |
+| **Move to “<parent folder>”** | When not at the top level and not in search results. Moves the selection up one level. |
+| separator | |
+| **Compress “name”** / **Compress N items** | Not in search results. Not inside an archive. Makes a .zip. |
+| **Extract here** / **Extract N archives here** | Every selected item is a .zip, .tar, .tar.gz or .tgz. Inside an archive that is open as a folder it reads "Extract to “<folder the archive is in>”". |
+| **Extract to…** | One archive selected, or items inside an open archive. Opens the destination picker (any folder, any connection). |
+| **Compare files** or **Compare with “other.txt”** | Exactly two text files selected, or one text file here plus one text file selected in another pane. |
+| **Actions ▸** | Only when at least one enabled custom action takes the selection. Each entry shows a server icon or laptop icon, the shortcut as a hint, and "(n of m)" when it takes only part of the selection. Entries are greyed with "Fix it in Settings" when the command template is invalid. See Custom actions. |
+| separator | |
 | **Download** (⇧⌘D), or **Download as <format>** | Not on This computer. For a Google Doc, Sheet or Slides the first export is the main item. |
 | **Download as <other format>** | One Google Doc/Sheet/Slides: one item per further export format (for example PDF). |
 | **Copy share link (24 hours)** | Connections with share links. The label shows the lifetime set in Settings. Greyed unless exactly one file is selected. |
 | **Copy S3 URI** | S3-compatible connections. Greyed unless exactly one item is selected. |
+| **Copy path** / **Copy paths** | Every other connection. Puts the full path on the clipboard: the real path on This computer, the path inside the connection elsewhere (one line per item). |
 | separator | |
-| **Copy** (⌘C) | Always. |
-| **Cut** (⌘X) | Always. |
-| **Duplicate** (⌘D) | Always. |
-| **Paste into “folder”** | One folder, when something is on the clipboard from the same connection. |
-| **Copy to “<other pane>”** (F5) | Several panes open. Greyed when both panes show the same folder. |
-| **Move to “<other pane>”** (F6) | Several panes open, except between This computer and a cloud (those only copy). |
-| **Extract here** / **Extract N archives here** | Every selected item is a .zip, .tar, .tar.gz or .tgz. Inside an archive that is open as a folder it reads "Extract to “<folder the archive is in>”". |
-| **Extract to…** | One archive selected, or items inside an open archive. Opens the destination picker (any folder, any connection). |
-| **Compress “name”** / **Compress N items** | Not in search results. Not inside an archive. Makes a .zip. |
-| **Compare files** or **Compare with “other.txt”** | Exactly two text files selected, or one text file here plus one text file selected in another pane. |
-| **Copy or move to…** | Always. Opens the destination picker (a tree of every connection, opened at this folder). Copy/Move is chosen in the picker. |
-| **Move to “<parent folder>”** | When not at the top level and not in search results. Moves the selection up one level. |
-| separator | |
-| **Calculate size** / **Calculate sizes of N folders** | At least one folder selected. |
+| **Get Info** (⌘I) | Always. |
+| **Show in Finder / Show in Explorer** | One item on This computer, or inside a folder kept on this device by sync (its copy on disk). |
+| **Open in terminal** | One folder, on This computer or an SFTP server. |
+| **Show original** | One symbolic link, on SFTP. Jumps to the folder the link points into and selects the target. |
+| **Permissions…** (or "Permissions of N items…") | SFTP and FTP. |
+| **Make link…** | One item, on SFTP. Makes a symbolic link next to it ("report link.pdf"). |
+| **Calculate size** / **Calculate sizes of N folders** | At least one folder selected. Can be stopped (see Folder sizes). |
 | **Add to favorites / Remove from favorites** | One folder. |
-| **Sync this folder…** | One folder, not on This computer. |
-| **Keep on this device** (ticked "Kept on this device" once kept; clicking the ticked item stops keeping, after a question) | One folder, not on This computer. Makes a two-way synced copy in the Kybl folder and opens it. |
-| **Mount as drive…** and the drive group (see below) | One folder, not on This computer. |
-| **Mirror to…**, **Run “saved mirror”** | One folder. With more than two saved mirrors from that folder they collapse into "Run a saved mirror ▸". |
+| **Keep & sync ▸** | One folder. Holds the rarely used ones: **Sync this folder…** (not on This computer), **Keep on this device** (ticked "Kept on this device" once kept; clicking the ticked item stops keeping, after a question; not on This computer, makes a two-way synced copy in the Kybl folder and opens it), **Mount as drive…** and the drive group (see below; not on This computer), **Mirror to…** and **Run “saved mirror”** (with more than two saved mirrors from that folder they collapse into "Run a saved mirror ▸"). |
 | separator | |
 | **Rename…** (F2) or **Rename N items…** | Always. One item opens a name prompt, several open the Batch rename dialog. |
+| **Refresh** (⌘R), or **Search again** during a search | Always. Reloads the folder on screen (a full folder has no empty space to right-click). |
+| separator | |
 | **Move to Trash** (⌘⌫), with "…" when confirmation is on | Connections with a restorable trash. Called "Recycle Bin" on a Windows PC. |
 | **Delete…** (⌘⌫), red, or **Delete N items…** | All other connections. |
 
@@ -340,19 +343,15 @@ Opened on the blank area of a list or grid.
 | **Select all** (⌘A) | Always, greyed when the folder is empty. |
 | **Refresh** (⌘R), or **Search again** during a search | Always. |
 | **Clear search** | While search results are showing. |
+| **Copy S3 URI** / **Copy path** | S3-compatible / every other connection. The folder on screen. |
 | **Calculate folder size** | Always. |
-| **Sync this folder…** | Not on This computer. |
-| **Keep on this device** / **Kept on this device** | Not on This computer. |
-| **Mount as drive…** and the drive group | Not on This computer. |
-| **Copy this folder to another connection…** (at the top of a bucket: "Copy everything to another connection…") | When the copy-to-connection feature is available. |
-| **Mirror to…** and saved mirrors | Always. |
-| **Copy S3 URI** | S3-compatible. |
 | **Show hidden files** (⇧⌘.), ticked when on | This computer only. |
 | **Open terminal here** (⌃`) | This computer (not Windows) and SFTP. |
+| **Keep & sync ▸** | Holds **Sync this folder…**, **Keep on this device** / **Kept on this device**, **Mount as drive…** and the drive group (those three not on This computer), **Copy this folder to another connection…** (at the top of a bucket: "Copy everything to another connection…"; when the copy-to-connection feature is available) and **Mirror to…** with saved mirrors. |
 | **Split ▸ Right / Down / Left / Up** | Always. Items grey out when there is no room or no free slot. Right = ⌘\, Down = ⇧⌘\. |
 
 #### The toolbar "…" menu ("More actions")
-Refresh (or Search again), Go to folder… (⇧⌘G), then: Add to / Remove from favorites, and a "Panes ▸" submenu when the pane is narrow. With several panes it also holds: "Open this folder in the <right/left/above/below> pane too", "Swap with the other pane" (⇧⌘S), "Compare with the other pane", "Synced browsing with…" (ticked when linked; a submenu when more than one pane faces this one), and "Mirror to the other pane…". Then the empty-space items (Calculate folder size, Sync, Keep, Mount, Copy to another connection, Mirror, Copy S3 URI, Show hidden files, Open terminal here), and last "Show activity".
+Refresh (or Search again), Go to folder… (⇧⌘G), then: Add to / Remove from favorites, and a "Panes ▸" submenu when the pane is narrow. With several panes it also holds: "Open this folder in the <right/left/above/below> pane too", "Swap with the other pane" (⇧⌘S), "Compare with the other pane", "Synced browsing with…" (ticked when linked; a submenu when more than one pane faces this one), and "Mirror to the other pane…". Then the empty-space items (Copy S3 URI or Copy path, Calculate folder size, Show hidden files, Open terminal here, Keep & sync ▸), and last "Show activity".
 
 #### The toolbar "Upload or create" button
 Upload files… (⌘U), Upload folder… (⇧⌘U), New folder… (⇧⌘N). Disabled in an archive.
@@ -405,6 +404,7 @@ Where: file operations and the dialogs behind them.
   - A live preview of every row shows problems (empty name, "/" in a name, too long, duplicate, already taken) and nothing runs while any exist. It never overwrites. Swaps and chains (a to b, b to a) go through temporary names. It runs as one job with one Stop and one Undo, and a partly done batch can be retried.
 
 #### Delete
+- On This computer with the Trash on, the selected items themselves go to the Trash in one go (one call to the system, one sound, never file by file). WebDAV, Google Drive, OneDrive and Dropbox delete a folder with one request for the folder itself. SFTP and FTP have no recursive delete in the protocol, so they remove what is inside first. S3 has no folders, so it deletes the objects in batches of 1,000.
 - Delete key, ⌘⌫ (or F8 with several panes), or the menu item. On a connection with a restorable trash it reads "Move to Trash" (the dialog says you can restore from the Trash, or the drive's trash). Everywhere else it is permanent and the confirm says "cannot be undone".
 - "Confirm before deleting" in Settings can switch the question off.
 - Folders go with everything inside. Deleting a symbolic link removes only the link.
@@ -427,7 +427,7 @@ Where: file operations and the dialogs behind them.
 Opens Quick Look with its info column shown. Shows name, action buttons (copy the file to the clipboard on macOS, Copy or move…, Rename, Delete/Trash), an "Edit…" button for text-like files, the **Share link** section (lifetime 1 hour, 24 hours or 7 days, then Copy; only on connections with share links), and "About this file/folder": size (folders: "Calculate"), modified date, kind, location, and a technical section (exact bytes, content type, Cache-Control, content disposition, content encoding, storage class, object key or path, S3 URI, ETag, metadata, tags) with click-to-copy lines. S3-compatible connections get **Edit properties**: content type, Cache-Control, Content-Disposition, Content-Encoding, storage class (list or a custom name), custom metadata rows and tag rows. With several items selected it shows the count, files and folders, total size (folders count once their size is known; "Add up the folders too"), and Download, Copy or move, Delete buttons.
 
 #### Folder sizes
-"Calculate size" (item menu), the "Calculate" link in the Size column of a folder, or Get Info. Lists everything under the folder (one request per 1,000 objects on S3) and keeps the result until something changes the bucket. Runs up to three at once, shows progress, and the status bar shows the size of the folder on screen.
+"Calculate size" (item menu), the "Calculate" link in the Size column of a folder, or Get Info. Lists everything under the folder (one request per 1,000 objects on S3) and keeps the result until something changes the bucket. Runs up to three at once, shows progress, and the status bar shows the size of the folder on screen. **Stop** ends it right away (the storage stops listing within a fraction of a second): a Stop link in the Size column, in Get Info and Quick Look, and one in the status bar that stops every folder still being added up. A stopped folder goes back to "not calculated". On the phone the folder info sheet has the same Stop.
 
 #### Permissions (chmod): SFTP and FTP only
 "Permissions…" opens a sheet with Owner, Group and Others rows and Read / Write / Execute boxes, plus an octal field (Enter applies). Shows current owner and group. For folders, "Apply to enclosed items" with Everything / Files only / Folders only.

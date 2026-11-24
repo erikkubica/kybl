@@ -71,12 +71,28 @@ function loadLocalCols(): ColumnId[] {
 }
 
 /** Size cell of a folder: its size once worked out, progress while it runs, else a Calculate link. */
-function FolderSizeCell({ info, onCalc }: { info: FolderSizeInfo | undefined; onCalc?: () => void }) {
+function FolderSizeCell({ info, onCalc, onStop }: { info: FolderSizeInfo | undefined; onCalc?: () => void; onStop?: () => void }) {
   if (info?.running)
     return (
       <span className="fsize running" title={`${plural(info.objects, "object")} so far`}>
         <span className="spinner sm" />
         {info.bytes > 0 ? formatBytes(info.bytes) : ""}
+        {onStop && (
+          <button
+            type="button"
+            className="fsize-calc"
+            tabIndex={-1}
+            title="Stop adding up this folder"
+            onMouseDown={(ev) => ev.stopPropagation()}
+            onDoubleClick={(ev) => ev.stopPropagation()}
+            onClick={(ev) => {
+              ev.stopPropagation();
+              onStop();
+            }}
+          >
+            Stop
+          </button>
+        )}
       </span>
     );
   if (info) return <span title={`${info.objects.toLocaleString()} ${info.objects === 1 ? "object" : "objects"}`}>{formatBytes(info.bytes)}</span>;
@@ -118,6 +134,7 @@ export function FileTable({
   autoFocus,
   folderSize,
   onCalcSize,
+  onCancelSize,
   onColumnsChange,
   onSort,
   onPress,
@@ -156,6 +173,7 @@ export function FileTable({
   autoFocus?: boolean;
   folderSize?(key: string): FolderSizeInfo | undefined;
   onCalcSize?(key: string): void;
+  onCancelSize?(key: string): void;
   onColumnsChange?(columns: ColumnId[]): void;
   onSort: (k: SortKey) => void;
   onPress: (e: Entry, ev: React.MouseEvent) => void;
@@ -550,7 +568,7 @@ export function FileTable({
                   case "size":
                     return (
                       <div key={c.id} className="c-size" role="gridcell">
-                        {folder ? <FolderSizeCell info={folderSize?.(e.key)} onCalc={onCalcSize && (() => onCalcSize(e.key))} /> : entrySize(e)}
+                        {folder ? <FolderSizeCell info={folderSize?.(e.key)} onCalc={onCalcSize && (() => onCalcSize(e.key))} onStop={onCancelSize && (() => onCancelSize(e.key))} /> : entrySize(e)}
                       </div>
                     );
                   case "modified":

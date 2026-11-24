@@ -51,6 +51,7 @@ export function PreviewPane({
   onChanged,
   folderSize,
   onCalcSize,
+  onCancelSize,
   onOpenFull,
   onOpenExternal,
   onCopyFile,
@@ -92,7 +93,7 @@ export function PreviewPane({
   if (selection.length > 1) {
     return (
       <aside className="preview" onContextMenu={quiet}>
-        <SelectionInfo profileId={profileId} selection={selection} folderSize={folderSize} onCalcSize={onCalcSize} onDownload={onDownload} onMoveTo={onMoveTo} onDelete={onDelete} />
+        <SelectionInfo profileId={profileId} selection={selection} folderSize={folderSize} onCalcSize={onCalcSize} onCancelSize={onCancelSize} onDownload={onDownload} onMoveTo={onMoveTo} onDelete={onDelete} />
       </aside>
     );
   }
@@ -118,6 +119,7 @@ export function PreviewPane({
         onChanged={onChanged}
         folderSize={folderSize}
         onCalcSize={onCalcSize}
+        onCancelSize={onCancelSize}
         onOpenFull={onOpenFull}
         onOpenExternal={onOpenExternal}
         onCopyFile={onCopyFile}
@@ -143,6 +145,7 @@ function FileDetails({
   onChanged,
   folderSize,
   onCalcSize,
+  onCancelSize,
   onOpenFull,
   onOpenExternal,
   onCopyFile,
@@ -383,6 +386,7 @@ function FileDetails({
         onChanged={onChanged}
         folderSize={folderSize}
         onCalcSize={onCalcSize}
+        onCancelSize={onCancelSize}
         onOpenExternal={onOpenExternal}
         onCopyFile={onCopyFile}
       />

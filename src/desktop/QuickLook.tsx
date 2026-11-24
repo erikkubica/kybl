@@ -270,7 +270,7 @@ export function QuickLook({
             {many ? (
               <GroupSheet profileId={profileId} bucket={bucket} group={group!} onPick={onPick} />
             ) : entry.kind === "folder" ? (
-              <FolderLook key={entry.key} entry={entry} folderSize={act.folderSize} onCalcSize={act.onCalcSize} />
+              <FolderLook key={entry.key} entry={entry} folderSize={act.folderSize} onCalcSize={act.onCalcSize} onCancelSize={act.onCancelSize} />
             ) : (
               <Content key={entry.key} profileId={profileId} bucket={bucket} entry={entry} onOpen={onOpen} />
             )}
@@ -283,6 +283,7 @@ export function QuickLook({
                   selection={group!}
                   folderSize={act.folderSize}
                   onCalcSize={act.onCalcSize}
+                  onCancelSize={act.onCancelSize}
                   onDownload={act.onDownload && (() => act.onDownload!(group!))}
                   onMoveTo={() => moveTo(group!)}
                   moveLabel={act.moveLabel}
@@ -364,6 +365,7 @@ function QuickInfo({
         onChanged={act.onChanged}
         folderSize={act.folderSize}
         onCalcSize={act.onCalcSize}
+        onCancelSize={act.onCancelSize}
         onOpenExternal={onOpenExternal}
         onCopyFile={onCopyFile}
         onPermissions={act.onPermissions && (() => act.onPermissions!([entry]))}
@@ -375,13 +377,13 @@ function QuickInfo({
 }
 
 /** A folder: its art, name and size (worked out on request); Open in the header goes in. */
-function FolderLook({ entry, folderSize, onCalcSize }: SizeProps & { entry: Entry }) {
+function FolderLook({ entry, folderSize, onCalcSize, onCancelSize }: SizeProps & { entry: Entry }) {
   return (
     <div className="ql-none ql-folder">
       <FileIcon entry={entry} size={72} big />
       <strong>{entry.name}</strong>
       <span className="dim">
-        <FolderSizeLine entryKey={entry.key} folderSize={folderSize} onCalcSize={onCalcSize} />
+        <FolderSizeLine entryKey={entry.key} folderSize={folderSize} onCalcSize={onCalcSize} onCancelSize={onCancelSize} />
         {entry.modified ? ` · ${formatDateFull(entry.modified)}` : ""}
       </span>
     </div>

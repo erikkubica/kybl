@@ -158,6 +158,14 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
       )}
       {sortCapped && !busy && <span>Sorted the first {MAX_SORT_ITEMS.toLocaleString()} items only</span>}
       {hasMore && !lst.loading && !busy && <span title="S3 lists big folders in pages">In order: the first {loadedCount.toLocaleString()} items. More load as you scroll</span>}
+      {pane.folderSizes.loading > 0 && !busy && (
+        <span className="busy">
+          <span className="spinner" /> Adding up {pane.folderSizes.loading === 1 ? "a folder" : `${pane.folderSizes.loading.toLocaleString()} folders`}…
+          <button type="button" className="btn btn-sm btn-ghost" onClick={pane.folderSizes.cancelAll}>
+            Stop
+          </button>
+        </span>
+      )}
       {busy && (
         <span className="busy">
           <span className="spinner" /> {busy}

@@ -374,6 +374,52 @@ impl LocalBackend {
     }
 }
 
+/// Most items sent to the Trash in one call: the macOS way is one command line holding every path.
+#[cfg(desktop)]
+const TRASH_BATCH: usize = 1000;
+
+/// The paths that aren't inside another of them, each once.
+#[cfg(desktop)]
+fn outermost(mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    paths.sort();
+    paths.dedup();
+    // sorted, a folder comes right before what is inside it
+    let mut top: Vec<PathBuf> = Vec::with_capacity(paths.len());
+    for p in paths {
+        if !top.last().is_some_and(|parent| p.starts_with(parent)) {
+            top.push(p);
+        }
+    }
+    top
+}
+
+/// Moves `paths` to the Trash in as few OS calls as possible. An item that is inside another
+/// selected folder goes with that folder; one that is already gone is skipped.
+#[cfg(desktop)]
+async fn trash_together(paths: Vec<PathBuf>, total: u64, cancel: &AtomicBool, on_progress: &(dyn Fn(u64, u64) + Send + Sync)) -> SResult<(u64, u64)> {
+    let top = outermost(paths);
+    let mut done = 0u64;
+    for chunk in top.chunks(TRASH_BATCH) {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(StorageError::cancelled());
+        }
+        let chunk: Vec<PathBuf> = chunk.to_vec();
+        let n = chunk.len() as u64;
+        blocking(move || {
+            let there: Vec<&PathBuf> = chunk.iter().filter(|p| std::fs::symlink_metadata(p).is_ok()).collect();
+            if there.is_empty() {
+                return Ok(());
+            }
+            trash::delete_all(there).map_err(|e| StorageError::other("Couldn't move this to the Trash.").with_detail(e.to_string()))
+        })
+        .await?;
+        done += n;
+        on_progress(done.min(total), total);
+    }
+    on_progress(total, total);
+    Ok((total, total))
+}
+
 /// Disks other than the system one, and the system disk itself.
 #[cfg(desktop)]
 fn volumes() -> Vec<(String, PathBuf)> {
@@ -693,6 +739,20 @@ impl Storage for LocalBackend {
         let mut done = 0u64;
         on_progress(0, total);
         let items = files.iter().map(|f| (f, false)).chain(dirs.iter().map(|d| (d, true)));
+        #[cfg(desktop)]
+        if self.use_trash {
+            // The selected items themselves go to the Trash together, never what is inside a
+            // folder file by file: one call per batch is one Finder action (one "trash" sound,
+            // one Undo step) instead of one per file.
+            let mut paths: Vec<PathBuf> = Vec::new();
+            for (key, _) in items {
+                if parts(key)?.is_empty() {
+                    return Err(StorageError::other("The top of a folder list can't be deleted."));
+                }
+                paths.push(self.resolve_own(root, key).await?);
+            }
+            return trash_together(paths, total, cancel, on_progress).await;
+        }
         for (key, is_dir) in items {
             if cancel.load(Ordering::Relaxed) {
                 return Err(StorageError::cancelled());
@@ -775,6 +835,14 @@ impl Storage for LocalBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(desktop)]
+    #[test]
+    fn trashing_takes_the_selected_items_not_what_is_inside() {
+        let p = |s: &str| PathBuf::from(s);
+        let got = outermost(vec![p("/r/a/b.txt"), p("/r/a"), p("/r/ab"), p("/r/a"), p("/r/a/c/d")]);
+        assert_eq!(got, vec![p("/r/a"), p("/r/ab")]);
+    }
 
     struct Tmp(PathBuf);
     impl Drop for Tmp {
