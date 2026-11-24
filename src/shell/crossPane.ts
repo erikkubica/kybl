@@ -178,7 +178,11 @@ async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx
     try {
       await run.done;
     } catch (err) {
-      if (err instanceof ListingStopped) break;
+      if (err instanceof ListingStopped) {
+        // by "Stop listing" or Cancel all: either way nothing to announce
+        stopped = true;
+        break;
+      }
       // one folder that can't be listed doesn't stop the others; it is said once at the end
       failures++;
       failed = `Couldn't list “${e.name}”: ${errMessage(err)}`;

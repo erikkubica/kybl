@@ -640,9 +640,12 @@ async fn remove_if_empty(src: &dyn Storage, root: &str, dir: &str) {
         }
         return;
     }
+    // a drive can answer an empty first page with more behind it: only a whole, empty listing
+    // means the folder is empty
     if let Ok(page) = src.list(root, dir, None).await
         && page.folders.is_empty()
         && page.objects.is_empty()
+        && page.next_token.is_none()
     {
         let never = AtomicBool::new(false);
         // on prefix stores (S3) this removes the folder marker

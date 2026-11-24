@@ -564,7 +564,9 @@ pub async fn archive_compress(app: AppHandle, state: State<'_, AppState>, id: St
             let (left_out, packed) = tokio::join!(plan, packing(ops::pack_stream_to_file(src.clone(), &job.root, rx, &tmp, &say, &task.cancel), &pack_failed));
             let left_out = match (left_out, packed) {
                 (Ok(l), Ok(())) => l,
-                (Err(e), _) | (_, Err(e)) => {
+                // the packer's error first: when it fails, the listing stops with "cancelled",
+                // which would hide the real reason
+                (_, Err(e)) | (Err(e), Ok(())) => {
                     let _ = tokio::fs::remove_file(&tmp).await;
                     return Err(e);
                 }

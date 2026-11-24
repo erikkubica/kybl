@@ -277,6 +277,7 @@ export function makeFileOps(c: OpsContext) {
         toast("info", folders.length === 1 ? `Downloading “${folders[0].name}” to ${where}. Files start as they're found.` : `Downloading ${plural(folders.length, "folder")} to ${where}. Files start as they're found.`);
       }
       let stoppedAt: string | null = null;
+      let cancelledAll = false;
       let failed: string | null = null;
       let failures = 0;
       for (const e of folders) {
@@ -295,6 +296,7 @@ export function makeFileOps(c: OpsContext) {
         } catch (err) {
           if (err instanceof ListingStopped) {
             stoppedAt = e.name;
+            cancelledAll = err.reason === "all";
             break;
           }
           // one folder that can't be listed doesn't stop the others; it is said once at the end
@@ -310,6 +312,8 @@ export function makeFileOps(c: OpsContext) {
         toast("error", started ? `${failed}${more}. The files found so far are downloading.` : `${failed}${more}`);
       }
       if (stoppedAt !== null) {
+        // Cancel all cancelled the downloads too: nothing more to say
+        if (cancelledAll) return;
         toast("info", started ? `Stopped listing “${stoppedAt}”. ${plural(started, "file")} found so far keep downloading.` : `Stopped listing “${stoppedAt}”`);
         return;
       }
