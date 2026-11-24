@@ -18,7 +18,9 @@ import type { Entry, LocalFile, Profile } from "../types";
 import type { Toast } from "../components/Dialogs";
 import { finishedOk, type TransferActions } from "../useTransfers";
 import type { useJobs } from "../useJobs";
-import { applyChoices, findExisting, freeKeys, type Choice, type Clash } from "./conflicts";
+import { applyChoices, findExisting, findExistingLocal, freeKeys, type Choice, type Clash } from "./conflicts";
+import { downloadClashGate, resolveDownloadClashes } from "./downloadClash";
+import type { ResolveOpts } from "../components/ConflictDialog";
 import { copyName, joinPath, numberedName, safeName, safeRelPath, shortHash } from "./paths";
 import { undoStack, type UndoEntry } from "./undo";
 import { itemClipboard } from "./clipboard";
@@ -63,7 +65,7 @@ export type OpsContext = {
   prompt: (o: PromptOptions) => void;
   /** shows a dialog of its own (the Batch rename dialog) */
   show?: (render: (close: () => void) => ReactNode) => void;
-  resolveConflicts: (clashes: Clash[], verb: string, where: string) => Promise<Map<string, Choice> | null>;
+  resolveConflicts: (clashes: Clash[], verb: string, where: string, opts?: ResolveOpts) => Promise<Map<string, Choice> | null>;
   reloadIfShowing: (profileId: string, bucket: string) => boolean;
   /** select this key once the listing on screen has reloaded (if it is still that place) */
   selectAfterReload: (profileId: string, bucket: string, key: string | null) => void;
@@ -131,9 +133,11 @@ export function makeFileOps(c: OpsContext) {
     auto: Map<string, Choice> = new Map(),
     /** keys this batch writes anyway: "Keep both" must not pick one of them */
     reserved: Set<string> = new Set(),
+    /** "upload": the dialog offers "Remember until Kybl quits" and applies what was remembered */
+    remember?: ResolveOpts["remember"],
   ) => {
     const ask = clashes.filter((x) => !auto.has(x.key));
-    const choices = await c.resolveConflicts(ask, verb, where);
+    const choices = await c.resolveConflicts(ask, verb, where, remember ? { remember } : undefined);
     if (!choices) return null;
     for (const [k, v] of auto) choices.set(k, v);
     c.setBusy(choices.size ? "Finding free names…" : null);
@@ -189,7 +193,7 @@ export function makeFileOps(c: OpsContext) {
       if (!found) return false;
       const clashes = targets.filter((t) => found.has(t.key)).map((t) => ({ key: t.key, folder: t.folder, name: t.key.slice(dest.length).replace(/\/$/, "") }));
       const reserved = new Set(targets.filter((t) => !found.has(t.key)).map((t) => t.key));
-      const d = await decide(pid, bucket, clashes, "Uploading", placeLabel(pid, bucket, dest), new Map(), reserved);
+      const d = await decide(pid, bucket, clashes, "Uploading", placeLabel(pid, bucket, dest), new Map(), reserved, "upload");
       if (!d) return false;
       const items: Parameters<TransferActions["add"]>[0] = [];
       for (const [top, g] of groups) {
@@ -261,8 +265,15 @@ export function makeFileOps(c: OpsContext) {
         } else {
           // one file name right in the Downloads folder, never a path below it (a remote
           // `Documents\x` would otherwise step into a maybe linked `Documents/`); a file or link
-          // already at that name is kept and the download takes the next free name
+          // already at that name asks: Replace, Keep both (the next free name) or Skip
           local = joinPath(await api.downloadFolder(), safeName(f.name) || "download");
+          const r = await resolveDownloadClashes([{ name: f.name, local, overwrite }], c.resolveConflicts, findExistingLocal, "your Downloads folder");
+          if (!r) return;
+          if (!r.items.length) {
+            toast("info", `Skipped “${f.name}”: it is already in your Downloads folder`);
+            return;
+          }
+          overwrite = r.items[0].overwrite ?? false;
         }
         transfers.add([{ kind: "download", name: f.name, profileId: pid, bucket, key: f.key, local, total: f.size, overwrite, etag: f.etag }]);
         c.autoShowActivity();
@@ -277,12 +288,24 @@ export function makeFileOps(c: OpsContext) {
       let started = 0;
       // what was found goes to the transfer list at once: downloads start while the rest of a
       // folder is still being listed (a big tree on a slow server takes minutes)
-      const start = (batch: Parameters<TransferActions["add"]>[0]) => {
+      const begin = (batch: Parameters<TransferActions["add"]>[0]) => {
         if (!batch.length) return;
         if (started === 0) c.autoShowActivity();
         started += batch.length;
         transfers.add(batch);
       };
+      // files already on disk are asked about first (Replace, Keep both, Skip), a batch at a time;
+      // "Do this for all" covers the files the listing finds later too
+      let stopListing: (() => void) | null = null;
+      const gate = downloadClashGate({
+        ask: c.resolveConflicts,
+        exists: findExistingLocal,
+        where,
+        start: begin,
+        // closing the question calls the rest off: no more files are asked about or started
+        onCancel: () => stopListing?.(),
+      });
+      const start = (batch: Parameters<TransferActions["add"]>[0]) => gate.add(batch);
       const item = (key: string, size: number, rel: string, etag?: string | null) => {
         const safe = safeRelPath(rel);
         return safe ? [{ kind: "download" as const, name: safe, profileId: pid, bucket, key, local: joinPath(dir, safe), total: size, etag, base: dir }] : [];
@@ -298,6 +321,7 @@ export function makeFileOps(c: OpsContext) {
       let failures = 0;
       let notListed = 0;
       for (const [i, e] of folders.entries()) {
+        if (gate.cancelled) break;
         const base = relBase !== null && e.key.startsWith(relBase) ? relBase : parentPrefix(e.key);
         let found = 0;
         const run = eachFileUnder(pid, bucket, e.key, (files) => {
@@ -306,6 +330,7 @@ export function makeFileOps(c: OpsContext) {
           // an older listing keeps quiet once a later download (or another writer) has the line
           if (mayPaint()) setBusy(`Listing ${e.name}… ${plural(found, "file")} found`, run.stop, mine);
         });
+        stopListing = run.stop;
         // a new download takes the line; a later folder only does when nobody else holds it
         if (i === 0 || mayPaint()) setBusy(`Listing ${e.name}…`, run.stop, mine);
         // the Activity log keeps this download as one while files are still being found
@@ -326,7 +351,14 @@ export function makeFileOps(c: OpsContext) {
           release();
         }
       }
+      gate.end();
+      await gate.settled();
+      stopListing = null;
       clearBusy();
+      if (gate.cancelled) {
+        toast("info", started ? `Stopped. ${plural(started, "file")} already started keep downloading.` : "Download cancelled");
+        return;
+      }
       if (failed) {
         const more = failures > 1 ? ` (${failures} of ${folders.length} folders couldn't be listed)` : "";
         toast("error", started ? `${failed}${more}. The files found so far are downloading.` : `${failed}${more}`);
@@ -339,9 +371,11 @@ export function makeFileOps(c: OpsContext) {
         return;
       }
       if (started === 0) {
-        if (!failed) toast("info", "Nothing to download");
+        if (gate.skipped) toast("info", `Skipped ${plural(gate.skipped, "file")} that ${gate.skipped === 1 ? "was" : "were"} already in ${where}`);
+        else if (!failed) toast("info", "Nothing to download");
         return;
       }
+      if (gate.skipped) toast("info", `Skipped ${plural(gate.skipped, "file")} already in ${where}`);
       if (!folders.length) toast("info", `Downloading ${plural(started, "file")} to ${where}`);
     } catch (e) {
       clearBusy();

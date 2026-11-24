@@ -231,6 +231,7 @@ pub fn run() {
             commands::list_all_under,
             commands::stream_files_under,
             objects::existing_keys,
+            dest::existing_local_paths,
             objects::update_object_props,
             objects::get_object_tags,
             objects::put_object_tags,

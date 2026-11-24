@@ -92,6 +92,18 @@ fn numbered(path: &Path, n: u32) -> PathBuf {
     path.with_file_name(format!("{stem}{tag}{ext}"))
 }
 
+/// Which of these download paths already have a file (or folder, or link) on this computer, so the
+/// page can ask Replace / Keep both / Skip before a download picks a free name. A path the
+/// download would refuse anyway (see `validate`) is left out: it fails on its own, with its reason.
+#[tauri::command]
+pub async fn existing_local_paths(paths: Vec<String>) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || existing_among(paths)).await.map_err(|e| e.to_string())
+}
+
+fn existing_among(paths: Vec<String>) -> Vec<String> {
+    paths.into_iter().filter(|p| validate(p).is_ok_and(|v| std::fs::symlink_metadata(v).is_ok())).collect()
+}
+
 /// The first of `path`, "name (1).ext", "name (2).ext" … that `taken` says is free.
 pub fn free_name(path: &Path, taken: impl Fn(&Path) -> bool) -> PathBuf {
     if !taken(path) {
@@ -424,6 +436,17 @@ pub fn unless_in_use(path: &Path, f: impl FnOnce()) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn existing_paths_are_the_ones_already_on_disk() {
+        let dir = temp_dir();
+        let there = dir.join("a.txt");
+        std::fs::write(&there, b"x").unwrap();
+        let free = dir.join("b.txt");
+        let got = existing_among(vec![there.to_string_lossy().into_owned(), free.to_string_lossy().into_owned(), "relative.txt".into()]);
+        assert_eq!(got, vec![there.to_string_lossy().into_owned()]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     /// A name that leaves no room for ".s3part" keeps its whole name; only its partial file gets
     /// a shorter one (distinct per name). A number added to such a name still fits.

@@ -1,9 +1,9 @@
-import { memo, useMemo } from "react";
+import { Fragment, memo, useMemo } from "react";
 import { api, errSummary } from "../api";
 import { Icon } from "../Icons";
 import { baseName, formatBytes, formatEta, formatSpeed } from "../format";
 import { useJobList, useJobs } from "../useJobs";
-import { useTransferList, type TransferActions } from "../useTransfers";
+import { runCounts, usePrunedDone, useTransferList, type TransferActions } from "../useTransfers";
 import type { Transfer } from "../types";
 import { JobsPanel, useActiveJobCount, useMigrations } from "../jobs";
 
@@ -32,6 +32,10 @@ export function TransfersButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+/** Waiting rows listed at most (a 2,000-file folder would otherwise be 2,000 rows); the rest are counted. */
+const QUEUED_SHOWN = 60;
+const GROUP_LABEL = { running: "Running", queued: "Queued", paused: "Paused", error: "Failed", cancelled: "Cancelled", done: "Finished" } as const;
+
 const ORDER = { running: 0, queued: 1, paused: 2, error: 3, cancelled: 4, done: 5 } as const;
 
 /** Retries every failed transfer (not the ones stopped on purpose: those retry with a tap each). */
@@ -58,6 +62,15 @@ export function TransfersScreen({
   const jobs = useJobList();
   const jobActions = useJobs();
   const sorted = useMemo(() => [...list].sort((a, b) => ORDER[a.state] - ORDER[b.state]), [list]);
+  const prunedDone = usePrunedDone();
+  // what each group holds; Finished also counts the rows pruned off the list, so the number is true
+  const groupSize = useMemo(() => {
+    const n = { running: 0, queued: 0, paused: 0, error: 0, cancelled: 0, done: prunedDone };
+    for (const t of list) n[t.state]++;
+    return n;
+  }, [list, prunedDone]);
+  const run = runCounts(list);
+  const firstQueued = sorted.findIndex((t) => t.state === "queued");
   const active = list.some((t) => t.state === "queued" || t.state === "running");
   // paused: kept across a restart; they resume, or are stopped (what they kept is dropped)
   const paused = list.filter((t) => t.state === "paused");
@@ -174,9 +187,33 @@ export function TransfersScreen({
                   )}
                 </li>
               ))}
-              {sorted.map((t) => (
-                <TransferRow key={t.id} t={t} transfers={transfers} onOpenFile={onOpenFile} />
-              ))}
+              {run.total > 0 && active && (
+                <li className="m-xfer-summary" aria-live="off">
+                  {run.running.toLocaleString()} running · {run.queued.toLocaleString()} queued · {run.done.toLocaleString()} done of {run.total.toLocaleString()}
+                </li>
+              )}
+              {sorted.map((t, i) => {
+                const first = i === 0 || sorted[i - 1].state !== t.state;
+                // the rest of a long queue is counted in a line of its own, not drawn
+                if (t.state === "queued" && i - firstQueued >= QUEUED_SHOWN) {
+                  return i === firstQueued + QUEUED_SHOWN ? (
+                    <li key="more-queued" className="m-xfer-group">
+                      + {(groupSize.queued - QUEUED_SHOWN).toLocaleString()} more queued
+                    </li>
+                  ) : null;
+                }
+                return (
+                  <Fragment key={t.id}>
+                    {first && (
+                      <li className="m-xfer-group">
+                        {GROUP_LABEL[t.state]} ({groupSize[t.state].toLocaleString()})
+                      </li>
+                    )}
+                    <TransferRow t={t} transfers={transfers} onOpenFile={onOpenFile} />
+                  </Fragment>
+                );
+              })}
+
             </ul>
             {copiesSection}
           </>

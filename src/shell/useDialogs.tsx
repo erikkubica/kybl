@@ -7,7 +7,7 @@
 import { logMessage } from "../activityLog";
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConfirmDialog, ContextMenu, PromptDialog, Toasts, type MenuItem, type PromptResult, type Toast } from "../components/Dialogs";
-import { useConflictPrompt } from "../components/ConflictDialog";
+import { useConflictPrompt, type ResolveOpts } from "../components/ConflictDialog";
 import type { ToastAction } from "../desktop/fileOps";
 import type { Choice, Clash } from "../desktop/conflicts";
 import type { IconName } from "../Icons";
@@ -35,7 +35,7 @@ export type Dialogs = {
   prompt: (o: PromptOptions) => void;
   menu: (x: number, y: number, items: MenuItem[]) => void;
   toast: (kind: Toast["kind"], text: string, action?: ToastAction) => void;
-  resolveConflicts: (clashes: Clash[], verb: string, where: string) => Promise<Map<string, Choice> | null>;
+  resolveConflicts: (clashes: Clash[], verb: string, where: string, opts?: ResolveOpts) => Promise<Map<string, Choice> | null>;
   /** shows a modal of the caller's own; `render` gets the function that closes it */
   show: (render: (close: () => void) => ReactNode) => void;
   /** a dialog or menu from here is up */

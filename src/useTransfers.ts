@@ -103,6 +103,14 @@ const batchPrunedWhere = new Map<string, { profileId: string; bucket: string }>(
 const currentRun = new Set<string>();
 /** Bytes of the current run's finished transfers that were pruned off the list. */
 let runPrunedBytes = 0;
+/** How many of the current run's finished transfers were pruned off the list (for "K done of T"). */
+let runPrunedCount = 0;
+/**
+ * Successful transfers pruned off the list since "Clear finished" (see `KEEP_DONE`). The Done
+ * tab adds them to its count, so a 1,972-file download says 1,972, not the 500 still listed.
+ */
+let prunedDone = 0;
+const prunedStore = createStore(0);
 /** `where` lists each connection and bucket the batch uploaded into. */
 type Settled = (ok: number, failed: number, where: { profileId: string; bucket: string }[]) => void;
 const settledListeners = new Set<Settled>();
@@ -154,7 +162,9 @@ function flush() {
   if (!anyActive) {
     currentRun.clear();
     runPrunedBytes = 0;
+    runPrunedCount = 0;
   }
+  prunedStore.set(prunedDone);
   transfersStore.set(Array.from(byId.values()));
   // nothing left to report: stop ticking until the next transfer starts
   if (!anyActive && timer !== undefined) {
@@ -172,6 +182,7 @@ function prune() {
     if (done <= KEEP_DONE) break;
     if (t.state === "done") {
       pruneDone(id, t);
+      prunedDone++;
       forget(id);
       done--;
     }
@@ -184,7 +195,10 @@ function pruneDone(id: string, t: Transfer) {
     batchPrunedOk++;
     batchPrunedWhere.set(`${t.profileId}\n${t.bucket}`, { profileId: t.profileId, bucket: t.bucket });
   }
-  if (currentRun.delete(id)) runPrunedBytes += t.total;
+  if (currentRun.delete(id)) {
+    runPrunedBytes += t.total;
+    runPrunedCount++;
+  }
 }
 
 /** Takes a row off the list with everything kept about it. */
@@ -616,6 +630,7 @@ const actions = {
   },
   /** Clears done and cancelled transfers; failed ones stay (Retry, or `clearFailed`). */
   clearFinished() {
+    prunedDone = 0;
     clearWhere((t) => t.state === "done" || t.state === "cancelled");
   },
   /** Clears failed transfers, and what the backend kept to resume them. */
@@ -662,6 +677,37 @@ export function runTotals(list: Transfer[]): { total: number; done: number } {
     done += t.state === "done" ? t.total : t.bytes;
   }
   return { total, done };
+}
+
+/**
+ * The current run in counts, for the header ("2 running · 40 queued · 120 done of 162"): every
+ * transfer started since the queue was last idle, including finished ones pruned off the list.
+ * `recent` is the latest few finished ones of this run, so a small file that was done within one
+ * tick still shows up in In progress for a moment instead of vanishing.
+ */
+export function runCounts(list: Transfer[], recentMax = 5): { total: number; running: number; queued: number; done: number; recent: Transfer[] } {
+  let running = 0;
+  let queued = 0;
+  let done = runPrunedCount;
+  let total = runPrunedCount;
+  const recent: Transfer[] = [];
+  for (const t of list) {
+    if (!currentRun.has(t.id)) continue;
+    if (t.state === "running") running++;
+    else if (t.state === "queued") queued++;
+    else if (t.state === "done") {
+      done++;
+      recent.push(t);
+      if (recent.length > recentMax) recent.shift();
+    } else continue;
+    total++;
+  }
+  return { total, running, queued, done, recent: recent.reverse() };
+}
+
+/** How many successful transfers were pruned off the list (the list keeps the latest `KEEP_DONE`). */
+export function usePrunedDone(): number {
+  return useStore(prunedStore);
 }
 
 /** Whether a transfer of this connection is waiting or running ("Try again" keeps its connection then). */

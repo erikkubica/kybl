@@ -12,7 +12,35 @@ export type Clash = { key: string; name: string; folder: boolean };
 /** "replace" means merge for a folder: files with the same names inside are replaced. */
 export type Choice = "replace" | "skip" | "keep";
 
+/** Which way the files go: each direction remembers its own answer (see `rememberChoice`). */
+export type Direction = "download" | "upload";
+/** An answer that holds for the rest: one for files, one for folders. */
+export type Sticky = { file?: Choice; folder?: Choice };
+
+/**
+ * "Remember until Kybl quits": the answer given to a name clash, kept per direction and only in
+ * memory, so the next download (or upload) doesn't ask again. Nothing is saved to disk: a
+ * restart asks again, and a "Replace" is never one click away from a forgotten setting.
+ */
+const remembered: Record<Direction, Sticky> = { download: {}, upload: {} };
+export const rememberedChoice = (dir: Direction, folder: boolean): Choice | undefined => remembered[dir][folder ? "folder" : "file"];
+export const rememberChoice = (dir: Direction, folder: boolean, choice: Choice) => {
+  remembered[dir][folder ? "folder" : "file"] = choice;
+};
+/** Forgets what was remembered (tests). */
+export const forgetChoices = () => {
+  remembered.download = {};
+  remembered.upload = {};
+};
+
 const CHUNK = 1000;
+
+/** Which of these paths on this computer already have something (for downloads: the files about to be written). */
+export async function findExistingLocal(paths: string[]): Promise<Set<string>> {
+  const found = new Set<string>();
+  for (let i = 0; i < paths.length; i += CHUNK) for (const p of await api.existingLocalPaths(paths.slice(i, i + CHUNK))) found.add(p);
+  return found;
+}
 
 /** Which of `targets` already exist in the bucket (folders by prefix). */
 export async function findExisting(profileId: string, bucket: string, targets: { key: string; folder: boolean }[]): Promise<Set<string>> {

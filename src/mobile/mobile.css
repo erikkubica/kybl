@@ -3135,3 +3135,21 @@ input[type="checkbox"].m-switch:checked {
 .m-app > [data-layer][tabindex="-1"]:focus-visible {
   outline: none;
 }
+
+/* the Transfers screen: counts of the run, and a heading before each state's rows */
+.m-xfer-summary {
+  list-style: none;
+  padding: 10px 18px 2px;
+  font-size: calc(13 * var(--m-u));
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.m-xfer-group {
+  list-style: none;
+  padding: 14px 18px 4px;
+  font-size: calc(12 * var(--m-u));
+  font-weight: 650;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}

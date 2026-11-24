@@ -4,9 +4,9 @@ import { ErrorText } from "./ErrorText";
 import { formatBytes, formatEta, formatSpeed, mbpsInput, mbpsToKbps, parseMbps, plural } from "../format";
 import type { Transfer, TransferState } from "../types";
 import { useJobList, type Job, type JobKind } from "../useJobs";
-import { runTotals, transferActions, transferControls, useTransferList } from "../useTransfers";
+import { runCounts, runTotals, transferActions, transferControls, usePrunedDone, useTransferList } from "../useTransfers";
 import { useSync } from "../sync";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ContextMenu, PromptDialog, type MenuItem } from "./Dialogs";
 import { MBPS, limitLabel, saveTransferPrefs, useTransferPrefsStore } from "../transferPrefs";
 import "./transfers.css";
@@ -61,6 +61,10 @@ const SPEED_PRESETS = [0, 1, 5, 10];
 
 /** Failed rows listed at most; the rest are counted below them (Retry all and Clear failed cover every one). */
 const FAILED_SHOWN = 200;
+/** Finished rows listed at most; older ones are still counted (the Done tab says how many). */
+const DONE_SHOWN = 200;
+/** Waiting rows listed at most; the rest are counted under "Queued". */
+const QUEUED_SHOWN = 40;
 
 /** Uploads and downloads can pause and move up the queue; compress and extract run on their own. */
 const pausable = (t: Transfer) => t.kind === "upload" || t.kind === "download";
@@ -281,6 +285,7 @@ function TransferPanelView({
   extraShown,
 }: PanelProps) {
   const jobActions = useJobs();
+  const prunedDone = usePrunedDone();
   const nothing = transfers.length === 0 && jobs.length === 0 && syncs.length === 0;
   // no activity and no copies between connections: no panel, unless it was opened on purpose
   if (nothing && migrations === 0 && !(showEmpty && open) && !extraShown) return null;
@@ -318,15 +323,28 @@ function TransferPanelView({
   const eta = speed > 0 ? (totalBytes - doneBytes) / speed : 0;
 
   const cancelled = transfers.filter((t) => t.state === "cancelled");
+  // the run in counts, and its latest finished rows: a small file is done within one tick, so
+  // without them it would go from "Queued" to the Done tab without ever showing
+  const run = runCounts(transfers);
+  const recent = onTab && show("progress") ? run.recent : [];
   const list = [
     ...(show("progress") ? running : []),
     // capped like the others: tens of thousands of failed rows would freeze the window
     ...(show("failed") ? failed.slice(0, FAILED_SHOWN) : []),
-    ...(show("progress") ? queued.slice(0, 40) : []),
+    ...recent,
+    ...(show("progress") ? queued.slice(0, QUEUED_SHOWN) : []),
     ...(show("progress") ? paused.slice(0, 40) : []),
-    ...(show("done") ? done.slice(-40).reverse() : []),
+    ...(show("done") ? done.slice(-DONE_SHOWN).reverse() : []),
     ...(show("done") ? cancelled.slice(-20).reverse() : []),
   ];
+  // In progress tells running from waiting: a heading before each group's first row
+  const heads = new Map<string, string>();
+  if (onTab && tab === "activity") {
+    if (running[0]) heads.set(running[0].id, `Running (${running.length.toLocaleString()})`);
+    if (recent[0]) heads.set(recent[0].id, "Just finished");
+    if (queued[0]) heads.set(queued[0].id, `Queued (${queued.length.toLocaleString()})`);
+    if (paused[0]) heads.set(paused[0].id, `Paused (${paused.length.toLocaleString()})`);
+  }
   const shownJobs = jobList.filter((j) => (j.state === "running" ? show("progress") : j.state === "error" ? show("failed") : show("done")));
   const shownSyncs = show("progress") ? syncs : [];
   // copies between connections show here too (with tabs); their details and controls are in Jobs
@@ -336,11 +354,12 @@ function TransferPanelView({
   const counts = {
     progress: active + paused.length + jobsRunning.length + syncs.length + migrationsActive.length,
     failed: failed.length + jobsFailed.length + migrationsFailed.length,
-    done: done.length + cancelled.length + jobsDone.length + jobsCancelled.length + migrationsDone.length,
+    // plus the ones pruned off the list: the count stays the true number
+    done: done.length + prunedDone + cancelled.length + jobsDone.length + jobsCancelled.length + migrationsDone.length,
   };
   // finished rows past the caps above: said, like the other capped lists
   const doneHidden =
-    counts.done - Math.min(done.length, 40) - Math.min(cancelled.length, 20) - Math.min(jobsDone.length + jobsCancelled.length, 30) - (onTab ? Math.min(migrationsDone.length, 30) : migrationsDone.length);
+    counts.done - Math.min(done.length, DONE_SHOWN) - Math.min(cancelled.length, 20) - Math.min(jobsDone.length + jobsCancelled.length, 30) - (onTab ? Math.min(migrationsDone.length, 30) : migrationsDone.length);
   const onLog = !!onTab && tab === "log";
   const tabEmpty = shownJobs.length + shownSyncs.length + shownMigs.length + list.length === 0;
   const EMPTY_NOTE: Record<string, string> = {
@@ -415,7 +434,14 @@ function TransferPanelView({
                 ["log", "Log", 0, ""],
               ] as const
             ).map(([id, label, n, tone]) => (
-              <button key={id} role="tab" aria-selected={open && tab === id} className={open && tab === id ? "on" : ""} onClick={() => pickTab(id)}>
+              <button
+                key={id}
+                role="tab"
+                aria-selected={open && tab === id}
+                className={open && tab === id ? "on" : ""}
+                onClick={() => pickTab(id)}
+                title={id === "done" && prunedDone > 0 ? `${n.toLocaleString()} finished. The list shows the latest ${DONE_SHOWN.toLocaleString()}.` : undefined}
+              >
                 {label}
                 {n > 0 && <span className={`pill ${tone}`}>{n.toLocaleString()}</span>}
               </button>
@@ -445,6 +471,9 @@ function TransferPanelView({
         <div className="tp-summary">
           {active > 0 && (
             <>
+              <span className="tp-run" title="Running now, waiting for a turn, and finished, out of everything started in this run">
+                {running.length.toLocaleString()} running · {queued.length.toLocaleString()} queued · {run.done.toLocaleString()} done of {run.total.toLocaleString()}
+              </span>
               <span>
                 {running.some((t) => !t.total) ? formatBytes(doneBytes) : `${formatBytes(doneBytes)} of ${formatBytes(totalBytes)}`}
               </span>
@@ -683,8 +712,11 @@ function TransferPanelView({
           ))}
           {list.map((t) => {
             const ctl = transferControls(t.id);
+            const head = heads.get(t.id);
             return (
-              <div key={t.id} className={`tp-row st-${t.state}`}>
+              <Fragment key={t.id}>
+                {head && <div className="tp-group">{head}</div>}
+              <div className={`tp-row st-${t.state}`}>
                 <span className="tp-icon" title={KIND_LABEL[t.kind]}>
                   <Icon name={t.state === "running" ? (t.kind === "upload" || t.kind === "download" ? t.kind : "archive") : STATE_ICON[t.state]} size={15} />
                 </span>
@@ -774,12 +806,17 @@ function TransferPanelView({
                   )}
                 </div>
               </div>
+              </Fragment>
             );
           })}
           {show("failed") && failed.length > FAILED_SHOWN && <div className="tp-more">+ {(failed.length - FAILED_SHOWN).toLocaleString()} more failed</div>}
-          {show("progress") && queued.length > 40 && <div className="tp-more">+ {(queued.length - 40).toLocaleString()} more waiting</div>}
+          {show("progress") && queued.length > QUEUED_SHOWN && <div className="tp-more">+ {(queued.length - QUEUED_SHOWN).toLocaleString()} more queued</div>}
           {show("progress") && paused.length > 40 && <div className="tp-more">+ {(paused.length - 40).toLocaleString()} more paused</div>}
-          {show("done") && doneHidden > 0 && <div className="tp-more">+ {doneHidden.toLocaleString()} more finished</div>}
+          {show("done") && doneHidden > 0 && (
+            <div className="tp-more">
+              + {doneHidden.toLocaleString()} more finished{prunedDone > 0 ? " (counted, not listed)" : ""}
+            </div>
+          )}
         </div>
       )}
     </section>

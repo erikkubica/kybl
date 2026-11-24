@@ -1164,6 +1164,9 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     case "start_download":
       simulateTransfer(a.id, 18_000_000 + Math.random() * 60_000_000);
       return a.destPath;
+    case "existing_local_paths":
+      // a few well-known names are "already there", so the clash dialog can be tried in the mock
+      return (a.paths as string[]).filter((p) => /[/\\](report|photo)[^/\\]*$/.test(p));
     case "existing_keys": {
       // per bucket, like the real backend: media-prod's folders don't exist in an empty bucket
       const t = remoteTree(a.profileId, a.bucket);

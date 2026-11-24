@@ -19,6 +19,8 @@ import { parentPrefix, plural } from "../format";
 import { joinPath, safeRelPath } from "../desktop/paths";
 import { eachFileUnder, ListingStopped } from "../streamFiles";
 import { holdBatch } from "../transferLog";
+import { downloadClashGate } from "../desktop/downloadClash";
+import { findExistingLocal } from "../desktop/conflicts";
 import type { Pane } from "../browser/usePane";
 import type { FileOps } from "../desktop/fileOps";
 import type { Entry } from "../types";
@@ -144,8 +146,8 @@ export async function sendItems(
 /**
  * Cloud → this computer: every file (folders listed as they go) into `dir`, keeping folder
  * structure. Files start downloading as they are found, so a big folder on a slow server doesn't
- * sit silent while it is listed. A file already there is kept and the copy gets a free name, like
- * Finder. `done` runs once all ended. True when downloads were started.
+ * sit silent while it is listed. A file already there is asked about (Replace, Keep both, Skip;
+ * "all" covers the files found later). `done` runs once all ended. True when downloads were started.
  */
 async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx, dest: Place, done: () => void): Promise<boolean> {
   const { profileId, bucket } = src;
@@ -154,13 +156,11 @@ async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx
     const safe = safeRelPath(rel);
     return safe ? [{ kind: "download" as const, name: safe, profileId, bucket, key, local: joinPath(dir, safe), total: size, base: dir }] : [];
   };
-  const start = (batch: Parameters<TransferActions["add"]>[0]) => {
+  const begin = (batch: Parameters<TransferActions["add"]>[0]) => {
     if (!batch.length) return;
     if (!ids.length) c.autoShowActivity();
     for (const t of c.transfers.add(batch)) ids.push(t.id);
   };
-  const folders = items.filter((e) => e.kind !== "file");
-  start(items.filter((e) => e.kind === "file").flatMap((e) => item(e.key, e.size, e.name)));
   let stopped = false;
   let stopNow: (() => void) | null = null;
   // the listing shows on the busy line of the folder it lands in (the source pane if that isn't
@@ -174,6 +174,20 @@ async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx
     const o = busyOwner.get(setBusy);
     return listing && (o === mine || o === undefined);
   };
+  const gate = downloadClashGate({
+    ask: c.dialogs.resolveConflicts,
+    exists: findExistingLocal,
+    where: dir,
+    start: begin,
+    // closing the question calls the rest off
+    onCancel: () => {
+      stopped = true;
+      stopNow?.();
+    },
+  });
+  const start = (batch: Parameters<TransferActions["add"]>[0]) => gate.add(batch);
+  const folders = items.filter((e) => e.kind !== "file");
+  start(items.filter((e) => e.kind === "file").flatMap((e) => item(e.key, e.size, e.name)));
   if (folders.length) {
     const what = folders.length === 1 ? `Copying “${folders[0].name}”` : `Copying ${folders.length} folders`;
     c.dialogs.toast(
@@ -224,16 +238,23 @@ async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx
       release();
     }
   }
+  gate.end();
+  await gate.settled();
   stopNow = null;
   listing = false;
   if (setBusy && busyOwner.get(setBusy) === mine) setBusy(null);
+  if (gate.cancelled) {
+    if (ids.length) c.dialogs.toast("info", "Stopped. The files already started keep copying.");
+    return ids.length > 0;
+  }
   if (failed) {
     const more = failures > 1 ? ` (${failures} of ${folders.length} folders couldn't be listed)` : "";
     c.dialogs.toast("error", ids.length ? `${failed}${more}. The files found so far are copying.` : `${failed}${more}`);
   }
   if (!ids.length && failed) return false;
   if (!ids.length) {
-    if (!stopped) c.dialogs.toast("info", "Nothing to copy");
+    if (gate.skipped) c.dialogs.toast("info", `Skipped ${gate.skipped.toLocaleString()} ${gate.skipped === 1 ? "file" : "files"} that ${gate.skipped === 1 ? "was" : "were"} already there`);
+    else if (!stopped) c.dialogs.toast("info", "Nothing to copy");
     return false;
   }
   void Promise.all(ids.map((id) => c.transfers.whenFinished(id))).then(done);
