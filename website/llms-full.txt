@@ -1,31 +1,44 @@
-# Kybl: the fast S3 browser for your desktop
+# Kybl: one file manager for every cloud, bucket and server
 
-Kybl is a free app for macOS, Windows, Linux, Android and iPhone that works with any S3-compatible object storage. Browse, upload, download, share and sync files on Amazon S3, Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO and Ceph. Website: https://kybl.app/
+Kybl is a free app for macOS, Windows, Linux, Android and iPhone that puts object storage, cloud drives, servers and your own disk side by side in one window. Website: https://kybl.app/
 
-## Connect to any S3-compatible storage
+## Connections
 
-Pick a provider preset, paste your access key and you're in. Kybl fills in the endpoint and region, explains each provider's quirks (for example, Hetzner keys cannot list all buckets, so you enter the bucket name) and can test the connection before saving. Path-style addressing is available for MinIO and self-hosted servers.
+- Object storage: Amazon S3 and every S3-compatible service (Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph), Azure Blob Storage, Google Cloud Storage and Kybl Storage.
+- Cloud drives: Google Drive (My Drive, shared drives, Shared with me), OneDrive and Dropbox, signed in through the browser.
+- Servers: SFTP (password, key or SSH agent, host keys checked), SSH (an SFTP connection that opens as a terminal), FTP and FTPS, and WebDAV (Nextcloud, ownCloud, NAS boxes).
+- This computer: your own folders and drives, in the same panes.
 
-Secret keys are stored encrypted, with the encryption key in the operating system keychain: the macOS Keychain, Windows Credential Manager or a Secret Service (GNOME Keyring, KWallet) on Linux. They are never written to disk in plain text.
+Presets fill in endpoints, regions and each provider's quirks, and every connection can be tested before saving. Import connections reads FileZilla's Site Manager and ~/.ssh/config (LocalForward lines become SSH tunnels); folders become sidebar groups. Passwords and keys are stored in an encrypted vault whose key lives in the operating system keychain (macOS Keychain, Windows Credential Manager, a Linux Secret Service such as GNOME Keyring or KWallet, the Android Keystore on phones). They are never written to a settings file, and Kybl talks to your storage and servers directly.
 
 ## Features
 
-- Thumbnails in a blink: JPEGs use the photo's embedded EXIF thumbnail, read from only the first 256 KB. Other images are resized once. All thumbnails are cached on disk, so a folder you've seen opens instantly.
-- Previews without downloading: images, video, audio, PDF and text open in Quick Look (Space), next to size, date and the full key (Get Info, ⌘I).
-- Drag, drop, done: upload files or whole folders by dragging from Finder or Explorer. Large files use multipart upload.
-- A transfer queue that talks: speed and time left for every upload and download, with cancel and retry.
-- Share links in one click: presigned URLs valid for 1 hour, 1 day or 7 days, or copy the s3:// URI. Nothing has to be made public.
-- Huge folders, still snappy: lazy paging keeps folders with 100,000+ objects smooth; search looks through every subfolder.
-- File operations: download files or folders, delete, rename files and folders, create folders.
-- Move and copy: drag files and folders onto a folder or a breadcrumb, or pick a destination.
-- Folder sizes on demand: S3 has none, so Kybl counts the objects under a folder and keeps the result.
-- Keyboard first: Cmd+F search, Cmd+A select all, Cmd+R refresh, arrow keys to move, Backspace to go up a folder, Delete to delete.
+- Panes and workspaces: up to six panes split any way, with commander keys (F5 copy, F6 move, F7 new folder, F8 delete) and synchronized browsing. Each layout is a workspace tab, and a layout can be saved as a recipe.
+- Copy between anything: drag files from one connection to another, or start a copy or move job for whole folders. Jobs are checked, keep their place across restarts and use server-side copies where the provider has them.
+- Thumbnails in a blink: JPEGs use the photo's embedded EXIF thumbnail, read from only the first 256 KB, on any connection. Thumbnails are cached on disk.
+- Previews without downloading: images, video, audio, PDF and text open in Quick Look (Space), with Get Info (Cmd+I).
+- Edit anywhere: open a remote file in any app; each save uploads back, and a change on the server meanwhile is caught and shown side by side. Kybl also has its own editor.
+- Archives and diffs: zip and unzip (on the server over SSH when it can), open archives like folders, compare two files or two folders.
+- Search that digs: paged loading for folders with 100,000+ items, search through every subfolder, and search inside files on this computer and SFTP servers.
+- Transfer queue: speed and time left, pause, speed limits, retry, resume after a restart, and checksum checks where the provider gives one.
+- Share links: expiring links on S3, OneDrive and Dropbox.
+- Command palette (Cmd+K) and keyboard shortcuts for everything.
+- Custom actions: your own shell commands on selected files, with placeholders and a shortcut, run on this computer or on an SFTP server.
 - Make it yours: light, dark or system theme, colour schemes and accents, fonts, text size and density.
-- On your phone too: the same app on Android and iPhone with a touch interface (browse, preview, upload from Photos or Files, share links). Transfers keep going in the background, with a progress notification on Android, and a dropped download resumes where it stopped. Folder sync and the menu bar are desktop only.
+- On your phone too: the same connections on Android and iPhone with a touch interface, photo backup to any connection, background transfers and an app lock.
 
-## Folder sync
+## SSH and terminals (desktop)
 
-Point a local folder at a bucket (or a prefix inside one) and choose a direction: upload to the bucket or download from it. Kybl watches for changes on a schedule, skips files that match ignore rules (such as node_modules or .DS_Store) and keeps syncing from the menu bar when the window is closed. All folders can be paused from the menu bar icon. Errors are shown in plain words with the fix, for example "AccessDenied: this key cannot list objects in static-assets".
+- An SSH connection opens a terminal on the server with one click; its Folders button opens the server's files above the terminal.
+- Terminal panes for this computer (macOS and Linux) or any SFTP or SSH server, saved with workspaces, with a "follow the folder above" option.
+- SSH tunnels (local port forwards) to reach a database or admin panel behind the server, with auto-start.
+- Pasting several lines asks first and shows exactly what will run.
+
+## Sync, mirror and drives (desktop)
+
+- Folder sync between a folder on your computer and any connection: upload, download or two-way. Changes are picked up within seconds, ignore rules skip node_modules, .DS_Store and friends, big deletions ask first, and a file changed on both sides keeps both versions. It keeps running from the menu bar with the window closed.
+- Mirror: deploy a folder to a server (or pull one down) with a dry run first, then re-run a saved mirror in one click.
+- Mount as a drive: any connection, bucket or folder appears in Finder (macOS) or the Linux file manager.
 
 ## Kybl Storage
 
@@ -45,23 +58,29 @@ On first launch on a Mac, open System Settings > Privacy & Security and click Op
 
 ## FAQ
 
-Q: Which storage providers does Kybl work with?
-A: Any S3-compatible storage: Amazon S3, Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph and other S3 servers.
+Q: What can Kybl connect to?
+A: Object storage: Amazon S3 and every S3-compatible service (Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph), Azure Blob Storage and Google Cloud Storage. Cloud drives: Google Drive, OneDrive and Dropbox. Servers: SFTP, SSH, FTP and FTPS, and WebDAV (Nextcloud, ownCloud, NAS boxes). And the files on your own computer or phone, all side by side.
 
 Q: Is Kybl free?
-A: Yes. Kybl is a free download. Use your own bucket and pay your storage provider as usual, or start with 10 GB free on Kybl Storage.
+A: Yes. Kybl is a free download for macOS, Windows, Linux, Android and iPhone. Use your own storage and servers as usual, or start with 10 GB free on Kybl Storage.
+
+Q: Can I use Kybl as an SSH client?
+A: Yes. Add an SSH connection and a click opens a terminal on the server, with a Folders button for its files. Any SFTP connection can also open a terminal, start SSH tunnels (local port forwards) and run your own commands on the server. Terminals are on the desktop apps; on Windows they work for servers, not yet for the computer itself.
+
+Q: Can I bring my FileZilla sites or SSH hosts?
+A: Yes. Import connections reads FileZilla's Site Manager and your ~/.ssh/config (including LocalForward lines, which become tunnels). Folders become sidebar groups, and saved passwords and key files go straight into Kybl's encrypted vault.
+
+Q: Can Kybl sync a folder?
+A: Yes, with any connection: upload, download or two-way. Kybl watches for changes, skips what your ignore rules say, asks before big deletions, keeps both versions when a file changed on both sides, and keeps syncing from the menu bar with the window closed. For deploys, Mirror shows a dry run before it touches anything.
+
+Q: Where are my passwords and keys stored?
+A: In an encrypted vault on your device, with its key in the operating system keychain: the macOS Keychain, Windows Credential Manager or a Secret Service such as GNOME Keyring on Linux (the Android Keystore on phones). Never in a settings file, and Kybl talks to your storage and servers directly.
 
 Q: What is Kybl Storage?
-A: S3 storage run by Kybl. Sign in with your email and the app connects itself, without copying keys. 10 GB free, stored in the EU.
+A: S3 storage run by Kybl for people without a bucket of their own. Sign in with your email, approve the app in the browser and it connects itself, with no access keys to copy. The free plan has 10 GB, stored in the EU, and your dashboard can make access keys for any other S3 tool.
 
 Q: Are my files on Kybl Storage encrypted?
-A: Yes, at rest, with a key per bucket (AES-256). The storage provider only sees ciphertext. It is not end-to-end: Kybl's servers encrypt files as they pass through.
-
-Q: Where are my access keys stored?
-A: Encrypted, with the encryption key in the operating system keychain. They are never written to disk in plain text, and Kybl talks to your storage directly.
-
-Q: Can Kybl sync a folder with a bucket?
-A: Yes, in either direction, with ignore rules, and it keeps running from the menu bar.
+A: Yes, at rest. Every file is encrypted with its bucket's own key (AES-256) before it is written to disk, so the storage provider, its staff and its backups only ever see ciphertext. It is not end-to-end: Kybl's servers encrypt files as they pass through, so for data only you should read, encrypt it before uploading.
 
 Q: Does Kybl handle very large files and folders?
-A: Yes: multipart uploads for large files, paged loading for huge folders and recursive search.
+A: Yes. Large files go up in parts and resume after a restart, folders with hundreds of thousands of items load page by page, and search looks through every subfolder, or inside files on your computer and SFTP servers.

@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kybl · A fast S3 browser for Mac, Windows and Linux</title>
-<meta name="description" content="Kybl is a free app for S3-compatible storage. Browse, upload, share and sync files on AWS S3, Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces and MinIO, or start with 10 GB of encrypted Kybl Storage.">
-<meta name="keywords" content="S3 browser, S3 client, desktop S3 app, Cloudflare R2 client, Backblaze B2 client, Hetzner Object Storage, MinIO client, Wasabi, DigitalOcean Spaces, folder sync, encrypted cloud storage, Cyberduck alternative">
+<title>Kybl · One file manager for every cloud, bucket and server</title>
+<meta name="description" content="Kybl is a free, fast file manager for S3 buckets, Google Drive, OneDrive, Dropbox, SFTP, FTP, WebDAV and your own disk, with split panes, an SSH terminal, folder sync and mirroring. For macOS, Windows, Linux, Android and iPhone.">
+<meta name="keywords" content="file manager, S3 client, SFTP client, FTP client, SSH client, WebDAV client, Google Drive client, OneDrive, Dropbox, Cloudflare R2, Backblaze B2, Hetzner Object Storage, MinIO, folder sync, dual pane file manager, Cyberduck alternative, FileZilla alternative, Transmit alternative">
 <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
 <meta name="application-name" content="Kybl">
 <meta name="apple-mobile-web-app-title" content="Kybl">
@@ -21,8 +21,8 @@
 <meta property="og:site_name" content="Kybl">
 <meta property="og:locale" content="en_US">
 <meta property="og:url" content="https://kybl.app/">
-<meta property="og:title" content="Kybl · The fast S3 browser for your desktop">
-<meta property="og:description" content="Browse, upload, share and sync files on AWS S3, Cloudflare R2, Hetzner, Backblaze B2, Wasabi and MinIO. Free for macOS, Windows and Linux.">
+<meta property="og:title" content="Kybl · Every bucket, drive and server in one window">
+<meta property="og:description" content="A fast, free file manager for S3, Google Drive, OneDrive, Dropbox, SFTP, FTP and WebDAV, with split panes, an SSH terminal and folder sync. macOS, Windows, Linux and phones.">
 <meta property="og:image" content="https://kybl.app/assets/og.jpg">
 <meta property="og:image:secure_url" content="https://kybl.app/assets/og.jpg">
 <meta property="og:image:type" content="image/jpeg">
@@ -31,8 +31,8 @@
 <meta property="og:image:alt" content="Kybl, a red polka-dot bucket, next to the app window showing files in an S3 bucket.">
 
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Kybl · The fast S3 browser for your desktop">
-<meta name="twitter:description" content="Browse, upload, share and sync files on any S3-compatible storage. Free for macOS, Windows and Linux.">
+<meta name="twitter:title" content="Kybl · Every bucket, drive and server in one window">
+<meta name="twitter:description" content="One fast, free file manager for buckets, cloud drives and servers, with an SSH terminal and folder sync."
 <meta name="twitter:image" content="https://kybl.app/assets/og.jpg">
 <meta name="twitter:image:alt" content="Kybl, a red polka-dot bucket, next to the app window showing files in an S3 bucket.">
 
@@ -65,7 +65,7 @@
       "@type": "SoftwareApplication",
       "@id": "https://kybl.app/#app",
       "name": "Kybl",
-      "description": "A fast desktop app for S3-compatible object storage: browse, upload, download, share and sync files on AWS S3, Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO and Ceph.",
+      "description": "A fast file manager for object storage, cloud drives and servers: S3-compatible storage (AWS S3, Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph), Azure Blob Storage, Google Cloud Storage, Google Drive, OneDrive, Dropbox, SFTP, SSH, FTP/FTPS, WebDAV and the local disk, with split panes, workspaces, terminals, folder sync, mirroring and copies between connections.",
       "url": "https://kybl.app/",
       "applicationCategory": "UtilitiesApplication",
       "applicationSubCategory": "File manager",
@@ -77,18 +77,24 @@
       "screenshot": "https://kybl.app/assets/shots/app-browse.webp",
       "publisher": { "@id": "https://kybl.app/#org" },
       "featureList": [
-        "Connect to any S3-compatible storage with presets",
-        "Secret keys stored in the system keychain",
-        "List and grid view with fast local thumbnails",
-        "Previews for images, video, audio, PDF and text",
-        "Drag and drop upload with multipart for large files",
-        "Transfer queue with speed, time left, cancel and retry",
-        "Presigned share links for 1 hour, 1 day or 7 days",
-        "Move and copy files and folders by dragging",
-        "Folder sizes on demand",
-        "Folder sync that keeps running from the menu bar",
-        "Themes, colour schemes, fonts and text size",
-        "Apps for Android and iPhone",
+        "S3-compatible storage, Azure Blob, Google Cloud Storage, Google Drive, OneDrive, Dropbox, SFTP, FTP/FTPS, WebDAV and the local disk in one app",
+        "Import sites from FileZilla and hosts from ~/.ssh/config",
+        "Secrets stored encrypted, with the key in the system keychain",
+        "Up to six split panes, saved as workspaces, with commander keys (F5 copy, F6 move)",
+        "Terminal panes: a local shell or an SSH session on any server",
+        "SSH connections and SSH tunnels (local port forwards)",
+        "Quick Look previews for images, video, audio, PDF and text",
+        "Edit remote files in any app; saves upload back, conflicts are caught",
+        "Zip, unzip and browse archives; compare files and folders",
+        "Transfer queue with pause, resume after restart, retry and checksums",
+        "Copy and move whole folders between connections as resumable jobs",
+        "Folder sync (upload, download or two-way) running from the menu bar",
+        "Mirror a folder with a dry run first, saved for one-click re-runs",
+        "Mount any connection as a drive in Finder (macOS and Linux)",
+        "Custom shell actions on selected files, locally or on the server",
+        "Share links on S3, OneDrive and Dropbox",
+        "Command palette and keyboard shortcuts for everything",
+        "Apps for Android and iPhone, with photo backup",
         "Kybl Storage: 10 GB free, connected without copying keys",
         "Kybl Storage files encrypted at rest with a key per bucket"
       ]
@@ -97,13 +103,15 @@
       "@type": "FAQPage",
       "@id": "https://kybl.app/#faq",
       "mainEntity": [
-        { "@type": "Question", "name": "Which storage providers does Kybl work with?", "acceptedAnswer": { "@type": "Answer", "text": "Any S3-compatible storage: Amazon S3, Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph and other S3 servers. Presets fill in the endpoint and region for the common providers." } },
-        { "@type": "Question", "name": "Is Kybl free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Kybl is a free download for macOS, Windows, Linux, Android and iPhone. Use your own bucket and pay your storage provider as usual, or start with 10 GB free on Kybl Storage." } },
-        { "@type": "Question", "name": "What is Kybl Storage?", "acceptedAnswer": { "@type": "Answer", "text": "S3 storage run by Kybl for people without a bucket of their own. Sign in with your email, approve the app in the browser and it connects itself, with no access keys to copy. The free plan has 10 GB, stored in the EU, and the account site can make access keys for any other S3 tool." } },
+        { "@type": "Question", "name": "What can Kybl connect to?", "acceptedAnswer": { "@type": "Answer", "text": "Object storage: Amazon S3 and every S3-compatible service (Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph), Azure Blob Storage and Google Cloud Storage. Cloud drives: Google Drive, OneDrive and Dropbox. Servers: SFTP, SSH, FTP and FTPS, and WebDAV (Nextcloud, ownCloud, NAS boxes). And the files on your own computer or phone, all side by side." } },
+        { "@type": "Question", "name": "Is Kybl free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Kybl is a free download for macOS, Windows, Linux, Android and iPhone. Use your own storage and servers as usual, or start with 10 GB free on Kybl Storage." } },
+        { "@type": "Question", "name": "Can I use Kybl as an SSH client?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Add an SSH connection and a click opens a terminal on the server, with a Folders button for its files. Any SFTP connection can also open a terminal, start SSH tunnels (local port forwards) and run your own commands on the server. Terminals are on the desktop apps; on Windows they work for servers, not yet for the computer itself." } },
+        { "@type": "Question", "name": "Can I bring my FileZilla sites or SSH hosts?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Import connections reads FileZilla's Site Manager and your ~/.ssh/config (including LocalForward lines, which become tunnels). Folders become sidebar groups, and saved passwords and key files go straight into Kybl's encrypted vault." } },
+        { "@type": "Question", "name": "Can Kybl sync a folder?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, with any connection: upload, download or two-way. Kybl watches for changes, skips what your ignore rules say, asks before big deletions, keeps both versions when a file changed on both sides, and keeps syncing from the menu bar with the window closed. For deploys, Mirror shows a dry run before it touches anything." } },
+        { "@type": "Question", "name": "Where are my passwords and keys stored?", "acceptedAnswer": { "@type": "Answer", "text": "In an encrypted vault on your device, with its key in the operating system keychain: the macOS Keychain, Windows Credential Manager or a Secret Service such as GNOME Keyring on Linux (the Android Keystore on phones). Never in a settings file, and Kybl talks to your storage and servers directly." } },
+        { "@type": "Question", "name": "What is Kybl Storage?", "acceptedAnswer": { "@type": "Answer", "text": "S3 storage run by Kybl for people without a bucket of their own. Sign in with your email, approve the app in the browser and it connects itself, with no access keys to copy. The free plan has 10 GB, stored in the EU, and your dashboard can make access keys for any other S3 tool." } },
         { "@type": "Question", "name": "Are my files on Kybl Storage encrypted?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, at rest. Every file is encrypted with its bucket's own key (AES-256) before it is written to disk, so the storage provider, its staff and its backups only ever see ciphertext. It is not end-to-end: Kybl's servers encrypt files as they pass through, so for data only you should read, encrypt it before uploading." } },
-        { "@type": "Question", "name": "Where are my access keys stored?", "acceptedAnswer": { "@type": "Answer", "text": "Secret keys are stored encrypted, with the encryption key in the operating system keychain: the macOS Keychain, Windows Credential Manager or a Secret Service such as GNOME Keyring on Linux. They are never written to disk in plain text, and Kybl talks to your storage directly." } },
-        { "@type": "Question", "name": "Can Kybl sync a folder with a bucket?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Pick a local folder, a bucket and a direction (upload or download). Kybl watches for changes, skips files that match your ignore rules and keeps syncing from the menu bar when the window is closed." } },
-        { "@type": "Question", "name": "Does Kybl handle very large files and folders?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Large files upload in parts (multipart upload), folders with hundreds of thousands of objects load page by page, and search looks through every subfolder." } }
+        { "@type": "Question", "name": "Does Kybl handle very large files and folders?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Large files go up in parts and resume after a restart, folders with hundreds of thousands of items load page by page, and search looks through every subfolder, or inside files on your computer and SFTP servers." } }
       ]
     }
   ]
@@ -193,8 +201,9 @@
         <span>kybl</span>
       </a>
       <div class="nav-links">
-        <a href="#storage">Storage</a>
+        <a href="#connect">Connections</a>
         <a href="#features">Features</a>
+        <a href="#servers">SSH</a>
         <a href="#sync">Sync</a>
         <a href="#kybl-storage">Kybl Storage</a>
         <a class="btn btn-sm btn-ghost" href="https://app.kybl.app/" title="Kybl Storage: sign in, or go to your dashboard if you already are">Sign in</a>
@@ -205,8 +214,8 @@
 
   <div class="wrap gut hero-copy">
     <p class="eyebrow">Free · macOS, Windows, Linux, Android and iPhone</p>
-    <h1>The fast S3 browser for your&nbsp;desktop.</h1>
-    <p class="lede">Browse, upload, share and sync files on AWS S3, Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces and MinIO. Your keys stay in the system keychain.</p>
+    <h1>Every bucket, drive and server in one&nbsp;window.</h1>
+    <p class="lede">A fast, free file manager for S3, Google Drive, OneDrive, Dropbox, SFTP, FTP, WebDAV and your own disk, with split panes, an SSH terminal and folder sync built&nbsp;in.</p>
     <div class="actions">
       <a class="btn btn-iron" href="#download" data-hero-dl>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3m9 12v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5"/></svg>
@@ -235,31 +244,62 @@
 <div class="polka-strip" aria-hidden="true"></div>
 
 <main>
-  <section id="storage" class="sec">
+  <section id="connect" class="sec">
     <div class="wrap gut split">
       <div class="split-copy">
-        <p class="label">Any S3-compatible storage</p>
-        <h2>Works with the storage you already&nbsp;pay&nbsp;for.</h2>
-        <p class="body">Pick a preset, paste your access key and you're in. Kybl fills in the endpoint and region, tells you about each provider's quirks and can test the connection before you save it.</p>
-        <ul class="providers" aria-label="Supported providers">
-          <li><img src="assets/icons/aws-s3.svg" alt="" width="28" height="28"><span>Amazon S3</span></li>
-          <li><img src="assets/icons/cloudflare-icon.svg" alt="" width="34" height="16"><span>Cloudflare R2</span></li>
-          <li><img src="assets/icons/hetzner.svg" alt="" width="28" height="28"><span>Hetzner</span></li>
-          <li><img src="assets/icons/backblaze.svg" alt="" width="18" height="28"><span>Backblaze B2</span></li>
-          <li><img src="assets/icons/wasabi.svg" alt="" width="28" height="28"><span>Wasabi</span></li>
-          <li><img src="assets/icons/digital-ocean-icon.svg" alt="" width="28" height="28"><span>DigitalOcean</span></li>
-          <li><img src="assets/icons/minio.svg" alt="" width="15" height="28"><span>MinIO</span></li>
-          <li><img src="assets/icons/ceph.svg" alt="" width="28" height="28"><span>Ceph</span></li>
-        </ul>
+        <p class="label">Connections</p>
+        <h2>One app instead of&nbsp;five.</h2>
+        <p class="body">Your buckets, your cloud drives, the web server and the NAS, side by side in the same window. Copy from one to another by dragging. Pick a preset, sign in once, and Kybl fills in endpoints, regions and each provider's quirks.</p>
+        <div class="conn-groups" aria-label="What Kybl connects to">
+        <div class="cg">
+          <h3>Object storage</h3>
+          <ul class="chips">
+          <li><img src="assets/icons/aws-s3.svg" alt="" width="20" height="20"><span>Amazon S3</span></li>
+          <li><img src="assets/icons/cloudflare-icon.svg" alt="" width="30" height="14"><span>Cloudflare R2</span></li>
+          <li><img src="assets/icons/hetzner.svg" alt="" width="20" height="20"><span>Hetzner</span></li>
+          <li><img src="assets/icons/backblaze.svg" alt="" width="13" height="20"><span>Backblaze B2</span></li>
+          <li><img src="assets/icons/wasabi.svg" alt="" width="20" height="20"><span>Wasabi</span></li>
+          <li><img src="assets/icons/digital-ocean-icon.svg" alt="" width="20" height="20"><span>DigitalOcean</span></li>
+          <li><img src="assets/icons/minio.svg" alt="" width="11" height="20"><span>MinIO</span></li>
+          <li><img src="assets/icons/ceph.svg" alt="" width="20" height="20"><span>Ceph</span></li>
+          <li><i class="mono" style="--pc:#0b84d6">AZ</i><span>Azure Blob</span></li>
+          <li><i class="mono" style="--pc:#3b74e0">GCS</i><span>Google Cloud Storage</span></li>
+          <li><i class="mono" style="--pc:#d9381f">K</i><span>Kybl Storage</span></li>
+          </ul>
+        </div>
+        <div class="cg">
+          <h3>Cloud drives</h3>
+          <ul class="chips">
+          <li><i class="mono" style="--pc:#1e8e3e">GD</i><span>Google Drive</span></li>
+          <li><i class="mono" style="--pc:#0a6cc4">OD</i><span>OneDrive</span></li>
+          <li><i class="mono" style="--pc:#2d5bd8">DB</i><span>Dropbox</span></li>
+          </ul>
+        </div>
+        <div class="cg">
+          <h3>Servers</h3>
+          <ul class="chips">
+          <li><i class="mono" style="--pc:#1f8a70">SFTP</i><span>SFTP</span></li>
+          <li><i class="mono" style="--pc:#2f6f4f">SSH</i><span>SSH</span></li>
+          <li><i class="mono" style="--pc:#a46a1f">FTP</i><span>FTP and FTPS</span></li>
+          <li><i class="mono" style="--pc:#7a5bd0">DAV</i><span>WebDAV</span></li>
+          </ul>
+        </div>
+        <div class="cg">
+          <h3>This computer</h3>
+          <ul class="chips">
+          <li><i class="mono" style="--pc:#7c8494">⌂</i><span>Your own folders and drives</span></li>
+          </ul>
+        </div>
+        </div>
         <p class="keynote">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5"/></svg>
-          Secret keys are encrypted with a key kept in the macOS Keychain, Windows Credential Manager or Secret Service. Never stored in plain text.
+          <span>Moving from FileZilla or the command line? Import your Site Manager or <code>~/.ssh/config</code>. Passwords and keys go into an encrypted vault whose key lives in your system keychain.</span>
         </p>
       </div>
       <div class="shot shot-dialog">
         <picture>
           <source srcset="assets/shots/app-connect-dark.webp" media="(prefers-color-scheme: dark)">
-          <img src="assets/shots/app-connect.webp" width="1080" height="1332" loading="lazy" alt="The New connection dialog with presets for Hetzner, Amazon S3, Cloudflare R2, Backblaze B2, Wasabi, DigitalOcean and other S3 servers.">
+          <img src="assets/shots/app-connect.webp" width="1080" height="1332" loading="lazy" alt="The New connection dialog: Kybl Storage, S3-compatible, Azure Blob Storage and Google Cloud Storage; Google Drive, OneDrive and Dropbox; WebDAV, SFTP, SSH and FTP.">
         </picture>
       </div>
     </div>
@@ -269,13 +309,13 @@
     <div class="wrap gut">
       <div class="sec-head">
         <p class="label">Features</p>
-        <h2>Your bucket list, sorted.</h2>
-        <p class="body">Everything you expect from a file manager, made for buckets that hold a hundred files or a million.</p>
+        <h2>A file manager that does the whole&nbsp;job.</h2>
+        <p class="body">Everything you expect from Finder or Explorer, plus the tools you usually need three more apps for. Made for folders that hold a hundred files or a million.</p>
       </div>
       <div class="bento">
         <article class="card card-thumbs">
           <div class="mock mock-grid" aria-hidden="true">
-            <div class="mg-bar"><span class="mg-crumb">media-prod <i>/</i> photos <i>/</i> 2026</span><span class="mg-seg"><b></b><b class="on"></b></span></div>
+            <div class="mg-bar"><span class="mg-crumb">Google Drive <i>/</i> Photos <i>/</i> 2026</span><span class="mg-seg"><b></b><b class="on"></b></span></div>
             <div class="mg-tiles">
               <figure style="--a:18;--b:350"><span></span><figcaption>IMG_4100.jpg<em>4.2 MB</em></figcaption></figure>
               <figure style="--a:190;--b:220"><span></span><figcaption>IMG_4101.jpg<em>3.8 MB</em></figcaption></figure>
@@ -289,7 +329,7 @@
           </div>
           <div class="card-copy">
             <h3>Thumbnails in a blink</h3>
-            <p>JPEGs use the photo's own EXIF thumbnail, read from the first 256&nbsp;KB, and everything is cached on disk. A folder you've seen opens instantly.</p>
+            <p>JPEGs use the photo's own EXIF thumbnail, read from the first 256&nbsp;KB, wherever the photo lives, and everything is cached on disk. A folder you've seen opens instantly.</p>
           </div>
         </article>
 
@@ -304,7 +344,7 @@
           </div>
           <div class="card-copy">
             <h3>Share links in one click</h3>
-            <p>Presigned links for 1&nbsp;hour, 1&nbsp;day or 7&nbsp;days. Nothing to make public.</p>
+            <p>Expiring links for S3 buckets, OneDrive and Dropbox. Nothing to make public.</p>
           </div>
         </article>
 
@@ -317,7 +357,7 @@
           </div>
           <div class="card-copy">
             <h3>Drag, drop, done</h3>
-            <p>Files or whole folders, straight from Finder or Explorer. Big files go up in parts.</p>
+            <p>Files or whole folders, from Finder, Explorer or another pane. Big files go up in parts and pick up where they stopped.</p>
           </div>
         </article>
 
@@ -342,34 +382,49 @@
           </div>
           <div class="card-copy">
             <h3>A transfer queue that talks</h3>
-            <p>Speed and time left for every upload and download. Cancel one, retry the ones that failed, keep working meanwhile.</p>
+            <p>Speed and time left for every file. Pause, set a speed limit, retry what failed. Transfers carry on after a restart and are checked when they land.</p>
           </div>
         </article>
 
         <article class="card card-small">
+          <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18M12 12h9"/></svg></span>
+          <h3>Panes and workspaces</h3>
+          <p>Up to six panes, split any way you like, with F5 to copy and F6 to move between them. Save each layout as a workspace tab.</p>
+        </article>
+        <article class="card card-small">
           <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg></span>
           <h3>Previews without downloading</h3>
-          <p>Images, video, audio, PDF and text open right in Quick Look, with the file's details beside them.</p>
+          <p>Images, video, audio, PDF and text open in Quick Look with Space, from any connection, with the file's details beside them.</p>
+        </article>
+        <article class="card card-small">
+          <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+          <h3>Edit anywhere</h3>
+          <p>Open a file on a server in your own editor. Every save goes back up, and if someone changed it meanwhile, Kybl shows you both.</p>
+        </article>
+        <article class="card card-small">
+          <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/></svg></span>
+          <h3>Archives and diffs</h3>
+          <p>Zip, unzip, or open an archive like a folder. Compare two files side by side, or two folders to see what's missing where.</p>
         </article>
         <article class="card card-small">
           <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg></span>
-          <h3>Huge folders, still snappy</h3>
-          <p>Lazy paging keeps 100,000-file folders smooth. Search looks through every subfolder.</p>
+          <h3>Search that digs</h3>
+          <p>Lazy paging keeps 100,000-file folders smooth. Search every subfolder, or inside files on your computer and SFTP servers.</p>
         </article>
         <article class="card card-small card-keys">
           <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg></span>
           <h3>Keyboard first</h3>
           <div class="keys">
+            <span><kbd>⌘</kbd><kbd>K</kbd> anything</span>
             <span><kbd>⌘</kbd><kbd>F</kbd> search</span>
-            <span><kbd>⌘</kbd><kbd>A</kbd> select all</span>
-            <span><kbd>⌘</kbd><kbd>R</kbd> refresh</span>
-            <span><kbd>⌫</kbd> up a folder</span>
+            <span><kbd>F5</kbd> copy across</span>
+            <span><kbd>⌘</kbd><kbd>J</kbd> terminal</span>
           </div>
         </article>
         <article class="card card-small">
-          <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="M12 10v6m-3-3 3 3 3-3"/></svg></span>
-          <h3>Move and copy by dragging</h3>
-          <p>Drop files on a folder or a breadcrumb, or pick a destination. Folder sizes are one click away.</p>
+          <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>
+          <h3>Your own actions</h3>
+          <p>Turn any shell command into a menu item with its own shortcut: resize images, hash files, restart a service on the server.</p>
         </article>
         <article class="card card-small">
           <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg></span>
@@ -379,8 +434,45 @@
         <article class="card card-small">
           <span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg></span>
           <h3>On your phone too</h3>
-          <p>The same app on Android and iPhone, made for touch. Transfers keep going in the background, and dropped downloads pick up where they stopped.</p>
+          <p>The same app on Android and iPhone, made for touch. Back up your photos to any connection, and transfers keep going in the background.</p>
         </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="servers" class="sec sec-surface">
+    <div class="wrap gut split split-rev">
+      <div class="mock mock-ssh" aria-hidden="true">
+        <div class="sx-pane">
+          <div class="sx-head"><i class="mono" style="--pc:#2f6f4f">SSH</i><b>web-01</b><span>/var/www/shop</span></div>
+          <ul class="sx-files">
+            <li><span class="d"></span>public</li>
+            <li><span class="d"></span>storage</li>
+            <li><span class="f"></span>.env<em>1.2 KB</em></li>
+            <li><span class="f"></span>composer.json<em>2.8 KB</em></li>
+          </ul>
+        </div>
+        <div class="sx-pane sx-term">
+          <div class="sx-head"><i class="sx-tic">&gt;_</i><b>web-01</b><span>~/shop</span><span class="sx-fold">Folders</span></div>
+          <pre><span class="p">deploy@web-01:~/shop$</span> git pull --ff-only
+Updating 3f2a91c..8be04d7
+ 2 files changed, 41 insertions(+)
+<span class="p">deploy@web-01:~/shop$</span> sudo systemctl reload php-fpm
+<span class="p">deploy@web-01:~/shop$</span> <i class="cur"></i></pre>
+        </div>
+        <div class="sx-tunnel"><span class="on"></span>Postgres <code>localhost:5433 → db.internal:5432</code></div>
+      </div>
+      <div class="split-copy">
+        <p class="label">SSH and terminals</p>
+        <h2>Your servers, files and shell&nbsp;together.</h2>
+        <p class="body">Add an SSH connection and a click opens a terminal on the server. The Folders button puts its files right above, so you can drag a build in and restart the service without switching apps.</p>
+        <ul class="ticks">
+          <li>Terminal panes for this computer or any SFTP or SSH server</li>
+          <li>SSH tunnels to reach a database or admin panel behind the server</li>
+          <li>Passwords, keys or your SSH agent, with host keys checked</li>
+          <li>Zip and unzip run on the server when it can</li>
+          <li>Pasting several lines asks first, showing exactly what will run</li>
+        </ul>
       </div>
     </div>
   </section>
@@ -409,14 +501,15 @@
       </div>
       </div>
       <div class="split-copy">
-        <p class="label">Folder sync</p>
-        <h2>Keep a folder in sync, even with the window&nbsp;closed.</h2>
-        <p class="body">Point a local folder at a bucket and pick a direction. Kybl watches for changes, skips what you tell it to ignore and keeps going from the menu bar.</p>
+        <p class="label">Sync, mirror and move</p>
+        <h2>Keep folders in step, even with the window&nbsp;closed.</h2>
+        <p class="body">Point a folder on your computer at any connection and pick a direction. Kybl watches for changes, skips what you tell it to ignore and keeps going from the menu bar.</p>
         <ul class="ticks">
-          <li>Upload to the bucket or download from it</li>
-          <li>Ignore rules for <code>node_modules</code>, <code>.DS_Store</code> and friends</li>
-          <li>Pause everything from the menu bar icon</li>
-          <li>Errors in plain words, with the fix</li>
+          <li>Upload, download or two-way, keeping both versions when both sides changed</li>
+          <li>Mirror a site to a server with a dry run first, then again in one click</li>
+          <li>Copy or move whole folders between any two connections, checked and resumable</li>
+          <li>Mount a bucket or server as a drive in Finder or your Linux file manager</li>
+          <li>Ignore rules for <code>node_modules</code>, <code>.DS_Store</code> and friends, and a question before big deletions</li>
         </ul>
 
       </div>
@@ -520,13 +613,15 @@
         <h2>Good to know before you grab Kybl.</h2>
       </div>
       <div class="faq">
-        <details open><summary>Which storage providers does Kybl work with?</summary><p>Any S3-compatible storage: Amazon S3, Cloudflare R2, Hetzner Object Storage, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph and other S3 servers. Presets fill in the endpoint and region for the common providers.</p></details>
-        <details><summary>Is Kybl free?</summary><p>Yes. Kybl is a free download for macOS, Windows, Linux, Android and iPhone. Use your own bucket and pay your storage provider as usual, or start with 10&nbsp;GB free on Kybl Storage.</p></details>
+        <details open><summary>What can Kybl connect to?</summary><p>Object storage: Amazon S3 and every S3-compatible service (Cloudflare R2, Hetzner, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph), Azure Blob Storage and Google Cloud Storage. Cloud drives: Google Drive, OneDrive and Dropbox. Servers: SFTP, SSH, FTP and FTPS, and WebDAV (Nextcloud, ownCloud, NAS boxes). And the files on your own computer or phone, all side by side.</p></details>
+        <details><summary>Is Kybl free?</summary><p>Yes. Kybl is a free download for macOS, Windows, Linux, Android and iPhone. Use your own storage and servers as usual, or start with 10&nbsp;GB free on Kybl Storage.</p></details>
+        <details><summary>Can I use Kybl as an SSH client?</summary><p>Yes. Add an SSH connection and a click opens a terminal on the server, with a Folders button for its files. Any SFTP connection can also open a terminal, start SSH tunnels (local port forwards) and run your own commands on the server. Terminals are on the desktop apps; on Windows they work for servers, not yet for the computer itself.</p></details>
+        <details><summary>Can I bring my FileZilla sites or SSH hosts?</summary><p>Yes. Import connections reads FileZilla&#x27;s Site Manager and your ~/.ssh/config (including LocalForward lines, which become tunnels). Folders become sidebar groups, and saved passwords and key files go straight into Kybl&#x27;s encrypted vault.</p></details>
+        <details><summary>Can Kybl sync a folder?</summary><p>Yes, with any connection: upload, download or two-way. Kybl watches for changes, skips what your ignore rules say, asks before big deletions, keeps both versions when a file changed on both sides, and keeps syncing from the menu bar with the window closed. For deploys, Mirror shows a dry run before it touches anything.</p></details>
+        <details><summary>Where are my passwords and keys stored?</summary><p>In an encrypted vault on your device, with its key in the operating system keychain: the macOS Keychain, Windows Credential Manager or a Secret Service such as GNOME Keyring on Linux (the Android Keystore on phones). Never in a settings file, and Kybl talks to your storage and servers directly.</p></details>
         <details><summary>What is Kybl Storage?</summary><p>S3 storage run by Kybl for people without a bucket of their own. Sign in with your email, approve the app in the browser and it connects itself, with no access keys to copy. The free plan has 10&nbsp;GB, stored in the EU, and your dashboard can make access keys for any other S3 tool.</p></details>
-        <details><summary>Are my files on Kybl Storage encrypted?</summary><p>Yes, at rest. Every file is encrypted with its bucket's own key (AES-256) before it is written to disk, so the storage provider, its staff and its backups only ever see ciphertext. It isn't end-to-end: our servers encrypt files as they pass through, so for data only you should read, encrypt it before uploading.</p></details>
-        <details><summary>Where are my access keys stored?</summary><p>Secret keys are stored encrypted, with the encryption key in the operating system keychain: the macOS Keychain, Windows Credential Manager or a Secret Service such as GNOME Keyring on Linux. They are never written to disk in plain text, and Kybl talks to your storage directly.</p></details>
-        <details><summary>Can Kybl sync a folder with a bucket?</summary><p>Yes. Pick a local folder, a bucket and a direction (upload or download). Kybl watches for changes, skips files that match your ignore rules and keeps syncing from the menu bar when the window is closed.</p></details>
-        <details><summary>Does Kybl handle very large files and folders?</summary><p>Yes. Large files upload in parts (multipart upload), folders with hundreds of thousands of objects load page by page, and search looks through every subfolder.</p></details>
+        <details><summary>Are my files on Kybl Storage encrypted?</summary><p>Yes, at rest. Every file is encrypted with its bucket&#x27;s own key (AES-256) before it is written to disk, so the storage provider, its staff and its backups only ever see ciphertext. It is not end-to-end: Kybl&#x27;s servers encrypt files as they pass through, so for data only you should read, encrypt it before uploading.</p></details>
+        <details><summary>Does Kybl handle very large files and folders?</summary><p>Yes. Large files go up in parts and resume after a restart, folders with hundreds of thousands of items load page by page, and search looks through every subfolder, or inside files on your computer and SFTP servers.</p></details>
       </div>
     </div>
   </section>
@@ -536,7 +631,7 @@
       <div class="sec-head center">
         <p class="label">Download</p>
         <h2>Get Kybl for your computer and phone.</h2>
-        <p class="body">Free. Native on every platform, built with Rust and Tauri, so it starts fast and stays light.</p>
+        <p class="body">Free. Built with Rust and Tauri, so it starts fast and stays light on every platform.</p>
       </div>
       <div class="platforms">
         <div class="platform">
@@ -607,9 +702,10 @@
       </div>
     </div>
     <nav class="foot-links" aria-label="Footer">
-      <a href="#storage">Storage</a>
+      <a href="#connect">Connections</a>
       <a href="#features">Features</a>
-      <a href="#sync">Folder sync</a>
+      <a href="#servers">SSH</a>
+      <a href="#sync">Sync</a>
       <a href="#kybl-storage">Kybl Storage</a>
       <a href="#faq">FAQ</a>
       <a href="#download">Download</a>
