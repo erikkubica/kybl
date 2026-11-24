@@ -108,6 +108,12 @@ function TunnelRow({
   return (
     <div className="tunnel-edit" role="group" aria-label={t.name || "Tunnel"}>
       <div className="tunnel-edit-route">
+        <span
+          className={`tunnel-state${running ? " on" : ""}`}
+          role="img"
+          aria-label={running ? "Running" : "Not running"}
+          title={running ? "Running now. Saving a new port or address stops it." : "Not running"}
+        />
         <div className={`tunnel-route${err ? " bad" : ""}`} role="group" aria-label="Local port to remote host and port">
           <input
             className="mono tunnel-port"
@@ -155,12 +161,6 @@ function TunnelRow({
       </div>
       <div className="tunnel-edit-more">
         <input className="tunnel-name-input" aria-label="Tunnel name" value={t.name} onChange={(e) => onChange({ name: e.target.value })} placeholder="Name" {...RAW} />
-        {running && (
-          <span className="tunnel-running" title="Running now. Saving a new port or address stops it.">
-            <span className="tunnel-dot" aria-hidden="true" />
-            Running
-          </span>
-        )}
         <label className="check tunnel-auto" title="Starts when Kybl opens this connection">
           <input type="checkbox" checked={t.autoStart} onChange={(e) => onChange({ autoStart: e.target.checked })} />
           <span>Auto-start</span>

@@ -234,16 +234,23 @@
   align-self: flex-start;
   margin-top: 8px;
 }
-.tunnel-running {
-  display: inline-flex;
+/* a dot in front of each tunnel: green while it runs, hollow when it doesn't */
+.tunnel-state {
   flex: none;
-  align-items: center;
-  gap: 5px;
-  color: var(--ok);
-  font-size: 12px;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--faint);
+  border-radius: 50%;
 }
-.tunnel-running .tunnel-dot {
-  margin: 0;
+.tunnel-state.on {
+  border-color: var(--ok);
+  background: var(--ok);
+}
+/* the name line lines up under the route, past the dot */
+.tunnel-edit-more,
+.tunnel-edit > .field-err,
+.tunnel-edit > .tunnel-warn {
+  padding-left: 14px;
 }
 
 /* local port → host : port as one field, the arrow and colon as quiet joints */
