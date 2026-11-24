@@ -63,7 +63,22 @@ if (typeof window !== "undefined") {
 /** how soon after the last input a toast still counts as its answer */
 const ANSWER_MS = 1500;
 
-export const answersUser = () => Date.now() - lastInput < ANSWER_MS;
+export const answersUser = () => bgDepth === 0 && Date.now() - lastInput < ANSWER_MS;
+
+/**
+ * Toasts made inside `fn` report background work (a job, uploads or an archive finishing): they go
+ * to the bell however recently the user clicked or typed, which only says they were busy with
+ * something else.
+ */
+let bgDepth = 0;
+export function inBackground(fn: () => void) {
+  bgDepth++;
+  try {
+    fn();
+  } finally {
+    bgDepth--;
+  }
+}
 
 /** A drag (a pane, files, a connection, a resize) is going on: nothing should pop up over it. */
 export const dragging = () =>

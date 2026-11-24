@@ -262,13 +262,20 @@ function KeyedForm({
     }
   };
 
+  // the connection's own fields first; where it sits and how photos show under Options. Both stay
+  // mounted (hidden), so what was typed survives a switch
+  const [tab, setTab] = useState<"main" | "options">("main");
+  const [shareMore, setShareMore] = useState(false);
   const test = () => {
     if (busy) return;
+    setTab("main");
     const d = draft();
     if (d) void run("test", d);
   };
   const save = () => {
     if (busy) return;
+    // a field that needs fixing, and the result, are on the first tab
+    setTab("main");
     const d = draft();
     if (d) void run("save", d);
   };
@@ -320,6 +327,16 @@ function KeyedForm({
           save();
         }}
       >
+        <div className="seg conn-tabs span2" role="tablist" aria-label="Connection settings">
+          <button type="button" role="tab" aria-selected={tab === "main"} className={tab === "main" ? "on" : ""} onClick={() => setTab("main")}>
+            Connection
+          </button>
+          <button type="button" role="tab" aria-selected={tab === "options"} className={tab === "options" ? "on" : ""} onClick={() => setTab("options")}>
+            Options
+          </button>
+        </div>
+
+        <div className="conn-tab" style={{ display: tab === "main" ? "contents" : "none" }}>
         {pick === "s3" ? (
           <S3Form {...common} />
         ) : pick === "webdav" || pick === "ftp" || pick === "sftp" ? (
@@ -327,7 +344,13 @@ function KeyedForm({
         ) : (
           <BlobForm kind={pick as BlobKind} {...common} />
         )}
+          <p className="hint span2">
+          <Icon name="check-circle" size={13} />
+          {SECRET_NOTE}
+        </p>
+        </div>
 
+        <div className="conn-tab" style={{ display: tab === "options" ? "contents" : "none" }}>
         {groups && (
           <Field label="Group" optional wide hint="A folder in the sidebar. Use / for a group inside a group, like Clients/Acme.">
             {(c) => (
@@ -381,15 +404,21 @@ function KeyedForm({
             />
             <span>
               Share placeholders with other devices
-              <em>{SHARE_PLACEHOLDERS_TEXT}</em>
+              <em>
+                Other devices with Kybl show blurry previews at once.{" "}
+                {shareMore ? (
+                  SHARE_PLACEHOLDERS_TEXT
+                ) : (
+                  <button type="button" className="link-btn" onClick={(e) => (e.preventDefault(), setShareMore(true))}>
+                    More…
+                  </button>
+                )}
+              </em>
             </span>
           </label>
         )}
+        </div>
 
-        <p className="hint span2">
-          <Icon name="check-circle" size={13} />
-          {SECRET_NOTE}
-        </p>
 
         {result && (
           <div ref={resultRef} className={`result span2 ${result.ok ? "ok" : "bad"}`} role={result.ok ? "status" : "alert"}>

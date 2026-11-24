@@ -3,6 +3,7 @@
  * "Copy to another connection…" dialog and the quick F5 / F6 confirm, and when a job ends
  * reloads the panes that show its destination (and, for a move, its source) and says so.
  */
+import { inBackground } from "./notifications";
 import { createElement, useCallback, useEffect, useRef, useState } from "react";
 import type { JobSummary } from "../api";
 import { JobConfirm, MigrationDialog, jobFinishedToast, onJobFinished, startMigrations, type MigrationSource } from "../jobs";
@@ -43,7 +44,7 @@ export function useMigrationHost({
       }
       // the same words as on phones (jobs/finishedToast.ts)
       const t = jobFinishedToast(j);
-      if (t) dialogs.toast(t.kind, t.text, { label: "Show", run: showJobs });
+      if (t) inBackground(() => dialogs.toast(t.kind, t.text, { label: "Show", run: showJobs }));
     });
   }, []);
 

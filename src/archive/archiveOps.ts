@@ -3,6 +3,7 @@
  * the copy dialog), compress a selection to a .zip. Extracting and compressing run as one row of
  * the transfers panel each; the backend does the work (src-tauri/src/archive).
  */
+import { inBackground } from "../shell/notifications";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage } from "../api";
 import { baseName, formatBytes } from "../format";
@@ -103,7 +104,7 @@ export function makeArchiveOps(c: ArchiveCtx) {
       if (done.state === "done") {
         if (selectKey) c.selectAfterReload(job.destProfileId, job.destRoot, selectKey);
         c.reloadIfShowing(job.destProfileId, job.destRoot);
-      } else if (done.state === "error") c.toast("error", `Couldn’t extract “${label}”. ${(done.error ?? "").split("\n\n")[0]}`, { label: "Show", run: c.showActivity });
+      } else if (done.state === "error") inBackground(() => c.toast("error", `Couldn’t extract “${label}”. ${(done.error ?? "").split("\n\n")[0]}`, { label: "Show", run: c.showActivity }));
     });
   };
 
@@ -231,7 +232,7 @@ export function makeArchiveOps(c: ArchiveCtx) {
       if (done.state === "done") {
         c.selectAfterReload(pid, b, key);
         c.reloadIfShowing(pid, b);
-      } else if (done.state === "error") c.toast("error", `Couldn’t compress to “${name}”. ${(done.error ?? "").split("\n\n")[0]}`, { label: "Show", run: c.showActivity });
+      } else if (done.state === "error") inBackground(() => c.toast("error", `Couldn’t compress to “${name}”. ${(done.error ?? "").split("\n\n")[0]}`, { label: "Show", run: c.showActivity }));
     });
   };
 

@@ -4,6 +4,7 @@
  * several in a layout of splits) and routes the sidebar, the keyboard and the menu bar to the
  * active one.
  */
+import { inBackground } from "./notifications";
 import { freshConnection } from "../connLog";
 import { MountDialog } from "../mount/MountDialog";
 import { driveItems } from "../mount/driveMenu";
@@ -1557,8 +1558,10 @@ export function AppShell() {
   useEffect(
     () =>
       transfers.onUploadsSettled((ok, bad, where) => {
-        if (bad) toast("error", `${bad} ${bad === 1 ? "upload" : "uploads"} failed`, { label: "Show", run: showFailed });
-        else if (ok) toast("success", `Uploaded ${ok} ${ok === 1 ? "file" : "files"}`);
+        inBackground(() => {
+          if (bad) toast("error", `${bad} ${bad === 1 ? "upload" : "uploads"} failed`, { label: "Show", run: showFailed });
+          else if (ok) toast("success", `Uploaded ${ok} ${ok === 1 ? "file" : "files"}`);
+        });
         if (ok) clearAllSizes();
         for (const w of where) if (reloadIfShowing(w.profileId, w.bucket)) break;
       }),

@@ -8,6 +8,7 @@
  * so shortcuts route like the built-in ones), `useActionShortcuts` (the keys) and
  * `useActionPalette` (the ⌘K palette's "Run …" commands, see `customActionCommands`).
  */
+import { inBackground } from "../shell/notifications";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { createElement, useEffect, useRef } from "react";
@@ -642,8 +643,10 @@ export async function runAction(ctx: ActionContext, a: CustomAction, list: Entry
     if (state === "done" && Date.now() - run.started < 3000) ctx.jobs.dismiss(runId);
     if (a.refresh && state !== "stopped") ctx.refresh();
     if (a.output === "silent" && state !== "stopped") {
-      if (state === "done") dialogs.toast("success", `“${a.name}” finished`, showAction);
-      else dialogs.toast("error", `“${a.name}” failed (exit code ${end.code ?? "unknown"})`, showAction);
+      inBackground(() => {
+        if (state === "done") dialogs.toast("success", `“${a.name}” finished`, showAction);
+        else dialogs.toast("error", `“${a.name}” failed (exit code ${end.code ?? "unknown"})`, showAction);
+      });
     }
   } catch (err) {
     flushOutput();

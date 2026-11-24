@@ -697,3 +697,14 @@
 .imp-result li em::before {
   content: "· ";
 }
+
+/* Connection | Options: the fields that make the connection, apart from how it is shown */
+.conn-tabs {
+  justify-self: start;
+}
+.conn-tabs button {
+  width: auto;
+  min-width: 84px;
+  height: 26px;
+  padding: 0 14px;
+}
