@@ -50,10 +50,16 @@ impl Format {
 }
 
 /// A name from inside an archive as a safe key below the folder it unpacks into, or None when it
-/// must not be unpacked: absolute paths, drive letters, `..` anywhere, NUL bytes. Backslashes count
-/// as separators (archives made on Windows), `.` and empty parts are dropped. Folders keep their
-/// trailing `/`; the bare top ("", "./") is None.
+/// must not be unpacked: absolute paths, a leading drive letter, `..` anywhere, NUL bytes. On Windows
+/// also any part this computer's folders can't hold (a colon, a device name like `aux.c`, a
+/// trailing dot or space), so the entry is left out and counted instead of stopping an extraction
+/// partway. Backslashes count as separators (archives made on Windows), `.` and empty parts are
+/// dropped. Folders keep their trailing `/`; the bare top ("", "./") is None.
 pub fn safe_key(raw: &str, is_dir: bool) -> Option<String> {
+    safe_key_for(raw, is_dir, cfg!(windows))
+}
+
+pub(super) fn safe_key_for(raw: &str, is_dir: bool, windows: bool) -> Option<String> {
     if raw.contains('\0') {
         return None;
     }
@@ -66,8 +72,9 @@ pub fn safe_key(raw: &str, is_dir: bool) -> Option<String> {
         match p {
             "" | "." => continue,
             ".." => return None,
-            // a drive letter ("C:") or any part with a colon: never a plain relative name
+            // a leading drive letter ("C:") is never a plain relative name
             p if p.len() >= 2 && p.as_bytes()[1] == b':' && parts.is_empty() => return None,
+            p if windows && (p.contains(':') || crate::dest::windows_unfit(p)) => return None,
             p => parts.push(p),
         }
     }

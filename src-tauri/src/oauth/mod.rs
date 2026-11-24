@@ -13,7 +13,7 @@
 //! with `kind` and `cloud` (account email and id) filled in. Tokens: [`token`].
 
 pub mod http;
-mod loopback;
+pub(crate) mod loopback;
 #[cfg(test)]
 pub mod mock;
 pub mod token;

@@ -48,11 +48,31 @@ impl Source for SshConfig {
         self.parse_all(path).map(|(sites, _)| sites)
     }
     fn parse_all(&self, path: &Path) -> Result<(Vec<ImportedSite>, Vec<String>), String> {
-        let text = std::fs::read_to_string(path).map_err(|e| format!("Couldn't read the file: {e}"))?;
+        let text = read_config(path).ok_or("Couldn't read the file. It has to be a regular text file under 1 MB.")?;
         let ssh_dir = home().map(|h| h.join(".ssh")).unwrap_or_else(|| path.parent().map(Path::to_path_buf).unwrap_or_default());
         let env = Env { home: home(), local_user: local_user(), ssh_dir };
-        Ok(parse_str(&text, &env, &|p| std::fs::read_to_string(p).ok()))
+        Ok(parse_str(&text, &env, &read_config))
     }
+}
+
+/// Largest config (or included file) read: real ones are a few KB.
+const MAX_CONFIG: u64 = 1 << 20;
+
+/// A config file's text. Only a regular file within the size cap: an `Include` of `/dev/zero`
+/// would fill memory and one of a FIFO would never end.
+fn read_config(p: &Path) -> Option<String> {
+    use std::io::Read;
+    // looked at before opening: opening a FIFO waits for a writer
+    if !std::fs::metadata(p).ok()?.is_file() {
+        return None;
+    }
+    let f = std::fs::File::open(p).ok()?;
+    if !f.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut text = String::new();
+    f.take(MAX_CONFIG + 1).read_to_string(&mut text).ok()?;
+    (text.len() as u64 <= MAX_CONFIG).then_some(text)
 }
 
 /// What `~`, `%d`, `%u` and relative `Include`s stand for.
@@ -518,6 +538,22 @@ Host *
 
         assert_eq!(hints.len(), 1);
         assert!(hints[0].contains("Match"));
+    }
+
+    #[test]
+    fn only_a_small_regular_file_is_read() {
+        let dir = std::env::temp_dir().join(format!("kybl-sshcfg-read-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ok = dir.join("ok");
+        std::fs::write(&ok, "Host a\n").unwrap();
+        assert_eq!(read_config(&ok).as_deref(), Some("Host a\n"));
+        let big = dir.join("big");
+        std::fs::write(&big, vec![b'#'; MAX_CONFIG as usize + 1]).unwrap();
+        assert_eq!(read_config(&big), None);
+        // a folder or a device is no config (and /dev/zero would never end)
+        assert_eq!(read_config(&dir), None);
+        #[cfg(unix)]
+        assert_eq!(read_config(Path::new("/dev/zero")), None);
     }
 
     #[test]

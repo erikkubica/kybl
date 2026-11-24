@@ -61,7 +61,7 @@ pub(crate) enum Shell {
     Other,
 }
 
-/// Servers (`user@host:port`) and their login shell, once known for sure.
+/// Servers (`user@host:port#host key`) and their login shell, once known for sure.
 static SHELLS: LazyLock<Mutex<HashMap<String, Shell>>> = LazyLock::new(Default::default);
 
 /// Asked once per server before any command goes there. POSIX shells and fish print
@@ -206,10 +206,16 @@ impl SftpBackend {
         }
     }
 
+    /// Which server this is, for what is remembered about it: the address alone isn't enough, as
+    /// a tunnel or a forwarded port can lead to another machine, whose key tells it apart.
+    fn server_id(&self) -> String {
+        format!("{}@{}:{}#{}", self.user, self.host, self.port, self.host_key.as_deref().unwrap_or(""))
+    }
+
     /// The account's login shell (see [`PROBE`]), asked once per server. Only a clear answer is
     /// kept: a dropped connection or no output at all is an error, asked again next time.
     pub(crate) async fn login_shell(&self) -> SResult<Shell> {
-        let who = format!("{}@{}:{}", self.user, self.host, self.port);
+        let who = self.server_id();
         if let Some(sh) = SHELLS.lock().unwrap().get(&who).copied() {
             return Ok(sh);
         }
@@ -278,7 +284,7 @@ impl SftpBackend {
     /// such command (an SFTP-only account, no shell); such a server isn't asked again this run.
     /// Given at most 20 s plus the time to read the file at 50 MB/s.
     pub async fn hash_on_server(&self, key: &str, size: u64) -> SResult<Option<(HashKind, String)>> {
-        let who = format!("{}@{}:{}", self.user, self.host, self.port);
+        let who = self.server_id();
         if NO_HASH.lock().unwrap().contains(&who) {
             return Ok(None);
         }

@@ -88,19 +88,35 @@ pub fn parse_grep_line(raw: &[u8], windows: bool) -> Option<(String, u64, String
     while let Some(p) = path.strip_prefix("./") {
         path = p.to_string();
     }
-    if path.is_empty() {
+    // a name can't climb out of the searched folder or carry control characters (a newline in a
+    // name would otherwise let output of a file stand in for a path)
+    if path.is_empty() || path.starts_with('/') || path.chars().any(char::is_control) || path.split('/').any(|p| p == "..") {
         return None;
     }
-    Some((path, line,String::from_utf8_lossy(&rest[colon + 1..]).into_owned()))
+    Some((path, line, String::from_utf8_lossy(&rest[colon + 1..]).into_owned()))
 }
 
 /// Splits a byte stream into lines (the last, unfinished one waits for the next chunk).
 #[derive(Default)]
 pub struct Lines {
     pending: Vec<u8>,
+    /// `--null` output: every record holds a NUL, so a line without one is the first part of a
+    /// path that has a line break in it and joins the next line
+    records: bool,
+    /// leading lines passed on as they are (a header the server prints before the records)
+    head: usize,
+    carry: Vec<u8>,
 }
 
+/// Longest path piece held while waiting for its NUL.
+const CARRY_MAX: usize = 8192;
+
 impl Lines {
+    /// For `--null` output; `head` lines at the start are not records.
+    pub fn records(head: usize) -> Self {
+        Lines { records: true, head, ..Default::default() }
+    }
+
     pub fn push(&mut self, chunk: &[u8], mut each: impl FnMut(&[u8]) -> bool) -> bool {
         self.pending.extend_from_slice(chunk);
         let mut start = 0;
@@ -108,7 +124,22 @@ impl Lines {
         while let Some(i) = self.pending[start..].iter().position(|b| *b == b'\n') {
             let end = start + i;
             if go {
-                go = each(&self.pending[start..end]);
+                let line = &self.pending[start..end];
+                if self.head > 0 {
+                    self.head -= 1;
+                    go = each(line);
+                } else if self.records && !line.contains(&0) {
+                    if self.carry.len() + line.len() < CARRY_MAX {
+                        self.carry.extend_from_slice(line);
+                        self.carry.push(b'\n');
+                    }
+                } else if self.carry.is_empty() {
+                    go = each(line);
+                } else {
+                    let mut whole = std::mem::take(&mut self.carry);
+                    whole.extend_from_slice(line);
+                    go = each(&whole);
+                }
             }
             start = end + 1;
         }
@@ -118,8 +149,10 @@ impl Lines {
 
     /// What is left after the stream ended (a last line without a newline).
     pub fn finish(&mut self, each: impl FnMut(&[u8]) -> bool) {
-        if !self.pending.is_empty() {
-            let rest = std::mem::take(&mut self.pending);
+        // a last piece without a newline is a record only if it holds a NUL
+        if !self.pending.is_empty() && !(self.records && self.head == 0 && !self.pending.contains(&0)) {
+            let mut rest = std::mem::take(&mut self.carry);
+            rest.extend_from_slice(&std::mem::take(&mut self.pending));
             let mut each = each;
             each(&rest);
         }
@@ -218,6 +251,24 @@ mod tests {
         assert_eq!(parse_grep_line(b".\\src\\a.txt\x002:x", true), Some(("src/a.txt".into(), 2, "x".into())));
         // elsewhere (and on every SFTP server) a backslash is part of the name
         assert_eq!(parse_grep_line(b"./a\\b.txt\x001:x", false), Some(("a\\b.txt".into(), 1, "x".into())));
+    }
+
+    #[test]
+    fn a_line_break_in_a_name_doesnt_make_a_fake_path() {
+        // `a\n..` holding etc/passwd: the second half used to read as `../etc/passwd`
+        let out = b"kybl:rg\n./a\n../etc/passwd\x001:needle\n./ok.txt\x002:x\n";
+        let mut got = Vec::new();
+        let mut l = Lines::records(1);
+        l.push(out, |x| {
+            got.push(parse_grep_line(x, false));
+            true
+        });
+        // the header isn't a record; the broken name is refused whole; the next record is intact
+        assert_eq!(got, vec![None, None, Some(("ok.txt".into(), 2, "x".into()))]);
+        assert_eq!(parse_grep_line(b"../x\x001:a", false), None);
+        assert_eq!(parse_grep_line(b"/etc/x\x001:a", false), None);
+        assert_eq!(parse_grep_line(b"a/../x\x001:a", false), None);
+        assert_eq!(parse_grep_line(b"a..b/x\x001:a", false), Some(("a..b/x".into(), 1, "a".into())));
     }
 
     #[test]

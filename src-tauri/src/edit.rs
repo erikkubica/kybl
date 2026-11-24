@@ -353,11 +353,16 @@ async fn run(app: AppHandle, s: Arc<Session>) {
     }
 }
 
-/// Reads the copy, retrying briefly while an editor's atomic replace has it missing.
+/// Reads the copy, retrying briefly while an editor's atomic replace has it missing. At most
+/// `MAX_BYTES + 1` bytes: a longer file is reported as too large without being read whole.
 async fn read_settled(path: &Path) -> Option<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
     for _ in 0..3 {
-        if let Ok(b) = tokio::fs::read(path).await {
-            return Some(b);
+        if let Ok(f) = tokio::fs::File::open(path).await {
+            let mut b = Vec::new();
+            if f.take(MAX_BYTES + 1).read_to_end(&mut b).await.is_ok() {
+                return Some(b);
+            }
         }
         tokio::time::sleep(DEBOUNCE).await;
     }
