@@ -43,7 +43,7 @@ struct Upload {
     created: u64,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Clone)]
 struct Ledger {
     #[serde(default)]
     uploads: Vec<Upload>,
@@ -84,15 +84,61 @@ fn change(f: impl FnOnce(&mut Ledger)) {
 /// first. One save at a time, each writing what is current then, so an older list never lands
 /// after a newer one.
 pub fn save() {
-    let Some(path) = PATH.get() else { return };
+    let _ = save_now();
+}
+
+fn save_now() -> std::io::Result<()> {
+    let Some(path) = PATH.get() else { return Err(std::io::Error::other("no ledger yet")) };
     let _one = WRITING.lock().unwrap();
     let json = {
         let mut l = LEDGER.lock().unwrap();
         l.partials.retain(|p| p.exists());
         serde_json::to_vec(&*l)
     };
-    let Ok(json) = json else { return };
-    let _ = crate::state::write_atomic(path, &json);
+    crate::state::write_atomic(path, &json.map_err(std::io::Error::other)?)
+}
+
+/// How often a running Kybl looks for runs that ended meanwhile (another copy that quit or
+/// crashed): their folders of copies are removed, their ledgers and kept transfers taken over.
+const SWEEP_EVERY: Duration = Duration::from_secs(3600);
+
+/// Takes over what runs that ended while this one runs left (B5-3): their kept transfers (into
+/// `resume`) and their ledgers, whose uploads and partial files are then cleaned up as at a
+/// start. Also removes the folders of copies they left (`instance_dir::sweep_ended_runs`).
+/// Blocking, apart from the clean-up it starts.
+fn take_over_ended(app: &AppHandle) {
+    crate::instance_dir::sweep_ended_runs();
+    let Some(base) = RUN.get().and_then(|r| r.as_ref()).and_then(|r| r.parent().map(Path::to_path_buf)) else { return };
+    let mut found = Ledger::default();
+    crate::instance_dir::sweep_ended_adopting(&base, |_, gone| {
+        if !crate::resume::take_in(app, gone) {
+            return false;
+        }
+        let Some(mut l) = read_ledger(&gone.join(FILE)) else { return true };
+        // what a kept transfer left is the resume store's (as in `start`)
+        l.uploads.retain(|u| !crate::resume::keeps_upload(&u.upload_id));
+        l.partials.retain(|p| !crate::resume::keeps_partial(p));
+        merge(&mut LEDGER.lock().unwrap(), l.clone());
+        // written into this run's ledger before their folder goes
+        if save_now().is_err() {
+            return false;
+        }
+        merge(&mut found, l);
+        true
+    });
+    if found.uploads.is_empty() && found.partials.is_empty() {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        for part in &found.partials {
+            remove_partial(part);
+        }
+        for u in found.uploads {
+            abort_left(&app, u).await;
+        }
+        save();
+    });
 }
 
 fn read_ledger(path: &Path) -> Option<Ledger> {
@@ -193,6 +239,16 @@ pub fn start(app: &AppHandle) {
         let _ = crate::instance_dir::claim(&cache.join("uploads"));
     }
     let _ = run_dir(app);
+    // a run that ends while this one keeps going (in the tray for weeks) isn't left until the
+    // next start
+    let sweeper = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(SWEEP_EVERY).await;
+            let app = sweeper.clone();
+            let _ = tokio::task::spawn_blocking(move || take_over_ended(&app)).await;
+        }
+    });
     let Some((path, mut earlier)) = TAKEN.lock().unwrap().take() else { return };
     // what a paused or interrupted transfer kept to carry on from is the resume store's (`resume`)
     earlier.uploads.retain(|u| !crate::resume::keeps_upload(&u.upload_id));

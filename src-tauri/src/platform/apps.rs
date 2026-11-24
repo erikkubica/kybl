@@ -36,6 +36,7 @@ pub async fn apps_for(name: String, folder: bool) -> Result<Vec<AppInfo>, String
 #[tauri::command]
 pub async fn open_with(path: String, app: String) -> Result<(), String> {
     super::must_exist_or_dir(&path)?;
+    crate::open_copies::handed_out(&path);
     tokio::task::spawn_blocking(move || launch(&path, &app))
         .await
         .map_err(|e| e.to_string())?
@@ -46,6 +47,7 @@ pub async fn open_with(path: String, app: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn open_with_chooser(path: String) -> Result<(), String> {
     super::must_exist(&path)?;
+    crate::open_copies::handed_out(&path);
     #[cfg(windows)]
     {
         std::process::Command::new("rundll32")

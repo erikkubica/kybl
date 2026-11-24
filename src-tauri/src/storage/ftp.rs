@@ -329,6 +329,17 @@ pub mod tls_memory {
             Err(_) => {
                 m.doubt = Some(Doubt::Damaged);
                 m.seen.extend(salvage(&raw));
+                // the rewritten list reads whole on the next run, when its consent entries count
+                // again: one whose server isn't listed may have lost its "seen with TLS" entry
+                // here, so it is dropped (the user is asked once more). Consent of this run stays.
+                let keep: HashSet<String> = m
+                    .seen
+                    .iter()
+                    .filter_map(|e| e.strip_suffix("#plain"))
+                    .filter(|k| m.agreed_now.contains(*k) || m.seen.contains(*k))
+                    .map(consent_entry)
+                    .collect();
+                m.seen.retain(|e| !e.ends_with("#plain") || keep.contains(e));
                 let aside = path.with_extension(format!("damaged-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)));
                 if std::fs::rename(path, &aside).is_err() {
                     return false;
@@ -1588,6 +1599,28 @@ mod tests {
         merge_from_disk(&path, &mut d);
         assert_eq!(d.known("u@other:21"), Known::Unsure);
         assert!(!d.plain_allowed("u@h:21"), "a 'seen with TLS' entry of it may be what was lost");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A repaired list reads whole on the next run: a consent entry that survived the damage while
+    /// its server's "seen with TLS" entry didn't must not count again then (S3-4).
+    #[test]
+    fn a_repaired_tls_memory_drops_consent_of_servers_it_lost() {
+        use tls_memory::{consent_entry, merge_from_disk, Memory};
+        let dir = std::env::temp_dir().join(format!("kybl-tls-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ftp-tls-seen.json");
+        // "u@lost:21" (seen with TLS) is damaged beyond reading, its consent entry is not; the
+        // consent of a server still listed stays (it is moot there: a seen server never goes plain)
+        let raw = format!("[\"{}\",\"u@k\u{0}ept\" garbage \"{}\",\"u@kept:21\",\"{}\"", consent_entry("u@lost:21"), consent_entry("u@kept:21"), consent_entry("u@now:21"));
+        std::fs::write(&path, raw).unwrap();
+        let mut m = Memory::default();
+        merge_from_disk(&path, &mut m);
+        let mut next_run = Memory::default();
+        merge_from_disk(&path, &mut next_run);
+        assert!(!next_run.plain_allowed("u@lost:21"), "fail closed: asked again");
+        assert!(!next_run.seen(&consent_entry("u@now:21")));
+        assert!(next_run.seen(&consent_entry("u@kept:21")) && next_run.seen("u@kept:21"));
         let _ = std::fs::remove_dir_all(dir);
     }
 

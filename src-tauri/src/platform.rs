@@ -280,6 +280,7 @@ async fn native<T: serde::de::DeserializeOwned>(app: &AppHandle, cmd: &str, args
 #[tauri::command]
 pub async fn open_local(app: AppHandle, path: String) -> Result<(), String> {
     must_exist(&path)?;
+    crate::open_copies::handed_out(&path);
     #[cfg(desktop)]
     {
         let _ = app;
@@ -297,6 +298,7 @@ pub async fn open_local(app: AppHandle, path: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn copy_file_to_clipboard(app: AppHandle, path: String) -> Result<(), String> {
     must_exist(&path)?;
+    crate::open_copies::handed_out(&path);
     #[cfg(target_os = "macos")]
     {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -441,6 +443,7 @@ pub async fn reveal_local(path: String) -> Result<(), String> {
     {
         // folders too: a folder kept on this device by sync is shown the same way
         must_exist_or_dir(&path)?;
+        crate::open_copies::handed_out(&path);
         tauri_plugin_opener::reveal_item_in_dir(&path).map_err(|e| format!("Couldn't show {}: {e}", name(&path)))
     }
     #[cfg(mobile)]
@@ -461,6 +464,7 @@ pub async fn share_files(app: AppHandle, paths: Vec<String>) -> Result<(), Strin
     }
     for p in &paths {
         must_exist(p)?;
+        crate::open_copies::handed_out(p);
     }
     #[cfg(desktop)]
     {

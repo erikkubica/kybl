@@ -600,15 +600,19 @@ pub async fn update_check(app: AppHandle) -> Result<UpdateStatus, String> {
 /// `auto`: check on its own. `skip`: a version not to prompt for ("" clears it).
 #[tauri::command]
 pub fn update_settings(app: AppHandle, auto: Option<bool>, skip: Option<String>) -> Result<UpdateStatus, String> {
-    let st = update(&app, |st| {
+    let change = |st: &mut UpdateStatus| {
         if let Some(a) = auto {
             st.auto = a;
         }
-        if let Some(s) = skip {
-            st.skipped = (!s.is_empty()).then_some(s);
+        if let Some(s) = &skip {
+            st.skipped = (!s.is_empty()).then(|| s.clone());
         }
-    });
-    save(&app, &st)?;
+    };
+    // saved first, live once saved: a failed save changes nothing
+    let mut next = app.state::<Updater>().st.lock().unwrap().clone();
+    change(&mut next);
+    save(&app, &next)?;
+    let st = update(&app, change);
     let turned_on = auto == Some(true) && st.last_checked.is_none() && !st.checking;
     if turned_on {
         let app = app.clone();

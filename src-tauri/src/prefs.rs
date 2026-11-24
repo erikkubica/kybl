@@ -109,9 +109,10 @@ pub fn set_app_prefs(
     close_to_tray: Option<bool>,
     launch_at_login: Option<bool>,
 ) -> Result<AppPrefs, String> {
+    // saved first, live once saved: a failed save leaves the app as the file says (B5-6)
     if let Some(v) = close_to_tray {
-        prefs.close_to_tray.store(v, Ordering::Relaxed);
         update(&app, |s| s.close_to_tray = v)?;
+        prefs.close_to_tray.store(v, Ordering::Relaxed);
     }
     if let Some(v) = launch_at_login {
         let al = app.autolaunch();

@@ -15,6 +15,16 @@ const done = new Map<string, string>();
 // with the modified time too: FTP, SFTP and WebDAV often give no etag, and an edit can keep the size
 const idOf = (s: Source) => `${s.profileId}|${s.bucket}|${s.key}|${s.etag ?? ""}|${s.size}|${s.modified ?? ""}`;
 
+// the app removed copies nobody used for long ("Clear cache", the weekly trim): fetch them again
+let watching = false;
+function watchRemovals() {
+  if (watching) return;
+  watching = true;
+  listen("open-copies-removed", () => done.clear()).catch(() => {
+    watching = false;
+  });
+}
+
 export type LocalCopy = {
   /** the local path once it is there */
   path: Promise<string>;
@@ -25,6 +35,7 @@ let tempDir: Promise<string> | null = null;
 
 /** Starts fetching; `onProgress` gets 0..1 (or null while the size is unknown). */
 export function localCopy(src: Source, onProgress?: (frac: number | null) => void): LocalCopy {
+  watchRemovals();
   const have = done.get(idOf(src));
   if (have) return { path: Promise.resolve(have), cancel: () => {} };
   const id = crypto.randomUUID();

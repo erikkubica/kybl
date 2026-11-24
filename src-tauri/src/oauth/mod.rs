@@ -477,7 +477,11 @@ pub async fn oauth_start(
         Some(i) => profiles[i] = profile.clone(),
         None => profiles.push(profile.clone()),
     }
-    save_profiles(&app, &profiles, &held)?;
+    if let Err(e) = save_profiles(&app, &profiles, &held) {
+        drop(held);
+        crate::commands::forget_unsaved(&state, &id, existing.is_none()).await;
+        return Err(e);
+    }
     drop(held);
     crate::storage::registry::forget(&id);
     // a reconnect may be another account: its files are not this one's
