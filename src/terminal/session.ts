@@ -113,7 +113,13 @@ class Session {
           if (!(e.metaKey || e.ctrlKey)) return termNotice(`${MAC ? "⌘" : "Ctrl"}-click opens ${uri}`);
           void openLink(uri).catch(() => termNotice("That link can't be opened."));
         },
-        hover: (_e, uri) => termNotice(`${MAC ? "⌘" : "Ctrl"}-click opens ${uri}`),
+        // the address as a tooltip (a notice per hovered link would fill the bell)
+        hover: (_e, uri) => {
+          this.host.title = `${MAC ? "⌘" : "Ctrl"}-click opens ${uri}`;
+        },
+        leave: () => {
+          this.host.title = "";
+        },
       },
     });
     this.term.loadAddon(this.fit);

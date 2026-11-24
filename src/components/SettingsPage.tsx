@@ -146,7 +146,7 @@ function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info"
         : st.phase === "ready"
           ? busyAsk
             ? busyAsk === "terminal"
-              ? "A program is still running in a terminal. Restarting now stops it."
+              ? "A terminal is busy or connected to a server. Restarting now closes it."
               : "Transfers are still running. Restarting now stops them."
             : `Kybl ${rel?.version} is installed. Restart to use it.`
           : st.error

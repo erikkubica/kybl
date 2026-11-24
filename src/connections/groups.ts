@@ -35,7 +35,8 @@ export type { GroupNode };
  */
 export const SECTION_KINDS: { kind: "ftp" | "sftp" | "webdav"; label: string }[] = [
   { kind: "ftp", label: "FTP" },
-  { kind: "sftp", label: "SFTP" },
+  // SSH connections are SFTP ones that open as a terminal: the same section
+  { kind: "sftp", label: "SSH / SFTP" },
   { kind: "webdav", label: "WebDAV" },
 ];
 /** With fewer of a kind they stay plain rows. */

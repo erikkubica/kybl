@@ -756,7 +756,8 @@ impl Storage for WebdavBackend {
 pub(crate) fn split_userinfo(raw: &str) -> (String, Option<(String, Option<String>)>) {
     let raw = raw.trim();
     let Some((scheme, rest)) = raw.split_once("://") else { return (raw.to_string(), None) };
-    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    // a backslash ends the address too, as browsers (and NetForm) read it: `host\@evil` is no user
+    let end = rest.find(['/', '?', '#', '\\']).unwrap_or(rest.len());
     // the last "@": a password may hold an unescaped one
     let Some((info, host)) = rest[..end].rsplit_once('@') else { return (raw.to_string(), None) };
     let decode = |s: &str| percent_decode_str(s).decode_utf8_lossy().into_owned();
@@ -1139,6 +1140,8 @@ mod tests {
         assert_eq!(clean, "https://cloud.example.com:8443/dav/?a=b@c");
         assert_eq!(pair, Some(("al@ice".into(), Some("p:w".into()))));
         assert_eq!(split_userinfo("https://bob@h/x").1, Some(("bob".into(), None)));
+        // a backslash ends the address: no user, and the server stays the one typed
+        assert_eq!(split_userinfo(r"https://nas.local\@evil.example/dav/"), (r"https://nas.local\@evil.example/dav/".into(), None));
         assert_eq!(split_userinfo("https://p@ss:w@h/").1, Some(("p@ss".into(), Some("w".into()))));
         assert_eq!(split_userinfo("https://h/a@b"), ("https://h/a@b".into(), None));
         let c = candidate_urls(&cfg(Some("https://alice:pw@cloud.example.com"), "", "", "")).unwrap();

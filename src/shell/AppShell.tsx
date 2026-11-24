@@ -2513,9 +2513,7 @@ export function AppShell() {
           onConnected={(p) => {
             forgetCaps(p.id);
             conns.upsertProfile(p);
-            // an SSH connection opens as its terminal (once the saved profile is in the list)
-            if (isShellConn(p)) requestAnimationFrame(() => openShell(p));
-            else openHere((pane) => void connectIn(pane.id, p));
+            openHere((pane) => void connectIn(pane.id, p));
           }}
           onDeleted={forgetProfile}
         />
@@ -2541,7 +2539,9 @@ export function AppShell() {
             forgetCaps(p.id);
             clearAuthNeeded(p.id);
             conns.upsertProfile(p);
-            openHere((pane) => void connectIn(pane.id, p));
+            // an SSH connection opens as its terminal (once the saved profile is in the list)
+            if (isShellConn(p)) requestAnimationFrame(() => openShell(p));
+            else openHere((pane) => void connectIn(pane.id, p));
           }}
           onDeleted={forgetProfile}
         />

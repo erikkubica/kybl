@@ -62,6 +62,8 @@ const editable = (p: Profile) => p.provider === "kybl" || KINDS.some((k) => k.id
 
 export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl, kyblFirst, startKind, startTab, reconnect, onImport, groups, ref }: ConnectionDialogProps) {
   const [pick, setPick] = useState<PickId | null>(initial ? pickOf(initial) : (startKind ?? null));
+  // SFTP and SSH share one form: the title follows its "Opens as"
+  const [shell, setShell] = useState<boolean | null>(null);
   // the keyboard follows the step: the form's first field after a kind is chosen, the first kind
   // again after "Back" or a discard (the dialog box can stay the same, so it won't refocus by itself)
   const firstPick = useRef(true);
@@ -84,7 +86,10 @@ export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl,
   const choose = (id: PickId) => {
     dirty.current = false;
     if (id === "kybl") onKybl?.();
-    else setPick(id);
+    else {
+      setShell(null);
+      setPick(id);
+    }
   };
 
   // Something typed into the form: leaving it (close, Escape, Back) asks first, so a
@@ -135,7 +140,8 @@ export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl,
     );
   }
 
-  const info = kindInfo(pick);
+  const shellNow = shell ?? pick === "ssh";
+  const info = pick === "sftp" || pick === "ssh" ? kindInfo(shellNow ? "ssh" : "sftp") : kindInfo(pick);
   const back = initial || startKind ? undefined : guarded(() => setPick(null));
   const title = initial ? `Edit ${info.label} connection` : `Add ${info.label}`;
 
@@ -162,6 +168,7 @@ export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl,
           onDirty={() => (dirty.current = true)}
           groups={groups}
           startTab={startTab}
+          onShell={setShell}
         />
       </Modal>
       {discardAsk}
@@ -180,8 +187,11 @@ function KeyedForm({
   onDirty,
   groups,
   startTab,
+  onShell,
 }: {
   startTab?: "tunnels";
+  /** SFTP / SSH: "Opens as" switched (true: a terminal) */
+  onShell?: (shell: boolean) => void;
   pick: Exclude<PickId, CloudKind | "kybl">;
   /** the sidebar's groups, offered in the Group field (no field without them: phones) */
   groups?: string[];
@@ -437,6 +447,7 @@ function KeyedForm({
               value={opensAs}
               onChange={(v) => {
                 setOpensAs(v);
+                onShell?.(v === "terminal");
                 onDirty();
               }}
               options={[

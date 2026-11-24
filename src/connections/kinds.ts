@@ -200,7 +200,7 @@ export function addressOf(p: Profile): string {
     // never with a user name or password that an older save left in the address
     if (p.kind === "webdav" && n.url) return splitDavUrl(n.url).href;
     const port = n.port ? `:${n.port}` : "";
-    const scheme = p.kind === "ftp" ? (n.tls === "none" || n.tls === "auto" ? "ftp" : "ftps") : (p.kind ?? "");
+    const scheme = p.kind === "ftp" ? (n.tls === "none" || n.tls === "auto" ? "ftp" : "ftps") : isShellConn(p) ? "ssh" : (p.kind ?? "");
     return `${scheme}://${n.host}${port}${n.basePath ? `/${n.basePath.replace(/^\//, "")}` : ""}`;
   }
   if (p.blob) return p.blob.container ? `${p.blob.account ? `${p.blob.account}/` : ""}${p.blob.container}` : p.blob.account;

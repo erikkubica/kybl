@@ -368,6 +368,8 @@ pub(crate) async fn move_with<R: Runtime>(
     // every source is fixed before the first one moves (see `Storage::pin_sources`)
     let sources: Vec<(Loc, bool)> = items.iter().map(|it| (Loc::new(bucket, &it.from), it.is_prefix)).collect();
     if let Err(e) = s.pin_sources(&sources).await {
+        // the ones pinned before the failure must not outlive it (a pin beats listings and forgets)
+        s.unpin_sources(&sources).await;
         return Ok(OpResult { done: 0, total: items.len() as u64, error: Some(e.into()) });
     }
     let r = move_items(app, s, bucket, dest_bucket, items, true, op_id, cancel).await;

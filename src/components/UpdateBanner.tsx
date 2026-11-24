@@ -78,7 +78,7 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
             <b>Kybl {rel.version} is installed</b>
             <small className={restartError ? "update-err" : undefined}>
               {restartError ?? (busy === "terminal"
-                ? "A program is still running in a terminal. Restart when it ends, or now to stop it."
+                ? "A terminal is busy or connected to a server. Restart when you’re done there, or now to close it."
                 : busy
                   ? "Transfers are still running. Restart when they finish, or now to stop them."
                   : "Restart to start using it.")}

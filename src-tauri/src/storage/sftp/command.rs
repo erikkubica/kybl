@@ -80,7 +80,9 @@ const PROBE_CSH_END: &str = " c!d";
 /// print before it, and an exit trap, a login wrapper's footer or a "connection closed" notice
 /// after it. `Other` (kept for the run) only when no line is an answer at all; None when nothing
 /// came back (nothing printed, or the connection dropped): asked again.
-fn read_probe(out: &str, exited: bool) -> Option<Shell> {
+/// `quiet_ok`: it ended with status 0 and wrote nothing to stderr either (an empty answer then
+/// means no shell ran; a wrapper that failed without a terminal says so on stderr or in its status).
+fn read_probe(out: &str, exited: bool, quiet_ok: bool) -> Option<Shell> {
     let lines: Vec<&str> = out.lines().map(|l| l.trim_end_matches('\r')).filter(|l| !l.trim().is_empty()).collect();
     let csh = |l: &str| l.starts_with("kybl'sh ") && l.ends_with(PROBE_CSH_END) && !l.contains(r"\!");
     if lines.iter().rev().any(|l| *l == PROBE_POSIX) {
@@ -96,7 +98,7 @@ fn read_probe(out: &str, exited: bool) -> Option<Shell> {
     match lines.last() {
         Some(_) if exited => Some(Shell::Other),
         // it ended without a word: what ran was no shell (any shell prints the echo)
-        None if exited && out.trim().is_empty() => Some(Shell::FilesOnly),
+        None if exited && quiet_ok && out.trim().is_empty() => Some(Shell::FilesOnly),
         _ => None,
     }
 }
@@ -231,10 +233,13 @@ impl SftpBackend {
         let stop = AtomicBool::new(false);
         // the end of what it prints is enough (startup files can print a lot before the answer)
         let mut out = Vec::new();
+        let mut said_err = false;
         // its input is closed at once: on an account for file transfers only the command is the
         // SFTP server, which would otherwise wait for packets until the time limit
         let run = self.exec_raw_with(PROBE, true, &stop, |err, d| {
-            if !err {
+            if err {
+                said_err |= !d.is_empty();
+            } else {
                 out.extend_from_slice(d);
                 if out.len() > 4096 {
                     out.drain(..out.len() - 1024);
@@ -242,7 +247,7 @@ impl SftpBackend {
             }
         });
         let end = tokio::time::timeout(Duration::from_secs(20), run).await.map_err(|_| StorageError::other("The server didn't answer in time."))??;
-        let sh = read_probe(&String::from_utf8_lossy(&out), end.code.is_some()).ok_or_else(|| StorageError::new(ErrKind::Network, NO_PROBE_ANSWER))?;
+        let sh = read_probe(&String::from_utf8_lossy(&out), end.code.is_some(), end.code == Some(0) && !said_err).ok_or_else(|| StorageError::new(ErrKind::Network, NO_PROBE_ANSWER))?;
         SHELLS.lock().unwrap().insert(who, sh);
         Ok(sh)
     }
@@ -414,7 +419,7 @@ mod tests {
         let dropped = ExecEnd { code: None, stopped: false };
         assert!(!ended_properly(&dropped));
         // the shell probe: no output and no exit status is no answer; an answer that came is read
-        assert_eq!(read_probe("", false), None);
+        assert_eq!(read_probe("", false, true), None);
         let exited = ExecEnd { code: Some(1), stopped: false };
         assert!(ended_properly(&exited));
         assert!(ended_properly(&ExecEnd { code: None, stopped: true }));
@@ -450,26 +455,29 @@ mod tests {
         for sh in shells.into_iter().filter(|p| std::path::Path::new(p).exists()) {
             let out = std::process::Command::new(sh).arg("-c").arg(PROBE).output().unwrap();
             let want = if sh.ends_with("csh") { Shell::Csh } else { Shell::Posix };
-            assert_eq!(read_probe(&String::from_utf8_lossy(&out.stdout), true), Some(want), "{sh}");
+            assert_eq!(read_probe(&String::from_utf8_lossy(&out.stdout), true, true), Some(want), "{sh}");
         }
-        assert_eq!(read_probe("kybl'sh a!#b c\\!d\r\n", true), Some(Shell::Posix));
+        assert_eq!(read_probe("kybl'sh a!#b c\\!d\r\n", true, true), Some(Shell::Posix));
         // an account for file transfers only: the SFTP server ran, said nothing and ended
-        assert_eq!(read_probe("", true), Some(Shell::FilesOnly));
-        assert_eq!(read_probe("This service allows sftp connections only.\r\n", true), Some(Shell::FilesOnly));
+        assert_eq!(read_probe("", true, true), Some(Shell::FilesOnly));
+        // a wrapper that ran something needing a terminal: it complained on stderr or failed, so
+        // it isn't taken for an account without a shell (asked again)
+        assert_eq!(read_probe("", true, false), None);
+        assert_eq!(read_probe("This service allows sftp connections only.\r\n", true, true), Some(Shell::FilesOnly));
         // nothing because the connection dropped: asked again
-        assert_eq!(read_probe("", false), None);
+        assert_eq!(read_probe("", false, true), None);
         // startup files that print something first
-        assert_eq!(read_probe("Welcome!\nconda: base\n\nkybl'sh a!#b c\\!d\n\n", true), Some(Shell::Posix));
+        assert_eq!(read_probe("Welcome!\nconda: base\n\nkybl'sh a!#b c\\!d\n\n", true, true), Some(Shell::Posix));
         // and something printed after it (an EXIT trap, a login wrapper's footer)
-        assert_eq!(read_probe("kybl'sh a!#b c\\!d\nLogged out at 12:00.\n", true), Some(Shell::Posix));
-        assert_eq!(read_probe("motd\nkybl'sh a<words>b c!d\r\nbye\r\n", true), Some(Shell::Csh));
+        assert_eq!(read_probe("kybl'sh a!#b c\\!d\nLogged out at 12:00.\n", true, true), Some(Shell::Posix));
+        assert_eq!(read_probe("motd\nkybl'sh a<words>b c!d\r\nbye\r\n", true, true), Some(Shell::Csh));
         // cmd.exe prints the line as it is; PowerShell's echo puts each word on its own line
         for not in [r"'kybl'\''sh' 'a!#b' 'c\!d'", "kybl\n\\'sh\na!#b\nc\\!d"] {
-            assert_eq!(read_probe(not, true), Some(Shell::Other), "{not:?}");
+            assert_eq!(read_probe(not, true, true), Some(Shell::Other), "{not:?}");
         }
         // no answer because the connection dropped (no exit status) is not kept: asked again
-        assert_eq!(read_probe("", false), None);
-        assert_eq!(read_probe("kybl", false), None);
+        assert_eq!(read_probe("", false, true), None);
+        assert_eq!(read_probe("kybl", false, true), None);
     }
 
     /// The csh hole: a folder named `;touch pwn1;` and an item named `x!#`, the way a server
