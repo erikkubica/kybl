@@ -16,6 +16,7 @@
 import { api, errMessage, LOCAL_ID } from "../api";
 import { parentPrefix } from "../format";
 import { joinPath, safeRelPath } from "../desktop/paths";
+import { eachFileUnder } from "../streamFiles";
 import type { Pane } from "../browser/usePane";
 import type { FileOps } from "../desktop/fileOps";
 import type { Entry } from "../types";
@@ -134,35 +135,39 @@ export async function sendItems(
 }
 
 /**
- * Cloud → this computer: every file (folders listed in full) into `dir`, keeping folder structure.
- * A file already there is kept and the copy gets a free name, like Finder. `done` runs once all
- * ended. True when downloads were started.
+ * Cloud → this computer: every file (folders listed as they go) into `dir`, keeping folder
+ * structure. Files start downloading as they are found, so a big folder on a slow server doesn't
+ * sit silent while it is listed. A file already there is kept and the copy gets a free name, like
+ * Finder. `done` runs once all ended. True when downloads were started.
  */
 async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx, done: () => void): Promise<boolean> {
   const { profileId, bucket } = src;
-  const out: Parameters<TransferActions["add"]>[0] = [];
-  const add = (key: string, size: number, rel: string) => {
+  const ids: string[] = [];
+  const item = (key: string, size: number, rel: string) => {
     const safe = safeRelPath(rel);
-    if (safe) out.push({ kind: "download", name: safe, profileId, bucket, key, local: joinPath(dir, safe), total: size, base: dir });
+    return safe ? [{ kind: "download" as const, name: safe, profileId, bucket, key, local: joinPath(dir, safe), total: size, base: dir }] : [];
   };
+  const start = (batch: Parameters<TransferActions["add"]>[0]) => {
+    if (!batch.length) return;
+    if (!ids.length) c.autoShowActivity();
+    for (const t of c.transfers.add(batch)) ids.push(t.id);
+  };
+  const folders = items.filter((e) => e.kind !== "file");
+  start(items.filter((e) => e.kind === "file").flatMap((e) => item(e.key, e.size, e.name)));
+  if (folders.length) c.dialogs.toast("info", `${folders.length === 1 ? `Copying “${folders[0].name}”` : `Copying ${folders.length} folders`} here. Files start as they're found.`);
   try {
-    for (const e of items) {
-      if (e.kind === "file") add(e.key, e.size, e.name);
-      else {
-        const base = parentPrefix(e.key);
-        for (const f of await api.listAllUnder(profileId, bucket, e.key)) add(f.key, f.size, f.key.slice(base.length));
-      }
+    for (const e of folders) {
+      const base = parentPrefix(e.key);
+      await eachFileUnder(profileId, bucket, e.key, (files) => start(files.flatMap((f) => item(f.key, f.size, f.key.slice(base.length)))));
     }
   } catch (e) {
     c.dialogs.toast("error", errMessage(e));
-    return false;
+    if (!ids.length) return false;
   }
-  if (!out.length) {
+  if (!ids.length) {
     c.dialogs.toast("info", "Nothing to copy");
     return false;
   }
-  const started = c.transfers.add(out);
-  c.autoShowActivity();
-  void Promise.all(started.map((t) => c.transfers.whenFinished(t.id))).then(done);
+  void Promise.all(ids.map((id) => c.transfers.whenFinished(id))).then(done);
   return true;
 }

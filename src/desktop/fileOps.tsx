@@ -24,6 +24,7 @@ import { undoStack, type UndoEntry } from "./undo";
 import { itemClipboard } from "./clipboard";
 import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
 import { localCopies, type LocalCopyVerb } from "../localCopyProgress";
+import { eachFileUnder } from "../streamFiles";
 
 /** `localCopy` calls under way, by file and version: a second one waits for the first. */
 const inFlightCopies = new Map<string, Promise<string | null>>();
@@ -251,28 +252,41 @@ export function makeFileOps(c: OpsContext) {
         ? ((r) => (Array.isArray(r) ? r[0] : r))(await openDialog({ directory: true, multiple: false, title: "Choose a download folder" }))
         : await api.downloadFolder();
       if (!dir) return;
-      const items: Parameters<TransferActions["add"]>[0] = [];
-      const add = (key: string, size: number, rel: string, etag?: string | null) => {
-        const safe = safeRelPath(rel);
-        if (safe) items.push({ kind: "download", name: safe, profileId: pid, bucket, key, local: joinPath(dir, safe), total: size, etag, base: dir });
+      const where = settings.downloadAsk ? dir : "your Downloads folder";
+      let started = 0;
+      // what was found goes to the transfer list at once: downloads start while the rest of a
+      // folder is still being listed (a big tree on a slow server takes minutes)
+      const start = (batch: Parameters<TransferActions["add"]>[0]) => {
+        if (!batch.length) return;
+        if (started === 0) c.autoShowActivity();
+        started += batch.length;
+        transfers.add(batch);
       };
-      for (const e of list) {
-        if (e.kind === "file") {
-          add(e.key, e.size, relBase !== null && e.key.startsWith(relBase) ? e.key.slice(relBase.length) : e.name, e.etag);
-        } else {
-          c.setBusy(`Listing ${e.name}…`);
-          const base = relBase !== null && e.key.startsWith(relBase) ? relBase : parentPrefix(e.key);
-          for (const rf of await api.listAllUnder(pid, bucket, e.key)) add(rf.key, rf.size, rf.key.slice(base.length));
-        }
+      const item = (key: string, size: number, rel: string, etag?: string | null) => {
+        const safe = safeRelPath(rel);
+        return safe ? [{ kind: "download" as const, name: safe, profileId: pid, bucket, key, local: joinPath(dir, safe), total: size, etag, base: dir }] : [];
+      };
+      const folders = list.filter((e) => e.kind !== "file");
+      start(list.filter((e) => e.kind === "file").flatMap((e) => item(e.key, e.size, relBase !== null && e.key.startsWith(relBase) ? e.key.slice(relBase.length) : e.name, e.etag)));
+      if (folders.length) {
+        toast("info", folders.length === 1 ? `Downloading “${folders[0].name}” to ${where}. Files start as they're found.` : `Downloading ${plural(folders.length, "folder")} to ${where}. Files start as they're found.`);
+      }
+      for (const e of folders) {
+        c.setBusy(`Listing ${e.name}…`);
+        const base = relBase !== null && e.key.startsWith(relBase) ? relBase : parentPrefix(e.key);
+        let found = 0;
+        await eachFileUnder(pid, bucket, e.key, (files) => {
+          found += files.length;
+          start(files.flatMap((f) => item(f.key, f.size, f.key.slice(base.length))));
+          c.setBusy(`Listing ${e.name}… ${plural(found, "file")} found`);
+        });
       }
       c.setBusy(null);
-      if (items.length === 0) {
+      if (started === 0) {
         toast("info", "Nothing to download");
         return;
       }
-      transfers.add(items);
-      c.autoShowActivity();
-      toast("info", `Downloading ${plural(items.length, "file")} to ${settings.downloadAsk ? dir : "your Downloads folder"}`);
+      if (!folders.length) toast("info", `Downloading ${plural(started, "file")} to ${where}`);
     } catch (e) {
       c.setBusy(null);
       toast("error", errMessage(e));

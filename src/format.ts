@@ -42,7 +42,8 @@ export function setByteUnits(binary: boolean) {
 export function formatBytes(n: number, digits = 1): string {
   if (!Number.isFinite(n) || n < 0) return "—";
   const base = binaryUnits ? 1024 : 1000;
-  if (n < base) return `${n} B`;
+  // a rate (bytes per second) is a fraction: whole bytes only
+  if (Math.round(n) < base) return `${Math.round(n)} B`;
   const units = binaryUnits ? ["KiB", "MiB", "GiB", "TiB", "PiB"] : ["KB", "MB", "GB", "TB", "PB"];
   let v = n;
   let i = -1;

@@ -12,6 +12,9 @@ test("a tiny speed limit stays a limit", () => {
 test("sizes pick their unit after rounding", () => {
   setByteUnits(false);
   assert.equal(formatBytes(999), "999 B");
+  // a speed is a fraction of bytes per second
+  assert.equal(formatBytes(555.7011059505487), "556 B");
+  assert.equal(formatBytes(999.7), "1.0 KB");
   assert.equal(formatBytes(1500), "1.5 KB");
   assert.equal(formatBytes(99_950), "100 KB");
   assert.equal(formatBytes(999_950), "1.0 MB");

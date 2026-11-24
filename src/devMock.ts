@@ -1127,6 +1127,16 @@ async function handle(cmd: string, a: any): Promise<unknown> {
         localSizes.set(p, size);
         return { path: p, rel: p.split("/").pop(), size };
       });
+    case "stream_files_under": {
+      const t = remoteTree(a.profileId, a.bucket);
+      const files = Object.entries(t).flatMap(([k, d]) => (k.startsWith(a.prefix) ? d.objects.map((o) => ({ key: o.key, size: o.size })) : []));
+      // a slow server: the files come in a few batches
+      for (let i = 0; i < files.length; i += 3) {
+        await new Promise((ok) => setTimeout(ok, 150));
+        (a.onBatch as { onmessage: (f: unknown) => void }).onmessage(files.slice(i, i + 3));
+      }
+      return files.length;
+    }
     case "list_all_under": {
       const t = remoteTree(a.profileId, a.bucket);
       return Object.entries(t).flatMap(([k, d]) => (k.startsWith(a.prefix) ? d.objects.map((o) => ({ key: o.key, size: o.size })) : []));
