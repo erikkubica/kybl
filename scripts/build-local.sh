@@ -4,7 +4,10 @@
 # "Always Allow", and the app shows no company name (unlike the Apple Development certificate).
 #
 #   scripts/build-local.sh            build only
-#   scripts/build-local.sh --install  also replace /Applications/Kybl.app and relaunch it
+#   scripts/build-local.sh --install  also put it in /Applications. A running Kybl is left alone
+#                                     (its terminals may hold work): the new build starts the next
+#                                     time Kybl is opened. When Kybl isn't running it is opened.
+#   scripts/build-local.sh --install --restart   also quits a running Kybl and opens the new one
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -38,10 +41,30 @@ codesign --verify --strict "$APP"
 codesign -dvv "$APP" 2>&1 | grep -E "Identifier=|Authority|TeamIdentifier"
 
 if [ "${1:-}" = "--install" ]; then
-  pkill -f "Kybl.app/Contents/MacOS/kybl" || true
-  sleep 1
-  rm -rf /Applications/Kybl.app
-  cp -R "$APP" /Applications/
-  open /Applications/Kybl.app
-  echo "Installed and launched."
+  running=0
+  pgrep -f "Kybl.app/Contents/MacOS/kybl" >/dev/null && running=1
+  if [ "$running" = 1 ] && [ "${2:-}" = "--restart" ]; then
+    pkill -f "Kybl.app/Contents/MacOS/kybl" || true
+    sleep 1
+    running=0
+  fi
+  # swapped in with renames, not deleted in place: a Kybl that is still running keeps the files it
+  # has open, and the new bundle is complete before it takes the name
+  stage="/Applications/.Kybl.app.new"
+  old="/Applications/.Kybl.app.old"
+  rm -rf "$stage"
+  # an earlier build moved aside is removed only when nothing still runs from it
+  pgrep -f ".Kybl.app.old/Contents/MacOS/kybl" >/dev/null || rm -rf "$old"
+  [ -e "$old" ] && old="/Applications/.Kybl.app.old.$$"
+  cp -R "$APP" "$stage"
+  [ -e /Applications/Kybl.app ] && mv /Applications/Kybl.app "$old"
+  mv "$stage" /Applications/Kybl.app
+  # the running Kybl still reads from the moved-aside build: it is removed on a later install
+  [ "$running" = 1 ] || rm -rf "$old"
+  if [ "$running" = 1 ]; then
+    echo "Installed. Kybl is still running the old build; the new one starts the next time you open Kybl."
+  else
+    open /Applications/Kybl.app
+    echo "Installed and launched."
+  fi
 fi
