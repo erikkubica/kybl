@@ -51,7 +51,7 @@ fn hash_command(path: &str) -> Option<String> {
 
 /// How a server's login shell reads what [`crate::actions::quote`] writes.
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Shell {
+pub(crate) enum Shell {
     /// sh, bash, zsh, dash, ksh, fish: the quoting holds as it is
     Posix,
     /// csh, tcsh: the quoting holds, but `!` is history expansion even inside single quotes
@@ -95,7 +95,7 @@ fn read_probe(out: &str, exited: bool) -> Option<Shell> {
 /// `command` as csh must get it: every `!` written `\!` (csh drops the `\`, also inside single
 /// quotes, and the `!` is then plain), except the `$!` of a POSIX script (the last background
 /// job's pid; `$\!` is an error in csh) when nothing csh would expand follows it.
-fn for_csh(command: &str) -> String {
+pub(crate) fn for_csh(command: &str) -> String {
     let mut out = String::with_capacity(command.len() + 8);
     let mut prev = '\0';
     let mut chars = command.chars().peekable();
@@ -137,6 +137,32 @@ fn read_hash_run(out: &str, code: Option<u32>) -> HashRun {
         return HashRun::NoCommands;
     }
     HashRun::ThisFile
+}
+
+/// Hash runs in a row per server that ended with an error and printed nothing at all.
+static SILENT: LazyLock<Mutex<HashMap<String, u32>>> = LazyLock::new(Default::default);
+/// That many in a row: the script never starts there (a restricted shell that can't run
+/// `/bin/sh`), so the server is treated as running no hash commands.
+const SILENT_LIMIT: u32 = 3;
+
+/// `run` after counting it for its server: [`SILENT_LIMIT`] silent failures in a row turn into
+/// NoCommands; a hash resets the count. `silent`: it failed with no output at all.
+fn tally(count: &mut u32, run: HashRun, silent: bool) -> HashRun {
+    match run {
+        HashRun::ThisFile if silent => {
+            *count += 1;
+            if *count >= SILENT_LIMIT {
+                HashRun::NoCommands
+            } else {
+                HashRun::ThisFile
+            }
+        }
+        HashRun::ThisFile => run,
+        run => {
+            *count = 0;
+            run
+        }
+    }
 }
 
 /// A hash command that couldn't run at all. Only the server refusing the command request itself
@@ -182,7 +208,7 @@ impl SftpBackend {
 
     /// The account's login shell (see [`PROBE`]), asked once per server. Only a clear answer is
     /// kept: a dropped connection or no output at all is an error, asked again next time.
-    async fn login_shell(&self) -> SResult<Shell> {
+    pub(crate) async fn login_shell(&self) -> SResult<Shell> {
         let who = format!("{}@{}:{}", self.user, self.host, self.port);
         if let Some(sh) = SHELLS.lock().unwrap().get(&who).copied() {
             return Ok(sh);
@@ -273,7 +299,11 @@ impl SftpBackend {
             // the channel closed with no exit status (the connection dropped mid-way, perhaps
             // after part of the output): this file only, never "no commands here"
             Ok(end) if !ended_properly(&end) => HashRun::ThisFile,
-            Ok(end) if !end.stopped => read_hash_run(&String::from_utf8_lossy(&out), end.code),
+            Ok(end) if !end.stopped => {
+                let silent = out.iter().all(u8::is_ascii_whitespace) && end.code.is_some_and(|c| c != 0);
+                let run = read_hash_run(&String::from_utf8_lossy(&out), end.code);
+                tally(SILENT.lock().unwrap().entry(who.clone()).or_default(), run, silent)
+            }
             // out of time (a slow disk, a huge file): this file only
             Ok(_) => HashRun::ThisFile,
             Err(e) => failed_run(&e),
@@ -331,6 +361,25 @@ mod tests {
         assert_eq!(failed_run(&StorageError::new(ErrKind::Unsupported, "refused")), HashRun::NoCommands);
         assert_eq!(failed_run(&StorageError::other("The server didn't run the command.")), HashRun::ThisFile);
         assert_eq!(failed_run(&StorageError::new(ErrKind::Network, "dropped")), HashRun::ThisFile);
+    }
+
+    /// A restricted shell (rbash) fails every hash run with exit 1 and no output: after a few in
+    /// a row the server counts as running no hash commands (B6-7); one odd name doesn't.
+    #[test]
+    fn silent_failures_in_a_row_turn_hashing_off() {
+        let mut n = 0;
+        assert_eq!(tally(&mut n, HashRun::ThisFile, true), HashRun::ThisFile);
+        assert_eq!(tally(&mut n, HashRun::ThisFile, true), HashRun::ThisFile);
+        // a hash in between starts the count again
+        assert_eq!(tally(&mut n, HashRun::Hash(HashKind::Md5, "0".repeat(32)), false), HashRun::Hash(HashKind::Md5, "0".repeat(32)));
+        assert_eq!(n, 0);
+        // a failure with output (an unreadable file) isn't counted
+        for _ in 0..5 {
+            assert_eq!(tally(&mut n, HashRun::ThisFile, false), HashRun::ThisFile);
+        }
+        assert_eq!(tally(&mut n, HashRun::ThisFile, true), HashRun::ThisFile);
+        assert_eq!(tally(&mut n, HashRun::ThisFile, true), HashRun::ThisFile);
+        assert_eq!(tally(&mut n, HashRun::ThisFile, true), HashRun::NoCommands);
     }
 
     /// A channel that closed without an exit status (a dropped connection) is no verdict: the

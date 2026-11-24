@@ -264,12 +264,18 @@ pub async fn launch_with(profile_id: &str, def: TunnelDef, backend: SftpBackend,
 }
 
 /// Accepts connections and keeps the SSH connection up until told to stop; then closes it all.
-async fn supervise(listener: TcpListener, mut backend: SftpBackend, rebuild: Option<Rebuild>, first: Handle, def: TunnelDef, shared: Arc<Shared>, mut stop: watch::Receiver<bool>) {
+/// Signing in again runs beside the accepting (B6-8): connections made meanwhile are taken at
+/// once and wait in `forward` for the new connection.
+async fn supervise(listener: TcpListener, backend: SftpBackend, rebuild: Option<Rebuild>, first: Handle, def: TunnelDef, shared: Arc<Shared>, mut stop: watch::Receiver<bool>) {
+    type Attempt = crate::storage::BoxFuture<'static, (SftpBackend, crate::storage::SResult<client::Handle<HostCheck>>)>;
     let slot = Arc::new(watch::Sender::new(Some(first)));
     let mut conns = JoinSet::new();
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     let mut backoff = Duration::from_secs(1);
     let mut next_try = Instant::now();
+    // the backend while no sign-in runs (an attempt holds it and hands it back)
+    let mut idle = Some(backend);
+    let mut attempt: Option<Attempt> = None;
     loop {
         tokio::select! {
             _ = stop.changed() => break,
@@ -282,32 +288,10 @@ async fn supervise(listener: TcpListener, mut backend: SftpBackend, rebuild: Opt
                 Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
             },
             Some(_) = conns.join_next(), if !conns.is_empty() => {}
-            _ = tick.tick() => {
-                let down = slot.borrow().as_ref().is_none_or(|h| h.is_closed());
-                if !down {
-                    continue;
-                }
-                if shared.phase() == Phase::Up {
-                    slot.send_replace(None);
-                    shared.set(Phase::Retrying, Some("The connection to the server dropped. Reconnecting…".into()));
-                    backoff = Duration::from_secs(1);
-                    next_try = Instant::now();
-                }
-                if Instant::now() < next_try {
-                    continue;
-                }
-                // the connection's current settings and secrets (edited since it started, say)
-                if let Some(rebuild) = &rebuild {
-                    tokio::select! {
-                        r = rebuild() => if let Ok(b) = r { backend = b },
-                        _ = stop.changed() => break,
-                    }
-                }
-                let attempt = tokio::select! {
-                    r = backend.sign_in_connection() => r,
-                    _ = stop.changed() => break,
-                };
-                match attempt {
+            (b, r) = async { attempt.as_mut().expect("guarded").await }, if attempt.is_some() => {
+                attempt = None;
+                idle = Some(b);
+                match r {
                     Ok(h) => {
                         slot.send_replace(Some(Arc::new(h)));
                         backoff = Duration::from_secs(1);
@@ -320,8 +304,36 @@ async fn supervise(listener: TcpListener, mut backend: SftpBackend, rebuild: Opt
                     }
                 }
             }
+            _ = tick.tick() => {
+                let down = slot.borrow().as_ref().is_none_or(|h| h.is_closed());
+                if !down || attempt.is_some() {
+                    continue;
+                }
+                if shared.phase() == Phase::Up {
+                    slot.send_replace(None);
+                    shared.set(Phase::Retrying, Some("The connection to the server dropped. Reconnecting…".into()));
+                    backoff = Duration::from_secs(1);
+                    next_try = Instant::now();
+                }
+                if Instant::now() < next_try {
+                    continue;
+                }
+                let Some(mut b) = idle.take() else { continue };
+                let rebuild = rebuild.clone();
+                attempt = Some(Box::pin(async move {
+                    // the connection's current settings and secrets (edited since it started, say)
+                    if let Some(rebuild) = rebuild {
+                        if let Ok(nb) = rebuild().await {
+                            b = nb;
+                        }
+                    }
+                    let r = b.sign_in_connection().await;
+                    (b, r)
+                }));
+            }
         }
     }
+    drop(attempt);
     drop(listener);
     conns.abort_all();
     while conns.join_next().await.is_some() {}

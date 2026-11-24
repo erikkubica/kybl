@@ -219,13 +219,19 @@ fn zip_millis(t: zip::DateTime) -> Option<i64> {
 impl Index {
     /// Reads the table of contents of `path`. A .tar.gz is unpacked to a .tar in `work` first
     /// (reads need to seek), stopping at the size limits; `cancel` stops that.
+    #[cfg(test)]
     pub fn open(path: &Path, format: Format, work: &Path, cancel: &AtomicBool) -> io::Result<Index> {
+        Self::open_with(path, format, work, cancel, &|_| {})
+    }
+
+    /// [`Index::open`], telling `unpacked` how much of a .tar.gz is unpacked so far.
+    pub fn open_with(path: &Path, format: Format, work: &Path, cancel: &AtomicBool, unpacked: &dyn Fn(u64)) -> io::Result<Index> {
         let file = PosFile::open(path)?;
         match format {
             Format::Zip => Self::open_zip(path, file),
             Format::Tar => Self::open_tar(path, file, format),
             Format::TarGz => {
-                let tar = gunzip(path, work, file.len(), cancel)?;
+                let tar = gunzip(path, work, file.len(), cancel, unpacked)?;
                 let mut ix = Self::open_tar(path, PosFile::open(&tar)?, format)?;
                 ix.data = tar;
                 Ok(ix)
@@ -471,13 +477,17 @@ pub fn human(n: u64) -> String {
 
 /// Unpacks a .tar.gz to a .tar in `work` (reused while the archive is unchanged), refusing to
 /// write more than the bomb limits allow.
-fn gunzip(path: &Path, work: &Path, archive_len: u64, cancel: &AtomicBool) -> io::Result<PathBuf> {
+fn gunzip(path: &Path, work: &Path, archive_len: u64, cancel: &AtomicBool, unpacked: &dyn Fn(u64)) -> io::Result<PathBuf> {
     std::fs::create_dir_all(work)?;
-    gunzip_with(path, work, archive_len, free_space(work), cancel)
+    gunzip_with(path, work, archive_len, free_space(work), cancel, unpacked)
 }
 
+/// A .tar.gz unpacking to more than this many times its size (and past [`BOMB_FLOOR`]) is
+/// refused: gzip of real files rarely passes 20x, and every byte of it is written to disk.
+pub const GZ_BOMB_RATIO: u64 = 100;
+
 /// [`gunzip`] with the disk's free space given (None: not known).
-pub(crate) fn gunzip_with(path: &Path, work: &Path, archive_len: u64, free: Option<u64>, cancel: &AtomicBool) -> io::Result<PathBuf> {
+pub(crate) fn gunzip_with(path: &Path, work: &Path, archive_len: u64, free: Option<u64>, cancel: &AtomicBool, unpacked: &dyn Fn(u64)) -> io::Result<PathBuf> {
     std::fs::create_dir_all(work)?;
     let meta = std::fs::metadata(path)?;
     let stamp = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis()).unwrap_or(0);
@@ -486,7 +496,7 @@ pub(crate) fn gunzip_with(path: &Path, work: &Path, archive_len: u64, free: Opti
     if out.exists() {
         return Ok(out);
     }
-    let limit = MAX_TOTAL.min(BOMB_FLOOR.max(archive_len.saturating_mul(BOMB_RATIO)));
+    let limit = MAX_TOTAL.min(BOMB_FLOOR.max(archive_len.saturating_mul(GZ_BOMB_RATIO)));
     // never more than half the disk's free space: a bomb (or a huge honest archive) must not
     // fill the disk before it is refused
     let room = free.map(|f| f / 2);
@@ -507,6 +517,7 @@ pub(crate) fn gunzip_with(path: &Path, work: &Path, archive_len: u64, free: Opti
                 break;
             }
             done += n as u64;
+            unpacked(done);
             if done > limit {
                 return Err(bad(format!("This archive unpacks to more than {} from {}, which looks like a decompression bomb. Kybl won't open it.", human(limit), human(archive_len))));
             }

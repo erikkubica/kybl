@@ -1,5 +1,5 @@
 //! Custom actions (Settings → Actions): a shell command line with placeholders, run on the
-//! selected files and folders, on this computer (`$SHELL -l -c` for a POSIX shell, else /bin/sh) or on an SFTP
+//! selected files and folders, on this computer (`$SHELL -l -c` for a POSIX shell, else /bin/sh with that shell's PATH) or on an SFTP
 //! server over SSH.
 //!
 //! Templates are shell commands on purpose, but every placeholder value is shell-quoted (single
@@ -139,9 +139,11 @@ const PLACEHOLDERS: [&str; 6] = ["path", "name", "ext", "stem", "paths", "dir"];
 /// value is single-quoted already, and that only keeps it one plain word where the shell reads
 /// commands: outside every quote, or inside `$( … )` (a fresh context, even inside double quotes).
 /// An allow-list: inside quotes, `$'…'`, backticks, `${ … }`, `$(( … ))`, `(( … ))`, `$[ … ]`, a
-/// here-document or a comment, or after something shells read differently (a `#` inside a word,
-/// `case` inside `$( … )`), a placeholder is refused. Mirrored in src/actions/templateCheck.ts;
-/// both run tests/actions/template-vectors.json. The error names the placeholder.
+/// here-document or a comment, in the word after `>&`/`<&`, as what a builtin reads as code
+/// (see [`operand_problem`]), or after something shells read differently (a `#` inside a word,
+/// `case`, a comment or a `)` in `${ … }` inside `$( … )`, a line continuation inside a word, `\'`
+/// in `$'…'`), a placeholder is refused. Mirrored in src/actions/templateCheck.ts; both run
+/// tests/actions/template-vectors.json. The error names the placeholder.
 pub fn check_template(template: &str) -> Result<(), String> {
     #[derive(Clone, Copy, PartialEq)]
     enum Ctx {
@@ -165,27 +167,63 @@ pub fn check_template(template: &str) -> Result<(), String> {
     let placeholder_at = |i: usize| PLACEHOLDERS.iter().find(|w| template[i..].starts_with(&format!("{{{w}}}")));
     // where a word can start (a `#` there begins a comment)
     let word_start = |i: usize| i == 0 || matches!(b[i - 1], b' ' | b'\t' | b'\n' | b'\r' | b';' | b'&' | b'|' | b'(' | b')' | b'<' | b'>');
+    let blank = |x: u8| matches!(x, b' ' | b'\t' | b'\n');
     // a here-document (`<<`, not bash's `<<<`) seen: its body is read like double quotes
     let mut heredoc = false;
     // something seen that shells read differently: what follows can't be proven
     let mut unsure = false;
+    // in the word after `>&` or `<&` (bash 3.2 expands it once more): the stack depth there, and
+    // whether the word has begun
+    let mut dup: Option<(usize, bool)> = None;
     let mut i = 0;
     while i < b.len() {
         let ctx = *stack.last().unwrap();
         let c = b[i];
         // where the shell reads commands (not inside quotes or an expansion)
         let code = matches!(ctx, Ctx::Plain | Ctx::Subst(_));
+        if let Some((depth, started)) = dup {
+            if stack.len() < depth || (stack.len() == depth && matches!(c, b'\n' | b'\r' | b';' | b'&' | b'|' | b'(' | b')' | b'<' | b'>')) {
+                dup = None;
+            } else if stack.len() == depth && matches!(c, b' ' | b'\t') {
+                if started {
+                    dup = None;
+                }
+            } else {
+                dup = Some((depth, true));
+            }
+        }
         // `\{path}`: the backslash would then sit right before the opening quote of the value
         if c == b'\\' && ctx != Ctx::Single {
             if let Some(w) = placeholder_at(i + 1) {
                 return Err(format!("{{{w}}} comes right after a backslash. Take the backslash away: it would undo Kybl's quoting of the file name."));
             }
+            // a line continuation inside a word joins two pieces the scan reads apart (`$\⏎'`)
+            if b.get(i + 1) == Some(&b'\n') && i > 0 && !blank(b[i - 1]) && b.get(i + 2).is_some_and(|&x| !blank(x)) {
+                unsure = true;
+            }
+            // dash and ash end `$'…'` at `\'` (no ANSI-C quoting there)
+            if ctx == Ctx::AnsiC && b.get(i + 1) == Some(&b'\'') {
+                unsure = true;
+            }
+        }
+        // bash 3.2 ends `$( … )` at the first `)` of a `${ … }` in it
+        if c == b')' && stack.iter().position(|c| matches!(c, Ctx::Subst(_))).is_some_and(|s| stack[s..].iter().any(|c| matches!(c, Ctx::Brace(_)))) {
+            unsure = true;
         }
         if code && b[i..].starts_with(b"<<") && !b[i..].starts_with(b"<<<") && !(i > 0 && b[i - 1] == b'<') {
             heredoc = true;
         }
+        if code && matches!(c, b'>' | b'<') && b.get(i + 1) == Some(&b'&') {
+            dup = Some((stack.len(), false));
+            i += 2;
+            continue;
+        }
         if code && c == b'#' {
             if word_start(i) {
+                // bash 3.2 finds the end of `$( … )` by counting parentheses, comments included
+                if stack.iter().any(|c| matches!(c, Ctx::Subst(_))) {
+                    unsure = true;
+                }
                 // a comment, to the end of the line: a value with a line break would end it
                 let end = b[i..].iter().position(|&x| x == b'\n').map_or(b.len(), |n| i + n);
                 if let Some(w) = (i..end).find_map(|j| if b[j] == b'{' { placeholder_at(j) } else { None }) {
@@ -221,8 +259,14 @@ pub fn check_template(template: &str) -> Result<(), String> {
                 if stack.iter().any(|c| matches!(c, Ctx::Arith(_) | Ctx::ArithSq(_))) {
                     return Err(format!("{{{w}}} is inside arithmetic ($(( … )) or (( … ))). Use it outside: in there a file name could run as a command."));
                 }
+                if dup.is_some() {
+                    return Err(format!("{{{w}}} comes after >& or <&. Use > or < there instead: after >& some shells (bash on macOS) read the file name again as code."));
+                }
                 if unsure {
-                    return Err(format!("{{{w}}} comes after a part shells read differently (a # inside a word, or case inside $( … )). Put it before that part, or rewrite it."));
+                    return Err(format!("{{{w}}} comes after a part shells read differently (a # inside a word, case or a comment inside $( … ), a line break inside a word…). Put it before that part, or rewrite it."));
+                }
+                if let Some(why) = operand_problem(template, i) {
+                    return Err(format!("{{{w}}} {why}"));
                 }
             }
         }
@@ -241,6 +285,8 @@ pub fn check_template(template: &str) -> Result<(), String> {
                 _ => None,
             }
         };
+        // `$$`, `$#`, `$?`, `$1`…: a whole parameter, so a `$(` or `$'` right after it is not one
+        let special = c == b'$' && b.get(i + 1).is_some_and(|x| b"$#?!-@*".contains(x) || x.is_ascii_digit());
         match ctx {
             Ctx::Single => {
                 if c == b'\'' {
@@ -262,6 +308,7 @@ pub fn check_template(template: &str) -> Result<(), String> {
                 b'"' => {
                     stack.pop();
                 }
+                _ if special => i += 1,
                 _ => {
                     if let Some((next, len)) = opens(true) {
                         stack.push(next);
@@ -270,7 +317,7 @@ pub fn check_template(template: &str) -> Result<(), String> {
                 }
             },
             Ctx::Plain | Ctx::Subst(_) | Ctx::Brace(_) | Ctx::Arith(_) | Ctx::ArithSq(_) => {
-                if c == b'\\' {
+                if c == b'\\' || special {
                     i += 1;
                 } else if let Some((next, len)) = opens(false) {
                     stack.push(next);
@@ -306,6 +353,58 @@ pub fn check_template(template: &str) -> Result<(), String> {
         i += 1;
     }
     Ok(())
+}
+
+/// Builtins that read their operand as code: an arithmetic expression, a variable name with an
+/// array index (`x[$(cmd)]`), or a command. Quoting can't help there, the value itself is read.
+const CODE_BUILTINS: [&str; 9] = ["let", "eval", "trap", "read", "unset", "compgen", "complete", "mapfile", "readarray"];
+/// Builtins whose operands are variable names (an `x[$(cmd)]` there runs), unless given as `name=value`.
+const NAME_BUILTINS: [&str; 6] = ["declare", "typeset", "local", "export", "readonly", "integer"];
+/// Test operators that read both sides as numbers (ksh and `[[` evaluate them as arithmetic).
+const NUMERIC_TESTS: [&str; 6] = ["-eq", "-ne", "-lt", "-le", "-gt", "-ge"];
+
+/// Why the placeholder at byte `at` goes where a builtin reads its value as code (the rest of the
+/// error after the placeholder's name), or None. A best effort on the plain words of the command
+/// it is in (from the last `;`, `&`, `|`, line break, `(`, `)` or backtick): `let`, `read`, `trap`,
+/// `eval` and the like, a variable name for `declare`/`export`/…, `printf -v`, `[[`/`[`/`test`
+/// with a numeric comparison or `-v`, and an array index (`a[{name}]`). Mirrored in templateCheck.ts.
+fn operand_problem(template: &str, at: usize) -> Option<&'static str> {
+    let b = template.as_bytes();
+    let sep = |x: &u8| matches!(x, b';' | b'&' | b'|' | b'\n' | b'(' | b')' | b'`');
+    let start = b[..at].iter().rposition(sep).map_or(0, |p| p + 1);
+    let end = b[at..].iter().position(sep).map_or(b.len(), |p| at + p);
+    let before = &template[start..at];
+    let words: Vec<&str> = before.split_ascii_whitespace().collect();
+    // the part of the placeholder's own word before it ("" when it starts a word), and the word before
+    let glued = !before.is_empty() && !before.ends_with(|c: char| c.is_ascii_whitespace());
+    let cur = if glued { words.last().copied().unwrap_or("") } else { "" };
+    let done = &words[..words.len() - glued as usize];
+    let prev = done.last().copied().unwrap_or("");
+    // the command: the first word after keywords, prefixes and `NAME=value` assignments
+    let assignment = |w: &str| w.find('=').is_some_and(|e| e > 0 && w[..e].bytes().all(|x| x.is_ascii_alphanumeric() || x == b'_'));
+    const LEAD: [&str; 14] = ["!", "{", "time", "command", "builtin", "exec", "nohup", "then", "do", "else", "elif", "if", "while", "until"];
+    let cmd = done.iter().copied().find(|w| !LEAD.contains(w) && !assignment(w)).unwrap_or("");
+    let code = "goes where the shell reads the value as code (let, read, trap, eval, -eq, an array index…), and a file name could run there. Pass it as a plain argument instead.";
+    if CODE_BUILTINS.contains(&cmd) {
+        return Some(code);
+    }
+    if NAME_BUILTINS.contains(&cmd) && !cur.contains('=') {
+        return Some(code);
+    }
+    if cmd == "printf" && prev == "-v" {
+        return Some(code);
+    }
+    if matches!(cmd, "[[" | "[" | "test") {
+        let all = template[start..end].split_ascii_whitespace();
+        if prev == "-v" || prev == "-R" || all.clone().any(|w| NUMERIC_TESTS.contains(&w)) {
+            return Some(code);
+        }
+    }
+    // an unclosed `[` in its own word: an array index (`a[{name}]=1`)
+    if cur.rfind('[').is_some_and(|o| !cur[o..].contains(']')) {
+        return Some(code);
+    }
+    None
 }
 
 /// The command lines to run: one per item when the template uses `{path}`, `{name}`, `{ext}` or
@@ -565,22 +664,94 @@ mod local {
             .unwrap_or_else(|| "/bin/sh".into())
     }
 
-    /// The user's shell as a login shell (so PATH has Homebrew and the like, as in Terminal).
+    /// The PATH in an `env` listing: its last `PATH=` line, absolute folders only. None when it
+    /// has none.
     #[cfg(unix)]
-    fn shell(line: &str) -> Command {
-        let mut c = Command::new(user_shell(std::env::var("SHELL").ok()));
-        c.args(["-l", "-c", line]);
+    pub fn path_from_env(out: &str) -> Option<String> {
+        let line = out.lines().rev().find_map(|l| l.strip_prefix("PATH="))?;
+        let keep: Vec<&str> = line.split(':').filter(|d| d.starts_with('/')).collect();
+        (!keep.is_empty()).then(|| keep.join(":"))
+    }
+
+    /// The PATH a login of `shell` sets up (fish, nushell, csh…: its config is where Homebrew and
+    /// the like are added), asked once per shell by having it run `env`. None when it couldn't
+    /// say within a few seconds.
+    #[cfg(unix)]
+    pub async fn login_path(shell: &str) -> Option<String> {
+        static PATHS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Option<String>>>> = std::sync::LazyLock::new(Default::default);
+        if let Some(p) = PATHS.lock().unwrap().get(shell) {
+            return p.clone();
+        }
+        // csh and tcsh take -l only on its own
+        let args: &[&str] = if shell.ends_with("csh") { &["-c", "/usr/bin/env"] } else { &["-l", "-c", "/usr/bin/env"] };
+        let out = Command::new(shell).args(args).stdin(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true).output();
+        let path = match tokio::time::timeout(Duration::from_secs(8), out).await {
+            Ok(Ok(o)) => path_from_env(&String::from_utf8_lossy(&o.stdout)),
+            _ => None,
+        };
+        PATHS.lock().unwrap().insert(shell.to_string(), path.clone());
+        path
+    }
+
+    /// The user's shell as a login shell (so PATH has Homebrew and the like, as in Terminal). Any
+    /// other login shell (fish, nushell…): /bin/sh, with the PATH that shell sets up.
+    #[cfg(unix)]
+    async fn shell(line: &str) -> Command {
+        let user = std::env::var("SHELL").ok();
+        let sh = user_shell(user.clone());
+        let mut c = Command::new(&sh);
+        let other = user.filter(|u| *u != sh && u.starts_with('/') && Path::new(u).exists());
+        match other {
+            Some(u) => match login_path(&u).await {
+                // not a login sh: its profile (path_helper on a Mac) would reorder that PATH
+                Some(path) => {
+                    c.args(["-c", line]).env("PATH", path);
+                }
+                None => {
+                    let mut path = std::env::var("PATH").unwrap_or_default();
+                    for d in ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"] {
+                        if !path.split(':').any(|p| p == d) {
+                            path = if path.is_empty() { d.to_string() } else { format!("{path}:{d}") };
+                        }
+                    }
+                    c.args(["-l", "-c", line]).env("PATH", path);
+                }
+            },
+            None => {
+                c.args(["-l", "-c", line]);
+            }
+        }
         // its own process group, so Stop ends what it started too
         c.process_group(0);
         c
     }
 
-    /// Windows: the sh that Git for Windows installs (the quoting is POSIX).
+    /// Windows: the sh that Git for Windows installs (the quoting is POSIX), with no console
+    /// window of its own.
     #[cfg(windows)]
-    fn shell(line: &str) -> Command {
+    async fn shell(line: &str) -> Command {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let mut c = Command::new("sh");
         c.args(["-c", line]);
+        c.creation_flags(CREATE_NO_WINDOW);
         c
+    }
+
+    /// Windows has no process groups: the shell and everything it started, ended at once.
+    #[cfg(windows)]
+    fn kill_tree(child: &tokio::process::Child) {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        use std::os::windows::process::CommandExt;
+        if let Some(pid) = child.id() {
+            let exe = std::env::var("SystemRoot").map_or_else(|_| r"C:\Windows\System32\taskkill.exe".to_string(), |r| format!(r"{r}\System32\taskkill.exe"));
+            let _ = std::process::Command::new(exe)
+                .args(["/T", "/F", "/PID", &pid.to_string()])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(CREATE_NO_WINDOW)
+                .status();
+        }
     }
 
     #[cfg(unix)]
@@ -594,6 +765,8 @@ mod local {
     fn terminate(child: &mut tokio::process::Child, hard: bool) {
         #[cfg(unix)]
         signal(child, if hard { libc::SIGKILL } else { libc::SIGTERM });
+        #[cfg(windows)]
+        kill_tree(child);
         #[cfg(not(unix))]
         let _ = hard;
         if hard || cfg!(not(unix)) {
@@ -628,7 +801,7 @@ mod local {
 
     /// Runs one command line in `dir`: (exit code, stopped).
     pub async fn run(line: &str, dir: &str, cancel: &AtomicBool, mut on_data: impl FnMut(bool, &[u8])) -> Result<(Option<i32>, bool), String> {
-        let mut cmd = shell(line);
+        let mut cmd = shell(line).await;
         if !dir.is_empty() && Path::new(dir).is_dir() {
             cmd.current_dir(dir);
         }
@@ -816,6 +989,38 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Round-5 holes, each refused now, checked against the shells that read them that way when
+    /// they are installed: `$$(`, `$'…\'…'` in dash, `>&word` in bash 3.2, `)` in `${ … }`
+    /// inside `$( … )` in bash 3.2, and builtins that read their operand as code.
+    #[cfg(unix)]
+    #[test]
+    fn round5_refusals_really_run_names() {
+        let dir = std::env::temp_dir().join(format!("kybl-tpl5-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("pwned");
+        // relative: `{name}` is the last part of the path (run in `dir`)
+        let (subst, index) = ("x$(touch pwned)y", "x[$(touch pwned)]");
+        let bash3 = std::process::Command::new("/bin/bash").arg("-c").arg("echo $BASH_VERSION").output().is_ok_and(|o| o.stdout.starts_with(b"3."));
+        let cases: Vec<(&str, &str, Vec<&str>)> = vec![
+            (r#"echo "$$(echo {name})""#, subst, vec!["/bin/bash", "/bin/zsh", "/bin/dash"]),
+            (r"echo $'it\'s' {name} '", subst, vec!["/bin/dash"]),
+            ("echo hi >&{name}", subst, if bash3 { vec!["/bin/bash"] } else { vec![] }),
+            (r#"echo "$(echo ${x:-)} {name})""#, subst, if bash3 { vec!["/bin/bash"] } else { vec![] }),
+            ("[[ 5 -eq {name} ]]", index, vec!["/bin/bash"]),
+            ("let n={name}", index, vec!["/bin/bash"]),
+        ];
+        for (t, name, shells) in cases {
+            assert!(check_template(t).is_err(), "{t}");
+            for sh in shells.into_iter().filter(|p| std::path::Path::new(p).exists()) {
+                let _ = std::fs::remove_file(&marker);
+                let line = expand(t, &[item(&format!("{}/{name}", dir.display()))], &dir.to_string_lossy(), false).remove(0);
+                let _ = std::process::Command::new(sh).arg("-c").arg(&line).current_dir(&dir).stderr(std::process::Stdio::null()).output().unwrap();
+                assert!(marker.exists(), "{sh}: {t} did not run the name, the test is stale");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Server scripts never carry a line break or control character (csh would end the command
     /// there, see `plain_text`), and run with an absolute-only PATH.
     #[test]
@@ -858,6 +1063,23 @@ mod tests {
             let out = std::process::Command::new("/bin/sh").arg("-c").arg(&cmd).env("PATH", none).output().unwrap();
             assert_eq!(String::from_utf8_lossy(&out.stdout), "/usr/bin:/bin", "{none:?}");
         }
+    }
+
+    /// A login shell that isn't POSIX (fish, nushell, csh) still hands its PATH to the /bin/sh
+    /// that runs the line (B6-1): Homebrew's tools stay found.
+    #[cfg(all(unix, desktop))]
+    #[test]
+    fn other_login_shells_keep_their_path() {
+        assert_eq!(local::path_from_env("motd PATH=/x\nHOME=/h\nPATH=/opt/homebrew/bin:.:bin:/usr/bin\n").as_deref(), Some("/opt/homebrew/bin:/usr/bin"));
+        assert_eq!(local::path_from_env("HOME=/h\n"), None);
+        assert_eq!(local::path_from_env("PATH=.:rel\n"), None);
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            for sh in ["/bin/zsh", "/bin/tcsh", "/opt/homebrew/bin/fish", "/usr/local/bin/fish", "/usr/bin/fish"].into_iter().filter(|p| std::path::Path::new(p).exists()) {
+                let p = local::login_path(sh).await.unwrap_or_else(|| panic!("{sh} gave no PATH"));
+                assert!(p.split(':').any(|d| d == "/usr/bin" || d == "/bin"), "{sh}: {p}");
+            }
+        });
     }
 
     /// Only a POSIX `$SHELL` runs an action line: csh expands `!#` inside single quotes, and

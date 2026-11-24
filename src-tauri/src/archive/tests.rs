@@ -212,12 +212,39 @@ fn tar_gz_open_stays_within_free_space() {
     let len = std::fs::metadata(&p).unwrap().len();
     let work = s.0.join("work");
     // 4 MB free: 2 MB may be used, the 8 MB tar doesn't fit
-    let err = super::index::gunzip_with(&p, &work, len, Some(4 << 20), &no()).err().expect("refused");
+    let err = super::index::gunzip_with(&p, &work, len, Some(4 << 20), &no(), &|_| {}).err().expect("refused");
     assert!(err.to_string().contains("free disk space"), "{err}");
     assert_eq!(std::fs::read_dir(&work).unwrap().count(), 0, "the partial file stayed");
     // plenty of room: it opens
-    assert!(super::index::gunzip_with(&p, &work, len, Some(1 << 40), &no()).is_ok());
+    assert!(super::index::gunzip_with(&p, &work, len, Some(1 << 40), &no(), &|_| {}).is_ok());
     assert!(super::index::free_space(&s.0).is_some_and(|f| f > 0) || cfg!(not(any(unix, windows))));
+}
+
+/// Opening a .tar.gz says how far the unpack is, and Stop ends it with nothing left behind
+/// (round-5 B6-5).
+#[test]
+fn tar_gz_open_reports_progress_and_stops() {
+    let s = Scratch::new();
+    let p = s.0.join("big.tar.gz");
+    let mut gz = flate2::write::GzEncoder::new(std::fs::File::create(&p).unwrap(), flate2::Compression::fast());
+    gz.write_all(&vec![7u8; 4 << 20]).unwrap();
+    gz.finish().unwrap();
+    let len = std::fs::metadata(&p).unwrap().len();
+    let work = s.0.join("work");
+    let cancel = AtomicBool::new(false);
+    let seen = std::sync::Mutex::new(Vec::new());
+    let err = super::index::gunzip_with(&p, &work, len, None, &cancel, &|n| {
+        seen.lock().unwrap().push(n);
+        if n >= 1 << 20 {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    })
+    .err()
+    .expect("stopped");
+    assert_eq!(err.kind(), std::io::ErrorKind::Interrupted);
+    let seen = seen.into_inner().unwrap();
+    assert!(seen.len() > 1 && seen.windows(2).all(|w| w[0] < w[1]), "{seen:?}");
+    assert_eq!(std::fs::read_dir(&work).unwrap().count(), 0, "the partial file stayed");
 }
 
 #[tokio::test]
@@ -463,19 +490,19 @@ impl FakeServer {
         std::fs::create_dir_all(s.0.join("bin")).unwrap();
         let slow = r#"[ -n "$SLOW" ] && { echo $$ > "$PIDFILE"; exec sleep 30; }"#;
         // what "unpacking" leaves: a file `ok` (set-user-ID with SUID), plus a FIFO with FIFO
-        let made = |d: &str| format!(": > \"{d}/ok\"\n[ -n \"$SUID\" ] && chmod 4755 \"{d}/ok\"\n[ -n \"$FIFO\" ] && mkfifo \"{d}/pipe\"\nexit 0\n");
+        let made = |d: &str| format!(": > \"{d}/ok\"\n[ -n \"$SUID\" ] && chmod 4755 \"{d}/ok\"\n[ -n \"$WW\" ] && chmod 777 \"{d}/ok\" \"{d}\"\n[ -n \"$FIFO\" ] && mkfifo \"{d}/pipe\"\nexit 0\n");
         let tools = [
             (
                 "unzip",
                 format!(
-                    "case \"$1\" in\n-Z) [ -n \"$FAIL\" ] && exit 9; echo 'Archive:  a'; echo 'Zip file size: 9 bytes, number of entries: 1'; echo \"${{MODE:--rw-r--r--}}  3.0 unx 2 tx stor 24-Jan-01 00:00 x\"; echo '1 file, 2 bytes uncompressed, 2 bytes compressed:  0.0%'; exit 0;;\n-Z1) [ -n \"$FAIL\" ] && exit 9; printf '%s\\n' \"$N\"; exit 0;;\nesac\n{slow}\n{}",
+                    "case \"$1\" in\n-Z) [ -n \"$FAIL\" ] && exit 9; [ -n \"$RECORD\" ] && echo \"$2\" >> \"$RECORD\"; echo 'Archive:  a'; echo 'Zip file size: 9 bytes, number of entries: 1'; echo \"${{MODE:--rw-r--r--}}  3.0 unx 2 tx stor 24-Jan-01 00:00 x\"; echo '1 file, 2 bytes uncompressed, 2 bytes compressed:  0.0%'; exit 0;;\n-Z1) [ -n \"$FAIL\" ] && exit 9; printf '%s\\n' \"$N\"; exit 0;;\nesac\n{slow}\n{}",
                     made("$5")
                 ),
             ),
             (
                 "tar",
                 format!(
-                    "case \"$1\" in\n-tvf) [ -n \"$FAIL\" ] && exit 9; echo \"${{MODE:--rw-r--r--}}  0 0 0 2 Jan  1  2024 x\"; exit 0;;\n-tf) [ -n \"$FAIL\" ] && exit 9; printf '%s\\n' \"$N\"; exit 0;;\nesac\n{slow}\n{}",
+                    "case \"$1\" in\n-tvf) [ -n \"$FAIL\" ] && exit 9; [ -n \"$RECORD\" ] && echo \"$2\" >> \"$RECORD\"; echo \"${{MODE:--rw-r--r--}}  0 0 0 2 Jan  1  2024 x\"; exit 0;;\n-tf) [ -n \"$FAIL\" ] && exit 9; printf '%s\\n' \"$N\"; exit 0;;\nesac\n{slow}\n{}",
                     made("$4")
                 ),
             ),
@@ -497,6 +524,10 @@ impl FakeServer {
     fn start(&self, sh: &str, script: &str, env: &[(&str, &str)]) -> std::process::Child {
         use std::os::unix::process::CommandExt;
         std::fs::create_dir_all(self.dir()).unwrap();
+        // the archives the scripts are given (copied before they are read)
+        for a in ["a", "it's a"] {
+            std::fs::write(format!("{}/{a}", self.dir()), b"archive").unwrap();
+        }
         let mut c = std::process::Command::new(sh);
         c.arg("-c").arg(script).env("PATH", format!("{}:/usr/bin:/bin", self.s.0.join("bin").display())).env("PIDFILE", self.s.0.join("pid")).process_group(0);
         c.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
@@ -583,12 +614,15 @@ fn server_unpack_keeps_only_plain_files() {
     let script = |format| remote::extract_script(&format!("{}/a", f.dir()), format, &f.dir(), "out");
     for sh in shells() {
         for format in [Format::Zip, Format::Tar] {
-            for mode in ["lrwxrwxrwx", "hrw-r--r--", "crw-rw-rw-", "brw-rw----", "prw-r--r--", "srwxr-xr-x", "?rw-r--r--"] {
+            // "?": a zip entry with no type bits (Python's writestr), unzipped as a plain file (B6-3)
+            let special: &[&str] = if format == Format::Zip { &[] } else { &["?rw-r--r--"] };
+            for mode in ["lrwxrwxrwx", "hrw-r--r--", "crw-rw-rw-", "brw-rw----", "prw-r--r--", "srwxr-xr-x"].iter().chain(special) {
                 let _ = std::fs::remove_dir_all(&out);
                 assert_eq!(f.run(sh, &script(format), &[("N", "x"), ("MODE", mode)]), Some(125), "{sh} {format:?} {mode}");
                 assert!(!Path::new(&out).exists());
             }
-            for mode in ["-rw-r--r--", "drwxr-xr-x"] {
+            let plain: &[&str] = if format == Format::Zip { &["?rw-------"] } else { &[] };
+            for mode in ["-rw-r--r--", "drwxr-xr-x"].iter().chain(plain) {
                 let _ = std::fs::remove_dir_all(&out);
                 assert_eq!(f.run(sh, &script(format), &[("N", "x"), ("MODE", mode)]), Some(0), "{sh} {format:?} {mode}");
             }
@@ -602,6 +636,20 @@ fn server_unpack_keeps_only_plain_files() {
             let m = std::fs::metadata(format!("{out}/ok")).unwrap().permissions().mode();
             assert_eq!(m & 0o6000, 0, "{sh} {format:?}: {m:o}");
             assert!(f.leftovers().is_empty(), "{:?}", f.leftovers());
+            // nothing comes out writable by others (S1-10)
+            let _ = std::fs::remove_dir_all(&out);
+            assert_eq!(f.run(sh, &script(format), &[("N", "x"), ("WW", "1")]), Some(0), "{sh} {format:?}");
+            for p in [format!("{out}/ok"), out.clone()] {
+                let m = std::fs::metadata(&p).unwrap().permissions().mode();
+                assert_eq!(m & 0o022, 0, "{sh} {format:?} {p}: {m:o}");
+            }
+            // only a private copy of the archive is listed (S1-8): never the path others can swap
+            let rec = f.s.0.join("record");
+            let _ = std::fs::remove_file(&rec);
+            let _ = std::fs::remove_dir_all(&out);
+            assert_eq!(f.run(sh, &script(format), &[("N", "x"), ("RECORD", &rec.to_string_lossy())]), Some(0), "{sh} {format:?}");
+            let read = std::fs::read_to_string(&rec).unwrap();
+            assert!(read.lines().all(|l| l.contains("/.kybl-extract-") && l.ends_with("/a")), "{read}");
         }
     }
 }
@@ -778,4 +826,23 @@ async fn picked_items_with_unsafe_names_are_left_out_of_the_zip() {
     let names: Vec<&str> = plan.iter().map(|i| i.name.as_str()).collect();
     assert_eq!(names, vec!["ok.txt"]);
     assert_eq!(left_out, vec!["..\\..\\run.bat".to_string(), "C:evil/".to_string()]);
+}
+
+/// A server whose login shell can't start /bin/sh (rbash and the like) makes the scripts end
+/// before their first line: that is "can't here" (the app's own path), not an unpack error (B6-7).
+#[test]
+fn a_script_that_never_started_falls_back() {
+    assert!(remote::never_started(Some(1), b""));
+    assert!(remote::never_started(None, b"rbash: /bin/sh: restricted\n"));
+    assert!(!remote::never_started(Some(1), b"motd\nkybl:started\r\n"));
+    assert!(!remote::never_started(Some(0), b""));
+    #[cfg(unix)]
+    if Path::new("/bin/bash").exists() {
+        let cmd = crate::actions::sh_c(&remote::marked("exit 3")).unwrap();
+        let out = std::process::Command::new("/bin/bash").arg("-r").arg("-c").arg(&cmd).output().unwrap();
+        assert!(remote::never_started(out.status.code().map(|c| c as u32), &out.stdout), "{out:?}");
+        let out = std::process::Command::new("/bin/bash").arg("-c").arg(&cmd).output().unwrap();
+        assert_eq!(out.status.code(), Some(3));
+        assert!(!remote::never_started(Some(3), &out.stdout));
+    }
 }

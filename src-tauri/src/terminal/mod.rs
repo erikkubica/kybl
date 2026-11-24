@@ -115,6 +115,20 @@ pub fn cd_line(dir: &str) -> Option<String> {
     })
 }
 
+/// The `cd` line for a fresh shell on `backend`'s server, only when its login shell is known to
+/// read the quoting as Kybl writes it (POSIX shells, fish, csh; asked once per server, see
+/// storage/sftp/command.rs). On cmd.exe or PowerShell (Windows OpenSSH) a folder name such as
+/// `x&calc&y` would run as a command, so nothing is typed there, nor when the server doesn't say.
+pub(crate) async fn remote_cd(backend: &crate::storage::sftp::SftpBackend, dir: &str) -> Option<String> {
+    use crate::storage::sftp::command::{for_csh, Shell};
+    let line = cd_line(dir)?;
+    match tokio::time::timeout(Duration::from_secs(10), backend.login_shell()).await {
+        Ok(Ok(Shell::Posix)) => Some(line),
+        Ok(Ok(Shell::Csh)) => Some(for_csh(&line)),
+        _ => None,
+    }
+}
+
 /// LANG for a shell: the app's own, or on a Mac one made from the system's region (an app started
 /// from the Dock has none), when the system has that locale; else a UTF-8 default.
 fn lang() -> String {
@@ -198,9 +212,10 @@ pub async fn terminal_open<R: Runtime>(
         let backend = registry::sftp_for(&app, &state, &profile_id).await?;
         let base = backend.shell_dir("")?;
         let dir = backend.shell_dir(&prefix)?;
+        let cd = remote_cd(&backend, &dir).await;
         let (handle, ch) = backend.open_shell(cols as u32, rows as u32, Some(&lang())).await?;
         remote_base = Some(base);
-        tokio::spawn(run_ssh(handle, ch, cd_line(&dir), cmd_rx, out_tx, exit_tx)).abort_handle()
+        tokio::spawn(run_ssh(handle, ch, cd, cmd_rx, out_tx, exit_tx)).abort_handle()
     };
 
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
@@ -532,6 +547,29 @@ mod tests {
     struct FakeShell {
         line: String,
         channels: Vec<russh::Channel<russh::server::Msg>>,
+        /// what an exec channel prints (the login shell probe's answer)
+        probe: &'static str,
+    }
+
+    /// A [`FakeShell`] server on a free port, answering the shell probe with `probe`: (port, host key fingerprint).
+    async fn fake_server(probe: &'static str) -> (u16, String) {
+        use russh::keys::{ssh_key::private::Ed25519Keypair, HashAlg, PrivateKey};
+        let key = PrivateKey::from(Ed25519Keypair::from_seed(&[9; 32]));
+        let fp = key.public_key().fingerprint(HashAlg::Sha256).to_string();
+        let config = Arc::new(russh::server::Config { keys: vec![key], auth_rejection_time: Duration::from_millis(10), ..Default::default() });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                let config = config.clone();
+                tokio::spawn(async move {
+                    if let Ok(s) = russh::server::run_stream(config, tcp, FakeShell { line: String::new(), channels: vec![], probe }).await {
+                        let _ = s.await;
+                    }
+                });
+            }
+        });
+        (port, fp)
     }
 
     impl russh::server::Handler for FakeShell {
@@ -549,6 +587,32 @@ mod tests {
         ) -> Result<(), Self::Error> {
             self.channels.push(channel);
             reply.accept().await;
+            Ok(())
+        }
+
+        /// SFTP (the connection the shell probe runs on), answering every stat with a folder
+        #[cfg(unix)]
+        async fn subsystem_request(&mut self, id: russh::ChannelId, name: &str, session: &mut russh::server::Session) -> Result<(), Self::Error> {
+            match (self.channels.iter().position(|c| c.id() == id), name) {
+                (Some(i), "sftp") => {
+                    let ch = self.channels.remove(i);
+                    session.channel_success(id)?;
+                    tokio::spawn(russh_sftp::server::run(ch.into_stream(), crate::devtools::content::sftp_tests::Files));
+                }
+                _ => session.channel_failure(id)?,
+            }
+            Ok(())
+        }
+
+        async fn exec_request(&mut self, channel: russh::ChannelId, _data: &[u8], session: &mut russh::server::Session) -> Result<(), Self::Error> {
+            session.channel_success(channel)?;
+            let (handle, probe) = (session.handle(), self.probe);
+            tokio::spawn(async move {
+                let _ = handle.data(channel, probe.as_bytes().to_vec()).await;
+                let _ = handle.exit_status_request(channel, 0).await;
+                let _ = handle.eof(channel).await;
+                let _ = handle.close(channel).await;
+            });
             Ok(())
         }
 
@@ -589,32 +653,18 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_remote_shell_goes_to_the_folder_takes_input_and_reports_its_exit() {
         use crate::state::NetConfig;
         use crate::storage::{net::Secrets, sftp::SftpBackend};
-        use russh::keys::{ssh_key::private::Ed25519Keypair, HashAlg, PrivateKey};
-        use std::time::Duration;
         let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
         rt.block_on(async {
-            let key = PrivateKey::from(Ed25519Keypair::from_seed(&[9; 32]));
-            let fp = key.public_key().fingerprint(HashAlg::Sha256).to_string();
-            let config = Arc::new(russh::server::Config { keys: vec![key], auth_rejection_time: Duration::from_millis(10), ..Default::default() });
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let port = listener.local_addr().unwrap().port();
-            tokio::spawn(async move {
-                while let Ok((tcp, _)) = listener.accept().await {
-                    let config = config.clone();
-                    tokio::spawn(async move {
-                        if let Ok(s) = russh::server::run_stream(config, tcp, FakeShell { line: String::new(), channels: vec![] }).await {
-                            let _ = s.await;
-                        }
-                    });
-                }
-            });
+            let (port, fp) = fake_server("motd\r\nkybl'sh a!#b c\\!d\r\n").await;
             let cfg = NetConfig { host: "127.0.0.1".into(), port, user: "me".into(), host_key: Some(fp), base_path: "/srv/My Site".into(), ..Default::default() };
             let b = SftpBackend::new(&cfg, Secrets { password: Some("pw".into()), ssh: None }).unwrap();
-            let cd = cd_line(&b.shell_dir("sub/").unwrap());
+            let cd = remote_cd(&b, &b.shell_dir("sub/").unwrap()).await;
+            assert_eq!(cd.as_deref(), Some(" cd '/srv/My Site/sub'"));
             let (handle, ch) = b.open_shell(80, 24, Some("en_US.UTF-8")).await.unwrap();
             let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
             let (out_tx, mut out_rx) = mpsc::channel(batch::QUEUE);
@@ -633,6 +683,28 @@ mod tests {
             cmd_tx.send(Cmd::Write(b"exit\r".to_vec())).unwrap();
             let code = tokio::time::timeout(Duration::from_secs(10), exit_rx).await.unwrap().unwrap();
             assert_eq!(code, Some(7));
+        });
+    }
+
+    /// A server whose login shell isn't a Unix one (cmd.exe, PowerShell on Windows OpenSSH) gets no
+    /// `cd` typed: a folder named `x&calc&y` would run there (S1-7). csh gets its `!` escaped.
+    #[cfg(unix)]
+    #[test]
+    fn no_cd_is_typed_into_a_shell_that_isnt_known() {
+        use crate::state::NetConfig;
+        use crate::storage::{net::Secrets, sftp::SftpBackend};
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            for (probe, want) in [
+                // cmd.exe echoes the quotes back as they are
+                ("'kybl'\\''sh' 'a!#b' 'c\\!d'\r\n", None),
+                ("kybl'sh a<words>b c!d\r\n", Some(r" cd '/srv/My Site/x&calc&y/a\!b'")),
+            ] {
+                let (port, fp) = fake_server(probe).await;
+                let cfg = NetConfig { host: "127.0.0.1".into(), port, user: "me".into(), host_key: Some(fp), base_path: "/srv/My Site".into(), ..Default::default() };
+                let b = SftpBackend::new(&cfg, Secrets { password: Some("pw".into()), ssh: None }).unwrap();
+                assert_eq!(remote_cd(&b, &b.shell_dir("x&calc&y/a!b/").unwrap()).await.as_deref(), want, "{probe:?}");
+            }
         });
     }
 

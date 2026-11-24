@@ -94,7 +94,8 @@ export type ExtractJob = {
 };
 
 export const archiveApi = {
-  open: (profileId: string, root: string, key: string, local: string | null) => invoke<ArchiveInfo>("archive_open", { profileId, root, key, local }),
+  /** `opId`: `cancel_transfer` with it stops the open; `archive-open-progress` events say how much of a .tar.gz is unpacked. */
+  open: (profileId: string, root: string, key: string, local: string | null, opId?: string) => invoke<ArchiveInfo>("archive_open", { profileId, root, key, local, opId: opId ?? null }),
   extract: (id: string, job: ExtractJob) => invoke<void>("archive_extract", { id, job }),
   compress: (id: string, job: { profileId: string; root: string; items: string[]; destKey: string }) => invoke<void>("archive_compress", { id, job }),
 };

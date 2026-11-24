@@ -53,47 +53,51 @@ pub fn compress_script(dir: &str, names: &[String], dest: &str) -> String {
 }
 
 /// The script that unpacks `archive` into `dir`/`folder` (made if missing; merged into when
-/// there, replacing files of the same names), through a temporary folder next to it. Refuses
-/// archives with anything but plain files and folders (links, devices, FIFOs), absolute names or
-/// `..` (exit [`UNSAFE`]), and archives it can't list (a listing that fails proves nothing about
-/// the entries). Set-user-ID and set-group-ID bits are never kept (the account may be root).
+/// there, replacing files of the same names), through a temporary folder next to it that only
+/// this account can enter. The archive is copied in there first and only that copy is listed and
+/// unpacked, so nobody can swap it between the check and the unpack. Refuses archives with
+/// anything but plain files and folders (links, devices, FIFOs), absolute names or `..` (exit
+/// [`UNSAFE`]), and archives it can't list (a listing that fails proves nothing about the
+/// entries). Set-user-ID and set-group-ID bits are never kept (the account may be root), and
+/// nothing comes out writable by the group or others.
 pub fn extract_script(archive: &str, format: Format, dir: &str, folder: &str) -> String {
     let tmp = format!("{}/.kybl-extract-{}", dir.trim_end_matches('/'), tag());
     let target = format!("{}/{folder}", dir.trim_end_matches('/'));
     // the listing is kept first, so a lister that fails stops the unpack
     let listed = |list: &str, filter: &str, pattern: &str| format!("L=$({list} 2>/dev/null) || exit {UNSAFE}; printf '%s\\n' \"$L\" {filter}| grep -Eq {pattern} && exit {UNSAFE}");
-    // the mode column of a listing: only "-" (a file) and "d" (a folder) may start an entry line
-    let only_files = "'^[^-d]'";
     let (need, check, unpack) = match format {
         Format::Zip => (
             "unzip",
             // zipinfo: an entry line starts with its mode (header and totals lines left out);
-            // then every name
+            // "-" a file, "d" a folder, "?" an entry with no type bits (Python's writestr), which
+            // unzip writes as a plain file; then every name
             format!(
                 "{}; {}",
-                listed("unzip -Z \"$A\"", "| grep -Ev '^(Archive:  |Zip file size: |[0-9]+ files?, )' ", only_files),
+                listed("unzip -Z \"$A\"", "| grep -Ev '^(Archive:  |Zip file size: |[0-9]+ files?, )' ", "'^[^-d?]'"),
                 listed("unzip -Z1 \"$A\"", "", "'(^/|(^|/)\\.\\.(/|$)|^[A-Za-z]:|\\\\)'")
             ),
-            waited("unzip -q -o \"$A\" -d \"$T\""),
+            waited("unzip -q -o \"$A\" -d \"$X\""),
         ),
         Format::Tar | Format::TarGz => {
             let z = if format == Format::TarGz { "z" } else { "" };
             (
                 "tar",
-                format!("{}; {}", listed("tar -tvf \"$A\"", "", only_files), listed("tar -tf \"$A\"", "", "'(^/|(^|/)\\.\\.(/|$)|\\\\)'")),
+                format!("{}; {}", listed("tar -tvf \"$A\"", "", "'^[^-d]'"), listed("tar -tf \"$A\"", "", "'(^/|(^|/)\\.\\.(/|$)|\\\\)'")),
                 format!(
                     "{} || {{ {}; }}",
-                    waited(&format!("tar -x{z}f \"$A\" -C \"$T\" --no-same-owner --no-same-permissions 2>/dev/null")),
-                    waited(&format!("tar -x{z}f \"$A\" -C \"$T\""))
+                    waited(&format!("tar -x{z}f \"$A\" -C \"$X\" --no-same-owner --no-same-permissions 2>/dev/null")),
+                    waited(&format!("tar -x{z}f \"$A\" -C \"$X\""))
                 ),
             )
         }
     };
     format!(
-        "command -v {need} >/dev/null 2>&1 || exit {NO_TOOL}; A={a}; T={t}; D={d}; F={f}; {check}; mkdir -p \"$T\" || exit 1; trap 'rm -rf \"$T\"' EXIT; {stop}; {unpack} || exit 1; \
-         L=$(find \"$T\" ! -type f ! -type d 2>/dev/null) || exit {UNSAFE}; [ -z \"$L\" ] || exit {UNSAFE}; \
-         find \"$T\" -type f \\( -perm -4000 -o -perm -2000 \\) -exec chmod ug-s {{}} + || exit 1; \
-         S=\"$T\"; if [ \"$(ls -A \"$T\")\" = {fname} ] && [ -d \"$T\"/{fname} ]; then S=\"$T\"/{fname}; fi; \
+        "command -v {need} >/dev/null 2>&1 || exit {NO_TOOL}; A={a}; T={t}; D={d}; F={f}; X=\"$T/x\"; \
+         mkdir -m 700 \"$T\" || exit 1; trap 'rm -rf \"$T\"' EXIT; {stop}; {copy} || exit 1; A=\"$T/a\"; \
+         {check}; mkdir \"$X\" || exit 1; {unpack} || exit 1; \
+         L=$(find \"$X\" ! -type f ! -type d 2>/dev/null) || exit {UNSAFE}; [ -z \"$L\" ] || exit {UNSAFE}; \
+         chmod -R u+rwX,go-w,ug-s \"$X\" || exit 1; \
+         S=\"$X\"; if [ \"$(ls -A \"$X\")\" = {fname} ] && [ -d \"$X\"/{fname} ]; then S=\"$X\"/{fname}; fi; \
          if [ ! -e \"$D\" ]; then mv \"$S\" \"$D\" || exit 1; else L=$(find \"$D\" -type l 2>/dev/null) || exit {UNSAFE}; [ -z \"$L\" ] || exit {UNSAFE}; cp -R \"$S\"/. \"$D\"/ || exit 1; fi",
         a = q(archive),
         t = q(&tmp),
@@ -101,19 +105,36 @@ pub fn extract_script(archive: &str, format: Format, dir: &str, folder: &str) ->
         f = q(folder),
         fname = q(folder),
         stop = on_stop("rm -rf \"$T\""),
+        copy = waited("cp -- \"$A\" \"$T/a\""),
     )
 }
 
+/// Printed first by every script, so a run that ended before it got that far (a restricted
+/// shell that can't `exec /bin/sh`, say) is told apart from a tool that failed.
+const STARTED: &str = "kybl:started";
+
+/// Whether a script's end means it never ran at all: it failed and never printed [`STARTED`].
+pub(crate) fn never_started(code: Option<u32>, out: &[u8]) -> bool {
+    code != Some(0) && !String::from_utf8_lossy(out).lines().any(|l| l.trim_end_matches('\r') == STARTED)
+}
+
+/// `script` with the [`STARTED`] line first.
+pub(crate) fn marked(script: &str) -> String {
+    format!("echo {STARTED}; {script}")
+}
+
 /// Runs a script with `sh` over the connection's SSH session (the shared exec helper, see
-/// storage/sftp/command.rs). Ok(None): the server runs no commands for this user.
+/// storage/sftp/command.rs). Ok(None): the server runs no commands for this user, or not this
+/// script (it never started: the other path takes over).
 async fn run(s: &SftpBackend, script: &str, cancel: &AtomicBool) -> SResult<Option<(Option<u32>, String)>> {
     // a name with a line break or another control character: the download/upload path takes it
-    let Some(command) = crate::actions::sh_c(script) else { return Ok(None) };
-    let mut err = Vec::new();
+    let Some(command) = crate::actions::sh_c(&marked(script)) else { return Ok(None) };
+    let (mut out, mut err) = (Vec::new(), Vec::new());
     let end = match s
         .exec(&command, cancel, |is_err, d| {
-            if is_err && err.len() < 64 * 1024 {
-                err.extend_from_slice(d);
+            let buf = if is_err { &mut err } else { &mut out };
+            if buf.len() < 64 * 1024 {
+                buf.extend_from_slice(d);
             }
         })
         .await
@@ -125,6 +146,9 @@ async fn run(s: &SftpBackend, script: &str, cancel: &AtomicBool) -> SResult<Opti
     };
     if end.stopped {
         return Err(StorageError::cancelled());
+    }
+    if never_started(end.code, &out) {
+        return Ok(None);
     }
     Ok(Some((end.code, String::from_utf8_lossy(&err).trim().to_string())))
 }
