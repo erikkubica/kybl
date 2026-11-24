@@ -675,7 +675,8 @@ pub(crate) async fn download_resumable(
                             }
                             // the file changed, or the server sent something else: can't go on
                             Raced::Got(Ok(_)) => return Err(StorageError::from(e)),
-                            Raced::Got(Err(again)) if again.kind == ErrKind::Conflict => return Err(again),
+                            // none of these changes by asking again (a deleted file, a lost sign-in)
+                            Raced::Got(Err(again)) if matches!(again.kind, ErrKind::Conflict | ErrKind::NotFound | ErrKind::PermissionDenied | ErrKind::NeedsAuth) => return Err(again),
                             Raced::Got(Err(_)) | Raced::Stalled => continue,
                             Raced::Stopped => return Ok(false),
                         }

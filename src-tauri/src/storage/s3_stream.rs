@@ -261,7 +261,7 @@ async fn put_part(
         if cancel.load(Ordering::Relaxed) {
             return Ok(None);
         }
-        let r = client
+        let request = client
             .upload_part()
             .bucket(bucket)
             .key(key)
@@ -270,8 +270,12 @@ async fn put_part(
             .content_length(data.len() as i64)
             .content_md5(&md5)
             .body(part_body(data.clone(), sent.clone()))
-            .send()
-            .await;
+            .send();
+        // the body waits out the speed cap between frames; dropping the request ends that wait
+        let r = tokio::select! {
+            r = request => r,
+            _ = wait_cancel(cancel) => return Ok(None),
+        };
         match r {
             Ok(out) => return Ok(Some(out.e_tag().unwrap_or_default().to_string())),
             Err(e) => {
@@ -486,7 +490,7 @@ enum Sent {
     Cancelled,
 }
 
-async fn wait_cancel(cancel: &AtomicBool) {
+pub(crate) async fn wait_cancel(cancel: &AtomicBool) {
     while !cancel.load(Ordering::Relaxed) {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }

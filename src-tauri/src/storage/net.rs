@@ -549,7 +549,7 @@ impl<'a> Meter<'a> {
             (self.progress)(self.done, self.total.unwrap_or(self.done).max(self.done));
             self.last = Instant::now();
         }
-        self.lane.throttle(n).await;
+        self.lane.throttle_unless(n, Some(self.cancel)).await;
     }
 
     pub fn finish(&self) {

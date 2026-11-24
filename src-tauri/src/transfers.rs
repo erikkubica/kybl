@@ -1127,7 +1127,12 @@ async fn spawn_transfer(
                 })
             }
             Ok(_) => {
+                // Record and `ACTIVE` entry go in one step under the `ACTIVE` lock, so `shutdown`
+                // (which checks `ACTIVE` under the same lock) never sees a transfer whose record is
+                // already gone and writes a "paused" one back for a finished file.
+                let mut active = ACTIVE.lock().unwrap();
                 resume::remove(&id);
+                active.remove(&id);
             }
         }
         ACTIVE.lock().unwrap().remove(&id);
@@ -1272,9 +1277,15 @@ pub async fn start_download(
 /// what was kept: the partial download file, the multipart upload or temporary file on the server.
 #[tauri::command]
 pub async fn cancel_transfer(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
-    if let Some(flag) = state.cancels.lock().await.get(&id) {
-        flag.store(true, Ordering::Relaxed);
-        return Ok(());
+    {
+        let cancels = state.cancels.lock().await;
+        if let Some(flag) = cancels.get(&id) {
+            flag.store(true, Ordering::Relaxed);
+            return Ok(());
+        }
+        // Not registered (yet): a listing that started in the same moment would otherwise walk
+        // its whole tree. Noted while the lock is held, so an op registering next sees it.
+        note_early_cancel(&id);
     }
     if let Some(p) = PENDING_DOWNLOADS.lock().unwrap().remove(&id) {
         forget_download(&id, p);
@@ -1287,6 +1298,24 @@ pub async fn cancel_transfer(app: AppHandle, state: State<'_, AppState>, id: Str
         resume::give_up(&app, &s);
     }
     Ok(())
+}
+
+/// Ids cancelled before anything was registered under them, with when. Short-lived: only a
+/// cancel racing the start of an operation is meant to be caught.
+static EARLY_CANCELS: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(Default::default);
+const EARLY_CANCEL_TTL: Duration = Duration::from_secs(10);
+
+fn note_early_cancel(id: &str) {
+    let mut m = EARLY_CANCELS.lock().unwrap();
+    m.retain(|_, at| at.elapsed() < EARLY_CANCEL_TTL);
+    if m.len() < 256 {
+        m.insert(id.to_string(), Instant::now());
+    }
+}
+
+/// Whether `id` was cancelled just before it registered (and forgets it).
+pub fn take_early_cancel(id: &str) -> bool {
+    EARLY_CANCELS.lock().unwrap().remove(id).is_some_and(|at| at.elapsed() < EARLY_CANCEL_TTL)
 }
 
 /// How long Quit waits for running transfers to settle before saving them.

@@ -131,7 +131,20 @@ pub fn norm_prefix(p: &str) -> String {
 /// exist yet can't be resolved, so it is compared as typed.
 pub fn overlaps(a: &str, b: &str) -> bool {
     let (a, b) = (super::local::sync_root(a), super::local::sync_root(b));
+    // Windows paths differ only in case at times (`C:\Docs` and `c:\docs\Sub`): the same tree
+    #[cfg(windows)]
+    let (a, b) = (std::path::PathBuf::from(a.to_string_lossy().to_lowercase()), std::path::PathBuf::from(b.to_string_lossy().to_lowercase()));
     a.starts_with(&b) || b.starts_with(&a)
+}
+
+/// The other saved folder that `m` newly overlaps. An edit that leaves the folder as it was
+/// (a new interval, ignore list or direction) is never refused for an overlap that was already
+/// there: the user picked no folder, and both pairs keep running as before.
+pub fn new_overlap<'a>(mappings: &'a [SyncMapping], m: &SyncMapping) -> Option<&'a SyncMapping> {
+    if !m.id.is_empty() && mappings.iter().any(|o| o.id == m.id && o.local_path == m.local_path) {
+        return None;
+    }
+    mappings.iter().find(|o| o.id != m.id && overlaps(&o.local_path, &m.local_path))
 }
 
 #[cfg(test)]

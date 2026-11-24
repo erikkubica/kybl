@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tokio::sync::{mpsc, Mutex};
 
 use super::{
-    config::{load_config, norm_prefix, overlaps, save_config, Direction, SyncConfig, SyncMapping},
+    config::{load_config, new_overlap, norm_prefix, save_config, Direction, SyncConfig, SyncMapping},
     local::{self, make_watcher, Dirty, Watcher},
     plan::Side,
     runner::{self, Engine, RunResult, Tick},
@@ -506,7 +506,7 @@ async fn save_mapping<R: Runtime>(app: &AppHandle<R>, mgr: &SyncManager, mapping
     // no base, which only merges.
     let (moving, paused_all) = {
         let cfg = mgr.config.lock().await;
-        if let Some(other) = cfg.mappings.iter().find(|o| o.id != m.id && overlaps(&o.local_path, &m.local_path)) {
+        if let Some(other) = new_overlap(&cfg.mappings, &m) {
             return Err(format!("{} is already synced (or inside a synced folder). Pick a different folder.", other.local_path));
         }
         let old = if m.id.is_empty() { None } else { cfg.mappings.iter().find(|o| o.id == m.id && o.places() != m.places()).cloned() };
@@ -528,7 +528,7 @@ async fn save_mapping<R: Runtime>(app: &AppHandle<R>, mgr: &SyncManager, mapping
     };
 
     let changed = change_config(app, mgr, |cfg| {
-        if let Some(other) = cfg.mappings.iter().find(|o| o.id != m.id && overlaps(&o.local_path, &m.local_path)) {
+        if let Some(other) = new_overlap(&cfg.mappings, &m) {
             return Err(format!("{} is already synced (or inside a synced folder). Pick a different folder.", other.local_path));
         }
         let mut reset = false;

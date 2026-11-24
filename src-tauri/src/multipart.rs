@@ -646,16 +646,12 @@ async fn send_part(
             return Ok(None);
         }
         let body = file_body(path, offset, len, sent.clone()).await?;
-        let r = client
-            .upload_part()
-            .bucket(bucket)
-            .key(key)
-            .upload_id(upload_id)
-            .part_number(n)
-            .content_length(len as i64)
-            .body(body)
-            .send()
-            .await;
+        let request = client.upload_part().bucket(bucket).key(key).upload_id(upload_id).part_number(n).content_length(len as i64).body(body).send();
+        // the body waits out the speed cap between frames; dropping the request ends that wait
+        let r = tokio::select! {
+            r = request => r,
+            _ = crate::storage::s3_stream::wait_cancel(cancel) => return Ok(None),
+        };
         match r {
             Ok(out) => return Ok(Some(out.e_tag().unwrap_or_default().to_string())),
             Err(e) => {
