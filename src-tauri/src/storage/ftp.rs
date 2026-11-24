@@ -129,6 +129,8 @@ pub struct FtpBackend {
     pool: Arc<Pool>,
     pages: PageCache,
     known_dirs: Mutex<HashSet<String>>,
+    /// whether SIZE works here: 0 not known yet, 1 yes, 2 no (see [`FtpBackend::exact_size`])
+    size_cmd: std::sync::atomic::AtomicU8,
 }
 
 /// Answers to AUTH TLS that mean "not offered here" (anything else, a 4xx above all, is a
@@ -439,6 +441,7 @@ impl FtpBackend {
             pool: Arc::new(Pool { idle: Mutex::default(), slots: Arc::new(Semaphore::new(MAX_CONNS)), readers: Arc::new(Semaphore::new(MAX_CONNS - 1)) }),
             pages: PageCache::default(),
             known_dirs: Mutex::default(),
+            size_cmd: Default::default(),
         })
     }
 
@@ -746,8 +749,16 @@ impl FtpBackend {
         }
         let mut up: Xfer = match lease.ftp().put_with_stream(path).await {
             Ok(x) => x,
-            // refused before any byte went: the caller may try another name
-            Err(FtpError::UnexpectedResponse(r)) => return Ok(Stored::Refused(ftp_error(FtpError::UnexpectedResponse(r), &self.host))),
+            // refused before any byte went: the caller may try another name. After a REST the
+            // connection goes: a server may keep the restart offset for the next STOR on it (a
+            // retry from byte 0 would then land at the old offset)
+            Err(FtpError::UnexpectedResponse(r)) => {
+                if offset.is_some() {
+                    lease.healthy = false;
+                }
+                let code = r.status.code();
+                return Ok(Stored::Refused(ftp_error(FtpError::UnexpectedResponse(r), &self.host), code));
+            }
             Err(e) => {
                 lease.healthy = false;
                 return Err(ftp_error(e, &self.host));
@@ -795,6 +806,84 @@ impl FtpBackend {
             })
             .await;
     }
+
+    /// SIZE of the file at `key`, asked about that name itself. A server without SIZE (500, 502,
+    /// 504) is remembered as such and not asked again.
+    async fn size_probe(&self, key: &str) -> SResult<SizeProbe> {
+        if self.size_cmd.load(std::sync::atomic::Ordering::Relaxed) == 2 {
+            return Ok(SizeProbe::NoAnswer);
+        }
+        let p = self.path(key).await?;
+        let (probe, works) = self
+            .run(move |ftp, _| {
+                let p = p.clone();
+                Box::pin(async move {
+                    match ftp.size(&p).await {
+                        Ok(n) => Ok((SizeProbe::Size(n as u64), Some(true))),
+                        Err(FtpError::UnexpectedResponse(r)) => Ok(match r.status.code() {
+                            550 => (SizeProbe::Missing, Some(true)),
+                            500 | 502 | 504 => (SizeProbe::NoAnswer, Some(false)),
+                            // something about this name (a 501 for its characters): the listing
+                            _ => (SizeProbe::NoAnswer, None),
+                        }),
+                        Err(e) => Err(e),
+                    }
+                })
+            })
+            .await?;
+        if let Some(w) = works {
+            self.size_cmd.store(if w { 1 } else { 2 }, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(probe)
+    }
+
+    /// The size of the file at `key` (None: no file there), by SIZE where the server has it:
+    /// many servers (pure-ftpd by default) hide dot names from LIST and MLSD, and an upload's
+    /// temporary file starts with a dot. Else from the listing.
+    async fn exact_size(&self, root: &str, key: &str) -> SResult<Option<u64>> {
+        match self.size_probe(key).await? {
+            SizeProbe::Size(n) => Ok(Some(n)),
+            SizeProbe::Missing => Ok(None),
+            SizeProbe::NoAnswer => Ok(self.stat(root, key).await?.map(|e| e.size.max(0) as u64)),
+        }
+    }
+
+    /// A new temporary name for an upload to `path`, and whether it is a plain one. A server
+    /// without SIZE is asked by listing whether a file is there, and its listing may hide dot
+    /// names: there the temporary name is a plain one (a name like the file's own), which it shows.
+    async fn fresh_temp(&self, path: &str) -> (String, bool) {
+        if self.size_cmd.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+            let _ = self.size_probe(path).await;
+        }
+        if self.size_cmd.load(std::sync::atomic::Ordering::Relaxed) == 2 { (plain_temp_key(path), true) } else { (temp_key(path), false) }
+    }
+}
+
+/// What SIZE said about a name.
+enum SizeProbe {
+    Size(u64),
+    /// 550: no file there
+    Missing,
+    /// no answer about this name (the server has no SIZE): ask the listing
+    NoAnswer,
+}
+
+/// Whether a STOR refused after REST says the server can't restart a transfer (its temporary
+/// file is then of no use): "not implemented" and the like, or a 550/553 that isn't about space.
+/// A passing answer (421, 425, 450) or one about space or quota (452, 552) keeps the partial
+/// file for the next try.
+fn rest_refused(code: u32, e: &StorageError) -> bool {
+    match code {
+        500 | 501 | 502 | 504 | 554 => true,
+        550 | 553 => !about_space(e),
+        _ => false,
+    }
+}
+
+/// A refusal about space or quota (whatever its code: servers answer "550 Quota exceeded").
+fn about_space(e: &StorageError) -> bool {
+    let text = format!("{} {}", e.message, e.detail.as_deref().unwrap_or_default()).to_lowercase();
+    ["space", "quota", "disk", "full", "exceed", "storage"].iter().any(|w| text.contains(w))
 }
 
 #[async_trait]
@@ -945,7 +1034,9 @@ impl Storage for FtpBackend {
         let down: Xfer = match lease.ftp().retr_as_stream(&full).await {
             Ok(x) => x,
             Err(e) => {
-                lease.healthy = matches!(e, FtpError::UnexpectedResponse(_));
+                // a refused RETR leaves the connection usable, unless a REST went first (the
+                // server may keep its offset for the next transfer on it)
+                lease.healthy = matches!(e, FtpError::UnexpectedResponse(_)) && start == 0;
                 return Err(ftp_error(e, &self.host));
             }
         };
@@ -1026,7 +1117,8 @@ impl Storage for FtpBackend {
         // an interrupted upload carries on in its temporary file, from the bytes already there
         let resume_tmp = opts.resume.as_ref().filter(|rs| is_temp_for(&rs.upload_id, path)).map(|rs| rs.upload_id.clone());
         let offset = match &resume_tmp {
-            Some(t) => resume_offset(self.stat(root, t).await?.map(|e| e.size.max(0) as u64), source_len(&src).await),
+            // asked of that name itself: a listing may hide the dot-named temporary file
+            Some(t) => resume_offset(self.exact_size(root, t).await?, source_len(&src).await),
             None => None,
         };
         // with `on_part` the caller keeps an interrupted upload to carry on: its file stays
@@ -1039,15 +1131,18 @@ impl Storage for FtpBackend {
         let (mut body, mut len) = source_stream_from(src, offset.unwrap_or(0)).await?;
         let (mut tmp_key, mut plain) = match (&resume_tmp, offset) {
             (Some(t), Some(_)) => (t.clone(), !file_name(t).starts_with('.')),
-            _ => (temp_key(path), false),
+            _ => self.fresh_temp(path).await,
         };
         announce_temp(&opts, &tmp_key, offset.unwrap_or(0));
         let mut stored = self.store(&self.path(&tmp_key).await?, &mut body, len, offset, progress, cancel).await;
         // REST goes out with the STOR, so a server that can't carry on an upload where it
-        // stopped refuses the STOR itself: its temporary file is of no use, start over
+        // stopped refuses the STOR itself: its temporary file is of no use, start over. Only
+        // for an answer that says so: a passing one (421, 425) or one about space keeps the
+        // partial file for the next try (returned as the error below)
         let mut offset = offset;
         if offset.is_some()
-            && let Ok(Stored::Refused(e)) = &stored
+            && let Ok(Stored::Refused(e, code)) = &stored
+            && rest_refused(*code, e)
         {
             self.remove_partial(self.path(&tmp_key).await?).await;
             let Some(p) = again else {
@@ -1055,7 +1150,7 @@ impl Storage for FtpBackend {
             };
             (body, len) = source_stream_from(WriteSource::Path(p), 0).await?;
             offset = None;
-            (tmp_key, plain) = (temp_key(path), false);
+            (tmp_key, plain) = self.fresh_temp(path).await;
             announce_temp(&opts, &tmp_key, 0);
             stored = self.store(&self.path(&tmp_key).await?, &mut body, len, None, progress, cancel).await;
         }
@@ -1076,7 +1171,7 @@ impl Storage for FtpBackend {
         let written = if direct.is_some() { target.clone() } else { self.path(&tmp_key).await? };
         let failed = match stored {
             Ok(Stored::Done) => None,
-            Ok(Stored::Refused(e)) => return Err(e),
+            Ok(Stored::Refused(e, _)) => return Err(e),
             Ok(Stored::Cancelled) => Some(None),
             Err(e) => Some(Some(e)),
         };
@@ -1100,7 +1195,7 @@ impl Storage for FtpBackend {
         if offset.is_some()
             && let Some(want) = len
         {
-            let got = self.stat(root, &tmp_key).await?.map(|e| e.size.max(0) as u64);
+            let got = self.exact_size(root, &tmp_key).await?;
             if got != Some(want) {
                 self.remove_partial(written).await;
                 return Err(StorageError::other("The upload couldn't be carried on where it stopped, so it will start over.")
@@ -1112,6 +1207,15 @@ impl Storage for FtpBackend {
             // the temporary file is kept when it can't go in place: the old file is never
             // deleted before the new one is there
             put_in_place(self, &tmp_key, path, &backup).await.map_err(|e| e.explain(Some(file_name(&tmp_key))))?;
+            // the file at the name now is the new one, or this isn't done (an existence check a
+            // server answered wrongly must never pass the old file off as the upload)
+            if let Some(want) = len
+                && let Some(got) = self.exact_size(root, path).await?
+                && got != want
+            {
+                return Err(StorageError::other(format!("The server didn't put the new file in place of the old one. The new copy was kept as {}.", file_name(&tmp_key)))
+                    .with_detail(format!("{got} bytes at the name instead of {want}")));
+            }
         }
         // the copy keeps the original's time where the server can set it (MFMT, in UTC)
         if let Some(ms) = opts.modified
@@ -1266,8 +1370,22 @@ impl Renames for FtpBackend {
         .await
     }
 
+    /// Asked about that very name (SIZE), never read off a listing alone: a server that hides
+    /// dot names from its listings would make an upload's temporary file look gone, and a
+    /// refused rename look like one that went through. Without SIZE, a dot name the listing
+    /// doesn't show is "can't tell" (an error: nothing is taken as replaced).
     async fn file_exists(&self, key: &str) -> SResult<bool> {
-        Ok(self.stat("", key).await?.is_some())
+        match self.size_probe(key).await? {
+            SizeProbe::Size(_) => Ok(true),
+            SizeProbe::Missing => Ok(false),
+            SizeProbe::NoAnswer => {
+                let seen = self.stat("", key).await?.is_some();
+                if !seen && file_name(key).starts_with('.') {
+                    return Err(StorageError::other("The server can't say whether its temporary file is still there.").with_detail(key.to_string()));
+                }
+                Ok(seen)
+            }
+        }
     }
 
     async fn remove_file(&self, key: &str) -> SResult<()> {
@@ -1283,21 +1401,22 @@ impl Renames for FtpBackend {
 enum Stored {
     Done,
     Cancelled,
-    Refused(StorageError),
+    /// with the reply code
+    Refused(StorageError, u32),
 }
 
 /// The server refused the name before any byte went (553 "name not allowed", 550 "denied" or
 /// "no such file" for a hidden name): another name may work, and the body is still unread.
 fn temp_refused(stored: &SResult<Stored>) -> bool {
-    matches!(stored, Ok(Stored::Refused(e)) if matches!(e.kind, ErrKind::PermissionDenied | ErrKind::NotFound))
+    matches!(stored, Ok(Stored::Refused(e, _)) if matches!(e.kind, ErrKind::PermissionDenied | ErrKind::NotFound))
 }
 
 /// Stricter, for the last resort of writing in place (which truncates the old file on open):
 /// only a refusal that is clearly about the name, never one about space or quota.
 fn name_refused(stored: &SResult<Stored>) -> bool {
-    let Ok(Stored::Refused(e)) = stored else { return false };
+    let Ok(Stored::Refused(e, _)) = stored else { return false };
     let text = format!("{} {}", e.message, e.detail.as_deref().unwrap_or_default()).to_lowercase();
-    if ["space", "quota", "disk", "full", "exceed", "storage"].iter().any(|w| text.contains(w)) {
+    if about_space(e) {
         return false;
     }
     let about_name = ["name", "extension", "not allowed", "denied", "permission"].iter().any(|w| text.contains(w));
@@ -1414,6 +1533,28 @@ mod tests {
     use super::*;
     use std::sync::atomic::Ordering;
     use suppaftp::Status;
+
+    /// Only an answer saying the server can't restart a transfer throws a partial upload away.
+    #[test]
+    fn only_a_permanent_refusal_after_rest_starts_over() {
+        let e = |code: Status, text: &str| {
+            let r = suppaftp::types::Response::new(code, text.as_bytes().to_vec());
+            (code.code(), ftp_error(FtpError::UnexpectedResponse(r), "h"))
+        };
+        for (c, err) in [e(Status::NotImplemented, "502 REST not implemented"), e(Status::BadCommand, "500 Unknown command"), e(Status::FileUnavailable, "550 Restart not allowed")] {
+            assert!(rest_refused(c, &err), "{c}");
+        }
+        for (c, err) in [
+            e(Status::NotAvailable, "421 Too many connections"),
+            e(Status::CannotOpenDataConnection, "425 Can't open data connection"),
+            e(Status::RequestFileActionIgnored, "450 File busy"),
+            e(Status::RequestedActionNotTaken, "452 Insufficient storage"),
+            e(Status::ExceededStorage, "552 Quota exceeded"),
+            e(Status::FileUnavailable, "550 Disk full"),
+        ] {
+            assert!(!rest_refused(c, &err), "{c}");
+        }
+    }
 
     #[test]
     fn a_server_listing_auth_tls_is_not_taken_for_plain() {
@@ -1609,7 +1750,7 @@ mod tests {
 
     #[test]
     fn only_a_refused_name_tries_another() {
-        let refused = |kind| Ok(Stored::Refused(StorageError::new(kind, "x")));
+        let refused = |kind| Ok(Stored::Refused(StorageError::new(kind, "x"), 550));
         assert!(temp_refused(&refused(ErrKind::PermissionDenied)));
         assert!(temp_refused(&refused(ErrKind::NotFound)));
         assert!(!temp_refused(&refused(ErrKind::Other)), "out of space isn't about the name");
@@ -1621,8 +1762,9 @@ mod tests {
     #[test]
     fn only_a_name_refusal_writes_in_place() {
         let refused = |code: Status, text: &str| {
+            let c = code.code();
             let r = suppaftp::types::Response::new(code, text.as_bytes().to_vec());
-            Ok(Stored::Refused(ftp_error(FtpError::UnexpectedResponse(r), "h")))
+            Ok(Stored::Refused(ftp_error(FtpError::UnexpectedResponse(r), "h"), c))
         };
         assert!(name_refused(&refused(Status::BadFilename, "553 Could not create file.")));
         assert!(name_refused(&refused(Status::FileUnavailable, "550 Permission denied")));

@@ -13,7 +13,7 @@ import { listen } from "@tauri-apps/api/event";
 import { createElement, useEffect, useRef } from "react";
 import { api, errMessage } from "../api";
 import { asExport } from "../connections/native";
-import { joinPath, safeRelPath } from "../desktop/paths";
+import { joinPath, safeName } from "../desktop/paths";
 import { MENU_ACCELERATORS } from "../desktop/menus";
 import { keyLabel as keyLabelFor } from "../components/shortcutKeys";
 import { registerCommands, type PaletteCommand } from "../palette/commands";
@@ -537,8 +537,8 @@ async function localItems(ctx: ActionContext, runId: string, targets: Entry[]): 
   const files = targets.flatMap((e) => {
     const x = asExport(e);
     if (!x) return [];
-    let rel = safeRelPath(x.name) || "file";
-    for (let n = 2; used.has(rel.toLowerCase()); n++) rel = `${n}/${safeRelPath(x.name) || "file"}`;
+    let rel = safeName(x.name) || "file";
+    for (let n = 2; used.has(rel.toLowerCase()); n++) rel = `${n}/${safeName(x.name) || "file"}`;
     used.add(rel.toLowerCase());
     return [{ e, x, local: joinPath(dir, rel) }];
   });

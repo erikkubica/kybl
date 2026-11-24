@@ -460,11 +460,13 @@ pub async fn archive_compress(app: AppHandle, state: State<'_, AppState>, id: St
         if let Some(final_path) = src.local_path(&job.root, &job.dest_key) {
             let tmp = final_path.with_file_name(format!(".{}.kybl-{tid}.part", base_name(&job.dest_key)));
             ops::pack_to_file(src.clone(), &job.root, &plan, &tmp, &tick, &task.cancel).await?;
-            if final_path.exists() {
+            // never over a file that is there (or turned up while it packed), in one step
+            let (t, f) = (tmp.clone(), final_path.clone());
+            let placed = tokio::task::spawn_blocking(move || crate::storage::local::fsops::rename_noreplace(&t, &f)).await.map_err(|e| StorageError::other(e.to_string()))?;
+            if let Err(e) = placed {
                 let _ = tokio::fs::remove_file(&tmp).await;
-                return Err(StorageError::exists());
+                return Err(if e.kind() == std::io::ErrorKind::AlreadyExists { StorageError::exists() } else { e.into() });
             }
-            tokio::fs::rename(&tmp, &final_path).await?;
             return Ok(total);
         }
         let work = work_dir(&a)?;

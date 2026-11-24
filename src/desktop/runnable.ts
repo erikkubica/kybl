@@ -1,4 +1,4 @@
-import { safeRelPath } from "./paths.ts";
+import { safeName } from "./paths.ts";
 
 /**
  * File types that run code when opened in their default app (programs, scripts, installers,
@@ -51,7 +51,7 @@ export function runsCode(name: string): boolean {
  * `payload.exe`. The guard checks both, and the path that opens too (`openFromConnection`).
  */
 export function localName(name: string): string {
-  return safeRelPath(name).split("/").pop() ?? "";
+  return safeName(name);
 }
 
 /**

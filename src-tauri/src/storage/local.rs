@@ -171,7 +171,9 @@ fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 /// A move to another disk: copy, then remove the originals of exactly what was copied. Never
-/// the whole folder: something left out, or added meanwhile, would go with it.
+/// the whole folder: something left out, or added meanwhile, would go with it. A link at `dst`
+/// is replaced by the moved file, as a same-disk rename does, never written through
+/// ([`copy_tree`]).
 fn move_across(src: &Path, dst: &Path) -> SResult<()> {
     let mut done = Copied::default();
     copy_tree(src, dst, false, &mut done)?;
@@ -724,6 +726,12 @@ impl Storage for LocalBackend {
             if let Some(parent) = dst.parent() {
                 std::fs::create_dir_all(parent)?;
             }
+            // a link at the destination (already confined to the root above) is copied through,
+            // as `write` does: what it points at gets the new contents and the link stays
+            let dst = match std::fs::symlink_metadata(&dst) {
+                Ok(l) if l.file_type().is_symlink() => std::fs::canonicalize(&dst).unwrap_or(dst),
+                _ => dst,
+            };
             let mut done = Copied::default();
             copy_tree(&src, &dst, true, &mut done)?;
             left_behind(&done.skipped)

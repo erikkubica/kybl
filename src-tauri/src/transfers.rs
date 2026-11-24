@@ -159,7 +159,7 @@ pub(crate) type Hold<'a> = Option<&'a (dyn Fn(u64, u64) + Send + Sync)>;
 /// little longer each time (1 s, 2 s, 4 s … up to 30 s) before it gives up.
 const RESUME_ATTEMPTS: u32 = 8;
 /// A download whose connection sends nothing for this long is taken as dropped and resumed.
-const STALL: Duration = Duration::from_secs(60);
+pub(crate) const STALL: Duration = Duration::from_secs(60);
 
 /// The wait before resume attempt `n` (1-based).
 fn resume_delay(n: u32) -> Duration {
@@ -209,6 +209,25 @@ async fn race_unlimited<T>(fut: impl std::future::Future<Output = T>, cancel: &A
                 }
             }
         }
+    }
+}
+
+/// What a transfer that went through becomes when Pause, Cancel or Quit stops its check.
+#[derive(Debug, PartialEq, Eq)]
+enum StoppedCheck {
+    /// paused with the whole file kept; Resume only checks it again
+    PauseRecheck,
+    /// done, unverified: never an error, and nothing already sent is discarded
+    DoneUnverified,
+}
+
+/// A download that was paused can come back for its check; an upload has no "check only" run,
+/// and its object is complete on the server, so it ends done, unverified (as does a cancelled
+/// download, whose file is whole).
+fn stopped_check(kind: &Kind, paused: bool) -> StoppedCheck {
+    match kind {
+        Kind::Download { .. } if paused => StoppedCheck::PauseRecheck,
+        _ => StoppedCheck::DoneUnverified,
     }
 }
 
@@ -922,26 +941,39 @@ async fn spawn_transfer(
                 }
             }
         };
-        let paused_now = pause.load(Ordering::Relaxed) && !matches!(result, Ok(Outcome::Done));
+        let mut paused_now = pause.load(Ordering::Relaxed) && !matches!(result, Ok(Outcome::Done));
         // checked once done, as the settings ask; a copy that doesn't match fails
         let mut result = result;
         if let (Ok(Outcome::Done), Some(path)) = (&result, &local_done) {
             // the check races Cancel (a server that never answers would hold the transfer and its
-            // turn); stopped there, the file stays as one whose check couldn't run
-            let check = match race_unlimited(crate::verify::check(&app, &conn, &profile_id, &bucket, &key, path, verify_part_size), &cancel).await {
-                Some(c) => c,
-                None => Err(crate::verify::CheckErr::Unverified("The check was stopped.".into())),
-            };
+            // turn). Stopped there, the transfer itself still went through: see `stopped_check`.
+            let check = race_unlimited(crate::verify::check(&app, &conn, &profile_id, &bucket, &key, path, verify_part_size), &cancel).await;
             match check {
-                Ok(c) => checked = c,
+                None => match stopped_check(&kind, pause.load(Ordering::Relaxed)) {
+                    // a download paused (or the app quit) mid-check: paused with the file kept
+                    // whole, and Resume only checks it
+                    StoppedCheck::PauseRecheck => {
+                        unverified = stamp_of(path);
+                        to_cache = false;
+                        paused_now = true;
+                        result = Ok(Outcome::Cancelled);
+                    }
+                    // done but unchecked: the data is in place (an upload's object is complete
+                    // on the server, nothing to send again), it just wasn't verified
+                    StoppedCheck::DoneUnverified => {
+                        to_cache = false;
+                        checked = None;
+                    }
+                },
+                Some(Ok(c)) => checked = c,
                 // a re-check of a file that came in whole earlier: it was checked against the
                 // file on the server as it is now, which may have changed since. That copy is
                 // the user's to keep; Retry downloads the server's file next to it.
-                Err(e @ crate::verify::CheckErr::Mismatch(_)) if matches!(kind, Kind::Download { recheck: true, .. }) => {
+                Some(Err(e @ crate::verify::CheckErr::Mismatch(_))) if matches!(kind, Kind::Download { recheck: true, .. }) => {
                     unverified = None;
                     result = Err(format!("{e} The file on the server may have changed since it was downloaded, so the downloaded file was kept. Retry to download the server's file again."));
                 }
-                Err(e @ crate::verify::CheckErr::Mismatch(_)) => {
+                Some(Err(e @ crate::verify::CheckErr::Mismatch(_))) => {
                     if matches!(kind, Kind::Download { .. }) {
                         // a download that came out different is no use to anyone
                         let _ = tokio::fs::remove_file(path).await;
@@ -951,7 +983,7 @@ async fn spawn_transfer(
                 }
                 // the check itself couldn't run: nothing says the copy is wrong, so it stays, and
                 // Retry checks that file again (as it is now) instead of downloading it once more
-                Err(e @ crate::verify::CheckErr::Unverified(_)) => {
+                Some(Err(e @ crate::verify::CheckErr::Unverified(_))) => {
                     result = Err(match kind {
                         Kind::Download { .. } => {
                             unverified = stamp_of(path);
@@ -1006,11 +1038,18 @@ async fn spawn_transfer(
         }
         // kept for later (paused, failed), or forgotten (done, cancelled)
         match &result {
-            _ if paused_now => resume::update_or_put(&id, record.clone(), |s| {
-                s.state = "paused".into();
-                (s.bytes, s.total) = (last.0.max(s.bytes), last.1.max(s.total));
-                s.error = None;
-            }),
+            _ if paused_now => {
+                let download = matches!(kind, Kind::Download { .. });
+                resume::update_or_put(&id, record.clone(), |s| {
+                    s.state = "paused".into();
+                    (s.bytes, s.total) = (last.0.max(s.bytes), last.1.max(s.total));
+                    s.error = None;
+                    // a download paused while its whole file was being checked: Resume checks it
+                    if download && unverified.is_some() {
+                        s.stamp = unverified;
+                    }
+                })
+            }
             Err(e) => {
                 let e = e.clone();
                 // it went through but didn't match: nothing of it is left to carry on from
@@ -1112,7 +1151,8 @@ pub async fn start_download(
     size: Option<u64>,
     base: Option<String>,
 ) -> Result<String, String> {
-    let wanted = dest::validate(&dest_path)?;
+    // a name too long to take ".s3part" or " (1)" is cut short; the answer says where it went
+    let wanted = dest::fit_download_name(&dest::validate(&dest_path)?);
     if let Some(base) = base.as_deref().filter(|b| !b.is_empty()) {
         crate::local_links::safe_write_target(Path::new(base), &wanted)?;
     }
@@ -1234,6 +1274,18 @@ mod tests {
     use super::*;
     use crate::state::{build_client, Profile};
     use std::sync::Mutex;
+
+    /// Pause, Cancel or Quit during the check after a transfer went through: never an error, and
+    /// nothing already sent is discarded. A paused download comes back to be checked only; an
+    /// upload (complete on the server) and a cancelled download end done, unverified.
+    #[test]
+    fn a_stopped_check_never_fails_a_finished_transfer() {
+        let dl = Kind::Download { resume: false, recheck: false };
+        assert_eq!(stopped_check(&dl, true), StoppedCheck::PauseRecheck);
+        assert_eq!(stopped_check(&dl, false), StoppedCheck::DoneUnverified);
+        assert_eq!(stopped_check(&Kind::Upload, true), StoppedCheck::DoneUnverified);
+        assert_eq!(stopped_check(&Kind::Upload, false), StoppedCheck::DoneUnverified);
+    }
 
     #[test]
     fn a_transfer_says_whether_it_carried_on_or_started_over() {

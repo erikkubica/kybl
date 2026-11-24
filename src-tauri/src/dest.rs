@@ -16,6 +16,26 @@ pub fn part_path(dest: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
+/// Bytes a download's own name may take, so that its partial file (`.s3part`) and a Finder-style
+/// number (" (12345)") still fit the 255 bytes most file systems allow in a name.
+const NAME_ROOM: usize = 255 - PART_SUFFIX.len() - 8;
+
+/// `dest` with a name too long for that cut short (at a character, keeping a short extension),
+/// as the local writer cuts its temporary names: a remote file named with 249-255 bytes could
+/// otherwise never be downloaded (`ENAMETOOLONG` on its partial file, on every try).
+pub fn fit_download_name(dest: &Path) -> PathBuf {
+    let Some(name) = dest.file_name().map(|n| n.to_string_lossy().into_owned()) else { return dest.to_path_buf() };
+    if name.len() <= NAME_ROOM {
+        return dest.to_path_buf();
+    }
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 && name.len() - i <= 16 => (&name[..i], &name[i..]),
+        _ => (name.as_str(), ""),
+    };
+    let stem = crate::storage::net::fit_name(stem, 255 - NAME_ROOM + ext.len());
+    dest.with_file_name(format!("{stem}{ext}"))
+}
+
 /// Checks a local download path. The page joins the folder the user chose with a path taken
 /// from object keys, and a key like `x/../../.zshrc` must not reach outside that folder, so any
 /// `..` (or `.`) part is refused outright, as is a path that is not absolute or names no file.
@@ -265,7 +285,7 @@ pub fn recheck_retry(chosen: PathBuf, wanted: &Path, overwrite: bool) -> (PathBu
         return (chosen, true);
     }
     let next = reserve(wanted, false).expect("only a download that replaces a file is ever refused");
-    let moved = std::fs::rename(part_path(&chosen), part_path(&next)).is_ok();
+    let moved = crate::storage::local::fsops::rename_noreplace(&part_path(&chosen), &part_path(&next)).is_ok();
     if moved {
         crate::leftovers::partial_started(&part_path(&next));
     } else {
@@ -291,6 +311,33 @@ pub fn unless_in_use(path: &Path, f: impl FnOnce()) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A name that leaves no room for ".s3part" and " (n)" is cut short, keeping its extension,
+    /// and the partial file of a numbered copy still fits the 255-byte limit.
+    #[test]
+    fn long_names_leave_room_for_the_partial_file_and_a_number() {
+        let short = Path::new("/d/photo.jpg");
+        assert_eq!(fit_download_name(short), short);
+        let long = format!("/d/{}.pdf", "a".repeat(250));
+        let fit = fit_download_name(Path::new(&long));
+        let name = fit.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.ends_with(".pdf") && name.len() <= NAME_ROOM, "{}", name.len());
+        let worst = part_path(&numbered(&fit, 99_999));
+        assert!(worst.file_name().unwrap().len() <= 255);
+        // cut at a character, not inside one
+        let cjk = format!("/d/{}", "文".repeat(90));
+        let fit = fit_download_name(Path::new(&cjk));
+        assert!(fit.file_name().unwrap().len() <= NAME_ROOM);
+        // no extension worth keeping: the whole name is cut
+        let odd = format!("/d/{}", "b".repeat(300));
+        assert_eq!(fit_download_name(Path::new(&odd)).file_name().unwrap().len(), NAME_ROOM);
+        // and it still lands on a real disk
+        let dir = std::env::temp_dir().join(format!("kybl-dest-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fit = fit_download_name(&dir.join(format!("{}.bin", "c".repeat(252))));
+        std::fs::write(part_path(&numbered(&fit, 12)), b"x").unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn climbing_out_of_the_folder_is_refused() {

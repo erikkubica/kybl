@@ -8,9 +8,11 @@ use std::{
 };
 
 /// Renames `from` to `to` only when nothing is at `to` (AlreadyExists otherwise). One atomic
-/// step where the system has one (Linux and Android `renameat2`, macOS and iOS `renamex_np`);
-/// elsewhere a hard link, which refuses an existing name just the same, then dropping `from`.
-/// Disks with neither (FAT, some phone storage) get a look first, the best that is left.
+/// step where the system has one (Linux and Android `renameat2`, macOS and iOS `renamex_np`,
+/// Windows `MoveFileExW` without its replace flag); elsewhere a hard link, which refuses an
+/// existing name just the same, then dropping `from`. Unix disks with neither (FAT, exFAT, some
+/// SMB shares and phone storage) get a look first, the best that is left there: a name another
+/// app creates in the instant between the look and the rename is replaced.
 pub fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
     match native_noreplace(from, to) {
         Ok(()) => return Ok(()),
@@ -69,7 +71,23 @@ fn native_noreplace(from: &Path, to: &Path) -> io::Result<()> {
     if r == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "ios")))]
+/// `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` fails when anything is at `to`, in one
+/// step (std's `rename` passes that flag, so it replaces). kernel32 is linked by std already.
+#[cfg(windows)]
+fn native_noreplace(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
+    }
+    let wide = |p: &Path| p.as_os_str().encode_wide().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let (f, t) = (wide(from), wide(to));
+    // SAFETY: both are valid NUL-terminated UTF-16 paths that outlive the call
+    let ok = unsafe { MoveFileExW(f.as_ptr(), t.as_ptr(), 0) };
+    if ok != 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "ios", windows)))]
 fn native_noreplace(_from: &Path, _to: &Path) -> io::Result<()> {
     Err(io::ErrorKind::Unsupported.into())
 }
@@ -89,13 +107,22 @@ pub struct Copied {
 /// Links inside are copied as links and never followed, so the copy can't reach outside the
 /// folder or loop. `follow_top`: a link given as `from` itself is copied as the file it points
 /// to (a copy of what a read would answer); otherwise as a link (a move of the link).
+///
+/// The destination side is as careful: a file (or link) is written under a temporary name next
+/// to its place and renamed over, so a failure midway (a full disk, an unreadable source) never
+/// leaves a file that was there destroyed or half-written, and a link already at a destination
+/// name is replaced, never written through. A folder is never made through a link either.
 pub fn copy_tree(from: &Path, to: &Path, follow_top: bool, out: &mut Copied) -> io::Result<()> {
     let meta = std::fs::symlink_metadata(from)?;
     let ft = meta.file_type();
     if ft.is_symlink() && follow_top && std::fs::metadata(from).is_ok_and(|m| m.is_file()) {
-        std::fs::copy(from, to)?;
+        copy_file_over(from, to)?;
         out.files.push(from.to_path_buf());
     } else if ft.is_dir() {
+        // a link at the folder's place would take the copy wherever it points
+        if std::fs::symlink_metadata(to).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{} is a link; a folder isn't copied through it.", to.display())));
+        }
         std::fs::create_dir_all(to)?;
         out.dirs.push(from.to_path_buf());
         for e in std::fs::read_dir(from)? {
@@ -109,7 +136,7 @@ pub fn copy_tree(from: &Path, to: &Path, follow_top: bool, out: &mut Copied) -> 
             out.skipped.push(from.to_path_buf());
         }
     } else if ft.is_file() {
-        std::fs::copy(from, to)?;
+        copy_file_over(from, to)?;
         out.files.push(from.to_path_buf());
     } else {
         out.skipped.push(from.to_path_buf());
@@ -117,9 +144,34 @@ pub fn copy_tree(from: &Path, to: &Path, follow_top: bool, out: &mut Copied) -> 
     Ok(())
 }
 
+/// A free temporary name next to `to`, like the local writer's (hidden, `.kybl-` and an id, the
+/// name cut short to leave room for them).
+fn temp_beside(to: &Path) -> io::Result<PathBuf> {
+    let parent = to.parent().ok_or(io::ErrorKind::InvalidInput)?;
+    let name = to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    Ok(parent.join(format!(".{}.kybl-{}", crate::storage::net::fit_name(&name, 43), uuid::Uuid::new_v4())))
+}
+
+/// Puts what `make` creates at a temporary name in place of `to` with one rename (which
+/// replaces a file or a link there, never writing through it); the temporary goes on failure.
+fn create_over(to: &Path, make: impl FnOnce(&Path) -> io::Result<()>) -> io::Result<()> {
+    let tmp = temp_beside(to)?;
+    let r = make(&tmp).and_then(|()| std::fs::rename(&tmp, to));
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
+}
+
+/// `std::fs::copy` (contents and permissions) without its truncate-in-place: see [`copy_tree`].
+fn copy_file_over(from: &Path, to: &Path) -> io::Result<()> {
+    create_over(to, |tmp| std::fs::copy(from, tmp).map(|_| ()))
+}
+
 #[cfg(unix)]
 fn copy_link(from: &Path, to: &Path) -> io::Result<bool> {
-    std::os::unix::fs::symlink(std::fs::read_link(from)?, to)?;
+    let target = std::fs::read_link(from)?;
+    create_over(to, |tmp| std::os::unix::fs::symlink(&target, tmp))?;
     Ok(true)
 }
 
@@ -128,7 +180,7 @@ fn copy_link(from: &Path, to: &Path) -> io::Result<bool> {
 #[cfg(not(unix))]
 fn copy_link(from: &Path, to: &Path) -> io::Result<bool> {
     if std::fs::metadata(from).is_ok_and(|m| m.is_file()) {
-        std::fs::copy(from, to)?;
+        copy_file_over(from, to)?;
         return Ok(true);
     }
     Ok(false)
@@ -227,6 +279,59 @@ mod tests {
         rename_noreplace(&a, &b).unwrap();
         assert_eq!(std::fs::read(&b).unwrap(), b"new");
         assert!(!a.exists());
+    }
+
+    /// A copy over a file goes through a temporary name: a copy that fails midway leaves the old
+    /// file whole, and a link at the destination is replaced, never written through.
+    #[cfg(unix)]
+    #[test]
+    fn copies_never_truncate_or_write_through_the_destination() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tmp();
+        let (src, dst) = (t.0.join("src.txt"), t.0.join("dst.txt"));
+        std::fs::write(&src, b"new").unwrap();
+        std::fs::write(&dst, b"old and precious").unwrap();
+        copy_tree(&src, &dst, true, &mut Copied::default()).unwrap();
+        assert_eq!(std::fs::read(&dst).unwrap(), b"new");
+        // an unreadable source fails before anything at the destination changes
+        let locked = t.0.join("locked.txt");
+        std::fs::write(&locked, b"secret").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&locked).is_err() {
+            assert!(copy_tree(&locked, &dst, true, &mut Copied::default()).is_err());
+            assert_eq!(std::fs::read(&dst).unwrap(), b"new", "the old file is untouched");
+        }
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o600)).unwrap();
+        // a link at the destination name: replaced by the copy, what it points at untouched
+        let outside = t.0.join("outside.txt");
+        std::fs::write(&outside, b"not yours").unwrap();
+        let via = t.0.join("via.txt");
+        std::os::unix::fs::symlink(&outside, &via).unwrap();
+        copy_tree(&src, &via, false, &mut Copied::default()).unwrap();
+        assert!(!std::fs::symlink_metadata(&via).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read(&via).unwrap(), b"new");
+        assert_eq!(std::fs::read(&outside).unwrap(), b"not yours");
+        // a folder is never made through a link
+        std::fs::create_dir_all(t.0.join("tree/sub")).unwrap();
+        std::fs::write(t.0.join("tree/sub/a"), b"a").unwrap();
+        std::fs::create_dir_all(t.0.join("elsewhere")).unwrap();
+        std::fs::create_dir_all(t.0.join("into")).unwrap();
+        std::os::unix::fs::symlink(t.0.join("elsewhere"), t.0.join("into/sub")).unwrap();
+        assert!(copy_tree(&t.0.join("tree"), &t.0.join("into"), false, &mut Copied::default()).is_err());
+        assert!(std::fs::read_dir(t.0.join("elsewhere")).unwrap().next().is_none(), "nothing written through the link");
+        let left: Vec<_> = walk_names(&t.0).into_iter().filter(|n| n.contains(".kybl-")).collect();
+        assert!(left.is_empty(), "no temporary file left: {left:?}");
+    }
+
+    fn walk_names(p: &Path) -> Vec<String> {
+        let mut out = Vec::new();
+        for e in std::fs::read_dir(p).unwrap().flatten() {
+            out.push(e.file_name().to_string_lossy().into_owned());
+            if e.file_type().unwrap().is_dir() {
+                out.extend(walk_names(&e.path()));
+            }
+        }
+        out
     }
 
     #[test]

@@ -1354,9 +1354,11 @@ pub async fn list_all_under(
     profile_id: String,
     bucket: String,
     prefix: String,
+    include_links: Option<bool>,
 ) -> Result<Vec<RemoteFile>, String> {
     let client = match storage::connect(&app, &state, &profile_id).await? {
         Conn::S3(c) => c,
+        Conn::Other(s) if include_links == Some(true) => return generic::list_all_under_with_links(&*s, &bucket, &prefix).await,
         Conn::Other(s) => return generic::list_all_under(&*s, &bucket, &prefix).await,
     };
     Ok(list_all(&client, &bucket, &prefix)

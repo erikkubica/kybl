@@ -813,11 +813,16 @@ impl Engine<'_> {
                         if let Some(parent) = dst.parent() {
                             std::fs::create_dir_all(parent)?;
                         }
-                        // a change of capitals on a disk that ignores case finds the file itself
-                        if dst.exists() && !local::same_entry(&src, &dst) {
-                            return Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "something with the new name is already here"));
+                        // a change of capitals on a disk that ignores case finds the file itself (a plain
+                        // rename then); anything else never replaces what is at the new name
+                        if dst.exists() && local::same_entry(&src, &dst) {
+                            std::fs::rename(&src, &dst)?;
+                        } else {
+                            crate::storage::local::fsops::rename_noreplace(&src, &dst).map_err(|e| match e.kind() {
+                                std::io::ErrorKind::AlreadyExists => std::io::Error::new(std::io::ErrorKind::AlreadyExists, "something with the new name is already here"),
+                                _ => e,
+                            })?;
                         }
-                        std::fs::rename(&src, &dst)?;
                         std::fs::metadata(&dst)
                     })();
                     match res {
