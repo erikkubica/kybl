@@ -546,8 +546,15 @@ pub async fn import_apply(app: AppHandle, state: State<'_, AppState>, source: St
         profiles.push(m.profile.clone());
         imported.push(m.profile);
     }
-    if !imported.is_empty() {
-        save_profiles(&app, &profiles, &held)?;
+    if !imported.is_empty()
+        && let Err(e) = save_profiles(&app, &profiles, &held)
+    {
+        drop(held);
+        // the passwords stored for them above go too: none of them is listed
+        for p in &imported {
+            crate::commands::forget_unsaved(&state, &p.id, true).await;
+        }
+        return Err(e);
     }
     Ok(ImportOutcome { imported, skipped, needs_secret })
 }

@@ -134,13 +134,8 @@ pub(crate) fn write_configs(p: &std::path::Path, list: &[MountConfig]) -> Result
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(err)?;
     }
-    // the file holds each drive's path token: this account only (`write_atomic` keeps the
-    // permissions the file has, so a new one is made private before anything is in it)
-    #[cfg(unix)]
-    if !p.exists() {
-        use std::os::unix::fs::OpenOptionsExt;
-        std::fs::OpenOptions::new().write(true).create(true).truncate(false).mode(0o600).open(p).map_err(err)?;
-    }
+    // the file holds each drive's path token: `write_atomic` makes it this account's only (0600),
+    // one an earlier build wrote readable by others included
     crate::state::write_atomic(p, &serde_json::to_vec_pretty(list).map_err(err)?).map_err(err)
 }
 

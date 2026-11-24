@@ -40,7 +40,8 @@ export const api = {
     invoke<Profile>("save_profile", { profile, secret: secret || null, clearSecret: !!clearSecret }),
   /** a saved connection has a password in the vault */
   profileHasSecret: (id: string) => invoke<boolean>("profile_has_secret", { id }),
-  deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
+  /** resolves to a note when the connection is gone but its secrets are only removed at the next start */
+  deleteProfile: (id: string) => invoke<string | null>("delete_profile", { id }),
   /** Files connections under sidebar groups by id ("" = the top level); returns every profile. */
   setProfileGroups: (groups: Record<string, string>) =>
     invoke<Profile[]>("set_profile_groups", { groups: Object.fromEntries(Object.entries(groups).map(([id, g]) => [id, g || null])) }),

@@ -307,7 +307,11 @@ async fn finish(app: &AppHandle, state: &AppState, tok: TokenResponse, replace_i
         Some(i) => profiles[i] = profile.clone(),
         None => profiles.push(profile.clone()),
     }
-    save_profiles(app, &profiles, &held)?;
+    if let Err(e) = save_profiles(app, &profiles, &held) {
+        drop(held);
+        crate::commands::forget_unsaved(state, &profile.id, existing.is_none()).await;
+        return Err(e);
+    }
     drop(held);
     state.clients.lock().await.remove(&profile.id);
     crate::storage::registry::forget(&profile.id);

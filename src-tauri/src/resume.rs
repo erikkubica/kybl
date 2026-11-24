@@ -108,10 +108,46 @@ fn changed() {
 /// half of it). One save at a time, each writing what is current then, so an older list never
 /// lands after a newer one.
 pub fn save() {
-    let Some(path) = PATH.get() else { return };
+    let _ = save_now();
+}
+
+fn save_now() -> std::io::Result<()> {
+    let Some(path) = PATH.get() else { return Err(std::io::Error::other("no file yet")) };
     let _one = WRITING.lock().unwrap();
     let list = with(|r| r.values().cloned().collect::<Vec<_>>());
-    let _ = write(path, list);
+    write(path, list)
+}
+
+/// Takes in, while this run goes on, the kept transfers of a run that ended meanwhile (another
+/// copy of Kybl; its folder `from`): into this run's records, shown as paused, and its file.
+/// False: they couldn't be written, so that run's folder must stay for a later try (taking the
+/// same records in twice changes nothing: of two records of one transfer the newer stays).
+pub fn take_in(app: &AppHandle, from: &Path) -> bool {
+    let theirs: Vec<Saved> = [FILE, LEGACY].iter().filter_map(|f| read(&from.join(f))).flatten().collect();
+    if theirs.is_empty() {
+        return true;
+    }
+    let (keep, stale) = read_back(theirs, now());
+    let added: Vec<Saved> = with(|r| {
+        let mut added = Vec::new();
+        for (id, s) in keep {
+            if r.get(&id).is_none_or(|x| x.saved < s.saved) {
+                r.insert(id, s.clone());
+                added.push(s);
+            }
+        }
+        added
+    });
+    for s in &added {
+        crate::transfers::adopt(s);
+    }
+    if save_now().is_err() {
+        return false;
+    }
+    for s in stale {
+        give_up(app, &s);
+    }
+    true
 }
 
 fn read(path: &Path) -> Option<Vec<Saved>> {

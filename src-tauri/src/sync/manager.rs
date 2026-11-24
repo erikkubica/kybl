@@ -447,14 +447,26 @@ pub async fn sync_all_now(mgr: &SyncManager) {
     }
 }
 
+/// Changes the sync settings: a copy is changed by `f` and saved, and only then takes the place
+/// of the one in memory, so a failed save changes nothing (the page is told it failed, and the
+/// running app must not act as if it hadn't). `f`'s answer comes back with the new settings.
+async fn change_config<R: Runtime, T>(app: &AppHandle<R>, mgr: &SyncManager, f: impl FnOnce(&mut SyncConfig) -> Result<T, String>) -> Result<(T, SyncConfig), String> {
+    let mut cfg = mgr.config.lock().await;
+    let mut next = cfg.clone();
+    let out = f(&mut next)?;
+    save_config(app, &next)?;
+    *cfg = next.clone();
+    mgr.paused_flag.store(next.paused_all, Ordering::Relaxed);
+    Ok((out, next))
+}
+
 pub async fn set_paused_all<R: Runtime>(app: &AppHandle<R>, mgr: &SyncManager, paused: bool) -> Result<(), String> {
-    let cfg = {
-        let mut cfg = mgr.config.lock().await;
+    let cfg = change_config(app, mgr, |cfg| {
         cfg.paused_all = paused;
-        save_config(app, &cfg)?;
-        mgr.paused_flag.store(paused, Ordering::Relaxed);
-        cfg.clone()
-    };
+        Ok(())
+    })
+    .await?
+    .1;
     for m in &cfg.mappings {
         apply(app, mgr, m, paused).await;
     }
@@ -483,8 +495,7 @@ async fn save_mapping<R: Runtime>(app: &AppHandle<R>, mgr: &SyncManager, mapping
     m.ignore = m.ignore.iter().map(|l| l.trim_end().to_string()).filter(|l| !l.trim().is_empty()).collect();
     m.interval_mins = m.interval_mins.clamp(1, 1440);
 
-    let (cfg, reset) = {
-        let mut cfg = mgr.config.lock().await;
+    let (reset, cfg) = change_config(app, mgr, |cfg| {
         if let Some(other) = cfg.mappings.iter().find(|o| o.id != m.id && overlaps(&o.local_path, &m.local_path)) {
             return Err(format!("{} is already synced (or inside a synced folder). Pick a different folder.", other.local_path));
         }
@@ -500,9 +511,9 @@ async fn save_mapping<R: Runtime>(app: &AppHandle<R>, mgr: &SyncManager, mapping
         } else {
             return Err("This sync folder no longer exists.".into());
         }
-        save_config(app, &cfg)?;
-        (cfg.clone(), reset)
-    };
+        Ok(reset)
+    })
+    .await?;
     if reset {
         stop_worker(mgr, &m.id).await;
         let lock = mgr.run_lock(&m.id);
@@ -555,12 +566,13 @@ pub async fn sync_save(app: AppHandle, mgr: State<'_, SyncManager>, mapping: Syn
 
 #[tauri::command]
 pub async fn sync_delete(app: AppHandle, mgr: State<'_, SyncManager>, id: String) -> Result<(), String> {
-    stop_worker(&mgr, &id).await;
-    {
-        let mut cfg = mgr.config.lock().await;
+    // out of the saved settings first: a failed save leaves the folder syncing as it was
+    change_config(&app, &mgr, |cfg| {
         cfg.mappings.retain(|m| m.id != id);
-        save_config(&app, &cfg)?;
-    }
+        Ok(())
+    })
+    .await?;
+    stop_worker(&mgr, &id).await;
     forget_db(&app, &id);
     mgr.status.lock().unwrap().remove(&id);
     crate::tray::refresh(&app);
@@ -574,15 +586,13 @@ pub async fn sync_now(mgr: State<'_, SyncManager>, id: String) -> Result<(), Str
 
 #[tauri::command]
 pub async fn sync_set_paused(app: AppHandle, mgr: State<'_, SyncManager>, id: String, paused: bool) -> Result<(), String> {
-    let (m, paused_all) = {
-        let mut cfg = mgr.config.lock().await;
+    let (m, cfg) = change_config(&app, &mgr, |cfg| {
         let slot = cfg.mappings.iter_mut().find(|m| m.id == id).ok_or("This sync folder no longer exists.")?;
         slot.paused = paused;
-        let m = slot.clone();
-        save_config(&app, &cfg)?;
-        (m, cfg.paused_all)
-    };
-    apply(&app, &mgr, &m, paused_all).await;
+        Ok(slot.clone())
+    })
+    .await?;
+    apply(&app, &mgr, &m, cfg.paused_all).await;
     Ok(())
 }
 

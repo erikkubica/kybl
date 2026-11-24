@@ -20,7 +20,7 @@ use tauri::{AppHandle, Emitter, State};
 use walkdir::WalkDir;
 
 use crate::state::{
-    build_client, delete_secret, err, get_secret, load_profiles, lock_profiles, save_profiles, sdk_err, set_secret,
+    build_client, err, get_secret, load_profiles, lock_profiles, save_profiles, sdk_err, set_secret,
     AppState,
     Profile,
 };
@@ -56,7 +56,8 @@ pub async fn save_profile(
     secret: Option<String>,
     clear_secret: Option<bool>,
 ) -> Result<Profile, String> {
-    if profile.id.is_empty() {
+    let was_new = profile.id.is_empty();
+    if was_new {
         profile.id = uuid::Uuid::new_v4().to_string();
     }
     profile.group = profile.group.as_deref().and_then(crate::state::normalize_group);
@@ -81,13 +82,18 @@ pub async fn save_profile(
         return Err("A secret key is required for a new connection".into());
     }
     let held = lock_profiles().await;
-    let mut profiles = load_profiles(&app)?;
-    match profiles.iter_mut().find(|p| p.id == profile.id) {
-        Some(existing) => *existing = profile.clone(),
-        None => profiles.push(profile.clone()),
-    }
-    save_profiles(&app, &profiles, &held)?;
+    let saved = load_profiles(&app).and_then(|mut profiles| {
+        match profiles.iter_mut().find(|p| p.id == profile.id) {
+            Some(existing) => *existing = profile.clone(),
+            None => profiles.push(profile.clone()),
+        }
+        save_profiles(&app, &profiles, &held)
+    });
     drop(held);
+    if let Err(e) = saved {
+        forget_unsaved(&state, &profile.id, was_new).await;
+        return Err(e);
+    }
     state.clients.lock().await.remove(&profile.id);
     registry::forget(&profile.id);
     #[cfg(desktop)]
@@ -123,12 +129,16 @@ fn apply_groups(profiles: &mut [Profile], groups: &std::collections::HashMap<Str
     }
 }
 
+/// Deletes a connection. Once it is out of the saved list everything else of it goes, whatever
+/// fails: an error from then on would leave a connection that can't be deleted again with its
+/// tunnels, open client and cached files still there (B3-1). Secrets that can't be removed now
+/// are removed at the next start; the answer is then a note saying so (`None`: all gone).
 #[tauri::command]
 pub async fn delete_profile(
     app: AppHandle,
     state: State<'_, AppState>,
     id: String,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     // its drives first: one with saves that couldn't be moved out keeps the connection too
     #[cfg(desktop)]
     crate::mount::forget_profile(&app, &id).await?;
@@ -137,7 +147,6 @@ pub async fn delete_profile(
     profiles.retain(|p| p.id != id);
     save_profiles(&app, &profiles, &held)?;
     drop(held);
-    delete_secret(&state, &id).await?;
     state.clients.lock().await.remove(&id);
     registry::forget(&id);
     #[cfg(desktop)]
@@ -145,7 +154,20 @@ pub async fn delete_profile(
     // files of a deleted connection don't stay on this computer
     crate::filecache::forget_profile(&app, &id).await;
     crate::placeholders::forget_profile(&id);
-    Ok(())
+    Ok(crate::state::forget_secrets_of_gone(&state, &id).await.err().map(left_secrets_note))
+}
+
+/// What the page says when a deleted connection's secrets are still stored.
+fn left_secrets_note(e: String) -> String {
+    format!("The connection was deleted, but its saved password or sign-in couldn't be removed yet. Kybl removes it the next time it starts.\n\n{e}")
+}
+
+/// A new connection whose save failed after its secret was stored: the secret goes too (now, or
+/// at the next start), so nothing of it is left in the vault.
+pub(crate) async fn forget_unsaved(state: &AppState, id: &str, was_new: bool) {
+    if was_new {
+        let _ = crate::state::forget_secrets_of_gone(state, id).await;
+    }
 }
 
 /// Tries the connection with the given (possibly unsaved) settings. `clear_secret` (FTP and

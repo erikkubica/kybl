@@ -67,9 +67,21 @@ async function fetchCopy(c: DragOutContext, e: Entry): Promise<string | null> {
   return done.state === "done" ? done.local : null;
 }
 
+// The app removed copies nobody used for long ("Clear cache", the weekly trim): a path remembered
+// here may be gone, and handing it over would drop the item, so they are fetched again.
+let watching = false;
+function watchRemovals() {
+  if (watching) return;
+  watching = true;
+  listen("open-copies-removed", () => fetched.clear()).catch(() => {
+    watching = false;
+  });
+}
+
 /** Starts fetching the small files of `items` that aren't on this computer anyway. */
 function warm(c: DragOutContext, items: Entry[]) {
   if (c.localPaths) return;
+  watchRemovals();
   let count = 0;
   let total = 0;
   for (const e of items) {
