@@ -465,8 +465,6 @@ pub struct Overview {
     /// the nearest tag behind HEAD
     pub tag: Option<String>,
     pub stashes: u32,
-    /// the last commit that touched the selected file, when one was asked about
-    pub file: Option<Commit>,
 }
 
 /// Fields of a commit line are split by the unit separator and lines by NUL (`log -z`), so
@@ -491,23 +489,26 @@ fn parse_commits(buf: &[u8]) -> Vec<Commit> {
 /// no query. `git@host:owner/repo.git` and `https://token@host/owner/repo.git` both become
 /// "host/owner/repo". The cleaning only ever removes text.
 fn clean_remote(url: &str) -> String {
-    // anything after `?` or `#` could be a token, and is never part of the address
-    let url = url.trim().split(['?', '#']).next().unwrap_or("");
+    let url = url.trim();
     let rest = if let Some((_, rest)) = url.split_once("://") {
-        // the userinfo sits before the first slash, up to the last `@`
-        let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
-        let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-        if path.is_empty() {
-            host.to_string()
-        } else {
-            format!("{host}/{path}")
-        }
+        // The userinfo is cut off first, on the whole text: a password may hold an unencoded
+        // `?`, `#` or `/`, and cutting at those first would leave part of it showing. It ends at
+        // the last `@` of the authority (up to the first slash); when a slash inside the
+        // password hides that `@`, the last `@` anywhere is used, which can only remove more.
+        let authority = rest.split('/').next().unwrap_or(rest);
+        let after = match authority.rfind('@') {
+            Some(i) => &rest[i + 1..],
+            None => rest.rfind('@').map_or(rest, |i| &rest[i + 1..]),
+        };
+        // a query or fragment could be a token and is never part of the address
+        after.split(['?', '#']).next().unwrap_or("").to_string()
     } else if let Some((front, path)) = url.split_once(':').filter(|(front, _)| !front.contains('/') && !front.is_empty()) {
         // scp-like `[user@]host:path`
         let host = front.rsplit_once('@').map_or(front, |(_, h)| h);
+        let path = path.split(['?', '#']).next().unwrap_or("");
         format!("{host}/{}", path.trim_start_matches('/'))
     } else {
-        url.to_string()
+        url.split(['?', '#']).next().unwrap_or("").to_string()
     };
     let rest = rest.trim_end_matches('/');
     rest.strip_suffix(".git").unwrap_or(rest).to_string()
@@ -554,31 +555,42 @@ fn remote_of(bin: &Path, top: &Path) -> Option<String> {
     (!clean.is_empty()).then_some(clean)
 }
 
-/// The overview of the repository folder `dir` is in; `file` (a file of that folder, relative to
-/// it) adds the last commit that touched it. None when git is missing or `dir` isn't in a work
-/// tree. Every run is time-boxed and none talks to a remote. Blocks for a moment: call it off
-/// the async runtime.
-pub fn overview_of(dir: &Path, file: Option<&str>) -> Option<Overview> {
+/// The overview of the repository folder `dir` is in. None when git is missing or `dir` isn't in
+/// a work tree. Every run is time-boxed and none talks to a remote. Blocks for a moment: call it
+/// off the async runtime. The selected file's last commit is a separate, single run
+/// (`file_commit_of`), so moving between files doesn't redo all of this.
+pub fn overview_of(dir: &Path) -> Option<Overview> {
     let bin = find_tool("git")?;
     let repo = find_repo(&bin, dir)?;
     let top = repo.top.as_path();
     let run = |args: &[&str]| run_in(&bin, top, args);
     let commits = run(&["log", "-10", "--no-show-signature", "-z", COMMIT_FORMAT, "HEAD", "--"]).map(|o| parse_commits(&o)).unwrap_or_default();
-    let file = file.filter(|f| safe_relative(f)).and_then(|f| {
-        // literal, so a file named like a pathspec magic (":(top)x") is just a file
-        let path = format!("{}{f}", repo.prefix);
-        let out = run(&["--literal-pathspecs", "log", "-1", "--no-show-signature", "-z", COMMIT_FORMAT, "HEAD", "--", &path])?;
-        parse_commits(&out).into_iter().next()
-    });
+    // `describe` walks the whole history when it finds no tag, which is slow on a big repository:
+    // it is only asked when a tag exists at all, and looks at few candidates
+    let has_tags = text_of(run(&["for-each-ref", "--count=1", "--format=x", "refs/tags"])).is_some();
+    let tag = if has_tags { text_of(run(&["describe", "--tags", "--abbrev=0", "--candidates=10"])) } else { None };
     Some(Overview {
         upstream: text_of(run(&["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])),
         fetched_at: fetched_at(&bin, top),
         remote: remote_of(&bin, top),
         commits,
-        tag: text_of(run(&["describe", "--tags", "--abbrev=0"])),
+        tag,
         stashes: text_of(run(&["rev-list", "--walk-reflogs", "--count", "refs/stash"])).and_then(|n| n.parse().ok()).unwrap_or(0),
-        file,
     })
+}
+
+/// The last commit that touched `file` (a file of the folder `dir` is in, relative to it); one
+/// git run. None when git is missing, `dir` isn't in a work tree, or git doesn't know the file.
+pub fn file_commit_of(dir: &Path, file: &str) -> Option<Commit> {
+    if !safe_relative(file) {
+        return None;
+    }
+    let bin = find_tool("git")?;
+    let repo = find_repo(&bin, dir)?;
+    // literal, so a file named like a pathspec magic (":(top)x") is just a file
+    let path = format!("{}{file}", repo.prefix);
+    let out = run_in(&bin, repo.top.as_path(), &["--literal-pathspecs", "log", "-1", "--no-show-signature", "-z", COMMIT_FORMAT, "HEAD", "--", &path])?;
+    parse_commits(&out).into_iter().next()
 }
 
 #[cfg(test)]
@@ -609,6 +621,11 @@ mod tests {
             ("ssh://git@host.example:2222/owner/repo.git", "host.example:2222/owner/repo"),
             ("https://host/owner/repo.git?token=abc#frag", "host/owner/repo"),
             ("/srv/git/repo.git", "/srv/git/repo"),
+            // unencoded `?`, `#` and `/` inside a password, encoded or not
+            ("https://user:pa?ss@host/o/r.git", "host/o/r"),
+            ("https://user:pa#ss@host/o/r.git", "host/o/r"),
+            ("https://user:pa/ss@host/o/r.git", "host/o/r"),
+            ("https://user:pa%2Fss%3F%23@host/o/r.git", "host/o/r"),
         ] {
             let got = clean_remote(url);
             assert_eq!(got, want, "{url}");
@@ -919,16 +936,16 @@ u UU N... 100644 100644 100644 100644 a b c conflict.txt\0\
         let kinds: HashMap<_, _> = info.changes.iter().map(|c| (c.path.as_str(), c.kind)).collect();
         assert_eq!(kinds.get("a.txt"), Some(&GitKind::Modified));
         assert_eq!(kinds.get("b.txt"), Some(&GitKind::Untracked));
-        let ov = overview_of(&dir.join("src"), Some("a.txt")).expect("a repository");
+        let ov = overview_of(&dir.join("src")).expect("a repository");
         assert_eq!(ov.commits.len(), 1);
         assert_eq!((ov.commits[0].subject.as_str(), ov.commits[0].author.as_str()), ("first", "t"));
-        assert_eq!(ov.file.as_ref().map(|c| c.subject.as_str()), Some("first"));
+        assert_eq!(file_commit_of(&dir.join("src"), "a.txt").map(|c| c.subject), Some("first".to_string()));
         // a file git doesn't know, and one that tries to leave the folder, have no last commit
-        assert!(overview_of(&dir.join("src"), Some("b.txt")).unwrap().file.is_none());
-        assert!(overview_of(&dir.join("src"), Some("../.gitignore")).unwrap().file.is_none());
+        assert!(file_commit_of(&dir.join("src"), "b.txt").is_none());
+        assert!(file_commit_of(&dir.join("src"), "../.gitignore").is_none());
         assert_eq!((ov.upstream, ov.fetched_at, ov.remote, ov.tag, ov.stashes), (None, None, None, None, 0));
         run(&["remote", "add", "origin", "https://me:pw@example.com/o/r.git"]);
-        assert_eq!(overview_of(&dir, None).unwrap().remote.as_deref(), Some("example.com/o/r"));
+        assert_eq!(overview_of(&dir).unwrap().remote.as_deref(), Some("example.com/o/r"));
         let top = status_of(&dir, true).unwrap();
         assert!(top.changes.iter().any(|c| c.path == "build/" && c.kind == GitKind::Ignored));
         let _ = std::fs::remove_dir_all(&dir);

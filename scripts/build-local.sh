@@ -53,10 +53,24 @@ if [ "${1:-}" = "--install" ]; then
   stage="/Applications/.Kybl.app.new"
   old="/Applications/.Kybl.app.old"
   rm -rf "$stage"
-  # an earlier build moved aside is removed only when nothing still runs from it
+  # an earlier build moved aside is removed only when no running Kybl uses it. The launch command
+  # line is no proof: a Kybl started from /Applications keeps that text after its bundle is moved
+  # to .old, so the real files each process holds open (lsof) and its real executable (ps comm)
+  # are compared; when either cannot be read, the bundle stays (a leftover folder is harmless)
+  in_use() {
+    local prev="$1" pid seen
+    for pid in $(pgrep -x kybl 2>/dev/null); do
+      seen=$(lsof -p "$pid" -Fn 2>/dev/null) || return 0
+      [ -n "$seen" ] || return 0
+      case "$seen" in *"$prev/"*) return 0 ;; esac
+      case "$(ps -o comm= -p "$pid" 2>/dev/null)" in *"$prev/"*) return 0 ;; esac
+      case "$(ps -o command= -p "$pid" 2>/dev/null)" in *"$prev/"*) return 0 ;; esac
+    done
+    return 1
+  }
   for prev in /Applications/.Kybl.app.old*; do
     [ -e "$prev" ] || continue
-    pgrep -f "$prev/Contents/MacOS/kybl" >/dev/null || rm -rf "$prev"
+    in_use "$prev" || rm -rf "$prev"
   done
   [ -e "$old" ] && old="/Applications/.Kybl.app.old.$$"
   cp -R "$APP" "$stage"

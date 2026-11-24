@@ -27,13 +27,22 @@ pub async fn git_status(app: AppHandle, state: State<'_, AppState>, profile_id: 
 }
 
 /// What the info panel shows about the repository a folder of this computer is in (tracking
-/// branch, remote, recent commits, tag, stashes, and the last commit of `file`, a file of the
-/// folder); None when it isn't in one. Never talks to a remote.
+/// branch, remote, recent commits, tag, stashes); None when it isn't in one. Never talks to a
+/// remote.
 #[tauri::command]
-pub async fn git_overview(app: AppHandle, state: State<'_, AppState>, profile_id: String, bucket: String, prefix: String, file: Option<String>) -> Result<Option<git::Overview>, String> {
+pub async fn git_overview(app: AppHandle, state: State<'_, AppState>, profile_id: String, bucket: String, prefix: String) -> Result<Option<git::Overview>, String> {
     let s = registry::open(&app, &state, &profile_id).await?;
     let Some(dir) = s.local_path(&bucket, &prefix) else { return Ok(None) };
-    Ok(tauri::async_runtime::spawn_blocking(move || git::overview_of(&dir, file.as_deref())).await.ok().flatten())
+    Ok(tauri::async_runtime::spawn_blocking(move || git::overview_of(&dir)).await.ok().flatten())
+}
+
+/// The last commit that touched `file`, a file of the folder (relative to it); one cheap git run
+/// when a file is selected, apart from the folder's overview.
+#[tauri::command]
+pub async fn git_file_commit(app: AppHandle, state: State<'_, AppState>, profile_id: String, bucket: String, prefix: String, file: String) -> Result<Option<git::Commit>, String> {
+    let s = registry::open(&app, &state, &profile_id).await?;
+    let Some(dir) = s.local_path(&bucket, &prefix) else { return Ok(None) };
+    Ok(tauri::async_runtime::spawn_blocking(move || git::file_commit_of(&dir, &file)).await.ok().flatten())
 }
 
 /// How much of a cloud drive's storage is used, for the folder info panel; None when the drive

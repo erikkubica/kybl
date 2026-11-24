@@ -12,7 +12,7 @@ import { Icon } from "../Icons";
 import { formatBytes } from "../format";
 import { addressOf, kindInfo, pickOf } from "../connections/kinds";
 import { providerMeta } from "../providers";
-import { devtoolsApi, type GitOverview } from "./devtoolsApi";
+import { devtoolsApi, type GitCommit, type GitOverview } from "./devtoolsApi";
 import { ago, connectionFacts, gitChips, gitCounts, type Fact } from "./infoFacts";
 import type { Pane } from "./usePane";
 import type { Entry } from "../types";
@@ -88,21 +88,41 @@ export default function InfoPanel({ pane }: { pane: Pane }) {
 
   // ---- the repository's overview (the status itself comes from the pane's git hook)
   const info = git.info;
-  const [overview, setOverview] = useState<{ file: string | null; ov: GitOverview } | null>(null);
+  // every answer carries the folder (and file) it was asked for and is used only while those are
+  // still the ones on screen, so a slow answer for the folder or file before never shows
+  const here = `${profile?.id}\u0000${bucket}\u0000${prefix}`;
+  const [overview, setOverview] = useState<{ at: string; ov: GitOverview } | null>(null);
   useEffect(() => {
-    if (!info || !profile || bucket == null) return setOverview(null);
+    // the old folder's overview goes at once; the same folder's stays until the fresh one is in
+    setOverview((o) => (o && o.at === here ? o : null));
+    if (!info || !profile || bucket == null) return;
     let live = true;
     devtoolsApi
-      .gitOverview(profile.id, bucket, prefix, file ?? undefined)
-      // the old answer stays until the new one is in, so the panel doesn't blink between files
-      .then((ov) => live && setOverview(ov ? { file, ov } : null))
+      .gitOverview(profile.id, bucket, prefix)
+      .then((ov) => live && setOverview(ov ? { at: here, ov } : null))
       .catch(() => live && setOverview(null));
     return () => {
       live = false;
     };
-    // a fresh status (folder opened, window back in front, a change made here) or another file asks again
-  }, [info, profile?.id, bucket, prefix, file]);
-  const ov = overview?.ov ?? null;
+    // a fresh status (folder opened, window back in front, a change made here) asks again
+  }, [info, here]);
+  const ov = overview && overview.at === here ? overview.ov : null;
+
+  // the selected file's last commit: its own small question, asked only when the file changes
+  const [fileLog, setFileLog] = useState<{ at: string; file: string; commit: GitCommit | null } | null>(null);
+  useEffect(() => {
+    if (!info || !profile || bucket == null || file == null) return setFileLog(null);
+    let live = true;
+    devtoolsApi
+      .gitFileCommit(profile.id, bucket, prefix, file)
+      .then((commit) => live && setFileLog({ at: here, file, commit }))
+      .catch(() => live && setFileLog(null));
+    return () => {
+      live = false;
+    };
+    // a new status (the file may have been committed) asks again
+  }, [info, here, file]);
+  const fileCommit = fileLog && fileLog.at === here && fileLog.file === file ? fileLog : null;
 
   // ---- a cloud drive's space
   const cloud = !!profile?.cloud;
@@ -176,7 +196,11 @@ export default function InfoPanel({ pane }: { pane: Pane }) {
               </span>
             )}
           </p>
-          {ov && <p className="info-quiet">{ov.upstream ? `tracks ${ov.upstream}${ov.fetchedAt ? ` · fetched ${ago(ov.fetchedAt)}` : ""}` : "no upstream"}</p>}
+          {ov && (
+            <p className="info-quiet" title={ov.upstream ?? undefined}>
+              {ov.upstream ? `tracks ${ov.upstream}${ov.fetchedAt ? ` · fetched ${ago(ov.fetchedAt)}` : ""}` : "no upstream"}
+            </p>
+          )}
           {ov?.remote && (
             <div className="info-path">
               <code title={ov.remote}>{ov.remote}</code>
@@ -228,7 +252,7 @@ export default function InfoPanel({ pane }: { pane: Pane }) {
             />
           )}
           {/* only an answer made for this very file, never the one for the file before it */}
-          {file != null && overview?.file === file && (
+          {file != null && fileCommit && (
             <div className="info-file-log">
               <h4>Selected file</h4>
               <p>
@@ -237,9 +261,9 @@ export default function InfoPanel({ pane }: { pane: Pane }) {
                     {LETTER[fileStatus.kind] ?? ""}
                   </span>
                 )}
-                {ov?.file ? (
+                {fileCommit.commit ? (
                   <>
-                    Last changed in <span className="info-hash">{ov.file.hash}</span> by {ov.file.author}, {ago(ov.file.time)}: <span title={ov.file.subject}>{ov.file.subject}</span>
+                    Last changed in <span className="info-hash">{fileCommit.commit.hash}</span> by {fileCommit.commit.author}, {ago(fileCommit.commit.time)}: <span title={fileCommit.commit.subject}>{fileCommit.commit.subject}</span>
                   </>
                 ) : (
                   "Not committed yet"
