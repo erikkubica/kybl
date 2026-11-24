@@ -69,7 +69,10 @@ export function DialogsProvider({ children }: { children: ReactNode }) {
   const open = useRef(false);
   const toast = useCallback((kind: Toast["kind"], text: string, action?: ToastAction) => {
     logMessage(kind, text);
-    const popUp = answersUser() && !open.current && !dragging();
+    // only the answer to what the user just did pops up (a menu item's "Copied", a rename that
+    // failed); work finishing in the background, which is what used to land on top of an open
+    // menu, waits under the bell. Nothing pops up over a drag.
+    const popUp = answersUser() && !dragging();
     addNotification(kind, text, action, popUp);
     if (!popUp) return;
     const id = Date.now() + Math.random();
