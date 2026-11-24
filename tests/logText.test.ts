@@ -131,6 +131,28 @@ test("an error splits into its sentence and its technical side", () => {
   assert.equal(errorDetail("Only a sentence."), null);
 });
 
+test("the SECRET pattern is linear: a long run of SECRET words is redacted fast (R9 S-9)", () => {
+  const t0 = Date.now();
+  redact("SECRET".repeat(33333));
+  assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0} ms`);
+  // the pattern still hides an ordinary name and a long one
+  assert.equal(redact("AWS_SECRET_ACCESS_KEY=abc123"), "AWS_SECRET_ACCESS_KEY=•••");
+  assert.equal(redact("MY_APP_SECRET=abc123 other=1"), "MY_APP_SECRET=••• other=1");
+});
+
+test("the log redacts before it cuts, and a huge detail is capped before redaction (R9 S-9)", async () => {
+  const { logMessage, currentLog, clearLog } = await import("../src/activityLog.ts");
+  clearLog();
+  // a credential that straddles the 4000-character cut of the line is hidden whole
+  logMessage("info", `${"a".repeat(3990)} https://alice:hunter2secret@host/x`);
+  assert.ok(!currentLog()[0].text.includes("hunter2"), currentLog()[0].text.slice(-40));
+  // a detail of 2 MB of SECRET words is handled fast
+  const t0 = Date.now();
+  logMessage("error", "Failed.", "SECRET".repeat(333_333));
+  assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0} ms`);
+  clearLog();
+});
+
 test("durations read naturally", () => {
   assert.equal(formatDuration(40), "0.1 s");
   assert.equal(formatDuration(1430), "1.4 s");

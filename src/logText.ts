@@ -57,7 +57,7 @@ export function redact(text: string): string {
       // JSON tokens: {"token":"…"}, "id_token", "SessionToken"
       .replace(/("(?:token|id_?token|session_?token)"\s*:\s*")[^"]*/gi, `$1${HIDDEN}`)
       // environment style names: AWS_SECRET_ACCESS_KEY=…
-      .replace(/\b([A-Z0-9_]*SECRET[A-Z0-9_]*=)[^\s"',;&]+/g, `$1${HIDDEN}`)
+      .replace(/\b([A-Z0-9_]{0,60}SECRET[A-Z0-9_]{0,60}=)[^\s"',;&]+/g, `$1${HIDDEN}`)
       // the per-run trust tag the app puts into host key and certificate errors
       .replace(/\bkybl:[0-9a-f]{32}\b ?/g, "")
       // the whole value to the end of the line: schemes such as `SharedKey acct:SIGNATURE` or `Token abc` have more than one word

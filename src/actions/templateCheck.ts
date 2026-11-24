@@ -29,6 +29,9 @@ export function templateProblem(template: string): string | null {
   // read: a placeholder after `>&\⏎   ` or `$\⏎'` is then judged where the shell puts it (R8 S-6).
   // An odd run of backslashes before the break; an even run is escaped backslashes and a real break.
   const t = template.replace(/(?<!\\)((?:\\\\)*)\\\n/g, "$1");
+  // a continuation was removed: a comment ending in a backslash does NOT continue in a shell, so
+  // with both in one template the comment's real end can't be judged (R9 S-1)
+  const folded = t.length !== template.length;
   const placeholderAt = (i: number) => PLACEHOLDERS.find((p) => t.startsWith(`{${p}}`, i));
   const wordStart = (i: number) => i === 0 || WORD_BREAK.has(t[i - 1]);
   // a here-document (`<<`, not bash's `<<<`) seen: its body is read like double quotes
@@ -41,6 +44,12 @@ export function templateProblem(template: string): string | null {
   // an expansion (`$…` or backticks) seen in a word after `>&` or `<&`: bash 3.2 expands that word
   // twice, so a variable holding a file name runs there (R8 S-3). Refused with a placeholder.
   let dupExpansion = false;
+  // a comment seen (a `#` where a word starts, outside quotes)
+  let comment = false;
+  // every plain `(` still open, true for one that is NOT a subshell, array value or process
+  // substitution: zsh reads what is in it as glob qualifiers, and `$( … )` in a qualifier runs
+  // even when it was quoted (R9 S-7)
+  const parens: boolean[] = [];
   for (let i = 0; i < t.length; i++) {
     const ctx = stack[stack.length - 1];
     const c = t[i];
@@ -52,6 +61,8 @@ export function templateProblem(template: string): string | null {
       } else dup.started = true;
     }
     if (dup && stack.length >= dup.depth && (c === "$" || c === "`")) dupExpansion = true;
+    if (code && c === ")" && !(ctx.k === "subst" && ctx.n === 0)) parens.pop();
+    if (code && c === "(" && t[i + 1] !== "(" && t[i - 1] !== "$") parens.push(globParen(t, i));
     if (c === "\\" && ctx.k !== "single") {
       const w = placeholderAt(i + 1);
       if (w) return `{${w}} comes right after a backslash. Take the backslash away: it would undo Kybl's quoting of the file name.`;
@@ -73,6 +84,7 @@ export function templateProblem(template: string): string | null {
       if (wordStart(i)) {
         // bash 3.2 finds the end of `$( … )` by counting parentheses, comments included
         if (stack.some((x) => x.k === "subst")) unsure = true;
+        comment = true;
         // a comment, to the end of the line: a value with a line break would end it
         let end = t.indexOf("\n", i);
         if (end < 0) end = t.length;
@@ -103,6 +115,17 @@ export function templateProblem(template: string): string | null {
           return `{${w}} comes after a part shells read differently (a # inside a word, case or a comment inside $( … ), a line break inside a word…). Put it before that part, or rewrite it.`;
         const why = operandProblem(t, i);
         if (why) return `{${w}} ${why}`;
+        // zsh reads `word(…)` and a `(…)` after a word as glob qualifiers, `[…]` as a subscript or
+        // range: quotes inside them don't hold (R9 S-7)
+        const end = i + w.length + 2;
+        if (
+          parens.some((g) => g) ||
+          t[end] === "(" ||
+          t[end] === "[" ||
+          (t[end] === "{" && !placeholderAt(end)) ||
+          (i > 0 && (t[i - 1] === "[" || t[i - 1] === "{"))
+        )
+          return `{${w}} is glued to a ( [ or {, or inside parentheses that follow a word. zsh reads those as glob qualifiers or subscripts, and there the quoting of the file name doesn't hold. Put a space around it, or use a plain argument.`;
       }
     }
     // a construct that opens here, and how many characters start it
@@ -159,6 +182,7 @@ export function templateProblem(template: string): string | null {
     }
   }
   if (PLACEHOLDERS.some((p) => uses(t, p))) {
+    if (comment && folded) return codeWhy("a comment and a line continuation (a backslash at the end of a line); a shell does not continue a comment, so Kybl can't tell where it ends");
     if (dupExpansion) return codeWhy("an expansion after `>&` or `<&` (bash on macOS reads that word twice)");
     return evaluationProblem(t);
   }
@@ -197,7 +221,9 @@ const RUNNING_VARS = ["PS4", "PROMPT_COMMAND", "BASH_ENV"];
  * arithmetic, so `a[$(cmd)]` runs; `ENV` is read by an interactive sh; the rest change how words
  * split or where commands come from). Assigning any of them is refused (R8 S-3).
  */
-const SPECIAL_VARS = ["OPTIND", "OPTARG", "RANDOM", "SECONDS", "TMOUT", "LINENO", "SHLVL", "MAILCHECK", "ENV", "BASH_ENV", "PS4", "PROMPT_COMMAND", "IFS", "PATH"];
+const SPECIAL_VARS = ["OPTIND", "OPTARG", "RANDOM", "SECONDS", "TMOUT", "LINENO", "SHLVL", "MAILCHECK", "ENV", "BASH_ENV", "PS4", "PROMPT_COMMAND", "IFS", "PATH", "HISTCMD", "JOBMAX", "PPID"];
+/** zsh's tables that define functions and aliases when written to. */
+const ZSH_TABLES = ["functions", "aliases", "galiases", "saliases", "commands"];
 
 /** Mirror of `brace_problem` in actions.rs: what `${body}` is when it is not an allowed form; null when it is allowed. */
 function braceProblem(body: string): string | null {
@@ -253,9 +279,10 @@ function evaluationProblem(t: string): string | null {
     if (BANNED_WORDS.includes(w)) return codeWhy(`\`${w}\`, which reads a variable's value as code or runs it`);
     if (RUNNING_VARS.includes(w)) return codeWhy(`\`${w}\`, which the shell runs as code`);
   }
-  // `(` and backticks stay inside the words here, so an expansion given as a name shows
-  for (const command of plain.split(/[;&|\n]/)) {
-    const words = command.split(ASCII_WS).filter(Boolean);
+  // the commands, split where a shell starts one: after `;` `&` `|` a line break, `(`, `)`, a
+  // backtick or a brace, so `(OPTIND=$v)`, `$(export "$v")` and `case x) export "$v"` are seen as
+  // the commands they are (R9 S-5)
+  for (const words of commands(maskPlaceholders(plain))) {
     const has = (x: string) => words.includes(x);
     // a declaring builtin given a flag that makes the variable numeric or a name reference
     if (words.some((w) => DECLARING.includes(w))) {
@@ -265,25 +292,35 @@ function evaluationProblem(t: string): string | null {
     }
     if ((has("printf") || has("print")) && has("-v")) return codeWhy("`printf -v`, which takes its variable name as code");
     if ((has("[") || has("[[") || has("test")) && (has("-v") || has("-R"))) return codeWhy("a `-v` or `-R` test, which takes its variable name as code");
-    // the command word: the first after keywords, prefixes and `NAME=value` assignments
-    // (`f() {` before it is a function header)
-    const cmdAt = words.findIndex((w) => !LEAD.includes(w) && !isAssignment(w) && !w.endsWith("()"));
-    // an assignment (`X=…`, `export X=…`, `for X in …`) to a variable the shell evaluates
+    // the command words: the first after keywords, redirections and `NAME=value` assignments, and
+    // every word after a prefix such as `command -p` or `env`
+    const cands = commandWords(words);
+    // an assignment (`X=…`, `export X=…`, `for X in …`) to a variable the shell evaluates, and
+    // zsh's tables of functions and aliases (`functions[1]=$v` defines a function)
     for (let k = 0; k < words.length; k++) {
       const eq = words[k].indexOf("=");
-      const n = eq > 0 ? words[k].slice(0, eq).replace(/\+$/, "") : k > 0 && words[k - 1] === "for" ? words[k] : "";
+      const n = eq > 0 ? words[k].slice(0, eq).replace(/\++$/, "") : k > 0 && words[k - 1] === "for" ? words[k] : "";
       if (SPECIAL_VARS.includes(n)) return codeWhy(`an assignment to \`${n}\`, which the shell evaluates or runs`);
+      const table = words[k].split(/[[=]/)[0].replace(/\++$/, "");
+      if (ZSH_TABLES.includes(table) && /[[=]/.test(words[k])) return codeWhy(`\`${table}[…]\`, zsh's table of ${table}, which runs what is put in it`);
     }
-    // a variable name given to a declaring builtin as an expansion: the shell reads a name with a
-    // subscript (`a[$(cmd)]`) as code, so `declare "$v"=1` or `export "$v"` runs a file name in $v
-    if (cmdAt >= 0 && NAME_BUILTINS.includes(words[cmdAt])) {
-      const named = words.slice(cmdAt + 1).filter((w) => !/^[-+]/.test(w));
-      if (named.some((w) => /[$`(]/.test(w.split("=")[0]))) return codeWhy(`an expansion as the variable name for \`${words[cmdAt]}\` (a name with a subscript runs as code)`);
-    }
-    // ksh reads a bare variable name as arithmetic too (`shift n`, `ulimit -n n`)
-    if (cmdAt >= 0 && (words[cmdAt] === "shift" || words[cmdAt] === "ulimit")) {
-      const literal = (w: string) => /^[0-9]*$/.test(w) || ["$?", "$#", "$$", "unlimited", "hard", "soft"].includes(w);
-      if (words.slice(cmdAt + 1).some((w) => !w.startsWith("-") && !literal(w))) return codeWhy(`\`${words[cmdAt]}\` with a variable or expression (ksh reads it as arithmetic)`);
+    for (const at of cands) {
+      const cmd = words[at];
+      const operands = words.slice(at + 1);
+      // a variable name given to a declaring builtin as an expansion: the shell reads a name with a
+      // subscript (`a[$(cmd)]`) as code, so `declare "$v"=1` or `export "$v"` runs a file name in $v
+      if (NAME_BUILTINS.includes(cmd)) {
+        const named = operands.filter((w) => !/^[-+]/.test(w));
+        if (named.some((w) => /[$`(]/.test(w.split("=")[0]))) return codeWhy(`an expansion as the variable name for \`${cmd}\` (a name with a subscript runs as code)`);
+      }
+      // ksh reads a bare variable name as arithmetic too (`shift n`, `ulimit -n n`)
+      if (cmd === "shift" || cmd === "ulimit") {
+        const literal = (w: string) => /^[0-9]*$/.test(w) || ["$?", "$#", "$$", "unlimited", "hard", "soft"].includes(w);
+        if (operands.some((w) => !w.startsWith("-") && !literal(w))) return codeWhy(`\`${cmd}\` with a variable or expression (ksh reads it as arithmetic)`);
+      }
+      // these define or run text later (`alias a=$v`, `fc -e`, `enable -f`), or read a file named by an expansion
+      if (cmd === "alias" || cmd === "fc" || cmd === "enable") return codeWhy(`\`${cmd}\`, which defines or runs text as code`);
+      if ((cmd === "source" || cmd === ".") && operands.some((w) => /[$`]/.test(w))) return codeWhy(`\`${cmd}\` with an expansion, which reads and runs a file chosen at run time`);
     }
     const at = words.findIndex((w) => NUMBER_BUILTINS.includes(w));
     if (at >= 0 && words.slice(at + 1).some((w) => w.includes("$") && !["$?", "$#", "$$"].includes(w))) {
@@ -322,48 +359,167 @@ const NAME_BUILTINS = ["declare", "typeset", "local", "export", "readonly", "int
 /** Test operators that read both sides as numbers (ksh and `[[` evaluate them as arithmetic). */
 const NUMERIC_TESTS = ["-eq", "-ne", "-lt", "-le", "-gt", "-ge"];
 /** Words that come before the command word in a command line. */
-const LEAD = ["!", "{", "time", "command", "builtin", "exec", "nohup", "then", "do", "else", "elif", "if", "while", "until"];
+const LEAD = ["!", "{", "then", "do", "else", "elif", "if", "while", "until"];
+/** Words that run what follows them (`command -p declare …`, `env X=1 export …`): after one, any later word of the command may be the command word. */
+const PREFIXES = ["command", "builtin", "exec", "env", "nohup", "time", "nice", "xargs", "noglob", "nocorrect"];
 /** `NAME=value` as a command prefix. */
 const isAssignment = (w: string) => {
   const e = w.indexOf("=");
   return e > 0 && /^[A-Za-z0-9_]+$/.test(w.slice(0, e));
 };
-const SEP = new Set([";", "&", "|", "\n", "(", ")", "`"]);
 /** ASCII whitespace as Rust's `split_ascii_whitespace` sees it (not \v). */
 const ASCII_WS = /[ \t\n\f\r]+/;
 
 /** Mirror of `operand_problem` in actions.rs: why the placeholder at `at` goes where a builtin reads its value as code. */
 function operandProblem(t: string, at: number): string | null {
+  // placeholders as one control character each (same length), so their braces are not the shell's
+  const m = maskPlaceholders(t);
   let start = at;
-  while (start > 0 && !SEP.has(t[start - 1])) start--;
+  while (start > 0 && !isSep(m, start - 1)) start--;
   let end = at;
-  while (end < t.length && !SEP.has(t[end])) end++;
+  while (end < m.length && !isSep(m, end)) end++;
   // inside `[[ … ]]`, `&`, `|`, `(` and `)` group tests and don't end the command: one test
-  const open = t.lastIndexOf("[[", at - 1);
+  const open = m.lastIndexOf("[[", at - 1);
   if (open >= 0 && open < at) {
-    const word = (open === 0 || /[ \t\n\f\r]/.test(t[open - 1]) || SEP.has(t[open - 1])) && /[ \t\n\f\r]/.test(t[open + 2] ?? "x");
-    if (word && !t.slice(open, at).includes("]]")) {
+    const word = (open === 0 || /[ \t\n\f\r]/.test(m[open - 1]) || isSep(m, open - 1)) && /[ \t\n\f\r]/.test(m[open + 2] ?? "x");
+    if (word && !m.slice(open, at).includes("]]")) {
       start = open;
-      const close = t.indexOf("]]", at);
-      end = close < 0 ? t.length : close;
+      const close = m.indexOf("]]", at);
+      end = close < 0 ? m.length : close;
     }
   }
-  const before = t.slice(start, at);
-  const words = before.split(ASCII_WS).filter(Boolean);
+  // the words as the shell will see them: quotes and backslashes are gone
+  const unquoted = (x: string) => x.replace(/['"\\]/g, "");
+  const before = unquoted(m.slice(start, at));
+  const words = splitWords(before);
+  // the part of the placeholder's own word before it ("" when it starts a word), and the word before
   const glued = before.length > 0 && !/[ \t\n\f\r]$/.test(before);
-  const cur = glued ? (words[words.length - 1] ?? "") : "";
-  const done = glued ? words.slice(0, -1) : words;
-  const prev = done[done.length - 1] ?? "";
-  const cmd = done.find((w) => !LEAD.includes(w) && !isAssignment(w)) ?? "";
+  const cur = glued ? (words.pop() ?? "") : "";
+  const prev = words[words.length - 1] ?? "";
   const code = "goes where the shell reads the value as code (let, read, trap, eval, -eq, an array index…), and a file name could run there. Pass it as a plain argument instead.";
-  if (CODE_BUILTINS.includes(cmd)) return code;
-  if (NAME_BUILTINS.includes(cmd) && !cur.includes("=")) return code;
-  if ((cmd === "printf" || cmd === "print") && prev === "-v") return code;
-  if (cmd === "[[" || cmd === "[" || cmd === "test") {
-    const all = t.slice(start, end).split(ASCII_WS);
-    if (prev === "-v" || prev === "-R" || all.some((w) => NUMERIC_TESTS.includes(w))) return code;
+  // every command word the command can have (see `commandWords`)
+  for (const k of commandWords(words)) {
+    const cmd = words[k];
+    if (CODE_BUILTINS.includes(cmd)) return code;
+    if (NAME_BUILTINS.includes(cmd) && !cur.includes("=")) return code;
+    if ((cmd === "printf" || cmd === "print") && prev === "-v") return code;
+    if (cmd === "[[" || cmd === "[" || cmd === "test") {
+      const all = unquoted(m.slice(start, end)).split(ASCII_WS);
+      if (prev === "-v" || prev === "-R" || all.some((w) => NUMERIC_TESTS.includes(w))) return code;
+    }
   }
   const o = cur.lastIndexOf("[");
   if (o >= 0 && !cur.slice(o).includes("]")) return code;
   return null;
+}
+
+/** Whether `b[i]` ends a command: `;`, `|`, a line break, `(`, `)`, a backtick, `{`, `}`, and a `&` that is not part of a redirection (`2>&1`, `&>x`; `>|` is one too). */
+function isSep(b: string, i: number): boolean {
+  switch (b[i]) {
+    case ";":
+    case "\n":
+    case "(":
+    case ")":
+    case "`":
+    case "{":
+    case "}":
+      return true;
+    case "|":
+      return !(i > 0 && b[i - 1] === ">");
+    case "&":
+      return !(i > 0 && (b[i - 1] === "<" || b[i - 1] === ">")) && b[i + 1] !== ">";
+    default:
+      return false;
+  }
+}
+
+/** The text with each placeholder (not the shell's `${word}`) turned into control characters of the same length. */
+function maskPlaceholders(t: string): string {
+  let out = "";
+  for (let i = 0; i < t.length; ) {
+    if (t[i] === "{" && t[i - 1] !== "$") {
+      const w = PLACEHOLDERS.find((p) => t.startsWith(`{${p}}`, i));
+      if (w) {
+        out += "\u0001".repeat(w.length + 2);
+        i += w.length + 2;
+        continue;
+      }
+    }
+    out += t[i];
+    i++;
+  }
+  return out;
+}
+
+/** The commands of `t`, each as its words (see `isSep` and `splitWords`). */
+function commands(t: string): string[][] {
+  const out: string[][] = [];
+  let from = 0;
+  for (let i = 0; i < t.length; i++) {
+    if (isSep(t, i)) {
+      // a backtick stays with the words before it, as the `$` of `$(` does
+      out.push(splitWords(t.slice(from, i + (t[i] === "`" ? 1 : 0))));
+      from = i + 1;
+    }
+  }
+  out.push(splitWords(t.slice(from)));
+  return out;
+}
+
+/** `2>&1`, `>file`, `<<EOF`, `&>x`: a word that is a redirection. */
+const isRedirect = (w: string) => /^[0-9]*&?[<>]/.test(w);
+/** A redirection written apart from its target (`>` then `file`), so the next word belongs to it. */
+const bareRedirect = (w: string) => ["<", ">", ">>", ">|", "<>", ">&", "<&", "<<", "<<<", "<<-", "&>", "&>>"].includes(w.replace(/^[0-9]+/, ""));
+
+/** Blank-separated words, with a redirection that is glued to a word (`shift>/dev/null`) split off, as a shell reads it. */
+function splitWords(s: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  for (const c of s) {
+    if (/[ \t\n\f\r]/.test(c)) {
+      if (cur) out.push(cur);
+      cur = "";
+      continue;
+    }
+    if ((c === "<" || c === ">") && cur !== "" && cur !== "&" && !/^[0-9]+$/.test(cur) && !isRedirect(cur)) {
+      out.push(cur);
+      cur = "";
+    }
+    cur += c;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/** Where the command word of a command is: the first word after keywords, redirections (with their targets) and `NAME=value` assignments. After a prefix every later word counts. */
+function commandWords(words: string[]): number[] {
+  let k = 0;
+  while (k < words.length) {
+    const w = words[k];
+    if (isRedirect(w)) k += bareRedirect(w) ? 2 : 1;
+    else if (LEAD.includes(w) || isAssignment(w)) k += 1;
+    else break;
+  }
+  if (k >= words.length) return [];
+  if (PREFIXES.includes(words[k])) return words.map((_, i) => i).filter((i) => i >= k);
+  return [k];
+}
+
+/** Whether the `(` at `i` is NOT where a command starts (a subshell, a process substitution, an array value `name=(…)` in front of the command or for `declare` and kin): zsh reads such a `(` after a word as glob qualifiers (R9 S-7). */
+function globParen(t: string, i: number): boolean {
+  let j = i;
+  while (j > 0 && (t[j - 1] === " " || t[j - 1] === "\t")) j--;
+  if (j === 0 || ";&|()\n\r`{<>$".includes(t[j - 1])) return false;
+  let ws = j;
+  while (ws > 0 && !/[ \t\n\f\r]/.test(t[ws - 1]) && !isSep(t, ws - 1)) ws--;
+  const word = t.slice(ws, j);
+  if (LEAD.includes(word) || PREFIXES.includes(word)) return false;
+  if (t[j - 1] === "=") {
+    let seg = ws;
+    while (seg > 0 && !isSep(t, seg - 1)) seg--;
+    const words = splitWords(t.slice(seg, ws));
+    const c = commandWords(words)[0];
+    return c !== undefined && !NAME_BUILTINS.includes(words[c]);
+  }
+  return true;
 }

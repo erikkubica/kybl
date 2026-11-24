@@ -149,6 +149,9 @@ pub fn check_template(template: &str) -> Result<(), String> {
     // the shell deletes every backslash + line break before it reads a word, so scan what it will
     // read: a placeholder after `>&\⏎   ` or `$\⏎'` is then judged where the shell puts it (R8 S-6)
     let unfolded = unfold(template);
+    // a continuation was removed: a comment ending in a backslash does NOT continue in a shell,
+    // so with both in one template the comment's real end can't be judged (R9 S-1)
+    let folded = unfolded.len() != template.len();
     let template = unfolded.as_str();
     #[derive(Clone, Copy, PartialEq)]
     enum Ctx {
@@ -182,6 +185,12 @@ pub fn check_template(template: &str) -> Result<(), String> {
     // an expansion (`$…` or backticks) seen in a word after `>&` or `<&`: bash 3.2 expands that
     // word twice, so a variable holding a file name runs there (R8 S-3). Refused with a placeholder.
     let mut dup_expansion = false;
+    // a comment seen (a `#` where a word starts, outside quotes)
+    let mut comment = false;
+    // every plain `(` still open, true for one that is NOT a subshell, array value or process
+    // substitution: zsh reads what is in it as glob qualifiers, and `$( … )` in a qualifier runs
+    // even when it was quoted (R9 S-7)
+    let mut parens: Vec<bool> = Vec::new();
     let mut i = 0;
     while i < b.len() {
         let ctx = *stack.last().unwrap();
@@ -201,6 +210,12 @@ pub fn check_template(template: &str) -> Result<(), String> {
         }
         if dup.is_some_and(|(depth, _)| stack.len() >= depth) && (c == b'$' || c == b'`') {
             dup_expansion = true;
+        }
+        if code && c == b')' && !matches!(ctx, Ctx::Subst(0)) {
+            parens.pop();
+        }
+        if code && c == b'(' && b.get(i + 1) != Some(&b'(') && !(i > 0 && b[i - 1] == b'$') {
+            parens.push(glob_paren(template, i));
         }
         // `\{path}`: the backslash would then sit right before the opening quote of the value
         if c == b'\\' && ctx != Ctx::Single {
@@ -230,6 +245,7 @@ pub fn check_template(template: &str) -> Result<(), String> {
                 if stack.iter().any(|c| matches!(c, Ctx::Subst(_))) {
                     unsure = true;
                 }
+                comment = true;
                 // a comment, to the end of the line: a value with a line break would end it
                 let end = b[i..].iter().position(|&x| x == b'\n').map_or(b.len(), |n| i + n);
                 if let Some(w) = (i..end).find_map(|j| if b[j] == b'{' { placeholder_at(j) } else { None }) {
@@ -273,6 +289,17 @@ pub fn check_template(template: &str) -> Result<(), String> {
                 }
                 if let Some(why) = operand_problem(template, i) {
                     return Err(format!("{{{w}}} {why}"));
+                }
+                // zsh reads `word(…)` and a `(…)` after a word as glob qualifiers, `[…]` as a
+                // subscript or range: quotes inside them don't hold (R9 S-7)
+                let end = i + w.len() + 2;
+                let next_is_placeholder = placeholder_at(end).is_some();
+                if parens.iter().any(|&g| g)
+                    || matches!(b.get(end), Some(b'(' | b'['))
+                    || (b.get(end) == Some(&b'{') && !next_is_placeholder)
+                    || (i > 0 && matches!(b[i - 1], b'[' | b'{'))
+                {
+                    return Err(format!("{{{w}}} is glued to a ( [ or {{, or inside parentheses that follow a word. zsh reads those as glob qualifiers or subscripts, and there the quoting of the file name doesn't hold. Put a space around it, or use a plain argument."));
                 }
             }
         }
@@ -359,6 +386,9 @@ pub fn check_template(template: &str) -> Result<(), String> {
         i += 1;
     }
     if PLACEHOLDERS.iter().any(|w| uses(template, w)) {
+        if comment && folded {
+            return Err(code_why("a comment and a line continuation (a backslash at the end of a line); a shell does not continue a comment, so Kybl can't tell where it ends"));
+        }
         if dup_expansion {
             return Err(code_why("an expansion after `>&` or `<&` (bash on macOS reads that word twice)"));
         }
@@ -408,8 +438,12 @@ const RUNNING_VARS: [&str; 3] = ["PS4", "PROMPT_COMMAND", "BASH_ENV"];
 /// Variables the shell itself evaluates or runs when they are set (integer ones read the value as
 /// arithmetic, so `a[$(cmd)]` runs; `ENV` is read by an interactive sh; the rest change how
 /// words split or where commands come from). Assigning any of them is refused (R8 S-3).
-const SPECIAL_VARS: [&str; 14] =
-    ["OPTIND", "OPTARG", "RANDOM", "SECONDS", "TMOUT", "LINENO", "SHLVL", "MAILCHECK", "ENV", "BASH_ENV", "PS4", "PROMPT_COMMAND", "IFS", "PATH"];
+/// `HISTCMD`, `JOBMAX` and `PPID` are integer variables in bash or ksh (R9 S-6); a sweep of every
+/// variable these shells document found no others that evaluate a value.
+const SPECIAL_VARS: [&str; 17] =
+    ["OPTIND", "OPTARG", "RANDOM", "SECONDS", "TMOUT", "LINENO", "SHLVL", "MAILCHECK", "ENV", "BASH_ENV", "PS4", "PROMPT_COMMAND", "IFS", "PATH", "HISTCMD", "JOBMAX", "PPID"];
+/// zsh's tables that define functions and aliases when written to.
+const ZSH_TABLES: [&str; 5] = ["functions", "aliases", "galiases", "saliases", "commands"];
 
 /// What `${body}` is, when it is not one of the allowed forms; None when it is allowed. The
 /// allow-list (a name is `[A-Za-z_][A-Za-z0-9_]*`, w, p and r hold no quote, bracket or brace):
@@ -505,12 +539,14 @@ fn evaluation_problem(t: &str) -> Option<String> {
             return Some(code_why(&format!("`{w}`, which the shell runs as code")));
         }
     }
-    // `(` and backticks stay inside the words here, so an expansion given as a name shows
-    for command in plain.split([';', '&', '|', '\n']) {
-        let words: Vec<&str> = command.split_ascii_whitespace().collect();
-        let has = |x: &str| words.contains(&x);
+    // the commands, split where a shell starts one: after `;` `&` `|` a line break, `(`, `)`, a
+    // backtick or a brace, so `(OPTIND=$v)`, `$(export "$v")` and `case x) export "$v"` are seen
+    // as the commands they are (R9 S-5)
+    let masked = mask_placeholders(&plain);
+    for words in commands(&masked) {
+        let has = |x: &str| words.iter().any(|w| w == x);
         // a declaring builtin given a flag that makes the variable numeric or a name reference
-        if words.iter().any(|w| ["declare", "typeset", "local", "export", "readonly"].contains(w)) {
+        if words.iter().any(|w| ["declare", "typeset", "local", "export", "readonly"].contains(&w.as_str())) {
             let flagged = |set: &[char]| words.iter().any(|w| w.starts_with('-') && !w.starts_with("--") && w.contains(set));
             if flagged(&['i', 'F', 'E']) {
                 return Some(ARITH_WHY.to_string());
@@ -525,33 +561,50 @@ fn evaluation_problem(t: &str) -> Option<String> {
         if (has("[") || has("[[") || has("test")) && (has("-v") || has("-R")) {
             return Some(code_why("a `-v` or `-R` test, which takes its variable name as code"));
         }
-        // the command word: the first after keywords, prefixes and `NAME=value` assignments
-        // (`f() {` before it is a function header)
-        let cmd_at = words.iter().position(|w| !LEAD.contains(w) && !is_assignment(w) && !w.ends_with("()"));
-        // an assignment (`X=…`, `export X=…`, `for X in …`) to a variable the shell evaluates
+        // the command words: the first after keywords, redirections and `NAME=value` assignments,
+        // and every word after a prefix such as `command -p` or `env` (what follows may be the command)
+        let cands = command_words(&words);
+        // an assignment (`X=…`, `export X=…`, `for X in …`) to a variable the shell evaluates, and
+        // zsh's tables of functions and aliases (`functions[1]=$v` defines a function)
         for (k, w) in words.iter().enumerate() {
-            let name = w.split_once('=').map(|(n, _)| n.trim_end_matches('+')).filter(|n| !n.is_empty()).or_else(|| (k > 0 && words[k - 1] == "for").then_some(*w));
+            let name = w.split_once('=').map(|(n, _)| n.trim_end_matches('+')).filter(|n| !n.is_empty()).or_else(|| (k > 0 && words[k - 1] == "for").then_some(w.as_str()));
             if let Some(n) = name.filter(|n| SPECIAL_VARS.contains(n)) {
                 return Some(code_why(&format!("an assignment to `{n}`, which the shell evaluates or runs")));
             }
-        }
-        // a variable name given to a declaring builtin as an expansion: the shell reads a name with a
-        // subscript (`a[$(cmd)]`) as code, so `declare "$v"=1` or `export "$v"` runs a file name in $v
-        if let Some(at) = cmd_at.filter(|&at| NAME_BUILTINS.contains(&words[at])) {
-            let named = words[at + 1..].iter().filter(|w| !w.starts_with(['-', '+'])).map(|w| w.split('=').next().unwrap_or(w));
-            if named.into_iter().any(|n| n.contains(['$', '`', '('])) {
-                return Some(code_why(&format!("an expansion as the variable name for `{}` (a name with a subscript runs as code)", words[at])));
+            let table = w.split(['[', '=']).next().unwrap_or("").trim_end_matches('+');
+            if ZSH_TABLES.contains(&table) && (w.contains('[') || w.contains('=')) {
+                return Some(code_why(&format!("`{table}[…]`, zsh's table of {table}, which runs what is put in it")));
             }
         }
-        // ksh reads a bare variable name as arithmetic too (`shift n`, `ulimit -n n`)
-        if let Some(at) = cmd_at.filter(|&at| matches!(words[at], "shift" | "ulimit")) {
-            let literal = |w: &str| w.bytes().all(|c| c.is_ascii_digit()) || matches!(w, "$?" | "$#" | "$$" | "unlimited" | "hard" | "soft");
-            if words[at + 1..].iter().any(|w| !w.starts_with('-') && !literal(w)) {
-                return Some(code_why(&format!("`{}` with a variable or expression (ksh reads it as arithmetic)", words[at])));
+        for &at in &cands {
+            let cmd = words[at].as_str();
+            let operands = &words[at + 1..];
+            // a variable name given to a declaring builtin as an expansion: the shell reads a name with a
+            // subscript (`a[$(cmd)]`) as code, so `declare "$v"=1` or `export "$v"` runs a file name in $v
+            if NAME_BUILTINS.contains(&cmd) {
+                let named = operands.iter().filter(|w| !w.starts_with(['-', '+'])).map(|w| w.split('=').next().unwrap_or(w));
+                if named.into_iter().any(|n| n.contains(['$', '`', '('])) {
+                    return Some(code_why(&format!("an expansion as the variable name for `{cmd}` (a name with a subscript runs as code)")));
+                }
+            }
+            // ksh reads a bare variable name as arithmetic too (`shift n`, `ulimit -n n`)
+            if matches!(cmd, "shift" | "ulimit") {
+                let literal = |w: &str| w.bytes().all(|c| c.is_ascii_digit()) || matches!(w, "$?" | "$#" | "$$" | "unlimited" | "hard" | "soft");
+                if operands.iter().any(|w| !w.starts_with('-') && !literal(w)) {
+                    return Some(code_why(&format!("`{cmd}` with a variable or expression (ksh reads it as arithmetic)")));
+                }
+            }
+            // these define or run text later (`alias a=$v`, `fc -e`, `enable -f`), or read a file
+            // named by an expansion
+            if matches!(cmd, "alias" | "fc" | "enable") {
+                return Some(code_why(&format!("`{cmd}`, which defines or runs text as code")));
+            }
+            if matches!(cmd, "source" | ".") && operands.iter().any(|w| w.contains(['$', '`'])) {
+                return Some(code_why(&format!("`{cmd}` with an expansion, which reads and runs a file chosen at run time")));
             }
         }
-        if let Some(at) = words.iter().position(|w| NUMBER_BUILTINS.contains(w)) {
-            if words[at + 1..].iter().any(|w| w.contains('$') && !matches!(*w, "$?" | "$#" | "$$")) {
+        if let Some(at) = words.iter().position(|w| NUMBER_BUILTINS.contains(&w.as_str())) {
+            if words[at + 1..].iter().any(|w| w.contains('$') && !matches!(w.as_str(), "$?" | "$#" | "$$")) {
                 return Some(code_why(&format!("`{}` with a variable (zsh and ksh read it as arithmetic)", words[at])));
             }
         }
@@ -607,7 +660,10 @@ const CODE_BUILTINS: [&str; 18] = [
 /// Builtins whose operands are variable names (an `x[$(cmd)]` there runs), unless given as `name=value`.
 const NAME_BUILTINS: [&str; 6] = ["declare", "typeset", "local", "export", "readonly", "integer"];
 /// Words that come before the command word in a command line.
-const LEAD: [&str; 14] = ["!", "{", "time", "command", "builtin", "exec", "nohup", "then", "do", "else", "elif", "if", "while", "until"];
+const LEAD: [&str; 9] = ["!", "{", "then", "do", "else", "elif", "if", "while", "until"];
+/// Words that run what follows them (`command -p declare …`, `env X=1 export …`): after one, any
+/// later word of the command may be the command word.
+const PREFIXES: [&str; 10] = ["command", "builtin", "exec", "env", "nohup", "time", "nice", "xargs", "noglob", "nocorrect"];
 /// `NAME=value` as a command prefix.
 fn is_assignment(w: &str) -> bool {
     w.find('=').is_some_and(|e| e > 0 && w[..e].bytes().all(|x| x.is_ascii_alphanumeric() || x == b'_'))
@@ -621,41 +677,45 @@ const NUMERIC_TESTS: [&str; 6] = ["-eq", "-ne", "-lt", "-le", "-gt", "-ge"];
 /// `eval` and the like, a variable name for `declare`/`export`/…, `printf -v`, `[[`/`[`/`test`
 /// with a numeric comparison or `-v`, and an array index (`a[{name}]`). Mirrored in templateCheck.ts.
 fn operand_problem(template: &str, at: usize) -> Option<&'static str> {
-    let b = template.as_bytes();
-    let sep = |x: &u8| matches!(x, b';' | b'&' | b'|' | b'\n' | b'(' | b')' | b'`');
-    let mut start = b[..at].iter().rposition(sep).map_or(0, |p| p + 1);
-    let mut end = b[at..].iter().position(sep).map_or(b.len(), |p| at + p);
+    // placeholders as one control byte each (same length), so their braces are not the shell's
+    let masked = mask_placeholders(template);
+    let b = masked.as_bytes();
+    let mut start = (0..at).rev().find(|&p| is_sep(b, p)).map_or(0, |p| p + 1);
+    let mut end = (at..b.len()).find(|&p| is_sep(b, p)).unwrap_or(b.len());
     // inside `[[ … ]]`, `&`, `|`, `(` and `)` group tests and don't end the command: one test
-    if let Some(open) = template[..at].rfind("[[") {
-        let word = (open == 0 || b[open - 1].is_ascii_whitespace() || sep(&b[open - 1])) && b.get(open + 2).is_some_and(u8::is_ascii_whitespace);
-        if word && !template[open..at].contains("]]") {
+    if let Some(open) = masked[..at].rfind("[[") {
+        let word = (open == 0 || b[open - 1].is_ascii_whitespace() || is_sep(b, open - 1)) && b.get(open + 2).is_some_and(u8::is_ascii_whitespace);
+        if word && !masked[open..at].contains("]]") {
             start = open;
-            end = template[at..].find("]]").map_or(b.len(), |p| at + p);
+            end = masked[at..].find("]]").map_or(b.len(), |p| at + p);
         }
     }
-    let before = &template[start..at];
-    let words: Vec<&str> = before.split_ascii_whitespace().collect();
+    // the words as the shell will see them: quotes and backslashes are gone
+    let unquoted = |x: &str| x.chars().filter(|c| !matches!(c, '\'' | '"' | '\\')).collect::<String>();
+    let before = unquoted(&masked[start..at]);
+    let mut words = split_words(&before);
     // the part of the placeholder's own word before it ("" when it starts a word), and the word before
     let glued = !before.is_empty() && !before.ends_with(|c: char| c.is_ascii_whitespace());
-    let cur = if glued { words.last().copied().unwrap_or("") } else { "" };
-    let done = &words[..words.len() - glued as usize];
-    let prev = done.last().copied().unwrap_or("");
-    // the command: the first word after keywords, prefixes and `NAME=value` assignments
-    let cmd = done.iter().copied().find(|w| !LEAD.contains(w) && !is_assignment(w)).unwrap_or("");
+    let cur = if glued { words.pop().unwrap_or_default() } else { String::new() };
+    let prev = words.last().cloned().unwrap_or_default();
     let code = "goes where the shell reads the value as code (let, read, trap, eval, -eq, an array index…), and a file name could run there. Pass it as a plain argument instead.";
-    if CODE_BUILTINS.contains(&cmd) {
-        return Some(code);
-    }
-    if NAME_BUILTINS.contains(&cmd) && !cur.contains('=') {
-        return Some(code);
-    }
-    if matches!(cmd, "printf" | "print") && prev == "-v" {
-        return Some(code);
-    }
-    if matches!(cmd, "[[" | "[" | "test") {
-        let all = template[start..end].split_ascii_whitespace();
-        if prev == "-v" || prev == "-R" || all.clone().any(|w| NUMERIC_TESTS.contains(&w)) {
+    // every command word the command can have (see `command_words`)
+    for at in command_words(&words) {
+        let cmd = words[at].as_str();
+        if CODE_BUILTINS.contains(&cmd) {
             return Some(code);
+        }
+        if NAME_BUILTINS.contains(&cmd) && !cur.contains('=') {
+            return Some(code);
+        }
+        if matches!(cmd, "printf" | "print") && prev == "-v" {
+            return Some(code);
+        }
+        if matches!(cmd, "[[" | "[" | "test") {
+            let all = unquoted(&masked[start..end]);
+            if prev == "-v" || prev == "-R" || all.split_ascii_whitespace().any(|w| NUMERIC_TESTS.contains(&w)) {
+                return Some(code);
+            }
         }
     }
     // an unclosed `[` in its own word: an array index (`a[{name}]=1`)
@@ -663,6 +723,136 @@ fn operand_problem(template: &str, at: usize) -> Option<&'static str> {
         return Some(code);
     }
     None
+}
+
+/// Whether `b[i]` ends a command: `;`, `|`, a line break, `(`, `)`, a backtick, `{`, `}`, and a `&`
+/// that is not part of a redirection (`2>&1`, `&>x`; `>|` is a redirection too).
+fn is_sep(b: &[u8], i: usize) -> bool {
+    match b[i] {
+        b';' | b'\n' | b'(' | b')' | b'`' | b'{' | b'}' => true,
+        b'|' => !(i > 0 && b[i - 1] == b'>'),
+        b'&' => !(i > 0 && matches!(b[i - 1], b'<' | b'>')) && b.get(i + 1) != Some(&b'>'),
+        _ => false,
+    }
+}
+
+/// The text with each placeholder (not the shell's `${word}`) turned into control bytes of the same
+/// length, so what is left is the shell's own braces and words.
+fn mask_placeholders(t: &str) -> String {
+    let mut out = String::with_capacity(t.len());
+    let mut i = 0;
+    while i < t.len() {
+        if t.as_bytes()[i] == b'{' && !t[..i].ends_with('$') {
+            if let Some(w) = PLACEHOLDERS.iter().find(|w| t[i..].starts_with(&format!("{{{w}}}"))) {
+                out.extend(std::iter::repeat('\u{1}').take(w.len() + 2));
+                i += w.len() + 2;
+                continue;
+            }
+        }
+        let ch = t[i..].chars().next().unwrap_or(' ');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// The commands of `t`, each as its words (see [`is_sep`] and [`split_words`]).
+fn commands(t: &str) -> Vec<Vec<String>> {
+    let b = t.as_bytes();
+    let mut out = Vec::new();
+    let mut from = 0;
+    for i in 0..b.len() {
+        if is_sep(b, i) {
+            // a backtick stays with the words before it, as the `$` of `$(` does, so `export \`cmd\``
+            // still shows an expansion as the variable name
+            out.push(split_words(&t[from..i + (b[i] == b'`') as usize]));
+            from = i + 1;
+        }
+    }
+    out.push(split_words(&t[from..]));
+    out
+}
+
+/// `2>&1`, `>file`, `<<EOF`, `&>x`: a word that is a redirection.
+fn is_redirect(w: &str) -> bool {
+    let r = w.trim_start_matches(|c: char| c.is_ascii_digit());
+    let r = r.strip_prefix('&').unwrap_or(r);
+    r.starts_with(['<', '>'])
+}
+
+/// A redirection written apart from its target (`>` then `file`), so the next word belongs to it.
+fn bare_redirect(w: &str) -> bool {
+    matches!(w.trim_start_matches(|c: char| c.is_ascii_digit()), "<" | ">" | ">>" | ">|" | "<>" | ">&" | "<&" | "<<" | "<<<" | "<<-" | "&>" | "&>>")
+}
+
+/// Blank-separated words, with a redirection that is glued to a word (`shift>/dev/null`) split
+/// off, as a shell reads it.
+fn split_words(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for c in s.chars() {
+        if c.is_ascii_whitespace() {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+            continue;
+        }
+        if matches!(c, '<' | '>') && !cur.is_empty() && cur != "&" && !cur.bytes().all(|x| x.is_ascii_digit()) && !is_redirect(&cur) {
+            out.push(std::mem::take(&mut cur));
+        }
+        cur.push(c);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Where the command word of a command is: the first word after keywords, redirections (with their
+/// targets) and `NAME=value` assignments. After a prefix (`command -p`, `env`, `nice -n 5`…) every
+/// later word counts, since which one is the command depends on the prefix's own flags.
+fn command_words(words: &[String]) -> Vec<usize> {
+    let mut k = 0;
+    while k < words.len() {
+        let w = words[k].as_str();
+        if is_redirect(w) {
+            k += if bare_redirect(w) { 2 } else { 1 };
+        } else if LEAD.contains(&w) || is_assignment(w) {
+            k += 1;
+        } else {
+            break;
+        }
+    }
+    match words.get(k) {
+        None => Vec::new(),
+        Some(w) if PREFIXES.contains(&w.as_str()) => (k..words.len()).collect(),
+        Some(_) => vec![k],
+    }
+}
+
+/// Whether the `(` at byte `i` is NOT where a command starts (a subshell, a process substitution,
+/// an array value `name=(…)` in front of the command or for `declare` and kin): zsh reads such a
+/// `(` after a word as glob qualifiers (R9 S-7).
+fn glob_paren(t: &str, i: usize) -> bool {
+    let b = t.as_bytes();
+    let mut j = i;
+    while j > 0 && matches!(b[j - 1], b' ' | b'\t') {
+        j -= 1;
+    }
+    if j == 0 || matches!(b[j - 1], b';' | b'&' | b'|' | b'(' | b')' | b'\n' | b'\r' | b'`' | b'{' | b'<' | b'>' | b'$') {
+        return false;
+    }
+    let ws = (0..j).rev().find(|&p| b[p].is_ascii_whitespace() || is_sep(b, p)).map_or(0, |p| p + 1);
+    let word = &t[ws..j];
+    if LEAD.contains(&word) || PREFIXES.contains(&word) {
+        return false;
+    }
+    if b[j - 1] == b'=' {
+        let seg = (0..ws).rev().find(|&p| is_sep(b, p)).map_or(0, |p| p + 1);
+        let words = split_words(&t[seg..ws]);
+        return command_words(&words).first().is_some_and(|&c| !NAME_BUILTINS.contains(&words[c].as_str()));
+    }
+    true
 }
 
 /// The command lines to run: one per item when the template uses `{path}`, `{name}`, `{ext}` or
@@ -1323,6 +1513,56 @@ mod tests {
                 let line = expand(t, &[item(&format!("{}/{name}", dir.display()))], &dir.to_string_lossy(), false).remove(0);
                 run_limited(sh, &line, &dir);
                 assert!(marker.exists(), "{sh}: {t} did not run the name, the test is stale");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Round-9 holes, each refused now and each really run by the shells listed (when installed,
+    /// every run limited to 5 s with its process group killed): a comment ending in a backslash
+    /// hiding a quote, command words behind `(`, `$(`, `case`, redirections and `command -p`,
+    /// the integer variables HISTCMD/JOBMAX/PPID, zsh glob qualifiers, `alias` and `functions[1]`.
+    #[cfg(unix)]
+    #[test]
+    fn round9_refusals_really_run_names() {
+        let dir = std::env::temp_dir().join(format!("kybl-tpl9-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("pwned");
+        let (subst, index) = ("x$(touch pwned)y", "x[$(touch pwned)]");
+        let bash3 = std::process::Command::new("/bin/bash").arg("-c").arg("echo $BASH_VERSION").output().is_ok_and(|o| o.stdout.starts_with(b"3."));
+        let b3 = |s: Vec<&'static str>| if bash3 { s } else { vec![] };
+        let all = vec!["/bin/bash", "/bin/sh", "/bin/zsh", "/bin/ksh", "/bin/dash"];
+        let cases: Vec<(&str, &str, Vec<&str>)> = vec![
+            ("echo hi # x \\\n'\necho {path}\n'", subst, all.clone()),
+            ("echo hi # x \\\n\"\necho {path}\n\"", subst, all),
+            ("v={name}; (OPTIND=$v)", index, b3(vec!["/bin/bash", "/bin/sh"])),
+            ("v={name}; echo $(OPTIND=$v)", index, b3(vec!["/bin/bash"])),
+            ("v={name}; ( export \"$v\" )", index, vec!["/bin/zsh"]),
+            ("v={name}; echo $(export \"$v\")", index, vec!["/bin/zsh"]),
+            ("v={name}; case x in x) export \"$v\";; esac", index, vec!["/bin/zsh"]),
+            ("v={name}; >/dev/null export \"$v\"", index, vec!["/bin/zsh"]),
+            ("v={name}; function f { export \"$v\"; }; f", index, vec!["/bin/zsh"]),
+            ("v={name}; command -p declare \"$v\"=1", index, b3(vec!["/bin/bash"])),
+            ("n={name}; (shift n)", index, vec!["/bin/ksh"]),
+            ("export 2>&1 {name}", index, vec!["/bin/zsh"]),
+            (">/dev/null shift {name}", index, vec!["/bin/ksh"]),
+            ("shift>/dev/null {name}", index, vec!["/bin/ksh"]),
+            ("v={name}; HISTCMD=$v", index, vec!["/bin/ksh"]),
+            ("v={name}; JOBMAX=$v", index, vec!["/bin/ksh"]),
+            ("v={name}; PPID=$v", index, vec!["/bin/ksh"]),
+            ("echo x({name})", index, vec!["/bin/zsh"]),
+            ("echo a ({name})", index, vec!["/bin/zsh"]),
+            ("echo a list=({name})", index, vec!["/bin/zsh"]),
+            ("v={name}; alias a=$v\na", subst, vec!["/bin/sh"]),
+            ("v={name}; functions[1]=$v; 1", subst, vec!["/bin/zsh"]),
+        ];
+        for (t, name, shells) in cases {
+            assert!(check_template(t).is_err(), "{t}");
+            for sh in shells.into_iter().filter(|p| std::path::Path::new(p).exists()) {
+                let _ = std::fs::remove_file(&marker);
+                let line = expand(t, &[item(&format!("{}/{name}", dir.display()))], &dir.to_string_lossy(), false).remove(0);
+                run_limited(sh, &line, &dir);
+                assert!(marker.exists(), "{sh}: {t:?} did not run the name, the test is stale");
             }
         }
         let _ = std::fs::remove_dir_all(&dir);
