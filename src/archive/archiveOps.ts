@@ -3,8 +3,9 @@
  * the copy dialog), compress a selection to a .zip. Extracting and compressing run as one row of
  * the transfers panel each; the backend does the work (src-tauri/src/archive).
  */
-import { errMessage } from "../api";
-import { baseName } from "../format";
+import { listen } from "@tauri-apps/api/event";
+import { api, errMessage } from "../api";
+import { baseName, formatBytes } from "../format";
 import { destLabel, entryParent, placeLabel } from "../moving";
 import { applyChoices, findExisting, freeKeys, type Choice, type Clash } from "../desktop/conflicts";
 import type { FileOps } from "../desktop/fileOps";
@@ -26,7 +27,8 @@ export type ArchiveCtx = {
   ops: FileOps;
   transfers: TransferActions;
   toast: (kind: Toast["kind"], text: string, action?: NonNullable<Toast["action"]>) => void;
-  setBusy: (text: string | null) => void;
+  /** the pane's busy text; `stop` adds a Stop button next to it */
+  setBusy: (text: string | null, stop?: () => void) => void;
   resolveConflicts: (clashes: Clash[], verb: string, where: string) => Promise<Map<string, Choice> | null>;
   reloadIfShowing: (profileId: string, bucket: string) => boolean;
   selectAfterReload: (profileId: string, bucket: string, key: string | null) => void;
@@ -43,6 +45,34 @@ export function makeArchiveOps(c: ArchiveCtx) {
   const origin = archiveOrigin(c.profile?.id);
   const profileOf = (id: string) => (id === c.local.id ? c.local : c.profiles.find((p) => p.id === id) ?? archiveProfile(id, c.profiles, c.local));
 
+  /**
+   * Opens archive `e` (its copy `local` on this computer), with how much of a .tar.gz is
+   * unpacked so far in the busy text and a Stop. Null when stopped.
+   */
+  const openStoppable = async (profileId: string, bucket: string, e: Entry, local: string) => {
+    const opId = `archive-open-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    const label = `Opening “${e.name}”…`;
+    let stopped = false;
+    const stop = () => {
+      stopped = true;
+      void api.cancelTransfer(opId).catch(() => {});
+      c.setBusy(`Stopping…`);
+    };
+    c.setBusy(label, stop);
+    const unlisten = await listen<{ opId: string; unpacked: number }>("archive-open-progress", (ev) => {
+      if (ev.payload.opId === opId && !stopped) c.setBusy(`${label} ${formatBytes(ev.payload.unpacked)} unpacked`, stop);
+    }).catch(() => null);
+    try {
+      return await archiveApi.open(profileId, bucket, e.key, local, opId);
+    } catch (err) {
+      if (stopped) return null;
+      throw err;
+    } finally {
+      unlisten?.();
+      c.setBusy(null);
+    }
+  };
+
   /** Opens an archive file of the pane's place like a folder. */
   const open = async (e: Entry) => {
     const { profile, bucket } = c;
@@ -50,9 +80,9 @@ export function makeArchiveOps(c: ArchiveCtx) {
     // a remote archive is fetched first, with its progress on the Open button and in Activity
     const local = await c.ops.localCopy(e, "open");
     if (!local) return;
-    c.setBusy(`Opening “${e.name}”…`);
     try {
-      const info = await archiveApi.open(profile.id, bucket, e.key, local);
+      const info = await openStoppable(profile.id, bucket, e, local);
+      if (!info) return;
       const p = archiveProfile(info.id, c.profiles, c.local);
       if (!p) return;
       c.go(p, info.root, "");
@@ -60,8 +90,6 @@ export function makeArchiveOps(c: ArchiveCtx) {
       if (note) c.toast("info", note);
     } catch (err) {
       c.toast("error", `Couldn’t open “${e.name}”. ${errMessage(err)}`);
-    } finally {
-      c.setBusy(null);
     }
   };
 
@@ -168,14 +196,12 @@ export function makeArchiveOps(c: ArchiveCtx) {
     if (!e) return;
     const local = await c.ops.localCopy(e, "open");
     if (!local) return;
-    c.setBusy(`Opening “${e.name}”…`);
     try {
-      const info = await archiveApi.open(profile.id, bucket, e.key, local);
+      const info = await openStoppable(profile.id, bucket, e, local);
+      if (!info) return;
       c.openMigration({ profileId: info.id, root: info.root, items: [{ path: "", isDir: true }] }, "copy", { profileId: profile.id, root: bucket, dir: entryParent(e) });
     } catch (err) {
       c.toast("error", `Couldn’t open “${e.name}”. ${errMessage(err)}`);
-    } finally {
-      c.setBusy(null);
     }
   };
 

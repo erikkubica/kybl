@@ -115,7 +115,7 @@ export function PaneBanners({ pane }: { pane: Pane }) {
 
 /** Item count and size, the selection, the whole folder's size and what is loading. */
 export function PaneStatusBar({ pane }: { pane: Pane }) {
-  const { ent, sel, busy, prefix } = pane;
+  const { ent, sel, busy, busyStop, prefix } = pane;
   const { entries, search, stale, filter, moreOnServer, lst, needsAll, loadedCount, sortCapped, hasMore } = ent;
   const { selected, selectedEntries } = sel;
   const totalSize = sumSizes(entries);
@@ -161,6 +161,11 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
       {busy && (
         <span className="busy">
           <span className="spinner" /> {busy}
+          {busyStop && (
+            <button type="button" className="btn btn-sm btn-ghost" onClick={busyStop}>
+              Stop
+            </button>
+          )}
         </span>
       )}
     </footer>

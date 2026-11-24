@@ -135,7 +135,13 @@ function usePaneCore(env: PaneEnv) {
   const sel = useSelection(entries, ent.stale);
   const { setSelected, setCursor } = sel;
 
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusyText] = useState<string | null>(null);
+  // a Stop next to the busy text (opening a big .tar.gz)
+  const [busyStop, setBusyStop] = useState<(() => void) | null>(null);
+  const setBusy = useCallback((text: string | null, stop?: () => void) => {
+    setBusyText(text);
+    setBusyStop(() => (text && stop ? stop : null));
+  }, []);
   const [quick, setQuick] = useState<string | null>(null);
   /** Get Info on several items: Quick Look shows them together (their keys), not one by one */
   const [quickGroup, setQuickGroup] = useState<string[] | null>(null);
@@ -451,6 +457,7 @@ function usePaneCore(env: PaneEnv) {
     sel,
     ops,
     busy,
+    busyStop,
     setBusy,
     quick,
     setQuick,

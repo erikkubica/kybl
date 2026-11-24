@@ -568,7 +568,7 @@ mod tests {
 }
 
 #[cfg(all(test, unix))]
-mod sftp_tests {
+pub(crate) mod sftp_tests {
     use std::collections::HashMap;
 
     use std::{sync::Arc, time::Duration};
@@ -580,7 +580,7 @@ mod sftp_tests {
     use crate::{state::NetConfig, storage::net::Secrets};
 
     /// The SFTP side: the start folder is a folder, and so is everything asked about.
-    struct Files;
+    pub(crate) struct Files;
 
     impl russh_sftp::server::Handler for Files {
         type Error = StatusCode;

@@ -177,6 +177,7 @@ async fn ensure<R: Runtime>(
     id: &str,
     local: Option<&str>,
     progress: &(dyn Fn(u64, u64) + Send + Sync),
+    unpacked: Unpacked,
     cancel: &Arc<AtomicBool>,
 ) -> SResult<Arc<ArchiveBackend>> {
     if let Some(b) = reusable(id, local) {
@@ -188,7 +189,7 @@ async fn ensure<R: Runtime>(
         match reusable(id, local) {
             // opened by the open this one waited for
             Some(b) => Ok(b),
-            None => open_now(app, state, id, local, progress, cancel).await,
+            None => open_now(app, state, id, local, progress, unpacked, cancel).await,
         }
     };
     {
@@ -206,6 +207,7 @@ async fn open_now<R: Runtime>(
     id: &str,
     local: Option<&str>,
     progress: &(dyn Fn(u64, u64) + Send + Sync),
+    unpacked: Unpacked,
     cancel: &Arc<AtomicBool>,
 ) -> SResult<Arc<ArchiveBackend>> {
     let (profile, root, key) = decode_id(id).ok_or_else(|| StorageError::other("This archive link is damaged."))?;
@@ -216,7 +218,7 @@ async fn open_now<R: Runtime>(
     let stamp = stamp_of(&path);
     let c = cancel.clone();
     let w = work.clone();
-    let index = tokio::task::spawn_blocking(move || Index::open(&path, format, &w, &c))
+    let index = tokio::task::spawn_blocking(move || Index::open_with(&path, format, &w, &c, &*unpacked))
         .await
         .map_err(|e| StorageError::other(e.to_string()))?
         .map_err(|e| if cancel.load(Ordering::Relaxed) { StorageError::cancelled() } else { StorageError::other(e.to_string()) })?;
@@ -235,7 +237,7 @@ async fn open_now<R: Runtime>(
 /// resuming), opened again from its source.
 pub fn reopen<'a, R: Runtime>(app: &'a AppHandle<R>, state: &'a AppState, id: &'a str) -> BoxFuture<'a, Result<Arc<dyn Storage>, String>> {
     Box::pin(async move {
-        let b = ensure(app, state, id, None, &|_, _| {}, &Arc::new(AtomicBool::new(false))).await?;
+        let b = ensure(app, state, id, None, &|_, _| {}, Arc::new(|_| {}), &Arc::new(AtomicBool::new(false))).await?;
         Ok(b as Arc<dyn Storage>)
     })
 }
@@ -254,12 +256,49 @@ pub struct ArchiveInfo {
     pub skipped: Skipped,
 }
 
+/// Told how many bytes of a .tar.gz are unpacked so far, while it is opened.
+type Unpacked = Arc<dyn Fn(u64) + Send + Sync>;
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct OpenProgress<'a> {
+    op_id: &'a str,
+    /// bytes of the .tar.gz unpacked so far
+    unpacked: u64,
+}
+
 /// Opens the archive at `key` (`local`: a copy on this computer the page already has) for
-/// browsing, and says how to list it.
+/// browsing, and says how to list it. `op_id`: `cancel_transfer` with it stops the open (a big
+/// .tar.gz is unpacked first), and `archive-open-progress` events under it say how far that is.
 #[tauri::command]
-pub async fn archive_open(app: AppHandle, state: State<'_, AppState>, profile_id: String, root: String, key: String, local: Option<String>) -> Result<ArchiveInfo, String> {
+pub async fn archive_open(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+    root: String,
+    key: String,
+    local: Option<String>,
+    op_id: Option<String>,
+) -> Result<ArchiveInfo, String> {
     let id = encode_id(&profile_id, &root, &key);
-    let b = ensure(&app, &state, &id, local.as_deref(), &|_, _| {}, &Arc::new(AtomicBool::new(false))).await?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    if let Some(op) = &op_id {
+        state.cancels.lock().await.insert(op.clone(), cancel.clone());
+    }
+    let last = Arc::new(Mutex::new(Instant::now()));
+    let (a, op) = (app.clone(), op_id.clone().unwrap_or_default());
+    let unpacked: Unpacked = Arc::new(move |n| {
+        let mut l = last.lock().unwrap();
+        if l.elapsed() >= Duration::from_millis(200) {
+            *l = Instant::now();
+            let _ = a.emit("archive-open-progress", OpenProgress { op_id: &op, unpacked: n });
+        }
+    });
+    let b = ensure(&app, &state, &id, local.as_deref(), &|_, _| {}, unpacked, &cancel).await;
+    if let Some(op) = &op_id {
+        state.cancels.lock().await.remove(op);
+    }
+    let b = b?;
     let ix = &b.index;
     Ok(ArchiveInfo { id, root: b.root.clone(), format: ix.format, files: ix.items.len(), folders: ix.dirs.len(), bytes: ix.total, skipped: ix.skipped })
 }
@@ -394,7 +433,7 @@ pub async fn archive_extract(app: AppHandle, state: State<'_, AppState>, id: Str
         }
 
         let t = task.clone();
-        let b = ensure(&a, &state, &archive_id, job.local.as_deref(), &move |n, total| t.tick(n, total), &task.cancel).await?;
+        let b = ensure(&a, &state, &archive_id, job.local.as_deref(), &move |n, total| t.tick(n, total), Arc::new(|_| {}), &task.cancel).await?;
         let mut plan = ops::plan_extract(&b.index, &job.paths, &job.base, &job.dest_dir, job.folder.as_deref(), &job.renames);
         plan.mark = from_elsewhere(&a, &state, &archive_id, &b.index.source).await;
         let total = plan.bytes;

@@ -25,7 +25,8 @@ import type { useJobs } from "../useJobs";
 import type { Entry, Profile, Transfer } from "../types";
 import { OutputSheet } from "./OutputSheet";
 import { extList, hasExt } from "./extMatch";
-import { ON_OS } from "../osNames";
+import { ON_OS, OS } from "../osNames";
+import { templateProblem } from "./templateCheck";
 
 // ------------------------------------------------------------ the actions
 
@@ -77,10 +78,13 @@ const example = (id: string, name: string, command: string, where: ActionWhere, 
   ...over,
 });
 
-/** A few to start from, off until switched on. */
+/** Local actions run in a POSIX `sh`: on Windows the one Git for Windows installs. */
+export const NEEDS_GIT_SH = OS === "win";
+
+/** A few to start from, off until switched on (`sips` is a Mac tool). */
 export const EXAMPLES: CustomAction[] = [
-  example("ex-optimize", "Optimize images", "sips -Z 2048 {path}", "local", { extensions: "jpg, jpeg, png, heic", output: "silent" }),
-  example("ex-sha256", "Compute SHA-256", "shasum -a 256 {paths}", "local"),
+  ...(OS === "mac" ? [example("ex-optimize", "Optimize images", "sips -Z 2048 {path}", "local", { extensions: "jpg, jpeg, png, heic", output: "silent" })] : []),
+  example("ex-sha256", "Compute SHA-256", OS === "mac" ? "shasum -a 256 {paths}" : "sha256sum {paths}", "local"),
   example("ex-du", "Disk usage on server", "du -sh {path}", "server", { appliesTo: "both" }),
   example("ex-chmod", "Make executable", "chmod +x {paths}", "server", { output: "silent", refresh: true }),
 ];
@@ -227,8 +231,8 @@ export function actionsMenu(ctx: ActionContext, list: Entry[]): MenuItem[] {
           type: "item" as const,
           label: list.length > 1 && targets.length !== list.length && targets.length ? `${a.name} (${targets.length} of ${list.length})` : a.name,
           icon: a.where === "server" ? ("server" as const) : ("laptop" as const),
-          hint: why ?? (a.shortcut ? comboLabel(a.shortcut) : undefined),
-          disabled: !targets.length,
+          hint: templateProblem(a.command) ? "Fix it in Settings" : why ?? (a.shortcut ? comboLabel(a.shortcut) : undefined),
+          disabled: !targets.length || !!templateProblem(a.command),
           onClick: () => void runAction(ctx, a, list),
         })),
     },
@@ -245,6 +249,7 @@ export function actionCommandMap(ctx: ActionContext): Record<string, () => void>
 /** Why the action can't run on `list` here, or null when it can (the palette's greyed reason). */
 function refusal(a: CustomAction, ctx: ActionContext, list: Entry[]): string | null {
   if (!ctx.profile || ctx.bucket == null) return "Open a folder first";
+  if (templateProblem(a.command)) return "Its command needs fixing in Settings → Actions";
   if (placeProblem(a, ctx) !== undefined) return "Runs on SFTP servers only";
   if (!list.length) return "Select the items to run it on";
   const { targets, why } = targetsFor(a, ctx, list);
@@ -565,6 +570,9 @@ async function localItems(ctx: ActionContext, runId: string, targets: Entry[]): 
 export async function runAction(ctx: ActionContext, a: CustomAction, list: Entry[]): Promise<void> {
   const { profile, bucket, dialogs } = ctx;
   if (!profile || bucket == null) return;
+  // before anything is downloaded for it (the backend refuses it too)
+  const problem = templateProblem(a.command);
+  if (problem) return void dialogs.toast("error", `“${a.name}” can’t run. ${problem} Edit it in Settings → Actions.`);
   const { targets, why } = targetsFor(a, ctx, list);
   if (!targets.length) return void dialogs.toast("info", why ?? `“${a.name}” doesn’t apply to ${list.length === 1 ? "this item" : "these items"}.`);
   if (targets.length > CONFIRM_OVER) {
@@ -608,7 +616,12 @@ export async function runAction(ctx: ActionContext, a: CustomAction, list: Entry
   });
   if (a.output === "show") showOutput(dialogs, runId);
 
-  const again = () => void runAction(ctx, a, list);
+  // Retry runs the action as it is now (edited since, say); gone: nothing to retry
+  const again = () => {
+    const now = actionsStore.get().find((x) => x.id === a.id);
+    if (now) void runAction(ctx, now, list);
+    else dialogs.toast("info", `“${a.name}” was deleted.`);
+  };
   const showAction = { label: "Show output", run: () => showOutput(dialogs, runId) };
   try {
     const spec = server

@@ -6,6 +6,7 @@ import { Icon } from "../Icons";
 import {
   LOCAL_LABEL,
   LOCAL_PHRASE,
+  NEEDS_GIT_SH,
   comboFromEvent,
   comboLabel,
   deleteAction,
@@ -89,17 +90,22 @@ export function ActionsSection({ onToast }: { onToast: ToastFn }) {
     <>
       <h3 className="set-title">Actions</h3>
       <p className="ca-intro">
-        Your own commands for files and folders, in the right-click menu under Actions. They run in your shell {LOCAL_PHRASE}, or over SSH on SFTP servers. Names are always passed safely quoted.
+        Your own commands for files and folders, in the right-click menu under Actions. They run {NEEDS_GIT_SH ? `in sh ${LOCAL_PHRASE} (Git for Windows has it, install that first)` : `in your shell ${LOCAL_PHRASE}`}, or over SSH on SFTP servers. Names are always passed safely quoted.
       </p>
       <div className="set-card">
         {actions.length === 0 && <div className="set-row"><div className="set-label">No actions yet<small>Add one to run a command on the selected items.</small></div></div>}
-        {actions.map((a) => (
-          <div key={a.id} className={`conn-row ca-row ${a.enabled ? "" : "off"}`}>
+        {actions.map((a) => {
+          // saved before the check got stricter: it can't run until it's fixed
+          const problem = templateProblem(a.command);
+          return (
+          <div key={a.id} className={`conn-row ca-row ${a.enabled && !problem ? "" : "off"}`}>
             <button
-              className={`switch ${a.enabled ? "on" : ""}`}
+              className={`switch ${a.enabled && !problem ? "on" : ""}`}
               role="switch"
-              aria-checked={a.enabled}
+              aria-checked={a.enabled && !problem}
               aria-label={`${a.name} on`}
+              disabled={!!problem}
+              title={problem ? "Fix the command first" : undefined}
               onClick={() => saveAction({ ...a, enabled: !a.enabled })}
             />
             <div className="set-label">
@@ -110,13 +116,15 @@ export function ActionsSection({ onToast }: { onToast: ToastFn }) {
               <small>
                 <code className="ca-cmd">{a.command}</code>
               </small>
+              {problem && <small className="ca-bad">Can’t run: {problem}</small>}
               <small>{summary(a)}</small>
             </div>
             <button className="btn btn-sm" onClick={() => setEditing(a)}>
               Edit
             </button>
           </div>
-        ))}
+          );
+        })}
       </div>
       <div className="btn-row" style={{ marginTop: 12 }}>
         <button className="btn btn-primary btn-sm" onClick={() => setEditing(blank())}>
@@ -323,7 +331,7 @@ function ActionEditor({
             <p className="hint">
               <Icon name="info" size={13} />
               {a.where === "local"
-                ? "In your shell. Files of a server or cloud connection are downloaded to a temporary folder first: {path} is that copy, and changes stay there."
+                ? (NEEDS_GIT_SH ? "In sh from Git for Windows (install it first). " : "In your shell (fish and other non-POSIX shells: in sh, with their PATH). ") + "Files of a server or cloud connection are downloaded to a temporary folder first: {path} is that copy, and changes stay there."
                 : "Over SSH, in the folder on screen, with the server’s login shell. SFTP connections only."}
             </p>
           </div>
