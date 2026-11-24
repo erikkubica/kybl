@@ -49,10 +49,18 @@ pub async fn folder<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Bytes this run's copies take.
-pub async fn usage<R: Runtime>(app: &AppHandle<R>) -> u64 {
-    let Ok(base) = base(app) else { return 0 };
-    tokio::task::spawn_blocking(move || claim(&base).map(|d| entries(&d).iter().map(|e| e.2).sum()).unwrap_or(0)).await.unwrap_or(0)
+/// Bytes this run's copies take: (all, the part "Clear cache" keeps as in use).
+pub async fn usage<R: Runtime>(app: &AppHandle<R>) -> (u64, u64) {
+    let Ok(base) = base(app) else { return (0, 0) };
+    tokio::task::spawn_blocking(move || claim(&base).map(|d| split_usage(&entries(&d), SystemTime::now())).unwrap_or((0, 0))).await.unwrap_or((0, 0))
+}
+
+/// (all bytes, bytes touched within [`IN_USE`]): the same line [`trim`] draws for "Clear cache".
+fn split_usage(entries: &[(PathBuf, SystemTime, u64)], now: SystemTime) -> (u64, u64) {
+    entries.iter().fold((0, 0), |(all, kept), (_, touched, bytes)| {
+        let in_use = now.duration_since(*touched).unwrap_or_default() < IN_USE;
+        (all + bytes, kept + if in_use { *bytes } else { 0 })
+    })
 }
 
 /// Removes this run's copies not touched in the last [`IN_USE`]; answers the bytes freed.
@@ -156,6 +164,9 @@ mod tests {
         assert_eq!(freed, 15);
         assert!(!dir.join("old1").exists() && !dir.join("actions/r1").exists() && !dir.join("share/s1").exists());
         assert!(dir.join("new1/b.pdf").exists() && dir.join("actions/r2/y.txt").exists() && dir.join("mixed/old.bin").exists());
+        // Settings counts what is left as in use now, and as clearable an hour later
+        assert_eq!(split_usage(&entries(&dir), SystemTime::now()), (12, 12));
+        assert_eq!(split_usage(&entries(&dir), SystemTime::now() + IN_USE + Duration::from_secs(60)), (12, 0));
         // "Clear cache" an hour and a bit later: the rest goes
         assert_eq!(trim(&dir, IN_USE, SystemTime::now() + IN_USE + Duration::from_secs(60)), 12);
         assert!(entries(&dir).iter().all(|e| e.2 == 0));

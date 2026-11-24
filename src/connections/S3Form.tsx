@@ -6,6 +6,7 @@ import { ProviderBadge } from "../components/Sidebar";
 import type { Profile } from "../types";
 import { Field, RAW, SecretInput, type FormApi } from "./fields";
 import { endpointAfterRegion, fieldsAfterProvider } from "./s3Endpoint";
+import { keepsSavedSecret } from "./kinds";
 
 type Preset = {
   id: string;
@@ -113,6 +114,8 @@ export function S3Form({ initial, tried, formApi, onEdit }: { initial: Profile |
   };
 
   const ep = endpoint.trim();
+  // the saved secret belongs to the saved key ID
+  const keepSecret = !!initial && keepsSavedSecret(initial.accessKeyId, accessKeyId);
   const problems = {
     endpoint:
       !ep && provider !== "aws"
@@ -123,7 +126,7 @@ export function S3Form({ initial, tried, formApi, onEdit }: { initial: Profile |
             ? "Start with https:// (or http:// for a local server)."
             : null,
     accessKeyId: accessKeyId.trim() ? null : "Enter the access key ID.",
-    secret: secret.trim() || initial ? null : "Enter the secret access key.",
+    secret: secret.trim() || keepSecret ? null : initial ? "Enter the secret for the new key." : "Enter the secret access key.",
   };
   const show = (k: keyof typeof problems) => (tried ? problems[k] : null);
 
@@ -200,7 +203,7 @@ export function S3Form({ initial, tried, formApi, onEdit }: { initial: Profile |
         {(c) => <input {...c} className="mono" value={accessKeyId} onChange={(e) => edit(setAccessKeyId)(e.target.value)} {...RAW} />}
       </Field>
       <Field label="Secret access key" error={show("secret")}>
-        {(c) => <SecretInput control={c} value={secret} onChange={edit(setSecret)} editing={!!initial} />}
+        {(c) => <SecretInput control={c} value={secret} onChange={edit(setSecret)} editing={keepSecret} />}
       </Field>
 
       <label className="check span2">

@@ -15,6 +15,9 @@ export function parseMbps(text: string): number | string {
   return mb;
 }
 
+/** A typed limit in MB/s as the backend's KiB/s: 0 is "none", anything else at least 1 KB/s (never rounded to "none"). */
+export const mbpsToKbps = (mb: number) => (mb === 0 ? 0 : Math.max(1, Math.round((mb * 1_000_000) / 1024)));
+
 /** A limit in MB/s as the custom-limit field shows it: precise to 1 KB/s, so it survives a re-save. */
 export const mbpsInput = (mb: number) => String(Math.round(mb * 1000) / 1000);
 

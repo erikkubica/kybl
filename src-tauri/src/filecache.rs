@@ -570,6 +570,8 @@ pub fn remember_download<R: Runtime>(app: &AppHandle<R>, conn: Conn, profile: St
 pub struct CacheUsage {
     thumbnails: u64,
     files: u64,
+    /// part of `files`: copies another app may still have open, which Clear cache keeps
+    in_use: u64,
 }
 
 #[tauri::command]
@@ -580,9 +582,10 @@ pub async fn cache_usage(app: AppHandle) -> Result<CacheUsage, String> {
         Some(c) => tokio::task::spawn_blocking(|| c.usage()).await.unwrap_or(0),
         None => 0,
     };
-    // copies made for "Open", drag-out and custom actions count with the cached files
-    let files = files + crate::open_copies::usage(&app).await;
-    Ok(CacheUsage { thumbnails, files })
+    // copies made for "Open", drag-out and custom actions count with the cached files; the ones
+    // still in use there are kept by Clear cache, so they are told apart
+    let (copies, in_use) = crate::open_copies::usage(&app).await;
+    Ok(CacheUsage { thumbnails, files: files + copies, in_use })
 }
 
 /// Clears the thumbnail cache (with the photo placeholders), the file cache and this run's

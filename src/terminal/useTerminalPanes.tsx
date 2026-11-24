@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { api } from "../api";
 import { baseName } from "../format";
+import { THIS_COMPUTER } from "../components/osText";
 import { LOCAL_PROFILE, type Loc, type PaneId } from "../browser/types";
 import type { Pane } from "../browser/usePane";
 import type { MenuItem } from "../components/Dialogs";
@@ -191,7 +192,7 @@ export function useTerminalPanes(initial: Layout) {
       return null;
     }
     if (!canTerminal(profileOf(loc.profileId))) {
-      h.toast("info", "Terminals open on This Mac and on SFTP connections.");
+      h.toast("info", `Terminals open on ${THIS_COMPUTER} and on SFTP connections.`);
       return null;
     }
     let made: PaneId | null = null;
@@ -333,14 +334,14 @@ export function useTerminalPanes(initial: Layout) {
       const h = host.current;
       if (!h) return [];
       const src = h.fileId ? h.slot(h.fileId) : null;
-      const why = !src?.here ? "Open a folder first" : !canTerminal(src.profile) ? "Terminals open on This Mac and on SFTP connections" : null;
+      const why = !src?.here ? "Open a folder first" : !canTerminal(src.profile) ? `Terminals open on ${THIS_COMPUTER} and on SFTP connections` : null;
       const mac = profileOf(LOCAL_PROFILE) ?? { id: LOCAL_PROFILE, kind: "local" as const };
       return [
         { id: "terminal:here", title: "Open Terminal Here", group: "Terminal", icon: "terminal", keywords: "shell console command line ssh", disabled: why, run: () => void (h.fileId && latest.current.open(h.fileId)) },
         { id: "terminal:toggle", title: "Toggle Terminal", group: "Terminal", icon: "terminal", shortcut: "⌃`", keywords: "shell console focus", run: () => latest.current.toggle() },
         {
           id: "terminal:new-local",
-          title: "New Terminal on This Mac",
+          title: `New Terminal on ${THIS_COMPUTER}`,
           group: "Terminal",
           icon: "terminal",
           keywords: "shell console home",

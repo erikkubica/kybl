@@ -1353,7 +1353,7 @@ async function handle(cmd: string, a: any): Promise<unknown> {
     case "clear_thumbnail_cache":
       return 0;
     case "cache_usage":
-      return { thumbnails: 48_200_000, files: 312_500_000 };
+      return { thumbnails: 48_200_000, files: 312_500_000, inUse: 4_100_000 };
     case "clear_caches":
       return 360_700_000;
     // photo placeholders: two in three demo photos are known on this device, the rest come from

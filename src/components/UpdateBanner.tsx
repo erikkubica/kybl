@@ -3,7 +3,7 @@ import { useTransfersActive } from "../useTransfers";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Icon } from "../Icons";
 import { formatBytes } from "../format";
-import { actionLabel, installAndRestart, updatesApi, type UpdateStatus } from "../updates";
+import { actionLabel, installAndRestart, UpdateStepError, updatesApi, type UpdateStatus } from "../updates";
 
 /** Versions the user put off with "Later": not shown again until the next launch. */
 const later = new Set<string>();
@@ -14,6 +14,7 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
   const [started, setStarted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [restartError, setRestartError] = useState<string | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
   // once the transfers end, the next click is a plain restart again (it asks anew if still busy)
   const transfersActive = useTransfersActive();
   useEffect(() => {
@@ -34,16 +35,19 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
     setStarted(true);
     setBusy(false);
     setRestartError(null);
+    setInstallError(null);
     if (rel.how !== "install") {
       updatesApi.install().catch(() => {});
       hide();
       return;
     }
-    installAndRestart(() => setBusy(true)).catch((e) => setRestartError(String(e)));
+    installAndRestart(() => setBusy(true)).catch((e) =>
+      e instanceof UpdateStepError && e.step === "install" ? setInstallError(e.message) : setRestartError(e instanceof Error ? e.message : String(e)),
+    );
   };
   const pct = st.total > 0 ? Math.min(100, (st.received / st.total) * 100) : 0;
   // a refused restart drops the phase back (the installer went missing): its reason shows here too
-  const failText = working || st.phase === "ready" ? null : (restartError ?? (started && st.phase === "" ? st.error : null));
+  const failText = working || st.phase === "ready" ? null : (restartError ?? installError ?? (started && st.phase === "" ? st.error : null));
   const failed = !!failText;
 
   return (

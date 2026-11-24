@@ -76,6 +76,12 @@ export const emptyNet = (kind: NetKind): NetConfig => ({
   url: kind === "webdav" ? "" : null,
 });
 
+/**
+ * Editing: whether an empty secret field may keep the saved secret. Only while the identity it
+ * belongs to (S3 access key ID, Azure account) is unchanged; a new one needs its own secret.
+ */
+export const keepsSavedSecret = (saved: string | null | undefined, now: string) => saved != null && saved.trim() === now.trim();
+
 export const emptyBlob = (): BlobConfig => ({ account: "", endpoint: "", container: "" });
 
 /** A profile of a non-S3 kind: the S3 fields stay empty, `provider` is the kind (its badge). */
