@@ -33,7 +33,8 @@ export function connectionFacts(p: Profile, root: string): Fact[] {
   const kind = p.kind ?? "s3";
   const out: Fact[] = [];
   const add = (label: string, value: string | null | undefined) => value && out.push({ label, value });
-  if (kind === "local") return [{ label: "Where", value: "This computer" }];
+  // the kind line above the facts already says "This computer"
+  if (kind === "local") return [];
   if (kind === "s3") {
     add("Bucket", root);
     add("Region", p.region);
@@ -71,6 +72,15 @@ export function gitCounts(changes: GitCountsInput) {
     }
   }
   return { changed, staged, untracked };
+}
+
+/** The counts as short chips ("2 changed", "1 staged", "3 untracked"); zeros are left out, so none means clean. */
+export function gitChips(c: { changed: number; staged: number; untracked: number }): string[] {
+  return [
+    ...(c.changed ? [`${c.changed.toLocaleString()} changed`] : []),
+    ...(c.staged ? [`${c.staged.toLocaleString()} staged`] : []),
+    ...(c.untracked ? [`${c.untracked.toLocaleString()} untracked`] : []),
+  ];
 }
 
 /** "just now", "5 minutes ago", "3 days ago": the age of a commit. */

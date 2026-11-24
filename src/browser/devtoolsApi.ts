@@ -27,15 +27,30 @@ export type GitInfo = {
   partial: boolean;
 };
 
-/** One file's content search result. */
+/** One commit, as the info panel lists it. */
 export type GitCommit = {
   /** abbreviated hash */
   hash: string;
-  subject: string;
   /** Unix seconds */
   time: number;
-  /** the repository's top folder (absolute) */
-  top: string;
+  author: string;
+  subject: string;
+};
+
+/** What the info panel shows about a repository beyond its status. */
+export type GitOverview = {
+  /** the tracking branch ("origin/main"); null without one */
+  upstream: string | null;
+  /** when the repository last fetched (Unix seconds); null if never */
+  fetchedAt: number | null;
+  /** the remote's address without credentials ("github.com/owner/repo") */
+  remote: string | null;
+  /** newest first, up to 10 */
+  commits: GitCommit[];
+  tag: string | null;
+  stashes: number;
+  /** the last commit that touched the selected file, when one was asked about */
+  file: GitCommit | null;
 };
 
 export type ContentHit = {
@@ -71,8 +86,8 @@ export const devtoolsApi = {
   /** null: not a git work tree, no git, or not this computer */
   gitStatus: (profileId: string, bucket: string, prefix: string, force = false) =>
     invoke<GitInfo | null>("git_status", { profileId, bucket, prefix, force }),
-  /** The newest commit of the repository the folder is in; null when there isn't one, or no git. */
-  gitLastCommit: (profileId: string, bucket: string, prefix: string) => invoke<GitCommit | null>("git_last_commit", { profileId, bucket, prefix }),
+  /** Tracking branch, remote, recent commits, tag, stashes and (for `file`, a file of the folder) its last commit; null when not a repository. */
+  gitOverview: (profileId: string, bucket: string, prefix: string, file?: string) => invoke<GitOverview | null>("git_overview", { profileId, bucket, prefix, file: file ?? null }),
   /** A cloud drive's used and total space (total null: unlimited or not said); null when it doesn't say. */
   storageQuota: (profileId: string) => invoke<{ used: number; total: number | null } | null>("storage_quota", { profileId }),
   /** Files found stream in as `content-search-progress`; `cancelTransfer(opId)` stops it. */

@@ -26,12 +26,14 @@ pub async fn git_status(app: AppHandle, state: State<'_, AppState>, profile_id: 
     Ok(tauri::async_runtime::spawn_blocking(move || git::status_of(&dir, force.unwrap_or(false))).await.ok().flatten())
 }
 
-/// The newest commit of the repository a folder of this computer is in; None when it isn't in one.
+/// What the info panel shows about the repository a folder of this computer is in (tracking
+/// branch, remote, recent commits, tag, stashes, and the last commit of `file`, a file of the
+/// folder); None when it isn't in one. Never talks to a remote.
 #[tauri::command]
-pub async fn git_last_commit(app: AppHandle, state: State<'_, AppState>, profile_id: String, bucket: String, prefix: String) -> Result<Option<git::LastCommit>, String> {
+pub async fn git_overview(app: AppHandle, state: State<'_, AppState>, profile_id: String, bucket: String, prefix: String, file: Option<String>) -> Result<Option<git::Overview>, String> {
     let s = registry::open(&app, &state, &profile_id).await?;
     let Some(dir) = s.local_path(&bucket, &prefix) else { return Ok(None) };
-    Ok(tauri::async_runtime::spawn_blocking(move || git::last_commit_of(&dir)).await.ok().flatten())
+    Ok(tauri::async_runtime::spawn_blocking(move || git::overview_of(&dir, file.as_deref())).await.ok().flatten())
 }
 
 /// How much of a cloud drive's storage is used, for the folder info panel; None when the drive
