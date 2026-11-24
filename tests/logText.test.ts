@@ -65,6 +65,46 @@ test("secrets never reach the log", () => {
   for (const s of ["Wrong user name or password.", "ftp.example.sk didn't answer in time.", "Downloaded “a.txt” from X to Downloads"]) assert.equal(redact(s), s);
 });
 
+test("a credential is hidden whole: quoted values with spaces, escaped JSON, long and short names (R8 S-4)", () => {
+  const gone = (text: string, ...secrets: string[]) => {
+    const out = redact(text);
+    for (const s of secrets) assert.ok(!out.includes(s), `${text} -> ${out}`);
+  };
+  gone('passphrase: "correct horse battery staple"', "correct", "horse", "battery", "staple");
+  gone('{"password":"a b c d"}', "b c d", "a b");
+  gone("password=ab,cd password2=x;y token=a&b=c", "cd", "y", "b=c");
+  gone("password='it is a secret' next", "it is", "secret'");
+  gone('PASSWORD=\\"abc123\\" rest', "abc123");
+  gone('{\\"password\\":\\"abc123\\"}', "abc123");
+  gone('{"password":"he said \\"hi\\" ok","user":"erik"}', "said", "hi", "ok");
+  gone('password="never closed and runs on', "never", "runs");
+  gone(`GOOGLE_APPLICATION_CREDENTIALS_SERVICE_ACCOUNT_PRIVATE_KEY=hunter2zz`, "hunter2zz");
+  gone(`${"a".repeat(60)}_password=hunter2zz`, "hunter2zz");
+  for (const t of ["pass=H1", "pw=H1", "pswd: H1", "PASS H1", "--password H1", "-p H1".replace("-p", "-pass"), "key=H1", '"key":"H1"', "authKey=H1", "sessionKey: H1", "session=H1", "sid=H1", "jwt=H1", "otp=H1", "credential=H1", "credentials=H1", "?sessionid=H1", "SESSION_ID=H1"]) gone(t, "H1");
+  gone("-----begin private key-----\nBODY1\n-----end private key-----", "BODY1");
+  // the credential is the only thing that goes
+  assert.equal(redact('{"password":"a b","user":"erik"}'), '{"password":"•••","user":"erik"}');
+  assert.equal(redact("password=hunter2 user=erik"), "password=••• user=erik");
+  // names that only contain a short word are left alone
+  for (const s of ["monkey=1 hotplug=on passport=ok keyboard=us", "id=1 pass-through=yes"]) assert.equal(redact(s), s);
+  // and it stays linear on adversarial runs
+  const t = Date.now();
+  for (const s of ["password".repeat(30_000), `password${" ".repeat(200_000)}`, `password="${"\\".repeat(100_000)}`, `password=\\"${"a".repeat(200_000)}`, `${"secret_".repeat(30_000)}=x`, "key=".repeat(50_000), `"${"a ".repeat(100_000)}`]) redact(s);
+  assert.ok(Date.now() - t < 2000, "redact stays linear");
+});
+
+test("a line of blanks without a line break is cleaned in linear time (R8 S-5)", async () => {
+  const { logMessage, currentLog, clearLog } = await import("../src/activityLog.ts");
+  clearLog();
+  const t = Date.now();
+  logMessage("info", " ".repeat(200_000));
+  logMessage("info", `a${" ".repeat(200_000)}b`);
+  assert.ok(Date.now() - t < 1000, "no quadratic scan");
+  logMessage("info", "one \n \n  two\r\n three  ");
+  assert.equal(currentLog().at(-1)?.text, "one two three");
+  clearLog();
+});
+
 test("errors are sorted into what the user can do about them", () => {
   const t = classifyError("ftp.example.sk didn't answer in time. Check the address and your internet connection.\n\nTimed out: no reply from ftp.example.sk within 20 s.");
   assert.equal(t.kind, "timeout");

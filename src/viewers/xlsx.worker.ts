@@ -4,7 +4,7 @@
  */
 import { read, utils, type WorkBook } from "xlsx";
 import { sheetCut, usedExtent } from "./gridShape";
-import { zipTooBig } from "./zipCheck";
+import { plainForSheetJS } from "./zipCheck";
 
 export type XlsxRequest = { id: number; open: Uint8Array } | { id: number; sheet: string };
 export type XlsxResponse =
@@ -21,12 +21,14 @@ self.onmessage = async (ev: MessageEvent<XlsxRequest>) => {
   try {
     if ("open" in req) {
       book = null;
-      // a few MB can inflate to GBs, and a worker out of memory takes the whole web view with it:
-      // refused before SheetJS inflates anything (it even allocates what a part's header claims).
-      // SheetJS unzips with its own code, so this check inflates every part once through JSZip with
-      // a cap, and only a plain zip layout (where both readers see the same parts) is let through.
-      if (await zipTooBig(req.open)) return post({ id: req.id, error: true });
-      book = read(req.open, { type: "array", dense: true, cellHTML: false, cellStyles: false, bookVBA: false });
+      // a few MB can inflate to GBs, and a worker out of memory takes the whole web view with it.
+      // SheetJS unzips with its own code and reads different parts than JSZip does (entries that
+      // claim 0 bytes, directory entries, data descriptors, duplicates), so it never sees the
+      // uploaded zip: every part is inflated here under a cap and SheetJS gets a plain zip
+      // rebuilt from those bytes. This holds for .xlsx and .ods alike; an old .xls isn't a zip.
+      const plain = await plainForSheetJS(req.open);
+      if ("refused" in plain) return post({ id: req.id, error: true });
+      book = read(plain.bytes, { type: "array", dense: true, cellHTML: false, cellStyles: false, bookVBA: false });
       const b = book;
       post({ id: req.id, sheets: b.SheetNames.map((name, i) => ({ name, hidden: !!b.Workbook?.Sheets?.[i]?.Hidden })) });
       return;

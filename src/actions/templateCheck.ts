@@ -21,12 +21,14 @@ type Ctx =
 const WORD_BREAK = new Set([" ", "\t", "\n", "\r", ";", "&", "|", "(", ")", "<", ">"]);
 const DUP_END = new Set(["\n", "\r", ";", "&", "|", "(", ")", "<", ">"]);
 const SPECIAL = "$#?!-@*0123456789";
-const blank = (c: string | undefined) => c === " " || c === "\t" || c === "\n";
 
 /** Why the template can't be used, or null when it's fine. */
 export function templateProblem(template: string): string | null {
   const stack: Ctx[] = [{ k: "plain" }];
-  const t = template;
+  // the shell deletes every backslash + line break before it reads a word, so scan what it will
+  // read: a placeholder after `>&\⏎   ` or `$\⏎'` is then judged where the shell puts it (R8 S-6).
+  // An odd run of backslashes before the break; an even run is escaped backslashes and a real break.
+  const t = template.replace(/(?<!\\)((?:\\\\)*)\\\n/g, "$1");
   const placeholderAt = (i: number) => PLACEHOLDERS.find((p) => t.startsWith(`{${p}}`, i));
   const wordStart = (i: number) => i === 0 || WORD_BREAK.has(t[i - 1]);
   // a here-document (`<<`, not bash's `<<<`) seen: its body is read like double quotes
@@ -36,6 +38,9 @@ export function templateProblem(template: string): string | null {
   // in the word after `>&` or `<&` (bash 3.2 expands it once more): the stack depth there, and
   // whether the word has begun
   let dup: { depth: number; started: boolean } | null = null;
+  // an expansion (`$…` or backticks) seen in a word after `>&` or `<&`: bash 3.2 expands that word
+  // twice, so a variable holding a file name runs there (R8 S-3). Refused with a placeholder.
+  let dupExpansion = false;
   for (let i = 0; i < t.length; i++) {
     const ctx = stack[stack.length - 1];
     const c = t[i];
@@ -46,11 +51,10 @@ export function templateProblem(template: string): string | null {
         if (dup.started) dup = null;
       } else dup.started = true;
     }
+    if (dup && stack.length >= dup.depth && (c === "$" || c === "`")) dupExpansion = true;
     if (c === "\\" && ctx.k !== "single") {
       const w = placeholderAt(i + 1);
       if (w) return `{${w}} comes right after a backslash. Take the backslash away: it would undo Kybl's quoting of the file name.`;
-      // a line continuation inside a word joins two pieces the scan reads apart (`$\⏎'`)
-      if (t[i + 1] === "\n" && i > 0 && !blank(t[i - 1]) && i + 2 < t.length && !blank(t[i + 2])) unsure = true;
       // dash and ash end `$'…'` at `\'` (no ANSI-C quoting there)
       if (ctx.k === "ansic" && t[i + 1] === "'") unsure = true;
     }
@@ -154,7 +158,10 @@ export function templateProblem(template: string): string | null {
       }
     }
   }
-  if (PLACEHOLDERS.some((p) => uses(t, p))) return evaluationProblem(t);
+  if (PLACEHOLDERS.some((p) => uses(t, p))) {
+    if (dupExpansion) return codeWhy("an expansion after `>&` or `<&` (bash on macOS reads that word twice)");
+    return evaluationProblem(t);
+  }
   return null;
 }
 
@@ -185,6 +192,12 @@ const BANNED_WORDS = ["read", "unset", "trap", "mapfile", "readarray", "compgen"
 const NUMBER_BUILTINS = ["exit", "return", "break", "continue", "shift", "logout", "ulimit"];
 /** Variables whose value the shell runs (every traced line, every prompt, the next shell). */
 const RUNNING_VARS = ["PS4", "PROMPT_COMMAND", "BASH_ENV"];
+/**
+ * Variables the shell itself evaluates or runs when they are set (integer ones read the value as
+ * arithmetic, so `a[$(cmd)]` runs; `ENV` is read by an interactive sh; the rest change how words
+ * split or where commands come from). Assigning any of them is refused (R8 S-3).
+ */
+const SPECIAL_VARS = ["OPTIND", "OPTARG", "RANDOM", "SECONDS", "TMOUT", "LINENO", "SHLVL", "MAILCHECK", "ENV", "BASH_ENV", "PS4", "PROMPT_COMMAND", "IFS", "PATH"];
 
 /** Mirror of `brace_problem` in actions.rs: what `${body}` is when it is not an allowed form; null when it is allowed. */
 function braceProblem(body: string): string | null {
@@ -240,7 +253,8 @@ function evaluationProblem(t: string): string | null {
     if (BANNED_WORDS.includes(w)) return codeWhy(`\`${w}\`, which reads a variable's value as code or runs it`);
     if (RUNNING_VARS.includes(w)) return codeWhy(`\`${w}\`, which the shell runs as code`);
   }
-  for (const command of plain.split(/[;&|\n()`]/)) {
+  // `(` and backticks stay inside the words here, so an expansion given as a name shows
+  for (const command of plain.split(/[;&|\n]/)) {
     const words = command.split(ASCII_WS).filter(Boolean);
     const has = (x: string) => words.includes(x);
     // a declaring builtin given a flag that makes the variable numeric or a name reference
@@ -251,6 +265,26 @@ function evaluationProblem(t: string): string | null {
     }
     if ((has("printf") || has("print")) && has("-v")) return codeWhy("`printf -v`, which takes its variable name as code");
     if ((has("[") || has("[[") || has("test")) && (has("-v") || has("-R"))) return codeWhy("a `-v` or `-R` test, which takes its variable name as code");
+    // the command word: the first after keywords, prefixes and `NAME=value` assignments
+    // (`f() {` before it is a function header)
+    const cmdAt = words.findIndex((w) => !LEAD.includes(w) && !isAssignment(w) && !w.endsWith("()"));
+    // an assignment (`X=…`, `export X=…`, `for X in …`) to a variable the shell evaluates
+    for (let k = 0; k < words.length; k++) {
+      const eq = words[k].indexOf("=");
+      const n = eq > 0 ? words[k].slice(0, eq).replace(/\+$/, "") : k > 0 && words[k - 1] === "for" ? words[k] : "";
+      if (SPECIAL_VARS.includes(n)) return codeWhy(`an assignment to \`${n}\`, which the shell evaluates or runs`);
+    }
+    // a variable name given to a declaring builtin as an expansion: the shell reads a name with a
+    // subscript (`a[$(cmd)]`) as code, so `declare "$v"=1` or `export "$v"` runs a file name in $v
+    if (cmdAt >= 0 && NAME_BUILTINS.includes(words[cmdAt])) {
+      const named = words.slice(cmdAt + 1).filter((w) => !/^[-+]/.test(w));
+      if (named.some((w) => /[$`(]/.test(w.split("=")[0]))) return codeWhy(`an expansion as the variable name for \`${words[cmdAt]}\` (a name with a subscript runs as code)`);
+    }
+    // ksh reads a bare variable name as arithmetic too (`shift n`, `ulimit -n n`)
+    if (cmdAt >= 0 && (words[cmdAt] === "shift" || words[cmdAt] === "ulimit")) {
+      const literal = (w: string) => /^[0-9]*$/.test(w) || ["$?", "$#", "$$", "unlimited", "hard", "soft"].includes(w);
+      if (words.slice(cmdAt + 1).some((w) => !w.startsWith("-") && !literal(w))) return codeWhy(`\`${words[cmdAt]}\` with a variable or expression (ksh reads it as arithmetic)`);
+    }
     const at = words.findIndex((w) => NUMBER_BUILTINS.includes(w));
     if (at >= 0 && words.slice(at + 1).some((w) => w.includes("$") && !["$?", "$#", "$$"].includes(w))) {
       return codeWhy(`\`${words[at]}\` with a variable (zsh and ksh read it as arithmetic)`);
@@ -287,7 +321,13 @@ const CODE_BUILTINS = ["let", "eval", "trap", "read", "unset", "compgen", "compl
 const NAME_BUILTINS = ["declare", "typeset", "local", "export", "readonly", "integer"];
 /** Test operators that read both sides as numbers (ksh and `[[` evaluate them as arithmetic). */
 const NUMERIC_TESTS = ["-eq", "-ne", "-lt", "-le", "-gt", "-ge"];
+/** Words that come before the command word in a command line. */
 const LEAD = ["!", "{", "time", "command", "builtin", "exec", "nohup", "then", "do", "else", "elif", "if", "while", "until"];
+/** `NAME=value` as a command prefix. */
+const isAssignment = (w: string) => {
+  const e = w.indexOf("=");
+  return e > 0 && /^[A-Za-z0-9_]+$/.test(w.slice(0, e));
+};
 const SEP = new Set([";", "&", "|", "\n", "(", ")", "`"]);
 /** ASCII whitespace as Rust's `split_ascii_whitespace` sees it (not \v). */
 const ASCII_WS = /[ \t\n\f\r]+/;
@@ -314,11 +354,7 @@ function operandProblem(t: string, at: number): string | null {
   const cur = glued ? (words[words.length - 1] ?? "") : "";
   const done = glued ? words.slice(0, -1) : words;
   const prev = done[done.length - 1] ?? "";
-  const assignment = (w: string) => {
-    const e = w.indexOf("=");
-    return e > 0 && /^[A-Za-z0-9_]+$/.test(w.slice(0, e));
-  };
-  const cmd = done.find((w) => !LEAD.includes(w) && !assignment(w)) ?? "";
+  const cmd = done.find((w) => !LEAD.includes(w) && !isAssignment(w)) ?? "";
   const code = "goes where the shell reads the value as code (let, read, trap, eval, -eq, an array index…), and a file name could run there. Pass it as a plain argument instead.";
   if (CODE_BUILTINS.includes(cmd)) return code;
   if (NAME_BUILTINS.includes(cmd) && !cur.includes("=")) return code;

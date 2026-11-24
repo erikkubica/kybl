@@ -5,8 +5,8 @@
  * downloaded; a few MB can inflate to many GB. Reading the directory first can't match every
  * parser, so the caps are enforced WHILE INFLATING: every part goes through JSZip's own stream,
  * which counts the bytes it produces and stops at the cap. The directory check below is only a
- * fast pre-filter (and keeps SheetJS, which unzips with its own code, to a plain layout where
- * both readers see the same parts). Nothing here ever calls `.async()` on a part without a cap.
+ * fast pre-filter. SheetJS, which unzips with its own code and reads other parts than JSZip does,
+ * is only ever given a zip rebuilt from the bytes read here (see `plainForSheetJS`). Nothing here ever calls `.async()` on a part without a cap.
  */
 import JSZip from "jszip";
 
@@ -22,40 +22,72 @@ const LOC = 0x04034b50;
 
 type Part = { name: string; method: number; flags: number; csize: number; usize: number; local: number };
 
+/** What reading an archive through the capped reader found. */
+type Scan = { refused: string } | { plain: true } | { parts: [string, Uint8Array][] };
+
 /** Why the archive may not be parsed (a short reason, for logs), or null when it may. */
 export async function zipTooBig(bytes: Uint8Array, caps = { part: PART_MAX, total: TOTAL_MAX }): Promise<string | null> {
+  const r = await scan(bytes, caps, false);
+  return "refused" in r ? r.refused : null;
+}
+
+/**
+ * The bytes to hand SheetJS (R8 S-1). SheetJS unzips with its own code and does NOT see the same
+ * parts as JSZip: it inflates entries JSZip calls empty, directories and earlier duplicates, and
+ * allocates the size a local header claims even when the directory and the data say otherwise. So
+ * it never gets the uploaded zip. Every part is read through the capped reader (one budget for the
+ * whole file) and a fresh, plain zip is written from exactly those bytes: STORE only, honest sizes,
+ * no data descriptors, no comment, no extra fields, one entry per name, no directory entries.
+ * Anything that isn't a zip (an old .xls, which is a compound file, or a CSV) comes back as it
+ * was. A compound file has no compression, so what SheetJS reads from it can't be bigger than the
+ * file itself, which the registry already caps (30 MB).
+ */
+export async function plainForSheetJS(bytes: Uint8Array, caps = { part: PART_MAX, total: TOTAL_MAX }): Promise<{ bytes: Uint8Array } | { refused: string }> {
+  const r = await scan(bytes, caps, true);
+  if ("refused" in r) return r;
+  if ("plain" in r) return { bytes };
+  const out = new JSZip();
+  // a fixed date: the rebuilt zip is only ever read by SheetJS
+  const date = new Date(Date.UTC(1980, 0, 1));
+  for (const [name, data] of r.parts) out.file(name, data, { binary: true, compression: "STORE", createFolders: false, date });
+  return { bytes: await out.generateAsync({ type: "uint8array", compression: "STORE" }) };
+}
+
+async function scan(bytes: Uint8Array, caps: { part: number; total: number }, keep: boolean): Promise<Scan> {
   let parts: Part[] | null;
   try {
     parts = directory(bytes);
   } catch {
     // a directory the parsers might read from another place than this check does (bytes in
     // front, a comment, a ZIP64 record only one reader uses): not worth the risk
-    return "unusual zip layout";
+    return { refused: "unusual zip layout" };
   }
   // not a zip at all (an old .xls, a CSV): nothing to inflate
-  if (!parts) return null;
+  if (!parts) return { plain: true };
   const dv = view(bytes);
   let claimedTotal = 0;
   for (const p of parts) {
-    // the size the directory or the part's own header claims (SheetJS allocates it, whatever inflates)
-    if (dv.getUint32(p.local, true) !== LOC) return "bad local header";
+    // the size the directory or the part's own header claims (a fast refusal; what counts is the
+    // inflating below, and SheetJS never sees these headers on the `keep` path)
+    if (dv.getUint32(p.local, true) !== LOC) return { refused: "bad local header" };
     const localUsize = dv.getUint32(p.local + 22, true);
     const claimed = Math.max(p.usize, p.flags & 8 ? 0 : localUsize === 0xffffffff ? 0 : localUsize);
-    if (claimed > caps.part) return `part too big: ${p.name}`;
+    if (claimed > caps.part) return { refused: `part too big: ${p.name}` };
     claimedTotal += claimed;
-    if (claimedTotal > caps.total) return "inflates too far";
-    if (p.local + 30 + dv.getUint16(p.local + 26, true) + dv.getUint16(p.local + 28, true) + p.csize > bytes.length) return "part runs past the end";
+    if (claimedTotal > caps.total) return { refused: "inflates too far" };
+    if (p.local + 30 + dv.getUint16(p.local + 26, true) + dv.getUint16(p.local + 28, true) + p.csize > bytes.length) return { refused: "part runs past the end" };
   }
   // the real count: every part inflated through JSZip's stream, stopped at the cap. A zip JSZip
-  // can't read is refused too, since SheetJS is more forgiving than JSZip and might still read it.
+  // can't read is refused too.
   try {
     const budget = { left: caps.total };
     const zip = await JSZip.loadAsync(bytes);
-    for (const f of Object.values(zip.files)) if (!f.dir) await readCapped(f, budget, caps.part, false);
+    const out: [string, Uint8Array][] = [];
+    for (const f of Object.values(zip.files)) if (!f.dir) out.push([f.name, await readCapped(f, budget, caps.part, keep)]);
+    return keep ? { parts: out } : { plain: true };
   } catch (e) {
-    return e instanceof TooFar ? "inflates too far" : "unreadable zip";
+    return { refused: e instanceof TooFar ? "inflates too far" : "unreadable zip" };
   }
-  return null;
 }
 
 class TooFar extends Error {}
