@@ -410,7 +410,8 @@ async fn mount_one(app: &AppHandle, id: &str) {
         if let Some(stale) = stale {
             // Linux: a mount of the previous token left by a crash is found by that address
             // only, so it goes before the token changes (B5-8). Other systems: nothing to do.
-            let _ = tokio::task::spawn_blocking(move || os::forget_stale(&stale)).await;
+            // (a hung gvfs must not hold the drive lock, and every drive after this one, forever)
+            let _ = tokio::time::timeout(Duration::from_secs(5), tokio::task::spawn_blocking(move || os::forget_stale(&stale))).await;
         }
         c.token = server::random_token();
         match server::start(fs, c.port, c.token.clone(), read_only).await {

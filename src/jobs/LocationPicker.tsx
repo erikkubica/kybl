@@ -334,8 +334,19 @@ export function LocationPicker({
     const down = (e: PointerEvent) => {
       pressed.current = e.target instanceof Element ? e.target : null;
     };
+    // a press only explains the blur it causes, which comes before the pointer is released:
+    // forgotten then, or a later Tab away would be read as the click it no longer is
+    const up = () => {
+      pressed.current = null;
+    };
     document.addEventListener("pointerdown", down, true);
-    return () => document.removeEventListener("pointerdown", down, true);
+    document.addEventListener("pointerup", up, true);
+    document.addEventListener("pointercancel", up, true);
+    return () => {
+      document.removeEventListener("pointerdown", down, true);
+      document.removeEventListener("pointerup", up, true);
+      document.removeEventListener("pointercancel", up, true);
+    };
   }, [creating]);
   const onNewBlur = (e: React.FocusEvent) => {
     const to = pressed.current ?? (e.relatedTarget instanceof Element ? e.relatedTarget : null);

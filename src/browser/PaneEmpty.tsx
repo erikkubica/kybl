@@ -99,21 +99,24 @@ export function ChooseBucket({
   const fix = connTrouble(profile, error);
   // FTP, SFTP, WebDAV…: one root, nothing to choose; it's connecting, or it couldn't
   const single = mode === "single";
-  const failed = !!(note || error);
+  // a key that can't list buckets is not a failed connection: say so plainly, and offer what
+  // works (open a bucket by name), not a Try again that can never succeed
+  const denied = !single && !!(note || error) && classifyError(error ?? note).kind === "denied";
+  const failed = !!(note || error) && !denied;
   return (
     <div className="welcome">
       <div className="welcome-card">
         <div className="welcome-logo plain">
           {single && !failed ? <span className="spinner" /> : <Icon name={single ? "server" : "bucket"} size={30} />}
         </div>
-        <h1>{single ? (failed ? `Couldn’t connect to ${profile.name}` : `Connecting to ${profile.name}…`) : failed && classifyError(error ?? note).kind !== "denied" ? `Couldn’t list ${profile.name}` : `Choose a ${what}`}</h1>
+        <h1>{single ? (failed ? `Couldn’t connect to ${profile.name}` : `Connecting to ${profile.name}…`) : failed ? `Couldn’t list ${profile.name}` : `Choose a ${what}`}</h1>
         {failed ? (
           <div role="alert">
             <p>{note || "Something went wrong while connecting."}</p>
             <ConnErrorHelp error={error ?? note} />
           </div>
         ) : (
-          <p>{single ? "Opening its files." : `Pick a ${what} from the sidebar.`}</p>
+          <p>{single ? "Opening its files." : denied && note ? note : `Pick a ${what} from the sidebar.`}</p>
         )}
         {fix ? (
           <div className="cert-actions">

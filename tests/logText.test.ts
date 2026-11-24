@@ -90,10 +90,12 @@ test("one line when a batch starts, one when it ends", () => {
 
   const end: BatchEnd = { ...info, count: 12, done: 12, failed: 0, cancelled: 0, bytes: 3_400_000, ms: 72_000, errors: [] };
   assert.deepEqual(batchEndLine(end), { kind: "success", text: "Downloaded “regina-lite” (folder) from psychozdravie.sk to Downloads (12 files, 3.4 MB) in 1 min 12 s" });
-  const some = batchEndLine({ ...end, done: 10, failed: 2, errors: ["a.txt: x didn't answer in time.\n\nTimed out"] });
+  const some = batchEndLine({ ...end, done: 10, failed: 2, errors: [{ name: "a.txt", message: "x didn't answer in time.\n\nTimed out" }] });
   assert.equal(some.kind, "error");
   assert.equal(some.text, "Downloading “regina-lite” (folder) from psychozdravie.sk to Downloads finished with problems: 2 of 12 files failed (x didn't answer in time.)");
-  const all = batchEndLine({ ...end, done: 0, failed: 12, errors: ["a.txt: Wrong user name or password."] });
+  const all = batchEndLine({ ...end, done: 0, failed: 12, errors: [{ name: "a.txt", message: "Wrong user name or password." }] });
+  // a name with ": " in it is no part of the message
+  assert.equal(batchEndLine({ ...end, done: 0, failed: 1, errors: [{ name: "report: final.txt", message: "Access denied" }] }).text.endsWith(": Access denied"), true);
   assert.equal(all.text, "Couldn't download “regina-lite” (folder) from psychozdravie.sk to Downloads: Wrong user name or password.");
   assert.deepEqual(batchEndLine({ ...end, done: 0, cancelled: 12 }), { kind: "info", text: "Stopped downloading “regina-lite” (folder) from psychozdravie.sk to Downloads" });
   assert.equal(
@@ -101,7 +103,7 @@ test("one line when a batch starts, one when it ends", () => {
     "Compressed into “Archive.zip” on X in 1.4 s",
   );
 
-  const detail = batchDetail({ ...end, done: 10, failed: 2, errors: ["a.txt: Timed out\n\nraw"] }, [
+  const detail = batchDetail({ ...end, done: 10, failed: 2, errors: [{ name: "a.txt", message: "Timed out\n\nraw" }] }, [
     ["Connection", "psychozdravie.sk"],
     ["From", "/www/regina-lite"],
     ["To", null],

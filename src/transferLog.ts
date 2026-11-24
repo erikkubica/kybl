@@ -35,8 +35,8 @@ type Batch = {
   started: number;
   lastAdd: number;
   doneBytes: number;
-  /** by row id: the first few, as "name: message" */
-  errors: Map<string, string>;
+  /** by row id: the first few, name and message kept apart (a name can hold ": ") */
+  errors: Map<string, { name: string; message: string }>;
   facts: [string, string | null][];
   /** when its last row ended */
   endAt: number;
@@ -45,6 +45,8 @@ type Batch = {
 
 const batchOf = new Map<string, Batch>();
 const open = new Set<Batch>();
+/** folder listings still feeding downloads, by batch signature: their batches stay open meanwhile */
+const listing = new Map<string, number>();
 let tempDir: string | null = null;
 let askedTemp = false;
 
@@ -96,14 +98,24 @@ export function noteAdded(rows: Transfer[], how: "new" | "retry" | "adopted" = "
       tops.set(top, (tops.get(top) ?? false) || n.length > top.length);
     }
     let b: Batch | undefined;
-    if (how === "new")
-      for (const o of open) {
-        if (o.sig !== sig) continue;
-        if (now - o.lastAdd < JOIN_MS || [...tops.keys()].some((x) => o.tops.has(x))) {
+    if (how === "new") {
+      // a shared top folder is an exact match and wins over "came right after the last rows":
+      // two folders streaming to one destination would otherwise mix their later files
+      for (const o of open) if (o.sig === sig && [...tops.keys()].some((x) => o.tops.has(x))) {
+        b = o;
+        break;
+      }
+      if (!b) {
+        const mine = new Set(tops.keys());
+        for (const o of open) {
+          if (o.sig !== sig || now - o.lastAdd >= JOIN_MS) continue;
+          // not the batch of another folder that is still being listed
+          if (listing.get(sig) && [...o.tops].some(([x, folder]) => folder && !mine.has(x))) continue;
           b = o;
           break;
         }
       }
+    }
     if (!b) {
       const first = g.rows[0];
       const temp = first.kind === "download" && !!tempDir && first.local.startsWith(tempDir);
@@ -164,7 +176,7 @@ export function noteState(t: Transfer, gone = false) {
   b.states.set(t.id, state);
   if (state === "done") b.doneBytes += t.total || t.bytes;
   else if (before === "done") b.doneBytes -= t.total || t.bytes;
-  if (state === "error" && b.errors.size < KEEP_ERRORS) b.errors.set(t.id, `${t.name}: ${t.error ?? "failed"}`);
+  if (state === "error" && b.errors.size < KEEP_ERRORS) b.errors.set(t.id, { name: t.name, message: t.error ?? "failed" });
   else if (before === "error" && state !== "error") b.errors.delete(t.id);
   check(b);
 }
@@ -177,13 +189,36 @@ function check(b: Batch) {
     clearTimeout(b.timer);
     b.timer = undefined;
   }
+  // rows still being found for it: not over, however quiet it is
+  if (listing.get(b.sig)) return;
   for (const s of b.states.values()) if (!ended(s)) return;
   b.endAt = Date.now();
   b.timer = setTimeout(() => finish(b), SETTLE_MS);
 }
 
+/**
+ * A folder download is still listing its files into `dir`: its batch is not over when the rows so
+ * far have ended (a slow listing hands over the next files later than the settle time, which
+ * would otherwise log "Started… Downloaded…" again for one action). Call the returned function
+ * once the listing ended, however it ended.
+ */
+export function holdBatch(profileId: string, bucket: string, dir: string): () => void {
+  const sig = `download\n${profileId}\n${bucket}\n${dir}`;
+  listing.set(sig, (listing.get(sig) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const left = (listing.get(sig) ?? 1) - 1;
+    if (left > 0) listing.set(sig, left);
+    else listing.delete(sig);
+    for (const b of open) if (b.sig === sig) check(b);
+  };
+}
+
 function finish(b: Batch) {
   b.timer = undefined;
+  if (listing.get(b.sig)) return;
   let done = 0;
   let failed = 0;
   let cancelled = 0;

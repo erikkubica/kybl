@@ -817,7 +817,8 @@ function MessageLog() {
     );
   const copy = () =>
     void navigator.clipboard
-      ?.writeText(logAsText(shown))
+      // the whole log, whatever the filter shows: a bug report needs the lines before the error
+      ?.writeText(logAsText(log))
       .then(() => setCopied(true))
       .catch(() => {});
   return (

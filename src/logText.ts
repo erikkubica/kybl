@@ -146,8 +146,8 @@ export type BatchEnd = BatchInfo & {
   cancelled: number;
   bytes: number;
   ms: number;
-  /** the first errors, as "name: message" */
-  errors: string[];
+  /** the first errors: which file, and why */
+  errors: { name: string; message: string }[];
 };
 
 const VERBS: Record<TransferKind, { ing: string; ed: string; base: string; ingCap: string }> = {
@@ -180,7 +180,7 @@ export function batchEndLine(b: BatchEnd): { kind: "success" | "error" | "info";
   const took = formatDuration(b.ms);
   const sized = b.bytes > 0 ? `, ${formatBytes(b.bytes)}` : "";
   const perFile = b.kind === "download" || b.kind === "upload";
-  const firstErr = b.errors[0] ? errorSentence(b.errors[0].replace(/^[^:]*: /, "")) : "";
+  const firstErr = b.errors[0] ? errorSentence(b.errors[0].message) : "";
   if (b.failed === 0 && b.done === 0) return { kind: "info", text: `Stopped ${v.ing} ${what} ${where(b)}` };
   if (b.failed === 0) {
     const counts = perFile ? ` (${files(b.done)}${sized}${b.cancelled ? `, ${b.cancelled.toLocaleString()} stopped` : ""})` : sized ? ` (${sized.slice(2)})` : "";
@@ -202,7 +202,7 @@ export function batchDetail(b: BatchEnd | BatchInfo, facts: [string, string | nu
     if (b.ms > 0) lines.push(`Took: ${formatDuration(b.ms)}`);
     if (b.errors.length) {
       lines.push("", b.failed > b.errors.length ? `Errors (the first ${b.errors.length} of ${b.failed.toLocaleString()}):` : "Errors:");
-      for (const e of b.errors) lines.push(`• ${e.replace(/\n\n/g, " — ").replace(/\n/g, " ")}`);
+      for (const e of b.errors) lines.push(`• ${`${e.name}: ${e.message}`.replace(/\n\n/g, " — ").replace(/\n/g, " ")}`);
     }
   }
   return lines.join("\n");

@@ -113,7 +113,9 @@ export function NetForm({
   // a pasted sftp://me@host:2222 fills Port and User name (on leaving the field, and on Save)
   const server = splitServer(host);
   const parts = typeof server === "string" ? null : server;
-  const portNum = port.trim() ? Number(port.trim()) : (parts?.port ?? 0);
+  // a port pasted into Server wins over the one in the field, as it does once the field is left:
+  // Enter submits without leaving it
+  const portNum = parts?.port ? parts.port : port.trim() ? Number(port.trim()) : 0;
   const tidyServer = () => {
     if (!parts || (parts.host === host.trim() && !parts.port && !parts.user)) return;
     const p = parts.port ? String(parts.port) : port;
