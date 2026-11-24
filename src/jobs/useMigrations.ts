@@ -7,6 +7,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { jobsApi, type JobFailure, type JobProgress, type JobSpec, type JobState, type JobSummary } from "../api";
 import { createStore, useStore } from "../store";
+import { logMessage } from "../activityLog";
 
 /** States in which a job still has work to do on its own (the quit prompt and badges count these). */
 export const ACTIVE_STATES: ReadonlySet<JobState> = new Set(["planning", "running", "waitingNetwork"]);
@@ -86,6 +87,10 @@ export function refreshJobs(): Promise<void> {
       loadedOnce = true;
       list = list.filter((j) => !removed.has(j.id));
       jobsStore.set(list);
+      // a copy or move between connections just started: one line in the Activity log (how it
+      // ends is said by the finished toast, which the log keeps too)
+      if (listedBefore)
+        for (const j of list) if (!before.has(j.id) && !FINISHED_STATES.has(j.progress.state)) logMessage("info", `Started: ${j.title}`);
       notifyEnded(
         list.filter((j) => {
           const was = before.get(j.id);

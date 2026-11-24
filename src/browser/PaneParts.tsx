@@ -4,6 +4,9 @@ import { formatBytes, sumSizes, hasSize, plural } from "../format";
 import { rootName } from "../connections/roots";
 import { destLabel } from "../moving";
 import { Icon } from "../Icons";
+import { errDetail, errSummary } from "../api";
+import { errorHint, freshConnection } from "../connLog";
+import { classifyError } from "../logText.ts";
 import type { DragState } from "../useItemDrag";
 import { MAX_SORT_ITEMS } from "./useEntries";
 import type { Pane } from "./usePane";
@@ -88,11 +91,21 @@ export function PaneBanners({ pane }: { pane: Pane }) {
         </div>
       )}
       {listError && entries.length > 0 && (
-        <div className="banner error">
+        <div className="banner error" role="alert">
           <Icon name="alert" size={14} />
-          <span>{listError}</span>
-          <button className="btn btn-sm" onClick={ent.refresh}>
-            <Icon name="retry" size={13} /> Retry
+          <span title={errDetail(listError) ?? undefined}>
+            {errSummary(listError)}
+            {errorHint(listError) && ` ${errorHint(listError)}`}
+          </span>
+          <button
+            className="btn btn-sm"
+            onClick={async () => {
+              // a timeout or a dropped network: a fresh connection, so it really reconnects
+              if (classifyError(listError).network && pane.profile) await freshConnection(pane.profile.id);
+              ent.refresh();
+            }}
+          >
+            <Icon name="retry" size={13} /> Try again
           </button>
         </div>
       )}

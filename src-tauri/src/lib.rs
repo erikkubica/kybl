@@ -269,6 +269,7 @@ pub fn run() {
             archive::archive_extract,
             archive::archive_compress,
             storage::generic_cmds::list_roots,
+            storage::generic_cmds::reconnect_connection,
             storage::generic_cmds::connection_capabilities,
             storage::generic_cmds::local_path,
             storage::perms::set_permissions,

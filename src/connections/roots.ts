@@ -36,6 +36,11 @@ export function setConnectionNames(profiles: Pick<Profile, "id" | "name" | "kind
   if (diff) changed();
 }
 
+/** A connection's own name (null when it isn't known yet), for the Activity log. */
+export function connectionName(profileId: string): string | null {
+  return connNames.get(profileId) ?? null;
+}
+
 /** A root's name on screen; the bucket name itself for S3 (and anything not listed yet). */
 export function rootName(profileId: string, root: string): string {
   // "" is only ever the one root of a server or single-container connection

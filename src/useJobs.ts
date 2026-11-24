@@ -4,7 +4,11 @@
  */
 import { listen } from "@tauri-apps/api/event";
 import { createStore, useStore } from "./store";
+import { logMessage } from "./activityLog";
+import { formatDuration } from "./logText.ts";
 
+/** "Moving 3 items" → "moving 3 items", for "Started moving 3 items" (names in quotes stay as they are). */
+const lowerFirst = (t: string) => (/^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t);
 /** "action": a custom action running (src/actions); its id is the run's, so Stop reaches it */
 export type JobKind = "move" | "copy" | "delete" | "rename" | "action";
 export type JobState = "running" | "done" | "error" | "cancelled";
@@ -96,6 +100,8 @@ const actions = {
     listenOnce();
     const id = `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     trackers.set(id, tracker());
+    // one line in the Activity log; a failure is said by the caller's toast, which the log keeps
+    logMessage("info", `Started ${lowerFirst(j.title)}`);
     jobsStore.set((list) => [
       ...list,
       { ...j, id, state: "running", phase: null, done: 0, total: 0, bytes: 0, totalBytes: 0, frac: null, eta: null, error: null, started: Date.now(), finished: null },
@@ -109,6 +115,14 @@ const actions = {
    */
   finish(id: string, r: { done?: number; total?: number; error?: string | null }, retry?: () => void) {
     trackers.delete(id);
+    const j = jobsStore.get().find((x) => x.id === id);
+    if (j && j.state === "running" && (!r.error || r.error === "Cancelled")) {
+      const took = formatDuration(Date.now() - j.started);
+      const n = r.total ?? r.done;
+      const counts = n ? ` (${(r.done ?? n).toLocaleString()} of ${n.toLocaleString()} ${n === 1 ? "item" : "items"})` : "";
+      if (r.error) logMessage("info", `Stopped ${lowerFirst(j.title)}${counts}`);
+      else logMessage("success", `Finished ${lowerFirst(j.title)}${counts}${took ? ` in ${took}` : ""}`);
+    }
     jobsStore.set((list) =>
       list.map((j) => {
         if (j.id !== id) return j;

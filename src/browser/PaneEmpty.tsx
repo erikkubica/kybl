@@ -11,6 +11,10 @@ import { rootsMode } from "../connections/roots";
 import { isCloudKind } from "../connections/kinds";
 import { ConnFixButton, connTrouble } from "../connections/ConnFix";
 import { ON_OS } from "../osNames";
+import { errDetail } from "../api";
+import { errorHint, freshConnection } from "../connLog";
+import { classifyError } from "../logText.ts";
+import { useState } from "react";
 
 /** The shell's ways out of an empty pane. */
 export type EmptyActions = {
@@ -28,6 +32,8 @@ export type EmptyActions = {
   /** An SFTP server's key (new, or changed since it was trusted) the user chose to trust: save it
    *  on the connection; with `reopen`, connect again (else the caller retries what failed). */
   onTrustHostKey: (p: Profile, fp: string, reopen: boolean) => Promise<void>;
+  /** "Try again" after connecting failed (a timeout, the VPN was off): connect afresh and open it */
+  onRetryConnect: (p: Profile) => Promise<void>;
   /** a workspace recipe's pane whose connection isn't on this device: its name (it stays empty) */
   missing?: string;
 };
@@ -100,8 +106,15 @@ export function ChooseBucket({
         <div className="welcome-logo plain">
           {single && !failed ? <span className="spinner" /> : <Icon name={single ? "server" : "bucket"} size={30} />}
         </div>
-        <h1>{single ? (failed ? `Couldn’t connect to ${profile.name}` : `Connecting to ${profile.name}…`) : `Choose a ${what}`}</h1>
-        <p>{note || (single ? (failed ? "" : "Opening its files.") : `Pick a ${what} from the sidebar.`)}</p>
+        <h1>{single ? (failed ? `Couldn’t connect to ${profile.name}` : `Connecting to ${profile.name}…`) : failed && classifyError(error ?? note).kind !== "denied" ? `Couldn’t list ${profile.name}` : `Choose a ${what}`}</h1>
+        {failed ? (
+          <div role="alert">
+            <p>{note || "Something went wrong while connecting."}</p>
+            <ConnErrorHelp error={error ?? note} />
+          </div>
+        ) : (
+          <p>{single ? "Opening its files." : `Pick a ${what} from the sidebar.`}</p>
+        )}
         {fix ? (
           <div className="cert-actions">
             <ConnFixButton
@@ -116,6 +129,15 @@ export function ChooseBucket({
           <button className="btn btn-primary" onClick={() => actions.onReconnect(profile)}>
             <Icon name="refresh" size={14} /> Connect again
           </button>
+        ) : failed ? (
+          <div className="cert-actions">
+            <TryAgain className="btn btn-primary" run={() => actions.onRetryConnect(profile)} />
+            {(kybl || byName) && (
+              <button className="btn" onClick={() => (kybl ? actions.onNewBucket(profile) : actions.onOpenBucketByName(profile))}>
+                {kybl ? "New bucket" : "Open bucket by name"}
+              </button>
+            )}
+          </div>
         ) : (
           (kybl || byName) && (
             <button className="btn" onClick={() => (kybl ? actions.onNewBucket(profile) : actions.onOpenBucketByName(profile))}>
@@ -151,15 +173,21 @@ export function ListError({
   // FTPS / WebDAV with the server's own certificate, an "encrypt if available" FTP server that
   // offered none, an SFTP key to trust: fix it, then list again
   const fix = connTrouble(profile, error);
+  const hint = errorHint(error);
+  // a timeout or a dropped network: let go of the connection first, so Try again really reconnects
+  const retry = async () => {
+    if (classifyError(error).network) await freshConnection(profile.id);
+    onRetry();
+  };
   return (
-    <div className="empty error-state">
+    <div className="empty error-state" role="alert">
       <div className="empty-art">
         <Icon name="alert" size={26} />
       </div>
       <h3>Couldn’t load this folder</h3>
       {/* a div: the error's folded details (<details>, <pre>) can't sit inside a <p> */}
       <div className="error-msg">
-        <ErrorText message={revoked ? kyblError(error) : error} />
+        <ErrorText message={revoked ? kyblError(error) : error} hint={revoked || signIn ? null : hint} />
       </div>
       {fix ? (
         <div className="cert-actions">
@@ -179,19 +207,55 @@ export function ListError({
               onRetry();
             }}
           />
-          <button className="btn btn-sm" onClick={onRetry}>
-            <Icon name="retry" size={13} /> Try again
-          </button>
+          <TryAgain className="btn btn-sm" run={retry} />
         </div>
       ) : revoked || signIn ? (
         <button className="btn btn-primary btn-sm kybl-reconnect" onClick={() => onReconnect(profile)}>
           <Icon name="refresh" size={13} /> {signIn ? "Sign in again" : "Connect again"}
         </button>
       ) : (
-        <button className="btn btn-sm" onClick={onRetry}>
-          <Icon name="retry" size={13} /> Try again
-        </button>
+        <TryAgain className="btn btn-primary btn-sm" run={retry} />
       )}
     </div>
+  );
+}
+
+/** "Try again", busy (and not pressable twice) while it runs. */
+function TryAgain({ run, className }: { run: () => Promise<void> | void; className: string }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className={className}
+      disabled={busy}
+      aria-busy={busy || undefined}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await run();
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? <span className="spinner" aria-hidden="true" /> : <Icon name="retry" size={13} />} {busy ? "Trying again…" : "Try again"}
+    </button>
+  );
+}
+
+/** Under a connection error: what to do about it (a timeout: check the network or VPN), and the technical text under "Details". */
+function ConnErrorHelp({ error }: { error: string | null | undefined }) {
+  if (!error) return null;
+  const hint = errorHint(error);
+  const detail = errDetail(error);
+  return (
+    <>
+      {hint && <p className="conn-hint">{hint}</p>}
+      {detail && (
+        <details className="err-details">
+          <summary>Details</summary>
+          <pre className="selectable">{detail}</pre>
+        </details>
+      )}
+    </>
   );
 }

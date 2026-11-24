@@ -12,6 +12,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errMessage } from "../api";
 import type { ListResult, ObjInfo } from "../types";
+import { watchConn } from "../connLog";
+
+/** One page of a folder; connecting, and failures, are noted in the Activity log (connLog.ts). */
+const listPage = (loc: Loc, token: string | null) =>
+  watchConn(loc.profileId, { root: loc.bucket, prefix: loc.prefix }, () => api.listObjects(loc.profileId, loc.bucket, loc.prefix, token));
 
 export type Loc = { profileId: string; bucket: string; prefix: string };
 /** `folderInfo`: what the server said about some folders (permissions, links; servers only). */
@@ -42,7 +47,7 @@ export function useListing(limit: number) {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.listObjects(loc.profileId, loc.bucket, loc.prefix, null);
+      const res = await listPage(loc, null);
       if (id !== reqId.current) return null;
       setListing({ loc, folders: res.folders, objects: res.objects, next: res.nextToken, folderInfo: res.folderInfo });
       return res;
@@ -75,7 +80,7 @@ export function useListing(limit: number) {
       let first: ListResult | null = null;
       try {
         do {
-          const res = await api.listObjects(loc.profileId, loc.bucket, loc.prefix, next);
+          const res = await listPage(loc, next);
           if (id !== reqId.current) return null;
           first ??= res;
           folders.push(...res.folders);
@@ -105,7 +110,7 @@ export function useListing(limit: number) {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.listObjects(loc.profileId, loc.bucket, loc.prefix, token);
+      const res = await listPage(loc, token);
       if (id !== reqId.current) return;
       setListing((prev) =>
         sameLoc(prev.loc, loc)
@@ -156,7 +161,7 @@ export function useListing(limit: number) {
     };
     try {
       while (next && have < cap) {
-        const res: ListResult = await api.listObjects(loc.profileId, loc.bucket, loc.prefix, next);
+        const res: ListResult = await listPage(loc, next);
         if (id !== reqId.current) return;
         folders.push(...res.folders);
         objects.push(...res.objects);

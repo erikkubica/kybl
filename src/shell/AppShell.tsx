@@ -4,6 +4,7 @@
  * several in a layout of splits) and routes the sidebar, the keyboard and the menu bar to the
  * active one.
  */
+import { freshConnection } from "../connLog";
 import { MountDialog } from "../mount/MountDialog";
 import { driveItems } from "../mount/driveMenu";
 import { findMount, useMounts } from "../mount/useMounts";
@@ -1594,6 +1595,11 @@ export function AppShell() {
       if (!p.net) return;
       await api.ftpAllowPlain(p.net);
       if (reopen) await connectIn(id, p);
+    },
+    // "Try again" on a connection that failed (timed out before the VPN was up): a fresh connection, then open it
+    onRetryConnect: async (p) => {
+      await freshConnection(p.id);
+      await connectIn(id, p);
     },
     missing: rec.notes[id],
   });

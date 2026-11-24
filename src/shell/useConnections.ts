@@ -10,6 +10,7 @@ import { LS } from "../browser/types";
 import type { BucketList } from "../components/Sidebar";
 import type { Profile } from "../types";
 import { setConnectionNames, setRootNames, useRootName, usesListRoots } from "../connections/roots";
+import { watchConn } from "../connLog";
 
 const EXPANDED_KEY = "s3b.expanded";
 export function loadExpanded(): Set<string> {
@@ -76,10 +77,10 @@ export function useConnections() {
     try {
       if (usesListRoots(p)) {
         // other kinds name their roots ("Home" for /Users/me): the id stays what commands take
-        const roots = await api.listRoots(p.id);
+        const roots = await watchConn(p.id, null, () => api.listRoots(p.id));
         names = roots.map((r) => r.id);
         setRootNames(p.id, roots);
-      } else names = (await api.listBuckets(p.id)).map((b) => b.name);
+      } else names = (await watchConn(p.id, null, () => api.listBuckets(p.id))).map((b) => b.name);
     } catch (e) {
       const msg = errMessage(e);
       error = msg;

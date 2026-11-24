@@ -273,6 +273,8 @@ export const api = {
   // reject where `capabilities` says the connection can't.
   /** Where browsing starts: buckets, drives, one server folder, or this device's folders. */
   listRoots: (profileId: string) => read<RootInfo[]>("list_roots", { profileId }),
+  /** Lets go of a connection's open backend (its pooled sockets), so the next command connects afresh ("Try again"). */
+  reconnect: (profileId: string) => invoke<void>("reconnect_connection", { profileId }),
   /** What the connection can do; `useCaps` caches it per connection. */
   capabilities: (profileId: string) => invoke<Capabilities>("connection_capabilities", { profileId }),
   /**

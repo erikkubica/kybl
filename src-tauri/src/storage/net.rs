@@ -622,6 +622,7 @@ pub fn wrong_login() -> StorageError {
 
 pub fn timed_out(host: &str) -> StorageError {
     StorageError::new(ErrKind::Network, format!("{host} didn't answer in time. Check the address and your internet connection."))
+        .with_detail(format!("Timed out waiting for a reply from {host}."))
 }
 
 pub fn dropped() -> StorageError {
@@ -650,7 +651,7 @@ pub fn tls_error(detail: impl Into<String>) -> StorageError {
 pub async fn with_timeout<T>(host: &str, d: Duration, f: impl Future<Output = SResult<T>>) -> SResult<T> {
     match tokio::time::timeout(d, f).await {
         Ok(r) => r,
-        Err(_) => Err(timed_out(host)),
+        Err(_) => Err(timed_out(host).with_detail(format!("Timed out: no reply from {host} within {} s.", d.as_secs()))),
     }
 }
 

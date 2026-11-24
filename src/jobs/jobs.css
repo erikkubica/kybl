@@ -620,5 +620,57 @@
 .tp-log-tools {
   display: flex;
   justify-content: flex-end;
+  gap: 4px;
   padding: 4px 10px 0;
+}
+.tp-log-body {
+  min-width: 0;
+}
+/* the technical side of a line, folded away: what failed, the hint, the raw error */
+.tp-log-more {
+  margin: 2px 0 4px;
+}
+.tp-log-more summary {
+  width: max-content;
+  margin-left: -4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  color: var(--faint);
+  font-size: 11px;
+  cursor: pointer;
+}
+.tp-log-more summary:hover,
+.tp-log-more summary:focus-visible {
+  background: var(--hover);
+  color: var(--dim);
+}
+.tp-log-more pre {
+  max-height: 180px;
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--hover);
+  color: var(--dim);
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+.tp-log-filter {
+  display: flex;
+  padding: 0 10px 4px;
+}
+.tp-log-filter .btn.on {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+/* "Problem:" for screen readers (the color and icon say it on screen) */
+.tp-log-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
