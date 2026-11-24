@@ -16,7 +16,7 @@
 import { api, errMessage, LOCAL_ID } from "../api";
 import { parentPrefix } from "../format";
 import { joinPath, safeRelPath } from "../desktop/paths";
-import { eachFileUnder } from "../streamFiles";
+import { eachFileUnder, ListingStopped } from "../streamFiles";
 import type { Pane } from "../browser/usePane";
 import type { FileOps } from "../desktop/fileOps";
 import type { Entry } from "../types";
@@ -154,18 +154,36 @@ async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx
   };
   const folders = items.filter((e) => e.kind !== "file");
   start(items.filter((e) => e.kind === "file").flatMap((e) => item(e.key, e.size, e.name)));
-  if (folders.length) c.dialogs.toast("info", `${folders.length === 1 ? `Copying “${folders[0].name}”` : `Copying ${folders.length} folders`} here. Files start as they're found.`);
-  try {
-    for (const e of folders) {
-      const base = parentPrefix(e.key);
-      await eachFileUnder(profileId, bucket, e.key, (files) => start(files.flatMap((f) => item(f.key, f.size, f.key.slice(base.length)))));
-    }
-  } catch (e) {
-    c.dialogs.toast("error", errMessage(e));
-    if (!ids.length) return false;
+  let stopped = false;
+  let stopNow: (() => void) | null = null;
+  if (folders.length) {
+    c.dialogs.toast("info", `${folders.length === 1 ? `Copying “${folders[0].name}”` : `Copying ${folders.length} folders`} here. Files start as they're found.`, {
+      label: "Stop listing",
+      run: () => {
+        stopped = true;
+        stopNow?.();
+      },
+    });
   }
+  let failed: string | null = null;
+  for (const e of folders) {
+    if (stopped) break;
+    const base = parentPrefix(e.key);
+    const run = eachFileUnder(profileId, bucket, e.key, (files) => start(files.flatMap((f) => item(f.key, f.size, f.key.slice(base.length)))));
+    stopNow = run.stop;
+    try {
+      await run.done;
+    } catch (err) {
+      if (err instanceof ListingStopped) break;
+      // one folder that can't be listed doesn't stop the others; it is said once at the end
+      failed = `Couldn't list “${e.name}”: ${errMessage(err)}`;
+    }
+  }
+  stopNow = null;
+  if (failed) c.dialogs.toast("error", ids.length ? `${failed}. The files found so far are copying.` : failed);
+  if (!ids.length && failed) return false;
   if (!ids.length) {
-    c.dialogs.toast("info", "Nothing to copy");
+    if (!stopped) c.dialogs.toast("info", "Nothing to copy");
     return false;
   }
   void Promise.all(ids.map((id) => c.transfers.whenFinished(id))).then(done);

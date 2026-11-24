@@ -1133,6 +1133,7 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       // a slow server: the files come in a few batches
       for (let i = 0; i < files.length; i += 3) {
         await new Promise((ok) => setTimeout(ok, 150));
+        if (cancelled.delete(a.opId)) throw "Cancelled";
         (a.onBatch as { onmessage: (f: unknown) => void }).onmessage(files.slice(i, i + 3));
       }
       return files.length;

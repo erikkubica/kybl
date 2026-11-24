@@ -5,6 +5,7 @@ import { logMessage } from "./activityLog";
 import { inOpenBatch, noteAdded, noteState } from "./transferLog";
 import { formatBytes } from "./format";
 import { createStore, useStore } from "./store";
+import { stopListings } from "./streamFiles";
 import type { Transfer, TransferEvent } from "./types";
 
 type NewTransfer = Pick<Transfer, "kind" | "name" | "profileId" | "bucket" | "key" | "local"> & {
@@ -542,6 +543,8 @@ const actions = {
     flush();
   },
   cancelAll() {
+    // a folder still being listed would keep adding downloads after this
+    stopListings();
     let changed = false;
     for (const t of [...byId.values()]) {
       if ((t.state === "queued" || t.state === "running") && stopOne(t.id, "cancel")) changed = true;

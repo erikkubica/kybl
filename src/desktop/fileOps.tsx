@@ -24,7 +24,7 @@ import { undoStack, type UndoEntry } from "./undo";
 import { itemClipboard } from "./clipboard";
 import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
 import { localCopies, type LocalCopyVerb } from "../localCopyProgress";
-import { eachFileUnder } from "../streamFiles";
+import { eachFileUnder, ListingStopped } from "../streamFiles";
 
 /** `localCopy` calls under way, by file and version: a second one waits for the first. */
 const inFlightCopies = new Map<string, Promise<string | null>>();
@@ -52,7 +52,8 @@ export type OpsContext = {
   /** opens the Activity panel */
   showActivity: () => void;
   showFailed?: () => void;
-  setBusy: (text: string | null) => void;
+  /** with `stop`, the busy line shows a Stop button that runs it */
+  setBusy: (text: string | null, stop?: () => void) => void;
   confirm: (o: ConfirmOptions) => Promise<boolean>;
   prompt: (o: PromptOptions) => void;
   /** shows a dialog of its own (the Batch rename dialog) */
@@ -271,19 +272,36 @@ export function makeFileOps(c: OpsContext) {
       if (folders.length) {
         toast("info", folders.length === 1 ? `Downloading “${folders[0].name}” to ${where}. Files start as they're found.` : `Downloading ${plural(folders.length, "folder")} to ${where}. Files start as they're found.`);
       }
+      let stoppedAt: string | null = null;
+      let failed: string | null = null;
       for (const e of folders) {
-        c.setBusy(`Listing ${e.name}…`);
         const base = relBase !== null && e.key.startsWith(relBase) ? relBase : parentPrefix(e.key);
         let found = 0;
-        await eachFileUnder(pid, bucket, e.key, (files) => {
+        const run = eachFileUnder(pid, bucket, e.key, (files) => {
           found += files.length;
           start(files.flatMap((f) => item(f.key, f.size, f.key.slice(base.length))));
-          c.setBusy(`Listing ${e.name}… ${plural(found, "file")} found`);
+          c.setBusy(`Listing ${e.name}… ${plural(found, "file")} found`, run.stop);
         });
+        c.setBusy(`Listing ${e.name}…`, run.stop);
+        try {
+          await run.done;
+        } catch (err) {
+          if (err instanceof ListingStopped) {
+            stoppedAt = e.name;
+            break;
+          }
+          // one folder that can't be listed doesn't stop the others; it is said once at the end
+          failed = `Couldn't list “${e.name}”: ${errMessage(err)}`;
+        }
       }
       c.setBusy(null);
+      if (failed) toast("error", started ? `${failed}. The files found so far are downloading.` : failed);
+      if (stoppedAt !== null) {
+        toast("info", started ? `Stopped listing “${stoppedAt}”. ${plural(started, "file")} found so far keep downloading.` : `Stopped listing “${stoppedAt}”`);
+        return;
+      }
       if (started === 0) {
-        toast("info", "Nothing to download");
+        if (!failed) toast("info", "Nothing to download");
         return;
       }
       if (!folders.length) toast("info", `Downloading ${plural(started, "file")} to ${where}`);
