@@ -50,6 +50,8 @@ export const api = {
   /** "Connect without encryption": this "encrypt if available" FTP server may be used over plain
    *  FTP when it offers no encryption (asked once per server, after an `ftp-plain-unconfirmed` error). */
   ftpAllowPlain: (net: NetConfig) => invoke<void>("ftp_allow_plain", { net }),
+  /** The per-run tag that starts a trust error's detail (see `setTrustTag` in connections/kinds.ts). */
+  trustTag: () => invoke<string>("trust_tag"),
 
   listBuckets: (profileId: string) =>
     read<{ name: string; created: number | null }[]>("list_buckets", { profileId }),
@@ -367,7 +369,8 @@ export function errSummary(msg: string): string {
 }
 export function errDetail(msg: string): string | null {
   const i = msg.indexOf("\n\n");
-  return i < 0 ? null : msg.slice(i + 2);
+  // a trust error's per-run tag (connections/kinds.ts) means nothing to people
+  return i < 0 ? null : msg.slice(i + 2).replace(/^kybl:[0-9a-f]{32} /, "");
 }
 
 // ---------------------------------------------------------------- WP-D: documents (src/viewers)

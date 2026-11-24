@@ -12,9 +12,9 @@ const RUNNABLE = new Set(
     "exe com scr pif cpl msi msp mst msc msu bat cmd ps1 psm1 psd1 psc1 ps1xml vb vbs vbe js jse ws wsf wsh wsc sct hta lnk url reg jar " +
     "msh msh1 msh2 mshxml shs inf job " +
     "appref-ms application xbap vsto gadget appinstaller msix msixbundle appx appxbundle settingcontent-ms searchconnector-ms library-ms " +
-    "chm scf website rdp ica jnlp theme themepack deskthemepack diagcab " +
+    "chm scf website rdp ica jnlp theme themepack deskthemepack diagcab search-ms " +
     "app pkg mpkg dmg command terminal tool workflow action scpt applescript osascript prefpane kext webloc inetloc fileloc saver service " +
-    "mobileconfig shortcut " +
+    "mobileconfig shortcut scptd osax kmmacros alfredworkflow bttpreset tblk ovpn vmwarevm vmx pvm slp " +
     "sh bash zsh csh ksh fish py pyw pyz pyzw pyc pyo pl rb php jsx jsxbin desktop appimage run deb rpm flatpakref snap apk " +
     "docm dotm xlsm xltm xlam xla xll iqy dqy slk pptm potm ppam ppsm sldm mdb mde accdb accde " +
     "iso img vhd vhdx"
@@ -22,7 +22,7 @@ const RUNNABLE = new Set(
 );
 
 /**
- * The runnable types that are plain text: opened in an editor the person picked, they are only
+ * The runnable types that are plain text: opened in a known text editor (`EDITORS`), they are only
  * read. Programs, installers, macro documents and settings files are not in here: the app picked
  * for those is usually the one that runs, installs or applies them (Word, Installer, Settings).
  */
@@ -55,27 +55,39 @@ export function localName(name: string): string {
 }
 
 /**
- * Who opens the file: the type's default app (also Windows' "Choose an app", and an app that is
- * the type's default anyway), an app that runs what it opens (a terminal, an interpreter, an
- * installer), or another app the person picked (an editor, most likely).
+ * Who opens the file: the type's default app (also Windows' "Choose an app"), a known text editor
+ * (`EDITORS`), or any other app. Other apps count as ones that may run what they open: Photoshop
+ * runs a .jsx, CrossOver or Whisky a .bat, any terminal a .command.
  */
-export type Opener = "default" | "runner" | "picked";
+export type Opener = "default" | "editor" | "other";
 
-const RUNNERS =
-  /terminal|iterm|alacritty|wezterm|ghostty|konsole|xterm|tilix|terminator|tabby|^warp$|^kitty$|^hyper$|python|^pyw?$|^node(js)?$|^bun$|^deno$|^perl|^ruby|^php|^(ba|z|k|c|da|fi)?sh$|powershell|pwsh|^cmd$|wscript|cscript|mshta|^javaw?$|launcher|installer|^wine|regedit|msiexec|rundll32/;
+/**
+ * Text editors and IDEs that only show a script (by app name, lower case, without .app / .exe /
+ * .desktop; reverse-DNS Linux ids by their last part). Anything not listed is asked about.
+ */
+const EDITORS =
+  /^(visual studio code( - insiders)?|code( - insiders|-insiders|-oss)?|vscodium|codium|cursor|windsurf|sublime text( \d+)?|sublime_text|subl|textedit|bbedit|textwrangler|nova|xcode|zed|zed preview|coteditor|textmate|mate|notepad|notepad\+\+|notepad2|notepad3|notepads|atom|pulsar|macvim|gvim|neovide|vimr|emacs|aquamacs|gedit|texteditor|gnome-text-editor|kate|kwrite|mousepad|pluma|xed|geany|featherpad|leafpad|lapce|brackets|ultraedit|textpad|editpad( lite| pro)?|fleet|(intellij idea|webstorm|pycharm|phpstorm|rubymine|goland|clion|rider|rustrover|datagrip|appcode|android studio)( ce| ultimate| community| professional| community edition| edu)?)$/;
+
+/** Whether the app at `app` (an `AppChoice.path`) is a known text editor. */
+export function isEditor(app: string): boolean {
+  let base = (app.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? app).replace(/\.(app|exe|desktop)$/i, "");
+  // org.gnome.TextEditor, org.kde.kate, com.sublimetext.three: the app's own part
+  if (/^[a-z]{2,}(\.[\w-]+){2,}$/i.test(base)) base = base.split(".").pop() ?? base;
+  return EDITORS.test(base.toLowerCase());
+}
 
 /** `app` (an `AppChoice.path`: undefined or "" the default app, null Windows' chooser) as an `Opener`. */
 export function openerOf(app: string | null | undefined, isDefault: boolean): Opener {
-  if (app == null || app === "" || isDefault) return "default";
-  const base = app.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? app;
-  return RUNNERS.test(base.replace(/\.(app|exe|desktop)$/i, "").toLowerCase()) ? "runner" : "picked";
+  if (app == null || app === "") return "default";
+  if (isEditor(app)) return "editor";
+  return isDefault ? "default" : "other";
 }
 
 /**
  * Whether opening a file of a connection called `name` with `opener` is asked about first: it
- * runs code (by its remote name or its local one), unless it is a plain-text script going to an
- * app the person picked that is neither its default nor runs things (an editor only reads it).
+ * runs code (by its remote name or its local one), unless it is a plain-text script going to a
+ * known text editor (which only shows it).
  */
 export function asksFirst(name: string, opener: Opener): boolean {
-  return [name, localName(name)].some((n) => runsCode(n) && !(opener === "picked" && SCRIPTS.has(extOf(n))));
+  return [name, localName(name)].some((n) => runsCode(n) && !(opener === "editor" && SCRIPTS.has(extOf(n))));
 }

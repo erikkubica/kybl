@@ -228,7 +228,19 @@ fn name(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
+/// A path the page may hand to the system: absolute, with no "." or ".." parts. The page builds
+/// these from item names (a synced copy's path is its folder plus the remote key, and S3 keys may
+/// hold ".."), so one that climbs out of where it points is refused, never resolved.
+pub(crate) fn plain_path(path: &str) -> bool {
+    use std::path::{Component, Path};
+    let p = Path::new(path);
+    p.is_absolute() && !path.split(['/', '\\']).any(|c| c == "." || c == "..") && !p.components().any(|c| matches!(c, Component::ParentDir | Component::CurDir))
+}
+
 fn must_exist(path: &str) -> Result<(), String> {
+    if !plain_path(path) {
+        return Err(format!("{} isn't a file Kybl can open.", name(path)));
+    }
     match std::fs::metadata(path) {
         Ok(m) if m.is_file() => Ok(()),
         Ok(_) => Err(format!("{} isn't a file.", name(path))),
@@ -238,6 +250,9 @@ fn must_exist(path: &str) -> Result<(), String> {
 
 /// Like [`must_exist`], but a folder is fine too (show it in Finder, open it in an editor).
 fn must_exist_or_dir(path: &str) -> Result<(), String> {
+    if !plain_path(path) {
+        return Err(format!("{} isn't a file Kybl can open.", name(path)));
+    }
     match std::fs::metadata(path) {
         Ok(_) => Ok(()),
         Err(_) => Err(format!("{} isn't on this device any more.", name(path))),
@@ -553,6 +568,20 @@ pub(crate) async fn ask_storage(app: &AppHandle) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paths_that_climb_out_are_refused() {
+        let tmp = std::env::temp_dir();
+        let t = tmp.to_string_lossy();
+        assert!(plain_path(&t));
+        assert!(!plain_path(&format!("{t}/sync/../../etc/passwd")));
+        assert!(!plain_path(&format!("{t}/./x")));
+        assert!(!plain_path(&format!("{t}\\..\\x")));
+        assert!(!plain_path("relative/file.txt"));
+        assert!(plain_path(&format!("{t}/..name/x..y")));
+        assert!(must_exist_or_dir(&format!("{t}/sub/..")).is_err());
+        assert!(must_exist_or_dir(&t).is_ok());
+    }
 
     #[test]
     fn temporary_files_get_names_the_system_can_hold() {

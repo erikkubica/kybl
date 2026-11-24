@@ -15,6 +15,7 @@ import { Modal } from "../components/Dialogs";
 import { ErrorText } from "../components/ErrorText";
 import type { Profile } from "../types";
 import { KINDS, certTrouble, hostKeyChanged, hostKeyUnknown, isCloudKind, kindInfo, pickOf, plainFtpUnconfirmed, type BlobKind, type NetKind, type PickId } from "./kinds";
+import { trustHost } from "./connTrouble";
 import { Field, RAW, SECRET_NOTE, Segmented, type Draft, type FormApi } from "./fields";
 import { normalizeGroup } from "./groups";
 import { KindPicker } from "./KindPicker";
@@ -224,7 +225,7 @@ function KeyedForm({
     return d && { ...d, profile: { ...d.profile, group: (groups ? normalizeGroup(group) : normalizeGroup(initial?.group)) || null } };
   };
 
-  const hostOf = (p: Profile) => p.net?.host || p.name;
+  const hostOf = trustHost;
 
   const run = async (what: "test" | "save", d: Draft, skipCheck = false, verify = false) => {
     setBusy(what);
@@ -397,7 +398,7 @@ function KeyedForm({
               <ErrorText message={result.text} />
               {cert && result.draft && (
                 <div className="cert-actions">
-                  <TrustCertButton cert={cert} host={cert.host || hostOf(result.draft.profile)} onTrust={trustCert} />
+                  <TrustCertButton cert={cert} host={hostOf(result.draft.profile)} onTrust={trustCert} />
                 </div>
               )}
               {plain && result.then && (

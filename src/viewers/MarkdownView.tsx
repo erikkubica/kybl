@@ -35,7 +35,14 @@ export function renderMarkdown(src: string): string {
   const html = md.parse(src) as string;
   // ids and names come out as "user-content-…" (as on GitHub), so none can stand for a document
   // property; SandboxFrame looks anchors up with that prefix too
-  return DOMPurify.sanitize(html, { FORCE_BODY: true, SANITIZE_NAMED_PROPS: true, FORBID_TAGS: ["form", "input", "button", "textarea", "select"] });
+  // no inline styles or <style>: Markdown needs none, and with them a link could cover the whole
+  // preview unseen (or dress part of it up as a sign-in sheet)
+  return DOMPurify.sanitize(html, {
+    FORCE_BODY: true,
+    SANITIZE_NAMED_PROPS: true,
+    FORBID_TAGS: ["form", "input", "button", "textarea", "select", "style"],
+    FORBID_ATTR: ["style"],
+  });
 }
 
 /** Whether rendered HTML shows an image from the web (an <img> or a srcset with an http(s) address). */

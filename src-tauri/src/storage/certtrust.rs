@@ -135,7 +135,7 @@ impl StdError for Refusal {}
 
 /// One line of text: names in certificates are the server's to choose.
 fn line(s: &str) -> String {
-    s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect::<String>().trim().to_string()
+    super::one_line(s)
 }
 
 impl Refusal {
