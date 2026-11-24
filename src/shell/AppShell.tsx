@@ -1574,15 +1574,26 @@ export function AppShell() {
     rootLabel: conns.rootLabel,
     connMenu: (id, x, y, current, pick) =>
       dialogs.menu(x, y, [
-        ...connectionMenuItems(profiles.filter(canTerminal), {
+        // every connection, as the file pane's menu: one that has a shell gets a terminal here, any
+        // other turns this pane into its files
+        ...connectionMenuItems(profiles, {
           recent: recents.recent,
           skipRecent: current,
           row: (p): MenuItem => ({
             type: "item",
             label: p.name,
             checked: p.id === current || undefined,
-            // the shell there ends: asks first when a program runs in it
-            onClick: () => p.id !== current && void okToEndShells(sidsOf([id]), "Switch connection").then((ok) => ok && pick(p.id)),
+            // the shell here ends: asks first when a program runs in it
+            onClick: () =>
+              p.id !== current &&
+              void okToEndShells(sidsOf([id]), "Switch connection").then((ok) => {
+                if (!ok) return;
+                if (canTerminal(p)) return pick(p.id);
+                term.assign(id, undefined);
+                setActiveId(id);
+                void connectIn(id, p);
+                focusSoon(id);
+              }),
           }),
         }),
         { type: "sep" },
@@ -2002,7 +2013,13 @@ export function AppShell() {
               type: "item",
               label: p.name,
               checked: current || undefined,
-              onClick: () => (single ? open(p, "") : (setActiveId(id), void connectIn(id, p), focusSoon(id))),
+              onClick: () =>
+                // an SSH connection opens as its terminal, here as from the sidebar
+                isShellConn(p) && !current
+                  ? (setActiveId(id), term.shellIn(id, p.id))
+                  : single
+                    ? open(p, "")
+                    : (setActiveId(id), void connectIn(id, p), focusSoon(id)),
             };
           }
           return {

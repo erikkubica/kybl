@@ -327,11 +327,16 @@ export function useTerminalPanes(initial: Layout) {
     // a file pane becomes the terminal, as it would show another connection's files (its files
     // are a click away: Folders); a terminal stays, with this one below it
     if (ts[h.activeId] || !canTerminal(profileOf(profileId))) return open(h.activeId, at);
+    return shellIn(h.activeId, profileId);
+  };
+
+  /** File pane `id` becomes a terminal on server `profileId`, in its start folder. */
+  const shellIn = (id: PaneId, profileId: string): PaneId => {
     const sid = newSid();
     focusWhenShown(sid);
-    h.slot(h.activeId).showConnection(null);
-    assign(h.activeId, { ...at, sid });
-    return h.activeId;
+    host.current?.slot(id).showConnection(null);
+    assign(id, { profileId, bucket: "", prefix: "", sid });
+    return id;
   };
 
   /** The connection badge in a terminal's header: pane `id` gets a new shell on `profileId` (this computer: in the home folder). */
@@ -545,7 +550,7 @@ export function useTerminalPanes(initial: Layout) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { terms, setTerms, assign, host, open, openLocal, openFor, openRemote, forget, toggle, items, dropTarget, drop, dropPaths, nameOf, gc, render };
+  return { terms, setTerms, assign, host, open, openLocal, openFor, openRemote, shellIn, forget, toggle, items, dropTarget, drop, dropPaths, nameOf, gc, render };
 }
 
 /**
