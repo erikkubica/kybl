@@ -8,7 +8,7 @@ import { deleteWording, nameProblem, takenName } from "../itemText";
 import { useRef } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, errMessage, errSummary, type Capabilities } from "../api";
-import { baseName, classify, parentPrefix } from "../format";
+import { BIG_RENAME, baseName, classify, parentPrefix } from "../format";
 import { destKey, destLabel, entryParent } from "../moving";
 import type { Settings } from "../settings";
 import type { PromptResult, Toast } from "../components/Dialogs";
@@ -530,14 +530,15 @@ export function useFileOps(c: FileOpsCtx) {
     if (!l) return;
     const { profileId: pid, bucket: b } = l;
     const isFolder = e.kind === "folder";
-    // folders that are key prefixes (S3, Azure, GCS) have no rename: every file is copied
-    const slow = isFolder && c.caps?.rename === "copy-delete";
+    // folders that are key prefixes (S3, Azure, GCS) have no rename: every file is copied. A big
+    // file is copied too and takes as long: it goes on in the background, not in a locked sheet
+    const slow = (isFolder || e.size >= BIG_RENAME) && c.caps?.rename === "copy-delete";
     c.setPrompt({
       title: isFolder ? "Rename folder" : "Rename file",
       label: "New name",
       initial: e.name,
       confirmLabel: "Rename",
-      note: slow ? "Renaming a folder here copies every file in it, so it can take a while." : undefined,
+      note: slow ? (isFolder ? "Renaming a folder here copies every file in it, so it can take a while." : "Renaming a big file here copies it, so it can take a while. It carries on in Transfers.") : undefined,
       check: nameProblem,
       // what stops the rename (a name taken and not replaced, the server refusing) shows in the
       // sheet, with the name kept
@@ -560,7 +561,7 @@ export function useFileOps(c: FileOpsCtx) {
           if (ok) c.renamedDetail(e.key, { ...e, key: to, name });
           return refused;
         };
-        // a slow folder rename goes on in the background (its pill); a quick one answers in the sheet
+        // a slow rename goes on in the background (its pill); a quick one answers in the sheet
         const start = (replaced: boolean) => {
           if (!slow) return run(replaced, true);
           void run(replaced, false);

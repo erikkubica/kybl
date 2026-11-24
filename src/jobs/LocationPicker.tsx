@@ -331,18 +331,24 @@ export function LocationPicker({
   const pressed = useRef<Element | null>(null);
   useEffect(() => {
     if (!creating) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const down = (e: PointerEvent) => {
+      // an earlier press's timer must not forget this one
+      clearTimeout(timer);
       pressed.current = e.target instanceof Element ? e.target : null;
     };
-    // a press only explains the blur it causes, which comes before the pointer is released:
-    // forgotten then, or a later Tab away would be read as the click it no longer is
+    // a press only explains the blur it causes, so it is forgotten soon after: a later Tab away
+    // would otherwise be read as the click it no longer is. Not at pointerup itself: on touch the
+    // blur comes after it (pointerup, touchend, then the compatibility mousedown moves focus)
     const up = () => {
-      pressed.current = null;
+      clearTimeout(timer);
+      timer = setTimeout(() => (pressed.current = null), 400);
     };
     document.addEventListener("pointerdown", down, true);
     document.addEventListener("pointerup", up, true);
     document.addEventListener("pointercancel", up, true);
     return () => {
+      clearTimeout(timer);
       document.removeEventListener("pointerdown", down, true);
       document.removeEventListener("pointerup", up, true);
       document.removeEventListener("pointercancel", up, true);

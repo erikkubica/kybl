@@ -27,6 +27,8 @@ import { localCopies, type LocalCopyVerb } from "../localCopyProgress";
 import { eachFileUnder, ListingStopped } from "../streamFiles";
 import { holdBatch } from "../transferLog";
 
+/** Which folder download owns each pane's busy line (keyed by the pane's setBusy). */
+const busyOwner = new WeakMap<object, symbol>();
 /** `localCopy` calls under way, by file and version: a second one waits for the first. */
 const inFlightCopies = new Map<string, Promise<string | null>>();
 import { parentOf, renameRounds } from "../batchRename";
@@ -82,10 +84,7 @@ export type OpsContext = {
 /** Undo of a copy deletes the copied objects; past this many it asks first. */
 const UNDO_CONFIRM_OVER = 100;
 
-/** A file this big (64 MB) renamed by copy-and-delete takes long enough to run as a job. */
-const BIG_RENAME = 64 * 1024 * 1024;
-
-import { plural } from "../format";
+import { BIG_RENAME, plural } from "../format";
 const whatOf = (list: { name: string }[]) => (list.length === 1 ? `“${list[0].name}”` : plural(list.length, "item"));
 
 export function makeFileOps(c: OpsContext) {
@@ -231,6 +230,13 @@ export function makeFileOps(c: OpsContext) {
     if (skipped) toast("info", NO_EXPORT);
     if (!list.length) return;
     const pid = profile.id;
+    // the busy line is one slot per pane: only the latest listing owns it, so an earlier one
+    // that ends first doesn't wipe the later one's text and Stop
+    const setBusy = c.setBusy;
+    const mine = Symbol();
+    const clearBusy = () => {
+      if (busyOwner.get(setBusy) === mine) setBusy(null);
+    };
     try {
       if (list.length === 1 && list[0].kind === "file" && relBase === null) {
         const f = list[0];
@@ -286,9 +292,11 @@ export function makeFileOps(c: OpsContext) {
         const run = eachFileUnder(pid, bucket, e.key, (files) => {
           found += files.length;
           start(files.flatMap((f) => item(f.key, f.size, f.key.slice(base.length))));
-          c.setBusy(`Listing ${e.name}… ${plural(found, "file")} found`, run.stop);
+          busyOwner.set(setBusy, mine);
+          setBusy(`Listing ${e.name}… ${plural(found, "file")} found`, run.stop);
         });
-        c.setBusy(`Listing ${e.name}…`, run.stop);
+        busyOwner.set(setBusy, mine);
+        setBusy(`Listing ${e.name}…`, run.stop);
         // the Activity log keeps this download as one while files are still being found
         const release = holdBatch(pid, bucket, dir);
         try {
@@ -306,7 +314,7 @@ export function makeFileOps(c: OpsContext) {
           release();
         }
       }
-      c.setBusy(null);
+      clearBusy();
       if (failed) {
         const more = failures > 1 ? ` (${failures} of ${folders.length} folders couldn't be listed)` : "";
         toast("error", started ? `${failed}${more}. The files found so far are downloading.` : `${failed}${more}`);
@@ -323,7 +331,7 @@ export function makeFileOps(c: OpsContext) {
       }
       if (!folders.length) toast("info", `Downloading ${plural(started, "file")} to ${where}`);
     } catch (e) {
-      c.setBusy(null);
+      clearBusy();
       toast("error", errMessage(e));
     }
   };
@@ -654,6 +662,8 @@ ${picked.etag ?? ""}` : null;
         jobs.finish(id, r, retry);
         if (r.error && r.error !== "Cancelled") {
           if (inDialog && r.done === 0) refused = errSummary(r.error);
+          // nothing renamed: not "stopped after 0"
+          else if (r.done === 0) toast("error", `Couldn’t rename “${e.name}”: ${errSummary(r.error)}`, showAction);
           else toast("error", `Renaming stopped after ${r.done.toLocaleString()} of ${plural(r.total, "object")}. ${r.error}`, showAction);
         } else renamed = !r.error;
       } catch (err) {

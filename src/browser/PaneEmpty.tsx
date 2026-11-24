@@ -100,8 +100,10 @@ export function ChooseBucket({
   // FTP, SFTP, WebDAV…: one root, nothing to choose; it's connecting, or it couldn't
   const single = mode === "single";
   // a key that can't list buckets is not a failed connection: say so plainly, and offer what
-  // works (open a bucket by name), not a Try again that can never succeed
-  const denied = !single && !!(note || error) && classifyError(error ?? note).kind === "denied";
+  // works (open a bucket by name), not a Try again that can never succeed. Only where there is a
+  // by-name way in, and only for the store's own "access denied": a Drive 403 or a proxy's
+  // Forbidden may pass, so those keep Try again
+  const denied = byName && !single && !reconnect && /access denied|not allowed/i.test(error ?? note ?? "");
   const failed = !!(note || error) && !denied;
   return (
     <div className="welcome">
