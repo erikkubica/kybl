@@ -1226,7 +1226,9 @@ impl Storage for FtpBackend {
         let mut offset = offset;
         if offset.is_some()
             && let Ok(Stored::Refused(e, code)) = &stored
-            && rest_refused(*code, e, &tmp_key)
+            // the whole server path the STOR named: the reply echoes it, and its words (a home
+            // folder like /mnt/storage/ftp) must not read as "about space"
+            && rest_refused(*code, e, &self.path(&tmp_key).await?)
         {
             self.remove_partial(self.path(&tmp_key).await?).await;
             let Some(p) = again else {
@@ -1247,7 +1249,7 @@ impl Storage for FtpBackend {
         }
         // and some only take certain names (extensions): write in place as a last resort
         let mut direct = None;
-        if name_refused(&stored, path) && offset.is_none() {
+        if name_refused(&stored, &self.path(&tmp_key).await?) && offset.is_none() {
             let existed = self.stat(root, path).await?.is_some();
             direct = Some(existed);
             stored = self.store(&target, &mut body, len, None, progress, cancel).await;

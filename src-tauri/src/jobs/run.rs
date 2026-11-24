@@ -158,7 +158,7 @@ async fn work(r: &mut Runner<'_>, spec: &Arc<JobSpec>, ctl: &Arc<Ctl>) -> JobSta
         match open.await {
             // stopped (Cancel, Pause, Delete) while it connected: wind down as asked, whatever
             // the attempt answered, instead of turning it into a failure
-            Err(_) if ctl.stop.load(Ordering::Relaxed) => return stopped_at(r, ctl, None).await,
+            Err(_) if ctl.stop.load(Ordering::Relaxed) => return stopped_at(r, ctl, None, Some(spec)).await,
             // a server that still counts a dropped session ("too many clients") lets go in a
             // moment: wait and ask again, as planning does, instead of failing the job
             Err(e) if e.kind == ErrKind::RateLimited && !ctl.stop.load(Ordering::Relaxed) => {
@@ -166,7 +166,7 @@ async fn work(r: &mut Runner<'_>, spec: &Arc<JobSpec>, ctl: &Arc<Ctl>) -> JobSta
                 nap(inner, &ctl.stop, open_backoff).await;
                 open_backoff = (open_backoff * 2).min(Duration::from_secs(120));
                 if ctl.stop.load(Ordering::Relaxed) {
-                    return stopped_at(r, ctl, None).await;
+                    return stopped_at(r, ctl, None, Some(spec)).await;
                 }
             }
             other => break other,
@@ -674,23 +674,40 @@ async fn remove_if_empty(src: &dyn Storage, root: &str, dir: &str) {
 
 /// The runner was asked to stop: record why.
 async fn stopped(r: &mut Runner<'_>, ctl: &Arc<Ctl>, ctx: &Ctx) -> JobState {
-    stopped_at(r, ctl, Some(ctx)).await
+    stopped_at(r, ctl, Some(ctx), None).await
 }
 
 /// `stopped` before the connections are open (no `ctx` yet: nothing of this run to abort).
-async fn stopped_at(r: &mut Runner<'_>, ctl: &Arc<Ctl>, ctx: Option<&Ctx>) -> JobState {
+async fn stopped_at(r: &mut Runner<'_>, ctl: &Arc<Ctl>, ctx: Option<&Ctx>, spec: Option<&Arc<JobSpec>>) -> JobState {
     let inner = r.inner;
     let _ = db::reset_running(&inner.db.lock().unwrap(), Some(r.id));
     r.live.current.lock().unwrap().clear();
     match ctl.want.load(Ordering::SeqCst) {
         WANT_CANCEL | WANT_DELETE => {
             let uploads = db::open_uploads(&inner.db.lock().unwrap(), r.id).unwrap_or_default();
-            if let Some(ctx) = ctx
-                && let Some(s3) = ctx.dst.as_s3()
-            {
-                for (key, upload_id) in &uploads {
-                    crate::storage::s3_stream::abort(s3, &ctx.spec.dst.root, key, upload_id).await;
+            if let Some(ctx) = ctx {
+                if let Some(s3) = ctx.dst.as_s3() {
+                    for (key, upload_id) in &uploads {
+                        crate::storage::s3_stream::abort(s3, &ctx.spec.dst.root, key, upload_id).await;
+                    }
                 }
+            } else if let Some(spec) = spec
+                && !uploads.is_empty()
+            {
+                // stopped before this run had its connections (still waiting to connect): the
+                // destination is opened on the side to abort what an earlier run left half
+                // uploaded, since the records of those uploads are cleared below
+                let host = inner.host.clone();
+                let spec = spec.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Ok(dst) = host.open(&spec.dst.profile_id).await
+                        && let Some(s3) = dst.as_s3()
+                    {
+                        for (key, upload_id) in uploads {
+                            crate::storage::s3_stream::abort(s3, &spec.dst.root, &key, &upload_id).await;
+                        }
+                    }
+                });
             }
             let _ = db::clear_uploads(&inner.db.lock().unwrap(), r.id);
             if ctl.want.load(Ordering::SeqCst) == WANT_DELETE {

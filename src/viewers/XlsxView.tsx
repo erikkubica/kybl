@@ -29,10 +29,13 @@ export default function XlsxView({ name, bytes, mode }: ViewerProps) {
 
   const timers = useRef(new Set<number>());
 
-  const ask = (req: { open: Uint8Array } | { sheet: string }, then: (m: XlsxResponse) => void) => {
-    const w = worker.current;
-    if (!w) return;
-    const id = ++seq.current;
+  // One watchdog for the worker, not one per request: the worker answers requests in turn, so a
+  // request queued behind others isn't slow just for waiting. The limit runs while something is
+  // pending and starts over on every answer, so it measures how long the worker has been silent.
+  const watch = (w: Worker) => {
+    timers.current.forEach((t) => window.clearTimeout(t));
+    timers.current.clear();
+    if (!waiting.current.size) return;
     // a file built to keep SheetJS busy for minutes would leave the spinner up for ever: past
     // the limit the worker is ended and the file is called too big (R9 S-3)
     const timer = window.setTimeout(() => {
@@ -44,11 +47,16 @@ export default function XlsxView({ name, bytes, mode }: ViewerProps) {
       setError("refused");
     }, WORKER_LIMIT_MS);
     timers.current.add(timer);
-    waiting.current.set(id, (m) => {
-      window.clearTimeout(timer);
-      timers.current.delete(timer);
-      then(m);
-    });
+  };
+
+  const ask = (req: { open: Uint8Array } | { sheet: string }, then: (m: XlsxResponse) => void) => {
+    const w = worker.current;
+    if (!w) return;
+    const id = ++seq.current;
+    const idle = waiting.current.size === 0;
+    waiting.current.set(id, then);
+    // already watching while others are pending: that clock keeps running
+    if (idle) watch(w);
     w.postMessage({ ...req, id } satisfies XlsxRequest);
   };
 
@@ -63,6 +71,8 @@ export default function XlsxView({ name, bytes, mode }: ViewerProps) {
     w.onmessage = (ev: MessageEvent<XlsxResponse>) => {
       const then = pending.get(ev.data.id);
       pending.delete(ev.data.id);
+      // it answered: the silence clock starts over for whatever is still queued
+      watch(w);
       then?.(ev.data);
     };
     w.onerror = () => setError("failed");
