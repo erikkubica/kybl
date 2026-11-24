@@ -541,7 +541,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     cut: () => ops.clip(selectedEntries, "cut"),
     duplicate: () => selectedEntries.length > 0 && void ops.duplicate(selectedEntries),
     paste: () => ops.paste(),
-    deselect: () => sel.setSelected(new Set()),
+    deselect: () => sel.clear(),
     "toggle-hidden": toggleHidden,
     ...actionCommandMap(actionCtx),
   };

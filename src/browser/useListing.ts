@@ -62,6 +62,17 @@ export function useListing(limit: number) {
   }, []);
 
   /**
+   * Shows a listing kept earlier as it was (a workspace coming back): no request, so the rows are
+   * there at once. A load still running for the place left behind is ignored.
+   */
+  const seed = useCallback((l: Listing) => {
+    reqId.current++;
+    setListing(l);
+    setLoading(false);
+    setError(null);
+  }, []);
+
+  /**
    * Reloads the place on screen without blanking it: pages are gathered until there are at least
    * as many items as before, then swapped in at once, so the scroll position and selection stay.
    */
@@ -195,5 +206,5 @@ export function useListing(limit: number) {
     if (pulling && !loading) loadRest(limit);
   }, [pulling, loading, limit, loadRest]);
 
-  return { listing, loading, error, count, pulling, open, refresh, loadMore, clear };
+  return { listing, loading, error, count, pulling, open, seed, refresh, loadMore, clear };
 }

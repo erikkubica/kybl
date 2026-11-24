@@ -1287,6 +1287,9 @@ kbd {
 .statusbar .sel {
   color: var(--accent);
   font-weight: 600;
+  /* centres the clear button on the text; a baseline-aligned button sat lower than it */
+  display: inline-flex;
+  align-items: center;
 }
 
 /* ---------------------------------------------------------------- welcome */
@@ -4562,12 +4565,8 @@ body.dragging-items * {
 .grid-scroll:focus-visible .card.active .card-thumb {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-solid) 75%, transparent);
 }
-/* focused with nothing under the cursor: ring the whole list so it's clear where keys go */
-.table:focus-visible:not(:has(.row.active)) .table-body,
-.grid-scroll:focus-visible:not(:has(.card.active)) {
-  box-shadow: inset 0 0 0 2px var(--accent-ring);
-  border-radius: 4px;
-}
+/* a list with nothing under the cursor shows no ring at all: where keys go is told by the
+   active pane's header, never by a frame around the whole list */
 
 /* rows of the previous place while the next one loads: visible, but not something to act on */
 .table.stale .table-body > .row,
@@ -5334,7 +5333,6 @@ input[type="range"]:focus-visible {
   border-radius: 50%;
   background: transparent;
   color: inherit;
-  vertical-align: -3px;
   cursor: pointer;
 }
 .statusbar .sel-clear:hover {

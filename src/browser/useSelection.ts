@@ -84,7 +84,11 @@ export function useSelection(entries: Entry[], stale: boolean) {
     [entries, setCursor],
   );
 
-  const clear = useCallback(() => setSelected(new Set()), []);
+  // the cursor goes too: otherwise the ring stays on the item that was selected
+  const clear = useCallback(() => {
+    setSelected(new Set());
+    setCursor(null, true);
+  }, [setCursor]);
   const deselect = useCallback(
     (keys: string[]) =>
       setSelected((sel) => {

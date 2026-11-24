@@ -110,7 +110,7 @@ import {
 } from "./workspaces";
 import { dropPlace } from "./recipes";
 import type { HistorySnap } from "../browser/useHistory";
-import { sameLoc } from "../browser/useListing";
+import { sameLoc, type Listing } from "../browser/useListing";
 import { PaneContext } from "./PaneContext";
 import { useMigrationHost } from "./useMigrationHost";
 import { usePalette } from "../palette/usePalette";
@@ -341,6 +341,8 @@ export function AppShell() {
    * another connection or bucket carries on undisturbed in the meantime.
    */
   const reloadIfShowing = useCallback((pid: string, b: string) => {
+    // a workspace not on screen that kept this place's listing would bring back the old rows
+    for (const [k, l] of keptListings.current) if (l.loc?.profileId === pid && l.loc.bucket === b) keptListings.current.delete(k);
     let hit = false;
     for (const p of panesRef.current) {
       if (p.profile?.id !== pid || p.bucket !== b) continue;
@@ -540,6 +542,7 @@ export function AppShell() {
     autoShowActivity,
     focusPane: (id: PaneId) => requestAnimationFrame(() => focusPaneList(id)),
     reloadIfShowing,
+    busyFor: (pid, b) => panesRef.current.find((p) => p.profile?.id === pid && p.bucket === b)?.setBusy,
     confirmMigration: migrations.confirm,
   };
 
@@ -892,6 +895,28 @@ export function AppShell() {
   // ------------------------------------------------------------ workspaces
   /** a workspace's panes' Back / Forward while another is on screen (this session only) */
   const histories = useRef(new Map<string, Partial<Record<PaneId, HistorySnap>>>());
+  /**
+   * The listings of the panes of workspaces not on screen, by workspace and slot. The slots are
+   * shared by every workspace, so without this each switch would list every folder again (and
+   * with it reconnect). Held only for what a pane showed when it was left; dropped when that place
+   * changes (reloadIfShowing), the workspace closes or resets. No pane stays mounted, so nothing
+   * polls in the background.
+   */
+  const keptListings = useRef(new Map<string, Listing>());
+  /** a listing this big is listed again instead of kept: it would weigh on memory for a rare return */
+  const KEEP_LISTING_MAX = 20_000;
+  const dropKept = (match: (key: string, l: Listing) => boolean) => {
+    for (const [k, l] of keptListings.current) if (match(k, l)) keptListings.current.delete(k);
+  };
+  const keepListings = (wsId: string) => {
+    for (const k of [...keptListings.current.keys()]) if (k.startsWith(`${wsId}\n`)) keptListings.current.delete(k);
+    for (const id of ids) {
+      const p = slot(id);
+      const l = p.ent.listing;
+      if (term.terms[id] || !p.ent.fresh || p.ent.listError || !l.loc || l.folders.length + l.objects.length > KEEP_LISTING_MAX) continue;
+      keptListings.current.set(`${wsId}\n${id}`, l);
+    }
+  };
   /** how far down a pane's list was, given back once that list is there again */
   const pendingScroll = useRef(new Map<PaneId, { loc: Loc; top: number; selected?: string[] }>());
   /** the workspace being renamed in its tab, and the one whose settings are open */
@@ -1005,7 +1030,7 @@ export function AppShell() {
    * Points slot `id` at a pane as a workspace kept it: its place, how it looked, its Back / Forward
    * and how far down its list was (`fallback`: where it opens without a place; without one, This Mac).
    */
-  const fillSlot = (id: PaneId, s: PaneSnap | undefined, hist: HistorySnap | null, fallback: Loc | null, empty = false) => {
+  const fillSlot = (id: PaneId, s: PaneSnap | undefined, hist: HistorySnap | null, fallback: Loc | null, empty = false, seed?: Listing) => {
     const p = slot(id);
     p.closeQuick();
     p.ent.setQuery("");
@@ -1019,7 +1044,7 @@ export function AppShell() {
       p.showConnection(null);
       p.history.load(null, null);
     } else if (at && prof) {
-      p.go(prof, at.bucket, at.prefix, { history: false });
+      p.go(prof, at.bucket, at.prefix, { history: false, seed });
       p.history.load(hist, at);
       void conns.loadBuckets(prof);
       if (s?.query) p.ent.setQuery(s.query);
@@ -1047,10 +1072,12 @@ export function AppShell() {
           if (ids.includes(id)) vacate(id);
           continue;
         }
-        fillSlot(id, l.panes[id], hist[id] ?? null, fallback, !!empty?.has(id));
+        fillSlot(id, l.panes[id], hist[id] ?? null, fallback, !!empty?.has(id), keptListings.current.get(`${wsId}\n${id}`));
       }
     });
     dualPane.forgetBehind();
+    // used up: this workspace is on screen now, and its panes' own state is the live one
+    dropKept((k) => k.startsWith(`${wsId}\n`));
     setTree(l.tree);
     setLinks(l.links);
     setRecent([...l.recent.filter((x) => nextIds.includes(x)), ...nextIds.filter((x) => !l.recent.includes(x))]);
@@ -1073,6 +1100,7 @@ export function AppShell() {
     if (!target || id === ws.active) return;
     const now = liveLayout(true);
     keepHistories();
+    keepListings(ws.active);
     setWsSettings(null);
     setWs((cur) => ({ ...withLive(cur, now), active: id }));
     applyLayout(target, id, active.here);
@@ -1081,6 +1109,7 @@ export function AppShell() {
   const addWorkspace = (w: Workspace, after?: string, focus = true, empty?: Set<PaneId>) => {
     const now = liveLayout(true);
     keepHistories();
+    keepListings(ws.active);
     setWsSettings(null);
     setWs((cur) => {
       const list = withLive(cur, now).list;
@@ -1115,12 +1144,14 @@ export function AppShell() {
   /** Shows layout `l` as workspace `id`, in place of what it showed (a reset to its recipe). */
   const replaceWorkspace = (id: string, l: Layout, empty: Set<PaneId>) => {
     histories.current.delete(id);
+    dropKept((k) => k.startsWith(`${id}\n`));
     setWsSettings(null);
     if (id === ws.active) {
       setWs((cur) => ({ ...cur, list: cur.list.map((w) => (w.id === id ? { ...w, ...l } : w)) }));
     } else {
       const now = liveLayout(true);
       keepHistories();
+      keepListings(ws.active);
       setWs((cur) => {
         const list = withLive(cur, now).list.map((w) => (w.id === id ? { ...w, ...l } : w));
         return { list, active: id };
@@ -1138,6 +1169,7 @@ export function AppShell() {
     const was = { ...w, ...layoutOf(id) };
     setWsSettings(null);
     histories.current.delete(id);
+    dropKept((k) => k.startsWith(`${id}\n`));
     if (id === ws.active) {
       const next = ws.list[i + 1] ?? ws.list[i - 1];
       setWs((cur) => ({ list: cur.list.filter((x) => x.id !== id), active: next.id }));
