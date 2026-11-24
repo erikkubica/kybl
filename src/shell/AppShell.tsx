@@ -1572,6 +1572,22 @@ export function AppShell() {
     confirm: dialogs.confirm,
     toast,
     rootLabel: conns.rootLabel,
+    connMenu: (id, x, y, current, pick) =>
+      dialogs.menu(x, y, [
+        ...connectionMenuItems(profiles.filter(canTerminal), {
+          recent: recents.recent,
+          skipRecent: current,
+          row: (p): MenuItem => ({
+            type: "item",
+            label: p.name,
+            checked: p.id === current || undefined,
+            // the shell there ends: asks first when a program runs in it
+            onClick: () => p.id !== current && void okToEndShells(sidsOf([id]), "Switch connection").then((ok) => ok && pick(p.id)),
+          }),
+        }),
+        { type: "sep" },
+        { type: "item", label: "New connection…", icon: "plus", onClick: () => setConnDialog({ profile: null }) },
+      ]),
   };
   paneLater.current = { close: closeNow, closeOthers: closeOthersNow, takeFromLive };
   // a shell ends once no workspace has its pane any more

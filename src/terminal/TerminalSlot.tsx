@@ -35,6 +35,8 @@ export type TerminalSlotProps = {
   onToggle: () => void;
   /** the folders of this terminal's connection, in a file pane */
   onFolders: () => void;
+  /** the connection badge: another connection's shell in this pane */
+  onSwitch: (x: number, y: number) => void;
   /** it `cd`s wherever the file pane it opened from goes; `canFollow`: that pane is on screen */
   follow: boolean;
   canFollow: boolean;
@@ -88,10 +90,22 @@ export function TerminalSlot(p: TerminalSlotProps) {
         }
       >
         <div className="toolbar">
-          <span className="pbadge term-badge" aria-hidden>
-            <Icon name="terminal" size={12} />
-          </span>
-          <span className="term-conn">{p.connName}</span>
+          <button
+            type="button"
+            className="term-switch"
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              p.onSwitch(r.left, r.bottom + 4);
+            }}
+            title={`${p.connName} · switch connection`}
+            aria-label="Switch connection"
+            aria-haspopup="menu"
+          >
+            <span className="pbadge term-badge" aria-hidden>
+              <Icon name="terminal" size={12} />
+            </span>
+            <span className="term-conn">{p.connName}</span>
+          </button>
           <span className="conn-sep" aria-hidden>
             <Icon name="chevron" size={12} />
           </span>

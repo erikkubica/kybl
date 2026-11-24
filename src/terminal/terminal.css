@@ -5,8 +5,29 @@
   --pc: var(--text);
   margin: 0 4px 0 2px;
 }
-.toolbar > .term-conn {
+/* the badge and connection name: one button that switches the pane to another connection's shell */
+.toolbar > .term-switch {
+  display: inline-flex;
   flex: 0 1000 auto;
+  align-items: center;
+  min-width: 32px;
+  max-width: 230px;
+  height: 30px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.toolbar > .term-switch:hover {
+  background: var(--hover);
+}
+.term-switch > * {
+  pointer-events: none;
+}
+.term-switch > .term-conn {
   min-width: 24px;
   max-width: 200px;
   overflow: hidden;

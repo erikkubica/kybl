@@ -71,6 +71,8 @@ export type TermHost = {
   menu: Dialogs["menu"];
   toast: Dialogs["toast"];
   rootLabel: (profileId: string, root: string) => string;
+  /** the connections a terminal can run on, as a menu; `pick` once one is chosen (and a running program may end) */
+  connMenu: (id: PaneId, x: number, y: number, current: string, pick: (profileId: string) => void) => void;
 };
 
 /** The terminals of a layout, each with a session id (a pane saved without one starts a shell of its own). */
@@ -332,6 +334,23 @@ export function useTerminalPanes(initial: Layout) {
     return h.activeId;
   };
 
+  /** The connection badge in a terminal's header: pane `id` gets a new shell on `profileId` (this computer: in the home folder). */
+  const switchTo = async (id: PaneId, profileId: string) => {
+    let at: Loc = { profileId, bucket: "", prefix: "" };
+    if (profileId === LOCAL_PROFILE) {
+      const home = (await api.listRoots(LOCAL_PROFILE).catch(() => []))[0]?.id;
+      if (home == null) {
+        host.current?.toast("info", "Couldn't find your home folder for the terminal.");
+        return;
+      }
+      at = { profileId, bucket: home, prefix: "" };
+    }
+    if (!termsRef.current[id]) return; // closed meanwhile
+    const sid = newSid();
+    focusWhenShown(sid);
+    assign(id, { ...at, sid });
+  };
+
   /**
    * Folders in a terminal's header: its file pane when that is on screen, else one above it, in
    * the connection and folder the terminal started in (⌘J then goes back and forth between them).
@@ -466,6 +485,7 @@ export function useTerminalPanes(initial: Layout) {
         onClose={() => host.current?.close(id)}
         onToggle={toggle}
         onFolders={() => showFiles(id)}
+        onSwitch={(x, y) => h.connMenu(id, x, y, t.profileId, (pid) => void switchTo(id, pid))}
         follow={!!t.follow}
         canFollow={!!t.from && h.ids.includes(t.from) && !termsRef.current[t.from]}
         onFollow={() => setFollow(id, !t.follow)}
