@@ -168,6 +168,17 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
           )}
         </span>
       )}
+      {/* the folder's info panel (connection, path, git), remembered for this pane */}
+      <button
+        type="button"
+        className={`statusbar-btn ${pane.infoOpen ? "on" : ""}`}
+        onClick={() => pane.setInfoOpen(!pane.infoOpen)}
+        aria-pressed={pane.infoOpen}
+        title={pane.infoOpen ? "Hide folder info" : "Show folder info"}
+        aria-label="Folder info"
+      >
+        <Icon name="panel-right" size={14} />
+      </button>
     </footer>
   );
 }

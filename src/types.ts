@@ -18,6 +18,8 @@ export type Profile = {
   blob?: BlobConfig | null;
   /** The sidebar group it is filed under, slash-separated ("Clients/Acme"); none = the top level. */
   group?: string | null;
+  /** Pinned connections are listed first wherever connections are listed. */
+  pinned?: boolean;
 };
 
 // WP0: connection kinds beyond S3 (capabilities and roots are in api.ts)

@@ -121,6 +121,9 @@ import { LazyEditConflictHost, LazyEditingChip } from "../edit/lazy";
 import { useEditCount, type SaveRule } from "../edit/editStore";
 import { listMirrors, mirrorToPane, quickRun } from "../mirror";
 import { registerCommands } from "../palette/commands";
+import { connectionMenuItems } from "../connections/organizeMenu";
+import { moveInto, togglePins } from "../connections/organize";
+import { useConnPicks } from "../connections/useConnPicks";
 import {
   allGroups,
   groupLabel,
@@ -218,6 +221,7 @@ export function AppShell() {
   // the sidebar's groups folded open, and the connections opened last (both kept per device)
   const openGroups = useOpenGroups();
   const recents = useRecentConnections();
+  const picks = useConnPicks(conns.profiles);
   // ⌥⌘F: the sidebar's filter field takes the keyboard (each press bumps this)
   const [findSignal, setFindSignal] = useState(0);
   // workspace recipes (recipes.ts): layouts saved to reset to or open again, terminals included
@@ -1641,17 +1645,34 @@ export function AppShell() {
       toast("error", `Couldn’t change the group. ${errMessage(e)}`);
     }
   };
-  const moveToGroup = (p: Profile, raw: string) => {
+  /** Files these connections under group `raw` ("" = the top level). */
+  const moveToGroup = (ps: Profile[], raw: string) => {
     const g = normalizeGroup(raw);
-    if (g === groupOf(p)) return;
-    void applyGroups({ [p.id]: g });
-    // follow it there, so it's plain where it went
-    openGroups.reveal(revealKeys(profiles, { ...p, group: g }));
+    const changes = moveInto(saved, ps.map((p) => p.id), g);
+    if (!Object.keys(changes).length) return;
+    void applyGroups(changes);
+    // follow them there, so they're plain where they went
+    if (g) openGroups.reveal(revealKeys(profiles, { ...ps[0], group: g }));
+    picks.clear();
   };
-  /** A connection's "Move to group" submenu: every group, the top level, or a new one. */
-  const groupItems = (p: Profile): MenuItem[] => {
-    const cur = groupOf(p);
+  /** Pins these connections, or unpins them when they all are already. */
+  const togglePin = async (ids: string[]) => {
+    const changes = togglePins(saved, ids);
+    if (!Object.keys(changes).length) return;
+    try {
+      conns.setProfiles(await api.setProfilePins(changes));
+      picks.clear();
+    } catch (e) {
+      toast("error", `Couldn’t pin. ${errMessage(e)}`);
+    }
+  };
+  /** "Move to group" for one or several connections: every group, the top level, or a new one. */
+  const groupItems = (ps: Profile[]): MenuItem[] => {
+    // the group they all share, ticked
+    const shared = new Set(ps.map(groupOf));
+    const cur = shared.size === 1 ? [...shared][0] : null;
     const groups = allGroups(saved);
+    const who = ps.length === 1 ? ps[0].name : `${ps.length} connections`;
     // the new group and the top level first: a long list of groups can't push them out of reach
     return tidyMenu([
       {
@@ -1661,16 +1682,16 @@ export function AppShell() {
         onClick: () =>
           dialogs.prompt({
             title: "New group",
-            label: `Group for ${p.name}`,
+            label: `Group for ${who}`,
             initial: "",
             confirmLabel: "Move",
             note: "Use / for a group inside a group, like Clients/Acme.",
-            run: (v) => moveToGroup(p, v),
+            run: (v) => moveToGroup(ps, v),
           }),
       },
-      !!cur && { type: "item", label: "No group (top level)", icon: "arrow-up", onClick: () => moveToGroup(p, "") },
+      cur !== "" && { type: "item", label: "No group (top level)", icon: "arrow-up", onClick: () => moveToGroup(ps, "") },
       { type: "sep" },
-      ...groups.map((g): MenuItem => ({ type: "item", label: groupLabel(g), icon: "folder", checked: g === cur || undefined, onClick: () => moveToGroup(p, g) })),
+      ...groups.map((g): MenuItem => ({ type: "item", label: groupLabel(g), icon: "folder", checked: g === cur || undefined, onClick: () => moveToGroup(ps, g) })),
     ]);
   };
   /**
@@ -1702,7 +1723,8 @@ export function AppShell() {
       },
       {
         type: "item",
-        label: parentGroup(path) ? `Ungroup (move into ${groupLabel(parentGroup(path))})` : "Ungroup",
+        // only the folder goes: its connections stay, one level up
+        label: parentGroup(path) ? `Delete group (connections move into ${groupLabel(parentGroup(path))})` : "Delete group (connections stay)",
         icon: "arrow-up",
         onClick: () => {
           void applyGroups(ungroup(listed, path));
@@ -1792,7 +1814,9 @@ export function AppShell() {
         ? []
         : [
             { type: "sep" as const },
-            { type: "submenu" as const, label: "Move to group", icon: "folder" as const, items: () => groupItems(p) },
+            { type: "item" as const, label: p.pinned ? "Unpin" : "Pin to the top", icon: "pin" as const, onClick: () => void togglePin([p.id]) },
+            { type: "item" as const, label: "Select to organize", icon: "check" as const, onClick: () => picks.add(p.id) },
+            { type: "submenu" as const, label: "Move to group", icon: "folder" as const, items: () => groupItems(picks.picked.has(p.id) ? saved.filter((x) => picks.picked.has(x.id)) : [p]) },
             { type: "item" as const, label: "Edit connection…", icon: "edit" as const, onClick: () => setConnDialog({ profile: p }) },
           ]),
     ]));
@@ -1841,19 +1865,34 @@ export function AppShell() {
       focusSoon(id);
     };
     dialogs.menu(x, y, [
-      ...profiles.map((p): MenuItem => {
-        const current = pane.profile?.id === p.id;
-        if (rootsMode(p, peekCaps(p.id)) === "single") return { type: "item", label: p.name, checked: current || undefined, onClick: () => open(p, "") };
-        return {
-          type: "submenu",
-          label: current ? `${p.name} ✓` : p.name,
-          items: async () => {
-            const names = conns.bucketsBy[p.id]?.names?.length ? conns.bucketsBy[p.id].names : await conns.loadBuckets(p).catch(() => [] as string[]);
-            const hidden = new Set(conns.hiddenBuckets[p.id] ?? []);
-            const shown = names.filter((b) => !hidden.has(b));
-            return rootMenuItems(p, shown, current ? pane.bucket : null, (b) => open(p, b), id);
-          },
-        };
+      // pinned, recent, groups, then the rest, with a search over all of them (organizeMenu.ts)
+      ...connectionMenuItems(profiles, {
+        recent: recents.recent,
+        skipRecent: pane.profile?.id,
+        row: (p, nested): MenuItem => {
+          const current = pane.profile?.id === p.id;
+          const single = rootsMode(p, peekCaps(p.id)) === "single";
+          // inside a group (and in search results) a menu can't go another level down for the
+          // buckets: the row opens the connection, and its buckets are in the pane
+          if (single || nested) {
+            return {
+              type: "item",
+              label: p.name,
+              checked: current || undefined,
+              onClick: () => (single ? open(p, "") : (setActiveId(id), void connectIn(id, p), focusSoon(id))),
+            };
+          }
+          return {
+            type: "submenu",
+            label: current ? `${p.name} ✓` : p.name,
+            items: async () => {
+              const names = conns.bucketsBy[p.id]?.names?.length ? conns.bucketsBy[p.id].names : await conns.loadBuckets(p).catch(() => [] as string[]);
+              const hidden = new Set(conns.hiddenBuckets[p.id] ?? []);
+              const shown = names.filter((b) => !hidden.has(b));
+              return rootMenuItems(p, shown, current ? pane.bucket : null, (b) => open(p, b), id);
+            },
+          };
+        },
       }),
       { type: "sep" },
       { type: "item", label: "New connection…", icon: "plus", onClick: () => setConnDialog({ profile: null }) },
@@ -2211,6 +2250,12 @@ export function AppShell() {
             onGroupMenu={groupMenu}
             onSectionMenu={sectionMenu}
             onOpenConnection={openConnection}
+            picked={picks.picked}
+            onTogglePick={(p) => picks.toggle(p.id)}
+            onClearPicks={picks.clear}
+            onMoveToGroup={(ids, g) => moveToGroup(saved.filter((x) => ids.includes(x.id)), g)}
+            onMoveMenu={(ids, x, y) => dialogs.menu(x, y, groupItems(saved.filter((q) => ids.includes(q.id))))}
+            onTogglePin={(ids) => void togglePin(ids)}
             findSignal={findSignal}
             findOnMount={sideHidden && sidePeek.byFind}
             onFindDone={() => {

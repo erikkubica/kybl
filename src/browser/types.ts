@@ -31,6 +31,8 @@ export type PaneView = {
   hidden: boolean | null;
   compact: boolean | null;
   tile: number | null;
+  /** the info panel beside the list is open (absent or null: closed) */
+  info?: boolean | null;
 };
 
 export function paneKeys(id: PaneId) {
@@ -41,6 +43,7 @@ export function paneKeys(id: PaneId) {
     hidden: `s3b.hidden.${id}`,
     compact: `s3b.compact.${id}`,
     tile: `s3b.tile.${id}`,
+    info: `s3b.info.${id}`,
   };
 }
 

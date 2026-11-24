@@ -437,9 +437,55 @@ pub fn status_of(dir: &Path, force: bool) -> Option<GitInfo> {
     })
 }
 
+/// The newest commit of the repository a folder is in, for the folder's info panel.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LastCommit {
+    /// the abbreviated hash
+    pub hash: String,
+    pub subject: String,
+    /// when it was committed (Unix seconds)
+    pub time: i64,
+    /// the repository's top folder, for opening changed files
+    pub top: String,
+}
+
+/// Reads `git log -1 --format=%h%x00%ct%x00%s`; the subject goes last so a stray separator in
+/// it can't shift the others.
+fn parse_last_commit(buf: &[u8], top: &str) -> Option<LastCommit> {
+    let text = String::from_utf8_lossy(buf);
+    let mut parts = text.trim_end().splitn(3, '\0');
+    let (hash, time, subject) = (parts.next()?, parts.next()?, parts.next()?);
+    let time = time.parse().ok()?;
+    (!hash.is_empty()).then(|| LastCommit { hash: hash.to_string(), subject: subject.to_string(), time, top: top.to_string() })
+}
+
+/// The newest commit for folder `dir`; None when git is missing, `dir` isn't in a work tree, or
+/// there is no commit yet. Blocks for up to a moment: call it off the async runtime.
+pub fn last_commit_of(dir: &Path) -> Option<LastCommit> {
+    let bin = find_tool("git")?;
+    let repo = find_repo(&bin, dir)?;
+    // an argument list and the repository's programs switched off, like the status run
+    let mut c = git_in(&bin, &repo.top)?;
+    c.args(["log", "-1", "--no-show-signature", "--format=%h%x00%ct%x00%s"]);
+    let (st, out) = run_capture(c, TIME_BOX).ok()?;
+    if !st.success() {
+        return None;
+    }
+    parse_last_commit(&out, &repo.top.to_string_lossy())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_last_commit() {
+        let c = parse_last_commit(b"abc1234\x001700000000\x00Fix the thing\n", "/r").unwrap();
+        assert_eq!((c.hash.as_str(), c.time, c.subject.as_str()), ("abc1234", 1_700_000_000, "Fix the thing"));
+        assert!(parse_last_commit(b"", "/r").is_none());
+        assert!(parse_last_commit(b"abc\x00soon\x00x", "/r").is_none());
+    }
 
     const SAMPLE: &[u8] = b"# branch.oid 1234567890abcdef\0# branch.head main\0# branch.upstream origin/main\0# branch.ab +2 -1\0\
 1 .M N... 100644 100644 100644 aaa aaa src/app.ts\0\
@@ -736,6 +782,8 @@ u UU N... 100644 100644 100644 100644 a b c conflict.txt\0\
         let kinds: HashMap<_, _> = info.changes.iter().map(|c| (c.path.as_str(), c.kind)).collect();
         assert_eq!(kinds.get("a.txt"), Some(&GitKind::Modified));
         assert_eq!(kinds.get("b.txt"), Some(&GitKind::Untracked));
+        let last = last_commit_of(&dir.join("src")).expect("a commit");
+        assert_eq!(last.subject, "first");
         let top = status_of(&dir, true).unwrap();
         assert!(top.changes.iter().any(|c| c.path == "build/" && c.kind == GitKind::Ignored));
         let _ = std::fs::remove_dir_all(&dir);

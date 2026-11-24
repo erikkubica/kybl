@@ -64,6 +64,14 @@ pub struct Profile {
     /// none for a connection at the top level
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
+    /// pinned: listed first wherever connections are listed. Like the group, it is kept on the
+    /// connection itself, and only changes through `set_profile_pins`
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pinned: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 /// A group path as it is saved: each folder trimmed, empty ones dropped, joined by "/"; `None`
@@ -461,7 +469,7 @@ fn profiles_to_save(old: Option<Vec<serde_json::Value>>, profiles: &[Profile]) -
         match saved {
             Some(serde_json::Value::Object(saved)) => {
                 let mut keep = saved.clone();
-                for k in ["name", "group"] {
+                for k in ["name", "group", "pinned"] {
                     match mine.get(k) {
                         Some(v) => keep.insert(k.to_string(), v.clone()),
                         None => keep.remove(k),

@@ -45,6 +45,8 @@ export const api = {
   /** Files connections under sidebar groups by id ("" = the top level); returns every profile. */
   setProfileGroups: (groups: Record<string, string>) =>
     invoke<Profile[]>("set_profile_groups", { groups: Object.fromEntries(Object.entries(groups).map(([id, g]) => [id, g || null])) }),
+  /** Pins (true) or unpins connections by id; returns every profile. */
+  setProfilePins: (pins: Record<string, boolean>) => invoke<Profile[]>("set_profile_pins", { pins }),
   /** `clearSecret`: test without the saved password, as Save with `clearSecret` would leave it */
   testConnection: (profile: Profile, secret?: string, clearSecret?: boolean) =>
     invoke<string>("test_connection", { profile, secret: secret || null, clearSecret: !!clearSecret }),

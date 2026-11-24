@@ -45,6 +45,7 @@ import { Layer, Presence, useCollapsed, useWide } from "./ui";
 import { FileList } from "./FileList";
 import { Connections, HomeScreen, addKind, rootWord, type Buckets } from "./Home";
 import { rootsMode } from "../connections/roots";
+import { allGroups, groupLabel, groupOf, normalizeGroup } from "../connections/groupPaths";
 import { FolderInfo } from "./FolderInfo";
 import { DestinationScreen, type SharedFile } from "./DestinationScreen";
 import { PullIndicator, useEdgeSwipe, usePullToRefresh } from "./gestures";
@@ -1398,6 +1399,10 @@ export default function MobileApp() {
         if (authNeeded.has(p.id)) items.push({ icon: "refresh", label: "Sign in again", run: () => signInAgain(p) });
         // this phone's own folder has nothing to edit
         if (!isLocal(p)) items.push({ icon: "edit", label: "Edit connection", run: () => editProfile(p) });
+        if (!isLocal(p)) {
+          items.push({ icon: "pin", label: p.pinned ? "Unpin" : "Pin to the top", run: () => void organizeConn(() => api.setProfilePins({ [p.id]: !p.pinned })) });
+          items.push({ icon: "folder", label: "Move to group…", run: () => groupSheet(p) });
+        }
         if (single) items.push({ icon: "folder", label: "Open", run: () => go({ profileId: p.id, bucket: "", prefix: "" }) });
         else items.push({ icon: "eye", label: `Choose ${words} to show`, run: () => setChoosing(p.id) });
         if (add === "new") items.push({ icon: "plus", label: "New bucket", run: () => askNewBucket(p) });
@@ -1435,6 +1440,31 @@ export default function MobileApp() {
       onChoose={setChoosing}
     />
   );
+
+  /** Pins or files a connection (one call, then the list as it is now). */
+  async function organizeConn(run: () => Promise<Profile[]>) {
+    try {
+      setProfiles(await run());
+    } catch (e) {
+      toast("error", `Couldn't change that. ${errSummary(errMessage(e))}`);
+    }
+  }
+  /** "Move to group…": the groups there are, the top level, or a new one. */
+  function groupSheet(p: Profile) {
+    const cur = groupOf(p);
+    const move = (g: string) => void organizeConn(() => api.setProfileGroups({ [p.id]: normalizeGroup(g) }));
+    const items: SheetItem[] = [
+      {
+        icon: "folder-plus",
+        label: "New group…",
+        run: () =>
+          setPrompt({ title: "New group", label: `Group for ${p.name}`, initial: "", confirmLabel: "Move", note: "Use / for a group inside a group, like Clients/Acme.", run: (v) => move(v) }),
+      },
+      ...(cur ? [{ icon: "arrow-up", label: "No group (top level)", run: () => move("") }] : []),
+      ...allGroups(profiles ?? []).map((g) => ({ icon: "folder", label: groupLabel(g), run: () => move(g) })),
+    ];
+    setSheet({ title: `Move ${connName(p)}`, items });
+  }
 
   /** Kybl Storage: the account owns its buckets, so it can make new ones. */
   function askNewBucket(p: Profile) {

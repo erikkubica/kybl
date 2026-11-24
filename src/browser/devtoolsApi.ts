@@ -28,6 +28,16 @@ export type GitInfo = {
 };
 
 /** One file's content search result. */
+export type GitCommit = {
+  /** abbreviated hash */
+  hash: string;
+  subject: string;
+  /** Unix seconds */
+  time: number;
+  /** the repository's top folder (absolute) */
+  top: string;
+};
+
 export type ContentHit = {
   key: string;
   size: number;
@@ -61,6 +71,10 @@ export const devtoolsApi = {
   /** null: not a git work tree, no git, or not this computer */
   gitStatus: (profileId: string, bucket: string, prefix: string, force = false) =>
     invoke<GitInfo | null>("git_status", { profileId, bucket, prefix, force }),
+  /** The newest commit of the repository the folder is in; null when there isn't one, or no git. */
+  gitLastCommit: (profileId: string, bucket: string, prefix: string) => invoke<GitCommit | null>("git_last_commit", { profileId, bucket, prefix }),
+  /** A cloud drive's used and total space (total null: unlimited or not said); null when it doesn't say. */
+  storageQuota: (profileId: string) => invoke<{ used: number; total: number | null } | null>("storage_quota", { profileId }),
   /** Files found stream in as `content-search-progress`; `cancelTransfer(opId)` stops it. */
   contentSearch: (profileId: string, bucket: string, prefix: string, query: string, opts: ContentOpts, opId: string) =>
     invoke<ContentResult>("content_search", { profileId, bucket, prefix, query, ...opts, opId }),

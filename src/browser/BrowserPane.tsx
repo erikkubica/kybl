@@ -3,7 +3,7 @@
  * or grid with its empty and error states, the status bar, Quick Look and the drag ghost. All
  * state lives in the pane object from usePane; this only draws it.
  */
-import { useEffect, useRef, type CSSProperties } from "react";
+import { lazy, Suspense, useEffect, useRef, type CSSProperties } from "react";
 import { Icon } from "../Icons";
 import { Toolbar } from "../components/Toolbar";
 import { rootIcon, rootsMode } from "../connections/roots";
@@ -21,6 +21,9 @@ import type { MenuItem } from "../components/Dialogs";
 import { BranchChip, SearchModes } from "../components/DevMarks";
 import type { Entry } from "../types";
 import { registerCommands } from "../palette/commands";
+
+// the info panel is code most panes never need: it loads when one is first opened
+const InfoPanel = lazy(() => import("./InfoPanel"));
 
 /** the clipboard takes files on macOS only for now (see platform.rs) */
 const IS_MAC = /Mac/.test(navigator.platform || navigator.userAgent);
@@ -303,6 +306,11 @@ export function BrowserPane(p: BrowserPaneProps) {
             </div>
           )}
         </div>
+        {pane.infoOpen && profile && bucket != null && (
+          <Suspense fallback={<aside className="info-panel" aria-busy="true" />}>
+            <InfoPanel pane={pane} />
+          </Suspense>
+        )}
       </div>
 
       {pane.quick && pane.quickIndex >= 0 && profile && bucket != null && (

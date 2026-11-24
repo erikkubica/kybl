@@ -3135,3 +3135,38 @@ input[type="checkbox"].m-switch:checked {
 .m-app > [data-layer][tabindex="-1"]:focus-visible {
   outline: none;
 }
+
+/* organizing connections: folders of connections on the home list */
+.m-conn-head {
+  margin: 14px 4px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--faint);
+}
+.m-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+}
+.m-group-head > span:first-of-type {
+  flex: 1;
+  min-width: 0;
+}
+.m-group-head svg.open {
+  transform: rotate(90deg);
+}
+.m-group-count,
+.m-dest-group {
+  color: var(--faint);
+  font-weight: 400;
+  font-size: 13px;
+}

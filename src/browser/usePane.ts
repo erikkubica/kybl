@@ -107,6 +107,8 @@ function usePaneCore(env: PaneEnv) {
   const [hiddenOwn, setShowHidden] = usePanePref<boolean>(keys.hidden);
   const [compactOwn, setCompact] = usePanePref<boolean>(keys.compact);
   const [tileOwn, setTile] = usePanePref<number>(keys.tile);
+  // the info panel beside the list (remembered per pane, and kept by the workspace)
+  const [infoOwn, setInfoOpen] = usePanePref<boolean>(keys.info);
   const sortSetting = sortOwn ?? settings.sort;
   const showHidden = hiddenOwn ?? settings.showHiddenFiles;
   const compact = compactOwn ?? LS.get("s3b.compact") === "1";
@@ -164,7 +166,7 @@ function usePaneCore(env: PaneEnv) {
     LS.set(viewKey, v);
   };
   /** The pane's own view choices as they are (null: following the app's setting), for a workspace to keep. */
-  const viewState = (): PaneView => ({ view, sort: sortOwn, hidden: hiddenOwn, compact: compactOwn, tile: tileOwn });
+  const viewState = (): PaneView => ({ view, sort: sortOwn, hidden: hiddenOwn, compact: compactOwn, tile: tileOwn, info: infoOwn });
   /** Takes a workspace's view choices back. */
   const applyView = (v: PaneView) => {
     if (v.view !== view) setView(v.view);
@@ -172,6 +174,7 @@ function usePaneCore(env: PaneEnv) {
     setShowHidden(v.hidden);
     setCompact(v.compact);
     setTile(v.tile);
+    setInfoOpen(v.info ? true : null);
   };
 
   const folderSizes = useFolderSizes(profile?.id ?? null, bucket, (pre, msg) =>
@@ -496,6 +499,8 @@ function usePaneCore(env: PaneEnv) {
     setCompact,
     tile,
     setTile,
+    infoOpen: !!infoOwn,
+    setInfoOpen: (on: boolean) => setInfoOpen(on ? true : null),
     onPress,
     go,
     navigate,

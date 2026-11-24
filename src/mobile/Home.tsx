@@ -21,6 +21,7 @@ import { connName, isLocal } from "./connName";
 import { useCaps } from "../useCaps";
 import { rootIcon, rootsMode, useRootName } from "../connections/roots";
 import { addressOf } from "../connections/kinds";
+import { groupKeysHolding, organize, type OrgGroup } from "../connections/organize";
 import type { Capabilities } from "../api";
 import { ConnFixRow, hasConnFix, type ConnFixes } from "./ConnFixRow";
 
@@ -160,6 +161,8 @@ export function Connections({
   onSignInAgain?: (p: Profile) => void;
 }) {
   const [all, setAll] = useState<Record<string, boolean>>({});
+  // groups the person folded open or shut (the one holding the open connection starts open)
+  const [folded, setFolded] = useState<Record<string, boolean>>({});
   if (error && !profiles?.length) {
     return (
       <div className="m-empty">
@@ -176,9 +179,7 @@ export function Connections({
   }
   if (profiles === null) return <SkeletonList />;
   if (profiles.length === 0) return null;
-  return (
-    <div className={compact ? "m-conns compact" : "m-conns"}>
-      {profiles.map((p) => (
+  const card = (p: Profile) => (
         <ConnCard
           key={p.id}
           p={p}
@@ -201,7 +202,45 @@ export function Connections({
           onBucketHidden={onBucketHidden}
           onChoose={onChoose}
         />
-      ))}
+  );
+  // the organizing model (connections/organize.ts): pinned first, groups as folders that fold
+  // open, a long ungrouped list sorted by type, this phone's own folder last
+  const org = organize(profiles.filter((p) => !isLocal(p)), { recentAfter: Infinity });
+  const device = profiles.filter(isLocal);
+  const pinnedIds = new Set(org.pinned.map((p) => p.id));
+  const holding = current ? groupKeysHolding(org.groups, current.profileId) : [];
+  const folder = (g: OrgGroup, depth: number): React.ReactNode => {
+    const open = folded[g.key] ?? holding.includes(g.key);
+    return (
+      <div key={`g:${g.key}`} className="m-conn-group" style={{ marginLeft: depth * 10 }}>
+        <button className="m-group-head" aria-expanded={open} onClick={() => setFolded((f) => ({ ...f, [g.key]: !open }))}>
+          <Icon name="chevron" size={13} className={open ? "open" : ""} />
+          <Icon name="folder" size={15} />
+          <span>{g.name}</span>
+          <span className="m-group-count">{g.count}</span>
+        </button>
+        {open && (
+          <>
+            {g.groups.map((x) => folder(x, depth + 1))}
+            {g.items.filter((p) => !pinnedIds.has(p.id)).map(card)}
+          </>
+        )}
+      </div>
+    );
+  };
+  const rows = (
+    <>
+      {org.pinned.length > 0 && <h2 className="m-conn-head">Pinned</h2>}
+      {org.pinned.map(card)}
+      {org.pinned.length > 0 && org.groups.length + org.items.length > 0 && <h2 className="m-conn-head">All connections</h2>}
+      {org.groups.map((g) => folder(g, 0))}
+      {org.items.filter((p) => !pinnedIds.has(p.id)).map(card)}
+      {device.map(card)}
+    </>
+  );
+  return (
+    <div className={compact ? "m-conns compact" : "m-conns"}>
+      {rows}
       {!compact && (
         <button className="m-add-row" onClick={onAdd}>
           <Icon name="plus" size={16} /> Add a connection

@@ -586,6 +586,24 @@ Commands it holds: every menu-bar command (File: New Folder, Upload Files / Fold
 
 ---
 
+
+#### Folder info panel (computers)
+
+A compact panel inside each pane, opened and closed by the icon at the right end of that pane's bottom status row. It gives context for the folder on screen; it is not a file preview.
+
+- **Remembered per pane.** The open or closed state is part of the pane's view choices, so workspaces keep it. The panel's code loads the first time one is opened.
+- **Always:** the connection (kind, server or bucket, user), the current path with a copy button, and the folder's item count and size (and the whole-folder size once worked out).
+- **By connection:**
+  - S3: bucket, region and endpoint.
+  - SFTP, FTP and WebDAV: server, protocol (TLS on or off, FTPS) and user.
+  - Cloud drives: the account and, when the drive says, the space used.
+  - Azure and Google Cloud Storage: account or project and container or bucket.
+- **Git, for a folder of this computer inside a work tree:**
+  - the branch (or the commit when detached) and how far it is ahead of and behind its upstream;
+  - changed, staged and untracked counts for the folder, with the first 8 changed files (a click opens the file or folder);
+  - the last commit: short hash, subject and age.
+- **How git is run:** the backend runs the user's own `git` with an argument list in the repository's folder, never a shell, with a time limit and the repository's own programs switched off (`git status --porcelain=v2 --branch`, `git log -1`). Without git, or outside a work tree, the git section is simply not shown.
+- **When it refreshes:** when the folder changes and when the window comes back to the front. There is no polling.
 ### Custom actions
 Where: Settings → Actions; the item menu's "Actions ▸"; the palette; their own shortcuts.
 
@@ -935,7 +953,26 @@ Kybl Storage has its own flow and badge (1.1). Changing the region follows the p
   - Azure and GCS keys are tied to the endpoint and account the same way.
   - S3 secrets are tied to the access key ID.
   - Name, folder and other edits keep the saved secret.
-- **Groups:** connections can be put in sidebar folders (computers).
+- **Groups:** connections can be put in folders, nested with `/` ("Clients/Acme").
+
+#### 2.1a Organizing many connections
+
+One model (`src/connections/organize.ts`) lays connections out the same way everywhere they are listed: the pane's connection menu, the sidebar, the destination picker, the command palette and the phone's list.
+
+- **Pinned** connections come first, by name. A pinned connection also stays in its group.
+- **Recent** lists the last 5 opened, once there are more than 10 connections. Pinned ones are not repeated there.
+- **Groups** are folders (submenus in menus, folders that fold open elsewhere). Connections in no group follow, by name. This computer is always first and is never filed.
+- **By type:** with more than 15 connections in no group, they are listed under Servers, Cloud drives and Object storage instead of one long list. The sidebar already has a section per server kind (FTP, SFTP, WebDAV), so there it folds the rest by type.
+- **Find** searches every group at once. In menus, a match shows the group it is in beside it.
+- **Long menus scroll**, with arrows at the edges. Menus open one level deep, so a nested group is one row with its whole path ("Clients › Acme").
+- **Making groups (computers):**
+  - ⌘/Ctrl-click (or "Select to organize" in a connection's menu) picks connections. A bar appears with **Move to group…** (existing groups, no group, or a new one) and **Pin** / **Unpin**. Esc clears the selection.
+  - Drag connections onto a group row to file them there. Drop them on the "Connections" heading to take them out of a group.
+  - A group's menu has **Rename group…** and **Delete group**. Deleting a group only ungroups: its connections stay, one level up.
+  - **Pin to the top** / **Unpin** is in a connection's menu.
+- **On the phone:** a connection's menu has **Pin to the top** and **Move to group…**. The home list shows Pinned first, then groups that fold open.
+- **Saved with the connection:** the group and the pin are fields of the saved connection (`group`, `pinned`), changed without reconnecting. Recent and which groups are folded open are kept per device.
+
 
 #### 2.2 Import connections (computers)
 
