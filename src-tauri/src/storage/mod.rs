@@ -945,32 +945,42 @@ pub fn walk_by_listing<'a, S: Storage + ?Sized>(s: &'a S, root: &'a str, dir: &'
 }
 
 /// [`walk_by_listing`] with up to `n` folders listed at once, for servers where every listing
-/// is a round trip of its own (FTP: a data connection per folder). Batches come as listings
-/// finish, so not in name order; a folder's own entry still comes before anything inside it.
+/// is a round trip of its own (FTP: a data connection per folder). Each group of listings is
+/// finished before any of it is handed out: a listing left half-read while the caller works on a
+/// batch would hold a server connection, and two folder copies on one server could then wait on
+/// each other forever. Batches aren't in name order; a folder's own entry still comes before
+/// anything inside it.
 pub fn walk_parallel<'a, S: Storage + ?Sized>(s: &'a S, root: &'a str, dir: &'a str, n: usize) -> BoxStream<'a, SResult<Vec<Entry>>> {
-    use futures_util::{stream::FuturesUnordered, StreamExt};
-    type Listed<'a> = BoxFuture<'a, (String, SResult<Page>)>;
-    struct St<'a> {
+    use std::collections::VecDeque;
+    struct St {
         // what is left to list (a stack: one part of the tree is finished before the next)
         todo: Vec<(String, Option<String>)>,
-        running: FuturesUnordered<Listed<'a>>,
+        ready: VecDeque<Vec<Entry>>,
         failed: bool,
     }
-    let start = St { todo: vec![(dir.to_string(), None)], running: FuturesUnordered::new(), failed: false };
+    let start = St { todo: vec![(dir.to_string(), None)], ready: VecDeque::new(), failed: false };
     Box::pin(futures_util::stream::unfold(start, move |mut st| async move {
-        if st.failed {
-            return None;
-        }
-        while st.running.len() < n.max(1) {
-            let Some((d, token)) = st.todo.pop() else { break };
-            st.running.push(Box::pin(async move {
+        loop {
+            if let Some(b) = st.ready.pop_front() {
+                return Some((Ok(b), st));
+            }
+            if st.failed || st.todo.is_empty() {
+                return None;
+            }
+            let group: Vec<_> = (0..n.max(1)).filter_map(|_| st.todo.pop()).collect();
+            let listed = futures_util::future::join_all(group.into_iter().map(|(d, token)| async move {
                 let r = s.list(root, &d, token).await;
                 (d, r)
-            }));
-        }
-        let (d, r) = st.running.next().await?;
-        match r {
-            Ok(mut page) => {
+            }))
+            .await;
+            for (d, r) in listed {
+                let mut page = match r {
+                    Ok(p) => p,
+                    Err(e) => {
+                        st.failed = true;
+                        return Some((Err(e), st));
+                    }
+                };
                 if let Some(next) = page.next_token.take() {
                     st.todo.push((d, Some(next)));
                 }
@@ -984,11 +994,7 @@ pub fn walk_parallel<'a, S: Storage + ?Sized>(s: &'a S, root: &'a str, dir: &'a 
                     .collect();
                 st.todo.extend(page.folders.iter().rev().filter(|f| page.folder_link(f).is_none()).map(|f| (f.clone(), None)));
                 batch.extend(page.objects);
-                Some((Ok(batch), st))
-            }
-            Err(e) => {
-                st.failed = true;
-                Some((Err(e), st))
+                st.ready.push_back(batch);
             }
         }
     }))

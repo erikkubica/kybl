@@ -474,6 +474,15 @@ pub struct CompressJob {
     pub dest_key: String,
 }
 
+/// Packing that says when it failed (`failed`), so the listing feeding it stops too.
+async fn packing(pack: impl std::future::Future<Output = SResult<()>>, failed: &AtomicBool) -> SResult<()> {
+    let r = pack.await;
+    if r.is_err() {
+        failed.store(true, Ordering::Relaxed);
+    }
+    r
+}
+
 /// Zips files and folders of any connection into `dest_key` next to them, as transfer `id`.
 #[tauri::command]
 pub async fn archive_compress(app: AppHandle, state: State<'_, AppState>, id: String, job: CompressJob) -> Result<(), String> {
@@ -514,8 +523,11 @@ pub async fn archive_compress(app: AppHandle, state: State<'_, AppState>, id: St
             t.tick(done, bytes);
         };
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        // set when packing failed: the listing stops instead of walking on for minutes
+        let pack_failed = Arc::new(AtomicBool::new(false));
         let plan = {
             let (src, found, say) = (src.clone(), found.clone(), say.clone());
+            let (cancel, failed) = (task.cancel.clone(), pack_failed.clone());
             let (root, items) = (job.root.clone(), job.items.clone());
             async move {
                 let mut left_out = Vec::new();
@@ -534,6 +546,7 @@ pub async fn archive_compress(app: AppHandle, state: State<'_, AppState>, id: St
                         let _ = tx.send(i);
                     },
                     &mut left_out,
+                    &|| cancel.load(Ordering::Relaxed) || failed.load(Ordering::Relaxed),
                 )
                 .await;
                 found.lock().unwrap().2 = true;
@@ -548,7 +561,7 @@ pub async fn archive_compress(app: AppHandle, state: State<'_, AppState>, id: St
         // cache, then uploaded
         if let Some(final_path) = src.local_path(&job.root, &job.dest_key) {
             let tmp = final_path.with_file_name(format!(".{}.kybl-{tid}.part", crate::storage::net::fit_name(base_name(&job.dest_key), 1 + 6 + tid.len() + 5)));
-            let (left_out, packed) = tokio::join!(plan, ops::pack_stream_to_file(src.clone(), &job.root, rx, &tmp, &say, &task.cancel));
+            let (left_out, packed) = tokio::join!(plan, packing(ops::pack_stream_to_file(src.clone(), &job.root, rx, &tmp, &say, &task.cancel), &pack_failed));
             let left_out = match (left_out, packed) {
                 (Ok(l), Ok(())) => l,
                 (Err(e), _) | (_, Err(e)) => {
@@ -572,7 +585,7 @@ pub async fn archive_compress(app: AppHandle, state: State<'_, AppState>, id: St
         tokio::fs::create_dir_all(&work).await?;
         let tmp = work.join(format!("pack-{tid}.zip"));
         let res = async {
-            let (left_out, packed) = tokio::join!(plan, ops::pack_stream_to_file(src.clone(), &job.root, rx, &tmp, &say, &task.cancel));
+            let (left_out, packed) = tokio::join!(plan, packing(ops::pack_stream_to_file(src.clone(), &job.root, rx, &tmp, &say, &task.cancel), &pack_failed));
             packed?;
             let left_out = left_out?;
             if !left_out.is_empty() {

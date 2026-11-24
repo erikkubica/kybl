@@ -37,13 +37,21 @@ pub struct PackItem {
 pub async fn plan_pack(s: &dyn Storage, root: &str, items: &[String]) -> SResult<(Vec<PackItem>, Vec<String>)> {
     let mut out = Vec::new();
     let mut left_out = Vec::new();
-    plan_pack_into(s, root, items, &mut |i| out.push(i), &mut left_out).await?;
+    plan_pack_into(s, root, items, &mut |i| out.push(i), &mut left_out, &|| false).await?;
     Ok((out, left_out))
 }
 
 /// [`plan_pack`] handing each item to `emit` as it is found, so packing can start while a big
 /// folder on a slow server is still being listed.
-pub async fn plan_pack_into(s: &dyn Storage, root: &str, items: &[String], emit: &mut (dyn FnMut(PackItem) + Send), left_out: &mut Vec<String>) -> SResult<()> {
+/// `stop`: Cancel, or the packing already failed; the listing ends there instead of walking on.
+pub async fn plan_pack_into(
+    s: &dyn Storage,
+    root: &str,
+    items: &[String],
+    emit: &mut (dyn FnMut(PackItem) + Send),
+    left_out: &mut Vec<String>,
+    stop: &(dyn Fn() -> bool + Send + Sync),
+) -> SResult<()> {
     let Some(first) = items.first() else { return Ok(()) };
     let base = parent_of(first).to_string();
     let rel = |k: &str| k.strip_prefix(base.as_str()).unwrap_or(k).to_string();
@@ -65,6 +73,9 @@ pub async fn plan_pack_into(s: &dyn Storage, root: &str, items: &[String], emit:
             put(PackItem { name: rel(key), key: key.clone(), size: 0, modified: None }, emit);
             let mut walk = s.walk(root, key);
             while let Some(batch) = walk.next().await {
+                if stop() {
+                    return Err(StorageError::cancelled());
+                }
                 for e in batch? {
                     if e.key == *key {
                         continue;
@@ -171,8 +182,10 @@ const PREFETCH: usize = 3;
 
 /// The body of one zip entry: read ahead (a small file), or still to be streamed.
 enum Body {
-    Read(Vec<Bytes>),
-    Stream(crate::storage::ByteStream),
+    /// read ahead, with the rest still to come when it was longer than listed
+    Read(Vec<Bytes>, Option<crate::storage::ByteStream>),
+    /// a big file, opened on its turn
+    Later,
 }
 
 /// [`pack_to_file`] for items that are still being found (`items` ends when the listing does).
@@ -219,12 +232,26 @@ pub async fn pack_stream_to_file(
                 if it.name.ends_with('/') {
                     return Ok::<_, StorageError>((it, None));
                 }
-                let body = s.read(root, &it.key, None, None).await?.body;
+                // a big file is opened only when its turn comes: opened ahead, it would hold a
+                // connection (an idle FTP data connection the server may time out) while it waits
                 if it.size > PREFETCH_MAX {
-                    return Ok((it, Some(Body::Stream(body))));
+                    return Ok((it, Some(Body::Later)));
                 }
-                let chunks: Vec<Bytes> = body.try_collect().await?;
-                Ok((it, Some(Body::Read(chunks))))
+                let mut body = s.read(root, &it.key, None, None).await?.body;
+                // the listed size may be wrong (0 on a WebDAV server that gives none): read ahead
+                // at most PREFETCH_MAX, the rest streams on its turn
+                let (mut chunks, mut got) = (Vec::new(), 0u64);
+                while got <= PREFETCH_MAX {
+                    match body.next().await {
+                        Some(c) => {
+                            let c = c?;
+                            got += c.len() as u64;
+                            chunks.push(c);
+                        }
+                        None => return Ok((it, Some(Body::Read(chunks, None)))),
+                    }
+                }
+                Ok((it, Some(Body::Read(chunks, Some(body)))))
             }
         };
         let mut ahead = tokio_stream_of(items).map(fetch).buffered(PREFETCH);
@@ -242,27 +269,27 @@ pub async fn pack_stream_to_file(
             if tx.send(Msg::File(it.name.clone(), it.modified, it.size)).await.is_err() {
                 return Ok(());
             }
-            match body {
-                Body::Read(chunks) => {
-                    for chunk in chunks {
-                        done += chunk.len() as u64;
-                        progress(done);
-                        if tx.send(Msg::Data(chunk)).await.is_err() {
-                            return Ok(());
-                        }
-                    }
+            let (chunks, rest) = match body {
+                Body::Read(chunks, rest) => (chunks, rest),
+                Body::Later => (Vec::new(), Some(s.read(root, &it.key, None, None).await?.body)),
+            };
+            for chunk in chunks {
+                done += chunk.len() as u64;
+                progress(done);
+                if tx.send(Msg::Data(chunk)).await.is_err() {
+                    return Ok(());
                 }
-                Body::Stream(mut body) => {
-                    while let Some(chunk) = body.next().await {
-                        if cancel.load(Ordering::Relaxed) {
-                            return Err(StorageError::cancelled());
-                        }
-                        let chunk = chunk?;
-                        done += chunk.len() as u64;
-                        progress(done);
-                        if tx.send(Msg::Data(chunk)).await.is_err() {
-                            return Ok(());
-                        }
+            }
+            if let Some(mut body) = rest {
+                while let Some(chunk) = body.next().await {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Err(StorageError::cancelled());
+                    }
+                    let chunk = chunk?;
+                    done += chunk.len() as u64;
+                    progress(done);
+                    if tx.send(Msg::Data(chunk)).await.is_err() {
+                        return Ok(());
                     }
                 }
             }
