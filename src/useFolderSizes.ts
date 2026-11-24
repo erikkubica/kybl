@@ -99,6 +99,15 @@ export function useFolderSizes(profileId: string | null, bucket: string | null, 
     [scope],
   );
 
+  /** Stops every folder still being added up (queued or running) in this bucket. */
+  const cancelAll = useCallback(() => {
+    queue.current = queue.current.filter((j) => !j.key.startsWith(scope));
+    const running = new Set(ops.current.values());
+    for (const [id, k] of ops.current) if (k.startsWith(scope)) invoke("cancel_transfer", { id }).catch(() => {});
+    // what never started goes straight back to "not calculated"; a running one does when its call ends
+    setSizes((s) => Object.fromEntries(Object.entries(s).filter(([k, v]) => !(k.startsWith(scope) && v.state === "loading" && !running.has(k)))));
+  }, [scope]);
+
   /** Forget everything: call after anything that changes what is in the bucket. */
   const clear = useCallback(() => {
     for (const id of ops.current.keys()) invoke("cancel_transfer", { id }).catch(() => {});
@@ -117,5 +126,8 @@ export function useFolderSizes(profileId: string | null, bucket: string | null, 
     [sizes, scope],
   );
 
-  return { get, view, calc, cancel, clear };
+  /** how many folders in this bucket are being added up now */
+  const loading = Object.keys(sizes).filter((k) => k.startsWith(scope) && sizes[k].state === "loading").length;
+
+  return { get, view, calc, cancel, cancelAll, clear, loading };
 }

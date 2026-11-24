@@ -830,27 +830,33 @@ export default function MobileApp() {
   };
 
   const isPhoto = (e: Entry) => isMedia(e) || (e.kind === "file" && classify(e.name) === "image");
+  /** Grouped as the desktop's item menu is: open and info, move, get it out, favorite, rename, delete. */
   const entryActions = (e: Entry): SheetItem[] => {
     const items: SheetItem[] = [];
     if (e.kind === "file") {
-      items.push({ icon: "share", label: "Share…", run: () => ops.shareSheet([e]) });
       if (!isMedia(e) || (classify(e.name) === "video" && !isPlayableVideo(e.name))) items.push({ icon: "open", label: "Open in…", run: () => ops.openIn(e) });
-      if (PHONE_OS && isPhoto(e)) items.push({ icon: "photos", label: "Save to Photos", run: () => ops.saveToPhotos([e]) });
       // photos and documents open full screen: their details (size, link, properties) are here
       if (detail?.key !== e.key) items.push({ icon: "info", label: "Info", run: () => setDetail(e) });
+    } else {
+      items.push({ icon: "info", label: "Info", run: () => setFolderInfo({ prefix: e.key, name: e.name }) });
     }
+    items.push(
+      { icon: "move", label: "Move or copy…", run: () => setMoveDialog({ items: [e], mode: "move" }) },
+      { icon: "copy", label: "Copy to another connection…", run: () => migrateEntries([e]) },
+    );
     items.push({ icon: "download", label: e.kind === "folder" ? "Download folder" : e.native?.exports.length ? `Download as ${e.native.exports[0].label}` : "Download", run: () => ops.download([e]) });
     // a Google Doc / Sheet / Slides: its other formats (PDF…)
     for (const x of e.native?.exports.slice(1) ?? []) items.push({ icon: "download", label: `Download as ${x.label}`, run: () => ops.download([asExport(e, x.ext) ?? e]) });
+    if (e.kind === "file") {
+      items.push({ icon: "share", label: "Share…", run: () => ops.shareSheet([e]) });
+      if (PHONE_OS && isPhoto(e)) items.push({ icon: "photos", label: "Save to Photos", run: () => ops.saveToPhotos([e]) });
+    }
     if (e.kind === "folder") {
       const at = loc && { ...loc, prefix: e.key };
-      items.push({ icon: "info", label: "Info", run: () => setFolderInfo({ prefix: e.key, name: e.name }) });
       if (at) items.push(isFavorite(at) ? { icon: "star-fill", label: "Remove from Favorites", run: () => setFavorite(at, false) } : { icon: "star", label: "Add to Favorites", run: () => setFavorite(at, true) });
     }
     items.push(
       { icon: "edit", label: "Rename", run: () => ops.askRename(e) },
-      { icon: "move", label: "Move or copy…", run: () => setMoveDialog({ items: [e], mode: "move" }) },
-      { icon: "copy", label: "Copy to another connection…", run: () => migrateEntries([e]) },
       { icon: "check", label: "Select", run: () => select(e) },
       { icon: "trash", label: "Delete", danger: true, run: () => ops.askDelete([e]) },
     );

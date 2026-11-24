@@ -239,7 +239,13 @@ pub(crate) async fn size_scan(
     let (mut bytes, mut objects) = (0u64, 0u64);
     let mut kids: HashMap<String, (u64, u64)> = HashMap::new();
     let mut walk = s.walk(bucket, prefix);
-    while let Some(batch) = walk.next().await {
+    loop {
+        // a slow folder listing (FTP, a far SFTP server) shouldn't hold up Stop until it answers
+        let next = tokio::select! {
+            n = walk.next() => n,
+            _ = async { while !cancel.load(Ordering::Relaxed) { tokio::time::sleep(Duration::from_millis(100)).await } } => return Err(CANCELLED.into()),
+        };
+        let Some(batch) = next else { break };
         if cancel.load(Ordering::Relaxed) {
             return Err(CANCELLED.into());
         }

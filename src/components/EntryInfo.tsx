@@ -32,6 +32,8 @@ export const isNotFound = (msg: string) => /NotFound|NoSuchKey|status: 404|\b404
 export type SizeProps = {
   folderSize?(key: string): FolderSizeInfo | undefined;
   onCalcSize?(key: string): void;
+  /** stops a size that is being added up */
+  onCancelSize?(key: string): void;
 };
 
 /**
@@ -61,12 +63,20 @@ export function useObjectHead(profileId: string, bucket: string, entry: Entry) {
 export type ObjectHead = ReturnType<typeof useObjectHead>;
 
 /** Folder size line: the total once known, live progress while it adds up, else a button. */
-export function FolderSizeLine({ entryKey, folderSize, onCalcSize }: SizeProps & { entryKey: string }) {
+export function FolderSizeLine({ entryKey, folderSize, onCalcSize, onCancelSize }: SizeProps & { entryKey: string }) {
   const info = folderSize?.(entryKey);
   if (info?.running)
     return (
       <span className="fsize-line" role="status">
         <span className="spinner sm" /> Adding up… {formatBytes(info.bytes)} in {info.objects.toLocaleString()} {info.objects === 1 ? "object" : "objects"} so far
+        {onCancelSize && (
+          <>
+            {" "}
+            <button type="button" className="link-btn" onClick={() => onCancelSize(entryKey)} title="Stop adding up this folder">
+              Stop
+            </button>
+          </>
+        )}
       </span>
     );
   if (info)
@@ -140,6 +150,7 @@ export function EntryInfo({
   onChanged,
   folderSize,
   onCalcSize,
+  onCancelSize,
   onOpenExternal,
   onCopyFile,
   onPermissions,
@@ -362,7 +373,7 @@ export function EntryInfo({
             {!isFolder && <Prop label="Size">{entrySize(entry)}</Prop>}
             {isFolder && (
               <Prop label="Size">
-                <FolderSizeLine entryKey={entry.key} folderSize={folderSize} onCalcSize={onCalcSize} />
+                <FolderSizeLine entryKey={entry.key} folderSize={folderSize} onCalcSize={onCalcSize} onCancelSize={onCancelSize} />
               </Prop>
             )}
             {(details?.modified ?? entry.modified) && <Prop label="Modified">{formatDateFull(details?.modified ?? entry.modified)}</Prop>}
@@ -426,6 +437,7 @@ export function SelectionInfo({
   selection,
   folderSize,
   onCalcSize,
+  onCancelSize,
   onDownload,
   onMoveTo,
   moveLabel = "Move to…",
@@ -468,6 +480,14 @@ export function SelectionInfo({
       <p>{parts.join(" and ")}</p>
       <p className="preview-total">
         {running && <span className="spinner sm" />} {formatBytes(total)}
+        {running && onCancelSize && (
+          <>
+            {" "}
+            <button type="button" className="link-btn" onClick={() => selection.forEach((e) => e.kind === "folder" && folderSize?.(e.key)?.running && onCancelSize(e.key))}>
+              Stop
+            </button>
+          </>
+        )}
         {unknown > 0 && !running && (
           <>
             {" "}

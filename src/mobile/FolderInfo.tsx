@@ -1,5 +1,5 @@
 /** A folder's size and file count, counted on the storage, in a bottom sheet. */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage, errSummary } from "../api";
 import { Icon } from "../Icons";
@@ -8,7 +8,7 @@ import { formatBytes } from "../format";
 import { rootName } from "../connections/roots";
 import { SheetBackdrop } from "./ui";
 
-type Size = { bytes: number; objects: number; done: boolean; error?: string };
+type Size = { bytes: number; objects: number; done: boolean; error?: string; stopped?: boolean };
 
 export function FolderInfo({
   profileId,
@@ -26,8 +26,11 @@ export function FolderInfo({
   onCopyPath: (text: string) => void;
 }) {
   const [size, setSize] = useState<Size>({ bytes: 0, objects: 0, done: false });
+  // the running count's id, so Stop can end it
+  const running = useRef<string | null>(null);
   useEffect(() => {
     const opId = `size-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    running.current = opId;
     let finished = false;
     const off = listen<{ opId: string; bytes: number; objects: number }>("size-progress", (e) => {
       if (e.payload.opId === opId) setSize((s) => (s.done ? s : { bytes: e.payload.bytes, objects: e.payload.objects, done: false }));
@@ -35,7 +38,7 @@ export function FolderInfo({
     api
       .folderSize(profileId, bucket, prefix, opId)
       .then((r) => setSize({ ...r, done: true }))
-      .catch((e) => setSize((s) => ({ ...s, done: true, error: errSummary(errMessage(e)) })))
+      .catch((e) => setSize((s) => ({ ...s, done: true, ...(errMessage(e) === "Cancelled" ? { stopped: true } : { error: errSummary(errMessage(e)) }) })))
       .finally(() => {
         finished = true;
       });
@@ -73,6 +76,12 @@ export function FolderInfo({
                 <>
                   {formatBytes(size.bytes)}
                   {!size.done && <span className="spinner" />}
+                  {size.stopped && <span className="faint"> (stopped, only part counted)</span>}
+                  {!size.done && (
+                    <button type="button" className="link-btn" onClick={() => running.current && void api.cancelTransfer(running.current).catch(() => {})}>
+                      Stop
+                    </button>
+                  )}
                 </>
               )}
             </dd>

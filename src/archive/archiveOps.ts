@@ -257,9 +257,9 @@ export function makeArchiveOps(c: ArchiveCtx) {
     const archives = list.filter((e) => e.kind === "file" && isArchiveName(e.name));
     const all = archives.length === list.length;
     return [
+      !c.searching && { type: "item", label: list.length === 1 ? `Compress “${list[0].name}”` : `Compress ${list.length} items`, icon: "archive", onClick: () => void compress(list) },
       all && { type: "item", label: archives.length > 1 ? `Extract ${archives.length} archives here` : "Extract here", icon: "archive", onClick: () => void extractFiles(archives) },
       all && archives.length === 1 && !!c.openMigration && { type: "item", label: "Extract to…", icon: "move", onClick: () => void extractTo(archives) },
-      !c.searching && { type: "item", label: list.length === 1 ? `Compress “${list[0].name}”` : `Compress ${list.length} items`, icon: "archive", onClick: () => void compress(list) },
     ];
   };
 
