@@ -291,7 +291,8 @@ async fn finish(app: &AppHandle, state: &AppState, tok: TokenResponse, replace_i
         .or_else(|| profiles.iter().position(|p| p.provider == PROVIDER && p.name == label && p.endpoint == tok.endpoint));
     let profile = Profile {
         id: existing.map(|i| profiles[i].id.clone()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-        name: label,
+        // a name the user chose survives connecting again
+        name: existing.map(|i| profiles[i].name.clone()).unwrap_or(label),
         provider: PROVIDER.into(),
         endpoint: tok.endpoint,
         region: tok.region,

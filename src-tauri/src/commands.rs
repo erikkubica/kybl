@@ -95,6 +95,14 @@ pub async fn save_profile(
             .ok_or_else(|| "There is no saved key to add the passphrase to. Choose the key file again.".to_string())?;
         secret = Some(merged);
         secret_name = name;
+    } else if key_auth && secret.as_deref().is_some_and(|s| !s.is_empty()) {
+        // a whole new key goes where the key is read from: a connection saved by an older build
+        // keeps its key under `#ssh`, which is read before the bare id, so writing to the id
+        // would leave the old key in use
+        let ssh = crate::state::secret_key(&profile.id, "ssh");
+        if get_secret(&state, &ssh).await?.is_some() {
+            secret_name = ssh;
+        }
     }
     // what the vault held before this save changed it, and what it left there, to put back if
     // the list can't be saved (an unreadable "before", a refused keychain prompt: nothing is)

@@ -258,7 +258,9 @@ impl Api {
             };
             match wait {
                 Some(w) if tries < TRIES => {
-                    repeated |= status >= 500;
+                    // a 503 says the request was not taken, so its retry can't be the second
+                    // copy of one that went through; a lost gateway answer (502, 504) can
+                    repeated |= matches!(status, 502 | 504);
                     tokio::time::sleep(w.min(self.max_wait)).await
                 }
                 Some(_) if status == 429 => return Err(rate_limited(self.kind)),
@@ -285,12 +287,12 @@ impl Api {
     }
 }
 
-/// Marks an answer to a request that was sent again after a 502, 503 or 504 (see
+/// Marks an answer to a request that was sent again after a 502 or 504 (see
 /// [`was_repeated`]).
 #[derive(Clone, Copy)]
 struct Repeated;
 
-/// True when this answer is to a request sent again after a 502, 503 or 504. The first try may
+/// True when this answer is to a request sent again after a 502 or 504. The first try may
 /// have been carried out with only its answer lost, so a "conflict" or "not found" here can mean
 /// "already done": the upload paths look at the item before reporting it (B3-3, round 5).
 pub fn was_repeated(res: &Response) -> bool {

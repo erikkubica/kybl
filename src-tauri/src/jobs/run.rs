@@ -506,7 +506,8 @@ async fn delete_extras(r: &mut Runner<'_>, ctx: &Ctx, ctl: &Arc<Ctl>) -> Result<
                 break;
             }
             let end = match dst.list(root, &d.dst_path, None).await {
-                Ok(page) if page.folders.is_empty() && page.objects.iter().all(|o| o.key == d.dst_path) => {
+                // a short first page with more behind it says nothing about the rest
+                Ok(page) if page.next_token.is_none() && page.folders.is_empty() && page.objects.iter().all(|o| o.key == d.dst_path) => {
                     match dst.delete(root, &[], std::slice::from_ref(&d.dst_path), &ctl.stop, &|_, _| {}).await {
                         Ok(_) => Ok(db::End::Done),
                         Err(e) => Err(format!("Couldn't delete this folder at the destination: {e}")),
