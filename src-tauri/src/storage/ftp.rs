@@ -580,8 +580,10 @@ impl FtpBackend {
     }
 
     /// Runs `f` on a connection, with a time limit; a connection that failed isn't reused, and an
-    /// operation that failed because an idle connection had dropped is tried once more.
-    async fn run<T, F>(&self, f: F) -> SResult<T>
+    /// operation that failed because an idle connection had dropped is tried once more. `path`
+    /// is the full server path (or paths) the command names: the server repeats it in a refusal,
+    /// and a folder called "Locked" or "Permissions" must not change what the refusal means.
+    async fn run<T, F>(&self, path: String, f: F) -> SResult<T>
     where
         F: for<'c> Fn(&'c mut Ftp, &'c str) -> BoxFuture<'c, Result<T, FtpError>>,
     {
@@ -596,7 +598,7 @@ impl FtpBackend {
                 Ok(Err(FtpError::ConnectionError(_))) if attempt == 0 => lease.healthy = false,
                 Ok(Err(e)) => {
                     lease.healthy = !matches!(e, FtpError::ConnectionError(_) | FtpError::SecureError(_) | FtpError::BadResponse | FtpError::DataConnectionAlreadyOpen);
-                    return Err(ftp_error(e, &self.host));
+                    return Err(ftp_error_at(e, &self.host, &path));
                 }
                 Err(_) => {
                     lease.healthy = false;
@@ -629,7 +631,7 @@ impl FtpBackend {
     async fn list_raw_as(&self, path: &str, mlsd: bool) -> SResult<Vec<(FtpFile, Entry)>> {
         let path = path.to_string();
         let lines = self
-            .run(move |ftp, _| {
+            .run(path.clone(), move |ftp, _| {
                 let path = path.clone();
                 Box::pin(async move {
                     if mlsd {
@@ -676,7 +678,7 @@ impl FtpBackend {
         }
         let base = self.base().await?;
         let parts: Vec<String> = key_parts(&dir)?.into_iter().map(str::to_string).collect();
-        self.run(move |ftp, _| {
+        self.run(format!("{}/{}", base.trim_end_matches('/'), dir), move |ftp, _| {
             let (base, parts) = (base.clone(), parts.clone());
             Box::pin(async move {
                 let mut p = base.trim_end_matches('/').to_string();
@@ -748,14 +750,14 @@ impl FtpBackend {
                 if f.is_directory() && !links.contains(f.name()) {
                     self.remove_tree(child, cancel).await?;
                 } else {
-                    self.run(move |ftp, _| {
+                    self.run(child.clone(), move |ftp, _| {
                         let child = child.clone();
                         Box::pin(async move { ftp.rm(&child).await })
                     })
                     .await?;
                 }
             }
-            self.run(move |ftp, _| {
+            self.run(path.clone(), move |ftp, _| {
                 let path = path.clone();
                 Box::pin(async move { ftp.rmdir(&path).await })
             })
@@ -833,7 +835,7 @@ impl FtpBackend {
 
     async fn remove_quietly(&self, path: String) {
         let _ = self
-            .run(move |ftp, _| {
+            .run(path.clone(), move |ftp, _| {
                 let p = path.clone();
                 Box::pin(async move { ftp.rm(&p).await })
             })
@@ -848,7 +850,7 @@ impl FtpBackend {
         }
         let p = self.path(key).await?;
         let (probe, works) = self
-            .run(move |ftp, _| {
+            .run(p.clone(), move |ftp, _| {
                 let p = p.clone();
                 Box::pin(async move {
                     match ftp.size(&p).await {
@@ -1310,7 +1312,7 @@ impl Storage for FtpBackend {
             let when: String = super::extras::format_rfc3339(ms).chars().filter(char::is_ascii_digit).collect();
             let t = target.clone();
             let _ = self
-                .run(move |ftp, _| {
+                .run(t.clone(), move |ftp, _| {
                     let cmd = format!("MFMT {when} {t}");
                     Box::pin(async move { ftp.custom_command(cmd, &[suppaftp::Status::File]).await.map(|_| ()) })
                 })
@@ -1349,7 +1351,7 @@ impl Storage for FtpBackend {
                 match self.dir_is_link(&p).await {
                     Ok(true) => {
                         let link = p.trim_end_matches('/').to_string();
-                        self.run(move |ftp, _| {
+                        self.run(link.clone(), move |ftp, _| {
                             let link = link.clone();
                             Box::pin(async move { ftp.rm(&link).await })
                         })
@@ -1359,7 +1361,7 @@ impl Storage for FtpBackend {
                     Err(e) => Err(e),
                 }
             } else {
-                self.run(move |ftp, _| {
+                self.run(p.clone(), move |ftp, _| {
                     let p = p.clone();
                     Box::pin(async move { ftp.rm(&p).await })
                 })
@@ -1394,7 +1396,7 @@ impl Storage for FtpBackend {
             return Err(StorageError::other("This name can't be sent to an FTP server."));
         }
         let took = self
-            .run(move |ftp, _| {
+            .run(full.clone(), move |ftp, _| {
                 let p = full.clone();
                 Box::pin(async move {
                     match ftp.site(format!("CHMOD {:o} {p}", mode & 0o7777)).await {
@@ -1427,7 +1429,7 @@ impl Storage for FtpBackend {
         self.ensure_dir(&parent_key(&to.path)).await?;
         if is_dir {
             // a folder never replaces another
-            self.run(move |ftp, _| {
+            self.run(format!("{src} {dst}"), move |ftp, _| {
                 let (s, d) = (src.clone(), dst.clone());
                 Box::pin(async move { ftp.rename(&s, &d).await })
             })
@@ -1449,7 +1451,7 @@ impl Storage for FtpBackend {
 impl Renames for FtpBackend {
     async fn rename_file(&self, from: &str, to: &str) -> SResult<()> {
         let (f, t) = (self.path(from).await?, self.path(to).await?);
-        self.run(move |ftp, _| {
+        self.run(format!("{f} {t}"), move |ftp, _| {
             let (f, t) = (f.clone(), t.clone());
             Box::pin(async move { ftp.rename(&f, &t).await })
         })
@@ -1484,7 +1486,7 @@ impl Renames for FtpBackend {
 
     async fn remove_file(&self, key: &str) -> SResult<()> {
         let p = self.path(key).await?;
-        self.run(move |ftp, _| {
+        self.run(p.clone(), move |ftp, _| {
             let p = p.clone();
             Box::pin(async move { ftp.rm(&p).await })
         })
@@ -1619,22 +1621,27 @@ fn ftp_error_at(e: FtpError, host: &str, path: &str) -> StorageError {
         FtpError::UnexpectedResponse(r) => {
             let code = r.status.code();
             let text = one_line(&r.to_string());
-            let low = text.to_lowercase();
             // a server that still counts a dropped session answers the new login or the same
             // file with these; asking again a moment later works, so they must not read as a
             // wrong password or a missing file
+            // the path the server repeats is never its own wording: the one given, and any word
+            // of the reply that looks like a path (it has a `/`)
+            let echoed = text.split_whitespace().filter(|w| w.contains('/')).collect::<Vec<_>>().join(" ");
+            let path = format!("{path} {echoed}");
+            let words = text_words(&text, &path);
+            let has = |w: &str| words.contains(w);
             let crowded = crowded_login(&text);
-            let in_use = in_use_reply(&text, path);
+            let in_use = in_use_reply(&text, &path);
             let (kind, say) = match code {
                 530 | 430 if crowded => (ErrKind::RateLimited, "The server has too many connections open for this account. Try again in a moment."),
                 450 | 550 if in_use => (ErrKind::Other, IN_USE_SAY),
                 530 | 430 => (ErrKind::NeedsAuth, "Wrong user name or password."),
                 421 => (ErrKind::RateLimited, "The server closed the connection. It may allow only a few connections at a time; try again in a moment."),
                 425 | 426 => (ErrKind::Network, "Couldn't open a data connection to the server. A firewall may be blocking passive mode."),
-                450 | 550 | 551 if low.contains("permission") || low.contains("denied") || low.contains("not allowed") => {
+                450 | 550 | 551 if has("permission") || has("denied") || has("not allowed") => {
                     (ErrKind::PermissionDenied, "The server didn't allow that. Check the account's permissions.")
                 }
-                450 | 550 | 551 if low.contains("exist") && !low.contains("not exist") && !low.contains("no such") => (ErrKind::Exists, "Something with this name is already there."),
+                450 | 550 | 551 if has("exist") && !has("not exist") && !has("no such") => (ErrKind::Exists, "Something with this name is already there."),
                 450 | 550 | 551 => (ErrKind::NotFound, "This file or folder isn't there any more. It may have been moved or deleted."),
                 452 | 552 => (ErrKind::Other, "The server is out of space, or the account is over its quota."),
                 553 => (ErrKind::PermissionDenied, "The server doesn't allow this file name."),
@@ -1993,6 +2000,26 @@ mod tests {
         assert_eq!(ftp_error(FtpError::UnexpectedResponse(r), "h").kind, ErrKind::Other);
         let r = suppaftp::types::Response::new(Status::FileUnavailable, b"550 The process cannot access the file because it is being used by another process.".to_vec());
         assert_eq!(ftp_error(FtpError::UnexpectedResponse(r), "h").kind, ErrKind::Other);
+    }
+
+    /// A folder called "Permissions", "Denied" or "Existing items" in the path the server repeats
+    /// doesn't change the kind, with the path given or not (R10 UB-4).
+    #[test]
+    fn folder_names_in_the_echoed_path_do_not_change_the_kind() {
+        let at = |code: Status, text: &str, path: &str| ftp_error_at(FtpError::UnexpectedResponse(suppaftp::types::Response::new(code, text.as_bytes().to_vec())), "h", path);
+        for path in ["/Archive/Permissions/new", ""] {
+            let e = at(Status::FileUnavailable, "550 /Archive/Permissions/new: No such file or directory", path);
+            assert_eq!(e.kind, ErrKind::NotFound, "{path:?}");
+        }
+        for path in ["/x/Existing items/a", ""] {
+            assert_eq!(at(Status::FileUnavailable, "550 /x/Existing items/a: Operation failed", path).kind, ErrKind::NotFound, "{path:?}");
+        }
+        assert_eq!(at(Status::FileUnavailable, "550 /x/Locked/a.txt: No such file", "").kind, ErrKind::NotFound);
+        assert_eq!(at(Status::FileUnavailable, "550 /x/Denied/a.txt: No such file", "/x/Denied/a.txt").kind, ErrKind::NotFound);
+        // the server's own words still count
+        assert_eq!(at(Status::FileUnavailable, "550 /x/Permissions/a: Permission denied", "/x/Permissions/a").kind, ErrKind::PermissionDenied);
+        assert_eq!(at(Status::FileUnavailable, "550 /x/Locked/a: Permission denied", "").kind, ErrKind::PermissionDenied);
+        assert_eq!(at(Status::FileUnavailable, "550 a: File exists", "/x/a").kind, ErrKind::Exists);
     }
 
     /// The path's own words and look-alike words ("unlocked", "blocked", "busybox") don't make a

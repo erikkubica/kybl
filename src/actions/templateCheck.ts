@@ -34,6 +34,16 @@ export function templateProblem(template: string): string | null {
   const folded = t.length !== template.length;
   const placeholderAt = (i: number) => PLACEHOLDERS.find((p) => t.startsWith(`{${p}}`, i));
   const wordStart = (i: number) => i === 0 || WORD_BREAK.has(t[i - 1]);
+  // where a `#` begins a comment: after UNESCAPED whitespace or an operator, or at the start. Not
+  // after `\ `, `\;`…, and not after a `)` (it may close `$( … )` or `<( … )`, which go on as one
+  // word: `a\ #b` and `$(x)#b` hold a literal `#`). Those count as a `#` inside a word (R10 S-4)
+  const commentStart = (i: number) => {
+    if (i === 0) return true;
+    if (!wordStart(i) || t[i - 1] === ")") return false;
+    let n = 0;
+    while (i - 2 - n >= 0 && t[i - 2 - n] === "\\") n++;
+    return n % 2 === 0;
+  };
   // a here-document (`<<`, not bash's `<<<`) seen: its body is read like double quotes
   let heredoc = false;
   // something seen that shells read differently: what follows can't be proven
@@ -81,7 +91,7 @@ export function templateProblem(template: string): string | null {
       continue;
     }
     if (code && c === "#") {
-      if (wordStart(i)) {
+      if (commentStart(i)) {
         // bash 3.2 finds the end of `$( … )` by counting parentheses, comments included
         if (stack.some((x) => x.k === "subst")) unsure = true;
         comment = true;
@@ -200,7 +210,7 @@ const ARITH_WHY =
   "This template has a placeholder and also does arithmetic (`$(( ))`, `(( ))`, `$[ ]`, let, -eq and the like, declare -i, an array index). A shell reads a variable it is used with as code there, so a file name such as a[$(cmd)] would run as a command, even though the placeholder is quoted. Do the arithmetic in a script of your own, or take the placeholder out of this template.";
 const EVAL_WHY =
   "This template has a placeholder and also eval, which runs text as code, so a file name could run as a command even though the placeholder is quoted. Take eval out of this template.";
-const DECLARING = ["declare", "typeset", "local", "export", "readonly"];
+const DECLARING = ["declare", "typeset", "local", "export", "readonly", "private"];
 
 /** The refusal for a construct that can read a variable's value as code. */
 const codeWhy = (what: string) =>
@@ -299,7 +309,9 @@ function evaluationProblem(t: string): string | null {
     // zsh's tables of functions and aliases (`functions[1]=$v` defines a function)
     for (let k = 0; k < words.length; k++) {
       const eq = words[k].indexOf("=");
-      const n = eq > 0 ? words[k].slice(0, eq).replace(/\++$/, "") : k > 0 && words[k - 1] === "for" ? words[k] : "";
+      let n = eq > 0 ? words[k].slice(0, eq).replace(/\++$/, "") : k > 0 && words[k - 1] === "for" ? words[k] : "";
+      // `OPTIND[0]=` assigns the variable too (R10 S-3)
+      n = n.split("[")[0];
       if (SPECIAL_VARS.includes(n)) return codeWhy(`an assignment to \`${n}\`, which the shell evaluates or runs`);
       const table = words[k].split(/[[=]/)[0].replace(/\++$/, "");
       if (ZSH_TABLES.includes(table) && /[[=]/.test(words[k])) return codeWhy(`\`${table}[…]\`, zsh's table of ${table}, which runs what is put in it`);
@@ -312,6 +324,11 @@ function evaluationProblem(t: string): string | null {
       if (NAME_BUILTINS.includes(cmd)) {
         const named = operands.filter((w) => !/^[-+]/.test(w));
         if (named.some((w) => /[$`(]/.test(w.split("=")[0]))) return codeWhy(`an expansion as the variable name for \`${cmd}\` (a name with a subscript runs as code)`);
+      }
+      // zsh and ksh: `set -A name …` takes the array's name
+      if (cmd === "set") {
+        const k = operands.findIndex((w) => isArrayFlag(w));
+        if (k >= 0 && k + 1 < operands.length && /[$`(]/.test(operands[k + 1])) return codeWhy("an expansion as the array name for `set -A` (a name with a subscript runs as code)");
       }
       // ksh reads a bare variable name as arithmetic too (`shift n`, `ulimit -n n`)
       if (cmd === "shift" || cmd === "ulimit") {
@@ -354,19 +371,23 @@ function evaluationProblem(t: string): string | null {
 
 /** Builtins that read their operand as code (an arithmetic expression, `x[$(cmd)]`, a command); `exit` and kin in zsh, `shift` and `ulimit` in ksh, `repeat` and `vared` in zsh. */
 const CODE_BUILTINS = ["let", "eval", "trap", "read", "unset", "compgen", "complete", "mapfile", "readarray", "exit", "return", "break", "continue", "shift", "logout", "repeat", "vared", "ulimit"];
-/** Builtins whose operands are variable names, unless given as `name=value`. */
-const NAME_BUILTINS = ["declare", "typeset", "local", "export", "readonly", "integer"];
+/** Builtins whose operands are variable names, unless given as `name=value`. Also zsh's `private`, `getln` and `getopts`, and ksh's `alarm` (R10 S-1). */
+const NAME_BUILTINS = ["declare", "typeset", "local", "export", "readonly", "integer", "private", "getopts", "getln", "alarm"];
 /** Test operators that read both sides as numbers (ksh and `[[` evaluate them as arithmetic). */
 const NUMERIC_TESTS = ["-eq", "-ne", "-lt", "-le", "-gt", "-ge"];
 /** Words that come before the command word in a command line. */
 const LEAD = ["!", "{", "then", "do", "else", "elif", "if", "while", "until"];
 /** Words that run what follows them (`command -p declare …`, `env X=1 export …`): after one, any later word of the command may be the command word. */
-const PREFIXES = ["command", "builtin", "exec", "env", "nohup", "time", "nice", "xargs", "noglob", "nocorrect"];
-/** `NAME=value` as a command prefix. */
+const PREFIXES = ["command", "builtin", "exec", "env", "nohup", "time", "nice", "xargs", "noglob", "nocorrect", "-", "coproc"];
+/** `NAME=value`, `NAME+=value` and `NAME[sub]=value` as a command prefix (R10 S-2). */
 const isAssignment = (w: string) => {
   const e = w.indexOf("=");
-  return e > 0 && /^[A-Za-z0-9_]+$/.test(w.slice(0, e));
+  return e > 0 && /^[A-Za-z0-9_]+$/.test(w.slice(0, e).replace(/\++$/, "").split("[")[0]);
 };
+/** Shells that read a script name as code (ksh93 runs the `[$(cmd)]` of a name before it fails to open it). */
+const isKsh = (cmd: string) => ["ksh", "ksh93", "mksh", "pdksh"].includes(cmd.split("/").pop() ?? "");
+/** `-A`, `+A`, `-eA`: the flag of `set` that takes an array name (zsh and ksh). */
+const isArrayFlag = (w: string) => /^[-+][A-Za-z]*A$/.test(w);
 /** ASCII whitespace as Rust's `split_ascii_whitespace` sees it (not \v). */
 const ASCII_WS = /[ \t\n\f\r]+/;
 
@@ -402,6 +423,10 @@ function operandProblem(t: string, at: number): string | null {
     const cmd = words[k];
     if (CODE_BUILTINS.includes(cmd)) return code;
     if (NAME_BUILTINS.includes(cmd) && !cur.includes("=")) return code;
+    // `set -A NAME` (zsh, ksh): the word after the flag is a variable name
+    if (cmd === "set" && isArrayFlag(prev)) return code;
+    // ksh93 runs the `[$(cmd)]` of a script name before it opens it (R10 S-5)
+    if (isKsh(cmd)) return code;
     if ((cmd === "printf" || cmd === "print") && prev === "-v") return code;
     if (cmd === "[[" || cmd === "[" || cmd === "test") {
       const all = unquoted(m.slice(start, end)).split(ASCII_WS);

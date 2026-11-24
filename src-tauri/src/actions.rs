@@ -175,6 +175,10 @@ pub fn check_template(template: &str) -> Result<(), String> {
     let placeholder_at = |i: usize| PLACEHOLDERS.iter().find(|w| template[i..].starts_with(&format!("{{{w}}}")));
     // where a word can start (a `#` there begins a comment)
     let word_start = |i: usize| i == 0 || matches!(b[i - 1], b' ' | b'\t' | b'\n' | b'\r' | b';' | b'&' | b'|' | b'(' | b')' | b'<' | b'>');
+    // where a `#` begins a comment: after UNESCAPED whitespace or an operator, or at the start. Not
+    // after `\ `, `\;`…, and not after a `)` (it may close `$( … )` or `<( … )`, which go on as one
+    // word: `a\ #b` and `$(x)#b` hold a literal `#`). Those count as a `#` inside a word (R10 S-4)
+    let comment_start = |i: usize| i == 0 || (word_start(i) && b[i - 1] != b')' && b[..i - 1].iter().rev().take_while(|&&x| x == b'\\').count() % 2 == 0);
     // a here-document (`<<`, not bash's `<<<`) seen: its body is read like double quotes
     let mut heredoc = false;
     // something seen that shells read differently: what follows can't be proven
@@ -240,7 +244,7 @@ pub fn check_template(template: &str) -> Result<(), String> {
             continue;
         }
         if code && c == b'#' {
-            if word_start(i) {
+            if comment_start(i) {
                 // bash 3.2 finds the end of `$( … )` by counting parentheses, comments included
                 if stack.iter().any(|c| matches!(c, Ctx::Subst(_))) {
                     unsure = true;
@@ -546,7 +550,7 @@ fn evaluation_problem(t: &str) -> Option<String> {
     for words in commands(&masked) {
         let has = |x: &str| words.iter().any(|w| w == x);
         // a declaring builtin given a flag that makes the variable numeric or a name reference
-        if words.iter().any(|w| ["declare", "typeset", "local", "export", "readonly"].contains(&w.as_str())) {
+        if words.iter().any(|w| ["declare", "typeset", "local", "export", "readonly", "private"].contains(&w.as_str())) {
             let flagged = |set: &[char]| words.iter().any(|w| w.starts_with('-') && !w.starts_with("--") && w.contains(set));
             if flagged(&['i', 'F', 'E']) {
                 return Some(ARITH_WHY.to_string());
@@ -568,6 +572,8 @@ fn evaluation_problem(t: &str) -> Option<String> {
         // zsh's tables of functions and aliases (`functions[1]=$v` defines a function)
         for (k, w) in words.iter().enumerate() {
             let name = w.split_once('=').map(|(n, _)| n.trim_end_matches('+')).filter(|n| !n.is_empty()).or_else(|| (k > 0 && words[k - 1] == "for").then_some(w.as_str()));
+            // `OPTIND[0]=` assigns the variable too (R10 S-3)
+            let name = name.map(|n| n.split('[').next().unwrap_or(""));
             if let Some(n) = name.filter(|n| SPECIAL_VARS.contains(n)) {
                 return Some(code_why(&format!("an assignment to `{n}`, which the shell evaluates or runs")));
             }
@@ -585,6 +591,14 @@ fn evaluation_problem(t: &str) -> Option<String> {
                 let named = operands.iter().filter(|w| !w.starts_with(['-', '+'])).map(|w| w.split('=').next().unwrap_or(w));
                 if named.into_iter().any(|n| n.contains(['$', '`', '('])) {
                     return Some(code_why(&format!("an expansion as the variable name for `{cmd}` (a name with a subscript runs as code)")));
+                }
+            }
+            // zsh and ksh: `set -A name …` takes the array's name
+            if cmd == "set" {
+                if let Some(k) = operands.iter().position(|w| is_array_flag(w)) {
+                    if operands.get(k + 1).is_some_and(|n| n.contains(['$', '`', '('])) {
+                        return Some(code_why("an expansion as the array name for `set -A` (a name with a subscript runs as code)"));
+                    }
                 }
             }
             // ksh reads a bare variable name as arithmetic too (`shift n`, `ulimit -n n`)
@@ -658,15 +672,29 @@ const CODE_BUILTINS: [&str; 18] = [
     "let", "eval", "trap", "read", "unset", "compgen", "complete", "mapfile", "readarray", "exit", "return", "break", "continue", "shift", "logout", "repeat", "vared", "ulimit",
 ];
 /// Builtins whose operands are variable names (an `x[$(cmd)]` there runs), unless given as `name=value`.
-const NAME_BUILTINS: [&str; 6] = ["declare", "typeset", "local", "export", "readonly", "integer"];
+/// Also zsh's `private`, `getln` and `getopts`, and ksh's `alarm`, which take a variable name too (a
+/// placeholder as any of their operands is refused, R10 S-1).
+const NAME_BUILTINS: [&str; 10] = ["declare", "typeset", "local", "export", "readonly", "integer", "private", "getopts", "getln", "alarm"];
 /// Words that come before the command word in a command line.
 const LEAD: [&str; 9] = ["!", "{", "then", "do", "else", "elif", "if", "while", "until"];
 /// Words that run what follows them (`command -p declare …`, `env X=1 export …`): after one, any
 /// later word of the command may be the command word.
-const PREFIXES: [&str; 10] = ["command", "builtin", "exec", "env", "nohup", "time", "nice", "xargs", "noglob", "nocorrect"];
-/// `NAME=value` as a command prefix.
+/// zsh's `-` (a precommand modifier) and `coproc` (a reserved word) run what follows too.
+const PREFIXES: [&str; 12] = ["command", "builtin", "exec", "env", "nohup", "time", "nice", "xargs", "noglob", "nocorrect", "-", "coproc"];
+/// `NAME=value`, `NAME+=value` and `NAME[sub]=value` as a command prefix (R10 S-2).
 fn is_assignment(w: &str) -> bool {
-    w.find('=').is_some_and(|e| e > 0 && w[..e].bytes().all(|x| x.is_ascii_alphanumeric() || x == b'_'))
+    w.find('=').is_some_and(|e| {
+        let base = w[..e].trim_end_matches('+').split('[').next().unwrap_or("");
+        !base.is_empty() && base.bytes().all(|x| x.is_ascii_alphanumeric() || x == b'_')
+    })
+}
+/// Shells that read a script name as code (ksh93 runs the `[$(cmd)]` of a name before it fails to open it).
+fn is_ksh(cmd: &str) -> bool {
+    matches!(cmd.rsplit('/').next().unwrap_or(""), "ksh" | "ksh93" | "mksh" | "pdksh")
+}
+/// `-A`, `+A`, `-eA`: the flag of `set` that takes an array name (zsh and ksh).
+fn is_array_flag(w: &str) -> bool {
+    w.len() > 1 && w.starts_with(['-', '+']) && w[1..].bytes().all(|c| c.is_ascii_alphabetic()) && w.ends_with('A')
 }
 /// Test operators that read both sides as numbers (ksh and `[[` evaluate them as arithmetic).
 const NUMERIC_TESTS: [&str; 6] = ["-eq", "-ne", "-lt", "-le", "-gt", "-ge"];
@@ -706,6 +734,14 @@ fn operand_problem(template: &str, at: usize) -> Option<&'static str> {
             return Some(code);
         }
         if NAME_BUILTINS.contains(&cmd) && !cur.contains('=') {
+            return Some(code);
+        }
+        // `set -A NAME` (zsh, ksh): the word after the flag is a variable name
+        if cmd == "set" && is_array_flag(&prev) {
+            return Some(code);
+        }
+        // ksh93 runs the `[$(cmd)]` of a script name before it opens it (R10 S-5)
+        if is_ksh(cmd) {
             return Some(code);
         }
         if matches!(cmd, "printf" | "print") && prev == "-v" {
@@ -1555,6 +1591,37 @@ mod tests {
             ("echo a list=({name})", index, vec!["/bin/zsh"]),
             ("v={name}; alias a=$v\na", subst, vec!["/bin/sh"]),
             ("v={name}; functions[1]=$v; 1", subst, vec!["/bin/zsh"]),
+        ];
+        for (t, name, shells) in cases {
+            assert!(check_template(t).is_err(), "{t}");
+            for sh in shells.into_iter().filter(|p| std::path::Path::new(p).exists()) {
+                let _ = std::fs::remove_file(&marker);
+                let line = expand(t, &[item(&format!("{}/{name}", dir.display()))], &dir.to_string_lossy(), false).remove(0);
+                run_limited(sh, &line, &dir);
+                assert!(marker.exists(), "{sh}: {t:?} did not run the name, the test is stale");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Round-10 holes (builtins that take a name, `+=` and `a[0]=` prefixes, `-` and `coproc`,
+    /// `OPTIND[0]=`, an escaped `#`, ksh script names), each refused now and each really run by
+    /// the shells listed when installed (every run limited to 5 s, process group killed).
+    #[cfg(unix)]
+    #[test]
+    fn round10_refusals_really_run_names() {
+        let dir = std::env::temp_dir().join(format!("kybl-tpl10-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("pwned");
+        let index = "a[$(touch pwned)]";
+        let bash3 = std::process::Command::new("/bin/bash").arg("-c").arg("echo $BASH_VERSION").output().is_ok_and(|o| o.stdout.starts_with(b"3."));
+        let cases: Vec<(&str, &str, Vec<&str>)> = vec![
+            ("private {name}", index, vec!["/bin/zsh"]),
+            ("set -A {name} x", index, vec!["/bin/zsh"]),
+            ("x+=1 typeset {name}", index, vec!["/bin/zsh"]),
+            ("true | - export {name}", index, vec!["/bin/zsh"]),
+            ("OPTIND[0]={name}", index, if bash3 { vec!["/bin/bash"] } else { vec![] }),
+            ("ksh {name}", index, vec!["/bin/ksh"]),
         ];
         for (t, name, shells) in cases {
             assert!(check_template(t).is_err(), "{t}");
