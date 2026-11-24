@@ -35,11 +35,15 @@ export function redact(text: string): string {
       .replace(/\b([A-Z0-9_]*SECRET[A-Z0-9_]*=)[^\s"',;&]+/g, `$1${HIDDEN}`)
       // the per-run trust tag the app puts into host key and certificate errors
       .replace(/\bkybl:[0-9a-f]{32}\b ?/g, "")
-      .replace(/\b(authorization\s*[:=]\s*)(?:(bearer|basic|aws4-hmac-sha256)\s+)?[^\s,"']+/gi, (_m, head: string, scheme?: string) => `${head}${scheme ? `${scheme} ` : ""}${HIDDEN}`)
+      // the whole value to the end of the line: schemes such as `SharedKey acct:SIGNATURE` or `Token abc` have more than one word
+      .replace(/\b(authorization\s*[:=]\s*)(?:(bearer|basic|aws4-hmac-sha256)\s+)?[^\r\n]+/gi, (_m, head: string, scheme?: string) => `${head}${scheme ? `${scheme} ` : ""}${HIDDEN}`)
       .replace(/\b(bearer|basic)\s+[a-z0-9._~+/=-]{8,}/gi, `$1 ${HIDDEN}`)
+      // any name that has a credential word in it, whatever comes before or after (`aws_secret_access_key = …`,
+      // `AccountKey=…`, `X-Amz-Security-Token: …`, `?auth_token=…`): by the shape of the name, not a list. The
+      // lookbehind starts the scan at the start of a name only, so a long run of letters stays linear.
       .replace(
-        /\b(password|passwd|passphrase|secret(?:[_-]?access[_-]?key)?|access[_-]?token|refresh[_-]?token|client[_-]?secret|api[_-]?key|sas[_-]?token|private[_-]?key)(["']?\s*[:=]\s*["']?)[^\s"',;&]+/gi,
-        `$1$2${HIDDEN}`,
+        /(?<![\w-])([\w-]{0,40}(?:secret|passw(?:or)?d|pwd|passphrase|token|account[_-]?key|access[_-]?key|api[_-]?key|private[_-]?key)[\w-]{0,40}["']?\s*[:=]\s*["']?)[^\s"',;&]+/gi,
+        `$1${HIDDEN}`,
       )
   );
 }
