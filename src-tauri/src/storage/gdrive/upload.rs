@@ -9,7 +9,7 @@ use std::sync::atomic::AtomicBool;
 use serde_json::json;
 
 use super::api::{DFile, Drive, FILE_FIELDS};
-use crate::oauth::http::{backoff, check, enc, read_json, unexpected, Api};
+use crate::oauth::http::{backoff, check, enc, read_json, unexpected, was_repeated, Api};
 use crate::storage::{extras::{self, Source}, ErrKind, PartRecord, Progress, SResult, StorageError, WriteOpts};
 
 /// Files up to this size go up in one request.
@@ -55,14 +55,17 @@ pub async fn upload(api: &Api, base: &str, t: Target<'_>, mut src: Source, opts:
             r => r?,
         };
         let n = bytes.len() as u64;
-        let f = simple(api, base, &t, bytes).await?;
+        let f = match simple(api, base, &t, bytes, cancel).await {
+            Err(e) if e.is_cancelled() => return Ok(None),
+            r => r?,
+        };
         progress(n, n);
         return Ok(Some(f));
     }
     resumable(api, base, &t, src, opts, progress, cancel).await
 }
 
-async fn simple(api: &Api, base: &str, t: &Target<'_>, bytes: bytes::Bytes) -> SResult<DFile> {
+async fn simple(api: &Api, base: &str, t: &Target<'_>, bytes: bytes::Bytes, cancel: &AtomicBool) -> SResult<DFile> {
     let boundary = format!("kybl-{}", uuid::Uuid::new_v4().simple());
     let mut body = Vec::with_capacity(bytes.len() + 512);
     body.extend_from_slice(format!("--{boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n{}\r\n--{boundary}\r\ncontent-type: {}\r\n\r\n", t.meta(), t.mime).as_bytes());
@@ -73,14 +76,14 @@ async fn simple(api: &Api, base: &str, t: &Target<'_>, bytes: bytes::Bytes) -> S
     let ctype = format!("multipart/related; boundary={boundary}");
     if t.existing.is_some() {
         // replacing a file's content is safe to send again
-        let res = api.send_piece(true, &body, |c, b| c.patch(&url).header("content-type", &ctype).header("content-length", body.len()).body(b)).await?;
+        let res = api.send_piece(true, &body, cancel, |c, b| c.patch(&url).header("content-type", &ctype).header("content-length", body.len()).body(b)).await?;
         return read_json(api.kind, check(api.kind, res).await?).await;
     }
     // a new file: never two of it (see `Drive::create_once`); what a lost answer made is known by
     // its size and MD5
     let (size, md5) = (bytes.len().to_string(), crate::verify::hex(&<md5::Md5 as md5::Digest>::digest(&bytes)));
     let same = |f: &DFile| f.size.as_deref() == Some(size.as_str()) && f.md5_checksum.as_deref().is_none_or(|m| m.eq_ignore_ascii_case(&md5));
-    let send = || api.send_piece_create(&body, |c, b| c.post(&url).header("content-type", &ctype).header("content-length", body.len()).body(b));
+    let send = || api.send_piece_create(&body, cancel, |c, b| c.post(&url).header("content-type", &ctype).header("content-length", body.len()).body(b));
     Drive { api, base }.create_once(t.parent, t.name, same, send).await
 }
 
@@ -202,9 +205,11 @@ async fn resumable(api: &Api, base: &str, t: &Target<'_>, mut src: Source, opts:
             format!("bytes {offset}-{}/{of}", end - 1)
         };
         let len = chunk.len();
-        let sent = api.send_piece(true, &chunk, |c, body| c.put(&session).header("content-range", &range).header("content-length", len).body(body)).await;
+        let sent_at = extras::now_ms();
+        let sent = api.send_piece(true, &chunk, cancel, |c, body| c.put(&session).header("content-range", &range).header("content-length", len).body(body)).await;
         let res = match sent {
             Ok(r) => r,
+            Err(e) if e.is_cancelled() => return abort(session).await,
             Err(e) if e.kind == ErrKind::Network && failures < FAILURES => {
                 failures += 1;
                 tokio::time::sleep(backoff(failures)).await;
@@ -240,6 +245,15 @@ async fn resumable(api: &Api, base: &str, t: &Target<'_>, mut src: Source, opts:
                 progress(offset, total.unwrap_or(offset));
             }
             404 | 410 if !restarted => {
+                // B3-3 (round 5): the last piece sent again after a 502/503/504 may meet a session
+                // its first try already finished; a new file it made is taken, not made twice
+                if last && t.existing.is_none() && was_repeated(&res) {
+                    let same = |f: &DFile| f.mime_type != super::api::FOLDER && f.size.as_deref().and_then(|s| s.parse::<u64>().ok()) == Some(end);
+                    if let Some(f) = (Drive { api, base }).made_since(t.parent, t.name, sent_at, &same).await? {
+                        progress(end, end);
+                        return Ok(Some(f));
+                    }
+                }
                 restarted = true;
                 session = start(api, base, t, total).await?;
                 offset = 0;

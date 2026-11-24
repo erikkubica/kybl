@@ -235,8 +235,11 @@ pub fn run_dir(app: &AppHandle) -> Option<PathBuf> {
 /// (`uploads/`, one folder per run: another Kybl still running keeps its own).
 pub fn start(app: &AppHandle) {
     // before any upload of this run can copy a file there
-    if let Ok(cache) = app.path().app_cache_dir() {
-        let _ = crate::instance_dir::claim(&cache.join("uploads"));
+    if let Ok(cache) = app.path().app_cache_dir()
+        && let Ok(dir) = crate::instance_dir::claim(&cache.join("uploads"))
+    {
+        // copies of uploads of unknown size go there too (B3-4, round 5)
+        crate::storage::extras::set_spool_dir(dir);
     }
     let _ = run_dir(app);
     // a run that ends while this one keeps going (in the tray for weeks) isn't left until the

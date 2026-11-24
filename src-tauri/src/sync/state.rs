@@ -23,7 +23,7 @@ use std::{
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
-use super::plan::{nfc, BaseEntry, Side, Tombstone, TOMBSTONE_KEEP_MS};
+use super::plan::{nfc, BaseEntry, RemoteMeta, Side, Tombstone, TOMBSTONE_KEEP_MS};
 
 /// The schema, one migration per release that changes it (append only; see `open`).
 const MIGRATIONS: &[&str] = &["
@@ -110,18 +110,54 @@ struct LegacyTracked {
 
 pub struct SyncDb {
     conn: Mutex<Connection>,
+    /// per mapping, the other side's files a pull of which a folder here blocks: path -> (the
+    /// file as last seen, its stored key where that differs). Kept in memory only: a worker's
+    /// first run after a start is a full listing, which finds them again (B4-5, round 5).
+    blocked: Mutex<HashMap<String, Blocked>>,
 }
+
+/// See [`SyncDb::blocked`].
+pub type Blocked = HashMap<String, (RemoteMeta, Option<String>)>;
 
 impl SyncDb {
     /// Opens (or creates) sync.db with its schema up to date (see `db::open`: WAL, append-only
     /// migrations, a file from a newer Kybl refused).
     pub fn open(path: &Path) -> Result<Self, String> {
-        Ok(Self { conn: Mutex::new(crate::db::open(path, MIGRATIONS)?) })
+        Ok(Self { conn: Mutex::new(crate::db::open(path, MIGRATIONS)?), blocked: Mutex::default() })
     }
 
     #[cfg(test)]
     pub fn in_memory() -> Self {
-        Self { conn: Mutex::new(crate::db::open_in_memory(MIGRATIONS).unwrap()) }
+        Self { conn: Mutex::new(crate::db::open_in_memory(MIGRATIONS).unwrap()), blocked: Mutex::default() }
+    }
+
+    /// Pulls a folder here blocks, for a run that doesn't list the other side: a change feed
+    /// reports a file once, so after the run that met the clash only this still knows about it.
+    pub fn blocked(&self, id: &str) -> Blocked {
+        self.blocked.lock().unwrap_or_else(|p| p.into_inner()).get(id).cloned().unwrap_or_default()
+    }
+
+    /// Remembers this run's blocked pulls: with `listed` (the other side was listed in full)
+    /// they replace what was remembered, else they are added to it.
+    pub fn set_blocked(&self, id: &str, listed: bool, now: Blocked) {
+        let mut all = self.blocked.lock().unwrap_or_else(|p| p.into_inner());
+        let slot = all.entry(id.to_string()).or_default();
+        if listed {
+            *slot = now;
+        } else {
+            slot.extend(now);
+        }
+        if slot.is_empty() {
+            all.remove(id);
+        }
+    }
+
+    /// Forgets the blocked pulls of `paths` (synced since).
+    pub fn unblock(&self, id: &str, synced: impl Fn(&str) -> bool) {
+        let mut all = self.blocked.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(slot) = all.get_mut(id) {
+            slot.retain(|p, _| !synced(p));
+        }
     }
 
     fn with<T>(&self, f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>) -> Result<T, String> {

@@ -26,7 +26,7 @@ use super::{
     gdrive::paths::number_page,
     *,
 };
-use crate::oauth::http::{backoff, check, enc, read_json, unexpected, Api};
+use crate::oauth::http::{backoff, check, enc, read_json, unexpected, was_repeated, Api};
 
 pub const ME: &str = "me";
 pub const SHARED: &str = "shared-with-me";
@@ -258,6 +258,19 @@ impl OneDrive {
         fails.then(|| WriteOutcome::Conflict(existing.map(|i| i.entry(key.to_string()))))
     }
 
+    /// After an upload whose answer was lost (or a request sent again met what its first try
+    /// did): the item is taken as written when it is there with this size, written just now, and
+    /// not the version an If-Match named.
+    async fn landed(&self, item: &str, total: u64, if_match: Option<&str>) -> Option<Item> {
+        const RECENT_MS: i64 = 15 * 60 * 1000;
+        let url = format!("{item}?$select={}", enc(SELECT));
+        let res = self.api.send(|c| c.get(&url)).await.ok()?;
+        let it: Item = read_json(ConnKind::Onedrive, check(ConnKind::Onedrive, res).await.ok()?).await.ok()?;
+        let fresh = it.last_modified_date_time.as_deref().and_then(extras::parse_rfc3339).is_some_and(|t| (extras::now_ms() - t).abs() < RECENT_MS);
+        let changed = if_match.is_none_or(|old| it.e_tag.as_deref() != Some(old));
+        (!it.is_folder() && it.size == Some(total as i64) && fresh && changed).then_some(it)
+    }
+
     async fn upload_session(
         &self,
         item: &str,
@@ -302,21 +315,14 @@ impl OneDrive {
             Ok(Some(next_expected(&v).unwrap_or(0)))
         };
         // B3-5: a session that is gone right after its last piece was sent may well have finished
-        // (the answer was lost on the way): the item is there, with this size, written just now,
-        // and not the version an If-Match named, so it is taken as done instead of failing.
+        // (the answer was lost on the way)
         let landed = |end: u64| {
             let if_match = if_match.clone();
             async move {
-                const RECENT_MS: i64 = 15 * 60 * 1000;
                 if end != total {
                     return None;
                 }
-                let url = format!("{item}?$select={}", enc(SELECT));
-                let res = self.api.send(|c| c.get(&url)).await.ok()?;
-                let it: Item = read_json(ConnKind::Onedrive, check(ConnKind::Onedrive, res).await.ok()?).await.ok()?;
-                let fresh = it.last_modified_date_time.as_deref().and_then(extras::parse_rfc3339).is_some_and(|t| (extras::now_ms() - t).abs() < RECENT_MS);
-                let changed = if_match.is_none_or(|old| it.e_tag.as_deref() != Some(old.as_str()));
-                (!it.is_folder() && it.size == Some(total as i64) && fresh && changed).then_some(it)
+                self.landed(item, total, if_match.as_deref()).await
             }
         };
         let mut offset = 0u64;
@@ -336,22 +342,20 @@ impl OneDrive {
         };
         let mut restarted = false;
         let mut failures = 0u32;
+        // with `on_part` the caller keeps the session to carry on later (a paused transfer)
+        let abort = |session: String| async move {
+            if opts.on_part.is_none() {
+                let _ = self.api.send_unsigned(|c| c.delete(&session)).await;
+            }
+            Ok(None)
+        };
         loop {
-            // with `on_part` the caller keeps the session to carry on later (a paused transfer)
             if cancel.load(Ordering::Relaxed) {
-                if opts.on_part.is_none() {
-                    let _ = self.api.send_unsigned(|c| c.delete(&session)).await;
-                }
-                return Ok(None);
+                return abort(session).await;
             }
             src.seek(offset).await?;
             let chunk = match src.chunk(piece as usize, cancel).await {
-                Err(e) if e.is_cancelled() => {
-                    if opts.on_part.is_none() {
-                        let _ = self.api.send_unsigned(|c| c.delete(&session)).await;
-                    }
-                    return Ok(None);
-                }
+                Err(e) if e.is_cancelled() => return abort(session).await,
                 r => r?,
             };
             if chunk.is_empty() {
@@ -360,9 +364,10 @@ impl OneDrive {
             let end = offset + chunk.len() as u64;
             let range = format!("bytes {offset}-{}/{total}", end - 1);
             let len = chunk.len();
-            let sent = self.api.send_piece(false, &chunk, |c, body| c.put(&session).header("content-range", &range).header("content-length", len).body(body)).await;
+            let sent = self.api.send_piece(false, &chunk, cancel, |c, body| c.put(&session).header("content-range", &range).header("content-length", len).body(body)).await;
             let res = match sent {
                 Ok(r) => r,
+                Err(e) if e.is_cancelled() => return abort(session).await,
                 Err(e) if e.kind == ErrKind::Network && failures < FAILURES => {
                     failures += 1;
                     tokio::time::sleep(backoff(failures)).await;
@@ -413,6 +418,14 @@ impl OneDrive {
                 }
                 409 | 412 => return Ok(Some(Err(()))),
                 404 | 410 if !restarted => {
+                    // B3-3 (round 5): the last piece sent again after a 502/503/504 meets the
+                    // session its first try finished; don't upload it all over again
+                    if was_repeated(&res)
+                        && let Some(it) = landed(end).await
+                    {
+                        progress(total, total);
+                        return Ok(Some(Ok(it)));
+                    }
                     restarted = true;
                     session = match start().await? {
                         Some(s) => s,
@@ -627,7 +640,7 @@ impl Storage for OneDrive {
             let url = format!("{item}/content?@microsoft.graph.conflictBehavior={behavior}");
             let ctype = opts.content_type.clone().unwrap_or_else(|| mime_guess::from_path(name).first_or_octet_stream().to_string());
             let put = || {
-                self.api.send_piece(true, &bytes, |c, body| {
+                self.api.send_piece(true, &bytes, cancel, |c, body| {
                     let r = c.put(&url).header("content-type", &ctype).header("content-length", bytes.len()).body(body);
                     match if_match_of(&opts.precondition) {
                         Some(t) => r.header("if-match", t),
@@ -635,13 +648,26 @@ impl Storage for OneDrive {
                     }
                 })
             };
-            let mut res = put().await?;
-            if res.status().as_u16() == 404 && !dir.is_empty() {
-                // the folder isn't there yet
-                self.ensure_dir(root, dir).await?;
-                res = put().await?;
-            }
+            let sent = match put().await {
+                Ok(res) if res.status().as_u16() == 404 && !dir.is_empty() => {
+                    // the folder isn't there yet
+                    self.ensure_dir(root, dir).await?;
+                    put().await
+                }
+                r => r,
+            };
+            let res = match sent {
+                Err(e) if e.is_cancelled() => return Ok(WriteOutcome::Cancelled),
+                r => r?,
+            };
             if matches!(res.status().as_u16(), 409 | 412) {
+                // B3-3 (round 5): sent again after a 502/503/504, the first try may have written it
+                if was_repeated(&res)
+                    && let Some(it) = self.landed(&item, total, if_match_of(&opts.precondition)).await
+                {
+                    progress(total, total);
+                    return Ok(WriteOutcome::Done(it.entry(path.to_string())));
+                }
                 return conflict().await;
             }
             let it: Item = read_json(ConnKind::Onedrive, check(ConnKind::Onedrive, res).await?).await?;
@@ -1107,6 +1133,47 @@ mod tests {
         let opts = WriteOpts { precondition: Precondition::IfMatch("\"old\"".into()), ..Default::default() };
         let c = od.write(ME, "a.txt", WriteSource::Bytes("hi".into()), opts, &|_, _| {}, &cancel).await.unwrap();
         assert!(matches!(c, WriteOutcome::Conflict(Some(ref e)) if e.etag.as_deref() == Some("\"cur\"")));
+    }
+
+    /// B3-3 (round 5): a request sent again after a 502 meets what its first try did. The small
+    /// PUT's 412 and the last piece's 404 are then "already written", not a conflict or a restart
+    /// from byte 0.
+    #[tokio::test]
+    async fn a_repeat_that_meets_its_own_write_counts_as_done() {
+        let puts = Arc::new(AtomicU64::new(0));
+        let base = Arc::new(Mutex::new(String::new()));
+        let (p2, b2) = (puts.clone(), base.clone());
+        let total = 2 * QUANTUM as usize;
+        let fresh = |size: usize| json!({ "id": "a", "name": "x", "size": size, "eTag": "\"v2\"", "file": {}, "lastModifiedDateTime": extras::format_rfc3339(extras::now_ms()) });
+        let mock = Mock::start(move |req: &Req| match (req.method.as_str(), req.path.as_str()) {
+            ("PUT", "/me/drive/root:/a.txt:/content") => match p2.fetch_add(1, Ordering::SeqCst) {
+                0 => Resp::status(502).header("retry-after", "0"),
+                _ => Resp::json(412, &json!({ "error": { "code": "resourceModified" } })),
+            },
+            ("GET", "/me/drive/root:/a.txt:") => Resp::json(200, &fresh(2)),
+            ("POST", "/me/drive/root:/big.bin:/createUploadSession") => Resp::json(200, &json!({ "uploadUrl": format!("{}/up/s1", b2.lock().unwrap()) })),
+            ("PUT", "/up/s1") if req.header("content-range").is_some_and(|r| r.starts_with("bytes 0-")) => {
+                Resp::json(202, &json!({ "nextExpectedRanges": [format!("{QUANTUM}-")] }))
+            }
+            ("PUT", "/up/s1") => match p2.fetch_add(1, Ordering::SeqCst) {
+                2 => Resp::status(502).header("retry-after", "0"), // committed, answer lost
+                _ => Resp::status(404),
+            },
+            ("GET", "/me/drive/root:/big.bin:") => Resp::json(200, &fresh(total)),
+            _ => Resp::status(404),
+        })
+        .await;
+        *base.lock().unwrap() = mock.base.clone();
+        let od = OneDrive::with_base(api(), &mock.base);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let opts = WriteOpts { precondition: Precondition::IfMatch("\"old\"".into()), ..Default::default() };
+        let out = od.write(ME, "a.txt", WriteSource::Bytes("hi".into()), opts, &|_, _| {}, &cancel).await.unwrap();
+        assert!(matches!(out, WriteOutcome::Done(ref e) if e.etag.as_deref() == Some("\"v2\"")));
+
+        let opts = WriteOpts { part_size: Some(QUANTUM), ..Default::default() };
+        let out = od.write(ME, "big.bin", WriteSource::Bytes(vec![3u8; total].into()), opts, &|_, _| {}, &cancel).await.unwrap();
+        assert!(matches!(out, WriteOutcome::Done(_)));
+        assert_eq!(mock.seen("/me/drive/root:/big.bin:/createUploadSession").len(), 1, "not started again");
     }
 
     /// B3-5: a write checked against a known eTag sends it as If-Match, so an edit made between

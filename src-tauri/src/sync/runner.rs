@@ -155,6 +155,9 @@ enum Done {
 struct JobCtx {
     remote: Arc<dyn Storage>,
     root: String,
+    /// "" or ending with "/": uploads to a folder on this computer never write through a link
+    /// below the folder behind it
+    prefix: String,
     /// the synced folder: downloads never write through a link below it
     local_root: PathBuf,
     md5: bool,
@@ -180,6 +183,11 @@ async fn exec(job: Job, ctx: Arc<JobCtx>, bytes: Arc<RunBytes>) -> (String, Resu
 async fn exec_transfer(job: Job, ctx: &JobCtx, progress: &(dyn Fn(u64, u64) + Send + Sync)) -> Result<Done, String> {
     match job {
         Job::Up { path, key, size, mtime, file_id, pre, .. } => {
+            // the other side is a folder on this computer: a link there that appeared since its
+            // last listing (a quick run lists nothing) is left alone, as a full run does (B4-1)
+            if crate::local_links::store_target(&*ctx.remote, &ctx.root, &ctx.prefix, &key, true).is_err() {
+                return Ok(Done::Skipped);
+            }
             let opts = WriteOpts { modified: Some(mtime), precondition: pre, ..Default::default() };
             match ctx.remote.write(&ctx.root, &key, WriteSource::Path(path), opts, progress, &ctx.cancel).await? {
                 WriteOutcome::Done(e) => {
@@ -308,7 +316,7 @@ impl Engine<'_> {
             // a quick run looked only at what changed here: a change the other side reports
             // below a link that was already here is left alone too, not failed (B4-1)
             let fresh = r.files.keys().filter(|k| !base.contains_key(*k) && !local.files.contains_key(*k)).map(String::as_str);
-            let found = local::links_above(&self.local_root, fresh, &mut HashMap::new());
+            let found = local::links_above(&self.local_root, fresh, true, &mut HashMap::new());
             local.links.extend(found);
         }
         let mut ex = plan::Excluded::default();
@@ -388,11 +396,11 @@ impl Engine<'_> {
     /// finish. Answers how many uploads and downloads made it, and whether any was skipped
     /// because its file changed again meanwhile (left for the next run to look at afresh).
     /// Transfers that wait for the user ([`Done::Blocked`]) go to `notices`, not `errors`.
-    async fn run_jobs(&self, jobs: Vec<Job>, total: u32, errors: &mut Vec<String>, notices: &mut Vec<String>) -> (usize, usize, bool) {
+    async fn run_jobs(&self, jobs: Vec<Job>, total: u32, errors: &mut Vec<String>, notices: &mut Vec<(String, String)>) -> (usize, usize, bool) {
         let ups: HashSet<String> = jobs.iter().filter(|j| matches!(j, Job::Up { .. })).map(|j| j.rel().to_string()).collect();
         let total_bytes: u64 = jobs.iter().map(Job::size).sum();
         let bytes = Arc::new(RunBytes::default());
-        let ctx = Arc::new(JobCtx { remote: self.remote.clone(), root: self.root.clone(), local_root: self.local_root.clone(), md5: self.md5(), cancel: self.cancel.clone() });
+        let ctx = Arc::new(JobCtx { remote: self.remote.clone(), root: self.root.clone(), prefix: self.prefix.clone(), local_root: self.local_root.clone(), md5: self.md5(), cancel: self.cancel.clone() });
         let mut set = JoinSet::new();
         let mut queue = jobs.into_iter();
         let (mut done, mut up_ok, mut down_ok, mut skipped) = (0u32, 0usize, 0usize, false);
@@ -419,7 +427,7 @@ impl Engine<'_> {
                                 Err(e) => errors.push(format!("{rel}: {e}")),
                             },
                             Ok(Done::Skipped) => skipped = true,
-                            Ok(Done::Blocked(why)) => notices.push(format!("{rel}: {why}")),
+                            Ok(Done::Blocked(why)) => notices.push((rel, why)),
                             Ok(Done::Cancelled) => {}
                             Err(e) if e == crate::storage::CANCELLED => {}
                             Err(e) => errors.push(format!("{rel}: {e}")),
@@ -440,6 +448,14 @@ impl Engine<'_> {
         if items.is_empty() || self.cancelled() {
             return gone;
         }
+        // on a folder on this computer, nothing reached through a link is deleted (B4-1)
+        let kept: Vec<(String, String)>;
+        let items = if self.remote.caps().local_paths {
+            kept = items.iter().filter(|(_, k)| crate::local_links::store_target(&*self.remote, &self.root, &self.prefix, k, false).is_ok()).cloned().collect();
+            &kept[..]
+        } else {
+            items
+        };
         if self.remote_trash && !self.remote.caps().trash {
             let day = local::ymd(now_ms());
             for (rel, key) in items {
@@ -640,7 +656,7 @@ impl Engine<'_> {
         }
         let mut notices = Vec::new();
         let (uploaded, _, _) = self.run_jobs(jobs, total, &mut errors, &mut notices).await;
-        errors.append(&mut notices);
+        errors.extend(notices.into_iter().map(|(rel, why)| format!("{rel}: {why}")));
         let dels: Vec<(String, String)> = p.delete_remote.iter().map(|rel| (rel.clone(), self.push_key(rel, &local, rs))).collect();
         let deleted = self.delete_remote(&dels, &mut errors).await;
         self.db.drop_base_many(&self.id, &deleted)?;
@@ -699,7 +715,7 @@ impl Engine<'_> {
         }
         let mut notices = Vec::new();
         let (_, downloaded, _) = self.run_jobs(jobs, total, &mut errors, &mut notices).await;
-        errors.append(&mut notices);
+        errors.extend(notices.into_iter().map(|(rel, why)| format!("{rel}: {why}")));
         let trash: Vec<(String, PathBuf)> = p.trash_local.iter().map(|rel| (rel.clone(), local.path(&self.local_root, rel))).collect();
         let trashed = self.delete_local(trash, &base, &mut errors).await;
         self.db.drop_base_many(&self.id, &trashed)?;
@@ -753,6 +769,17 @@ impl Engine<'_> {
         let mut base = self.load_base(&gi)?;
         let mut local = self.scan_local(&gi, &base, if full { None } else { dirty }).await?;
         let (mut remote, next_cursor) = self.twoway_remote(&gi, &base, full).await?;
+        // a pull a folder here blocked is tried again each run until it works, also when this
+        // run didn't list the other side: a change feed names the file only once (B4-5)
+        let listed = matches!(next_cursor, Some(NextCursor::Full { .. }));
+        self.db.unblock(&self.id, |p| base.contains_key(p));
+        if !listed {
+            for (rel, (meta, raw)) in self.db.blocked(&self.id) {
+                if !base.contains_key(&rel) {
+                    remote.keep_blocked(&rel, &meta, raw.as_deref());
+                }
+            }
+        }
         // a path this computer can't read is left alone; the other side's changes under it are
         // then not handled, and the feed has to be read from here again next time
         let skipped_changes = {
@@ -802,6 +829,11 @@ impl Engine<'_> {
                     let (Some(b), Some(_)) = (base.get(from), local.files.get(to)) else { continue };
                     let src = remote.key(&self.prefix, from);
                     let dst = format!("{}{}", self.prefix, local.raw.get(to).map(String::as_str).unwrap_or(to));
+                    // never through a link in a folder on this computer (B4-1)
+                    let linked = |k: &str, last| crate::local_links::store_target(&*self.remote, &self.root, &self.prefix, k, last).is_err();
+                    if linked(&src, false) || linked(&dst, true) {
+                        continue;
+                    }
                     match self.remote.rename(&Loc::new(&self.root, &src), &Loc::new(&self.root, &dst), false).await {
                         Ok(()) => {
                             // the remote file at the new name is the synced content: record it
@@ -933,10 +965,12 @@ impl Engine<'_> {
         let mut notices = Vec::new();
         let (ups, downs, skipped_jobs) = self.run_jobs(jobs, total, &mut errors, &mut notices).await;
         left_alone |= skipped_jobs;
+        let blocked = notices.iter().filter_map(|(rel, _)| Some((rel.clone(), (remote.files.get(rel)?.clone(), remote.raw.get(rel).cloned())))).collect();
+        self.db.set_blocked(&self.id, listed, blocked);
         // they stand with the notices before them: shown each run until the user acts, without
         // holding the change feed back
-        for n in notices {
-            errors.insert(standing, n);
+        for (rel, why) in notices {
+            errors.insert(standing, format!("{rel}: {why}"));
             standing += 1;
         }
 

@@ -26,7 +26,7 @@ use super::{
     extras::{self, Source},
     *,
 };
-use crate::oauth::http::{backoff, check, provider_error, read_json, unexpected, Api};
+use crate::oauth::http::{backoff, check, provider_error, read_json, unexpected, was_repeated, Api};
 
 /// Up to this size a file goes up in one request, held in memory (Dropbox would take 150 MiB
 /// that way, but several uploads at once would hold hundreds of MB); bigger ones stream through
@@ -185,12 +185,12 @@ impl Dropbox {
 
     /// An upload piece: like [`content_call`](Self::content_call), but a slow piece is never cut
     /// off while its bytes keep moving (see `Api::send_piece`).
-    async fn content_piece(&self, route: &str, arg: &Value, piece: &Bytes) -> SResult<reqwest::Response> {
+    async fn content_piece(&self, route: &str, arg: &Value, piece: &Bytes, cancel: &AtomicBool) -> SResult<reqwest::Response> {
         let url = format!("{}/{route}", self.content);
         let header = api_arg(arg);
         let len = piece.len();
         self.api
-            .send_piece(true, piece, |c, body| {
+            .send_piece(true, piece, cancel, |c, body| {
                 c.post(&url).header("dropbox-api-arg", &header).header("content-type", "application/octet-stream").header("content-length", len).body(body)
             })
             .await
@@ -272,8 +272,9 @@ impl Dropbox {
                 (Some(id), false) => ("files/upload_session/append_v2", json!({ "cursor": { "session_id": id, "offset": offset }, "close": false })),
                 (Some(id), true) => ("files/upload_session/finish", json!({ "cursor": { "session_id": id, "offset": offset }, "commit": Self::commit(path, opts) })),
             };
-            let res = match self.content_piece(route, &arg, &chunk).await {
+            let res = match self.content_piece(route, &arg, &chunk, cancel).await {
                 Ok(r) => r,
+                Err(e) if e.is_cancelled() => return Ok(None),
                 Err(e) if e.kind == ErrKind::Network && failures < FAILURES => {
                     // sent again: a wrong offset answer below says where Dropbox really is
                     failures += 1;
@@ -284,6 +285,7 @@ impl Dropbox {
             };
             let status = res.status().as_u16();
             if status == 409 {
+                let repeated = was_repeated(&res);
                 let b = res.bytes().await.unwrap_or_default();
                 let (code, v) = dbx_error(&b);
                 let correct = v["error"]["correct_offset"].as_u64().or_else(|| v["error"]["lookup_failed"]["correct_offset"].as_u64());
@@ -299,7 +301,9 @@ impl Dropbox {
                         continue;
                     }
                     _ if route.ends_with("finish") => {
-                        if code.contains("not_found")
+                        // a finish sent again after a 502/503/504 may meet the file its first
+                        // try committed (B3-3, round 5)
+                        if (code.contains("not_found") || repeated && code.contains("conflict"))
                             && let Some(m) = self.landed(path, end, opts).await
                         {
                             progress(end, end);
@@ -539,10 +543,24 @@ impl Storage for Dropbox {
                     Err(e) if e.is_cancelled() => return Ok(WriteOutcome::Cancelled),
                     r => r?,
                 };
-                let res = self.content_piece("files/upload", &Self::commit(&p, &opts), &bytes).await?;
+                let res = match self.content_piece("files/upload", &Self::commit(&p, &opts), &bytes, cancel).await {
+                    Err(e) if e.is_cancelled() => return Ok(WriteOutcome::Cancelled),
+                    r => r?,
+                };
                 if res.status().as_u16() == 409 {
+                    let repeated = was_repeated(&res);
                     let b = res.bytes().await.unwrap_or_default();
-                    Some(dbx_error(&b))
+                    let (code, v) = dbx_error(&b);
+                    // B3-3 (round 5): sent again after a 502/503/504, the first try may have
+                    // written it; that is not a conflict
+                    if repeated
+                        && code.contains("conflict")
+                        && let Some(m) = self.landed(&p, n, &opts).await
+                    {
+                        progress(n, n);
+                        return Ok(WriteOutcome::Done(m.entry(path.to_string())));
+                    }
+                    Some((code, v))
                 } else {
                     let m: Meta = read_json(ConnKind::Dropbox, check(ConnKind::Dropbox, res).await?).await?;
                     progress(n, n);
@@ -895,6 +913,31 @@ mod tests {
         finishes.store(0, Ordering::SeqCst);
         let opts = WriteOpts { part_size: Some(1024), modified, ..Default::default() };
         assert!(d.write("", "big.bin", WriteSource::Bytes(vec![7u8; 2999].into()), opts, &|_, _| {}, &cancel).await.is_err());
+    }
+
+    /// B3-3 (round 5): a one-request upload sent again after a 502 meets the file its first try
+    /// wrote; that is done, not a conflict. A conflict on a first try stays a conflict.
+    #[tokio::test]
+    async fn a_repeated_upload_that_meets_its_own_file_counts_as_done() {
+        let tries = Arc::new(AtomicU64::new(0));
+        let t2 = tries.clone();
+        let mock = Mock::start(move |req| match req.path.as_str() {
+            "/content/files/upload" => match t2.fetch_add(1, Ordering::SeqCst) {
+                0 => Resp::status(502).header("retry-after", "0"),
+                _ => Resp::json(409, &json!({ "error_summary": "path/conflict/file/..", "error": { ".tag": "path" } })),
+            },
+            "/rpc/files/get_metadata" => Resp::json(200, &json!({ ".tag": "file", "name": "a.txt", "path_display": "/a.txt", "rev": "new", "size": 2,
+                "server_modified": extras::format_rfc3339(extras::now_ms()) })),
+            _ => Resp::status(404),
+        })
+        .await;
+        let d = Dropbox::with_base(api(), format!("{}/rpc", mock.base), format!("{}/content", mock.base));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let opts = || WriteOpts { precondition: Precondition::IfNoneMatch, ..Default::default() };
+        let out = d.write("", "a.txt", WriteSource::Bytes("hi".into()), opts(), &|_, _| {}, &cancel).await.unwrap();
+        assert!(matches!(out, WriteOutcome::Done(ref e) if e.etag.as_deref() == Some("new")));
+        let out = d.write("", "a.txt", WriteSource::Bytes("hi".into()), opts(), &|_, _| {}, &cancel).await.unwrap();
+        assert!(matches!(out, WriteOutcome::Conflict(_)));
     }
 
     /// B3-6: Dropbox ignores case, so "A.txt" is the source itself: clearing it would delete it.

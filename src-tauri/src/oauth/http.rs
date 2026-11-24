@@ -6,7 +6,7 @@
 use std::{
     future::Future,
     sync::{
-        atomic::{AtomicI64, Ordering},
+        atomic::{AtomicBool, AtomicI64, Ordering},
         Arc, OnceLock,
     },
     time::Duration,
@@ -100,14 +100,19 @@ fn marked_body(piece: Bytes, mark: Arc<AtomicI64>) -> reqwest::Body {
 }
 
 /// `fut`, unless `mark` stays put for `stall`: then a network error, which the upload loops
-/// treat like a dropped connection (ask the server how far it got, carry on from there).
-async fn unless_stalled<T>(fut: impl Future<Output = SResult<T>>, mark: &AtomicI64, stall: Duration, kind: ConnKind) -> SResult<T> {
+/// treat like a dropped connection (ask the server how far it got, carry on from there). The
+/// cancel flag is looked at a few times a second, so Pause and Cancel don't wait for a piece
+/// that is still on its way (a cancelled error).
+async fn unless_stalled<T>(fut: impl Future<Output = SResult<T>>, mark: &AtomicI64, stall: Duration, cancel: &AtomicBool, kind: ConnKind) -> SResult<T> {
     let mut fut = std::pin::pin!(fut);
-    let every = (stall / 4).max(Duration::from_millis(10));
+    let every = (stall / 4).min(Duration::from_millis(250)).max(Duration::from_millis(10));
     loop {
         tokio::select! {
             r = &mut fut => return r,
             _ = tokio::time::sleep(every) => {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(StorageError::cancelled());
+                }
                 if extras::now_ms() - mark.load(Ordering::Relaxed) > stall.as_millis() as i64 {
                     let say = format!("{} didn't answer in time. Check your internet connection.", kind.label());
                     return Err(StorageError::new(ErrKind::Network, say).with_detail("the upload stopped moving"));
@@ -115,6 +120,21 @@ async fn unless_stalled<T>(fut: impl Future<Output = SResult<T>>, mark: &AtomicI
             }
         }
     }
+}
+
+/// The whole answer to a piece, read while the stall watch still runs (each chunk of the answer
+/// moves `mark`), handed back as a response whose body is already here. A server that sends the
+/// headers and then goes quiet would otherwise hold the caller's body read forever: the piece
+/// client has no read timeout.
+async fn buffered(mut res: Response, mark: &AtomicI64, kind: ConnKind) -> SResult<Response> {
+    mark.store(extras::now_ms(), Ordering::Relaxed);
+    let mut body = Vec::new();
+    while let Some(c) = res.chunk().await.map_err(|e| net_error(kind, &e))? {
+        mark.store(extras::now_ms(), Ordering::Relaxed);
+        body.extend_from_slice(&c);
+    }
+    let (parts, _) = tauri::http::Response::<reqwest::Body>::from(res).into_parts();
+    Ok(Response::from(tauri::http::Response::from_parts(parts, Bytes::from(body))))
 }
 
 // ---------------------------------------------------------------- signed requests
@@ -161,30 +181,37 @@ impl Api {
 
     /// Sends one upload piece: `build` makes the request around the body it is given. Unlike
     /// [`send`](Api::send), a slow piece is never cut off while its bytes keep moving; only a
-    /// stall ends it (see [`piece_client`]). `sign` is false for addresses that carry their own
-    /// authorization.
-    pub async fn send_piece(&self, sign: bool, piece: &Bytes, build: impl Fn(&Client, reqwest::Body) -> RequestBuilder + Sync) -> SResult<Response> {
-        self.piece_inner(sign, true, piece, &build).await
+    /// stall ends it (see [`piece_client`]), while sending or while reading the answer, whose
+    /// body is already read when this returns. `cancel` ends it at once with a cancelled error.
+    /// `sign` is false for addresses that carry their own authorization.
+    pub async fn send_piece(&self, sign: bool, piece: &Bytes, cancel: &AtomicBool, build: impl Fn(&Client, reqwest::Body) -> RequestBuilder + Sync) -> SResult<Response> {
+        self.piece_inner(sign, true, piece, cancel, &build).await
     }
 
     /// [`send_piece`](Api::send_piece) for a request that makes something new (Drive's one-request
     /// upload): a 502 or 504 is returned, as with [`send_create`](Api::send_create).
-    pub async fn send_piece_create(&self, piece: &Bytes, build: impl Fn(&Client, reqwest::Body) -> RequestBuilder + Sync) -> SResult<Response> {
-        self.piece_inner(true, false, piece, &build).await
+    pub async fn send_piece_create(&self, piece: &Bytes, cancel: &AtomicBool, build: impl Fn(&Client, reqwest::Body) -> RequestBuilder + Sync) -> SResult<Response> {
+        self.piece_inner(true, false, piece, cancel, &build).await
     }
 
-    async fn piece_inner(&self, sign: bool, repeat_gateway: bool, piece: &Bytes, build: &(dyn Fn(&Client, reqwest::Body) -> RequestBuilder + Sync)) -> SResult<Response> {
+    async fn piece_inner(&self, sign: bool, repeat_gateway: bool, piece: &Bytes, cancel: &AtomicBool, build: &(dyn Fn(&Client, reqwest::Body) -> RequestBuilder + Sync)) -> SResult<Response> {
         let mark = Arc::new(AtomicI64::new(extras::now_ms()));
         let api = Api { http: piece_client(), ..self.clone() };
         let make = |c: &Client| {
             mark.store(extras::now_ms(), Ordering::Relaxed);
             build(c, marked_body(piece.clone(), mark.clone()))
         };
-        unless_stalled(api.send_inner(&make, sign, repeat_gateway), &mark, STALL, self.kind).await
+        let whole = async {
+            let res = api.send_inner(&make, sign, repeat_gateway).await?;
+            buffered(res, &mark, self.kind).await
+        };
+        unless_stalled(whole, &mark, STALL, cancel, self.kind).await
     }
 
     async fn send_inner(&self, build: &(dyn Fn(&Client) -> RequestBuilder + Sync), sign: bool, repeat_gateway: bool) -> SResult<Response> {
         let mut refreshed = false;
+        // sent again after a 502/503/504: the first try may have been carried out
+        let mut repeated = false;
         let mut tries = 0u32;
         loop {
             tries += 1;
@@ -230,9 +257,18 @@ impl Api {
                 _ => None,
             };
             match wait {
-                Some(w) if tries < TRIES => tokio::time::sleep(w.min(self.max_wait)).await,
+                Some(w) if tries < TRIES => {
+                    repeated |= status >= 500;
+                    tokio::time::sleep(w.min(self.max_wait)).await
+                }
                 Some(_) if status == 429 => return Err(rate_limited(self.kind)),
-                _ => return Ok(res),
+                _ => {
+                    let mut res = res;
+                    if repeated {
+                        res.extensions_mut().insert(Repeated);
+                    }
+                    return Ok(res);
+                }
             }
         }
     }
@@ -247,6 +283,18 @@ impl Api {
         let res = self.ok(build).await?;
         read_json(self.kind, res).await
     }
+}
+
+/// Marks an answer to a request that was sent again after a 502, 503 or 504 (see
+/// [`was_repeated`]).
+#[derive(Clone, Copy)]
+struct Repeated;
+
+/// True when this answer is to a request sent again after a 502, 503 or 504. The first try may
+/// have been carried out with only its answer lost, so a "conflict" or "not found" here can mean
+/// "already done": the upload paths look at the item before reporting it (B3-3, round 5).
+pub fn was_repeated(res: &Response) -> bool {
+    res.extensions().get::<Repeated>().is_some()
 }
 
 /// The response, or the error it reports.
@@ -411,12 +459,34 @@ mod tests {
             }
             Ok::<_, StorageError>(7)
         };
-        assert_eq!(unless_stalled(slow, &mark, stall, ConnKind::Gdrive).await.unwrap(), 7, "480 ms, still moving");
+        let no = AtomicBool::new(false);
+        assert_eq!(unless_stalled(slow, &mark, stall, &no, ConnKind::Gdrive).await.unwrap(), 7, "480 ms, still moving");
 
         mark.store(extras::now_ms(), Ordering::Relaxed);
         let stuck = std::future::pending::<SResult<u32>>();
-        let e = unless_stalled(stuck, &mark, stall, ConnKind::Gdrive).await.unwrap_err();
+        let e = unless_stalled(stuck, &mark, stall, &no, ConnKind::Gdrive).await.unwrap_err();
         assert_eq!(e.kind, ErrKind::Network);
+
+        // B3-2 (round 5): Cancel ends a piece that is still moving, without waiting for it
+        let mark = Arc::new(AtomicI64::new(extras::now_ms()));
+        let m2 = mark.clone();
+        let busy = async move {
+            for _ in 0..10_000 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                m2.store(extras::now_ms(), Ordering::Relaxed);
+            }
+            Ok(0)
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        let c2 = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            c2.store(true, Ordering::Relaxed);
+        });
+        let started = std::time::Instant::now();
+        let e = unless_stalled::<u32>(busy, &mark, Duration::from_secs(120), &cancel, ConnKind::Gdrive).await.unwrap_err();
+        assert!(e.is_cancelled());
+        assert!(started.elapsed() < Duration::from_secs(2));
 
         // the body moves the mark as it is taken, slice by slice
         let mark = Arc::new(AtomicI64::new(0));
@@ -424,6 +494,47 @@ mod tests {
         let bytes = http_body_util::BodyExt::collect(body).await.unwrap().to_bytes();
         assert_eq!(bytes.len(), 200 * 1024);
         assert!(mark.load(Ordering::Relaxed) > 0);
+    }
+
+    /// B3-1 (round 5): an answer whose headers arrive and whose body then never comes ends as a
+    /// stall, and a whole answer comes back readable after the guard.
+    #[tokio::test]
+    async fn a_silent_answer_body_is_a_stall() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            for answer in ["HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok", "HTTP/1.1 200 OK\r\ncontent-length: 10\r\n\r\nok"] {
+                let (mut s, _) = listener.accept().await.unwrap();
+                let mut buf = [0u8; 1024];
+                let _ = s.read(&mut buf).await;
+                s.write_all(answer.as_bytes()).await.unwrap();
+                // keep the connection open and quiet
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    drop(s);
+                });
+            }
+        });
+        let url = format!("http://{addr}/");
+        let no = AtomicBool::new(false);
+        let stall = Duration::from_millis(300);
+        let get = |mark: Arc<AtomicI64>| {
+            let url = url.clone();
+            async move {
+                let c = bare_builder().pool_max_idle_per_host(0).build().unwrap();
+                let res = c.get(&url).send().await.map_err(|e| net_error(ConnKind::Gdrive, &e))?;
+                buffered(res, &mark, ConnKind::Gdrive).await
+            }
+        };
+        let mark = Arc::new(AtomicI64::new(extras::now_ms()));
+        let res = unless_stalled(get(mark.clone()), &mark, stall, &no, ConnKind::Gdrive).await.unwrap();
+        assert_eq!(res.status().as_u16(), 200);
+        assert_eq!(&res.bytes().await.unwrap()[..], b"ok");
+
+        let mark = Arc::new(AtomicI64::new(extras::now_ms()));
+        let e = unless_stalled(get(mark.clone()), &mark, stall, &no, ConnKind::Gdrive).await.unwrap_err();
+        assert_eq!(e.kind, ErrKind::Network);
     }
 
     #[test]

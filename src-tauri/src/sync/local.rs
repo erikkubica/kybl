@@ -247,10 +247,14 @@ pub fn rescan_dirty(root: &Path, gi: &Gitignore, base: &dyn BaseState, dirty: &H
     }
     // a link that replaced a synced folder (or file) earlier isn't among the watched changes:
     // found here, it is left alone as a full scan leaves it (B4-1), instead of the other side's
-    // changes under it failing the run
-    out.links = links_above(root, out.files.keys().map(String::as_str), &mut HashMap::new());
+    // changes under it failing the run. Folders only: a file replaced by a link is a watched
+    // change (looked at below), and an `lstat` per synced file would make every quick run walk
+    // the whole folder (B4-2, round 5)
+    out.links = links_above(root, out.files.keys().map(String::as_str), false, &mut HashMap::new());
     for d in dirty {
-        let Ok(rel) = d.strip_prefix(root) else { continue };
+        // a change reported somewhere else than expected (the folder reached another way): a
+        // full look, never a change silently dropped (B4-4, round 5)
+        let Ok(rel) = d.strip_prefix(root) else { return scan_local(root, gi) };
         let rel = nfc(&rel_key(rel));
         if rel.is_empty() {
             // the folder itself changed: no shortcut
@@ -276,18 +280,29 @@ pub fn rescan_dirty(root: &Path, gi: &Gitignore, base: &dyn BaseState, dirty: &H
     out
 }
 
-/// The links on the way to `rels` (relative keys under `root`, the path itself included), each
-/// reported once as the link's own key; what is below a link isn't looked at. `seen` remembers
-/// the folders already looked at (one `lstat` per folder, however many files share it).
-pub fn links_above<'a>(root: &Path, rels: impl IntoIterator<Item = &'a str>, seen: &mut HashMap<String, bool>) -> Vec<String> {
+/// The links on the way to `rels` (relative keys under `root`; with `last`, the path itself
+/// included), each reported once as the link's own key; what is below a link isn't looked at.
+/// `seen` remembers the folders already looked at (one `lstat` per folder, however many files
+/// share it).
+pub fn links_above<'a>(root: &Path, rels: impl IntoIterator<Item = &'a str>, last: bool, seen: &mut HashMap<String, bool>) -> Vec<String> {
     let mut out = std::collections::BTreeSet::new();
     for rel in rels {
         let mut end = 0;
         while end < rel.len() {
             end = rel[end..].find('/').map_or(rel.len(), |i| end + i);
+            if !last && end >= rel.len() {
+                break;
+            }
             let part = &rel[..end];
             end += 1;
-            let link = *seen.entry(part.to_string()).or_insert_with(|| std::fs::symlink_metadata(local_path_of(root, part)).is_ok_and(|m| m.file_type().is_symlink()));
+            let link = match seen.get(part) {
+                Some(&l) => l,
+                None => {
+                    let l = std::fs::symlink_metadata(local_path_of(root, part)).is_ok_and(|m| m.file_type().is_symlink());
+                    seen.insert(part.to_string(), l);
+                    l
+                }
+            };
             if link {
                 out.insert(part.to_string());
                 break;
@@ -444,8 +459,21 @@ impl Dirty {
 
 pub type Watcher = Debouncer<RecommendedWatcher, RecommendedCache>;
 
+/// The synced folder as the runs and the watcher use it. On macOS the watcher reports real paths
+/// (links in the folder's own path resolved: `~/Dropbox -> ~/Library/CloudStorage/…`, `/tmp`), so
+/// the runs work from the same real path, or no change it reports would be under the folder
+/// (B4-4, round 5). Windows keeps the path as picked: its real form (`\\?\C:\…`) is not what
+/// the watcher reports.
+pub fn sync_root(path: &str) -> PathBuf {
+    #[cfg(not(windows))]
+    if let Ok(real) = std::fs::canonicalize(path) {
+        return real;
+    }
+    PathBuf::from(path)
+}
+
 /// Watches `path`; each settled burst of changes is added to `dirty` and announced on `tx`.
-pub fn make_watcher(path: &str, tx: mpsc::Sender<bool>, dirty: Arc<Mutex<Dirty>>) -> Option<Watcher> {
+pub fn make_watcher(path: &Path, tx: mpsc::Sender<bool>, dirty: Arc<Mutex<Dirty>>) -> Option<Watcher> {
     let mut d = new_debouncer(Duration::from_secs(2), None, move |res: DebounceEventResult| {
         let Ok(events) = res else {
             dirty.lock().unwrap().overflow = true;
@@ -479,7 +507,7 @@ pub fn make_watcher(path: &str, tx: mpsc::Sender<bool>, dirty: Arc<Mutex<Dirty>>
         }
     })
     .ok()?;
-    d.watch(Path::new(path), RecursiveMode::Recursive).ok()?;
+    d.watch(path, RecursiveMode::Recursive).ok()?;
     Some(d)
 }
 
@@ -521,7 +549,22 @@ mod tests {
         assert!(quick.partial);
         assert_eq!(quick.links, vec!["docs".to_string()]);
         let mut seen = HashMap::new();
-        assert_eq!(links_above(&root, ["docs/new.txt", "plain/new.txt", "new/x.txt"], &mut seen), vec!["docs".to_string()]);
+        assert_eq!(links_above(&root, ["docs/new.txt", "plain/new.txt", "new/x.txt"], true, &mut seen), vec!["docs".to_string()]);
+        // B4-2 (round 5): folders only, when asked: files are never looked at one by one
+        std::os::unix::fs::symlink(root.join("top.txt"), root.join("plain/l.txt")).unwrap();
+        let mut seen = HashMap::new();
+        assert!(links_above(&root, ["plain/l.txt", "top.txt"], false, &mut seen).is_empty());
+        assert_eq!(seen.keys().map(String::as_str).collect::<Vec<_>>(), vec!["plain"], "one lstat, for the folder");
+        assert_eq!(links_above(&root, ["plain/l.txt"], true, &mut HashMap::new()), vec!["plain/l.txt".to_string()]);
+        // B4-4 (round 5): the folder reached through a link in its own path; a change reported
+        // under the real path is still seen, and a change elsewhere means a full look
+        let via = root.with_extension("via");
+        std::os::unix::fs::symlink(&root, &via).unwrap();
+        assert_eq!(sync_root(&via.to_string_lossy()), root);
+        std::fs::write(root.join("plain/new.txt"), "n").unwrap();
+        let quick = rescan_dirty(&via, &gi, &base, &HashSet::from([root.join("plain/new.txt")]));
+        assert!(quick.files.contains_key("plain/new.txt") && !quick.partial, "a full look, not a change dropped");
+        let _ = std::fs::remove_file(&via);
         assert!(!scan_local(&root, &gi).partial);
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&away);
