@@ -50,6 +50,7 @@ export function Toolbar({
   onSearch,
   onStopSearch,
   onClearSearch,
+  onLeaveDown,
   dual = false,
   onPanes,
   onTerminal,
@@ -112,6 +113,8 @@ export function Toolbar({
   onSearch: (q: string) => void;
   onStopSearch: () => void;
   onClearSearch: () => void;
+  /** ↓ in the search field moved the keyboard to the list */
+  onLeaveDown?: () => void;
   /** more than one pane is on screen */
   dual?: boolean;
   /** the panes button (shows only with this): opens the panes menu (split four ways, size, close) */
@@ -332,9 +335,10 @@ export function Toolbar({
                 searchInput.current?.blur();
               }
               if (e.key === "ArrowDown") {
-                // hand the keyboard to the list
+                // hand the keyboard to the list (a blur alone would leave it on the page)
                 e.preventDefault();
-                searchInput.current?.blur();
+                e.currentTarget.closest(".browser-pane")?.querySelector<HTMLElement>("[data-list-focus]")?.focus({ preventScroll: true });
+                onLeaveDown?.();
               }
             }}
             placeholder={searchPlaceholder ?? "Filter, ↵ to search subfolders"}

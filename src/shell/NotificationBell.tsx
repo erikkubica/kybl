@@ -89,7 +89,11 @@ export function NotificationBell() {
           <div className="notif-head">
             <span>Notifications</span>
             {list.length > 0 && (
-              <button type="button" className="notif-clear" onClick={clearNotifications}>
+              <button type="button" className="notif-clear" onClick={() => {
+                  clearNotifications();
+                  // the button goes with the list: keep the keyboard on the bell, not on the page
+                  btn.current?.focus();
+                }}>
                 Clear all
               </button>
             )}

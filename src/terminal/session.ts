@@ -12,6 +12,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { LS } from "../browser/types";
+import { openLink } from "../openLink";
 import { IS_MAC } from "../components/pointer";
 import { confirmPaste, pasteTrusts, setPasteTrust, setTermImpl, takeFocusWhenShown, takeStartup, termNotice, termWriteWhy, type TermAction, type TermSpec, type TermWrite } from "./api";
 import { cleanPaste, PASTE_ASK_ALWAYS, PASTE_MAX, pasteNeedsConfirm } from "./quote";
@@ -104,6 +105,8 @@ class Session {
       macOptionClickForcesSelection: true,
       rightClickSelectsWord: MAC,
       theme: theme(),
+      // links the server prints (OSC 8) open in the system browser, never in a window of the app
+      linkHandler: { activate: (_e, uri) => void openLink(uri).catch(() => termNotice("That link can't be opened.")) },
     });
     this.term.loadAddon(this.fit);
     this.term.onData((d) => this.input(d, false));
