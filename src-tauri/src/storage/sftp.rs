@@ -859,6 +859,9 @@ impl Storage for SftpBackend {
                 if !keep {
                     self.remove_quietly(tmp).await;
                 }
+                if e.kind == ErrKind::NotFound {
+                    forget_dir_chain(&self.known_dirs, &parent_key(path));
+                }
                 return Err(e);
             }
         }

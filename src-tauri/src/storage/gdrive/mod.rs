@@ -692,19 +692,28 @@ impl Storage for GDrive {
         if keys.iter().any(|k| extras::components(k).map(|c| c.is_empty()).unwrap_or(true)) {
             return Err(StorageError::other("The top of a drive can't be deleted."));
         }
-        let counter = std::sync::atomic::AtomicU64::new(0);
+        // every item is resolved to its id before the first is trashed: a numbered duplicate
+        // ("a (2).txt") would otherwise point at another file once an earlier one is gone
+        let mut ids = Vec::with_capacity(keys.len());
+        for key in &keys {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(StorageError::cancelled());
+            }
+            if let Some(found) = self.resolve(root, key).await? {
+                ids.push((key.clone(), found.node.own_id));
+            }
+        }
+        let counter = std::sync::atomic::AtomicU64::new((total as usize - ids.len()) as u64);
         let done = &counter;
         {
-            let mut work = futures_util::stream::iter(keys.into_iter().map(|key: String| async move {
+            let mut work = futures_util::stream::iter(ids.into_iter().map(|(key, id): (String, String)| async move {
                 if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                     return Err(StorageError::cancelled());
                 }
-                if let Some(found) = self.resolve(root, &key).await? {
-                    match self.d().trash(&found.node.own_id).await {
-                        Ok(()) => {}
-                        Err(e) if e.kind == ErrKind::NotFound => {}
-                        Err(e) => return Err(e),
-                    }
+                match self.d().trash(&id).await {
+                    Ok(()) => {}
+                    Err(e) if e.kind == ErrKind::NotFound => {}
+                    Err(e) => return Err(e),
                 }
                 self.cache.forget(root, &key);
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -732,6 +741,24 @@ impl Storage for GDrive {
         self.copy_tree(src, parent, drive_name(name)).await?;
         self.cache.forget(&to.root, &dst_key);
         Ok(())
+    }
+
+    async fn pin_sources(&self, from: &[(Loc, bool)]) -> SResult<()> {
+        // resolve every source before the first moves: "a (2).txt" means the second file named
+        // a.txt *now*, and a move of the first one would make it mean another file
+        for (loc, is_dir) in from {
+            let key = if *is_dir { dir_key(&loc.path) } else { loc.path.clone() };
+            if let Some(found) = self.resolve(&loc.root, &key).await? {
+                self.cache.pin(&loc.root, &key, found.node);
+            }
+        }
+        Ok(())
+    }
+
+    async fn unpin_sources(&self, from: &[(Loc, bool)]) {
+        for (loc, is_dir) in from {
+            self.cache.forget(&loc.root, &if *is_dir { dir_key(&loc.path) } else { loc.path.clone() });
+        }
     }
 
     async fn rename(&self, from: &Loc, to: &Loc, is_dir: bool) -> SResult<()> {

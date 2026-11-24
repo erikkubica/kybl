@@ -92,6 +92,27 @@ impl Meta {
             ..Default::default()
         }
     }
+    /// The key of an entry found below the folder `top` ("" or ending with "/"), spelled the way
+    /// a listing of `top` spells it. Dropbox promises the right case only for the last part of
+    /// `path_display`: the part that is `top` is the caller's own, the last one is `name`.
+    pub fn key_under(&self, top: &str) -> String {
+        let key = self.key();
+        if !key.to_lowercase().starts_with(&top.to_lowercase()) {
+            return key;
+        }
+        let rest: String = key.chars().skip(top.chars().count()).collect();
+        let body = rest.trim_end_matches('/');
+        if body.is_empty() {
+            return top.to_string();
+        }
+        let dir = match body.rfind('/') {
+            Some(i) => &body[..=i],
+            None => "",
+        };
+        let name = if self.name.is_empty() { body.rsplit('/').next().unwrap_or_default() } else { self.name.as_str() };
+        format!("{top}{dir}{name}{}", if self.is_folder() { "/" } else { "" })
+    }
+
     /// The key in Kybl's terms ("a/b.txt", folders "a/b/").
     pub fn key(&self) -> String {
         let p = self.path_display.as_deref().unwrap_or(&self.name).trim_start_matches('/');
@@ -455,11 +476,11 @@ impl Storage for Dropbox {
                 .into_iter()
                 .filter(|m| m.tag != "deleted")
                 .map(|m| {
-                    let k = m.key();
+                    let k = m.key_under(&top);
                     (k, m)
                 })
-                // the folder itself comes back too
-                .filter(|(k, _)| k != &top)
+                // the folder itself comes back too (Dropbox may spell its case differently)
+                .filter(|(k, _)| k.to_lowercase() != top.to_lowercase())
                 .map(|(k, m)| m.entry(k))
                 .collect();
             Some((Ok(batch), st))
@@ -746,6 +767,15 @@ mod tests {
 
     fn api() -> Api {
         Api { http: client(), tokens: fixed("tok"), kind: ConnKind::Dropbox, max_wait: Duration::from_millis(5) }
+    }
+
+    #[test]
+    fn walk_keys_keep_the_callers_spelling_of_the_folder() {
+        let m: Meta = serde_json::from_value(json!({ ".tag": "file", "name": "x.JPG", "path_display": "/photos/2024/x.jpg" })).unwrap();
+        assert_eq!(m.key_under("Photos/"), "Photos/2024/x.JPG");
+        let f: Meta = serde_json::from_value(json!({ ".tag": "folder", "name": "Photos", "path_display": "/photos" })).unwrap();
+        assert_eq!(f.key_under("Photos/"), "Photos/", "the folder itself is still recognised");
+        assert_eq!(m.key_under(""), "photos/2024/x.JPG");
     }
 
     #[test]

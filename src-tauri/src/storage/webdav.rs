@@ -59,6 +59,9 @@ pub struct WebdavBackend {
     candidates: Vec<Url>,
     /// the one that did, ending with `/`
     base: OnceCell<Url>,
+    /// the path the server's own answer gives that folder (hrefs are under it): it differs from
+    /// the base's when a redirect, a proxy prefix or letter case changed it on the way
+    href_root: OnceCell<String>,
     user: String,
     password: Option<String>,
     name: String,
@@ -100,8 +103,13 @@ impl WebdavBackend {
             patient: http_waiting(&tls, PATIENT),
             candidates,
             base: OnceCell::new(),
-            user: cfg.user.trim().to_string(),
-            password,
+            href_root: OnceCell::new(),
+            user: effective_user(cfg),
+            password: password.or_else(|| {
+                // the address's own password goes with the address's own user
+                let url_pair = cfg.url.as_deref().and_then(|u| split_userinfo(u).1)?;
+                (cfg.user.trim().is_empty() || cfg.user.trim() == url_pair.0).then_some(url_pair.1).flatten()
+            }),
             name,
             caps: webdav_caps(),
             pages: PageCache::default(),
@@ -130,8 +138,13 @@ impl WebdavBackend {
                 let mut last = None;
                 for url in &self.candidates {
                     match self.probe(url).await {
-                        Ok(true) => return Ok(url.clone()),
-                        Ok(false) => {}
+                        Ok(Some(own)) => {
+                            if !own.is_empty() {
+                                let _ = self.href_root.set(own);
+                            }
+                            return Ok(url.clone());
+                        }
+                        Ok(None) => {}
                         // a wrong password, an unreachable server or its certificate won't get better at another path
                         Err(e) if matches!(e.kind, ErrKind::NeedsAuth | ErrKind::Network | ErrKind::UntrustedCert | ErrKind::CertChanged) => return Err(e),
                         Err(e) => last = Some(e),
@@ -143,16 +156,16 @@ impl WebdavBackend {
             .await
     }
 
-    /// Whether `url` answers as a WebDAV folder.
-    async fn probe(&self, url: &Url) -> SResult<bool> {
+    /// Whether `url` answers as a WebDAV folder: the path the answer gives the folder itself.
+    async fn probe(&self, url: &Url) -> SResult<Option<String>> {
         let resp = self.propfind(url.clone(), "0", PROPS).await?;
         match resp.status() {
             StatusCode::MULTI_STATUS => {
                 let items = parse_multistatus(&resp.text().await.map_err(http_error)?)?;
-                Ok(items.first().is_some_and(|i| i.is_dir))
+                Ok(items.first().filter(|i| i.is_dir).map(|i| href_path(&i.href).unwrap_or_default()))
             }
             StatusCode::UNAUTHORIZED => Err(wrong_login()),
-            StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED | StatusCode::FORBIDDEN | StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND => Ok(false),
+            StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED | StatusCode::FORBIDDEN | StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND => Ok(None),
             _ => Err(status_error(resp, "list").await),
         }
     }
@@ -176,7 +189,8 @@ impl WebdavBackend {
     /// The key of an href in a PROPFIND answer; None when it's outside the base.
     async fn key_of(&self, href: &str, is_dir: bool) -> SResult<Option<String>> {
         let base = self.base().await?;
-        Ok(key_of(base, href, is_dir))
+        let own = self.href_root.get().and_then(|r| key_in(r, href, is_dir));
+        Ok(own.or_else(|| key_of(base, href, is_dir)))
     }
 
     fn entry(key: String, i: &DavItem) -> Entry {
@@ -471,8 +485,10 @@ impl Storage for WebdavBackend {
                 }
                 let items = parse_multistatus(&resp.text().await.map_err(http_error)?)?;
                 let (mut folders, mut files) = (Vec::new(), Vec::new());
+                let mut inside = false;
                 for i in &items {
                     let Some(key) = self.key_of(&i.href, i.is_dir).await? else { continue };
+                    inside = true;
                     // the folder itself, or something that isn't directly inside it
                     if key == prefix || !key.starts_with(&prefix) || key[prefix.len()..].trim_end_matches('/').contains('/') {
                         continue;
@@ -483,6 +499,11 @@ impl Storage for WebdavBackend {
                     } else {
                         files.push(Self::entry(key, i));
                     }
+                }
+                // not even the folder itself is where the server said it was: an empty list
+                // would pass for an empty folder (and a sync for "nothing there")
+                if !items.is_empty() && !inside {
+                    return Err(StorageError::other("The server answered with addresses outside this folder. Check the address of the connection."));
                 }
                 self.remember_dir(&prefix);
                 Ok((folders, files))
@@ -626,6 +647,9 @@ impl Storage for WebdavBackend {
             Ok(r) => r,
             Err(e) => {
                 drop_tmp().await;
+                if e.kind == ErrKind::NotFound {
+                    forget_dir_chain(&self.known_dirs, &parent_key(path));
+                }
                 return if e.is_cancelled() { Ok(WriteOutcome::Cancelled) } else { Err(e) };
             }
         };
@@ -651,7 +675,11 @@ impl Storage for WebdavBackend {
             StatusCode::PRECONDITION_FAILED => Ok(WriteOutcome::Conflict(self.stat_url(path).await?)),
             _ => {
                 drop_tmp().await;
-                Err(status_error(resp, "upload").await)
+                let e = status_error(resp, "upload").await;
+                if e.kind == ErrKind::NotFound {
+                    forget_dir_chain(&self.known_dirs, &parent_key(path));
+                }
+                Err(e)
             }
         }
     }
@@ -722,12 +750,40 @@ impl Storage for WebdavBackend {
 
 // ---------------------------------------------------------------- addresses
 
+/// `https://user:pw@host/x` as (`https://host/x`, user, password), both percent-decoded. A
+/// password in the address would be saved in clear and shown wherever the address is, so it
+/// lives in the vault (and the User name field) instead.
+pub(crate) fn split_userinfo(raw: &str) -> (String, Option<(String, Option<String>)>) {
+    let raw = raw.trim();
+    let Some((scheme, rest)) = raw.split_once("://") else { return (raw.to_string(), None) };
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    // the last "@": a password may hold an unescaped one
+    let Some((info, host)) = rest[..end].rsplit_once('@') else { return (raw.to_string(), None) };
+    let decode = |s: &str| percent_decode_str(s).decode_utf8_lossy().into_owned();
+    let (user, pass) = match info.split_once(':') {
+        Some((u, p)) => (decode(u), Some(decode(p))),
+        None => (decode(info), None),
+    };
+    (format!("{scheme}://{host}{}", &rest[end..]), Some((user, pass)))
+}
+
+/// The user name to sign in with: the field, else the one typed into the address.
+fn effective_user(cfg: &NetConfig) -> String {
+    let user = cfg.user.trim();
+    if !user.is_empty() {
+        return user.to_string();
+    }
+    cfg.url.as_deref().and_then(|u| split_userinfo(u).1).map(|(u, _)| u).unwrap_or_default()
+}
+
 /// The addresses to try, best first: what was typed (with the folder), then, when that is just
 /// a server, Nextcloud's and ownCloud's WebDAV folders for the user.
 pub(crate) fn candidate_urls(cfg: &NetConfig) -> SResult<Vec<Url>> {
+    // a profile saved by an older build may carry "user:pw@" in the address: never part of a
+    // request URL (the backend signs in with the pair itself)
     let typed = match cfg.url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
-        Some(u) if u.contains("://") => u.to_string(),
-        Some(u) => format!("https://{u}"),
+        Some(u) if u.contains("://") => split_userinfo(u).0,
+        Some(u) => split_userinfo(&format!("https://{u}")).0,
         None => {
             let (host, port) = socket_addr(cfg, 0);
             let scheme = if cfg.tls == TlsMode::None { "http" } else { "https" };
@@ -762,7 +818,8 @@ pub(crate) fn candidate_urls(cfg: &NetConfig) -> SResult<Vec<Url>> {
     base.set_query(None);
     base.set_fragment(None);
     let mut out = vec![base];
-    let user = cfg.user.trim();
+    let user = effective_user(cfg);
+    let user = user.as_str();
     if server_only && !user.is_empty() {
         for prefix in ["remote.php/dav/files/", "nextcloud/remote.php/dav/files/"] {
             let mut u = url.clone();
@@ -795,9 +852,18 @@ fn url_of(base: &Url, key: &str) -> SResult<Url> {
 
 /// The key of an href (absolute URL or path, percent-encoded any which way), relative to `base`.
 fn key_of(base: &Url, href: &str, is_dir: bool) -> Option<String> {
+    key_in(&percent_decode_str(base.path()).decode_utf8_lossy(), href, is_dir)
+}
+
+/// The decoded path of an href (an absolute URL or a path).
+fn href_path(href: &str) -> Option<String> {
     let path = if href.contains("://") { Url::parse(href).ok()?.path().to_string() } else { href.split(['?', '#']).next()?.to_string() };
-    let decoded = percent_decode_str(&path).decode_utf8_lossy().into_owned();
-    let base_path = percent_decode_str(base.path()).decode_utf8_lossy().into_owned();
+    Some(percent_decode_str(&path).decode_utf8_lossy().into_owned())
+}
+
+/// The key of an href under the decoded folder path `base_path`.
+fn key_in(base_path: &str, href: &str, is_dir: bool) -> Option<String> {
+    let decoded = href_path(href)?;
     let rest = decoded.strip_prefix(base_path.trim_end_matches('/'))?;
     if !rest.is_empty() && !rest.starts_with('/') {
         return None;
@@ -1068,6 +1134,20 @@ mod tests {
     }
 
     #[test]
+    fn userinfo_in_the_address_is_split_off() {
+        let (clean, pair) = split_userinfo("https://al%40ice:p%3Aw@cloud.example.com:8443/dav/?a=b@c");
+        assert_eq!(clean, "https://cloud.example.com:8443/dav/?a=b@c");
+        assert_eq!(pair, Some(("al@ice".into(), Some("p:w".into()))));
+        assert_eq!(split_userinfo("https://bob@h/x").1, Some(("bob".into(), None)));
+        assert_eq!(split_userinfo("https://p@ss:w@h/").1, Some(("p@ss".into(), Some("w".into()))));
+        assert_eq!(split_userinfo("https://h/a@b"), ("https://h/a@b".into(), None));
+        let c = candidate_urls(&cfg(Some("https://alice:pw@cloud.example.com"), "", "", "")).unwrap();
+        assert_eq!(c[0].as_str(), "https://cloud.example.com/");
+        assert_eq!(c[1].as_str(), "https://cloud.example.com/remote.php/dav/files/alice/");
+        assert!(c.iter().all(|u| u.username().is_empty() && u.password().is_none()));
+    }
+
+    #[test]
     fn keys_and_urls() {
         let base = Url::parse("https://h/remote.php/dav/files/me/").unwrap();
         assert_eq!(url_of(&base, "a b/c#1.txt").unwrap().as_str(), "https://h/remote.php/dav/files/me/a%20b/c%231.txt");
@@ -1078,6 +1158,9 @@ mod tests {
         assert_eq!(key_of(&base, "https://h/remote.php/dav/files/me/a%20b/c%231.txt", false).as_deref(), Some("a b/c#1.txt"));
         assert_eq!(key_of(&base, "/remote.php/dav/files/me/", true).as_deref(), Some(""));
         assert_eq!(key_of(&base, "/remote.php/dav/files/meow/x", false), None);
+        // a server that calls the folder by another path (a redirect, a proxy prefix, other case)
+        assert_eq!(key_in("/remote.php/webdav", "/remote.php/webdav/a%20b/c.txt", false).as_deref(), Some("a b/c.txt"));
+        assert_eq!(key_in("/Photos", "/photos/x", false), None, "exact, but the folder's own answer is what is used");
         assert_eq!(WebdavBackend::chunk_home(&base).unwrap().as_str(), "https://h/remote.php/dav/uploads/me/");
         assert!(WebdavBackend::chunk_home(&Url::parse("https://nas/dav/").unwrap()).is_none());
     }
