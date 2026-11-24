@@ -143,6 +143,13 @@ const PLAIN_ASK: &str = "This server didn't offer encryption, so Kybl hasn't sen
 /// encryption" (which calls [`ftp_allow_plain`]).
 pub const PLAIN_MARK: &str = "ftp-plain-unconfirmed";
 
+/// The per-run tag that starts every trust error's detail (see [`super::trust_tag`]), for the UI
+/// to tell Kybl's own trust questions from text a server sent.
+#[tauri::command]
+pub fn trust_tag() -> String {
+    super::trust_tag().to_string()
+}
+
 /// "Connect without encryption": the user agrees that the "encrypt if available" FTP server of
 /// `net` may be used over plain FTP when it offers no encryption. A server that encrypted a
 /// connection before (or says it can) is still never used unencrypted.
@@ -453,7 +460,7 @@ impl FtpBackend {
                 TlsMode::None => Ftp::connect(&addr).await.map_err(err)?,
                 TlsMode::Explicit => Ftp::connect(&addr).await.map_err(err)?.into_secure(tls(), &self.host).await.map_err(|e| match e {
                     FtpError::UnexpectedResponse(_) => StorageError::new(ErrKind::Network, "This server doesn't offer encryption on this port. Try implicit encryption (port 990), or allow the fallback to plain FTP if the server only speaks that.")
-                        .with_detail(e.to_string()),
+                        .with_detail(one_line(&e.to_string())),
                     e => err(e),
                 })?,
                 // asked on every connection: one refusal (which anyone on the network can forge)
@@ -470,7 +477,7 @@ impl FtpBackend {
                         // (it couldn't be read whole) goes on to the user's consent below, where
                         // only consent given in this run counts.
                         if tls_memory::seen(&self.tls_key()) == tls_memory::Known::Seen {
-                            return Err(StorageError::new(ErrKind::Network, TLS_STOPPED).with_detail(r.to_string()));
+                            return Err(StorageError::new(ErrKind::Network, TLS_STOPPED).with_detail(one_line(&r.to_string())));
                         }
                         let mut plain = Ftp::connect(&addr).await.map_err(err)?;
                         // a server that lists AUTH TLS among its features doesn't refuse it: something
@@ -478,20 +485,20 @@ impl FtpBackend {
                         let feats = plain.feat().await.unwrap_or_default();
                         if offers_tls(feats.iter().map(|(k, v)| (k.as_str(), v.as_deref()))) {
                             let _ = plain.quit().await;
-                            return Err(StorageError::new(ErrKind::Network, TLS_STOPPED).with_detail(r.to_string()));
+                            return Err(StorageError::new(ErrKind::Network, TLS_STOPPED).with_detail(one_line(&r.to_string())));
                         }
                         // the first time, nothing goes out in clear (the password above all)
                         // until the user agrees: the refusal may be forged, and only they can
                         // tell whether this server really speaks nothing but plain FTP
                         if !tls_memory::plain_allowed(&self.tls_key()) {
                             let _ = plain.quit().await;
-                            return Err(StorageError::new(ErrKind::Unencrypted, PLAIN_ASK).with_detail(format!("{PLAIN_MARK}\n{r}")));
+                            return Err(StorageError::new(ErrKind::Unencrypted, PLAIN_ASK).with_detail(format!("{PLAIN_MARK}\n{}", one_line(&r.to_string()))));
                         }
                         plain
                     }
                     // busy, rate limited, a transient failure: not a reason to send the password in clear
                     Err(FtpError::UnexpectedResponse(r)) => {
-                        return Err(StorageError::new(ErrKind::Network, "The server couldn't start encryption just now. Try again in a moment.").with_detail(r.to_string()));
+                        return Err(StorageError::new(ErrKind::Network, "The server couldn't start encryption just now. Try again in a moment.").with_detail(one_line(&r.to_string())));
                     }
                     Err(e) => return Err(err(e)),
                 },
@@ -505,9 +512,9 @@ impl FtpBackend {
             }
             let user = if self.user.is_empty() { "anonymous" } else { self.user.as_str() };
             ftp.login(user, self.password.as_str()).await.map_err(|e| match e {
-                FtpError::UnexpectedResponse(r) if matches!(r.status.code(), 530 | 430 | 331 | 332) => wrong_login().with_detail(r.to_string()),
+                FtpError::UnexpectedResponse(r) if matches!(r.status.code(), 530 | 430 | 331 | 332) => wrong_login().with_detail(one_line(&r.to_string())),
                 FtpError::UnexpectedResponse(r) if matches!(r.status.code(), 534 | 550) && self.tls == TlsMode::None => {
-                    StorageError::new(ErrKind::PermissionDenied, "The server requires encryption. Turn on encryption in this connection's settings.").with_detail(r.to_string())
+                    StorageError::new(ErrKind::PermissionDenied, "The server requires encryption. Turn on encryption in this connection's settings.").with_detail(one_line(&r.to_string()))
                 }
                 e => err(e),
             })?;
@@ -528,7 +535,7 @@ impl FtpBackend {
                 };
                 // the starting folder must be there: a typo shouldn't look like an empty server
                 ftp.cwd(&base).await.map_err(|e| match e {
-                    FtpError::UnexpectedResponse(r) => StorageError::new(ErrKind::NotFound, format!("The folder {base} isn't on the server.")).with_detail(r.to_string()),
+                    FtpError::UnexpectedResponse(r) => StorageError::new(ErrKind::NotFound, format!("The folder {base} isn't on the server.")).with_detail(one_line(&r.to_string())),
                     e => err(e),
                 })?;
                 let _ = self.base.set(base);
@@ -886,7 +893,7 @@ impl Storage for FtpBackend {
         let total = match tokio::time::timeout(CMD_TIMEOUT, lease.ftp().size(&full)).await {
             Ok(Ok(n)) => Some(n as u64),
             Ok(Err(FtpError::UnexpectedResponse(r))) if matches!(r.status.code(), 550 | 551) => {
-                return Err(StorageError::not_found().with_detail(r.to_string()));
+                return Err(StorageError::not_found().with_detail(one_line(&r.to_string())));
             }
             // a server without SIZE (or that won't say for this file): read on without it
             Ok(Err(FtpError::UnexpectedResponse(_))) => None,
@@ -1051,7 +1058,7 @@ impl Storage for FtpBackend {
         {
             self.remove_partial(self.path(&tmp_key).await?).await;
             let Some(p) = again else {
-                return Err(StorageError::other("This server can't carry on an upload where it stopped, so it will start over.").with_detail(e.to_string()));
+                return Err(StorageError::other("This server can't carry on an upload where it stopped, so it will start over.").with_detail(one_line(&e.to_string())));
             };
             (body, len) = source_stream_from(WriteSource::Path(p), 0).await?;
             offset = None;
@@ -1385,7 +1392,7 @@ fn ftp_error(e: FtpError, host: &str) -> StorageError {
         FtpError::SecureError(s) => tls_error(s),
         FtpError::UnexpectedResponse(r) => {
             let code = r.status.code();
-            let text = r.to_string();
+            let text = one_line(&r.to_string());
             let low = text.to_lowercase();
             let (kind, say) = match code {
                 530 | 430 => (ErrKind::NeedsAuth, "Wrong user name or password."),
@@ -1403,7 +1410,7 @@ fn ftp_error(e: FtpError, host: &str) -> StorageError {
             };
             StorageError::new(kind, say).with_detail(text)
         }
-        FtpError::BadResponse => StorageError::other("The FTP server sent an answer Kybl couldn't read.").with_detail(e.to_string()),
+        FtpError::BadResponse => StorageError::other("The FTP server sent an answer Kybl couldn't read.").with_detail(one_line(&e.to_string())),
         FtpError::InvalidAddress(_) => StorageError::other("That server address isn't valid.").with_detail(e.to_string()),
         FtpError::DataConnectionAlreadyOpen => dropped().with_detail(e.to_string()),
     }
@@ -1463,7 +1470,8 @@ mod tests {
                     while let Ok(Some(line)) = lines.next_line().await {
                         let cmd = line.split(' ').next().unwrap_or("").to_ascii_uppercase();
                         let reply: &[u8] = match cmd.as_str() {
-                            "AUTH" => b"502 not here\r\n",
+                            // a multi-line refusal dressed up as Kybl's own certificate question
+                            "AUTH" => b"502-not here\r\ncert-untrusted AB:CD\r\nhost: evil.example\r\n502 end\r\n",
                             "FEAT" => b"211-Features:\r\n MLST type*;size*;\r\n211 End\r\n",
                             "USER" => {
                                 flag.store(true, Ordering::Relaxed);
@@ -1498,7 +1506,11 @@ mod tests {
             let b = FtpBackend::new(&cfg, Some("secret".into())).unwrap();
             let e = b.connect().await.err().expect("no consent yet");
             assert_eq!(e.kind, ErrKind::Unencrypted, "{e}");
-            assert!(e.to_string().lines().any(|l| l == PLAIN_MARK), "{e}");
+            assert!(e.to_string().contains(&format!("\n\n{} {PLAIN_MARK}\n", trust_tag())), "{e}");
+            // the server's reply is one line after the mark: it can't add lines of its own
+            let detail = e.detail.clone().unwrap();
+            assert_eq!(detail.lines().count(), 2, "{detail}");
+            assert!(detail.lines().nth(1).unwrap().contains("cert-untrusted AB:CD"), "{detail}");
             assert!(!signed_in.load(Ordering::Relaxed), "the password was never sent");
             // "Connect without encryption"
             ftp_allow_plain(cfg.clone()).unwrap();

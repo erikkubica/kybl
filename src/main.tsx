@@ -3,6 +3,8 @@ import ReactDOM from "react-dom/client";
 import "@fontsource/fredoka/latin-700.css";
 import "./styles.css";
 import { applySettings, loadSettings } from "./settings";
+import { api } from "./api";
+import { setTrustTag } from "./connections/kinds";
 
 // before first paint, so the window never flashes the wrong theme
 applySettings(loadSettings());
@@ -47,6 +49,13 @@ async function boot() {
   // Plain `pnpm dev` in a browser has no Rust backend: fall back to demo data.
   if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) {
     await import("./devMock");
+  }
+  // the tag that marks Kybl's own trust questions (a host key, a certificate, plain FTP), before
+  // any error can ask one
+  try {
+    setTrustTag(await api.trustTag());
+  } catch {
+    /* no trust questions this run: a connection that needs one shows its error */
   }
   // Phones get their own touch UI over the same backend. `?mobile` forces it in a desktop browser.
   const phone =

@@ -38,7 +38,7 @@ test("names that change on the way to disk are judged by both", () => {
   for (const n of ["payload.exe\\", "x.exe\\..", "x.terminal\\", "x.fileloc\\", "x.pkg\\.", "x.exe\\.\\"]) {
     assert.ok(!runsCode(n), `${n} alone would slip through`);
     assert.ok(asksFirst(n, "default"), n);
-    assert.ok(asksFirst(n, "picked"), `${n}: not a script, so asked whatever the app`);
+    assert.ok(asksFirst(n, "editor"), `${n}: not a script, so asked whatever the app`);
   }
 });
 
@@ -56,39 +56,70 @@ test("a long name is judged by its real (last) extension", () => {
   assert.ok(asksFirst(`${"A".repeat(300)}.txt.exe`, "default"));
 });
 
-test("a script going to an editor the person picked isn't asked about", () => {
+test("a script going to a known text editor isn't asked about", () => {
   for (const n of ["deploy.sh", "app.js", "index.php", "tool.py", "x.ps1", "run.bat", "a.rb", "b.pl", "x.command", "fix.reg"]) {
     assert.ok(asksFirst(n, "default"), `${n} in its default app`);
-    assert.ok(asksFirst(n, "runner"), `${n} in a terminal or interpreter`);
-    assert.ok(!asksFirst(n, "picked"), `${n} in an editor`);
+    assert.ok(asksFirst(n, "other"), `${n} in any other app`);
+    assert.ok(!asksFirst(n, "editor"), `${n} in an editor`);
   }
   // programs, installers, macro documents: the picked app is the one that runs them
   for (const n of ["setup.exe", "Kybl.pkg", "x.dmg", "macro.docm", "corp.mobileconfig", "tool.jar", "x.app", "x.pyc", "x.scpt"]) {
-    assert.ok(asksFirst(n, "picked"), n);
+    assert.ok(asksFirst(n, "editor"), n);
   }
 });
 
-test("which apps run what they open", () => {
+test("only known text editors count as editors", () => {
   assert.equal(openerOf(undefined, false), "default");
   assert.equal(openerOf(null, false), "default");
   assert.equal(openerOf("", false), "default");
-  assert.equal(openerOf("/Applications/Visual Studio Code.app", true), "default");
-  const runners = [
+  assert.equal(openerOf("/Applications/Preview.app", true), "default");
+  // an editor that is the type's default only shows it too
+  assert.equal(openerOf("/Applications/Visual Studio Code.app", true), "editor");
+  const editors = [
+    "/Applications/Visual Studio Code.app",
+    "/Applications/Sublime Text.app",
+    "/System/Applications/TextEdit.app",
+    "/Applications/BBEdit.app",
+    "C:\\Program Files\\Notepad++\\notepad++.exe",
+    "/Applications/Xcode.app",
+    "/Applications/Zed.app",
+    "/Applications/Nova.app",
+    "/Applications/CotEditor.app",
+    "/Applications/PyCharm Community Edition.app",
+    "/Applications/IntelliJ IDEA CE.app",
+    "org.gnome.TextEditor.desktop",
+    "org.kde.kate.desktop",
+    "/Applications/Cursor.app/",
+  ];
+  for (const p of editors) assert.equal(openerOf(p, false), "editor", p);
+  // apps that run what they open, or might: asked about
+  const others = [
     "/System/Applications/Utilities/Terminal.app",
     "/Applications/iTerm.app",
+    "/Applications/Rio.app",
+    "/Applications/WaveTerm.app",
+    "/Applications/Termius.app",
     "/Applications/Python 3.12/Python Launcher 3.app",
-    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-    "C:\\Windows\\System32\\wscript.exe",
-    "C:\\Windows\\System32\\cmd.exe",
-    "/usr/bin/python3",
-    "/usr/bin/bash",
-    "org.gnome.Terminal.desktop",
-    "/Applications/Ghostty.app",
-    "/Applications/Warp.app",
+    "/Applications/Adobe Photoshop 2026/Adobe Photoshop 2026.app",
+    "/Applications/Adobe Illustrator 2026/Adobe Illustrator.app",
+    "/Applications/Adobe After Effects 2026/Adobe After Effects 2026.app",
+    "/Applications/CrossOver.app",
+    "/Applications/Whisky.app",
+    "/Applications/Wine Stable.app",
+    "/Applications/Parallels Desktop.app",
+    "/System/Library/CoreServices/Finder.app",
     "/System/Library/CoreServices/Installer.app",
     "/usr/bin/node",
+    "C:\\Windows\\System32\\wscript.exe",
+    "/Applications/Not Code.app",
+    "/Applications/Codex.app",
   ];
-  for (const p of runners) assert.equal(openerOf(p, false), "runner", p);
-  const editors = ["/Applications/Visual Studio Code.app", "/Applications/Sublime Text.app", "/System/Applications/TextEdit.app", "/Applications/BBEdit.app", "C:\\Program Files\\Notepad++\\notepad++.exe", "/Applications/Xcode.app", "/Applications/Zed.app", "/Applications/Nova.app"];
-  for (const p of editors) assert.equal(openerOf(p, false), "picked", p);
+  for (const p of others) assert.equal(openerOf(p, false), "other", p);
+});
+
+test("automation imports, VPN profiles, VM bundles and saved searches are asked about", () => {
+  for (const n of ["x.search-ms", "x.scptd", "x.kmmacros", "x.alfredworkflow", "x.bttpreset", "corp.tblk", "corp.ovpn", "win.vmwarevm", "win.vmx", "win.pvm", "x.slp", "x.osax"]) {
+    assert.ok(runsCode(n), n);
+    assert.ok(asksFirst(n, "editor"), `${n}: not a plain script`);
+  }
 });

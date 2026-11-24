@@ -203,6 +203,7 @@ pub fn run() {
             import::import_apply,
             commands::test_connection,
             storage::ftp::ftp_allow_plain,
+            storage::ftp::trust_tag,
             commands::list_buckets,
             commands::create_bucket,
             commands::list_objects,

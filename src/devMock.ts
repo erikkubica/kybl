@@ -648,7 +648,9 @@ function serverListing(pid: string, bucket: string, prefix: string, token: strin
     folderInfo,
   };
 }
-const HOST_KEY_UNKNOWN = "Kybl hasn't connected to this server before. Check that the server's fingerprint matches, then trust it to connect.\n\nhost-key-unknown SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8";
+/** Starts a trust error's detail, as the backend's per-run tag does (src-tauri/src/storage/mod.rs). */
+const TRUST_TAG = "kybl:0123456789abcdef0123456789abcdef";
+const HOST_KEY_UNKNOWN = `Kybl hasn't connected to this server before. Check that the server's fingerprint matches, then trust it to connect.\n\n${TRUST_TAG} host-key-unknown SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8`;
 /**
  * A server with its own certificate: FTP and WebDAV hosts named "nas.…" (like Office NAS) answer
  * with it until it's trusted; hosts with "changed" in the name present another one than the
@@ -660,7 +662,7 @@ function ownCertCheck(host: string, pin: string | null | undefined) {
   if (pin && norm(pin) === norm(OWN_CERT.fp)) return;
   const name = host.replace(/^\w+:\/\//, "").split(/[/:]/)[0];
   const detail = (first: string) =>
-    `${first}\nreason: self-signed, wrong-name\nhost: ${name}\nname: ${OWN_CERT.name}\nissuer: ${OWN_CERT.issuer}\nvalid-from: ${OWN_CERT.from}\nvalid-until: ${OWN_CERT.until}\ntls: invalid peer certificate: certificate refused`;
+    `${TRUST_TAG} ${first}\nreason: self-signed, wrong-name\nhost: ${name}\nname: ${OWN_CERT.name}\nissuer: ${OWN_CERT.issuer}\nvalid-from: ${OWN_CERT.from}\nvalid-until: ${OWN_CERT.until}\ntls: invalid peer certificate: certificate refused`;
   if (!pin)
     throw `The server's security certificate isn't trusted. The server signed it itself. It's made out to ${OWN_CERT.name}, not ${name}. If you know this server, check its certificate and trust it to connect.\n\n${detail(`cert-untrusted ${OWN_CERT.fp}`)}`;
   throw `The server's certificate changed since you trusted it. Someone may be intercepting the connection, so Kybl didn't connect. If you know it was renewed or replaced, check the new one and trust it.\n\n${detail(`cert-changed ${OWN_CERT.fp} expected ${pin}`)}`;
@@ -673,7 +675,7 @@ function otherConnect(p: Profile, secret: string | null) {
   if (p.kind === "sftp" && n) {
     // a host with "changed" in its name pretends to have been reinstalled since it was trusted
     if (/changed/.test(n.host) && n.hostKey && n.hostKey !== "SHA256:Zm9yZ2VkLWtleS1mb3ItdGhlLWNoYW5nZWQtc2VydmVy")
-      throw `The server's identity changed. Someone may be intercepting the connection, so Kybl didn't connect. If the server was reinstalled or its key replaced, remove the saved fingerprint in the connection's settings and connect again.\n\nhost-key-changed SHA256:Zm9yZ2VkLWtleS1mb3ItdGhlLWNoYW5nZWQtc2VydmVy expected ${n.hostKey}`;
+      throw `The server's identity changed. Someone may be intercepting the connection, so Kybl didn't connect. If the server was reinstalled or its key replaced, remove the saved fingerprint in the connection's settings and connect again.\n\n${TRUST_TAG} host-key-changed SHA256:Zm9yZ2VkLWtleS1mb3ItdGhlLWNoYW5nZWQtc2VydmVy expected ${n.hostKey}`;
     // (so trusting it there leads straight to the "identity changed" warning)
     if (!n.hostKey) throw HOST_KEY_UNKNOWN;
   }
@@ -896,6 +898,8 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       }
       if (!a.profile.endpoint) throw "Endpoint is required";
       return "Connected. 4 buckets visible.";
+    case "trust_tag":
+      return TRUST_TAG;
     case "ftp_allow_plain":
       return null;
     case "create_bucket":
