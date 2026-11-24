@@ -623,12 +623,12 @@ impl FtpBackend {
 
     /// The folder `dir` (a server path), straight from the server: each name's fields, and the
     /// permissions, owner, group and link target its line gives.
-    async fn list_raw(&self, path: &str) -> SResult<Vec<(FtpFile, Entry)>> {
+    async fn list_raw(&self, path: &str) -> SResult<Vec<(Listed, Entry)>> {
         self.list_raw_as(path, self.feats.get().is_some_and(|f| f.mlsd)).await
     }
 
     /// `mlsd`: false lists with LIST, the only listing that always shows links as links.
-    async fn list_raw_as(&self, path: &str, mlsd: bool) -> SResult<Vec<(FtpFile, Entry)>> {
+    async fn list_raw_as(&self, path: &str, mlsd: bool) -> SResult<Vec<(Listed, Entry)>> {
         let path = path.to_string();
         let lines = self
             .run(path.clone(), move |ftp, _| {
@@ -648,25 +648,39 @@ impl FtpBackend {
             })
             .await?;
         let (mlsd, lines) = lines;
-        Ok(lines
-            .iter()
-            .filter_map(|l| {
-                let f = if mlsd { ListParser::parse_mlsd(l).ok() } else { FtpFile::try_from(l.as_str()).ok() }?;
-                let mut meta = line_meta(l, mlsd);
-                meta.link = f.symlink().map(|t| t.to_string_lossy().into_owned()).filter(|t| !t.is_empty());
-                Some((f, meta))
-            })
-            .filter(|(f, _)| !matches!(f.name(), "." | "..") && !f.name().contains('/'))
-            .collect())
+        let mut out = Vec::with_capacity(lines.len());
+        let (mut unread, mut first) = (0, None);
+        for l in &lines {
+            match parse_line(l, mlsd) {
+                Ok(Some(f)) => {
+                    let mut meta = line_meta(l, mlsd);
+                    meta.link = f.link.clone();
+                    if !matches!(f.name(), "." | "..") && !f.name().contains('/') {
+                        out.push((f, meta));
+                    }
+                }
+                Ok(None) => {}
+                Err(()) => {
+                    unread += 1;
+                    first.get_or_insert(l.as_str());
+                }
+            }
+        }
+        // an entry left out would make a copy or a sync report success with files missing
+        if unread > 0 {
+            let what = if unread == 1 { "1 item in this folder couldn't be read".to_string() } else { format!("{unread} items in this folder couldn't be read") };
+            return Err(StorageError::other(format!("{what}: the server lists them in a way Kybl doesn't understand.")).with_detail(first.unwrap_or_default().to_string()));
+        }
+        Ok(out)
     }
 
-    fn entry(key: String, f: &FtpFile, meta: &Entry) -> Entry {
+    fn entry(key: String, f: &Listed, meta: &Entry) -> Entry {
         let modified = f.modified().duration_since(UNIX_EPOCH).ok().map(|d| d.as_millis() as i64).filter(|m| *m > 0);
         let size = f.size() as u64;
         Entry { etag: Some(weak_etag(size, modified)), size: size as i64, modified, key, ..meta.clone() }
     }
 
-    fn folder(key: String, f: &FtpFile, meta: &Entry) -> Entry {
+    fn folder(key: String, f: &Listed, meta: &Entry) -> Entry {
         let modified = f.modified().duration_since(UNIX_EPOCH).ok().map(|d| d.as_millis() as i64).filter(|m| *m > 0);
         Entry { key, modified, ..meta.clone() }
     }
@@ -784,19 +798,25 @@ impl FtpBackend {
                 e => Err(ftp_error(e, &self.host)),
             };
         }
-        let mut up: Xfer = match lease.ftp().put_with_stream(path).await {
-            Ok(x) => x,
+        // opening the data connection and waiting for the 150 have a limit too: a firewall that
+        // drops the passive ports would hold the connection for the system's connect timeout
+        let mut up: Xfer = match tokio::time::timeout(CMD_TIMEOUT, lease.ftp().put_with_stream(path)).await {
+            Ok(Ok(x)) => x,
             // refused before any byte went: the caller may try another name. After a REST the
             // connection goes: a server may keep the restart offset for the next STOR on it (a
             // retry from byte 0 would then land at the old offset)
-            Err(FtpError::UnexpectedResponse(r)) => {
+            Ok(Err(FtpError::UnexpectedResponse(r))) => {
                 lease.healthy = offset.is_none();
                 let code = r.status.code();
                 return Ok(Stored::Refused(ftp_error_at(FtpError::UnexpectedResponse(r), &self.host, path), code));
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 lease.healthy = false;
                 return Err(ftp_error(e, &self.host));
+            }
+            Err(_) => {
+                lease.healthy = false;
+                return Err(data_connection_timed_out());
             }
         };
         // nothing else may run on this connection until the transfer is finished
@@ -907,6 +927,12 @@ enum SizeProbe {
 
 /// Whether a STOR refused after REST says the server can't restart a transfer (its temporary
 /// file is then of no use): "not implemented" and the like, or a 550/553 that isn't about space.
+/// The data connection didn't open (or the 150 never came) within the time limit: the same
+/// thing a 425 says.
+fn data_connection_timed_out() -> StorageError {
+    StorageError::new(ErrKind::Network, "Couldn't open a data connection to the server. A firewall may be blocking passive mode.")
+}
+
 /// A passing answer (421, 425, 450) or one about space or quota (452, 552) keeps the partial
 /// file for the next try.
 /// `path`: the name the command was about, which servers repeat in their answer.
@@ -1117,9 +1143,10 @@ impl Storage for FtpBackend {
         if start > 0 {
             lease.ftp().resume_transfer(start as usize).await.map_err(|e| ftp_error(e, &self.host))?;
         }
-        let down: Xfer = match lease.ftp().retr_as_stream(&full).await {
-            Ok(x) => x,
-            Err(e) => {
+        let down: Xfer = match tokio::time::timeout(CMD_TIMEOUT, lease.ftp().retr_as_stream(&full)).await {
+            Ok(Ok(x)) => x,
+            Err(_) => return Err(data_connection_timed_out()),
+            Ok(Err(e)) => {
                 // a refused RETR leaves the connection usable, unless a REST went first (the
                 // server may keep its offset for the next transfer on it)
                 lease.healthy = trusted && matches!(e, FtpError::UnexpectedResponse(_)) && start == 0;
@@ -1259,7 +1286,12 @@ impl Storage for FtpBackend {
         let written = if direct.is_some() { target.clone() } else { self.path(&tmp_key).await? };
         let failed = match stored {
             Ok(Stored::Done) => None,
-            Ok(Stored::Refused(e, _)) => return Err(e),
+            Ok(Stored::Refused(e, _)) => {
+                if e.kind == ErrKind::NotFound {
+                    forget_dir_chain(&self.known_dirs, &parent_key(path));
+                }
+                return Err(e);
+            }
             Ok(Stored::Cancelled) => Some(None),
             Err(e) => Some(Some(e)),
         };
@@ -1272,6 +1304,9 @@ impl Storage for FtpBackend {
             return match err {
                 None => Ok(WriteOutcome::Cancelled),
                 Some(mut e) => {
+                    if e.kind == ErrKind::NotFound {
+                        forget_dir_chain(&self.known_dirs, &parent_key(path));
+                    }
                     if direct == Some(true) {
                         e.message = format!("{} This server doesn't allow temporary names, so the file was being replaced in place and may be incomplete now.", e.message);
                     }
@@ -1536,6 +1571,236 @@ fn remove_after_failed_store(direct: Option<bool>) -> bool {
 /// The permissions, owner and group a listing line gives, where it gives them: MLSD's
 /// `UNIX.mode`, `UNIX.owner` / `UNIX.uid` and `UNIX.group` / `UNIX.gid` facts, or a Unix
 /// `ls -l` line ("-rwxr-xr-x 1 owner group size date name").
+/// A listing line read into a file, with what suppaftp's `File` can't carry: the name as the
+/// line has it (leading spaces kept) and a link's target.
+struct Listed {
+    f: FtpFile,
+    name: String,
+    link: Option<String>,
+}
+
+impl std::ops::Deref for Listed {
+    type Target = FtpFile;
+    fn deref(&self) -> &FtpFile {
+        &self.f
+    }
+}
+
+impl Listed {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// One line of a listing: Ok(None) is no entry (a blank line, "total 12", a socket or device
+/// that isn't a file), Err a line that couldn't be read. suppaftp's parser goes first; what it
+/// rejects (ACL marks, localised months, `OS.unix=slink` types, 4-digit DOS years) is rebuilt in
+/// the form it knows, so an entry is never silently left out. (Its generic `File::try_from`
+/// falls back to the MLST parser, which takes any line for a file named after the whole line.)
+fn parse_line(line: &str, mlsd: bool) -> Result<Option<Listed>, ()> {
+    let line = line.trim_end_matches(['\r', '\n']);
+    if line.trim().is_empty() || (!mlsd && line.trim().to_ascii_lowercase().starts_with("total ")) {
+        return Ok(None);
+    }
+    if mlsd {
+        return parse_mlsd_line(line);
+    }
+    if let Some(p) = posix_parts(line) {
+        if matches!(p.kind, 'c' | 'b' | 's' | 'p') {
+            return Ok(None);
+        }
+        let f = ListParser::parse_posix(line).ok().or_else(|| ListParser::parse_posix(&p.canonical()).ok()).ok_or(())?;
+        let (name, link) = match p.name.split_once(" -> ") {
+            Some((n, t)) => (n, Some(t.to_string())),
+            None => (p.name, None),
+        };
+        // the library's regex eats a name's leading spaces
+        let name = if name.trim_start() == f.name() { name.to_string() } else { f.name().to_string() };
+        return Ok(Some(Listed { f, name, link: link.filter(|t| !t.is_empty()) }));
+    }
+    let f = ListParser::parse_dos(line).ok().or_else(|| dos_canonical(line).and_then(|c| ListParser::parse_dos(&c).ok())).ok_or(())?;
+    Ok(Some(Listed { name: f.name().to_string(), f, link: None }))
+}
+
+fn parse_mlsd_line(line: &str) -> Result<Option<Listed>, ()> {
+    let (facts, name) = match line.strip_prefix(' ') {
+        Some(n) => ("", n),
+        None => line.split_once("; ").ok_or(())?,
+    };
+    let mut link = None;
+    let f = match ListParser::parse_mlsd(line) {
+        Ok(f) => {
+            link = f.symlink().map(|t| t.to_string_lossy().into_owned());
+            f
+        }
+        Err(_) => {
+            // RFC 3659 allows `type=OS.unix=slink:/target`; the other facts are read leniently
+            let (mut ty, mut size, mut modify, mut mode) = ("file", String::new(), String::new(), String::new());
+            for fact in facts.split(';') {
+                let Some((k, v)) = fact.split_once('=') else { continue };
+                match k.to_ascii_lowercase().as_str() {
+                    "type" => {
+                        let lower = v.to_ascii_lowercase();
+                        ty = match lower.as_str() {
+                            "dir" | "cdir" | "pdir" => "dir",
+                            "link" => "link",
+                            t if t.starts_with("os.unix=slink") || t.starts_with("os.unix=symlink") => {
+                                link = v.split_once(':').map(|(_, t)| t.to_string());
+                                "link"
+                            }
+                            // fifos, sockets and devices aren't files
+                            t if t.starts_with("os.") => return Ok(None),
+                            _ => "file",
+                        };
+                    }
+                    "size" if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()) => size = format!("size={v};"),
+                    "modify" => modify = format!("modify={v};"),
+                    "unix.mode" if v.len() >= 3 && v.bytes().all(|b| (b'0'..=b'7').contains(&b)) => mode = format!("unix.mode={};", &v[v.len().saturating_sub(4)..]),
+                    _ => {}
+                }
+            }
+            // a time it can't read is the only thing left to drop
+            ListParser::parse_mlsd(&format!("type={ty};{size}{modify}{mode} {name}"))
+                .or_else(|_| ListParser::parse_mlsd(&format!("type={ty};{size}{mode} {name}")))
+                .map_err(|_| ())?
+        }
+    };
+    Ok(Some(Listed { name: name.to_string(), f, link: link.filter(|t| !t.is_empty()) }))
+}
+
+/// The fields of an `ls -l` line, however the server dresses them.
+struct PosixLine<'a> {
+    kind: char,
+    mode: &'a str,
+    owner: &'a str,
+    group: &'a str,
+    size: &'a str,
+    month: &'a str,
+    day: &'a str,
+    year_or_time: &'a str,
+    /// everything after the date, leading spaces kept (and a link's " -> target")
+    name: &'a str,
+}
+
+fn posix_parts<'a>(line: &'a str) -> Option<PosixLine<'a>> {
+    let mut rest: &'a str = line;
+    let mut tok = || -> Option<&'a str> {
+        let r = rest.trim_start();
+        let end = r.find(char::is_whitespace).unwrap_or(r.len());
+        if end == 0 {
+            return None;
+        }
+        let (t, after) = r.split_at(end);
+        rest = after;
+        Some(t)
+    };
+    let perm = tok()?;
+    let kind = perm.chars().next()?;
+    // 9 mode characters, then what some systems add: "+" (ACL), "@" (xattrs), "." (SELinux)
+    if !"-dlcbsp".contains(kind) || perm.len() < 10 {
+        return None;
+    }
+    let (mode, mark) = (perm.get(1..10)?, perm.get(10..)?);
+    if !mode.chars().all(|c| "rwxsStTl-".contains(c)) || !mark.chars().all(|c| "+@.".contains(c)) {
+        return None;
+    }
+    let _links = tok()?;
+    let (owner, group, size) = (tok()?, tok()?, tok()?);
+    let (month, day, year_or_time) = (tok()?, tok()?, tok()?);
+    if !size.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    // the name starts one space after the date: more spaces belong to it
+    let name = rest.strip_prefix(char::is_whitespace)?;
+    if name.is_empty() {
+        return None;
+    }
+    Some(PosixLine { kind, mode, owner, group, size, month, day, year_or_time, name })
+}
+
+impl PosixLine<'_> {
+    /// The line the way suppaftp's regex wants it.
+    fn canonical(&self) -> String {
+        let kind = match self.kind {
+            'd' => 'd',
+            'l' => 'l',
+            _ => '-',
+        };
+        let mode: String = self.mode.chars().map(|c| if c == 'l' { '-' } else { c }).collect();
+        let (month, day, when) = match month_number(self.month) {
+            Some(m) if !self.day.is_empty() && self.day.bytes().all(|b| b.is_ascii_digit()) => (MONTHS[m], self.day, self.year_or_time),
+            // a date it can't read is shown as none (the epoch)
+            _ => ("Jan", "1", "1970"),
+        };
+        format!("{kind}{mode} 1 {} {} {} {month} {day} {when} {}", self.owner, self.group, self.size, self.name.trim_start())
+    }
+}
+
+const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/// 0-based month from an English, German, French, Spanish, Italian or Dutch abbreviation.
+fn month_number(word: &str) -> Option<usize> {
+    let w = word.trim_end_matches('.').to_lowercase();
+    if w.starts_with("juin") {
+        return Some(5);
+    }
+    if w.starts_with("juil") {
+        return Some(6);
+    }
+    let w: String = w.chars().take(3).collect();
+    Some(match w.as_str() {
+        "jan" | "ene" | "gen" => 0,
+        "feb" | "fév" | "fev" => 1,
+        "mar" | "mär" | "mrt" | "mrz" => 2,
+        "apr" | "avr" | "abr" => 3,
+        "may" | "mai" | "mei" | "mag" => 4,
+        "jun" | "giu" => 5,
+        "jul" | "lug" => 6,
+        "aug" | "aoû" | "aou" | "ago" => 7,
+        "sep" | "set" => 8,
+        "oct" | "okt" | "ott" => 9,
+        "nov" => 10,
+        "dec" | "dez" | "déc" | "dic" => 11,
+        _ => return None,
+    })
+}
+
+/// A DOS (IIS) line with a 4-digit year or a 24-hour time, in the 2-digit-year, AM/PM form
+/// suppaftp reads.
+fn dos_canonical(line: &str) -> Option<String> {
+    let mut rest = line;
+    let mut tok = || -> Option<&str> {
+        let r = rest.trim_start();
+        let end = r.find(char::is_whitespace).unwrap_or(r.len());
+        if end == 0 {
+            return None;
+        }
+        let (t, after) = r.split_at(end);
+        rest = after;
+        Some(t)
+    };
+    let (date, time, third) = (tok()?, tok()?, tok()?);
+    let name = rest.trim_start();
+    let mut d = date.split('-');
+    let (mm, dd, yy) = (d.next()?, d.next()?, d.next()?);
+    if d.next().is_some() || ![mm, dd, yy].iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) || name.is_empty() {
+        return None;
+    }
+    let yy = &yy[yy.len().saturating_sub(2)..];
+    let upper = time.to_ascii_uppercase();
+    let (clock, ampm) = match upper.strip_suffix("AM").map(|c| (c, "AM")).or_else(|| upper.strip_suffix("PM").map(|c| (c, "PM"))) {
+        Some((c, a)) => (c.to_string(), Some(a)),
+        None => (upper.clone(), None),
+    };
+    let (h, m) = clock.split_once(':')?;
+    let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
+    let (h, ampm) = match ampm {
+        Some(a) => (h, a),
+        None => (if h % 12 == 0 { 12 } else { h % 12 }, if h >= 12 { "PM" } else { "AM" }),
+    };
+    Some(format!("{mm}-{dd}-{yy}  {h:02}:{m:02}{ampm} {third} {name}"))
+}
+
 fn line_meta(line: &str, mlsd: bool) -> Entry {
     let mut e = Entry::default();
     if mlsd {
@@ -1971,12 +2236,55 @@ mod tests {
     fn listings_parse_both_ways() {
         let f = ListParser::parse_mlsd("type=file;size=12;modify=20261122100000; a b.txt").unwrap();
         assert_eq!(f.name(), "a b.txt");
-        let e = FtpBackend::entry("x/a b.txt".into(), &f, &Entry::default());
+        let e = FtpBackend::entry("x/a b.txt".into(), &Listed { name: f.name().into(), f: f.clone(), link: None }, &Entry::default());
         assert_eq!(e.size, 12);
         assert_eq!(e.modified, Some(1_795_341_600_000));
         let d = FtpFile::try_from("drwxr-xr-x    2 ftp      ftp          4096 Nov 22  2025 photos").unwrap();
         assert!(d.is_directory());
         assert_eq!(d.name(), "photos");
+    }
+
+    fn read(line: &str, mlsd: bool) -> Listed {
+        parse_line(line, mlsd).unwrap().unwrap_or_else(|| panic!("no entry: {line}"))
+    }
+
+    /// X5-3: lines suppaftp rejects are rebuilt, never dropped.
+    #[test]
+    fn listing_lines_suppaftp_rejects_are_still_read() {
+        // ACL, xattr and SELinux marks after the mode
+        for mark in ["+", "@", "."] {
+            let f = read(&format!("-rw-r--r--{mark} 1 ftp ftp 1234 Nov  5 13:46 report.pdf"), false);
+            assert_eq!((f.name(), f.size(), f.is_file()), ("report.pdf", 1234, true), "{mark}");
+        }
+        // localised months
+        for m in ["Mär", "Okt", "déc.", "juin", "Dez"] {
+            let f = read(&format!("-rw-r--r-- 1 ftp ftp 12 {m} 15 2025 a.txt"), false);
+            assert_eq!(f.name(), "a.txt", "{m}");
+            assert!(f.modified() > std::time::UNIX_EPOCH, "{m}");
+        }
+        // a month it can't place keeps the entry, without a time
+        assert_eq!(read("-rw-r--r-- 1 ftp ftp 12 11月 15 2025 a.txt", false).name(), "a.txt");
+        // names keep their leading spaces, and a link its target
+        assert_eq!(read("-rw-r--r-- 1 ftp ftp 12 Nov  5 13:46  lead.txt", false).name(), " lead.txt");
+        let l = read("lrwxrwxrwx+ 1 a b 7 Nov  5 13:46 cur -> releases/42", false);
+        assert_eq!((l.name(), l.link.as_deref(), l.is_symlink()), ("cur", Some("releases/42"), true));
+        // not files: skipped on purpose; "total" and blank lines aren't entries
+        for l in ["srwxr-xr-x 1 a b 0 Nov  5 13:46 sock", "prw-r--r-- 1 a b 0 Nov  5 13:46 fifo", "total 12", ""] {
+            assert!(parse_line(l, false).unwrap().is_none(), "{l}");
+        }
+        // MLSD: the RFC 3659 OS-specific link type, odd modes
+        let f = read("type=OS.unix=slink:/etc/x;size=5;modify=20261122100000; cur", true);
+        assert_eq!((f.name(), f.link.as_deref(), f.is_symlink()), ("cur", Some("/etc/x"), true));
+        assert!(read("type=OS.unix=symlink;size=5; l", true).is_symlink());
+        assert!(parse_line("type=OS.unix=socket; s", true).unwrap().is_none());
+        assert_eq!(read("type=file;size=3;unix.mode=02755; a;b.txt", true).name(), "a;b.txt");
+        // DOS with a 4-digit year and a 24-hour clock
+        let d = read("11-05-2026  13:46       <DIR>          docs", false);
+        assert!((d.name(), d.is_directory()) == ("docs", true));
+        assert_eq!(read("11-05-2026  13:46       1,234 a b.txt", false).size(), 1234);
+        // what is no listing line at all is an error, not a gap
+        assert!(parse_line("this is not a listing line", false).is_err());
+        assert!(parse_line("type=file;size=1", true).is_err());
     }
 
     #[test]

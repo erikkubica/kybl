@@ -5,7 +5,10 @@
 
 use std::{
     collections::HashMap,
-    sync::{Arc, LazyLock, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, LazyLock, Mutex,
+    },
 };
 
 use tauri::{AppHandle, Runtime};
@@ -18,11 +21,25 @@ pub const LOCAL_ID: &str = "local";
 
 static OPEN: LazyLock<Mutex<HashMap<String, Arc<dyn Storage>>>> = LazyLock::new(Default::default);
 
+/// Bumped by every [`forget`]: an open that read the settings before one must not keep what it
+/// built from them (a save, a delete or "Try again" came in between).
+static FORGOTTEN: AtomicU64 = AtomicU64::new(0);
+
 /// The backend of a connection, opened once and then reused.
 pub async fn open<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id: &str) -> Result<Arc<dyn Storage>, String> {
-    if let Some(s) = OPEN.lock().unwrap().get(profile_id) {
-        return Ok(s.clone());
+    loop {
+        if let Some(s) = open_once(app, state, profile_id).await? {
+            return Ok(s);
+        }
     }
+}
+
+/// None: the connection was forgotten while this built it, so what it built is stale.
+async fn open_once<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id: &str) -> Result<Option<Arc<dyn Storage>>, String> {
+    if let Some(s) = OPEN.lock().unwrap().get(profile_id) {
+        return Ok(Some(s.clone()));
+    }
+    let before = FORGOTTEN.load(Ordering::SeqCst);
     let (s, profile): (Arc<dyn Storage>, Option<Profile>) = if profile_id == LOCAL_ID {
         (Arc::new(LocalBackend::system(app).await?), None)
     } else if profile_id.starts_with(crate::archive::PREFIX) {
@@ -40,7 +57,10 @@ pub async fn open<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id: 
         // so a server never gets two pools of connections, page caches or trust states
         let mut open = OPEN.lock().unwrap();
         if let Some(first) = open.get(profile_id) {
-            return Ok(first.clone());
+            return Ok(Some(first.clone()));
+        }
+        if FORGOTTEN.load(Ordering::SeqCst) != before {
+            return Ok(None);
         }
         open.insert(profile_id.to_string(), s.clone());
     }
@@ -51,7 +71,7 @@ pub async fn open<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile_id: 
     }
     #[cfg(not(desktop))]
     let _ = profile;
-    Ok(s)
+    Ok(Some(s))
 }
 
 /// Opens a backend for `profile` without keeping it. `secret`, when given, is used instead of
@@ -186,5 +206,7 @@ pub async fn open_sftp<R: Runtime>(app: &AppHandle<R>, state: &AppState, profile
 
 /// Drops the open backend of a connection (saved with new settings, or deleted).
 pub fn forget(profile_id: &str) {
-    OPEN.lock().unwrap().remove(profile_id);
+    let mut open = OPEN.lock().unwrap();
+    FORGOTTEN.fetch_add(1, Ordering::SeqCst);
+    open.remove(profile_id);
 }

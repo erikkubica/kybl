@@ -362,6 +362,30 @@ pub(crate) async fn move_with<R: Runtime>(
     op_id: Option<&str>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<OpResult, String> {
+    if !delete_source {
+        return move_items(app, s, bucket, dest_bucket, items, false, op_id, cancel).await;
+    }
+    // every source is fixed before the first one moves (see `Storage::pin_sources`)
+    let sources: Vec<(Loc, bool)> = items.iter().map(|it| (Loc::new(bucket, &it.from), it.is_prefix)).collect();
+    if let Err(e) = s.pin_sources(&sources).await {
+        return Ok(OpResult { done: 0, total: items.len() as u64, error: Some(e.into()) });
+    }
+    let r = move_items(app, s, bucket, dest_bucket, items, true, op_id, cancel).await;
+    s.unpin_sources(&sources).await;
+    r
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn move_items<R: Runtime>(
+    app: &AppHandle<R>,
+    s: &dyn Storage,
+    bucket: &str,
+    dest_bucket: Option<&str>,
+    items: &[MoveItem],
+    delete_source: bool,
+    op_id: Option<&str>,
+    cancel: &Arc<AtomicBool>,
+) -> Result<OpResult, String> {
     let to_bucket = dest_bucket.filter(|b| !b.is_empty()).unwrap_or(bucket);
     let same_root = to_bucket == bucket;
     for it in items {

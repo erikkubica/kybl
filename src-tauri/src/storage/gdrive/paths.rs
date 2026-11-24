@@ -21,6 +21,9 @@ use serde::{Deserialize, Serialize};
 /// How long a path → id answer is trusted (changes made elsewhere show up after this).
 pub const TTL: Duration = Duration::from_secs(60);
 
+/// How much longer than `TTL` a pinned answer is trusted (see `PathCache::pin`).
+const PIN: Duration = Duration::from_secs(600);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Node {
     /// what to read and list: the file, or a shortcut's target
@@ -66,6 +69,13 @@ impl PathCache {
             m.retain(|_, (_, at)| now.duration_since(*at) < TTL);
         }
         m.insert((root.to_string(), key.to_string()), (node, now));
+    }
+
+    /// Keeps `key` → `node` for `PIN` instead of `TTL`: a multi-item move resolves all its sources
+    /// first, and numbered duplicates ("a (2).txt") must not be looked up again after an earlier
+    /// item changed which file is the second one. `forget` (or the end of the move) unpins.
+    pub fn pin(&self, root: &str, key: &str, node: Node) {
+        self.put_at(root, key, node, Instant::now() + PIN);
     }
 
     /// Forgets `key` and, for a folder (or a name that may be one), everything inside it.
@@ -190,6 +200,16 @@ mod tests {
 
     fn node(id: &str) -> Node {
         Node { id: id.into(), own_id: id.into(), folder: false, mime: "text/plain".into() }
+    }
+
+    #[test]
+    fn a_pinned_answer_outlives_the_ttl_until_forgotten() {
+        let c = PathCache::default();
+        c.pin("root", "a (2).txt", node("B"));
+        let later = Instant::now() + TTL + Duration::from_secs(30);
+        assert_eq!(c.get_at("root", "a (2).txt", later).unwrap().id, "B");
+        c.forget("root", "a (2).txt");
+        assert_eq!(c.get_at("root", "a (2).txt", later), None);
     }
 
     #[test]

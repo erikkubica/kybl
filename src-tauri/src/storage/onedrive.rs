@@ -732,6 +732,11 @@ impl Storage for OneDrive {
         }
         let src_key = if is_dir { dir_key(&from.path) } else { from.path.clone() };
         let dst_key = if is_dir { dir_key(&to.path) } else { to.path.clone() };
+        // OneDrive ignores letter case: "Report.pdf" onto "report.pdf" is the source itself, and
+        // the copy would ask OneDrive to replace the file with itself
+        if fold_path(ConnKind::Onedrive, &src_key) == fold_path(ConnKind::Onedrive, &dst_key) {
+            return Err(StorageError::other("Source and destination are the same"));
+        }
         let (dir, name) = extras::parent_and_name(&dst_key);
         if is_dir && self.get_item(&to.root, &dst_key).await?.is_some() {
             return Err(StorageError::new(ErrKind::Exists, "A folder with this name is already there."));
@@ -895,6 +900,15 @@ mod tests {
 
     fn api() -> Api {
         Api { http: client(), tokens: fixed("tok"), kind: ConnKind::Onedrive, max_wait: Duration::from_millis(5) }
+    }
+
+    #[tokio::test]
+    async fn copying_onto_a_case_only_different_name_asks_nothing() {
+        let mock = Mock::start(|_| Resp::status(500)).await;
+        let o = OneDrive::with_base(api(), mock.base.clone());
+        let e = o.copy(&Loc::new("", "Docs/Report.pdf"), &Loc::new("", "docs/report.pdf"), false).await.unwrap_err();
+        assert!(e.message.contains("same"), "{}", e.message);
+        assert!(mock.seen("/").is_empty());
     }
 
     #[test]

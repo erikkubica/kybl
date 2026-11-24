@@ -249,6 +249,17 @@ pub fn parent_key(key: &str) -> String {
     }
 }
 
+/// A write into `dir` found it gone (deleted elsewhere): forget it and its parents as "known to
+/// exist", so the next write makes them again instead of failing the same way until reconnect.
+pub fn forget_dir_chain(known: &Mutex<std::collections::HashSet<String>>, dir: &str) {
+    let mut k = known.lock().unwrap();
+    let mut d = dir_prefix(dir);
+    while !d.is_empty() {
+        k.remove(&d);
+        d = parent_key(&d);
+    }
+}
+
 /// The last part of a key.
 pub fn file_name(key: &str) -> &str {
     let k = key.trim_end_matches('/');

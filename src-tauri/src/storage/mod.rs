@@ -810,6 +810,15 @@ pub trait Storage: Send + Sync + 'static {
         unsupported()
     }
 
+    /// Called before a multi-item move: stores that address items by something other than the
+    /// path (Drive's numbered duplicates) pin what every source is now, so the first item's
+    /// move can't change what the later paths mean. `unpin_sources` follows when it is over.
+    async fn pin_sources(&self, _from: &[(Loc, bool)]) -> SResult<()> {
+        Ok(())
+    }
+
+    async fn unpin_sources(&self, _from: &[(Loc, bool)]) {}
+
     /// Moves or renames, natively or by copy and delete (see `caps().rename`).
     async fn rename(&self, from: &Loc, to: &Loc, is_dir: bool) -> SResult<()>;
 

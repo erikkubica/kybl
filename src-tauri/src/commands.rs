@@ -83,6 +83,23 @@ pub async fn save_profile(
     // SFTP key sign-in: a passphrase alone goes with the key already saved (an imported key file
     // that has one), under the name the key is read from
     let mut secret = secret;
+    // a WebDAV address with "user:password@" in it: the user goes to the User name field and the
+    // password to the vault, so neither is saved in profiles.json or shown with the address
+    if profile.kind == ConnKind::Webdav {
+        if let Some(net) = profile.net.as_mut() {
+            if let Some(url) = net.url.as_deref() {
+                if let (clean, Some((user, pass))) = storage::webdav::split_userinfo(url) {
+                    net.url = Some(clean);
+                    if net.user.trim().is_empty() {
+                        net.user = user.clone();
+                    }
+                    if net.user.trim() == user && secret.as_deref().map_or(true, str::is_empty) {
+                        secret = pass.filter(|p| !p.is_empty());
+                    }
+                }
+            }
+        }
+    }
     let mut secret_name = profile.id.clone();
     let key_auth = profile.kind == ConnKind::Sftp && profile.net.as_ref().is_some_and(|n| n.auth == crate::state::NetAuth::Key);
     if let Some(pass) = secret.as_deref().filter(|_| key_auth).and_then(storage::net::SshKey::passphrase_only) {
