@@ -171,32 +171,112 @@ const EVAL_WHY =
   "This template has a placeholder and also eval, which runs text as code, so a file name could run as a command even though the placeholder is quoted. Take eval out of this template.";
 const DECLARING = ["declare", "typeset", "local", "export", "readonly"];
 
+/** The refusal for a construct that can read a variable's value as code. */
+const codeWhy = (what: string) =>
+  `This template has a placeholder and also ${what}. A file name could run code through it, even though the placeholder is quoted. Take it out of this template, or do that part in a script of your own.`;
+
 /**
- * Mirror of `evaluation_problem` in actions.rs. A template with a placeholder that evaluates
- * anything (arithmetic, a numeric test, an array index, `eval`) is refused whole: quoting only
- * keeps the value one word, and a shell that later evaluates a variable holding it reads it as code.
+ * Builtins refused anywhere in a template that has a placeholder: each reads or runs a variable's
+ * value as code (a name with a subscript, a handler, an expression), or sets what the shell
+ * evaluates later. A false alarm costs a rewrite, a miss runs a file name.
+ */
+const BANNED_WORDS = ["read", "unset", "trap", "mapfile", "readarray", "compgen", "complete", "vared", "repeat"];
+/** Builtins that read their operand as arithmetic in zsh or ksh: refused when given anything but `$?`, `$#` or `$$`. */
+const NUMBER_BUILTINS = ["exit", "return", "break", "continue", "shift", "logout", "ulimit"];
+/** Variables whose value the shell runs (every traced line, every prompt, the next shell). */
+const RUNNING_VARS = ["PS4", "PROMPT_COMMAND", "BASH_ENV"];
+
+/** Mirror of `brace_problem` in actions.rs: what `${body}` is when it is not an allowed form; null when it is allowed. */
+function braceProblem(body: string): string | null {
+  const textOk = (x: string) => !/[{}()`"'\\\n]/.test(x);
+  const other = "a `${ … }` this check can't prove plain";
+  if (body.includes("${")) return "a nested `${ … ${ … } … }`";
+  if (body.startsWith("!")) return "`${!name}` (indirect expansion, which evaluates the name it reads)";
+  if (body.startsWith("(")) return "a zsh `${(flags)name}` (flags such as e or P evaluate the value)";
+  const count = body.startsWith("#");
+  const rest = count ? body.slice(1) : body;
+  const m = /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*?$])/.exec(rest);
+  if (!m) return count && rest === "" ? null : other;
+  const name = m[0];
+  const tail = rest.slice(name.length);
+  if (tail === "") return null;
+  if (tail === "[@]" || tail === "[*]") return /^[A-Za-z_]/.test(name) ? null : "a subscript on a number or symbol";
+  if (tail.startsWith("[")) return "a subscript `${name[ … ]}` (evaluated as arithmetic)";
+  if (count) return other;
+  if (tail.startsWith(":")) {
+    const w = tail.slice(1);
+    if ("-=+?".includes(w[0] ?? "x")) return textOk(w.slice(1)) ? null : "a `${name:-word}` whose word holds quotes, brackets or braces";
+    return "a substring `${name:offset}` (the offset is evaluated as arithmetic)";
+  }
+  for (const op of ["%%", "%", "##", "#"]) {
+    if (tail.startsWith(op)) return textOk(tail.slice(op.length)) ? null : "a `${name%pattern}` whose pattern holds quotes, brackets or braces";
+  }
+  for (const op of ["//", "/"]) {
+    if (tail.startsWith(op)) {
+      const r = tail.slice(op.length);
+      const cut = r.indexOf("/");
+      if (cut >= 0 && textOk(r.slice(0, cut)) && textOk(r.slice(cut + 1)) && !r.slice(cut + 1).includes("/")) return null;
+      return "a `${name/pattern/text}` this check can't prove plain";
+    }
+  }
+  return other;
+}
+
+/**
+ * Mirror of `evaluation_problem` in actions.rs. A template with a placeholder that can evaluate a
+ * variable is refused whole: quoting only keeps the value one word, and a shell that later
+ * evaluates a variable holding it reads it as code. An ALLOW-LIST for parameter expansion (see
+ * `braceProblem`; anything else in `${ … }`, and any subscript but `[@]`/`[*]`, is refused), plus
+ * refused outright: arithmetic, `eval`, `read`, `unset`, `trap`, `mapfile`/`readarray`,
+ * `printf -v`, `test -v`, `exit $x` and kin, and `PS4`/`PROMPT_COMMAND`/`BASH_ENV`.
  */
 function evaluationProblem(t: string): string | null {
   if (t.includes("((") || t.includes("$[")) return ARITH_WHY;
-  for (const w of t.split(/[ \t\n\f\r;&|()`<>"'{}$]/)) {
+  // the words as the shell will see them: `r""ead` and `\read` are `read`
+  const plain = t.replace(/['"\\]/g, "");
+  for (const w of plain.split(/[ \t\n\f\r;&|()`<>{}$=]/)) {
     if (w === "eval") return EVAL_WHY;
     if (w === "let" || w === "integer" || w === "float" || NUMERIC_TESTS.includes(w)) return ARITH_WHY;
+    if (BANNED_WORDS.includes(w)) return codeWhy(`\`${w}\`, which reads a variable's value as code or runs it`);
+    if (RUNNING_VARS.includes(w)) return codeWhy(`\`${w}\`, which the shell runs as code`);
   }
-  // a declaring builtin given a flag that makes the variable numeric
-  for (const command of t.split(/[;&|\n()]/)) {
-    const words = command.split(ASCII_WS).filter(Boolean).map((w) => w.replace(/^["']+|["']+$/g, ""));
-    const at = words.findIndex((w) => DECLARING.includes(w));
-    if (at >= 0 && words.slice(at + 1).some((w) => w.startsWith("-") && !w.startsWith("--") && /[iFE]/.test(w))) return ARITH_WHY;
+  for (const command of plain.split(/[;&|\n()`]/)) {
+    const words = command.split(ASCII_WS).filter(Boolean);
+    const has = (x: string) => words.includes(x);
+    // a declaring builtin given a flag that makes the variable numeric or a name reference
+    if (words.some((w) => DECLARING.includes(w))) {
+      const flagged = (set: RegExp) => words.some((w) => w.startsWith("-") && !w.startsWith("--") && set.test(w));
+      if (flagged(/[iFE]/)) return ARITH_WHY;
+      if (flagged(/n/)) return codeWhy("`declare -n` (a name reference, which reads a variable's value as a name with a subscript)");
+    }
+    if ((has("printf") || has("print")) && has("-v")) return codeWhy("`printf -v`, which takes its variable name as code");
+    if ((has("[") || has("[[") || has("test")) && (has("-v") || has("-R"))) return codeWhy("a `-v` or `-R` test, which takes its variable name as code");
+    const at = words.findIndex((w) => NUMBER_BUILTINS.includes(w));
+    if (at >= 0 && words.slice(at + 1).some((w) => w.includes("$") && !["$?", "$#", "$$"].includes(w))) {
+      return codeWhy(`\`${words[at]}\` with a variable (zsh and ksh read it as arithmetic)`);
+    }
   }
-  // an array index is evaluated as arithmetic: `${a[$n]}`, `$a[$n]` (zsh), `a[$n]=1`
-  for (let j = t.indexOf("["); j >= 0; j = t.indexOf("[", j + 1)) {
-    let k = j;
-    while (k > 0 && /[A-Za-z0-9_]/.test(t[k - 1])) k--;
-    if (k === j || /[0-9]/.test(t[k])) continue;
-    const read = t[k - 1] === "$" || (t[k - 1] === "{" && t[k - 2] === "$");
-    const close = t.indexOf("]", j);
-    const assigned = close >= 0 && (t[close + 1] === "=" || t.startsWith("+=", close + 1));
-    if (read || assigned) return ARITH_WHY;
+  const ident = (c: string | undefined) => c !== undefined && /[A-Za-z0-9_]/.test(c);
+  for (let i = 0; i < t.length; i++) {
+    if (t[i] === "$" && t[i + 1] === "{") {
+      // up to the first `}`; one that is missing, or a body that isn't plain, is refused
+      const close = t.indexOf("}", i + 2);
+      if (close < 0) return codeWhy("a `${` with no closing `}`");
+      const what = braceProblem(t.slice(i + 2, close));
+      if (what) return codeWhy(what);
+      i = close;
+    } else if (t[i] === "[" && i > 0) {
+      const prev = t[i - 1];
+      const close = t.indexOf("]", i);
+      const inner = t.slice(i + 1, close < 0 ? t.length : close);
+      let k = i;
+      while (k > 0 && ident(t[k - 1])) k--;
+      // what the subscript hangs on: `$name[`, `${name}[`, `$1[`, `$@[` (zsh reads those as subscripts).
+      // `${name[@]}` never gets here: its whole body was checked above.
+      const onParam = (k < i && k > 0 && t[k - 1] === "$") || prev === "}" || (i > 1 && "@*#?$".includes(prev) && t[i - 2] === "$");
+      if (onParam) return codeWhy("a subscript (`name[ … ]`, evaluated as arithmetic; only `${name[@]}` and `${name[*]}` are allowed)");
+      if (k < i && !/[0-9]/.test(t[k]) && (/[$`()]/.test(inner) || /[A-Za-z_]/.test(inner))) return codeWhy("a subscript (`name[ … ]`, evaluated as arithmetic)");
+    }
   }
   return null;
 }

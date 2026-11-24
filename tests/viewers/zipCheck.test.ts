@@ -2,7 +2,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import JSZip from "jszip";
-import { zipTooBig } from "../../src/viewers/zipCheck.ts";
+import * as XLSX from "xlsx";
+import { openCapped, readCapped, zipTooBig } from "../../src/viewers/zipCheck.ts";
 
 const caps = { part: 1 << 20, total: 2 << 20 };
 
@@ -95,4 +96,89 @@ test("a zip comment, entries beyond the counted ones, and a gap before the end r
   gap.set(z.subarray(0, e));
   gap.set(z.subarray(e), e + 3);
   assert.notEqual(await zipTooBig(gap, caps), null);
+});
+
+// R7 S-1: the end record can be further than 64 KB from the end; JSZip still finds it.
+test("a zip with junk in front and 70 000 bytes after the end record is refused (S-1)", async () => {
+  const z = await bomb();
+  const odd = new Uint8Array(1 + z.length + 70000);
+  odd[0] = 10;
+  odd.set(z, 1);
+  assert.notEqual(await zipTooBig(odd, caps), null);
+  assert.ok((await JSZip.loadAsync(odd)).files["word/document.xml"], "JSZip really reads it");
+  // an old .xls / a big CSV with no end record anywhere is still just "not a zip"
+  assert.equal(await zipTooBig(new Uint8Array(200000).fill(65), caps), null);
+});
+
+// R7 S-2: a repeated ZIP64 extra field (JSZip: the last wins; the first would say "10 bytes").
+test("an entry with two ZIP64 extra fields, or one nobody asked for, is refused (S-2)", async () => {
+  const z = await bomb();
+  const dv = new DataView(z.buffer, z.byteOffset, z.byteLength);
+  const e = eocdOf(z);
+  const cd = dv.getUint32(e + 16, true);
+  const nameLen = dv.getUint16(cd + 28, true);
+  const rebuilt = (extra: Uint8Array, mark: boolean) => {
+    const head = z.slice(0, cd + 46 + nameLen);
+    const tail = z.slice(cd + 46 + nameLen, e);
+    const end = z.slice(e);
+    const out = new Uint8Array(head.length + extra.length + tail.length + end.length);
+    out.set(head);
+    out.set(extra, head.length);
+    out.set(tail, head.length + extra.length);
+    out.set(end, head.length + extra.length + tail.length);
+    const o = new DataView(out.buffer);
+    o.setUint16(cd + 30, extra.length, true);
+    o.setUint32(out.length - 22 + 12, dv.getUint32(e + 12, true) + extra.length, true);
+    if (mark) (o.setUint32(cd + 20, 0xffffffff, true), o.setUint32(cd + 24, 0xffffffff, true));
+    return out;
+  };
+  const field = (a: number, b: number) => {
+    const f = new Uint8Array(20);
+    const d = new DataView(f.buffer);
+    d.setUint16(0, 1, true);
+    d.setUint16(2, 16, true);
+    d.setUint32(4, a, true);
+    d.setUint32(12, b, true);
+    return f;
+  };
+  const two = new Uint8Array(40);
+  two.set(field(10, 10));
+  two.set(field(3 << 20, 100), 20);
+  assert.equal(await zipTooBig(rebuilt(two, true), caps), "unusual zip layout");
+  assert.equal(await zipTooBig(rebuilt(field(5, 5), false), caps), "unusual zip layout");
+});
+
+// R7: the cap is enforced while inflating, not only read from headers.
+test("readCapped stops a part at the cap and counts every byte it makes", async () => {
+  const z = await JSZip.loadAsync(await zip({ "a.xml": new Uint8Array(3 << 20), "b.xml": "<b/>" }));
+  await assert.rejects(readCapped(z.file("a.xml")!, { left: 10 << 20 }, 1 << 20), /too far/);
+  assert.equal((await readCapped(z.file("b.xml")!, { left: 10 << 20 })).length, 4);
+  // one budget for the whole file: two parts that each fit but together don't
+  const two = await JSZip.loadAsync(await zip({ "a.xml": new Uint8Array(900 << 10), "b.xml": new Uint8Array(900 << 10) }));
+  const budget = { left: 1 << 20 };
+  await readCapped(two.file("a.xml")!, budget);
+  await assert.rejects(readCapped(two.file("b.xml")!, budget), /too far/);
+});
+
+// Ordinary Office files, made the way Word, Excel and PowerPoint lay them out, still preview.
+test("real docx, xlsx and pptx files pass, and open through the capped reader", async () => {
+  const docx = await zip({
+    "[Content_Types].xml": "<Types/>",
+    "_rels/.rels": "<Relationships/>",
+    "word/document.xml": "<w:document><w:body>" + "<w:p><w:r><w:t>hello</w:t></w:r></w:p>".repeat(5000) + "</w:body></w:document>",
+    "word/media/image1.png": new Uint8Array(50000).map((_, i) => (i * 7) & 255),
+  });
+  assert.equal(await zipTooBig(docx), null);
+  assert.match((await (await openCapped(docx)).text("word/document.xml")) ?? "", /hello/);
+
+  const book = { SheetNames: ["S"], Sheets: { S: XLSX.utils.aoa_to_sheet([["a", "b"], [1, 2]]) } };
+  const xlsx = new Uint8Array(XLSX.write(book, { type: "array", bookType: "xlsx" }) as ArrayBuffer);
+  assert.equal(await zipTooBig(xlsx), null);
+  assert.equal(XLSX.read(xlsx, { type: "array" }).SheetNames[0], "S");
+
+  const pptx = await zip({ "[Content_Types].xml": "<Types/>", "ppt/presentation.xml": "<p:presentation/>", "ppt/slides/slide1.xml": "<p:sld/>", "docProps/thumbnail.jpeg": new Uint8Array(2000).fill(7) });
+  assert.equal(await zipTooBig(pptx), null);
+  const opened = await openCapped(pptx);
+  assert.deepEqual([opened.has("ppt/slides/slide1.xml"), opened.has("nope")], [true, false]);
+  assert.equal((await opened.bytes("docProps/thumbnail.jpeg"))?.length, 2000);
 });

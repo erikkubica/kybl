@@ -22,7 +22,9 @@ self.onmessage = async (ev: MessageEvent<XlsxRequest>) => {
     if ("open" in req) {
       book = null;
       // a few MB can inflate to GBs, and a worker out of memory takes the whole web view with it:
-      // refused before SheetJS inflates anything (it even allocates what a part's header claims)
+      // refused before SheetJS inflates anything (it even allocates what a part's header claims).
+      // SheetJS unzips with its own code, so this check inflates every part once through JSZip with
+      // a cap, and only a plain zip layout (where both readers see the same parts) is let through.
       if (await zipTooBig(req.open)) return post({ id: req.id, error: true });
       book = read(req.open, { type: "array", dense: true, cellHTML: false, cellStyles: false, bookVBA: false });
       const b = book;

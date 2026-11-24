@@ -355,7 +355,7 @@ pub fn check_template(template: &str) -> Result<(), String> {
     }
     if PLACEHOLDERS.iter().any(|w| uses(template, w)) {
         if let Some(why) = evaluation_problem(template) {
-            return Err(why.to_string());
+            return Err(why);
         }
     }
     Ok(())
@@ -364,49 +364,177 @@ pub fn check_template(template: &str) -> Result<(), String> {
 const ARITH_WHY: &str = "This template has a placeholder and also does arithmetic (`$(( ))`, `(( ))`, `$[ ]`, let, -eq and the like, declare -i, an array index). A shell reads a variable it is used with as code there, so a file name such as a[$(cmd)] would run as a command, even though the placeholder is quoted. Do the arithmetic in a script of your own, or take the placeholder out of this template.";
 const EVAL_WHY: &str = "This template has a placeholder and also eval, which runs text as code, so a file name could run as a command even though the placeholder is quoted. Take eval out of this template.";
 
+/// The refusal for a construct that can read a variable's value as code.
+fn code_why(what: &str) -> String {
+    format!("This template has a placeholder and also {what}. A file name could run code through it, even though the placeholder is quoted. Take it out of this template, or do that part in a script of your own.")
+}
+
+/// Builtins refused anywhere in a template that has a placeholder: each reads or runs a variable's
+/// value as code (a name with a subscript, a handler, an expression), or sets what the shell
+/// evaluates later. A false alarm costs a rewrite, a miss runs a file name.
+const BANNED_WORDS: [&str; 9] = ["read", "unset", "trap", "mapfile", "readarray", "compgen", "complete", "vared", "repeat"];
+/// Builtins that read their operand as arithmetic in zsh or ksh: refused when given anything
+/// but `$?`, `$#` or `$$`.
+const NUMBER_BUILTINS: [&str; 7] = ["exit", "return", "break", "continue", "shift", "logout", "ulimit"];
+/// Variables whose value the shell runs (every traced line, every prompt, the next shell).
+const RUNNING_VARS: [&str; 3] = ["PS4", "PROMPT_COMMAND", "BASH_ENV"];
+
+/// What `${body}` is, when it is not one of the allowed forms; None when it is allowed. The
+/// allow-list (a name is `[A-Za-z_][A-Za-z0-9_]*`, w, p and r hold no quote, bracket or brace):
+/// `name`, `1`, `@`, `*`, `?`, `$`, `#name`, `#`, `name[@]`, `name[*]`, `#name[@]`, `name:-w`,
+/// `name:=w`, `name:+w`, `name:?w`, `name%p`, `name%%p`, `name#p`, `name##p`, `name/p/r`,
+/// `name//p/r`. Everything else evaluates something or can't be proven plain.
+fn brace_problem(body: &str) -> Option<&'static str> {
+    let text_ok = |x: &str| !x.contains(['{', '}', '(', ')', '`', '"', '\'', '\\', '\n']);
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    if body.contains("${") {
+        return Some("a nested `${ … ${ … } … }`");
+    }
+    if body.starts_with('!') {
+        return Some("`${!name}` (indirect expansion, which evaluates the name it reads)");
+    }
+    if body.starts_with('(') {
+        return Some("a zsh `${(flags)name}` (flags such as e or P evaluate the value)");
+    }
+    let (count, rest) = body.strip_prefix('#').map_or((false, body), |r| (true, r));
+    let b = rest.as_bytes();
+    let n = match b.first() {
+        Some(c) if c.is_ascii_alphabetic() || *c == b'_' => b.iter().take_while(|&&c| ident(c)).count(),
+        Some(c) if c.is_ascii_digit() => b.iter().take_while(|c| c.is_ascii_digit()).count(),
+        Some(b'@' | b'*' | b'?' | b'$') => 1,
+        _ => 0,
+    };
+    if n == 0 {
+        return if count && rest.is_empty() { None } else { Some("a `${ … }` this check can't prove plain") };
+    }
+    let (name, tail) = rest.split_at(n);
+    if tail.is_empty() {
+        return None;
+    }
+    if tail == "[@]" || tail == "[*]" {
+        return if name.as_bytes()[0].is_ascii_alphabetic() || name.as_bytes()[0] == b'_' { None } else { Some("a subscript on a number or symbol") };
+    }
+    if tail.starts_with('[') {
+        return Some("a subscript `${name[ … ]}` (evaluated as arithmetic)");
+    }
+    if count {
+        return Some("a `${ … }` this check can't prove plain");
+    }
+    if let Some(w) = tail.strip_prefix(':') {
+        return match w.as_bytes().first() {
+            Some(b'-' | b'=' | b'+' | b'?') if text_ok(&w[1..]) => None,
+            Some(b'-' | b'=' | b'+' | b'?') => Some("a `${name:-word}` whose word holds quotes, brackets or braces"),
+            _ => Some("a substring `${name:offset}` (the offset is evaluated as arithmetic)"),
+        };
+    }
+    for op in ["%%", "%", "##", "#"] {
+        if let Some(pat) = tail.strip_prefix(op) {
+            return if text_ok(pat) { None } else { Some("a `${name%pattern}` whose pattern holds quotes, brackets or braces") };
+        }
+    }
+    for op in ["//", "/"] {
+        if let Some(r) = tail.strip_prefix(op) {
+            return match r.split_once('/') {
+                Some((p, rep)) if text_ok(p) && text_ok(rep) && !rep.contains('/') => None,
+                _ => Some("a `${name/pattern/text}` this check can't prove plain"),
+            };
+        }
+    }
+    Some("a `${ … }` this check can't prove plain")
+}
+
 /// Why a template that has a placeholder can't be used however its placeholders are placed, or
 /// None. Quoting only keeps the value one word; a shell that later evaluates a variable holding
-/// it (arithmetic, an array index, `eval`) reads it as code. So the whole template is refused,
-/// not just the command with the placeholder, whenever it evaluates anything: `$((`, `((`, `$[`,
-/// `let`, `-eq`/`-ne`/`-lt`/`-le`/`-gt`/`-ge`, `integer`, `float`, `declare`/`typeset`/`local`/
-/// `export`/`readonly` with an `-i`, `-F` or `-E` flag, an array index (`${a[…]}`, `a[…]=`), and
-/// `eval`. Text is looked at whatever quotes it is in: a false alarm costs a rewrite, a miss runs
-/// a file name. Mirrored in templateCheck.ts.
-fn evaluation_problem(t: &str) -> Option<&'static str> {
+/// it reads it as code. So the whole template is refused, not just the command with the
+/// placeholder, when it can evaluate a variable. That is an ALLOW-LIST for parameter expansion
+/// (see [`brace_problem`]; anything else in `${ … }`, and any subscript but `[@]`/`[*]`, is
+/// refused), plus these refused outright: arithmetic (`$((`, `((`, `$[`, `let`, `-eq`…`-ge`,
+/// `declare -i/-F/-E/-n`, an array index), `eval`, `read`, `unset`, `trap`, `mapfile`/`readarray`,
+/// `printf -v`, `test -v`, `exit $x` and kin, and `PS4`/`PROMPT_COMMAND`/`BASH_ENV`. Text is
+/// looked at whatever quotes it is in. Mirrored in templateCheck.ts.
+fn evaluation_problem(t: &str) -> Option<String> {
     if t.contains("((") || t.contains("$[") {
-        return Some(ARITH_WHY);
+        return Some(ARITH_WHY.to_string());
     }
-    let word_break = |c: char| c.is_ascii_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')' | '`' | '<' | '>' | '"' | '\'' | '{' | '}' | '$');
-    for w in t.split(word_break) {
+    // the words as the shell will see them: `r""ead` and `\read` are `read`
+    let plain: String = t.chars().filter(|c| !matches!(c, '\'' | '"' | '\\')).collect();
+    let word_break = |c: char| c.is_ascii_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')' | '`' | '<' | '>' | '{' | '}' | '$' | '=');
+    for w in plain.split(word_break) {
         if w == "eval" {
-            return Some(EVAL_WHY);
+            return Some(EVAL_WHY.to_string());
         }
         if matches!(w, "let" | "integer" | "float") || NUMERIC_TESTS.contains(&w) {
-            return Some(ARITH_WHY);
+            return Some(ARITH_WHY.to_string());
+        }
+        if BANNED_WORDS.contains(&w) {
+            return Some(code_why(&format!("`{w}`, which reads a variable's value as code or runs it")));
+        }
+        if RUNNING_VARS.contains(&w) {
+            return Some(code_why(&format!("`{w}`, which the shell runs as code")));
         }
     }
-    // a declaring builtin given a flag that makes the variable numeric
-    for command in t.split([';', '&', '|', '\n', '(', ')']) {
-        let mut words = command.split_ascii_whitespace().map(|w| w.trim_matches(['"', '\'']));
-        if words.any(|w| ["declare", "typeset", "local", "export", "readonly"].contains(&w)) && words.any(|w| w.starts_with('-') && !w.starts_with("--") && w.contains(['i', 'F', 'E'])) {
-            return Some(ARITH_WHY);
+    for command in plain.split([';', '&', '|', '\n', '(', ')', '`']) {
+        let words: Vec<&str> = command.split_ascii_whitespace().collect();
+        let has = |x: &str| words.contains(&x);
+        // a declaring builtin given a flag that makes the variable numeric or a name reference
+        if words.iter().any(|w| ["declare", "typeset", "local", "export", "readonly"].contains(w)) {
+            let flagged = |set: &[char]| words.iter().any(|w| w.starts_with('-') && !w.starts_with("--") && w.contains(set));
+            if flagged(&['i', 'F', 'E']) {
+                return Some(ARITH_WHY.to_string());
+            }
+            if flagged(&['n']) {
+                return Some(code_why("`declare -n` (a name reference, which reads a variable's value as a name with a subscript)"));
+            }
+        }
+        if (has("printf") || has("print")) && has("-v") {
+            return Some(code_why("`printf -v`, which takes its variable name as code"));
+        }
+        if (has("[") || has("[[") || has("test")) && (has("-v") || has("-R")) {
+            return Some(code_why("a `-v` or `-R` test, which takes its variable name as code"));
+        }
+        if let Some(at) = words.iter().position(|w| NUMBER_BUILTINS.contains(w)) {
+            if words[at + 1..].iter().any(|w| w.contains('$') && !matches!(*w, "$?" | "$#" | "$$")) {
+                return Some(code_why(&format!("`{}` with a variable (zsh and ksh read it as arithmetic)", words[at])));
+            }
         }
     }
-    // an array index is evaluated as arithmetic: `${a[$n]}`, `$a[$n]` (zsh), `a[$n]=1`
     let b = t.as_bytes();
-    for (j, _) in b.iter().enumerate().filter(|&(_, &c)| c == b'[') {
-        let mut k = j;
-        while k > 0 && (b[k - 1].is_ascii_alphanumeric() || b[k - 1] == b'_') {
-            k -= 1;
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'$' if b.get(i + 1) == Some(&b'{') => {
+                // up to the first `}`; one that is missing, or a body that isn't plain, is refused
+                let Some(close) = b[i + 2..].iter().position(|&c| c == b'}') else {
+                    return Some(code_why("a `${` with no closing `}`"));
+                };
+                let body = &t[i + 2..i + 2 + close];
+                if let Some(what) = brace_problem(body) {
+                    return Some(code_why(what));
+                }
+                i += 2 + close;
+            }
+            b'[' if i > 0 => {
+                let prev = b[i - 1];
+                let end = b[i..].iter().position(|&c| c == b']').map_or(b.len(), |p| i + p);
+                let inner = &t[i + 1..end.min(b.len())];
+                let mut k = i;
+                while k > 0 && ident(b[k - 1]) {
+                    k -= 1;
+                }
+                // what the subscript hangs on: `$name[`, `${name}[`, `$1[`, `$@[` (zsh reads those as subscripts).
+                // `${name[@]}` never gets here: its whole body was checked above.
+                let on_param = (k < i && k > 0 && b[k - 1] == b'$') || prev == b'}' || (i > 1 && b"@*#?$".contains(&prev) && b[i - 2] == b'$');
+                if on_param {
+                    return Some(code_why("a subscript (`name[ … ]`, evaluated as arithmetic; only `${name[@]}` and `${name[*]}` are allowed)"));
+                }
+                if !on_param && k < i && !b[k].is_ascii_digit() && (inner.contains(['$', '`', '(', ')']) || inner.bytes().any(|c| c.is_ascii_alphabetic() || c == b'_')) {
+                    return Some(code_why("a subscript (`name[ … ]`, evaluated as arithmetic)"));
+                }
+            }
+            _ => {}
         }
-        if k == j || b[k].is_ascii_digit() {
-            continue;
-        }
-        let read = (k > 0 && b[k - 1] == b'$') || (k > 1 && b[k - 1] == b'{' && b[k - 2] == b'$');
-        let assigned = t[j..].find(']').is_some_and(|e| b[j + e + 1..].starts_with(b"=") || b[j + e + 1..].starts_with(b"+="));
-        if read || assigned {
-            return Some(ARITH_WHY);
-        }
+        i += 1;
     }
     None
 }
@@ -1079,6 +1207,12 @@ mod tests {
             // round 6: a variable set from the placeholder and used in arithmetic later
             ("n={name}; echo $((n+1))", index, vec!["/bin/bash"]),
             ("declare -i n={name}", index, vec!["/bin/bash"]),
+            // round 7: substring offsets, indirect expansion, a subscript read by `read`, `trap` and PS4
+            ("n={name}; echo ${HOME:$n}", index, vec!["/bin/bash"]),
+            ("n={name}; echo ${!n}", index, vec!["/bin/bash"]),
+            (r#"n={name}; read -r "x[$n]" <<<1"#, index, vec!["/bin/bash"]),
+            (r#"n={name}; trap "echo $n" EXIT"#, subst, vec!["/bin/bash", "/bin/dash"]),
+            ("n={name}; PS4=$n; set -x; echo hi", subst, vec!["/bin/bash"]),
         ];
         for (t, name, shells) in cases {
             assert!(check_template(t).is_err(), "{t}");

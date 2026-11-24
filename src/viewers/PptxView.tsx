@@ -4,10 +4,9 @@
  * engine; this outline is enough to see what a deck says before opening it in another app.
  */
 import { useEffect, useState } from "react";
-import JSZip from "jszip";
 import { Note } from "./ui";
 import type { ViewerProps } from "./types";
-import { zipTooBig } from "./zipCheck";
+import { openCapped, zipTooBig, type CappedZip } from "./zipCheck";
 
 const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const P = "http://schemas.openxmlformats.org/presentationml/2006/main";
@@ -24,10 +23,10 @@ function xml(text: string): Document {
 }
 
 /** Relationship id → target path, resolved against the part's folder. */
-async function rels(zip: JSZip, part: string): Promise<Map<string, string>> {
+async function rels(zip: CappedZip, part: string): Promise<Map<string, string>> {
   const dir = part.slice(0, part.lastIndexOf("/") + 1);
   const relPath = `${dir}_rels/${part.slice(dir.length)}.rels`;
-  const src = await zip.file(relPath)?.async("string");
+  const src = await zip.text(relPath);
   const out = new Map<string, string>();
   if (!src) return out;
   for (const r of Array.from(xml(src).getElementsByTagName("Relationship"))) {
@@ -48,39 +47,40 @@ function normalize(path: string): string {
 }
 
 /** A picture of the deck as an object URL; one per picture, however many slides show it (`made`). */
-async function imageUrl(zip: JSZip, path: string, made: Map<string, string | null>): Promise<string | null> {
+async function imageUrl(zip: CappedZip, path: string, made: Map<string, string | null>): Promise<string | null> {
   if (made.has(path)) return made.get(path)!;
   const type = IMAGE_TYPES[path.slice(path.lastIndexOf(".") + 1).toLowerCase()];
-  const f = zip.file(path);
-  const url = type && f ? URL.createObjectURL(new Blob([(await f.async("uint8array")) as BlobPart], { type })) : null;
+  const data = type ? await zip.bytes(path) : undefined;
+  const url = type && data ? URL.createObjectURL(new Blob([data as BlobPart], { type })) : null;
   made.set(path, url);
   return url;
 }
 
 /** The deck's outline; slide pictures only for the full view (the side pane and Quick Look show none). */
 async function readDeck(bytes: Uint8Array, pictures: boolean): Promise<Deck> {
-  // a few MB can inflate to GBs: refused before anything is inflated for real
+  // a few MB can inflate to GBs: refused before anything is inflated for real, and every part
+  // below is read with a cap on what it may inflate to
   if (await zipTooBig(bytes)) throw new Error("too big to preview");
-  const zip = await JSZip.loadAsync(bytes);
+  const zip = await openCapped(bytes);
   const made = new Map<string, string | null>();
   // slide order comes from presentation.xml, not from the file names
-  const pres = await zip.file("ppt/presentation.xml")?.async("string");
+  const pres = await zip.text("ppt/presentation.xml");
   const presRels = await rels(zip, "ppt/presentation.xml");
   let parts: string[] = [];
   if (pres) {
     parts = Array.from(xml(pres).getElementsByTagNameNS(P, "sldId"))
       .map((s) => presRels.get(s.getAttributeNS(R, "id") ?? "") ?? "")
-      .filter((p) => p && zip.file(p));
+      .filter((p) => p && zip.has(p));
   }
   if (!parts.length) {
-    parts = Object.keys(zip.files)
+    parts = zip.names
       .filter((f) => /^ppt\/slides\/slide\d+\.xml$/.test(f))
       .sort((a, b) => Number(/(\d+)\.xml$/.exec(a)![1]) - Number(/(\d+)\.xml$/.exec(b)![1]));
   }
 
   const slides: Slide[] = [];
   for (const [i, part] of parts.entries()) {
-    const doc = xml((await zip.file(part)?.async("string")) ?? "");
+    const doc = xml((await zip.text(part)) ?? "");
     let title = "";
     const paras: Para[] = [];
     const titleShapes = new Set<Element>();

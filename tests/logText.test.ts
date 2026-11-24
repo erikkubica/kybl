@@ -41,6 +41,22 @@ test("secrets never reach the log", () => {
   gone('{"SessionToken": "SECRET8"}', "SECRET8");
   gone("AWS_SECRET_ACCESS_KEY=SECRET9 AWS_REGION=eu", "SECRET9");
   assert.equal(redact("kybl:0123456789abcdef0123456789abcdef host-key-unknown"), "host-key-unknown");
+  // round 7 (S-6): credential names by their shape, not a list
+  gone("secret_key=SECRETA secretKey=SECRETB secret-key: SECRETC account_key=SECRETD", "SECRET");
+  gone("DefaultEndpointsProtocol=https;AccountName=x;AccountKey=SECRETE==;EndpointSuffix=core.windows.net", "SECRETE");
+  gone("aws_secret_access_key = SECRETF", "SECRETF");
+  gone("X-Amz-Security-Token: SECRETG", "SECRETG");
+  gone("x-amz-security-token: SECRETH", "SECRETH");
+  for (const q of ["auth_token", "session_token", "oauth_token", "private_token", "secret_key"]) gone(`https://h/p?${q}=SECRETI&a=1`, "SECRETI");
+  gone("Authorization: SharedKey acct:SECRETJ", "SECRETJ");
+  gone("Authorization: Token SECRETK more", "SECRETK");
+  assert.equal(redact("Authorization: Bearer eyJ.abc.def\nnext line"), "Authorization: Bearer •••\nnext line");
+  assert.equal(redact("design=fine signal=ok max=5"), "design=fine signal=ok max=5");
+  // a long run of letters stays cheap too
+  const t1 = Date.now();
+  redact("a".repeat(200_000) + "=1");
+  redact("token".repeat(40_000));
+  assert.ok(Date.now() - t1 < 500, "redact stays linear on one long word");
   // a long run of dots and letters is cheap to scan (S-6)
   const t0 = Date.now();
   redact("a.".repeat(60_000));
