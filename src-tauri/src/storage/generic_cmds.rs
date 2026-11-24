@@ -32,6 +32,16 @@ use crate::{
 
 // ---------------------------------------------------------------- new commands
 
+/// "Try again" after a connection failed: lets go of its open backend (pooled sockets that may be
+/// dead after the network or VPN changed), so the next command connects afresh. Transfers still
+/// running keep the backend they hold. This computer and archives have nothing to reconnect.
+#[tauri::command]
+pub fn reconnect_connection(profile_id: String) {
+    if profile_id != registry::LOCAL_ID && !profile_id.starts_with(crate::archive::PREFIX) {
+        registry::forget(&profile_id);
+    }
+}
+
 /// Where browsing starts in a connection: buckets, drives, or this computer's folders.
 #[tauri::command]
 pub async fn list_roots(app: AppHandle, state: State<'_, AppState>, profile_id: String) -> Result<Vec<RootInfo>, String> {

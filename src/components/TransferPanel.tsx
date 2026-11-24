@@ -11,6 +11,7 @@ import { ContextMenu, PromptDialog, type MenuItem } from "./Dialogs";
 import { MBPS, limitLabel, saveTransferPrefs, useTransferPrefsStore } from "../transferPrefs";
 import "./transfers.css";
 import { clearLog, logMessage, useActivityLog } from "../activityLog";
+import { logAsText } from "../logText.ts";
 import type { JobSummary } from "../api";
 import { JobsPanel, isActive as migrationActive, jobFilesCount, jobMeta as migrationMeta, migrations as migrationStore, useMigrations } from "../jobs";
 import { useJobs } from "../useJobs";
@@ -773,23 +774,40 @@ function TransferPanelView({
   );
 }
 
-/** The Log tab: every message the app showed this session, newest at the bottom. */
+/**
+ * The Log tab: what Kybl did and said this session, newest at the bottom: transfers started and
+ * finished, connecting, and every error, each with its technical side under "Details".
+ */
 function MessageLog() {
   const log = useActivityLog();
   const box = useRef<HTMLDivElement>(null);
+  const [problems, setProblems] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const errors = useMemo(() => log.filter((m) => m.kind === "error").length, [log]);
+  const shown = problems ? log.filter((m) => m.kind === "error") : log;
   // follow new messages while the view is at the bottom; scrolling up to read holds it
   const follow = useRef(true);
   useEffect(() => {
     const el = box.current;
     if (el && follow.current) el.scrollTop = el.scrollHeight;
-  }, [log[log.length - 1]?.id]);
+  }, [shown[shown.length - 1]?.id]);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1600);
+    return () => clearTimeout(t);
+  }, [copied]);
   if (!log.length)
     return (
       <div className="tp-empty" id="tp-list">
         <Icon name="info" size={18} />
-        <span>Messages Kybl shows you (finished copies, errors, notes) collect here for this session.</span>
+        <span>What Kybl does and tells you collects here for this session: downloads and uploads started and finished, connecting, and anything that went wrong.</span>
       </div>
     );
+  const copy = () =>
+    void navigator.clipboard
+      ?.writeText(logAsText(shown))
+      .then(() => setCopied(true))
+      .catch(() => {});
   return (
     <div
       ref={box}
@@ -802,14 +820,35 @@ function MessageLog() {
         follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
       }}
     >
-      {log.map((m) => (
+      {(errors > 0 || problems) && (
+        <div className="tp-log-filter">
+          <button className={`btn btn-ghost btn-sm ${problems ? "on" : ""}`} aria-pressed={problems} onClick={() => setProblems((v) => !v)}>
+            <Icon name="alert" size={12} /> {problems ? "Showing problems only" : `Only problems (${errors.toLocaleString()})`}
+          </button>
+        </div>
+      )}
+      {shown.map((m) => (
         <div key={m.id} className={`tp-log-row k-${m.kind}`}>
           <time dateTime={new Date(m.at).toISOString()}>{new Date(m.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
           <Icon name={m.kind === "error" ? "alert" : m.kind === "success" ? "check-circle" : "info"} size={13} />
-          <span className="tp-log-text">{m.text}</span>
+          <div className="tp-log-body">
+            <span className="tp-log-text">
+              {m.kind === "error" && <span className="tp-log-sr">Problem: </span>}
+              {m.text}
+            </span>
+            {m.detail && (
+              <details className="tp-log-more">
+                <summary>Details</summary>
+                <pre className="selectable">{m.detail}</pre>
+              </details>
+            )}
+          </div>
         </div>
       ))}
       <div className="tp-log-tools">
+        <button className="btn btn-ghost btn-sm" onClick={copy} title="Copy the log as text, with details (for a bug report)">
+          <Icon name={copied ? "check" : "copy"} size={12} /> {copied ? "Copied" : "Copy log"}
+        </button>
         <button className="btn btn-ghost btn-sm" onClick={clearLog}>
           Clear log
         </button>

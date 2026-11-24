@@ -7,6 +7,8 @@
  * gesture / button (or a swipe from the left edge on iPhone) walks back up. Tablets (≥ 900 × 600):
  * connections in a sidebar, files in the middle, details in a panel on the right, like the desktop.
  */
+import { errorHint, freshConnection } from "../connLog";
+import { classifyError } from "../logText.ts";
 import { asExport } from "../connections/native";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
@@ -318,6 +320,13 @@ export default function MobileApp() {
 
   const lst = useListing(settleBucket);
   const { listing, open: openListing, reload: reloadListing, loadMore, loadAll, stopAll, saveScroll, forget: forgetListing } = lst;
+  /** "Try again" on a list that failed: after a timeout or a dropped network, on a fresh connection */
+  const retryListing = async (quiet = false) => {
+    const err = lst.error;
+    const pid = loc?.profileId;
+    if (err && pid && classifyError(err).network) await freshConnection(pid);
+    await reloadListing({ quiet });
+  };
   const locRef = useRef(loc);
   locRef.current = loc;
 
@@ -1151,8 +1160,8 @@ export default function MobileApp() {
               {locProfile && hasConnFix(locProfile, lst.error) ? (
                 <ConnFixRow profile={locProfile} error={lst.error} fixes={connFixes} then={() => void reloadListing({ quiet: true })} className="m-text-btn" bare />
               ) : (
-                <button className="m-text-btn" disabled={lst.refreshing} onClick={() => void reloadListing({ quiet: true })}>
-                  Retry
+                <button className="m-text-btn" disabled={lst.refreshing} onClick={() => void retryListing(true)}>
+                  Try again
                 </button>
               )}
             </div>
@@ -1188,16 +1197,22 @@ export default function MobileApp() {
           )}
 
           {lst.error && total === 0 && !search ? (
-            <div className="m-empty">
+            <div className="m-empty" role="alert">
               <div className="m-empty-art warn">
                 <Icon name={isNetworkError(lst.error) ? "cloud" : "alert"} size={30} />
               </div>
-              <h3>{isNetworkError(lst.error) ? "No connection" : `Couldn’t open this ${loc.prefix ? "folder" : rootNoun}`}</h3>
+              <h3>
+                {classifyError(lst.error).kind === "timeout"
+                  ? "The server didn’t answer"
+                  : isNetworkError(lst.error)
+                    ? "No connection"
+                    : `Couldn’t open this ${loc.prefix ? "folder" : rootNoun}`}
+              </h3>
               {/* the plain sentence only: the SDK's debug text helps nobody on a phone */}
-              <p className="m-empty-err">{isNetworkError(lst.error) ? "Check your internet connection and try again." : errSummary(lst.error)}</p>
+              <p className="m-empty-err">{isNetworkError(lst.error) ? (errorHint(lst.error) ?? "Check your internet connection and try again.") : errSummary(lst.error)}</p>
               {/* a certificate, plain FTP or a server key to agree to: the fix, then it lists again */}
               {locProfile && <ConnFixRow profile={locProfile} error={lst.error} fixes={connFixes} then={() => void reloadListing({ quiet: false })} />}
-              <button className="btn" onClick={() => void reloadListing({ quiet: false })}>
+              <button className="btn btn-primary" onClick={() => void retryListing()}>
                 <Icon name="retry" size={14} /> Try again
               </button>
             </div>
@@ -1355,7 +1370,7 @@ export default function MobileApp() {
       buckets={buckets}
       current={loc}
       compact={wide}
-      onRetry={loadBuckets}
+      onRetry={(p: Profile) => void freshConnection(p.id).then(() => loadBuckets(p))}
       fixes={connFixes}
       onRetryProfiles={() => void startup(false)}
       onOpen={(p, b) => go({ profileId: p.id, bucket: b, prefix: "" })}
@@ -1666,7 +1681,7 @@ export default function MobileApp() {
               setIntake(null);
             }}
             onBack={() => backRef.current()}
-            onRetry={(p) => void loadBuckets(p)}
+            onRetry={(p) => void freshConnection(p.id).then(() => loadBuckets(p))}
             fixes={connFixes}
           />
         )}

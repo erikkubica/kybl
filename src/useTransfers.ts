@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, errMessage } from "./api";
 import { logMessage } from "./activityLog";
+import { inOpenBatch, noteAdded, noteState } from "./transferLog";
 import { formatBytes } from "./format";
 import { createStore, useStore } from "./store";
 import type { Transfer, TransferEvent } from "./types";
@@ -164,6 +165,8 @@ function prune() {
 
 /** Takes a row off the list with everything kept about it. */
 function forget(id: string) {
+  const gone = byId.get(id);
+  if (gone) noteState(gone, true);
   byId.delete(id);
   overwriteIds.delete(id);
   requested.delete(id);
@@ -224,6 +227,7 @@ function listenOnce() {
     // order, not by when they started
     if ((ev.state === "done" || ev.state === "cancelled") && cur.state !== ev.state) byId.delete(ev.id);
     byId.set(ev.id, next);
+    if (cur.state !== next.state) noteState(next);
     if (ev.local) logMessage("info", `${cur.name}: a file with that name turned up while it downloaded, so it was saved as ${ev.local}.`);
     if (ev.resumedFrom) logMessage("info", `${cur.name}: carried on from ${formatBytes(ev.resumedFrom)} instead of starting over.`);
     else if (ev.restarted) logMessage("info", `${cur.name}: couldn't carry on where it stopped, so it started over.`);
@@ -242,13 +246,17 @@ function adoptRunning() {
   api
     .activeTransfers()
     .then((list) => {
+      const adopted: Transfer[] = [];
       for (const t of list) {
         if (byId.has(t.id)) continue;
-        byId.set(t.id, { ...t, speed: 0, error: null });
+        const row: Transfer = { ...t, speed: 0, error: null };
+        byId.set(t.id, row);
+        adopted.push(row);
         sent.add(t.id);
         currentRun.add(t.id);
         if (t.kind === "upload") batch.add(t.id);
       }
+      noteAdded(adopted, "adopted", bases);
       if (list.length) markDirty();
     })
     .catch(() => {});
@@ -313,6 +321,7 @@ async function start(t: Transfer) {
       again.delete(t.id);
       const stopped: Transfer = { ...cur, state: want === "cancel" ? "cancelled" : "paused", error: null, speed: 0 };
       byId.set(t.id, stopped);
+      noteState(stopped);
       settle(stopped);
       markDirty();
       return;
@@ -320,6 +329,7 @@ async function start(t: Transfer) {
     if (startAgain(t.id)) return;
     const failed: Transfer = { ...cur, state: "error", error: errMessage(e) };
     byId.set(t.id, failed);
+    noteState(failed);
     settle(failed);
     markDirty();
     onErrorRef(errMessage(e));
@@ -365,6 +375,7 @@ function requeue(id: string): Transfer | null {
   // to the end of the list: it finishes after the rest, so Done and pruning see it as the newest
   byId.delete(id);
   byId.set(id, fresh);
+  noteState(fresh);
   lastSample.delete(id);
   // its first start command is still under way: start it again once that returns
   if (sending.has(id)) {
@@ -397,6 +408,7 @@ function stopOne(id: string, what: "cancel" | "pause", backendDone = false): boo
   if (!(notStarted(t) || (what === "cancel" && t?.state === "paused"))) return false;
   const next: Transfer = { ...t!, state: what === "cancel" ? "cancelled" : "paused", speed: 0 };
   byId.set(id, next);
+  noteState(next);
   settle(next);
   return true;
 }
@@ -418,6 +430,8 @@ const actions = {
       currentRun.add(t.id);
       if (t.kind === "upload") batch.add(t.id);
     }
+    // one line in the Activity log for what was just started (see transferLog.ts)
+    noteAdded(created, "new", bases);
     dirty = true;
     flush();
     markDirty();
@@ -465,6 +479,7 @@ const actions = {
       if (fresh) again.push(fresh);
     }
     if (!again.length) return 0;
+    noteAdded(again.filter((t) => !inOpenBatch(t.id)), "retry", bases);
     dirty = true;
     flush();
     markDirty();
@@ -508,7 +523,10 @@ const actions = {
     listenOnce();
     if (hooks || !external.has(t.id)) external.set(t.id, hooks ?? external.get(t.id) ?? {});
     const next: Transfer = { ...t, error: t.error ?? null, speed: 0 };
+    const known = byId.has(t.id);
     byId.set(t.id, next);
+    if (known) noteState(next);
+    else noteAdded([next], "new");
     if (next.state === "queued" || next.state === "running") currentRun.add(t.id);
     settle(next);
     dirty = true;
@@ -518,6 +536,8 @@ const actions = {
   /** Takes a `track`ed transfer off the list (its failure was dealt with another way). */
   untrack(id: string) {
     if (!external.delete(id)) return;
+    const gone = byId.get(id);
+    if (gone) noteState(gone, true);
     byId.delete(id);
     dirty = true;
     flush();
@@ -525,6 +545,7 @@ const actions = {
   retry(id: string) {
     const fresh = requeue(id);
     if (!fresh) return;
+    if (!inOpenBatch(id)) noteAdded([fresh], "retry", bases);
     dirty = true;
     flush();
     markDirty();
@@ -539,6 +560,7 @@ const actions = {
       if (fresh) again.push(fresh);
     }
     if (!again.length) return 0;
+    noteAdded(again.filter((t) => !inOpenBatch(t.id)), "retry", bases);
     dirty = true;
     flush();
     markDirty();
@@ -601,6 +623,12 @@ export function runTotals(list: Transfer[]): { total: number; done: number } {
     done += t.state === "done" ? t.total : t.bytes;
   }
   return { total, done };
+}
+
+/** Whether a transfer of this connection is waiting or running ("Try again" keeps its connection then). */
+export function transfersActiveOn(profileId: string): boolean {
+  for (const t of byId.values()) if (t.profileId === profileId && (t.state === "queued" || t.state === "running")) return true;
+  return false;
 }
 
 /** The queue's actions, for components outside the hook (the Activity panel's pause and resume). */
