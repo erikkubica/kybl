@@ -4,7 +4,11 @@
 //! errors in plain language.
 
 use std::{
-    sync::{Arc, OnceLock},
+    future::Future,
+    sync::{
+        atomic::{AtomicI64, Ordering},
+        Arc, OnceLock,
+    },
     time::Duration,
 };
 
@@ -56,15 +60,61 @@ pub fn client_no_redirect() -> Client {
     HTTP.get_or_init(|| builder().redirect(reqwest::redirect::Policy::none()).build().expect("HTTP client")).clone()
 }
 
+/// How long a request may go without a byte moving before it counts as a dropped connection.
+const STALL: Duration = Duration::from_secs(120);
+
 fn builder() -> reqwest::ClientBuilder {
-        Client::builder()
-            .tls_backend_preconfigured((*tls_config()).clone())
-            .user_agent(concat!("Kybl/", env!("CARGO_PKG_VERSION")))
-            .connect_timeout(Duration::from_secs(20))
-            // no whole-request timeout: big uploads and downloads take as long as they take
-            .read_timeout(Duration::from_secs(120))
-            .pool_idle_timeout(Duration::from_secs(60))
-            .tcp_keepalive(Duration::from_secs(30))
+    // no whole-request timeout: big uploads and downloads take as long as they take
+    bare_builder().read_timeout(STALL)
+}
+
+fn bare_builder() -> reqwest::ClientBuilder {
+    Client::builder()
+        .tls_backend_preconfigured((*tls_config()).clone())
+        .user_agent(concat!("Kybl/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(Duration::from_secs(20))
+        .pool_idle_timeout(Duration::from_secs(60))
+        .tcp_keepalive(Duration::from_secs(30))
+}
+
+/// The client for upload pieces ([`Api::send_piece`]). reqwest's read timeout runs from the
+/// moment a request goes out and is not reset while its body is still being sent, so on a slow
+/// uplink (under about 70 KB/s for an 8 MiB piece) every piece would be cut off at 120 s and the
+/// upload could never move on. Pieces watch for a stall instead: no byte of the body taken for
+/// that long, or no answer that long after the last one.
+fn piece_client() -> Client {
+    static HTTP: OnceLock<Client> = OnceLock::new();
+    HTTP.get_or_init(|| bare_builder().build().expect("HTTP client")).clone()
+}
+
+/// `piece` as a request body handed out in small slices, each one moving `mark` (the time the
+/// last byte was taken) on.
+fn marked_body(piece: Bytes, mark: Arc<AtomicI64>) -> reqwest::Body {
+    const SLICE: usize = 64 * 1024;
+    let n = piece.len();
+    let slices = (0..n).step_by(SLICE).map(move |at| {
+        mark.store(extras::now_ms(), Ordering::Relaxed);
+        Ok::<Bytes, std::io::Error>(piece.slice(at..(at + SLICE).min(n)))
+    });
+    reqwest::Body::wrap_stream(futures_util::stream::iter(slices))
+}
+
+/// `fut`, unless `mark` stays put for `stall`: then a network error, which the upload loops
+/// treat like a dropped connection (ask the server how far it got, carry on from there).
+async fn unless_stalled<T>(fut: impl Future<Output = SResult<T>>, mark: &AtomicI64, stall: Duration, kind: ConnKind) -> SResult<T> {
+    let mut fut = std::pin::pin!(fut);
+    let every = (stall / 4).max(Duration::from_millis(10));
+    loop {
+        tokio::select! {
+            r = &mut fut => return r,
+            _ = tokio::time::sleep(every) => {
+                if extras::now_ms() - mark.load(Ordering::Relaxed) > stall.as_millis() as i64 {
+                    let say = format!("{} didn't answer in time. Check your internet connection.", kind.label());
+                    return Err(StorageError::new(ErrKind::Network, say).with_detail("the upload stopped moving"));
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------- signed requests
@@ -91,16 +141,49 @@ impl Api {
     /// try. A 401 refreshes the token and tries once more; rate limits and brief outages wait
     /// and try again. Any other answer comes back as it is (check the status).
     pub async fn send(&self, build: impl Fn(&Client) -> RequestBuilder + Sync) -> SResult<Response> {
-        self.send_inner(&build, true).await
+        self.send_inner(&build, true, true).await
+    }
+
+    /// [`send`](Api::send) for a request that makes something new and is not safe to repeat
+    /// (Drive's `files.create` and `files.copy`): a 502 or 504 can come back after the service
+    /// did the work, so it is returned rather than sent again; the caller looks for what the
+    /// request made before trying once more (see `gdrive::api::Drive::create_once`). A 503 and a
+    /// 429 still wait and repeat: they mean the request was not taken.
+    pub async fn send_create(&self, build: impl Fn(&Client) -> RequestBuilder + Sync) -> SResult<Response> {
+        self.send_inner(&build, true, false).await
     }
 
     /// The same for addresses that carry their own authorization (OneDrive upload sessions,
     /// temporary download links), which must not get the token.
     pub async fn send_unsigned(&self, build: impl Fn(&Client) -> RequestBuilder + Sync) -> SResult<Response> {
-        self.send_inner(&build, false).await
+        self.send_inner(&build, false, true).await
     }
 
-    async fn send_inner(&self, build: &(dyn Fn(&Client) -> RequestBuilder + Sync), sign: bool) -> SResult<Response> {
+    /// Sends one upload piece: `build` makes the request around the body it is given. Unlike
+    /// [`send`](Api::send), a slow piece is never cut off while its bytes keep moving; only a
+    /// stall ends it (see [`piece_client`]). `sign` is false for addresses that carry their own
+    /// authorization.
+    pub async fn send_piece(&self, sign: bool, piece: &Bytes, build: impl Fn(&Client, reqwest::Body) -> RequestBuilder + Sync) -> SResult<Response> {
+        self.piece_inner(sign, true, piece, &build).await
+    }
+
+    /// [`send_piece`](Api::send_piece) for a request that makes something new (Drive's one-request
+    /// upload): a 502 or 504 is returned, as with [`send_create`](Api::send_create).
+    pub async fn send_piece_create(&self, piece: &Bytes, build: impl Fn(&Client, reqwest::Body) -> RequestBuilder + Sync) -> SResult<Response> {
+        self.piece_inner(true, false, piece, &build).await
+    }
+
+    async fn piece_inner(&self, sign: bool, repeat_gateway: bool, piece: &Bytes, build: &(dyn Fn(&Client, reqwest::Body) -> RequestBuilder + Sync)) -> SResult<Response> {
+        let mark = Arc::new(AtomicI64::new(extras::now_ms()));
+        let api = Api { http: piece_client(), ..self.clone() };
+        let make = |c: &Client| {
+            mark.store(extras::now_ms(), Ordering::Relaxed);
+            build(c, marked_body(piece.clone(), mark.clone()))
+        };
+        unless_stalled(api.send_inner(&make, sign, repeat_gateway), &mark, STALL, self.kind).await
+    }
+
+    async fn send_inner(&self, build: &(dyn Fn(&Client) -> RequestBuilder + Sync), sign: bool, repeat_gateway: bool) -> SResult<Response> {
         let mut refreshed = false;
         let mut tries = 0u32;
         loop {
@@ -130,7 +213,8 @@ impl Api {
                 return Err(self.tokens.lost(Some(error_detail(401, &body))).await);
             }
             let wait = match status {
-                429 | 503 | 502 | 504 => Some(retry_after(&res).unwrap_or_else(|| backoff(tries))),
+                429 | 503 => Some(retry_after(&res).unwrap_or_else(|| backoff(tries))),
+                502 | 504 if repeat_gateway => Some(retry_after(&res).unwrap_or_else(|| backoff(tries))),
                 // Drive says "slow down" with a 403 and a reason in the body
                 403 if self.kind == ConnKind::Gdrive => {
                     let body = res.bytes().await.unwrap_or_default();
@@ -312,6 +396,35 @@ pub fn enc(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// B3-6 (round 4): a piece is ended by a stall, not by how long it takes. Bytes that keep
+    /// moving keep it alive past the stall time; a piece that stops moving is a network error.
+    #[tokio::test]
+    async fn pieces_end_on_a_stall_not_on_a_clock() {
+        let stall = Duration::from_millis(150);
+        let mark = Arc::new(AtomicI64::new(extras::now_ms()));
+        let m2 = mark.clone();
+        let slow = async move {
+            for _ in 0..12 {
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                m2.store(extras::now_ms(), Ordering::Relaxed);
+            }
+            Ok::<_, StorageError>(7)
+        };
+        assert_eq!(unless_stalled(slow, &mark, stall, ConnKind::Gdrive).await.unwrap(), 7, "480 ms, still moving");
+
+        mark.store(extras::now_ms(), Ordering::Relaxed);
+        let stuck = std::future::pending::<SResult<u32>>();
+        let e = unless_stalled(stuck, &mark, stall, ConnKind::Gdrive).await.unwrap_err();
+        assert_eq!(e.kind, ErrKind::Network);
+
+        // the body moves the mark as it is taken, slice by slice
+        let mark = Arc::new(AtomicI64::new(0));
+        let body = marked_body(Bytes::from(vec![1u8; 200 * 1024]), mark.clone());
+        let bytes = http_body_util::BodyExt::collect(body).await.unwrap().to_bytes();
+        assert_eq!(bytes.len(), 200 * 1024);
+        assert!(mark.load(Ordering::Relaxed) > 0);
+    }
 
     #[test]
     fn retry_after_in_seconds_or_as_a_date() {

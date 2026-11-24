@@ -306,6 +306,28 @@ async fn resumable_uploads_resend_what_the_server_missed() {
     assert_eq!(parts.iter().map(|p| p.size).sum::<u64>(), 393_216);
 }
 
+/// B3-2 (round 4): a copy job's source is a stream that can't be reopened; a piece the server
+/// only half took is still sent again from what arrived (the source keeps the last piece).
+#[tokio::test]
+async fn a_stream_source_resends_a_half_taken_piece() {
+    let u = Arc::new(Uploads { base: Default::default(), got: Default::default(), halved: AtomicU32::new(0), puts: Default::default() });
+    let u2 = u.clone();
+    let mock = Mock::start(move |req| upload_server(u2.clone(), req)).await;
+    *u.base.lock().unwrap() = mock.base.clone();
+    let g = GDrive::with_base(api(fixed("tok")), &mock.base);
+    let data: Vec<u8> = (0..600 * 1024u32).map(|i| (i % 249) as u8).collect();
+    let pieces: Vec<Result<bytes::Bytes, std::io::Error>> = data.chunks(100 * 1024).map(|c| Ok(bytes::Bytes::copy_from_slice(c))).collect();
+    let body: crate::storage::ByteStream = Box::pin(futures_util::stream::iter(pieces));
+    let src = WriteSource::Stream { len: Some(data.len() as u64), body, reopen: None };
+    let opts = WriteOpts { part_size: Some(256 * 1024), ..Default::default() };
+    let cancel = Arc::new(AtomicBool::new(false));
+    let out = g.write(MY_DRIVE, "up/big.bin", src, opts, &|_, _| {}, &cancel).await.unwrap();
+    assert!(matches!(out, WriteOutcome::Done(_)));
+    assert_eq!(*u.got.lock().unwrap(), data, "every byte, once, in order");
+    let puts = u.puts.lock().unwrap().clone();
+    assert_eq!(puts[2], "bytes 393216-614399/614400", "carries on from what arrived");
+}
+
 #[tokio::test]
 async fn an_interrupted_upload_resumes_its_session() {
     let u = Arc::new(Uploads { base: Default::default(), got: Default::default(), halved: AtomicU32::new(1), puts: Default::default() });
@@ -517,4 +539,93 @@ async fn renaming_at_the_top_of_my_drive_is_not_a_move() {
     let patch = mock.seen("/drive/v3/files/f1").into_iter().find(|r| r.method == "PATCH").expect("a PATCH");
     assert_eq!(patch.q("addParents"), None, "{}", patch.query);
     assert_eq!(patch.q("removeParents"), None, "{}", patch.query);
+}
+
+/// B3-3 (round 4): a create whose answer is a 502 is not sent again blindly. When Drive did make
+/// the folder, it is found and taken (one POST, no duplicate); when it didn't, the request is
+/// sent once more.
+#[tokio::test]
+async fn a_create_after_a_gateway_error_never_makes_two() {
+    let made = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let fail = Arc::new(AtomicU32::new(0));
+    let (m2, f2) = (made.clone(), fail.clone());
+    let mock = Mock::start(move |req| match (req.method.as_str(), req.path.as_str()) {
+        ("POST", "/drive/v3/files") => {
+            let name = req.json()["name"].as_str().unwrap().to_string();
+            let mode = f2.load(Ordering::SeqCst);
+            // mode 1: made, answer lost; mode 2: not made, gateway error; mode 0: fine
+            if mode == 2 {
+                f2.store(0, Ordering::SeqCst);
+                return Resp::status(502);
+            }
+            let f = json!({ "id": format!("id{}", m2.lock().unwrap().len()), "name": name, "mimeType": api::FOLDER, "parents": ["P"],
+                "createdTime": extras::format_rfc3339(extras::now_ms()) });
+            m2.lock().unwrap().push(f.clone());
+            if mode == 1 {
+                f2.store(0, Ordering::SeqCst);
+                return Resp::status(502);
+            }
+            Resp::json(200, &f)
+        }
+        ("GET", "/drive/v3/files") => {
+            let q = req.q("q").unwrap_or_default();
+            assert!(q.contains("createdTime >") && q.contains("'P' in parents"), "{q}");
+            let names = names_in(&q);
+            let hits: Vec<Value> = m2.lock().unwrap().iter().filter(|f| names.iter().any(|n| f["name"] == n.as_str())).cloned().collect();
+            files(hits, None)
+        }
+        _ => Resp::status(404),
+    })
+    .await;
+    let a = api(fixed("tok"));
+    let d = api::Drive { api: &a, base: &mock.base };
+
+    fail.store(1, Ordering::SeqCst);
+    let f = d.create_folder("P", "made").await.unwrap();
+    assert_eq!(f.id, "id0");
+    assert_eq!(mock.seen("/drive/v3/files").iter().filter(|r| r.method == "POST").count(), 1, "found, not made again");
+    assert_eq!(made.lock().unwrap().len(), 1);
+
+    fail.store(2, Ordering::SeqCst);
+    let f = d.create_folder("P", "lost").await.unwrap();
+    assert_eq!(f.name, "lost");
+    assert_eq!(mock.seen("/drive/v3/files").iter().filter(|r| r.method == "POST").count(), 3, "nothing there: sent again");
+    assert_eq!(made.lock().unwrap().len(), 2);
+}
+
+/// B3-7 (round 4): saving to a path that is a shortcut to a file writes the target's content
+/// (Drive takes none on a shortcut); the path still names the shortcut afterwards.
+#[tokio::test]
+async fn saving_through_a_shortcut_writes_its_target() {
+    let mut link = json!({ "id": "s2", "name": "Report.txt", "mimeType": api::SHORTCUT, "version": "3", "parents": ["root"], "modifiedTime": "2023-01-01T00:00:00Z" });
+    link["shortcutDetails"] = json!({ "targetId": "t1", "targetMimeType": "text/plain" });
+    let mut target = file("t1", "Elsewhere.txt", "text/plain", "2024-05-01T00:00:00Z");
+    target["parents"] = json!(["other"]);
+    let all = vec![link, target];
+    let mock = Mock::start(move |req| {
+        if req.path == "/drive/v3/files" {
+            let names = names_in(&req.q("q").unwrap_or_default());
+            return files(all.iter().filter(|f| names.iter().any(|n| f["name"] == n.as_str())).cloned().collect(), None);
+        }
+        if req.path == "/drive/v3/files/root" {
+            return Resp::json(200, &json!({ "id": "0Real" }));
+        }
+        if req.method == "PATCH" && req.path == "/upload/drive/v3/files/t1" {
+            return Resp::json(200, &json!({ "id": "t1", "name": "Elsewhere.txt", "mimeType": "text/plain", "size": "5", "md5Checksum": "new", "version": "9", "parents": ["other"] }));
+        }
+        if let Some(id) = req.path.strip_prefix("/drive/v3/files/") {
+            if let Some(f) = all.iter().find(|f| f["id"] == id) {
+                return Resp::json(200, f);
+            }
+        }
+        Resp::status(404)
+    })
+    .await;
+    let g = GDrive::with_base(api(fixed("tok")), &mock.base);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let out = g.write(MY_DRIVE, "Report.txt", WriteSource::Bytes("hello".into()), WriteOpts::default(), &|_, _| {}, &cancel).await.unwrap();
+    let WriteOutcome::Done(e) = out else { panic!("not done") };
+    assert!(mock.seen("/upload/drive/v3/files/s2").is_empty(), "never the shortcut's own id");
+    assert_eq!(mock.seen("/upload/drive/v3/files/t1").len(), 1);
+    assert_eq!((e.id.as_deref(), e.size, e.etag.as_deref()), (Some("s2"), 5, Some("new")), "still the shortcut, with the target's new content");
 }

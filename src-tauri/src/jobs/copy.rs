@@ -70,8 +70,9 @@ pub async fn copy_item(ctx: &Ctx, item: Item, inflight: Arc<AtomicU64>) -> Outco
 
 /// The rule for links on this computer (`local_links`), for one item: what is read from a picked
 /// folder here isn't a link or reached through one (a link to `~/.aws/credentials` in a project
-/// folder is never uploaded), and what comes from elsewhere isn't written through a link in the
-/// destination folder (a remote `Documents/x` never lands in a linked `~/Documents`). Checked
+/// folder is never uploaded), and what comes from elsewhere (a server, or another folder here)
+/// isn't written through a link in the destination folder (a `Documents/x` never lands in a
+/// linked `~/Documents`). Checked
 /// when the item runs, so a mirror's list (planned by the page) and a link made since planning
 /// are covered too.
 fn link_refusal(ctx: &Ctx, item: &Item) -> Option<String> {
@@ -88,8 +89,9 @@ fn link_refusal(ctx: &Ctx, item: &Item) -> Option<String> {
             return Some(why);
         }
     }
-    if !src_local
-        && ctx.dst.caps().local_paths
+    // names from another folder on this computer are just as foreign to the destination as a
+    // server's (B4-3): `dst/Documents -> ~/Documents` must not take a local copy's files either
+    if ctx.dst.caps().local_paths
         && let (Some(base), Some(path)) = (ctx.dst.local_path(&spec.dst.root, &own(&spec.dst.dir)), ctx.dst.local_path(&spec.dst.root, &own(&item.dst_path)))
         && let Err(why) = crate::local_links::safe_write_target(&base, &path)
     {

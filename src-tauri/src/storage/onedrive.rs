@@ -301,6 +301,24 @@ impl OneDrive {
             let v: Value = read_json(ConnKind::Onedrive, check(ConnKind::Onedrive, res).await?).await?;
             Ok(Some(next_expected(&v).unwrap_or(0)))
         };
+        // B3-5: a session that is gone right after its last piece was sent may well have finished
+        // (the answer was lost on the way): the item is there, with this size, written just now,
+        // and not the version an If-Match named, so it is taken as done instead of failing.
+        let landed = |end: u64| {
+            let if_match = if_match.clone();
+            async move {
+                const RECENT_MS: i64 = 15 * 60 * 1000;
+                if end != total {
+                    return None;
+                }
+                let url = format!("{item}?$select={}", enc(SELECT));
+                let res = self.api.send(|c| c.get(&url)).await.ok()?;
+                let it: Item = read_json(ConnKind::Onedrive, check(ConnKind::Onedrive, res).await.ok()?).await.ok()?;
+                let fresh = it.last_modified_date_time.as_deref().and_then(extras::parse_rfc3339).is_some_and(|t| (extras::now_ms() - t).abs() < RECENT_MS);
+                let changed = if_match.is_none_or(|old| it.e_tag.as_deref() != Some(old.as_str()));
+                (!it.is_folder() && it.size == Some(total as i64) && fresh && changed).then_some(it)
+            }
+        };
         let mut offset = 0u64;
         let mut session = None;
         if let Some(rs) = &opts.resume
@@ -342,7 +360,7 @@ impl OneDrive {
             let end = offset + chunk.len() as u64;
             let range = format!("bytes {offset}-{}/{total}", end - 1);
             let len = chunk.len();
-            let sent = self.api.send_unsigned(|c| c.put(&session).header("content-range", &range).header("content-length", len).body(chunk.clone())).await;
+            let sent = self.api.send_piece(false, &chunk, |c, body| c.put(&session).header("content-range", &range).header("content-length", len).body(body)).await;
             let res = match sent {
                 Ok(r) => r,
                 Err(e) if e.kind == ErrKind::Network && failures < FAILURES => {
@@ -355,7 +373,16 @@ impl OneDrive {
                                 failures += 1;
                                 tokio::time::sleep(backoff(failures)).await;
                             }
-                            r => break r?.ok_or_else(|| StorageError::other("OneDrive dropped the upload. Try again."))?,
+                            r => match r? {
+                                Some(at) => break at,
+                                None => match landed(end).await {
+                                    Some(it) => {
+                                        progress(total, total);
+                                        return Ok(Some(Ok(it)));
+                                    }
+                                    None => return Err(StorageError::other("OneDrive dropped the upload. Try again.")),
+                                },
+                            },
                         }
                     };
                     continue;
@@ -403,7 +430,16 @@ impl OneDrive {
                                 failures += 1;
                                 tokio::time::sleep(backoff(failures)).await;
                             }
-                            r => break r?.ok_or_else(|| StorageError::other("OneDrive dropped the upload. Try again."))?,
+                            r => match r? {
+                                Some(at) => break at,
+                                None => match landed(end).await {
+                                    Some(it) => {
+                                        progress(total, total);
+                                        return Ok(Some(Ok(it)));
+                                    }
+                                    None => return Err(StorageError::other("OneDrive dropped the upload. Try again.")),
+                                },
+                            },
                         }
                     };
                 }
@@ -591,8 +627,8 @@ impl Storage for OneDrive {
             let url = format!("{item}/content?@microsoft.graph.conflictBehavior={behavior}");
             let ctype = opts.content_type.clone().unwrap_or_else(|| mime_guess::from_path(name).first_or_octet_stream().to_string());
             let put = || {
-                self.api.send(|c| {
-                    let r = c.put(&url).header("content-type", &ctype).body(bytes.clone());
+                self.api.send_piece(true, &bytes, |c, body| {
+                    let r = c.put(&url).header("content-type", &ctype).header("content-length", bytes.len()).body(body);
                     match if_match_of(&opts.precondition) {
                         Some(t) => r.header("if-match", t),
                         None => r,
@@ -997,6 +1033,58 @@ mod tests {
         assert_eq!(*got.lock().unwrap(), data);
         let puts = mock.seen("/up/s1").into_iter().filter(|r| r.method == "PUT").count();
         assert_eq!(puts, 1_000_000usize.div_ceil(QUANTUM as usize) + 1, "one piece sent twice");
+    }
+
+    /// B3-5 (round 4): the last piece committed but its answer was lost; the session is gone (404)
+    /// and the item is there with the right size, just written: done, not "dropped". An item
+    /// written long ago is not taken for it.
+    #[tokio::test]
+    async fn a_last_piece_whose_answer_was_lost_counts_as_done() {
+        let got = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let base = Arc::new(Mutex::new(String::new()));
+        let stale = Arc::new(AtomicU64::new(0));
+        let (g2, b2, s2) = (got.clone(), base.clone(), stale.clone());
+        let total = 3 * QUANTUM as usize;
+        let mock = Mock::start(move |req: &Req| match (req.method.as_str(), req.path.as_str()) {
+            ("POST", "/me/drive/root:/big.bin:/createUploadSession") => Resp::json(200, &json!({ "uploadUrl": format!("{}/up/s1", b2.lock().unwrap()) })),
+            ("GET", "/up/s1") => {
+                let n = g2.lock().unwrap().len();
+                if n == total {
+                    Resp::status(404)
+                } else {
+                    Resp::json(200, &json!({ "nextExpectedRanges": [format!("{n}-")] }))
+                }
+            }
+            ("PUT", "/up/s1") => {
+                let mut got = g2.lock().unwrap();
+                got.extend_from_slice(&req.body);
+                if got.len() == total {
+                    return Resp::status(500); // committed, but the answer didn't make it
+                }
+                Resp::json(202, &json!({ "nextExpectedRanges": [format!("{}-", got.len())] }))
+            }
+            ("GET", "/me/drive/root:/big.bin:") => {
+                let when = if s2.load(Ordering::SeqCst) == 1 { 0 } else { extras::now_ms() };
+                Resp::json(200, &json!({ "id": "f", "name": "big.bin", "size": total, "eTag": "\"new\"", "file": {}, "lastModifiedDateTime": extras::format_rfc3339(when) }))
+            }
+            _ => Resp::status(404),
+        })
+        .await;
+        *base.lock().unwrap() = mock.base.clone();
+        let od = OneDrive::with_base(api(), &mock.base);
+        let data: Vec<u8> = (0..total as u32).map(|i| (i % 247) as u8).collect();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let opts = WriteOpts { part_size: Some(QUANTUM), ..Default::default() };
+        let out = od.write(ME, "big.bin", WriteSource::Bytes(data.clone().into()), opts, &|_, _| {}, &cancel).await.unwrap();
+        let WriteOutcome::Done(e) = out else { panic!("not done") };
+        assert_eq!(e.etag.as_deref(), Some("\"new\""));
+        assert_eq!(*got.lock().unwrap(), data, "sent once");
+
+        got.lock().unwrap().clear();
+        stale.store(1, Ordering::SeqCst);
+        let opts = WriteOpts { part_size: Some(QUANTUM), ..Default::default() };
+        let err = od.write(ME, "big.bin", WriteSource::Bytes(data.clone().into()), opts, &|_, _| {}, &cancel).await.err().expect("an old item isn't this upload");
+        assert!(err.message.contains("dropped"), "{}", err.message);
     }
 
     #[tokio::test]

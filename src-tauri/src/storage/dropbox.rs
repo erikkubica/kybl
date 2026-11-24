@@ -183,6 +183,19 @@ impl Dropbox {
             .await
     }
 
+    /// An upload piece: like [`content_call`](Self::content_call), but a slow piece is never cut
+    /// off while its bytes keep moving (see `Api::send_piece`).
+    async fn content_piece(&self, route: &str, arg: &Value, piece: &Bytes) -> SResult<reqwest::Response> {
+        let url = format!("{}/{route}", self.content);
+        let header = api_arg(arg);
+        let len = piece.len();
+        self.api
+            .send_piece(true, piece, |c, body| {
+                c.post(&url).header("dropbox-api-arg", &header).header("content-type", "application/octet-stream").header("content-length", len).body(body)
+            })
+            .await
+    }
+
     async fn meta(&self, key: &str) -> SResult<Option<Meta>> {
         let path = dbx_path(key)?;
         if path.is_empty() {
@@ -259,7 +272,7 @@ impl Dropbox {
                 (Some(id), false) => ("files/upload_session/append_v2", json!({ "cursor": { "session_id": id, "offset": offset }, "close": false })),
                 (Some(id), true) => ("files/upload_session/finish", json!({ "cursor": { "session_id": id, "offset": offset }, "commit": Self::commit(path, opts) })),
             };
-            let res = match self.content_call(route, &arg, chunk.clone(), None).await {
+            let res = match self.content_piece(route, &arg, &chunk).await {
                 Ok(r) => r,
                 Err(e) if e.kind == ErrKind::Network && failures < FAILURES => {
                     // sent again: a wrong offset answer below says where Dropbox really is
@@ -526,7 +539,7 @@ impl Storage for Dropbox {
                     Err(e) if e.is_cancelled() => return Ok(WriteOutcome::Cancelled),
                     r => r?,
                 };
-                let res = self.content_call("files/upload", &Self::commit(&p, &opts), bytes, None).await?;
+                let res = self.content_piece("files/upload", &Self::commit(&p, &opts), &bytes).await?;
                 if res.status().as_u16() == 409 {
                     let b = res.bytes().await.unwrap_or_default();
                     Some(dbx_error(&b))

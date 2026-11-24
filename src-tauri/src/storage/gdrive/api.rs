@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::paths::Node;
-use crate::oauth::http::{enc, Api};
+use crate::oauth::http::{backoff, check, enc, read_json, Api};
 use crate::storage::{extras, Entry, ExportFormat, Hashes, NativeDoc, SResult};
 
 pub const FOLDER: &str = "application/vnd.google-apps.folder";
@@ -212,7 +212,48 @@ impl Drive<'_> {
     pub async fn create_folder(&self, parent: &str, name: &str) -> SResult<DFile> {
         let url = format!("{}?fields={}&supportsAllDrives=true", self.files_url(), enc(FILE_FIELDS));
         let body = json!({ "name": name, "mimeType": FOLDER, "parents": [parent] }).to_string();
-        self.api.json(|c| c.post(&url).header("content-type", "application/json").body(body.clone())).await
+        let send = || self.api.send_create(|c| c.post(&url).header("content-type", "application/json").body(body.clone()));
+        self.create_once(parent, name, |f| f.mime_type == FOLDER, send).await
+    }
+
+    /// Sends a request that makes `name` in `parent` (a folder, a copy, a one-request upload)
+    /// without ever making it twice. `send` sends it once, with a 502 or 504 returned rather than
+    /// repeated (`Api::send_create`, `Api::send_piece_create`). Drive allows two files of the same name, so a request sent
+    /// again after a 502 or 504 that Drive had in fact carried out leaves a duplicate (and for a
+    /// folder, later uploads split between the two). After such an answer Kybl first looks for an
+    /// item of that name in that folder, created since the request went out and matching `is_it`,
+    /// and takes it; only when there is none does it send the request again.
+    pub async fn create_once<Fut: std::future::Future<Output = SResult<reqwest::Response>>>(
+        &self,
+        parent: &str,
+        name: &str,
+        is_it: impl Fn(&DFile) -> bool,
+        send: impl Fn() -> Fut,
+    ) -> SResult<DFile> {
+        const TRIES: u32 = 5;
+        // Google's clock and this computer's may disagree a little
+        const SKEW_MS: i64 = 2 * 60 * 1000;
+        let mut tries = 0u32;
+        loop {
+            tries += 1;
+            let sent_at = extras::now_ms();
+            let res = send().await?;
+            if !matches!(res.status().as_u16(), 502 | 504) || tries >= TRIES {
+                return read_json(self.api.kind, check(self.api.kind, res).await?).await;
+            }
+            drop(res);
+            tokio::time::sleep(backoff(tries).min(self.api.max_wait)).await;
+            let q = format!(
+                "{} in parents and name = {} and trashed = false and createdTime > '{}'",
+                quote(parent),
+                quote(name),
+                extras::format_rfc3339(sent_at - SKEW_MS)
+            );
+            let found = self.list(&q, Corpus::All, "createdTime", None, 10).await?;
+            if let Some(f) = found.files.into_iter().find(|f| f.name == name && is_it(f)) {
+                return Ok(f);
+            }
+        }
     }
 
     /// Changes a file's metadata; `add` / `remove` move it between folders.
@@ -236,7 +277,8 @@ impl Drive<'_> {
     pub async fn copy(&self, id: &str, parent: &str, name: &str) -> SResult<DFile> {
         let url = format!("{}/{}/copy?fields={}&supportsAllDrives=true", self.files_url(), enc(id), enc(FILE_FIELDS));
         let body = json!({ "name": name, "parents": [parent] }).to_string();
-        self.api.json(|c| c.post(&url).header("content-type", "application/json").body(body.clone())).await
+        let send = || self.api.send_create(|c| c.post(&url).header("content-type", "application/json").body(body.clone()));
+        self.create_once(parent, name, |f| f.mime_type != FOLDER, send).await
     }
 }
 

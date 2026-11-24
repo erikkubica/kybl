@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicBool;
 
 use serde_json::json;
 
-use super::api::{DFile, FILE_FIELDS};
+use super::api::{DFile, Drive, FILE_FIELDS};
 use crate::oauth::http::{backoff, check, enc, read_json, unexpected, Api};
 use crate::storage::{extras::{self, Source}, ErrKind, PartRecord, Progress, SResult, StorageError, WriteOpts};
 
@@ -71,12 +71,17 @@ async fn simple(api: &Api, base: &str, t: &Target<'_>, bytes: bytes::Bytes) -> S
     let body = bytes::Bytes::from(body);
     let url = t.url(base, "multipart");
     let ctype = format!("multipart/related; boundary={boundary}");
-    let existing = t.existing.is_some();
-    api.json(|c| {
-        let r = if existing { c.patch(&url) } else { c.post(&url) };
-        r.header("content-type", &ctype).body(body.clone())
-    })
-    .await
+    if t.existing.is_some() {
+        // replacing a file's content is safe to send again
+        let res = api.send_piece(true, &body, |c, b| c.patch(&url).header("content-type", &ctype).header("content-length", body.len()).body(b)).await?;
+        return read_json(api.kind, check(api.kind, res).await?).await;
+    }
+    // a new file: never two of it (see `Drive::create_once`); what a lost answer made is known by
+    // its size and MD5
+    let (size, md5) = (bytes.len().to_string(), crate::verify::hex(&<md5::Md5 as md5::Digest>::digest(&bytes)));
+    let same = |f: &DFile| f.size.as_deref() == Some(size.as_str()) && f.md5_checksum.as_deref().is_none_or(|m| m.eq_ignore_ascii_case(&md5));
+    let send = || api.send_piece_create(&body, |c, b| c.post(&url).header("content-type", &ctype).header("content-length", body.len()).body(b));
+    Drive { api, base }.create_once(t.parent, t.name, same, send).await
 }
 
 /// Opens an upload session; its address.
@@ -197,7 +202,7 @@ async fn resumable(api: &Api, base: &str, t: &Target<'_>, mut src: Source, opts:
             format!("bytes {offset}-{}/{of}", end - 1)
         };
         let len = chunk.len();
-        let sent = api.send(|c| c.put(&session).header("content-range", &range).header("content-length", len).body(chunk.clone())).await;
+        let sent = api.send_piece(true, &chunk, |c, body| c.put(&session).header("content-range", &range).header("content-length", len).body(body)).await;
         let res = match sent {
             Ok(r) => r,
             Err(e) if e.kind == ErrKind::Network && failures < FAILURES => {

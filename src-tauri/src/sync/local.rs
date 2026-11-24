@@ -152,6 +152,10 @@ pub struct LocalSnapshot {
     /// links (and, on Windows, junctions) in the folder (NFC, relative): never followed, and
     /// left alone, so a synced folder replaced by a link isn't taken for deleted
     pub links: Vec<String>,
+    /// a quick look ([`rescan_dirty`]): only the watched changes were looked at, so `links` holds
+    /// those, plus the links found above the base's paths; paths only the other side knows are
+    /// checked by the run ([`links_above`])
+    pub partial: bool,
 }
 
 impl LocalSnapshot {
@@ -235,12 +239,16 @@ fn scan_into(root: &Path, start: &Path, gi: &Gitignore, out: &mut LocalSnapshot)
 /// A quick look at only what the watcher saw change: the base's view of the folder, with each
 /// changed path (and everything under a changed folder) looked at again.
 pub fn rescan_dirty(root: &Path, gi: &Gitignore, base: &dyn BaseState, dirty: &HashSet<PathBuf>) -> LocalSnapshot {
-    let mut out = LocalSnapshot::default();
+    let mut out = LocalSnapshot { partial: true, ..Default::default() };
     for p in base.paths() {
         if let Some(b) = base.entry(p) {
             out.files.insert(p.to_string(), LocalMeta { size: b.l_size, mtime: b.l_mtime, file_id: b.l_fileid.clone(), md5: None });
         }
     }
+    // a link that replaced a synced folder (or file) earlier isn't among the watched changes:
+    // found here, it is left alone as a full scan leaves it (B4-1), instead of the other side's
+    // changes under it failing the run
+    out.links = links_above(root, out.files.keys().map(String::as_str), &mut HashMap::new());
     for d in dirty {
         let Ok(rel) = d.strip_prefix(root) else { continue };
         let rel = nfc(&rel_key(rel));
@@ -266,6 +274,27 @@ pub fn rescan_dirty(root: &Path, gi: &Gitignore, base: &dyn BaseState, dirty: &H
         }
     }
     out
+}
+
+/// The links on the way to `rels` (relative keys under `root`, the path itself included), each
+/// reported once as the link's own key; what is below a link isn't looked at. `seen` remembers
+/// the folders already looked at (one `lstat` per folder, however many files share it).
+pub fn links_above<'a>(root: &Path, rels: impl IntoIterator<Item = &'a str>, seen: &mut HashMap<String, bool>) -> Vec<String> {
+    let mut out = std::collections::BTreeSet::new();
+    for rel in rels {
+        let mut end = 0;
+        while end < rel.len() {
+            end = rel[end..].find('/').map_or(rel.len(), |i| end + i);
+            let part = &rel[..end];
+            end += 1;
+            let link = *seen.entry(part.to_string()).or_insert_with(|| std::fs::symlink_metadata(local_path_of(root, part)).is_ok_and(|m| m.file_type().is_symlink()));
+            if link {
+                out.insert(part.to_string());
+                break;
+            }
+        }
+    }
+    out.into_iter().collect()
 }
 
 /// The MD5 of a file, hex.
@@ -473,6 +502,29 @@ mod tests {
         for bad in ["", "../x", "a//b", "a\\b", "./a"] {
             assert!(!safe_rel_on(bad, false) && !safe_rel_on(bad, true), "{bad:?}");
         }
+    }
+
+    /// B4-1 (round 4): a quick look finds a link that replaced a synced folder earlier (not among
+    /// the watched changes), and paths only the other side knows are checked the same way.
+    #[cfg(unix)]
+    #[test]
+    fn quick_looks_find_links_that_were_already_there() {
+        let root = std::fs::canonicalize(std::env::temp_dir()).unwrap().join(format!("kybl-links-{}", uuid::Uuid::new_v4()));
+        let away = root.with_extension("away");
+        std::fs::create_dir_all(away.join("docs")).unwrap();
+        std::fs::create_dir_all(root.join("plain")).unwrap();
+        std::fs::write(root.join("top.txt"), "t").unwrap();
+        std::os::unix::fs::symlink(away.join("docs"), root.join("docs")).unwrap();
+        let gi = build_ignore(&root, &[]);
+        let base: HashMap<String, BaseEntry> = ["docs/a.txt", "docs/sub/b.txt", "top.txt", "plain/c.txt"].iter().map(|k| (k.to_string(), BaseEntry::default())).collect();
+        let quick = rescan_dirty(&root, &gi, &base, &HashSet::from([root.join("top.txt")]));
+        assert!(quick.partial);
+        assert_eq!(quick.links, vec!["docs".to_string()]);
+        let mut seen = HashMap::new();
+        assert_eq!(links_above(&root, ["docs/new.txt", "plain/new.txt", "new/x.txt"], &mut seen), vec!["docs".to_string()]);
+        assert!(!scan_local(&root, &gi).partial);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&away);
     }
 
     #[test]
