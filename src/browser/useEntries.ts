@@ -149,6 +149,15 @@ export function useEntries(
   }, [listLoadMore]);
 
   const folderKeys = useMemo(() => new Set(fresh ? listing.folders : []), [fresh, listing.folders]);
+  /**
+   * Every key in the folder on screen, once all of it is loaded (else null): a paste or upload
+   * into this folder checks its name clashes against it at once, as FileZilla does, instead of
+   * asking the server about each name.
+   */
+  const shownKeys = useMemo(
+    () => (fresh && !listing.next && listing.loc ? { loc: listing.loc, keys: new Set([...listing.folders, ...listing.objects.map((o) => o.key)]) } : null),
+    [fresh, listing.next, listing.loc, listing.folders, listing.objects],
+  );
 
   // read by refresh, so leaving search takes effect before the next render
   const searchRef = useRef(search);
@@ -186,6 +195,7 @@ export function useEntries(
     hasMore,
     loadMore,
     folderKeys,
+    shownKeys,
     refresh,
     leaveSearch,
     moreOnServer: !search && fresh && !!listing.next,

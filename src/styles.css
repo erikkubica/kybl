@@ -1965,6 +1965,16 @@ body.resizing-col * {
   display: flex;
   gap: 8px;
 }
+/* the name-clash question can carry six buttons: they wrap instead of running past the edge */
+.conflict-foot,
+.conflict-foot .btn-row {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+.conflict-foot .btn-row:last-child {
+  justify-content: flex-end;
+  margin-left: auto;
+}
 .confirm-icon {
   display: grid;
   place-items: center;

@@ -277,6 +277,7 @@ function usePaneCore(env: PaneEnv) {
     bucket,
     prefix,
     folderKeys: ent.folderKeys,
+    shownKeys: ent.shownKeys,
     settings,
     transfers: env.transfers,
     jobs: env.jobs,

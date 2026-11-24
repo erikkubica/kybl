@@ -484,10 +484,55 @@ pub async fn copy_or_move<R: Runtime>(
 }
 
 /// Which keys (and folders) are already there, in the order asked.
+///
+/// Names that share a folder are checked against one listing of it, the way FileZilla compares
+/// with the folder it already shows: on FTP every lone check is a listing of its own (and a data
+/// connection), so pasting 40 files asked the server 40 times. A folder with only a name or two
+/// is checked name by name, which stays cheaper than listing a big folder.
 pub async fn existing_keys(s: &dyn Storage, bucket: &str, keys: Vec<String>, prefixes: Vec<String>) -> Result<Existing, String> {
-    let check = |k: String, dir: bool| async move {
-        let probe = if dir && !k.ends_with('/') { format!("{k}/") } else { k.clone() };
-        s.stat(bucket, &probe).await.map(|e| e.is_some().then_some(k))
+    use std::collections::{HashMap, HashSet};
+    const LIST_FROM: usize = 3;
+    let parent = |k: &str| -> String {
+        let t = k.trim_end_matches('/');
+        t.rfind('/').map_or(String::new(), |i| t[..=i].to_string())
+    };
+    let mut per_dir: HashMap<String, usize> = HashMap::new();
+    for k in keys.iter().chain(prefixes.iter()) {
+        *per_dir.entry(parent(k)).or_default() += 1;
+    }
+    // the folders worth one listing: everything in each, as full keys (folders end with `/`)
+    let listed: HashMap<String, Option<HashSet<String>>> = futures_util::stream::iter(per_dir.into_iter().filter(|(_, n)| *n >= LIST_FROM).map(|(dir, _)| async move {
+        let mut names = HashSet::new();
+        let mut token = None;
+        loop {
+            match s.list(bucket, &dir, token).await {
+                Ok(page) => {
+                    names.extend(page.folders);
+                    names.extend(page.objects.into_iter().map(|e| e.key));
+                    token = page.next_token;
+                    if token.is_none() {
+                        break (dir, Some(names));
+                    }
+                }
+                // can't list it: those names are checked one by one instead
+                Err(_) => break (dir, None),
+            }
+        }
+    }))
+    .buffer_unordered(4)
+    .collect()
+    .await;
+    let check = |k: String, dir: bool| {
+        let known = listed.get(&parent(&k)).and_then(Option::as_ref);
+        async move {
+            let probe = if dir && !k.ends_with('/') { format!("{k}/") } else { k.clone() };
+            if let Some(names) = known {
+                // a folder can be listed as a file-like entry on some stores (a link): either counts
+                let there = names.contains(&probe) || names.contains(probe.trim_end_matches('/'));
+                return Ok(there.then_some(k));
+            }
+            s.stat(bucket, &probe).await.map(|e| e.is_some().then_some(k))
+        }
     };
     let keys: Vec<_> = futures_util::stream::iter(keys.into_iter().map(|k| check(k, false))).buffered(16).collect().await;
     let prefixes: Vec<_> = futures_util::stream::iter(prefixes.into_iter().map(|k| check(k, true))).buffered(16).collect().await;

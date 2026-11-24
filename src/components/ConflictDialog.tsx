@@ -85,7 +85,7 @@ function ConflictDialog({ ask }: { ask: Ask }) {
   const pick = (choice: Choice, all = false) => ask.done({ choice, all: all || remember, remember });
   const replace = folder ? "Merge" : "Replace";
   return (
-    <Modal title={folder ? `A folder named “${clash.name}” already exists` : `“${clash.name}” already exists`} onClose={() => ask.done(null)} width={520}>
+    <Modal title={folder ? `A folder named “${clash.name}” already exists` : `“${clash.name}” already exists`} onClose={() => ask.done(null)} width={more ? 600 : 480}>
       <div className="modal-body conflict-body">
         <div className="conflict-icon" aria-hidden="true">
           <Icon name={folder ? "folder" : "file"} size={22} />
@@ -108,7 +108,7 @@ function ConflictDialog({ ask }: { ask: Ask }) {
           )}
         </div>
       </div>
-      <div className="modal-foot split">
+      <div className="modal-foot split conflict-foot">
         <div className="btn-row">
           <button className="btn" onClick={() => ask.done(null)}>
             Cancel

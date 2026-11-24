@@ -50,6 +50,8 @@ export type OpsContext = {
   prefix: string;
   /** names of the folders in the listing on screen (for a free "New folder" name) */
   folderKeys: Set<string>;
+  /** every key of the folder on screen, when all of it is loaded: name clashes there need no server */
+  shownKeys?: { loc: { profileId: string; bucket: string; prefix: string }; keys: Set<string> } | null;
   settings: Settings;
   transfers: TransferActions;
   jobs: ReturnType<typeof useJobs>;
@@ -102,9 +104,22 @@ export function makeFileOps(c: OpsContext) {
    */
   const existing = async (pid: string, b: string, targets: { key: string; folder: boolean }[]): Promise<Set<string> | null> => {
     if (!targets.length) return new Set();
+    // names going into the folder on screen are looked up in its listing, with no request (the
+    // way FileZilla answers at once); only the rest are asked of the server
+    const shown = c.shownKeys;
+    const parentOf = (k: string) => k.slice(0, k.replace(/\/$/, "").lastIndexOf("/") + 1);
+    const local = shown && shown.loc.profileId === pid && shown.loc.bucket === b ? targets.filter((t) => parentOf(t.key) === shown.loc.prefix) : [];
+    const found = new Set<string>();
+    for (const t of local) {
+      const probe = t.folder && !t.key.endsWith("/") ? `${t.key}/` : t.key;
+      if (shown!.keys.has(probe) || shown!.keys.has(probe.replace(/\/$/, ""))) found.add(t.key);
+    }
+    const rest = targets.filter((t) => !local.includes(t));
+    if (!rest.length) return found;
     c.setBusy("Checking for items with the same names…");
     try {
-      return await findExisting(pid, b, targets);
+      for (const k of await findExisting(pid, b, rest)) found.add(k);
+      return found;
     } catch (e) {
       c.setBusy(null);
       const go = await c.confirm({
