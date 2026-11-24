@@ -154,13 +154,17 @@ impl SyncManager {
 
 /// Forgets everything a mapping knew about its files (it was removed, or points elsewhere now).
 pub fn forget_db<R: Runtime>(app: &AppHandle<R>, id: &str) {
-    if let Ok(db) = app.state::<SyncManager>().db(app) {
-        let _ = db.forget(id);
-    }
+    let _ = try_forget_db(app, id);
+}
+
+/// [`forget_db`], saying when the sync database couldn't be changed.
+fn try_forget_db<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String> {
+    let forgot = app.state::<SyncManager>().db(app).and_then(|db| db.forget(id));
     if let Some(p) = legacy_json(app, id) {
         let _ = std::fs::remove_file(&p);
         let _ = std::fs::remove_file(p.with_extension("json.bak"));
     }
+    forgot
 }
 
 // ---------------------------------------------------------------- one run
@@ -204,7 +208,7 @@ async fn with_engine<R: Runtime, T>(
     };
     let engine = Engine {
         id: m.id.clone(),
-        local_root: PathBuf::from(&m.local_path),
+        local_root: local::sync_root(&m.local_path),
         remote,
         root: m.bucket.clone(),
         prefix: norm_prefix(&m.prefix),
@@ -337,7 +341,7 @@ fn spawn_worker<R: Runtime>(app: AppHandle<R>, m: SyncMapping) -> Worker {
     let cancel = Arc::new(AtomicBool::new(false));
     let dirty = Arc::new(std::sync::Mutex::new(Dirty::default()));
     // a download mirror only follows the other side; the others react to local changes at once
-    let watcher = if m.direction != Direction::Download { make_watcher(&m.local_path, tx.clone(), dirty.clone()) } else { None };
+    let watcher = if m.direction != Direction::Download { make_watcher(&local::sync_root(&m.local_path), tx.clone(), dirty.clone()) } else { None };
     let c = cancel.clone();
     tauri::async_runtime::spawn(async move {
         let interval = Duration::from_secs(u64::from(m.interval_mins.max(1)) * 60);
@@ -495,7 +499,35 @@ async fn save_mapping<R: Runtime>(app: &AppHandle<R>, mgr: &SyncManager, mapping
     m.ignore = m.ignore.iter().map(|l| l.trim_end().to_string()).filter(|l| !l.trim().is_empty()).collect();
     m.interval_mins = m.interval_mins.clamp(1, 1440);
 
-    let (reset, cfg) = change_config(app, mgr, |cfg| {
+    // B4-3 (round 5): new places for a mapping drop what it knew about the old ones before the
+    // new places are saved, with its runs stopped meanwhile. Saved first, a quit or a failed drop
+    // in between would leave the new places with the old base, and the next run would take every
+    // old file for one deleted over there. Dropped first, the worst left is the old places with
+    // no base, which only merges.
+    let (moving, paused_all) = {
+        let cfg = mgr.config.lock().await;
+        if let Some(other) = cfg.mappings.iter().find(|o| o.id != m.id && overlaps(&o.local_path, &m.local_path)) {
+            return Err(format!("{} is already synced (or inside a synced folder). Pick a different folder.", other.local_path));
+        }
+        let old = if m.id.is_empty() { None } else { cfg.mappings.iter().find(|o| o.id == m.id && o.places() != m.places()).cloned() };
+        (old, cfg.paused_all)
+    };
+    let lock = mgr.run_lock(&m.id);
+    let held = match &moving {
+        Some(old) => {
+            stop_worker(mgr, &m.id).await;
+            let g = lock.lock().await; // wait for a run in progress to stop
+            if let Err(e) = try_forget_db(app, &m.id) {
+                drop(g);
+                apply(app, mgr, old, paused_all).await;
+                return Err(format!("Couldn't change this sync folder: {e}"));
+            }
+            Some(g)
+        }
+        None => None,
+    };
+
+    let changed = change_config(app, mgr, |cfg| {
         if let Some(other) = cfg.mappings.iter().find(|o| o.id != m.id && overlaps(&o.local_path, &m.local_path)) {
             return Err(format!("{} is already synced (or inside a synced folder). Pick a different folder.", other.local_path));
         }
@@ -513,12 +545,25 @@ async fn save_mapping<R: Runtime>(app: &AppHandle<R>, mgr: &SyncManager, mapping
         }
         Ok(reset)
     })
-    .await?;
+    .await;
+    let (reset, cfg) = match changed {
+        Ok(r) => r,
+        Err(e) => {
+            if let Some(old) = &moving {
+                // the old places, now with no base: the next run only merges
+                drop(held);
+                apply(app, mgr, old, paused_all).await;
+            }
+            return Err(e);
+        }
+    };
     if reset {
         stop_worker(mgr, &m.id).await;
-        let lock = mgr.run_lock(&m.id);
-        let _g = lock.lock().await; // wait for a run in progress to stop
-        forget_db(app, &m.id);
+        if held.is_none() {
+            // changed meanwhile by another save: dropped now, the old way
+            let _g = lock.lock().await;
+            forget_db(app, &m.id);
+        }
         mgr.update(app, &m.id, |s| {
             s.files = 0;
             s.last_sync = None;

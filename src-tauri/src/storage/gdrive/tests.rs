@@ -629,3 +629,45 @@ async fn saving_through_a_shortcut_writes_its_target() {
     assert_eq!(mock.seen("/upload/drive/v3/files/t1").len(), 1);
     assert_eq!((e.id.as_deref(), e.size, e.etag.as_deref()), (Some("s2"), 5, Some("new")), "still the shortcut, with the target's new content");
 }
+
+/// B3-3 (round 5): the last piece of a new file is sent again after a 502 and meets the session
+/// its first try finished (404): the file it made is taken, not uploaded a second time.
+#[tokio::test]
+async fn a_repeated_last_piece_never_makes_a_second_file() {
+    let base = Arc::new(Mutex::new(String::new()));
+    let made = Arc::new(AtomicU32::new(0));
+    let (b2, m2) = (base.clone(), made.clone());
+    let total = 512 * 1024;
+    let mock = Mock::start(move |req| match (req.method.as_str(), req.path.as_str()) {
+        ("GET", "/drive/v3/files") => {
+            let q = req.q("q").unwrap_or_default();
+            if q.contains("createdTime >") && m2.load(Ordering::SeqCst) > 0 {
+                let f = json!({ "id": "new1", "name": "big.bin", "mimeType": "application/octet-stream", "size": total.to_string(), "parents": ["root"],
+                    "createdTime": extras::format_rfc3339(extras::now_ms()) });
+                return files(vec![f], None);
+            }
+            files(vec![], None)
+        }
+        ("POST", "/upload/drive/v3/files") => Resp::status(200).header("location", &format!("{}/upload/s1", b2.lock().unwrap())),
+        ("PUT", "/upload/s1") => {
+            let range = req.header("content-range").unwrap_or_default().to_string();
+            if range.starts_with("bytes 0-") {
+                return Resp::status(308).header("range", "bytes=0-262143");
+            }
+            if m2.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Resp::status(502).header("retry-after", "0"); // made, answer lost
+            }
+            Resp::status(404)
+        }
+        _ => Resp::status(404),
+    })
+    .await;
+    *base.lock().unwrap() = mock.base.clone();
+    let g = GDrive::with_base(api(fixed("tok")), &mock.base);
+    let opts = WriteOpts { part_size: Some(256 * 1024), ..Default::default() };
+    let cancel = Arc::new(AtomicBool::new(false));
+    let out = g.write(MY_DRIVE, "big.bin", WriteSource::Bytes(vec![5u8; total].into()), opts, &|_, _| {}, &cancel).await.unwrap();
+    let WriteOutcome::Done(e) = out else { panic!("not done") };
+    assert_eq!(e.id.as_deref(), Some("new1"));
+    assert_eq!(mock.seen("/upload/drive/v3/files").len(), 1, "no second session");
+}

@@ -227,12 +227,10 @@ impl Drive<'_> {
         &self,
         parent: &str,
         name: &str,
-        is_it: impl Fn(&DFile) -> bool,
+        is_it: impl Fn(&DFile) -> bool + Sync,
         send: impl Fn() -> Fut,
     ) -> SResult<DFile> {
         const TRIES: u32 = 5;
-        // Google's clock and this computer's may disagree a little
-        const SKEW_MS: i64 = 2 * 60 * 1000;
         let mut tries = 0u32;
         loop {
             tries += 1;
@@ -243,17 +241,25 @@ impl Drive<'_> {
             }
             drop(res);
             tokio::time::sleep(backoff(tries).min(self.api.max_wait)).await;
-            let q = format!(
-                "{} in parents and name = {} and trashed = false and createdTime > '{}'",
-                quote(parent),
-                quote(name),
-                extras::format_rfc3339(sent_at - SKEW_MS)
-            );
-            let found = self.list(&q, Corpus::All, "createdTime", None, 10).await?;
-            if let Some(f) = found.files.into_iter().find(|f| f.name == name && is_it(f)) {
+            if let Some(f) = self.made_since(parent, name, sent_at, &is_it).await? {
                 return Ok(f);
             }
         }
+    }
+
+    /// An item named `name` in `parent`, created since `since_ms` (give or take the clocks'
+    /// difference) and matching `is_it`: what a request whose answer was lost made.
+    pub async fn made_since(&self, parent: &str, name: &str, since_ms: i64, is_it: &(dyn Fn(&DFile) -> bool + Sync)) -> SResult<Option<DFile>> {
+        // Google's clock and this computer's may disagree a little
+        const SKEW_MS: i64 = 2 * 60 * 1000;
+        let q = format!(
+            "{} in parents and name = {} and trashed = false and createdTime > '{}'",
+            quote(parent),
+            quote(name),
+            extras::format_rfc3339(since_ms - SKEW_MS)
+        );
+        let found = self.list(&q, Corpus::All, "createdTime", None, 10).await?;
+        Ok(found.files.into_iter().find(|f| f.name == name && is_it(f)))
     }
 
     /// Changes a file's metadata; `add` / `remove` move it between folders.

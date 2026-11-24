@@ -2,7 +2,7 @@
 //! listing (`walk`), or from the base plus the provider's change feed where it has one.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -27,12 +27,32 @@ pub struct RemoteSnapshot {
     /// links in the other folder when it is one on this computer (NFC, relative): left alone
     /// like links here, so nothing is written through them or read from them (`local_links`)
     pub links: Vec<String>,
+    /// for a snapshot made from a change feed: the paths (NFC, relative) and the ids it reported
+    /// changed, moved or removed
+    pub touched: Vec<String>,
+    pub touched_ids: HashSet<String>,
 }
 
 impl RemoteSnapshot {
     /// The full key (with the prefix) of a path.
     pub fn key(&self, prefix: &str, rel: &str) -> String {
         format!("{prefix}{}", self.raw.get(rel).map(String::as_str).unwrap_or(rel))
+    }
+
+    /// Puts back a file an earlier run saw whose pull is blocked (B4-5, round 5), unless the
+    /// feed this snapshot came from says something newer about it (then the feed wins).
+    pub fn keep_blocked(&mut self, rel: &str, meta: &RemoteMeta, raw: Option<&str>) {
+        let below = |t: &String| t == rel || rel.strip_prefix(t.as_str()).is_some_and(|r| r.starts_with('/'));
+        if self.files.contains_key(rel) || self.dupes.iter().any(|d| d == rel) || self.touched.iter().any(below) {
+            return;
+        }
+        if meta.id.as_ref().is_some_and(|i| self.touched_ids.contains(i)) {
+            return;
+        }
+        self.files.insert(rel.to_string(), meta.clone());
+        if let Some(r) = raw {
+            self.raw.insert(rel.to_string(), r.to_string());
+        }
     }
 
     fn insert(&mut self, rel: &str, meta: RemoteMeta) {
@@ -137,6 +157,9 @@ pub fn apply_changes(base: &HashMap<String, BaseEntry>, changes: &[Change], pref
     // which path each file id is at, for feeds that name files by id (Drive, OneDrive)
     let mut by_id: HashMap<String, String> = out.files.iter().filter_map(|(k, v)| Some((v.id.clone()?, k.clone()))).collect();
     for c in changes {
+        if let Some(id) = &c.id {
+            out.touched_ids.insert(id.clone());
+        }
         // the file's old place: a rename or move leaves it, and a removal (or a move out of
         // the synced folder) that only says which id is gone has no path at all
         if let Some(old) = c.id.as_ref().and_then(|id| by_id.remove(id)) {
@@ -145,7 +168,11 @@ pub fn apply_changes(base: &HashMap<String, BaseEntry>, changes: &[Change], pref
         }
         match &c.entry {
             Some(e) => {
+                if let Some(id) = &e.id {
+                    out.touched_ids.insert(id.clone());
+                }
                 let Some(rel) = rel_of(&c.key, prefix, gi) else { continue };
+                out.touched.push(nfc(rel));
                 out.files.remove(&nfc(rel));
                 out.insert(rel, remote_meta(e, md5));
                 if let Some(id) = &e.id {
@@ -163,6 +190,7 @@ pub fn apply_changes(base: &HashMap<String, BaseEntry>, changes: &[Change], pref
                 let below = format!("{rel}/");
                 out.files.retain(|k, _| *k != rel && !k.starts_with(&below));
                 out.raw.retain(|k, _| *k != rel && !k.starts_with(&below));
+                out.touched.push(rel);
             }
         }
     }

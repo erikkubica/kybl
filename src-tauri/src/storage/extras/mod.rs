@@ -334,12 +334,15 @@ impl Source {
 
     /// A source of unknown size, copied to a temporary file first, for services that need the
     /// size before an upload starts (OneDrive). Sources of known size are returned as they are.
+    /// The copy goes in this run's private uploads folder ([`set_spool_dir`]), which the next
+    /// start clears if this run crashes, and only its owner can read it.
     pub async fn spool(mut self, cancel: &AtomicBool) -> SResult<Self> {
         if self.len.is_some() {
             return Ok(self);
         }
-        let path = std::env::temp_dir().join(format!("kybl-upload-{}", uuid::Uuid::new_v4()));
-        let mut out = tokio::fs::File::create(&path).await?;
+        let dir = SPOOL_DIR.get().cloned().unwrap_or_else(std::env::temp_dir);
+        let path = dir.join(format!("kybl-upload-{}", uuid::Uuid::new_v4()));
+        let mut out = tokio::fs::File::from_std(crate::filecache::private_file(&path)?);
         let guard = Source { inner: Inner::Bytes(Bytes::new()), len: Some(0), pos: 0, spooled: Some(path.clone()) };
         let mut total = 0u64;
         loop {
@@ -358,6 +361,14 @@ impl Source {
         s.len = Some(total);
         Ok(s)
     }
+}
+
+static SPOOL_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Where [`Source::spool`] puts its copies: this run's own private uploads folder (see
+/// `leftovers::start`). Until it is set (tests), the system's temporary folder.
+pub fn set_spool_dir(dir: std::path::PathBuf) {
+    let _ = SPOOL_DIR.set(dir);
 }
 
 /// "photo.jpg" → ("photo", ".jpg"); folders and names without a dot have no extension. A name
@@ -525,6 +536,12 @@ mod tests {
         let s = Source::open(src).await.unwrap().spool(&never).await.unwrap();
         assert_eq!(s.len, Some(1000));
         let path = s.spooled.clone().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "only its owner can read the copy (B3-4, round 5)");
+        }
         let mut s = s;
         assert_eq!(&s.rest(10_000, &never).await.unwrap()[..], &data[..]);
         drop(s);

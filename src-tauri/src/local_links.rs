@@ -57,6 +57,27 @@ pub fn safe_write_target(base: &Path, path: &Path) -> Result<(), String> {
     }
 }
 
+/// `key` on a store on this computer (another folder a sync keeps up to date) is about to be
+/// written (`last`: the file itself counts) or deleted or moved away (only the folders on the way
+/// count: a link itself may go). Refused when a link lies between the folder behind `prefix` and
+/// it, as [`safe_write_target`] does. A link can appear there after the last full listing, so a
+/// run that didn't list that side checks each path as it goes (B4-1, round 5). Stores that are
+/// not on this computer have nothing to check.
+pub fn store_target(store: &dyn crate::storage::Storage, root: &str, prefix: &str, key: &str, last: bool) -> Result<(), String> {
+    if !store.caps().local_paths {
+        return Ok(());
+    }
+    let refused = |what: &str| format!("“{what}” is a link to another place, and Kybl doesn't write files from elsewhere through links, so this was left alone.");
+    let (Some(base), Some(path)) = (store.local_path(root, prefix.trim_end_matches('/')), store.local_path(root, key)) else {
+        // a link out of the store's folder on the way
+        return Err(refused(key.strip_prefix(prefix).unwrap_or(key)));
+    };
+    match link_between(&base, &path, last) {
+        None => Ok(()),
+        Some(link) => Err(refused(&shown(&base, &link))),
+    }
+}
+
 /// A file inside the picked folder `base` is about to be read to send elsewhere: refused when it,
 /// or a folder between it and `base`, is a link.
 pub fn safe_source(base: &Path, path: &Path) -> Result<(), String> {

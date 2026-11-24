@@ -645,6 +645,62 @@ fn links_in_the_other_folder_on_this_computer_are_left_alone() {
     });
 }
 
+#[cfg(unix)]
+#[test]
+fn a_quick_run_never_writes_through_a_link_that_appeared_over_there() {
+    run(async {
+        // B4-1 (round 5): after a full run, a synced folder and a synced file in the other folder
+        // are replaced by links. A quick run lists nothing over there, so the link check goes
+        // with each upload: local edits are left alone, not written through
+        let p = pair().await;
+        write(&p.l("docs/a.txt"), "a");
+        write(&p.l("notes.txt"), "n");
+        p.twoway().await;
+        write(&p.r("shared/secret.txt"), "theirs");
+        fs::remove_dir_all(p.r("docs")).unwrap();
+        fs::remove_file(p.r("notes.txt")).unwrap();
+        std::os::unix::fs::symlink(p.r("shared"), p.r("docs")).unwrap();
+        std::os::unix::fs::symlink(p.r("shared/secret.txt"), p.r("notes.txt")).unwrap();
+        write(&p.l("docs/new.txt"), "new here");
+        write(&p.l("notes.txt"), "edited here");
+        let dirty: HashSet<PathBuf> = [p.l("docs/new.txt"), p.l("notes.txt")].into();
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(false, Some(dirty.clone())).await.unwrap();
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(!p.r("shared/new.txt").exists(), "nothing written through the folder link");
+        assert_eq!(read(&p.r("shared/secret.txt")), "theirs", "nor through the file link");
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).upload(false, Some(dirty)).await.unwrap();
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(!p.r("shared/new.txt").exists());
+        assert_eq!(read(&p.r("shared/secret.txt")), "theirs");
+    });
+}
+
+#[test]
+fn a_blocked_pull_is_kept_for_runs_that_dont_list_the_other_side() {
+    run(async {
+        // B4-5 (round 5): a quick run builds the other side from the base (or a change feed that
+        // names the file once). The blocked file is still said, and pulled once the user renames
+        // the folder here, without waiting for a full listing
+        let p = pair().await;
+        write(&p.l("a/scratch.tmp"), "ignored");
+        write(&p.l("b.txt"), "b");
+        write(&p.r("a"), "theirs");
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(true, None).await.unwrap();
+        assert_eq!(r.errors.len(), 1, "{:?}", r.errors);
+        let dirty: HashSet<PathBuf> = [p.l("b.txt")].into();
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(false, Some(dirty)).await.unwrap();
+        assert_eq!(r.errors.len(), 1, "still said on a quick run: {:?}", r.errors);
+        fs::rename(p.l("a"), p.l("a-old")).unwrap();
+        let dirty: HashSet<PathBuf> = [p.l("a"), p.l("a-old")].into();
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(false, Some(dirty)).await.unwrap();
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert_eq!(read(&p.l("a")), "theirs", "pulled once the name is free");
+        // synced now: forgotten at the next run's start
+        p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(false, Some(HashSet::from([p.l("b.txt")]))).await.unwrap();
+        assert!(p.db.blocked("m").is_empty());
+    });
+}
+
 #[test]
 fn a_pull_blocked_by_a_folder_here_is_a_standing_notice() {
     run(async {
