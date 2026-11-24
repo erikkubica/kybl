@@ -2,7 +2,9 @@
  * Rearranging panes by dragging one by the empty part of its header, as editor groups dock in a
  * code editor. Past a few pixels the pane lifts: a small ghost (its badge and folder name) follows
  * the pointer and the pane dims. Over another pane, an overlay shows where it would land: a half
- * at an edge docks it there (that pane splits that way), the middle swaps the two. A zone that
+ * at an edge docks it there (that pane splits that way), the middle swaps the two. Near the outer
+ * edge of all the panes, a band docks it along that whole side (full width at the bottom, full
+ * height at a side), the way a code editor's panel docks. A zone that
  * would leave the panes too little room shows as refused; one that changes nothing isn't offered.
  *
  * Over a workspace's tab: letting go there moves the pane into that workspace, and resting on the
@@ -27,9 +29,16 @@ const DRAG_START = 5;
 const EDGE = 0.3;
 /** the overlay sits this far inside the pane */
 const INSET = 4;
+/** how close to the outer edge of all the panes the pointer docks along that whole side */
+const OUTER_BAND = 28;
+/** the share of the panes' area the outer zone shows */
+const OUTER_SHARE = 0.3;
+
+/** A drop target: a pane, or "outer" (the outer edge of all the panes; the zone is the side). */
+export type DropTarget = PaneId | "outer";
 
 type Box = { left: number; top: number; width: number; height: number };
-type Hover = { kind: "pane"; target: PaneId; zone: DropZone; ok: boolean; why?: string; box: Box } | { kind: "ws"; id: string; ok: boolean | null };
+type Hover = { kind: "pane"; target: DropTarget; zone: DropZone; ok: boolean; why?: string; box: Box } | { kind: "ws"; id: string; ok: boolean | null };
 
 type Drag = {
   id: PaneId;
@@ -56,8 +65,8 @@ export type PaneDragOptions = {
   ghost: (id: PaneId) => { provider?: string; name: string };
   /** whether the middle of a pane is a zone (swapping); not for a pane brought from another workspace */
   centre: (id: PaneId) => boolean;
-  check: (id: PaneId, target: PaneId, zone: DropZone) => DropCheck;
-  onDrop: (id: PaneId, target: PaneId, zone: DropZone) => void;
+  check: (id: PaneId, target: DropTarget, zone: DropZone) => DropCheck;
+  onDrop: (id: PaneId, target: DropTarget, zone: DropZone) => void;
   /** whether letting go on that workspace's tab moves the pane there (null: that tab only opens) */
   canToWorkspace: (id: PaneId, ws: string) => boolean | null;
   /** let go on a tab that can take it (`canToWorkspace` true or false: the shell says why not) */
@@ -91,6 +100,26 @@ const zoneAt = (r: DOMRect, x: number, y: number, centre: boolean): DropZone => 
   return near[0][1] < EDGE || !centre ? near[0][0] : "center";
 };
 
+/** The outer edge of all the panes under the point, within its band: the side and the zone drawn. */
+const outerAt = (x: number, y: number): { side: Exclude<DropZone, "center">; box: Box } | null => {
+  const r = document.querySelector(".splits")?.getBoundingClientRect();
+  if (!r || x < r.left || x > r.right || y < r.top || y > r.bottom) return null;
+  const near: [Exclude<DropZone, "center">, number][] = [
+    ["left", x - r.left],
+    ["right", r.right - x],
+    ["top", y - r.top],
+    ["bottom", r.bottom - y],
+  ];
+  near.sort((a, b) => a[1] - b[1]);
+  const [side, dist] = near[0];
+  if (dist > OUTER_BAND) return null;
+  const w = side === "left" || side === "right" ? r.width * OUTER_SHARE : r.width;
+  const h = side === "top" || side === "bottom" ? r.height * OUTER_SHARE : r.height;
+  const left = side === "right" ? r.right - w : r.left;
+  const top = side === "bottom" ? r.bottom - h : r.top;
+  return { side, box: { left: left + INSET, top: top + INSET, width: w - 2 * INSET, height: h - 2 * INSET } };
+};
+
 const sameHover = (a: Hover | null, b: Hover | null) => {
   if (!a || !b) return a === b;
   if (a.kind === "ws" || b.kind === "ws") return a.kind === "ws" && b.kind === "ws" && a.id === b.id && a.ok === b.ok;
@@ -121,6 +150,11 @@ export function usePaneDrag(o: PaneDragOptions) {
     if (tab) return tab === opts.current.activeWs ? null : { kind: "ws", id: tab, ok: opts.current.canToWorkspace(d.id, tab) };
     // panes only when the layout shows them all (not one at a time in a window too small for them)
     if (document.querySelector(".split-cramped")) return null;
+    const outer = outerAt(x, y);
+    if (outer) {
+      const c = opts.current.check(d.id, "outer", outer.side);
+      if (c) return { kind: "pane", target: "outer", zone: outer.side, ok: c === "ok", why: c === "ok" ? undefined : c.why, box: outer.box };
+    }
     const el = document.elementFromPoint(x, y)?.closest<HTMLElement>(".browser-pane[data-pane]");
     const target = el?.dataset.pane as PaneId | undefined;
     if (!el || !target) return null;

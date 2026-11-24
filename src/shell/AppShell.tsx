@@ -62,6 +62,7 @@ import { dualMenuItems, SplitLayout } from "./SplitLayout";
 import {
   allFacing,
   closePane,
+  dockEdge,
   equalize,
   freeSlot,
   leaf,
@@ -71,6 +72,7 @@ import {
   MAX_PANES,
   minSize,
   movePane,
+  moveToEdge,
   moveToward,
   relation,
   sameLink,
@@ -89,7 +91,7 @@ import {
 import { makeDualActions, paneName, type DualContext } from "./dualActions";
 import { stopOrCancel } from "../actions/customActions";
 import { WorkspaceBar, wsTabAt, type PaneSwitcher } from "./WorkspaceBar";
-import { usePaneDrag, type DropCheck } from "./usePaneDrag";
+import { usePaneDrag, type DropCheck, type DropTarget } from "./usePaneDrag";
 import { useFileDrag } from "./useFileDrag";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { useWorkspaceRecipes } from "./useWorkspaceRecipes";
@@ -1392,8 +1394,20 @@ export function AppShell() {
   const dockAt = (t: PaneNode, target: PaneId, zone: DropZone, fresh: PaneId) =>
     splitPane(t, target, zone === "left" || zone === "right" ? "row" : "col", fresh, zone === "left" || zone === "top");
   /** What dropping the dragged pane on pane `target`'s `zone` would do. */
-  const checkDrop = (id: PaneId, target: PaneId, zone: DropZone): DropCheck => {
+  const checkDrop = (id: PaneId, target: DropTarget, zone: DropZone): DropCheck => {
     const t = treeRef.current;
+    // the outer edge of all the panes: along that whole side
+    if (target === "outer") {
+      if (zone === "center") return null;
+      if (!dragAway()) {
+        const next = moveToEdge(t, id, zone);
+        if (shapeOf(next) === shapeOf(t)) return null;
+        return fitsRoom(next) ? "ok" : { why: "Not enough room" };
+      }
+      const fresh = freeSlot(t);
+      if (!fresh || leaves(t).length >= MAX_PANES) return { why: `${MAX_PANES} panes at most` };
+      return fitsRoom(dockEdge(t, fresh, zone)) ? "ok" : { why: "Not enough room" };
+    }
     if (!dragAway()) {
       if (target === id) return null;
       const next = movePane(t, id, target, zone);
@@ -1405,9 +1419,10 @@ export function AppShell() {
     if (!fresh || leaves(t).length >= MAX_PANES) return { why: `${MAX_PANES} panes at most` };
     return fitsRoom(dockAt(t, target, zone, fresh)) ? "ok" : { why: "Not enough room" };
   };
-  const dropPane = (id: PaneId, target: PaneId, zone: DropZone) => {
+  const dropPane = (id: PaneId, target: DropTarget, zone: DropZone) => {
     const from = dragFrom.current;
-    if (!from || from.ws === ws.active) return rearrange(id, movePane(treeRef.current, id, target, zone));
+    const outer = target === "outer" && zone !== "center" ? zone : null;
+    if (!from || from.ws === ws.active) return rearrange(id, outer ? moveToEdge(treeRef.current, id, outer) : target === "outer" ? treeRef.current : movePane(treeRef.current, id, target, zone));
     // from the workspace it was dragged out of, into a free slot here
     const t = treeRef.current;
     const fresh = freeSlot(t);
@@ -1415,7 +1430,7 @@ export function AppShell() {
     const { snap, hist } = keptPane(from.ws, from.id);
     keepScrolls();
     dualPane.quietly(() => fillSlot(fresh, snap, hist, null));
-    setTree(dockAt(t, target, zone, fresh));
+    setTree(outer ? dockEdge(t, fresh, outer) : target === "outer" ? t : dockAt(t, target, zone, fresh));
     setActiveId(fresh);
     focusSoon(fresh);
     takeFromKept(from.ws, from.id);

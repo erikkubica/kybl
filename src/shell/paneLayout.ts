@@ -192,13 +192,21 @@ export function moveToward(n: PaneNode, id: PaneId, d: "left" | "right" | "up" |
 }
 
 /**
- * The tree with pane `id` added along the whole of its `side` edge ("right": a column down the
- * right of everything), taking an even share. Moving a pane into another workspace puts it there.
+ * The tree with pane `id` added along the whole of its `side` edge ("bottom": a row across the
+ * bottom of everything, full width), taking an even share. Dragging a pane to the outer edge of
+ * the panes puts it there.
  */
-export function dockEdge(n: PaneNode, id: PaneId, side: "right" | "bottom"): PaneNode {
-  const dir: Dir = side === "right" ? "row" : "col";
+export function dockEdge(n: PaneNode, id: PaneId, side: "left" | "right" | "top" | "bottom"): PaneNode {
+  const dir: Dir = side === "left" || side === "right" ? "row" : "col";
   const m = n.t === "split" && n.dir === dir ? n.kids.length : 1;
-  return tidy({ t: "split", dir, sizes: [m / (m + 1), 1 / (m + 1)], kids: [n, leaf(id)] });
+  const first = side === "left" || side === "top";
+  return tidy({ t: "split", dir, sizes: first ? [1 / (m + 1), m / (m + 1)] : [m / (m + 1), 1 / (m + 1)], kids: first ? [leaf(id), n] : [n, leaf(id)] });
+}
+
+/** Pane `id` taken out of its place and put along the whole of the layout's `side` edge. */
+export function moveToEdge(n: PaneNode, id: PaneId, side: "left" | "right" | "top" | "bottom"): PaneNode {
+  const rest = closePane(n, id);
+  return rest ? dockEdge(rest, id, side) : n;
 }
 
 /** Sets the shares of the split at `path` (child indexes from the root). */
