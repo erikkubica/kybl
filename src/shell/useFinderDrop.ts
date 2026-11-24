@@ -1,6 +1,6 @@
 /**
- * Files and folders dragged in from Finder / Explorer upload into the pane under the pointer
- * (the only pane, or with two panes the one the drop lands on). The webview reports the drag,
+ * Files and folders dragged in from Finder / Explorer go to the pane under the pointer (terminals
+ * included: AppShell types their paths in there, never uploads), else the active one. The webview reports the drag,
  * not the DOM, so the pane is found from the pointer position.
  *
  * Over a workspace's tab (`tabs`): resting there opens that workspace (WorkspaceBar

@@ -127,3 +127,8 @@ export function freeName(taken: string[], base: string): string {
   if (!t.has(base.toLowerCase())) return base;
   for (let n = 2; ; n++) if (!t.has(`${base} ${n}`.toLowerCase())) return `${base} ${n}`;
 }
+
+/** Just the layout of `l` (a whole workspace carries its name, color and start mode too): what an Undo puts back. */
+export function layoutOnly(l: Layout): Layout {
+  return { tree: l.tree, links: l.links, recent: l.recent, panes: l.panes };
+}

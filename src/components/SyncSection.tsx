@@ -1,4 +1,5 @@
 import { TRAY } from "./osText";
+import { ON_OS } from "../osNames";
 import { useEffect, useRef, useState } from "react";
 import { ErrorText } from "./ErrorText";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -152,7 +153,7 @@ function PendingPanel({ m, count, run }: { m: SyncMapping; count: number; run: (
                 <span className="dim">
                   {there > 0 && `${there.toLocaleString()} would be deleted there`}
                   {there > 0 && here > 0 && " · "}
-                  {here > 0 && `${here.toLocaleString()} would go to the Trash here`}
+                  {here > 0 && `${here.toLocaleString()} would go to the ${ON_OS.trash} here`}
                 </span>
               )}
               <ul>
@@ -229,7 +230,7 @@ function ConflictsPanel({ m, count, run }: { m: SyncMapping; count: number; run:
               <button className="btn btn-sm" onClick={() => run(() => syncApi.resolveConflict(m.id, c.copy, "copy"))} title="Your version replaces the other one, on both sides">
                 Keep mine
               </button>
-              <button className="btn btn-sm" onClick={() => run(() => syncApi.resolveConflict(m.id, c.copy, "original"))} title="Your copy goes to the Trash">
+              <button className="btn btn-sm" onClick={() => run(() => syncApi.resolveConflict(m.id, c.copy, "original"))} title={`Your copy goes to the ${ON_OS.trash}`}>
                 Keep theirs
               </button>
               <button className="btn btn-sm btn-ghost" onClick={() => run(() => syncApi.resolveConflict(m.id, c.copy, "both"))} title="Keeps both files and stops showing this">
@@ -301,7 +302,7 @@ export function SyncSection({
             <Icon name="sync" size={24} />
           </div>
           <h4>Keep a folder in sync</h4>
-          <p>Back up a folder from this Mac, keep a local mirror of a remote folder, or keep both sides the same. Syncing keeps running in the {TRAY} when the window is closed.</p>
+          <p>Back up a folder from {ON_OS.here}, keep a local mirror of a remote folder, or keep both sides the same. Syncing keeps running in the {TRAY} when the window is closed.</p>
           <button className="btn btn-primary btn-sm" onClick={() => setEditing("new")} disabled={profiles.length === 0}>
             <Icon name="plus" size={14} /> Add folder
           </button>
@@ -344,7 +345,7 @@ export function SyncSection({
                     <Icon name="edit" size={13} /> Edit
                   </button>
                   <button className="btn btn-sm btn-ghost" onClick={() => revealItemInDir(m.localPath).catch(() => {})}>
-                    <Icon name="reveal" size={13} /> Show in Finder
+                    <Icon name="reveal" size={13} /> {ON_OS.showInFiles}
                   </button>
                   <span className="spacer" />
                   {confirmRemove === m.id ? (

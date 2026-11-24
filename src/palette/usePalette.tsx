@@ -62,7 +62,8 @@ export function usePalette({ host, blocked, here }: { host: () => PaletteHost; b
         if (e.key === "Escape") close();
         else if (e.key === "Backspace") early.current = early.current.slice(0, -1);
         else if (e.key.length === 1) early.current += e.key;
-        else return;
+        // (moving or picking in the list behind it would act on files the palette is about to cover)
+        else if (!["ArrowUp", "ArrowDown", "Enter", "Tab", "PageUp", "PageDown", "Home", "End"].includes(e.key)) return;
         e.preventDefault();
         e.stopPropagation();
         return;

@@ -1,7 +1,7 @@
 // How items are written per kind of connection: clipboard text, Delete wording, Go to folder. Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addressKind, deleteWording, goToText, isAbsolutePath, itemAddress, joinLocal, resolveLocalPath } from "../src/itemText.ts";
+import { addressKind, deleteWording, goToText, isAbsolutePath, itemAddress, joinLocal, nameProblem, openNote, resolveLocalPath, takenName } from "../src/itemText.ts";
 
 test("address kind: S3 buckets, this computer, everything else", () => {
   assert.equal(addressKind({ roots: "buckets", kind: "s3" }), "s3");
@@ -61,4 +61,30 @@ test("an absolute path on this computer lands in the closest root holding it", (
   assert.ok(isAbsolutePath("/Users"));
   assert.ok(isAbsolutePath("C:\\x"));
   assert.ok(!isAbsolutePath("photos/2026"));
+});
+
+test("delete wording: a link to a folder goes on its own", () => {
+  const link = deleteWording({ what: "“site”", count: 1, folders: false, links: true, trash: false, local: false });
+  assert.ok(!/everything inside/.test(link.text));
+  assert.match(link.text, /A link goes on its own/);
+  const both = deleteWording({ what: "2 items", count: 2, folders: true, links: true, trash: true, local: true });
+  assert.match(both.text, /^Folders go with everything inside them\. A link goes on its own/);
+});
+
+test("new names: checked in the dialog, before anything runs", () => {
+  assert.equal(nameProblem("report.pdf"), null);
+  assert.equal(nameProblem("  "), "Type a name.");
+  assert.match(nameProblem("a/b")!, /“\/”/);
+  assert.ok(nameProblem(".."));
+  assert.equal(takenName("Photos", true), "There’s already a folder named “Photos” here.");
+});
+
+test("Enter on several items: folders left out are said, never silent", () => {
+  assert.equal(openNote(0, 2), "Open one folder at a time.");
+  assert.equal(openNote(0, 1), null);
+  assert.equal(openNote(3, 0), null);
+  assert.equal(openNote(1, 1), "Opening the file. Folders open one at a time.");
+  assert.equal(openNote(2, 3), "Opening the 2 files. Folders open one at a time.");
+  assert.equal(openNote(12, 0), "Opening the first 10 files.");
+  assert.equal(openNote(12, 1), "Opening the first 10 files. Folders open one at a time.");
 });

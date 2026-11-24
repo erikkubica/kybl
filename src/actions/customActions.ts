@@ -25,6 +25,7 @@ import type { useJobs } from "../useJobs";
 import type { Entry, Profile, Transfer } from "../types";
 import { OutputSheet } from "./OutputSheet";
 import { extList, hasExt } from "./extMatch";
+import { ON_OS } from "../osNames";
 
 // ------------------------------------------------------------ the actions
 
@@ -58,7 +59,7 @@ const OUTPUT_LIMIT = 1024 * 1024;
 const UA = typeof navigator === "undefined" ? "" : navigator.userAgent;
 const MAC = /Mac/.test(UA);
 /** "on this Mac" */
-export const LOCAL_PHRASE = `on this ${MAC ? "Mac" : /Win/.test(UA) ? "PC" : "computer"}`;
+export const LOCAL_PHRASE = `on ${ON_OS.here}`;
 /** "On this Mac" */
 export const LOCAL_LABEL = LOCAL_PHRASE[0].toUpperCase() + LOCAL_PHRASE.slice(1);
 

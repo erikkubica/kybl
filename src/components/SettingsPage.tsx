@@ -20,7 +20,8 @@ import { actionLabel, ago, installAndRestart, UpdateStepError, updatesApi, useUp
 import { formatBytes, mbpsToKbps } from "../format";
 import { useTransfersActive } from "../useTransfers";
 import { spellKeys } from "./shortcutKeys";
-import { keys, THIS_COMPUTER, TRAY } from "./osText";
+import { keys, TRAY } from "./osText";
+import { ON_OS } from "../osNames";
 
 /** Shortcut keys show Mac glyphs on a Mac, Ctrl, Alt and Shift elsewhere. */
 const MAC = /Mac/i.test(navigator.userAgent);
@@ -103,7 +104,7 @@ const SHORTCUTS: { label: string; keys: string[] }[] = [
   { label: "Delete selection", keys: ["⌘⌫", "⌦"] },
   { label: "Clear selection / close dialog", keys: ["Esc"] },
   { label: "Settings", keys: ["⌘", ","] },
-  { label: `${THIS_COMPUTER}: show or hide hidden files`, keys: ["⇧", "⌘", "."] },
+  { label: `${ON_OS.device}: show or hide hidden files`, keys: ["⇧", "⌘", "."] },
   { label: "Grid view: bigger / smaller tiles", keys: ["⌘+", "⌘−"] },
   { label: "Split the pane right / down", keys: ["⌘\\", "⇧⌘\\"] },
   { label: "Close the pane", keys: ["⌘", "W"] },
@@ -600,17 +601,17 @@ export function SettingsPage({
 
                 <h3 className="set-title">Safety</h3>
                 <div className="set-card">
-                  <Row label="Confirm before deleting" hint="On most connections a delete cannot be undone. Drives and the Trash keep what you delete.">
+                  <Row label="Confirm before deleting" hint={`On most connections a delete cannot be undone. Drives and the ${ON_OS.trash} keep what you delete.`}>
                     <Switch label="Confirm before deleting" on={settings.confirmDelete} onChange={(confirmDelete) => onChange({ confirmDelete })} />
                   </Row>
-                  <Row label="Secret keys" hint="Saved encrypted, never in a settings file. The key is in the system keychain.">
+                  <Row label="Secret keys" hint={`Saved encrypted, never in a settings file. The key is in ${ON_OS.keychain}.`}>
                     <span className="set-value">Encrypted</span>
                   </Row>
                 </div>
 
                 <h3 className="set-title">About</h3>
                 <div className="set-card">
-                  <Row label={<KyblLockup size={18} />} hint="Browse, upload, download and share files on any S3-compatible storage.">
+                  <Row label={<KyblLockup size={18} />} hint="Browse, upload, download and share files on S3, SFTP, FTP, WebDAV and cloud drives.">
                     <span className="chip">{version ? `v${version}` : "dev build"}</span>
                   </Row>
                   <UpdatesRows onToast={onToast} />

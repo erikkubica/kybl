@@ -196,6 +196,7 @@ export function BrowserPane(p: BrowserPaneProps) {
         panesItems={p.panesItems}
         provider={pane.profile?.provider}
         connName={pane.profile?.name}
+        switchLabel={rootsKind === "single" ? "Switch connection" : rootsKind === "drives" ? "Switch connection or folder" : "Switch connection or bucket"}
         onSwitchConnection={p.onSwitchConnection}
         onGoTo={here ? (t) => void actions.goToPath(t) : undefined}
         goTo={actions.goTo}
@@ -296,7 +297,7 @@ export function BrowserPane(p: BrowserPaneProps) {
                 <Icon name="upload" size={34} />
                 <strong>Drop to upload</strong>
                 <span>
-                  to {bucket}/{prefix}
+                  to {[pane.bucketLabel, ...(prefix ?? "").split("/").filter(Boolean)].join(" / ")}
                 </span>
               </div>
             </div>

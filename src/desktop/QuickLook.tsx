@@ -274,6 +274,7 @@ export function QuickLook({
             <aside className="ql-info" aria-label="Info">
               {many ? (
                 <SelectionInfo
+                  profileId={profileId}
                   selection={group!}
                   folderSize={act.folderSize}
                   onCalcSize={act.onCalcSize}

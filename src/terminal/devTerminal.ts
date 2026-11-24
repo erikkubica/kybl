@@ -5,6 +5,7 @@
  */
 import type { Channel } from "@tauri-apps/api/core";
 import type { Profile } from "../types";
+import { ON_OS } from "../osNames";
 
 type Fake = { out: Channel<unknown>; cwd: string; cols: number; rows: number; line: string; acked: number; sent: number; busy?: boolean };
 const live = new Map<number, Fake>();
@@ -76,7 +77,7 @@ export async function handleTerminal(cmd: string, a: any, profiles: Profile[]): 
     case "terminal_open": {
       await new Promise((r) => setTimeout(r, 80));
       const p = profiles.find((x) => x.id === a.profileId);
-      if (a.profileId !== "local" && p?.kind !== "sftp") throw "Terminals open on This Mac and on SFTP connections.";
+      if (a.profileId !== "local" && p?.kind !== "sftp") throw `Terminals open on ${ON_OS.device} and on SFTP connections.`;
       if (p?.net?.host.startsWith("bad")) throw `Couldn't find ${p.net.host}. Check the address.\n\ndns error`;
       const base = a.profileId === "local" ? null : p?.net?.basePath || "~";
       const cwd = a.profileId === "local" ? [String(a.bucket).replace(/\/$/, ""), a.prefix.replace(/\/$/, "")].filter(Boolean).join("/") : [base, a.prefix.replace(/\/$/, "")].filter(Boolean).join("/");
@@ -84,7 +85,7 @@ export async function handleTerminal(cmd: string, a: any, profiles: Profile[]): 
       const f: Fake = { out: a.onOutput, cwd, cols: a.cols, rows: a.rows, line: "", acked: 0, sent: 0 };
       live.set(id, f);
       setTimeout(() => {
-        send(f, `Kybl mock shell on ${p?.name ?? "This Mac"} (${a.cols}x${a.rows})\r\n`);
+        send(f, `Kybl mock shell on ${p?.name ?? ON_OS.device} (${a.cols}x${a.rows})\r\n`);
         prompt(f);
       }, 10);
       return { id, remoteBase: base };

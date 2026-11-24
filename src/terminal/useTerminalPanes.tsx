@@ -10,7 +10,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { api } from "../api";
 import { baseName } from "../format";
-import { THIS_COMPUTER } from "../components/osText";
 import { LOCAL_PROFILE, type Loc, type PaneId } from "../browser/types";
 import type { Pane } from "../browser/usePane";
 import type { MenuItem } from "../components/Dialogs";
@@ -22,6 +21,7 @@ import { registerCommands } from "../palette/commands";
 import type { Entry, Profile } from "../types";
 import { TerminalSlot } from "./TerminalSlot";
 import { pastePreview } from "./quote";
+import { ON_OS } from "../osNames";
 import {
   canTerminal,
   gcTerminals,
@@ -44,6 +44,9 @@ import {
 } from "./api";
 
 export type Terms = Partial<Record<PaneId, TermSpec>>;
+
+/** Files from Finder / Explorer dropped on a terminal of a server: their paths mean nothing there. */
+export const REMOTE_TERM_DROP = "That terminal runs on a server. Drop the files on a folder to upload them.";
 
 /** What the hook needs from the shell, as of the latest render. */
 export type TermHost = {
@@ -200,7 +203,7 @@ export function useTerminalPanes(initial: Layout) {
       return null;
     }
     if (!canTerminal(profileOf(loc.profileId))) {
-      h.toast("info", `Terminals open on ${THIS_COMPUTER} and on SFTP connections.`);
+      h.toast("info", `Terminals open on ${ON_OS.device} and on SFTP connections.`);
       return null;
     }
     let made: PaneId | null = null;
@@ -277,6 +280,24 @@ export function useTerminalPanes(initial: Layout) {
     }
   };
 
+  /**
+   * Files dragged in from Finder / Explorer and dropped on terminal pane `pane`: their paths typed
+   * in, quoted for the shell (never an upload). Undefined: not a terminal; a string: why not.
+   */
+  const dropPaths = (pane: PaneId, paths: string[]): string | null | undefined => {
+    const t = termsRef.current[pane];
+    if (!t) return undefined;
+    if (t.profileId !== LOCAL_PROFILE) return REMOTE_TERM_DROP;
+    const quoted = paths.map(shellQuote).filter((p): p is string => p != null);
+    if (!quoted.length) return "That name has control characters, so it isn't pasted into the terminal.";
+    if (quoted.length < paths.length) host.current?.toast("info", "Names with control characters were left out.");
+    if (writeToTerminal(pane, `${quoted.join(" ")} `)) {
+      host.current?.setActive(pane);
+      host.current?.focus(pane);
+    }
+    return null;
+  };
+
   /** What a terminal pane is called (the drag ghost, the pane switcher). */
   const nameOf = (id: PaneId): string | null => {
     const t = termsRef.current[id];
@@ -342,14 +363,14 @@ export function useTerminalPanes(initial: Layout) {
       const h = host.current;
       if (!h) return [];
       const src = h.fileId ? h.slot(h.fileId) : null;
-      const why = !src?.here ? "Open a folder first" : !canTerminal(src.profile) ? `Terminals open on ${THIS_COMPUTER} and on SFTP connections` : null;
+      const why = !src?.here ? "Open a folder first" : !canTerminal(src.profile) ? `Terminals open on ${ON_OS.device} and on SFTP connections` : null;
       const mac = profileOf(LOCAL_PROFILE) ?? { id: LOCAL_PROFILE, kind: "local" as const };
       return [
         { id: "terminal:here", title: "Open Terminal Here", group: "Terminal", icon: "terminal", keywords: "shell console command line ssh", disabled: why, run: () => void (h.fileId && latest.current.open(h.fileId)) },
         { id: "terminal:toggle", title: "Toggle Terminal", group: "Terminal", icon: "terminal", shortcut: "⌃`", keywords: "shell console focus", run: () => latest.current.toggle() },
         {
           id: "terminal:new-local",
-          title: `New Terminal on ${THIS_COMPUTER}`,
+          title: `New Terminal on ${ON_OS.device}`,
           group: "Terminal",
           icon: "terminal",
           keywords: "shell console home",
@@ -380,7 +401,7 @@ export function useTerminalPanes(initial: Layout) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { terms, setTerms, assign, host, open, toggle, items, dropTarget, drop, nameOf, gc, render };
+  return { terms, setTerms, assign, host, open, toggle, items, dropTarget, drop, dropPaths, nameOf, gc, render };
 }
 
 /**

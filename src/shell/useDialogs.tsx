@@ -6,7 +6,7 @@
  */
 import { logMessage } from "../activityLog";
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
-import { ConfirmDialog, ContextMenu, PromptDialog, Toasts, type MenuItem, type Toast } from "../components/Dialogs";
+import { ConfirmDialog, ContextMenu, PromptDialog, Toasts, type MenuItem, type PromptResult, type Toast } from "../components/Dialogs";
 import { useConflictPrompt } from "../components/ConflictDialog";
 import type { ToastAction } from "../desktop/fileOps";
 import type { Choice, Clash } from "../desktop/conflicts";
@@ -14,7 +14,20 @@ import type { IconName } from "../Icons";
 
 /** `danger`: red button, focus starts on Cancel; `icon`: the title's icon (a danger confirm shows the trash unless given). */
 export type ConfirmOptions = { title: string; message: ReactNode; label: string; danger?: boolean; icon?: IconName };
-export type PromptOptions = { title: string; label: string; initial: string; confirmLabel: string; note?: string; run: (v: string) => void };
+/**
+ * `check`: what is wrong with a name, at once (the dialog stays open, the message under the field);
+ * `run`: a string back, also from its promise, is what went wrong there (the server refused, say): the
+ * dialog stays open with the name as typed. Long work is started, not awaited, once the name is fine.
+ */
+export type PromptOptions = {
+  title: string;
+  label: string;
+  initial: string;
+  confirmLabel: string;
+  note?: string;
+  check?: (v: string) => string | null;
+  run: (v: string) => PromptResult | Promise<PromptResult>;
+};
 
 export type Dialogs = {
   /** resolves true when confirmed, false when cancelled */
@@ -37,12 +50,14 @@ export function useDialogs(): Dialogs {
   return d;
 }
 
-type ConfirmState = ConfirmOptions & { resolve: (ok: boolean) => void };
+/** `seq`: each question its own dialog, so a newer one remounts and focuses afresh (Cancel first when danger) */
+type ConfirmState = ConfirmOptions & { resolve: (ok: boolean) => void; seq: number };
 let modalSeq = 0;
 
 export function DialogsProvider({ children }: { children: ReactNode }) {
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
-  const [prompt, setPrompt] = useState<PromptOptions | null>(null);
+  const [prompt, setPrompt] = useState<(PromptOptions & { seq: number }) | null>(null);
+  const showPrompt = useCallback((o: PromptOptions) => setPrompt({ ...o, seq: ++modalSeq }), []);
   const [menu, setMenu] = useState<null | { x: number; y: number; items: MenuItem[] }>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [modals, setModals] = useState<{ id: number; render: (close: () => void) => ReactNode }[]>([]);
@@ -63,7 +78,7 @@ export function DialogsProvider({ children }: { children: ReactNode }) {
     (o: ConfirmOptions) =>
       new Promise<boolean>((resolve) => {
         current.current?.resolve(false);
-        const next = { ...o, resolve };
+        const next = { ...o, resolve, seq: ++modalSeq };
         current.current = next;
         setConfirm(next);
       }),
@@ -77,8 +92,8 @@ export function DialogsProvider({ children }: { children: ReactNode }) {
   const isOpen = useCallback(() => open.current, []);
 
   const api = useMemo<Dialogs>(
-    () => ({ confirm: confirmAsync, prompt: setPrompt, menu: showMenu, toast, resolveConflicts: conflicts.resolve, show, isOpen }),
-    [confirmAsync, showMenu, toast, conflicts.resolve, show, isOpen],
+    () => ({ confirm: confirmAsync, prompt: showPrompt, menu: showMenu, toast, resolveConflicts: conflicts.resolve, show, isOpen }),
+    [confirmAsync, showPrompt, showMenu, toast, conflicts.resolve, show, isOpen],
   );
 
   return (
@@ -86,6 +101,7 @@ export function DialogsProvider({ children }: { children: ReactNode }) {
       {children}
       {confirm && (
         <ConfirmDialog
+          key={confirm.seq}
           title={confirm.title}
           message={confirm.message}
           confirmLabel={confirm.label}
@@ -102,13 +118,15 @@ export function DialogsProvider({ children }: { children: ReactNode }) {
       )}
       {prompt && (
         <PromptDialog
+          key={prompt.seq}
           title={prompt.title}
           label={prompt.label}
           initial={prompt.initial}
           confirmLabel={prompt.confirmLabel}
           note={prompt.note}
+          check={prompt.check}
           onSubmit={prompt.run}
-          onClose={() => setPrompt(null)}
+          onClose={() => setPrompt((p) => (p?.seq === prompt.seq ? null : p))}
         />
       )}
       {modals.map((m) => (

@@ -19,6 +19,7 @@ import { canChecksum, defaultMirrorName, gitignoreSide, mirrorBlocked, previewMi
 import { deleteMirror, markRun, saveMirror, useMirrors, type MirrorConfig, type MirrorEnd, type SavedMirror } from "./store";
 import { Cancelled } from "./walk";
 import "./mirror.css";
+import { ON_OS } from "../osNames";
 
 export type MirrorSheetProps = {
   /** where it starts: a folder (and, with two panes, the other pane's folder) */
@@ -323,7 +324,7 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
             <div className="mirror-warn" role="note">
               <Icon name="alert" size={14} />
               <span>
-                Files at the destination that aren't in the source are deleted{trash && localDst ? " (to the Trash)" : ""}, so it ends up exactly like the source. Excluded files are left
+                Files at the destination that aren't in the source are deleted{trash && localDst ? ` (to the ${ON_OS.trash})` : ""}, so it ends up exactly like the source. Excluded files are left
                 alone. Check the list before you mirror.
               </span>
             </div>

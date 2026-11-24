@@ -15,11 +15,11 @@ import type { FileOps } from "./fileOps";
 import { joinPath, plainRelPath } from "./paths";
 import { openOwnFile } from "./openGuard";
 
-const UA = typeof navigator === "undefined" ? "" : navigator.userAgent;
-export const OS: "mac" | "win" | "linux" = /Mac/.test(UA) ? "mac" : /Win/.test(UA) ? "win" : "linux";
+import { ON_OS, OS } from "../osNames";
+export { OS } from "../osNames";
 
 /** What the system's file manager is called here. */
-export const SHOW_IN_FILES = OS === "mac" ? "Show in Finder" : OS === "win" ? "Show in Explorer" : "Show in Files";
+export const SHOW_IN_FILES = ON_OS.showInFiles;
 
 // ------------------------------------------------------------ where the item is on this computer
 

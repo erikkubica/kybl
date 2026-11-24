@@ -6,11 +6,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, errMessage, errSummary, LOCAL_ID, type RootInfo } from "../api";
 import { Icon } from "../Icons";
 import { FileIcon } from "../components/FileIcon";
-import { THIS_COMPUTER } from "../components/osText";
 import { deviceIcon, rootIcon } from "../connections/roots";
 import { ProviderBadge } from "../components/Sidebar";
 import { capsFor } from "../useCaps";
 import type { Profile } from "../types";
+import { ON_OS } from "../osNames";
 import "./jobs.css";
 
 /** A folder somewhere: `dir` is "" for the top of the root, else ends with "/". */
@@ -24,7 +24,7 @@ export function deviceName(): string {
   // iPadOS asks for the desktop site: a Mac with a touch screen is an iPad
   if (/iPad/i.test(ua) || (/Macintosh/.test(ua) && typeof navigator !== "undefined" && navigator.maxTouchPoints > 1)) return "On this iPad";
   if (/Android|iPhone|iPod/i.test(ua) || new URLSearchParams(location.search).has("mobile")) return "On this phone";
-  return THIS_COMPUTER;
+  return ON_OS.device;
 }
 
 /** A folder path for people: "media-prod / photos / 2026". */

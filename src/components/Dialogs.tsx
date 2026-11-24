@@ -226,6 +226,9 @@ export function ConfirmDialog({
   );
 }
 
+/** What a prompt's run says: a string is what went wrong (the dialog stays open; "" quietly), anything else closes it. */
+export type PromptResult = string | null | void;
+
 export function PromptDialog({
   title,
   label,
@@ -247,27 +250,53 @@ export function PromptDialog({
   note?: string;
   /** what's wrong with a value, shown under the field (the dialog stays open); null when fine */
   check?: (value: string) => string | null;
-  onSubmit: (value: string) => void;
+  /**
+   * Runs the value. A string back (now or once its promise settles) is what went wrong: the dialog
+   * stays open with the name as typed and shows it ("" stays open quietly, a question cancelled).
+   */
+  onSubmit: (value: string) => PromptResult | Promise<PromptResult>;
   onClose: () => void;
 }) {
   const [value, setValue] = useState(initial);
   const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const live = useRef(true);
+  useEffect(() => {
+    // (set again on mount: React's dev double mount runs the cleanup once in between)
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
   useEffect(() => {
     input.current?.focus();
     const dot = selectAll ? -1 : initial.lastIndexOf(".");
     input.current?.setSelectionRange(0, dot > 0 ? dot : initial.length);
   }, [initial, selectAll]);
-  const submit = () => {
+  const refuse = (why: string) => {
+    setProblem(why || null);
+    // (after a question on top has closed and given focus back)
+    requestAnimationFrame(() => input.current?.focus());
+  };
+  const submit = async () => {
     const v = value.trim();
-    if (!v) return;
+    if (!v || busy) return;
     const bad = check?.(v) ?? null;
-    if (bad) {
-      setProblem(bad);
-      input.current?.focus();
-      return;
-    }
-    onSubmit(v);
+    if (bad) return refuse(bad);
+    const out = onSubmit(v);
+    if (out instanceof Promise) {
+      setBusy(true);
+      let got: PromptResult;
+      try {
+        got = await out;
+      } catch (e) {
+        got = e instanceof Error ? e.message : String(e);
+      }
+      if (!live.current) return;
+      setBusy(false);
+      if (typeof got === "string") return refuse(got);
+    } else if (typeof out === "string") return refuse(out);
     onClose();
   };
   return (
@@ -275,7 +304,7 @@ export function PromptDialog({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          submit();
+          void submit();
         }}
       >
         <div className="modal-body">
@@ -292,9 +321,14 @@ export function PromptDialog({
               autoCorrect="off"
               autoCapitalize="off"
               aria-invalid={!!problem}
+              readOnly={busy}
             />
           </label>
-          {problem && <p className="hint error">{problem}</p>}
+          {problem && (
+            <p className="hint error" role="alert">
+              {problem}
+            </p>
+          )}
           {note && (
             <p className="hint warn prompt-note">
               <Icon name="info" size={13} />
@@ -306,7 +340,7 @@ export function PromptDialog({
           <button type="button" className="btn" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" className="btn btn-primary" disabled={!value.trim()}>
+          <button type="submit" className="btn btn-primary" disabled={!value.trim() || busy}>
             {confirmLabel}
           </button>
         </div>

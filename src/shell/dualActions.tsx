@@ -23,6 +23,7 @@ import { CompareSummary } from "../compare/CompareSummary";
 import { crossesDisk, sendToPane, viaJob } from "./crossPane";
 import type { Dialogs } from "./useDialogs";
 import type { ConfirmMigration } from "./useMigrationHost";
+import { ON_OS } from "../osNames";
 
 export type DualContext = {
   /** the panes on screen, in reading order */
@@ -173,7 +174,7 @@ export function makeDualActions(get: () => DualContext) {
         null,
         `${verb} to `,
         createElement("strong", null, where),
-        asCopy ? ". Between this Mac and the cloud files are copied: the originals stay where they are." : ".",
+        asCopy ? `. Between ${ON_OS.here} and the cloud files are copied: the originals stay where they are.` : ".",
       ),
     });
     if (ok) await sendToPane(src, dst, items, mode, dst.prefix, c);
