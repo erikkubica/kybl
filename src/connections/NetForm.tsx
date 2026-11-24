@@ -226,8 +226,8 @@ export function NetForm({
 
   return (
     <>
-      <Field label="Name" optional wide>
-        {(c) => <input {...c} value={name} onChange={(e) => edit(setName)(e.target.value)} placeholder={kind === "webdav" ? "My Nextcloud" : "My server"} />}
+      <Field label="Name" wide>
+        {(c) => <input {...c} value={name} onChange={(e) => edit(setName)(e.target.value)} placeholder="Same as the server" />}
       </Field>
 
       {kind === "webdav" ? (
@@ -263,42 +263,26 @@ export function NetForm({
       )}
 
       {kind === "ftp" && (
-        <div className="field span2">
-          <span>Encryption</span>
-          <Segmented
-            label="Encryption"
-            value={tls === "auto" ? "explicit" : tls}
-            // switching between kinds of FTPS keeps the fallback choice only where it applies
-            onChange={(v) => edit(setTls)(v === "explicit" && tls === "auto" ? "auto" : v)}
-            options={[
-              { value: "explicit", label: "FTPS" },
-              { value: "implicit", label: "FTPS, implicit" },
-              { value: "none", label: "None" },
-            ]}
-          />
-          <small className="field-hint">
-            {tls === "explicit" || tls === "auto"
-              ? "The usual secure FTP (also called FTPES), on port 21."
-              : tls === "implicit"
-                ? "Older secure FTP, encrypted from the first byte, usually on port 990."
-                : "Plain FTP, for servers that offer nothing else."}
-          </small>
-        </div>
+        <Field
+          label="Encryption"
+          wide
+          hint={tls === "auto" ? "Asks you once before your password is sent unencrypted." : tls === "implicit" ? "Older servers, usually on port 990." : undefined}
+        >
+          {(c) => (
+            <select {...c} value={tls} onChange={(e) => edit(setTls)(e.target.value as NetConfig["tls"])}>
+              <option value="explicit">FTPS (explicit TLS)</option>
+              <option value="auto">FTPS if available</option>
+              <option value="implicit">FTPS, implicit TLS</option>
+              <option value="none">None (plain FTP)</option>
+            </select>
+          )}
+        </Field>
       )}
-      {kind === "ftp" && (tls === "explicit" || tls === "auto") && (
-        <label className="check span2">
-          <input type="checkbox" checked={tls === "auto"} onChange={(e) => edit(setTls)(e.target.checked ? "auto" : "explicit")} />
-          <span>
-            Fall back to plain FTP if the server doesn't support encryption
-            <em>Like FileZilla’s “TLS if available”, except that Kybl asks you once before it first sends your password unencrypted. Once the server has encrypted a connection (or when it says it can), Kybl no longer falls back. Still, leave this off once you know the server supports FTPS.</em>
-          </span>
-        </label>
-      )}
-      {kind === "ftp" && tls === "none" && <Warning>Plain FTP isn't encrypted. Your password and every file cross the network where others could read them. Use it only on networks you trust.</Warning>}
-      {davInsecure && <Warning>This address starts with http://, so your password and files travel unencrypted. Use https:// if the server supports it.</Warning>}
+      {kind === "ftp" && tls === "none" && <Warning>Not encrypted: others on the network can read your password and files.</Warning>}
+      {davInsecure && <Warning>http:// isn't encrypted: others on the network can read your password and files.</Warning>}
 
-      <Field label="User name" optional={kind !== "sftp"} error={show("user")} hint={kind === "ftp" ? "Leave empty to sign in as anonymous." : undefined}>
-        {(c) => <input {...c} value={user} onChange={(e) => edit(setUser)(e.target.value)} {...RAW} autoComplete="username" />}
+      <Field label="User name" error={show("user")}>
+        {(c) => <input {...c} value={user} onChange={(e) => edit(setUser)(e.target.value)} placeholder={kind === "ftp" ? "anonymous" : kind === "webdav" ? "None" : ""} {...RAW} autoComplete="username" />}
       </Field>
 
       {kind === "sftp" && (
@@ -320,7 +304,6 @@ export function NetForm({
       {(kind !== "sftp" || auth === "password") && (
         <Field
           label="Password"
-          optional={kind !== "sftp"}
           error={show("password")}
           hint={
             kind !== "sftp" && hasSecret && !password ? (

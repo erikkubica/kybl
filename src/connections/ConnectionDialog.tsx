@@ -367,13 +367,6 @@ function KeyedForm({
         ) : (
           <BlobForm kind={pick as BlobKind} {...common} />
         )}
-          {/* editing: the password box already says it's saved encrypted */}
-          {!initial && (
-            <p className="hint span2">
-              <Icon name="check-circle" size={13} />
-              {SECRET_NOTE}
-            </p>
-          )}
         </div>
         {tunnelTab && <div ref={setTunnelsHost} className="span2" data-tab="tunnels" style={{ display: tab === "tunnels" ? "block" : "none" }} />}
 
@@ -444,6 +437,10 @@ function KeyedForm({
             </span>
           </label>
         )}
+          <p className="hint span2">
+            <Icon name="check-circle" size={13} />
+            {SECRET_NOTE}
+          </p>
         </div>
 
 
