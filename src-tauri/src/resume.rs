@@ -307,7 +307,7 @@ pub fn give_up(app: &AppHandle, s: &Saved) {
     if s.is_download() {
         let part = crate::dest::part_path(Path::new(&s.local));
         if crate::dest::unpark(Path::new(&s.local), &s.id) {
-            let _ = std::fs::remove_file(part);
+            crate::dest::remove_part(&part);
         }
         return;
     }

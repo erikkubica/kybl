@@ -487,24 +487,27 @@ pub async fn serve_download<R: Runtime>(
         }
     };
     match copied {
-        Ok(true) if std::fs::metadata(&part).map(|m| m.len()).ok() == Some(id.size) => {
+        Ok(Some(held)) if std::fs::metadata(&part).map(|m| m.len()).ok() == Some(id.size) => {
             // as a fetched download: a file that turned up at `dest` meanwhile is kept
-            if dl.finish(&part, dest).is_err() {
-                let _ = tokio::fs::remove_file(&part).await;
+            let r = dl.finish(&part, dest);
+            drop(held);
+            if r.is_err() {
+                crate::dest::remove_part(&part);
                 return None;
             }
             crate::leftovers::partial_ended(&part);
             progress(id.size, id.size);
             Some(Ok(Outcome::Done))
         }
-        Ok(false) => {
-            let _ = tokio::fs::remove_file(&part).await;
+        Ok(None) => {
+            crate::dest::remove_part(&part);
             crate::leftovers::partial_ended(&part);
             Some(Ok(Outcome::Cancelled))
         }
         // a short copy or a disk error: drop it and fetch from the server instead
-        _ => {
-            let _ = tokio::fs::remove_file(&part).await;
+        other => {
+            drop(other);
+            crate::dest::remove_part(&part);
             crate::leftovers::partial_ended(&part);
             None
         }
@@ -512,8 +515,9 @@ pub async fn serve_download<R: Runtime>(
 }
 
 /// Copies `src` into `part` (a new file with the usual permissions, not the cache's 0600), in
-/// chunks so progress shows and a cancel stops it. Ok(false) when cancelled.
-fn copy_file(src: &Path, dest: &Path, part: &Path, done: &std::sync::atomic::AtomicU64, stop: &AtomicBool) -> std::io::Result<bool> {
+/// chunks so progress shows and a cancel stops it. Answers the partial file, still open (and so
+/// held, see `dest::create_part`) until it is in place; None when cancelled.
+fn copy_file(src: &Path, dest: &Path, part: &Path, done: &std::sync::atomic::AtomicU64, stop: &AtomicBool) -> std::io::Result<Option<std::fs::File>> {
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -526,7 +530,7 @@ fn copy_file(src: &Path, dest: &Path, part: &Path, done: &std::sync::atomic::Ato
     let mut last = Instant::now();
     loop {
         if stop.load(Ordering::Relaxed) {
-            return Ok(false);
+            return Ok(None);
         }
         let n = from.read(&mut buf)?;
         if n == 0 {
@@ -541,7 +545,7 @@ fn copy_file(src: &Path, dest: &Path, part: &Path, done: &std::sync::atomic::Ato
     }
     done.store(got, Ordering::Relaxed);
     to.sync_all()?;
-    Ok(true)
+    Ok(Some(to))
 }
 
 /// After a download from the server: keeps a copy of the file for the next open. `etag` is the
@@ -800,11 +804,11 @@ mod tests {
         let dest = dir.join("out/hello.txt");
         let part = crate::dest::part_path(&dest);
         let done = std::sync::atomic::AtomicU64::new(0);
-        assert!(copy_file(&src, &dest, &part, &done, &AtomicBool::new(false)).unwrap());
+        assert!(copy_file(&src, &dest, &part, &done, &AtomicBool::new(false)).unwrap().is_some());
         assert_eq!(std::fs::read(&part).unwrap(), b"hello");
         assert_eq!(done.load(Ordering::Relaxed), 5);
         // a cancel stops it
-        assert!(!copy_file(&src, &dest, &part, &done, &AtomicBool::new(true)).unwrap());
+        assert!(copy_file(&src, &dest, &part, &done, &AtomicBool::new(true)).unwrap().is_none());
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -823,7 +827,7 @@ mod tests {
         let part = crate::dest::part_path(&dest);
         std::os::unix::fs::symlink(&victim, &part).unwrap();
         let done = std::sync::atomic::AtomicU64::new(0);
-        assert!(copy_file(&src, &dest, &part, &done, &AtomicBool::new(false)).unwrap());
+        assert!(copy_file(&src, &dest, &part, &done, &AtomicBool::new(false)).unwrap().is_some());
         assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
         assert!(std::fs::symlink_metadata(&part).unwrap().file_type().is_file());
         assert_eq!(std::fs::read(&part).unwrap(), b"hello");

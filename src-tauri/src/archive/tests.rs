@@ -675,6 +675,17 @@ fn server_unpack_never_merges_through_links() {
         assert!(std::fs::read_dir(format!("{}/A.zip", f.dir())).unwrap().next().is_none());
         assert!(f.leftovers().is_empty(), "{:?}", f.leftovers());
         std::fs::remove_dir(format!("{}/A.zip", f.dir())).unwrap();
+        // a file that turned up at the name while it packed is never replaced
+        std::fs::write(format!("{}/A.zip", f.dir()), b"theirs").unwrap();
+        assert_eq!(f.run(sh, &remote::compress_script(&f.dir(), &["a b".into()], "A.zip"), &[]), Some(1), "{sh}");
+        assert_eq!(std::fs::read(format!("{}/A.zip", f.dir())).unwrap(), b"theirs");
+        assert!(f.leftovers().is_empty(), "{:?}", f.leftovers());
+        std::fs::remove_file(format!("{}/A.zip", f.dir())).unwrap();
+        // nothing there: it lands
+        assert_eq!(f.run(sh, &remote::compress_script(&f.dir(), &["a b".into()], "A.zip"), &[]), Some(0), "{sh}");
+        assert!(Path::new(&format!("{}/A.zip", f.dir())).is_file());
+        assert!(f.leftovers().is_empty(), "{:?}", f.leftovers());
+        std::fs::remove_file(format!("{}/A.zip", f.dir())).unwrap();
     }
 }
 
@@ -703,6 +714,8 @@ fn server_scripts_run_under_a_csh_login_shell() {
     let f = FakeServer::new();
     for csh in ["/bin/tcsh", "/bin/csh"].into_iter().filter(|p| Path::new(p).exists()) {
         let _ = std::fs::remove_dir_all(format!("{}/out", f.dir()));
+        // the zip of the shell before: never replaced, so it goes first
+        let _ = std::fs::remove_file(format!("{}/A.zip", f.dir()));
         let ex = crate::actions::sh_c(&remote::extract_script(&format!("{}/it's a", f.dir()), Format::Zip, &f.dir(), "out")).unwrap();
         assert_eq!(f.run(csh, &ex, &[("N", "x.txt")]), Some(0), "{csh}");
         assert!(Path::new(&format!("{}/out/ok", f.dir())).exists());

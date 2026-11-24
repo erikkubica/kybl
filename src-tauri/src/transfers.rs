@@ -43,9 +43,13 @@ struct TransferEvent {
     /// done and checked: what was compared ("size", "md5", "etag", "sha256", "quickxor", "dropbox")
     #[serde(skip_serializing_if = "Option::is_none")]
     verified: Option<&'static str>,
-    /// the download landed under this name instead (a file turned up at its own while it ran)
+    /// a download as it ends: the path it really is at (a free name it was given, "x (1).jpg",
+    /// or one it moved to because a file turned up at its own while it ran)
     #[serde(skip_serializing_if = "Option::is_none")]
     local: Option<String>,
+    /// it moved to `local` because a file turned up at its own name while it ran
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    moved: bool,
 }
 
 fn emit(app: &AppHandle, id: &str, state: &'static str, bytes: u64, total: u64, error: Option<String>) {
@@ -241,6 +245,8 @@ pub(crate) async fn download_file(
     cancel: &AtomicBool,
     progress: Progress<'_>,
 ) -> Result<Outcome, String> {
+    // held like any download's name: never two writers on one file (sync runs several at once)
+    let _held = dest::hold_exact(Path::new(dest))?;
     let mut dl = Dl { replace: true, ..Default::default() };
     download_to(client, bucket, key, Path::new(dest), None, false, cancel, progress, None, &mut dl).await
 }
@@ -433,11 +439,14 @@ async fn download_to(
     .await;
     // flushed to disk before anything else looks at it
     let _ = file.sync_all().await;
-    drop(file);
+    // still held while it is renamed into place, so no other download takes it for a leftover
+    let held = file.into_std().await;
     let paused = dl.pause.is_some_and(|p| p.load(Ordering::Relaxed));
     match result {
         Ok(true) => {
-            dl.finish(&part_path, dest).map_err(err)?;
+            let r = dl.finish(&part_path, dest);
+            drop(held);
+            r.map_err(err)?;
             // (a partial file removed anywhere is dropped from the list when it is next saved)
             crate::leftovers::partial_ended(&part_path);
             Ok(Outcome::Done)
@@ -445,12 +454,14 @@ async fn download_to(
         // paused: what arrived stays, to carry on from (the same version, asked by its ETag)
         Ok(false) if paused && etag.is_some() => Err(PAUSED.into()),
         Ok(false) => {
-            let _ = tokio::fs::remove_file(&part_path).await;
+            drop(held);
+            dest::remove_part(&part_path);
             Ok(Outcome::Cancelled)
         }
         Err(e) => {
+            drop(held);
             if !keep_partial {
-                let _ = tokio::fs::remove_file(&part_path).await;
+                dest::remove_part(&part_path);
             }
             Err(e)
         }
@@ -522,7 +533,7 @@ pub fn adopt(s: &Saved) {
 /// any more (a download that replaces the file can take a name a failed download left behind).
 fn forget_download(id: &str, p: PendingDownload) {
     if dest::unpark(&p.chosen, id) {
-        let _ = std::fs::remove_file(dest::part_path(&p.chosen));
+        dest::remove_part(&dest::part_path(&p.chosen));
     }
 }
 
@@ -593,6 +604,9 @@ async fn local_source(source: Source, key: &str, id: &str) -> Result<(String, Op
     };
     let name = key.rsplit('/').next().filter(|n| !n.is_empty()).unwrap_or("upload").to_string();
     let size = src.metadata().map(|m| m.len()).ok();
+    // the copy keeps the picked file's time, so a kept upload of it is carried on after a restart
+    // (its record compares size and time with the copy made then)
+    let modified = src.metadata().and_then(|m| m.modified()).ok();
     let kept = PICKED_COPIES.lock().unwrap().get(id).cloned();
     if let Some((was, was_size, dir)) = kept {
         let copy = dir.join(&name);
@@ -609,7 +623,11 @@ async fn local_source(source: Source, key: &str, id: &str) -> Result<(String, Op
         let _ = std::fs::remove_dir_all(&dir2);
         std::fs::create_dir_all(&dir2).map_err(err)?;
         let mut out = std::fs::File::create(&dest2).map_err(err)?;
-        std::io::copy(&mut src, &mut out).map_err(err)
+        let n = std::io::copy(&mut src, &mut out).map_err(err)?;
+        if let Some(t) = modified {
+            let _ = out.set_modified(t);
+        }
+        Ok(n)
     })
     .await
     .map_err(err)?;
@@ -787,6 +805,8 @@ async fn spawn_transfer(
         let mut verify_part_size: Option<u64> = None;
         let mut checked: Option<&'static str> = None;
         let mut local_done: Option<PathBuf> = None;
+        // an upload read from a copy of a file picked on Android
+        let mut picked = false;
         // a download's version is written down as soon as it is known
         let seen = |v: Option<&str>| {
             let v = v.map(str::to_string);
@@ -833,9 +853,15 @@ async fn spawn_transfer(
                                     && s.via == "s3"
                                     && let (Some(rs), Some(st)) = (&s.upload, s.stamp)
                                     && multipart::kept(&id).is_none()
-                                    && s.local == path
+                                    && s.local == local
                                 {
                                     multipart::adopt(&id, client, &profile_id, &bucket, &key, &path, st, rs);
+                                } else if let Some(s) = kept.as_ref().filter(|s| s.via == "s3" && s.upload.is_some())
+                                    && multipart::kept(&id).is_none()
+                                {
+                                    // not carried on (another file): the old upload goes, it would
+                                    // be recorded nowhere once the new one starts
+                                    resume::give_up(&app, s);
                                 }
                                 let part_size = Mutex::new(None);
                                 let total = now.map_or(0, |n| n.0);
@@ -857,8 +883,15 @@ async fn spawn_transfer(
                                 // before, for the same file unchanged
                                 let resume_state = kept
                                     .as_ref()
-                                    .filter(|k| (k.via == "drive" || k.via == "server") && k.stamp.is_some() && k.stamp == now && k.local == path)
+                                    .filter(|k| (k.via == "drive" || k.via == "server") && k.stamp.is_some() && k.stamp == now && k.local == local)
                                     .and_then(|k| k.upload.clone());
+                                // not carried on (the file changed): what the old one left on the
+                                // server goes, it would be recorded nowhere once this one starts
+                                if resume_state.is_none()
+                                    && let Some(k) = kept.as_ref().filter(|k| (k.via == "drive" || k.via == "server") && k.upload.is_some())
+                                {
+                                    resume::give_up(&app, k);
+                                }
                                 let st: Mutex<Option<(ResumeState, &'static str)>> = Mutex::new(None);
                                 let on_part = |p: PartRecord| {
                                     let mut g = st.lock().unwrap();
@@ -885,10 +918,9 @@ async fn spawn_transfer(
                             done_bytes = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
                             local_done = Some(PathBuf::from(&path));
                         }
-                        // a failed upload keeps its copy of a picked file for Retry
-                        if temp.is_some() && r.is_ok() {
-                            forget_picked(&id);
-                        }
+                        // a failed upload keeps its copy of a picked file for Retry (dropped below,
+                        // after the check that reads it)
+                        picked = temp.is_some();
                         r
                     }
                     Err(e) => Err(e),
@@ -994,6 +1026,9 @@ async fn spawn_transfer(
                 }
             }
         }
+        if picked && result.is_ok() {
+            forget_picked(&id);
+        }
         // only a copy that passed its check (or wasn't asked to be checked) goes into the cache
         if to_cache
             && let (Ok(Outcome::Done), Some(path)) = (&result, &local_done)
@@ -1021,7 +1056,7 @@ async fn spawn_transfer(
                     }
                     // stopped before its turn came: a partial file from an earlier attempt goes too
                     Ok(Outcome::Cancelled) => {
-                        let _ = tokio::fs::remove_file(dest::part_path(&chosen)).await;
+                        dest::remove_part(&dest::part_path(&chosen));
                     }
                     _ => {}
                 }
@@ -1095,7 +1130,8 @@ async fn spawn_transfer(
             resumed_from,
             restarted,
             verified: checked,
-            local: moved_to.clone(),
+            local: matches!(kind, Kind::Download { .. }).then(|| local.clone()),
+            moved: moved_to.is_some(),
         };
         let _ = app.emit(
             "transfer",
@@ -1151,8 +1187,9 @@ pub async fn start_download(
     size: Option<u64>,
     base: Option<String>,
 ) -> Result<String, String> {
-    // a name too long to take ".s3part" or " (1)" is cut short; the answer says where it went
-    let wanted = dest::fit_download_name(&dest::validate(&dest_path)?);
+    // the name stays whole (a drag-out promise or a save dialog chose that exact path); only a
+    // number added to a free name, or a partial file, is fitted to the length limit
+    let wanted = dest::validate(&dest_path)?;
     if let Some(base) = base.as_deref().filter(|b| !b.is_empty()) {
         crate::local_links::safe_write_target(Path::new(base), &wanted)?;
     }
@@ -1195,7 +1232,7 @@ pub async fn start_download(
             }
             None => {
                 dest::release(&chosen);
-                let _ = std::fs::remove_file(dest::part_path(&chosen));
+                dest::remove_part(&dest::part_path(&chosen));
             }
         }
         return Err(e);
@@ -1223,6 +1260,9 @@ pub async fn cancel_transfer(app: AppHandle, state: State<'_, AppState>, id: Str
     }
     Ok(())
 }
+
+/// How long Quit waits for running transfers to settle before saving them.
+const SETTLE: Duration = Duration::from_millis(1500);
 
 /// On quit: every transfer still queued or running is paused and kept for the next start (with
 /// what it did: partial files, the parts sent); bucket operations stop. Multipart uploads and
@@ -1255,6 +1295,12 @@ pub async fn shutdown(state: &AppState, limit: Duration) {
             s.total = s.total.max(t.total);
         });
     }
+    // each transfer notices the flags within a moment and writes what it really ended as (a
+    // check stopped midway: "paused, only check it again", or done); that is what gets saved
+    let settle = Instant::now();
+    while !ACTIVE.lock().unwrap().is_empty() && settle.elapsed() < SETTLE {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     let parts: Vec<PathBuf> = running
         .iter()
         .filter(|t| t.kind == "download")
@@ -1264,7 +1310,7 @@ pub async fn shutdown(state: &AppState, limit: Duration) {
         .collect();
     multipart::abort_all(limit).await;
     for p in parts {
-        let _ = std::fs::remove_file(p);
+        dest::remove_part(&p);
     }
     resume::save();
 }

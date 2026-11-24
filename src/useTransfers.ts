@@ -224,7 +224,7 @@ function listenOnce() {
     // order, not by when they started
     if ((ev.state === "done" || ev.state === "cancelled") && cur.state !== ev.state) byId.delete(ev.id);
     byId.set(ev.id, next);
-    if (ev.local) logMessage("info", `${cur.name}: a file with that name turned up while it downloaded, so it was saved as ${ev.local}.`);
+    if (ev.moved && ev.local) logMessage("info", `${cur.name}: a file with that name turned up while it downloaded, so it was saved as ${ev.local}.`);
     if (ev.resumedFrom) logMessage("info", `${cur.name}: carried on from ${formatBytes(ev.resumedFrom)} instead of starting over.`);
     else if (ev.restarted) logMessage("info", `${cur.name}: couldn't carry on where it stopped, so it started over.`);
     settle(next);

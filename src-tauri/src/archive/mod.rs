@@ -458,7 +458,7 @@ pub async fn archive_compress(app: AppHandle, state: State<'_, AppState>, id: St
         // on this computer: written next to the result and renamed in; elsewhere: zipped in the
         // cache, then uploaded
         if let Some(final_path) = src.local_path(&job.root, &job.dest_key) {
-            let tmp = final_path.with_file_name(format!(".{}.kybl-{tid}.part", base_name(&job.dest_key)));
+            let tmp = final_path.with_file_name(format!(".{}.kybl-{tid}.part", crate::storage::net::fit_name(base_name(&job.dest_key), 1 + 6 + tid.len() + 5)));
             ops::pack_to_file(src.clone(), &job.root, &plan, &tmp, &tick, &task.cancel).await?;
             // never over a file that is there (or turned up while it packed), in one step
             let (t, f) = (tmp.clone(), final_path.clone());

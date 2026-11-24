@@ -210,6 +210,12 @@ async fn copy_folder(k: &(impl Keys + ?Sized), from: &str, to: &str) -> SResult<
     }
     let listed = k.keys_below(&src).await?;
     let target = |key: &str| format!("{dst}{}", &key[src.len().min(key.len())..]);
+    // a copy landing on a key that is one of its own sources (`a/b/b/x` to `a/b/x` when `a/b/b/`
+    // goes to `a/b/`) would overwrite it before it is read, and a move would then delete it
+    let sources: std::collections::HashSet<&str> = listed.iter().map(|(key, _)| key.as_str()).collect();
+    if listed.iter().any(|(key, _)| key.starts_with(&src) && sources.contains(target(key).as_str())) {
+        return Err(StorageError::other("Can't copy a folder over a folder it is inside"));
+    }
     let (markers, files): (Vec<_>, Vec<_>) = listed.into_iter().filter(|(key, _)| key.starts_with(&src)).partition(|(_, m)| *m);
     let copies = futures_util::stream::iter(files.into_iter().map(|(f, _)| async move {
         let r = k.copy_key(&f, &target(&f)).await;
@@ -598,5 +604,14 @@ mod tests {
         assert!(!left.contains(&"b/2.txt".to_string()));
 
         assert!(copy_folder(&f, "a/", "a/inner/").await.is_err(), "not into itself");
+
+        // up one level onto the folder it is in: `p/b/b/x` would land on its own source `p/b/x`
+        let f = fake(&["p/b/x", "p/b/b/x", "p/b/b/b/x"], &[], None);
+        assert!(move_folder(&f, "p/b/b/", "p/b/").await.is_err());
+        assert_eq!(keys(&f), vec!["p/b/b/b/x", "p/b/b/x", "p/b/x"], "nothing touched");
+        // no overlap: fine
+        let f = fake(&["p/b/y", "p/b/b/x"], &[], None);
+        move_folder(&f, "p/b/b/", "p/c/").await.unwrap();
+        assert_eq!(keys(&f), vec!["p/b/y", "p/c/x"]);
     }
 }

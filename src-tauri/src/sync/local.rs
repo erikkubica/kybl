@@ -18,8 +18,9 @@ use tokio::sync::mpsc;
 use super::plan::{nfc, BaseState, LocalMeta};
 
 /// Patterns that are always ignored: partial downloads, one-way sync's scratch files, files the
-/// local backend is still writing, and the remote trash folder.
-pub const ALWAYS_IGNORED: [&str; 4] = ["*.s3part", ".s3sync-*", ".*.kybl-*", "/.kybl-trash/"];
+/// local backend is still writing, an FTP upload's visible temporary name (`name.kybl-<12 hex>.ext`,
+/// `kybl-<12 hex>.name`) and the remote trash folder.
+pub const ALWAYS_IGNORED: [&str; 6] = ["*.s3part", ".s3sync-*", ".*.kybl-*", "*.kybl-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*", "kybl-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*", "/.kybl-trash/"];
 
 /// The folder deleted files are moved to on stores without a trash of their own.
 pub const REMOTE_TRASH: &str = ".kybl-trash";
@@ -506,6 +507,19 @@ mod tests {
 
     /// B4-1 (round 4): a quick look finds a link that replaced a synced folder earlier (not among
     /// the watched changes), and paths only the other side knows are checked the same way.
+    /// Temporary names of uploads in progress (hidden, and FTP's visible ones) are never synced;
+    /// a user's own file that merely has "kybl" in its name is.
+    #[test]
+    fn upload_temporary_names_are_ignored() {
+        let gi = build_ignore(Path::new("/r"), &[]);
+        for t in ["a/.report.pdf.kybl-0123", "a/report.kybl-0123456789ab.pdf", "notes.kybl-0123456789ab", "a/kybl-0123456789ab.env", "x.s3part"] {
+            assert!(is_ignored(&gi, t), "{t}");
+        }
+        for t in ["report.kybl-draft.pdf", "kybl-notes.txt", "kybl.txt"] {
+            assert!(!is_ignored(&gi, t), "{t}");
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn quick_looks_find_links_that_were_already_there() {

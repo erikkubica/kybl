@@ -80,11 +80,39 @@ fn native_noreplace(from: &Path, to: &Path) -> io::Result<()> {
     unsafe extern "system" {
         fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
     }
-    let wide = |p: &Path| p.as_os_str().encode_wide().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    // long paths need the `\\?\` form, as std adds it for its own calls (no long-path manifest)
+    let wide = |p: &Path| {
+        let text: Vec<u16> = p.as_os_str().encode_wide().collect();
+        let mut w: Vec<u16> = String::from_utf16(&text).map_or(text, |t| verbatim(&t).encode_utf16().collect());
+        w.push(0);
+        w
+    };
     let (f, t) = (wide(from), wide(to));
     // SAFETY: both are valid NUL-terminated UTF-16 paths that outlive the call
     let ok = unsafe { MoveFileExW(f.as_ptr(), t.as_ptr(), 0) };
     if ok != 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+}
+
+/// A Windows path as Win32 takes it past 260 characters: `C:\x` → `\\?\C:\x`, `\\srv\share\x` →
+/// `\\?\UNC\srv\share\x` (with `/` as `\`, which the verbatim form doesn't translate). Short
+/// paths, relative ones, ones already verbatim and ones with `.` or `..` parts stay as they are.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn verbatim(p: &str) -> String {
+    if p.len() < 248 || p.starts_with(r"\\?\") || p.starts_with(r"\\.\") {
+        return p.to_string();
+    }
+    let p = p.replace('/', r"\");
+    if p.split('\\').skip(1).any(|s| s == "." || s == "..") {
+        return p;
+    }
+    let b = p.as_bytes();
+    if b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\' {
+        format!(r"\\?\{p}")
+    } else if let Some(unc) = p.strip_prefix(r"\\") {
+        format!(r"\\?\UNC\{unc}")
+    } else {
+        p
+    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "ios", windows)))]
@@ -251,6 +279,21 @@ pub fn through_link(root: &Path, p: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Windows' exclusive rename gets long paths in the `\\?\` form, as std's own calls do.
+    #[test]
+    fn long_windows_paths_go_verbatim() {
+        let deep = format!(r"C:\Users\me\Downloads\{}\big.iso", "a\\".repeat(130));
+        assert_eq!(verbatim(&deep), format!(r"\\?\{deep}"));
+        assert_eq!(verbatim(&deep.replace('\\', "/")), format!(r"\\?\{deep}"));
+        let unc = format!(r"\\nas\share\{}x.bin", "b\\".repeat(130));
+        assert_eq!(verbatim(&unc), format!(r"\\?\UNC\{}", &unc[2..]));
+        assert_eq!(verbatim(r"C:\short\a.txt"), r"C:\short\a.txt");
+        let already = format!(r"\\?\{deep}");
+        assert_eq!(verbatim(&already), already);
+        let dotted = format!(r"C:\x\..\{}", "c".repeat(260));
+        assert!(!verbatim(&dotted).starts_with(r"\\?\"));
+    }
 
     struct Tmp(PathBuf);
     impl Drop for Tmp {

@@ -86,7 +86,10 @@ struct Pool {
     readers: Arc<Semaphore>,
 }
 
-/// A lent connection; it goes back to the pool when dropped, unless something went wrong on it.
+/// A lent connection; it goes back to the pool when dropped, but only when it was marked
+/// `healthy` after its last reply was read in full. A lease dropped while a command waits for its
+/// answer (its future dropped by Pause, Cancel or a time limit) is closed instead, or the next
+/// command on it would read that old answer.
 struct Lease {
     conn: Option<Ftp>,
     pool: Arc<Pool>,
@@ -566,11 +569,11 @@ impl FtpBackend {
             let idle = self.pool.idle.lock().unwrap().pop();
             let Some((mut c, at)) = idle else { break };
             if at.elapsed() < IDLE_CHECK || tokio::time::timeout(Duration::from_secs(10), c.noop()).await.is_ok_and(|r| r.is_ok()) {
-                return Ok(Lease { conn: Some(c), pool: self.pool.clone(), healthy: true, _permit: permit, _reader: None });
+                return Ok(Lease { conn: Some(c), pool: self.pool.clone(), healthy: false, _permit: permit, _reader: None });
             }
         }
         let c = self.connect().await?;
-        Ok(Lease { conn: Some(c), pool: self.pool.clone(), healthy: true, _permit: permit, _reader: None })
+        Ok(Lease { conn: Some(c), pool: self.pool.clone(), healthy: false, _permit: permit, _reader: None })
     }
 
     /// Runs `f` on a connection, with a time limit; a connection that failed isn't reused, and an
@@ -583,7 +586,10 @@ impl FtpBackend {
             let mut lease = self.lease().await?;
             let base = self.base.get().cloned().unwrap_or_else(|| "/".into());
             match tokio::time::timeout(CMD_TIMEOUT, f(lease.ftp(), &base)).await {
-                Ok(Ok(v)) => return Ok(v),
+                Ok(Ok(v)) => {
+                    lease.healthy = true;
+                    return Ok(v);
+                }
                 Ok(Err(FtpError::ConnectionError(_))) if attempt == 0 => lease.healthy = false,
                 Ok(Err(e)) => {
                     lease.healthy = !matches!(e, FtpError::ConnectionError(_) | FtpError::SecureError(_) | FtpError::BadResponse | FtpError::DataConnectionAlreadyOpen);
@@ -602,7 +608,7 @@ impl FtpBackend {
         if let Some(b) = self.base.get() {
             return Ok(b.clone());
         }
-        drop(self.lease().await?);
+        self.lease().await?.healthy = true;
         Ok(self.base.get().cloned().unwrap_or_else(|| "/".into()))
     }
 
@@ -762,8 +768,16 @@ impl FtpBackend {
         if let Some(at) = offset
             && let Err(e) = lease.ftp().resume_transfer(at as usize).await
         {
-            lease.healthy = false;
-            return Err(StorageError::other("This server can't carry on an upload where it stopped, so it will start over.").with_detail(ftp_error(e, &self.host).to_string()));
+            // a refused REST is judged like a refused STOR after it (`rest_refused`): only a
+            // "can't do that" throws the partial file away. A dropped connection or a time limit
+            // is a passing failure, and the partial file stays for the next try
+            return match e {
+                FtpError::UnexpectedResponse(r) => {
+                    let code = r.status.code();
+                    Ok(Stored::Refused(ftp_error(FtpError::UnexpectedResponse(r), &self.host), code))
+                }
+                e => Err(ftp_error(e, &self.host)),
+            };
         }
         let mut up: Xfer = match lease.ftp().put_with_stream(path).await {
             Ok(x) => x,
@@ -771,9 +785,7 @@ impl FtpBackend {
             // connection goes: a server may keep the restart offset for the next STOR on it (a
             // retry from byte 0 would then land at the old offset)
             Err(FtpError::UnexpectedResponse(r)) => {
-                if offset.is_some() {
-                    lease.healthy = false;
-                }
+                lease.healthy = offset.is_none();
                 let code = r.status.code();
                 return Ok(Stored::Refused(ftp_error(FtpError::UnexpectedResponse(r), &self.host), code));
             }
@@ -890,18 +902,30 @@ enum SizeProbe {
 /// file is then of no use): "not implemented" and the like, or a 550/553 that isn't about space.
 /// A passing answer (421, 425, 450) or one about space or quota (452, 552) keeps the partial
 /// file for the next try.
-fn rest_refused(code: u32, e: &StorageError) -> bool {
+/// `path`: the name the command was about, which servers repeat in their answer.
+fn rest_refused(code: u32, e: &StorageError, path: &str) -> bool {
     match code {
         500 | 501 | 502 | 504 | 554 => true,
-        550 | 553 => !about_space(e),
+        550 | 553 => !about_space(e, path),
         _ => false,
     }
 }
 
+/// A refusal's text as whole lower-case words between spaces (" no such file "), without the
+/// words of `path`: servers repeat the path in their answer, and a folder called "Workspace" or
+/// "Full Backup" says nothing about space.
+fn reply_words(e: &StorageError, path: &str) -> String {
+    let words = |t: &str| t.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_string).collect::<Vec<_>>();
+    let own = words(path);
+    let text = format!("{} {}", e.message, e.detail.as_deref().unwrap_or_default());
+    let kept: Vec<String> = words(&text).into_iter().filter(|w| !own.contains(w)).collect();
+    format!(" {} ", kept.join(" "))
+}
+
 /// A refusal about space or quota (whatever its code: servers answer "550 Quota exceeded").
-fn about_space(e: &StorageError) -> bool {
-    let text = format!("{} {}", e.message, e.detail.as_deref().unwrap_or_default()).to_lowercase();
-    ["space", "quota", "disk", "full", "exceed", "storage"].iter().any(|w| text.contains(w))
+fn about_space(e: &StorageError, path: &str) -> bool {
+    let text = reply_words(e, path);
+    [" space ", " quota ", " disk ", " full ", " exceed ", " exceeded ", " exceeds ", " storage ", " insufficient "].iter().any(|w| text.contains(w))
 }
 
 #[async_trait]
@@ -923,7 +947,7 @@ impl Storage for FtpBackend {
 
     /// Signs in (and so checks the address, the password and the starting folder).
     async fn roots(&self) -> SResult<Vec<RootInfo>> {
-        drop(self.lease().await?);
+        self.lease().await?.healthy = true;
         Ok(vec![root_info(self.name.clone())])
     }
 
@@ -990,16 +1014,19 @@ impl Storage for FtpBackend {
         let full = self.path(path).await?;
         let mut lease = self.lease().await?;
         lease._reader = Some(reader);
+        // the connection goes back to the pool only if every answer on it parsed
+        let mut trusted = true;
         let total = match tokio::time::timeout(CMD_TIMEOUT, lease.ftp().size(&full)).await {
             Ok(Ok(n)) => Some(n as u64),
             Ok(Err(FtpError::UnexpectedResponse(r))) if matches!(r.status.code(), 550 | 551) => {
+                lease.healthy = true;
                 return Err(StorageError::not_found().with_detail(one_line(&r.to_string())));
             }
             // a server without SIZE (or that won't say for this file): read on without it
             Ok(Err(FtpError::UnexpectedResponse(_))) => None,
             // an answer that didn't parse: read on, but the connection isn't trusted again
             Ok(Err(FtpError::BadResponse)) => {
-                lease.healthy = false;
+                trusted = false;
                 None
             }
             // a reply that may still come (a timeout), or a broken connection: this connection is
@@ -1020,7 +1047,7 @@ impl Storage for FtpBackend {
             match tokio::time::timeout(CMD_TIMEOUT, lease.ftp().mdtm(&full)).await {
                 Ok(Ok(m)) => etag = Some(format!("{MDTM_TAG}{n:x}-{m}")),
                 Ok(Err(FtpError::UnexpectedResponse(_))) => {}
-                Ok(Err(FtpError::BadResponse)) => lease.healthy = false,
+                Ok(Err(FtpError::BadResponse)) => trusted = false,
                 Ok(Err(e)) => {
                     lease.healthy = false;
                     return Err(ftp_error(e, &self.host));
@@ -1031,6 +1058,8 @@ impl Storage for FtpBackend {
                 }
             }
         }
+        // no command waits for its answer now
+        lease.healthy = trusted;
         if let Some(t) = own
             && etag.as_deref() != Some(t)
         {
@@ -1046,6 +1075,8 @@ impl Storage for FtpBackend {
         if end.is_some_and(|e| e <= start) && range.is_some() {
             return Ok(ReadStream { body: Box::pin(futures_util::stream::empty()), len: Some(0), total, range: Some(start..start), etag, content_type: Some(mime_of(path)) });
         }
+        // REST and RETR wait for their answers: not back to the pool if dropped meanwhile
+        lease.healthy = false;
         if start > 0 {
             lease.ftp().resume_transfer(start as usize).await.map_err(|e| ftp_error(e, &self.host))?;
         }
@@ -1054,7 +1085,7 @@ impl Storage for FtpBackend {
             Err(e) => {
                 // a refused RETR leaves the connection usable, unless a REST went first (the
                 // server may keep its offset for the next transfer on it)
-                lease.healthy = matches!(e, FtpError::UnexpectedResponse(_)) && start == 0;
+                lease.healthy = trusted && matches!(e, FtpError::UnexpectedResponse(_)) && start == 0;
                 return Err(ftp_error(e, &self.host));
             }
         };
@@ -1160,7 +1191,7 @@ impl Storage for FtpBackend {
         let mut offset = offset;
         if offset.is_some()
             && let Ok(Stored::Refused(e, code)) = &stored
-            && rest_refused(*code, e)
+            && rest_refused(*code, e, &tmp_key)
         {
             self.remove_partial(self.path(&tmp_key).await?).await;
             let Some(p) = again else {
@@ -1181,7 +1212,7 @@ impl Storage for FtpBackend {
         }
         // and some only take certain names (extensions): write in place as a last resort
         let mut direct = None;
-        if name_refused(&stored) && offset.is_none() {
+        if name_refused(&stored, path) && offset.is_none() {
             let existed = self.stat(root, path).await?.is_some();
             direct = Some(existed);
             stored = self.store(&target, &mut body, len, None, progress, cancel).await;
@@ -1395,6 +1426,14 @@ impl Renames for FtpBackend {
     async fn file_exists(&self, key: &str) -> SResult<bool> {
         match self.size_probe(key).await? {
             SizeProbe::Size(_) => Ok(true),
+            // a 550 for a dot name may be "dot files are off limits" (pure-ftpd), not "gone": a
+            // listing that shows it settles it, one that doesn't can't (it may hide dot names)
+            SizeProbe::Missing if file_name(key).starts_with('.') => {
+                if self.stat("", key).await?.is_some() {
+                    return Ok(true);
+                }
+                Err(StorageError::other("The server can't say whether its temporary file is still there.").with_detail(key.to_string()))
+            }
             SizeProbe::Missing => Ok(false),
             SizeProbe::NoAnswer => {
                 let seen = self.stat("", key).await?.is_some();
@@ -1431,14 +1470,14 @@ fn temp_refused(stored: &SResult<Stored>) -> bool {
 
 /// Stricter, for the last resort of writing in place (which truncates the old file on open):
 /// only a refusal that is clearly about the name, never one about space or quota.
-fn name_refused(stored: &SResult<Stored>) -> bool {
+fn name_refused(stored: &SResult<Stored>, path: &str) -> bool {
     let Ok(Stored::Refused(e, _)) = stored else { return false };
-    let text = format!("{} {}", e.message, e.detail.as_deref().unwrap_or_default()).to_lowercase();
-    if about_space(e) {
+    let text = reply_words(e, path);
+    if about_space(e, path) {
         return false;
     }
-    let about_name = ["name", "extension", "not allowed", "denied", "permission"].iter().any(|w| text.contains(w));
-    e.kind == ErrKind::PermissionDenied || (e.kind == ErrKind::NotFound && about_name && !text.contains("no such"))
+    let about_name = [" name ", " filename ", " extension ", " not allowed ", " denied ", " permission "].iter().any(|w| text.contains(w));
+    e.kind == ErrKind::PermissionDenied || (e.kind == ErrKind::NotFound && about_name && !text.contains(" no such "))
 }
 
 /// Whether what a STOR that didn't finish left is removed (`direct`: written in place, and
@@ -1500,9 +1539,10 @@ fn plain_temp_key(key: &str) -> String {
     let (dir, name) = (parent_key(key), file_name(key));
     let id = &uuid::Uuid::new_v4().simple().to_string()[..12];
     match name.rfind('.') {
-        Some(i) if i > 0 => format!("{dir}{}.kybl-{id}{}", &name[..i], &name[i..]),
-        _ if name.starts_with('.') => format!("{dir}kybl-{id}{name}"),
-        _ => format!("{dir}{name}.kybl-{id}"),
+        // each cut to the name limit, as every temporary name is
+        Some(i) if i > 0 && name.len() - i <= 16 => format!("{dir}{}.kybl-{id}{}", fit_name(&name[..i], 6 + id.len() + name.len() - i), &name[i..]),
+        _ if name.starts_with('.') => format!("{dir}kybl-{id}{}", fit_name(name, 5 + id.len())),
+        _ => format!("{dir}{}.kybl-{id}", fit_name(name, 6 + id.len())),
     }
 }
 
@@ -1560,7 +1600,7 @@ mod tests {
             (code.code(), ftp_error(FtpError::UnexpectedResponse(r), "h"))
         };
         for (c, err) in [e(Status::NotImplemented, "502 REST not implemented"), e(Status::BadCommand, "500 Unknown command"), e(Status::FileUnavailable, "550 Restart not allowed")] {
-            assert!(rest_refused(c, &err), "{c}");
+            assert!(rest_refused(c, &err, "up.bin"), "{c}");
         }
         for (c, err) in [
             e(Status::NotAvailable, "421 Too many connections"),
@@ -1570,8 +1610,13 @@ mod tests {
             e(Status::ExceededStorage, "552 Quota exceeded"),
             e(Status::FileUnavailable, "550 Disk full"),
         ] {
-            assert!(!rest_refused(c, &err), "{c}");
+            assert!(!rest_refused(c, &err, "up.bin"), "{c}");
         }
+        // words of the path the server repeats say nothing about space
+        let (c, err) = e(Status::FileUnavailable, "550 /srv/workspace/Full Backup/.x.kybl-ab12: Restart not allowed");
+        assert!(rest_refused(c, &err, "workspace/Full Backup/.x.kybl-ab12"));
+        let (c, err) = e(Status::FileUnavailable, "550 /home/u/Disk Images/a.iso: Disk full");
+        assert!(!rest_refused(c, &err, "Disk Images/a.iso"), "still about space");
     }
 
     #[test]
@@ -1811,14 +1856,14 @@ mod tests {
             let r = suppaftp::types::Response::new(code, text.as_bytes().to_vec());
             Ok(Stored::Refused(ftp_error(FtpError::UnexpectedResponse(r), "h"), c))
         };
-        assert!(name_refused(&refused(Status::BadFilename, "553 Could not create file.")));
-        assert!(name_refused(&refused(Status::FileUnavailable, "550 Permission denied")));
-        assert!(name_refused(&refused(Status::FileUnavailable, "550 Filename not allowed")));
-        assert!(!name_refused(&refused(Status::FileUnavailable, "550 file: No space left on device")), "out of space");
-        assert!(!name_refused(&refused(Status::FileUnavailable, "550 Quota exceeded, permission denied")), "over quota");
-        assert!(!name_refused(&refused(Status::FileUnavailable, "550 Could not open file")), "a bare 550 says nothing about the name");
-        assert!(!name_refused(&refused(Status::FileUnavailable, "550 No such file or directory")));
-        assert!(!name_refused(&Ok(Stored::Done)));
+        assert!(name_refused(&refused(Status::BadFilename, "553 Could not create file."), "up.bin"));
+        assert!(name_refused(&refused(Status::FileUnavailable, "550 Permission denied"), "up.bin"));
+        assert!(name_refused(&refused(Status::FileUnavailable, "550 Filename not allowed"), "up.bin"));
+        assert!(!name_refused(&refused(Status::FileUnavailable, "550 file: No space left on device"), "up.bin"), "out of space");
+        assert!(!name_refused(&refused(Status::FileUnavailable, "550 Quota exceeded, permission denied"), "up.bin"), "over quota");
+        assert!(!name_refused(&refused(Status::FileUnavailable, "550 Could not open file"), "up.bin"), "a bare 550 says nothing about the name");
+        assert!(!name_refused(&refused(Status::FileUnavailable, "550 No such file or directory"), "up.bin"));
+        assert!(!name_refused(&Ok(Stored::Done), "up.bin"));
     }
 
     #[test]
