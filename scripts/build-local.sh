@@ -41,12 +41,30 @@ codesign --verify --strict "$APP"
 codesign -dvv "$APP" 2>&1 | grep -E "Identifier=|Authority|TeamIdentifier"
 
 if [ "${1:-}" = "--install" ]; then
+  # only the installed app counts: other Kybl bundles on this machine (the one just built, a
+  # worktree's) are not ours to touch
+  installed_running() {
+    local pid
+    for pid in $(pgrep -x kybl 2>/dev/null); do
+      case "$(ps -o comm= -p "$pid" 2>/dev/null)" in /Applications/Kybl.app/Contents/MacOS/kybl) return 0 ;; esac
+    done
+    return 1
+  }
   running=0
-  pgrep -f "Kybl.app/Contents/MacOS/kybl" >/dev/null && running=1
+  installed_running && running=1
   if [ "$running" = 1 ] && [ "${2:-}" = "--restart" ]; then
-    pkill -f "Kybl.app/Contents/MacOS/kybl" || true
-    sleep 1
-    running=0
+    # quit through the app, so it asks about what is still running (transfers, unsaved edits, a
+    # program in a terminal) and cleans up (drives unmount, edit copies sync); never killed
+    osascript -e 'tell application id "app.kybl.desktop" to quit' >/dev/null 2>&1 || true
+    for _ in $(seq 1 30); do
+      installed_running || break
+      sleep 0.5
+    done
+    if installed_running; then
+      echo "Kybl is still running (it asked, or you chose Keep running): the new build is installed and starts next time you open it."
+    else
+      running=0
+    fi
   fi
   # swapped in with renames, not deleted in place: a Kybl that is still running keeps the files it
   # has open, and the new bundle is complete before it takes the name

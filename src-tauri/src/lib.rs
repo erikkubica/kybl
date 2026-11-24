@@ -113,9 +113,9 @@ pub fn run() {
                 if app.state::<prefs::Prefs>().close_to_tray.load(Ordering::Relaxed) {
                     api.prevent_close();
                     tray::hide_main(app);
-                } else if !quit::quitting() && (quit::busy() > 0 || quit::unsaved() > 0) {
+                } else if !quit::quitting() && (quit::busy() > 0 || quit::unsaved() > 0 || quit::terminals_open()) {
                     // closing the window quits the app: ask first (unsaved edits, then what still
-                    // runs), like Quit does
+                    // runs, terminal programs too), like Quit does
                     api.prevent_close();
                     quit::request(app);
                 }

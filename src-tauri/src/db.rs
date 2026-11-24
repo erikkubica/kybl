@@ -50,7 +50,13 @@ fn migrate(conn: &mut Connection, migrations: &[&str]) -> Result<(), String> {
         return Err("This database was made by a newer version of Kybl. Update Kybl to use it.".into());
     }
     for (i, sql) in migrations.iter().enumerate().skip(have as usize) {
-        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        // the write lock is taken first and the version read again under it: another process
+        // opening the same file may have run this step since `have` was read
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+        let now: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(|e| e.to_string())?;
+        if now > i as i64 {
+            continue;
+        }
         tx.execute_batch(sql).map_err(|e| format!("Database upgrade {} failed: {e}", i + 1))?;
         // PRAGMA takes no parameters; the number is ours, not input
         tx.execute_batch(&format!("PRAGMA user_version = {}", i + 1)).map_err(|e| e.to_string())?;
@@ -81,6 +87,22 @@ mod tests {
         drop(conn);
         // an older build refuses the newer file
         assert!(open(&path, &one).unwrap_err().contains("newer version"));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn processes_opening_at_once_run_each_step_once() {
+        let path = std::env::temp_dir().join(format!("kybl-db-{}/t.db", uuid::Uuid::new_v4()));
+        let steps = ["CREATE TABLE a(x INTEGER)", "ALTER TABLE a ADD COLUMN y TEXT", "ALTER TABLE a ADD COLUMN z TEXT"];
+        let opens: Vec<_> = (0..8)
+            .map(|_| {
+                let p = path.clone();
+                std::thread::spawn(move || open(&p, &steps).map(|_| ()))
+            })
+            .collect();
+        for o in opens {
+            o.join().unwrap().unwrap();
+        }
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 

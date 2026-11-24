@@ -221,9 +221,15 @@ pub async fn set_transfer_prefs<R: Runtime>(
     state: State<'_, AppState>,
     prefs: TransferPrefsPatch,
 ) -> Result<TransferPrefs, String> {
-    let next = prefs.apply(current());
-    crate::prefs::save_transfers(&app, next)?;
-    apply(next);
+    // held from reading the settings to making them live: two changes at once (the speed menu
+    // and a Settings toggle) each build on the other's result instead of the same old one
+    static CHANGING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    {
+        let _one = CHANGING.lock().await;
+        let next = prefs.apply(current());
+        crate::prefs::save_transfers(&app, next)?;
+        apply(next);
+    }
     // transfers waiting for a slot look again: a higher limit lets more of them start now
     state.wake_transfer_slots().await;
     Ok(current())

@@ -666,7 +666,7 @@ pub async fn update_install(app: AppHandle) -> Result<UpdateStatus, String> {
 }
 
 /// Starts the new version: relaunches the swapped-in app, or hands over to the installer.
-/// Unless `force`, answers `"busy"` while transfers or bucket operations are running, so the
+/// Unless `force`, answers `"busy"` while transfers, bucket operations or terminal programs run, so the
 /// window can offer to restart when they are done instead of cutting them off.
 #[tauri::command]
 pub async fn update_restart(app: AppHandle, force: Option<bool>) -> Result<(), String> {
@@ -674,6 +674,11 @@ pub async fn update_restart(app: AppHandle, force: Option<bool>) -> Result<(), S
         return Err("The update isn't installed yet.".into());
     }
     if !force.unwrap_or(false) && !app.state::<crate::state::AppState>().cancels.lock().await.is_empty() {
+        return Err("busy".into());
+    }
+    // a program running in a terminal ends with the restart: ask first, like for transfers
+    #[cfg(desktop)]
+    if !force.unwrap_or(false) && crate::terminal::busy_sessions().await > 0 {
         return Err("busy".into());
     }
     // unsaved edits (in the editor, or saved in another app but not uploaded yet) would be lost:

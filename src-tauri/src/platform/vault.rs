@@ -48,8 +48,14 @@ pub fn read(dir: &Path, sealer: &impl Sealer) -> Result<HashMap<String, String>,
         Err(e) => return Err(format!("Could not read the secret keys: {e}")),
     };
     // a damaged plain file reads as empty, as it always did; it is not sealed (and so not
-    // deleted) here, in case it can still be rescued
+    // deleted) here, in case it can still be rescued. The next save would replace or delete it,
+    // so a copy is kept first (`secrets.json.unreadable-<time>`)
     let Ok(map) = serde_json::from_slice::<HashMap<String, String>>(&raw) else {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let copy = dir.join(format!("{PLAIN}.unreadable-{stamp}"));
+        if let Err(e) = crate::state::write_atomic(&copy, &raw) {
+            eprintln!("damaged secret keys file not kept aside: {e}");
+        }
         return Ok(HashMap::new());
     };
     // seal the keys of an earlier version right away rather than on the next save
@@ -173,6 +179,22 @@ mod tests {
         let sealed = std::fs::read(d.join(SEALED)).unwrap();
         assert!(!String::from_utf8_lossy(&sealed).contains("secret-1"), "no key in the clear");
         assert_eq!(read(&d, &s).unwrap(), keys(), "and it opens again");
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn a_damaged_plain_file_is_kept_aside_before_a_save_can_replace_it() {
+        let d = dir();
+        std::fs::write(d.join(PLAIN), b"{\"p1\": \"secret-1\", broken").unwrap();
+        let s = fake();
+        assert!(read(&d, &s).unwrap().is_empty());
+        let kept: Vec<_> = std::fs::read_dir(&d).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("secrets.json.unreadable-")).collect();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(std::fs::read(kept[0].path()).unwrap(), b"{\"p1\": \"secret-1\", broken");
+        // saving the one key entered again removes the damaged original, but not the copy
+        write(&d, &HashMap::from([("p2".to_string(), "x".to_string())]), &s).unwrap();
+        assert!(!d.join(PLAIN).exists());
+        assert!(kept[0].path().exists());
         let _ = std::fs::remove_dir_all(d);
     }
 
