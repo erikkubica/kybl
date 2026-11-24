@@ -36,10 +36,14 @@ use crate::{
 /// dead after the network or VPN changed), so the next command connects afresh. Transfers still
 /// running keep the backend they hold. This computer and archives have nothing to reconnect.
 #[tauri::command]
-pub fn reconnect_connection(profile_id: String) {
+pub async fn reconnect_connection(state: State<'_, AppState>, profile_id: String) -> Result<(), String> {
     if profile_id != registry::LOCAL_ID && !profile_id.starts_with(crate::archive::PREFIX) {
+        // an S3 connection is served from this cache first (`storage::connect`), so without this
+        // the retry would reuse the very client the user is retrying
+        state.clients.lock().await.remove(&profile_id);
         registry::forget(&profile_id);
     }
+    Ok(())
 }
 
 /// Where browsing starts in a connection: buckets, drives, or this computer's folders.
@@ -690,7 +694,7 @@ pub(crate) async fn download_resumable(
                 last = Instant::now();
             }
             if let Some(l) = lane.as_mut() {
-                l.throttle(chunk.len()).await;
+                l.throttle_unless(chunk.len(), Some(cancel)).await;
             }
             // "Wi-Fi only" and the phone moved to mobile data: let go of the connection, keep
             // what arrived, and ask for the rest (of the same version) once back on Wi-Fi

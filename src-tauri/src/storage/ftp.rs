@@ -1483,7 +1483,14 @@ fn name_refused(stored: &SResult<Stored>, path: &str) -> bool {
         return false;
     }
     let about_name = [" name ", " filename ", " extension ", " not allowed ", " denied ", " permission "].iter().any(|w| text.contains(w));
-    e.kind == ErrKind::PermissionDenied || (e.kind == ErrKind::NotFound && about_name && !text.contains(" no such "))
+    // The kind comes from the raw reply, which may repeat the folder's name ("550 /srv/Permission
+    // Slips/x: ..."), so a permission refusal counts only when the words left after taking the
+    // path's out still say it is about the name or permissions.
+    match e.kind {
+        ErrKind::PermissionDenied => about_name,
+        ErrKind::NotFound => about_name && !text.contains(" no such "),
+        _ => false,
+    }
 }
 
 /// Whether what a STOR that didn't finish left is removed (`direct`: written in place, and
@@ -1869,6 +1876,7 @@ mod tests {
         assert!(!name_refused(&refused(Status::FileUnavailable, "550 Quota exceeded, permission denied"), "up.bin"), "over quota");
         assert!(!name_refused(&refused(Status::FileUnavailable, "550 Could not open file"), "up.bin"), "a bare 550 says nothing about the name");
         assert!(!name_refused(&refused(Status::FileUnavailable, "550 No such file or directory"), "up.bin"));
+        assert!(!name_refused(&refused(Status::FileUnavailable, "550 /srv/Permission Slips/.a.kybl-x: failed"), "/srv/Permission Slips/.a.kybl-x"), "the path's words say nothing about the refusal");
         assert!(!name_refused(&Ok(Stored::Done), "up.bin"));
     }
 

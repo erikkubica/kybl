@@ -169,6 +169,17 @@ pub(crate) type Hold<'a> = Option<&'a (dyn Fn(u64, u64) + Send + Sync)>;
 /// How many times in a row a download picks up again after the connection drops, waiting a
 /// little longer each time (1 s, 2 s, 4 s … up to 30 s) before it gives up.
 const RESUME_ATTEMPTS: u32 = 8;
+
+/// Whether the server answered a request with a refusal that asking again won't change: a
+/// client error (403, 404, 412 for an object replaced under `If-Match`), other than the ones
+/// that mean "later" (408, 429). Errors with no answer at all (network) and 5xx are retried.
+fn will_not_change<E>(e: &aws_sdk_s3::error::SdkError<E, aws_sdk_s3::config::http::HttpResponse>) -> bool {
+    e.raw_response().is_some_and(|r| {
+        let code = r.status().as_u16();
+        (400..500).contains(&code) && code != 408 && code != 429
+    })
+}
+
 /// A download whose connection sends nothing for this long is taken as dropped and resumed.
 pub(crate) const STALL: Duration = Duration::from_secs(60);
 
@@ -375,7 +386,7 @@ async fn download_to(
                         progress(got, total);
                         last_emit = Instant::now();
                     }
-                    lane.throttle(chunk.len()).await;
+                    lane.throttle_unless(chunk.len(), Some(cancel)).await;
                     // "Wi-Fi only" and the phone moved to mobile data: let go of the connection,
                     // keep what arrived, and ask for the rest once it is back on Wi-Fi
                     if let Some(paused) = hold
@@ -431,7 +442,9 @@ async fn download_to(
                         }
                         // the server ignored the range and sent the whole file again: can't resume
                         Raced::Got(Ok(_)) => return Err(e),
-                        Raced::Got(Err(again)) if failures >= RESUME_ATTEMPTS => return Err(sdk_err(again)),
+                        // an answer that can never change (the object was replaced, deleted, or the
+                        // key lost access): no point waiting out the retries
+                        Raced::Got(Err(again)) if failures >= RESUME_ATTEMPTS || will_not_change(&again) => return Err(sdk_err(again)),
                         Raced::Stalled if failures >= RESUME_ATTEMPTS => return Err(STALLED.into()),
                         Raced::Got(Err(_)) | Raced::Stalled => continue,
                         Raced::Stopped => return Ok(false),
@@ -1304,11 +1317,18 @@ pub async fn shutdown(state: &AppState, limit: Duration) {
             overwrite: t.overwrite,
             ..Default::default()
         };
-        resume::update_or_put(&t.id, fresh, |s| {
-            s.state = "paused".into();
-            s.bytes = s.bytes.max(t.bytes);
-            s.total = s.total.max(t.total);
-        });
+        // Written while the transfer is still listed as running: one that finished meanwhile
+        // has already dropped its record, and a new "paused" one would make the next start
+        // download or upload the finished file a second time. A transfer leaves `ACTIVE` only
+        // after it removed its record, so this one check closes the gap.
+        let active = ACTIVE.lock().unwrap();
+        if active.contains_key(&t.id) {
+            resume::update_or_put(&t.id, fresh, |s| {
+                s.state = "paused".into();
+                s.bytes = s.bytes.max(t.bytes);
+                s.total = s.total.max(t.total);
+            });
+        }
     }
     // each transfer notices the flags within a moment and writes what it really ended as (a
     // check stopped midway: "paused, only check it again", or done); that is what gets saved

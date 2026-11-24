@@ -56,8 +56,14 @@ export function eachFileUnder(profileId: string, bucket: string, prefix: string,
       if (stopped) throw new ListingStopped();
       return n;
     })
-    .catch((e) => {
-      throw stopped ? new ListingStopped() : e;
+    .catch(async (e) => {
+      // batches found before the failure may still be on their way: let them land first, so
+      // the caller reports (and builds its list of downloads) after all of them were handed over
+      if (!stopped) await new Promise((ok) => setTimeout(ok, 300));
+      const byUser = stopped;
+      // none after the failure was reported
+      stopped = true;
+      throw byUser ? new ListingStopped() : e;
     })
     .finally(() => running.delete(opId));
   return { done, stop };

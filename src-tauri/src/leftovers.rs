@@ -9,6 +9,7 @@
 //! didn't create.
 
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -49,11 +50,11 @@ struct Ledger {
     uploads: Vec<Upload>,
     /// `.s3part` files
     #[serde(default)]
-    partials: Vec<PathBuf>,
+    partials: BTreeSet<PathBuf>,
 }
 
 static PATH: OnceLock<PathBuf> = OnceLock::new();
-static LEDGER: Mutex<Ledger> = Mutex::new(Ledger { uploads: Vec::new(), partials: Vec::new() });
+static LEDGER: Mutex<Ledger> = Mutex::new(Ledger { uploads: Vec::new(), partials: BTreeSet::new() });
 /// Held while the ledger is written.
 static WRITING: Mutex<()> = Mutex::new(());
 /// A save is already on its way.
@@ -90,9 +91,18 @@ pub fn save() {
 fn save_now() -> std::io::Result<()> {
     let Some(path) = PATH.get() else { return Err(std::io::Error::other("no ledger yet")) };
     let _one = WRITING.lock().unwrap();
+    // The files are looked at without the ledger locked: with tens of thousands of queued
+    // downloads this is a lot of stats, and every starting download waits on the lock.
+    let listed: Vec<PathBuf> = LEDGER.lock().unwrap().partials.iter().cloned().collect();
+    let gone: Vec<PathBuf> = listed.into_iter().filter(|p| !p.exists()).collect();
     let json = {
         let mut l = LEDGER.lock().unwrap();
-        l.partials.retain(|p| p.exists());
+        for p in &gone {
+            // looked at again: a download may have made the file again since
+            if !p.exists() {
+                l.partials.remove(p);
+            }
+        }
         serde_json::to_vec(&*l)
     };
     crate::state::write_atomic(path, &json.map_err(std::io::Error::other)?)
@@ -156,9 +166,7 @@ fn merge(into: &mut Ledger, from: Ledger) {
         }
     }
     for p in from.partials {
-        if !into.partials.contains(&p) {
-            into.partials.push(p);
-        }
+        into.partials.insert(p);
     }
 }
 
@@ -204,15 +212,15 @@ pub fn upload_ended(upload_id: &str) {
 /// A partial download file was created.
 pub fn partial_started(part: &Path) {
     change(|l| {
-        if !l.partials.iter().any(|p| p == part) {
-            l.partials.push(part.to_path_buf());
-        }
+        l.partials.insert(part.to_path_buf());
     });
 }
 
 /// The partial download file was renamed into place or removed.
 pub fn partial_ended(part: &Path) {
-    change(|l| l.partials.retain(|p| p != part));
+    change(|l| {
+        l.partials.remove(part);
+    });
 }
 
 /// This run's own folder below the data folder (`<RUNS>/<run>/`), claimed on the first call
@@ -357,7 +365,7 @@ mod tests {
     fn ledger_of(id: &str) -> Ledger {
         Ledger {
             uploads: vec![Upload { profile_id: "p".into(), bucket: "b".into(), key: id.into(), upload_id: id.into(), created: 1 }],
-            partials: vec![PathBuf::from(format!("/d/{id}.s3part"))],
+            partials: BTreeSet::from([PathBuf::from(format!("/d/{id}.s3part"))]),
         }
     }
 
@@ -406,7 +414,7 @@ mod tests {
     fn the_ledger_reads_back_and_tolerates_older_files() {
         let l = Ledger {
             uploads: vec![Upload { profile_id: "p".into(), bucket: "b".into(), key: "k".into(), upload_id: "u".into(), created: 1 }],
-            partials: vec![PathBuf::from("/d/a.s3part")],
+            partials: BTreeSet::from([PathBuf::from("/d/a.s3part")]),
         };
         let back: Ledger = serde_json::from_slice(&serde_json::to_vec(&l).unwrap()).unwrap();
         assert_eq!(back, l);

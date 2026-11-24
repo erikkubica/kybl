@@ -319,6 +319,12 @@ impl Limiter {
 
     /// Sleeps `wait`, cut short when the rate changes meanwhile (the new rate applies at once).
     pub async fn pause(&self, wait: Duration) {
+        self.pause_unless(wait, None).await;
+    }
+
+    /// [`pause`](Self::pause), also cut short when `stop` is set (Pause or Cancel of the
+    /// transfer waiting): at a low cap one wait can last minutes, and the row must not sit in it.
+    pub async fn pause_unless(&self, wait: Duration, stop: Option<&AtomicBool>) {
         if wait.is_zero() {
             return;
         }
@@ -326,7 +332,7 @@ impl Limiter {
         let until = tokio::time::Instant::now() + wait;
         loop {
             let now = tokio::time::Instant::now();
-            if now >= until || self.generation.load(Ordering::Relaxed) != generation {
+            if now >= until || self.generation.load(Ordering::Relaxed) != generation || stop.is_some_and(|s| s.load(Ordering::Relaxed)) {
                 return;
             }
             tokio::time::sleep((until - now).min(Duration::from_millis(100))).await;
@@ -370,6 +376,11 @@ pub struct Lane {
 impl Lane {
     /// After `n` more bytes went through.
     pub async fn throttle(&mut self, n: usize) {
+        self.throttle_unless(n, None).await;
+    }
+
+    /// [`throttle`](Self::throttle) that ends its wait as soon as `stop` is set.
+    pub async fn throttle_unless(&mut self, n: usize, stop: Option<&AtomicBool>) {
         let rate = self.limiter.rate();
         if rate == 0 {
             self.owed = 0;
@@ -379,8 +390,8 @@ impl Lane {
         let q = quantum(rate);
         while self.owed >= q {
             self.owed -= q;
-            self.limiter.pause(self.limiter.take(q)).await;
-            if self.limiter.rate() == 0 {
+            self.limiter.pause_unless(self.limiter.take(q), stop).await;
+            if self.limiter.rate() == 0 || stop.is_some_and(|s| s.load(Ordering::Relaxed)) {
                 self.owed = 0;
                 return;
             }
