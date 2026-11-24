@@ -472,14 +472,29 @@ pub async fn oauth_start(
         ..Default::default()
     };
     let stored = Stored { refresh_token: refresh, client_id: client_id.clone(), client_secret: own.as_ref().and(secret) };
-    set_secret(&state, &secret_key(&id, "oauth"), &serde_json::to_string(&stored).map_err(|e| e.to_string())?).await?;
+    let key = secret_key(&id, "oauth");
+    let raw = serde_json::to_string(&stored).map_err(|e| e.to_string())?;
+    // a reconnect: the sign-in it replaces, to put back if the list can't be saved (unreadable:
+    // nothing is put back)
+    let replaced = match existing {
+        Some(_) => get_secret(&state, &key).await.ok(),
+        None => None,
+    };
+    set_secret(&state, &key, &raw).await?;
     match existing {
         Some(i) => profiles[i] = profile.clone(),
         None => profiles.push(profile.clone()),
     }
     if let Err(e) = save_profiles(&app, &profiles, &held) {
+        // still under the list lock: no other save of this connection runs in between
+        let e = match replaced {
+            Some(prev) => {
+                crate::state::undo_secret(&state, &key, Some(&raw), prev).await;
+                e
+            }
+            None => crate::commands::forget_unsaved(&state, &id, existing.is_none(), e).await,
+        };
         drop(held);
-        crate::commands::forget_unsaved(&state, &id, existing.is_none()).await;
         return Err(e);
     }
     drop(held);
@@ -510,10 +525,9 @@ impl<R: Runtime> TokenStore for VaultStore<R> {
         let raw = get_secret(&state, &self.key).await.map_err(StorageError::other)?;
         Ok(raw.and_then(|r| token::parse_stored(&r)))
     }
-    async fn save(&self, s: &Stored) -> SResult<()> {
+    async fn save(&self, prev: &Stored, s: &Stored) -> SResult<()> {
         let state = self.app.state::<AppState>();
-        let raw = serde_json::to_string(s).map_err(|e| StorageError::other(e.to_string()))?;
-        set_secret(&state, &self.key, &raw).await.map_err(StorageError::other)
+        save_if_same(&state, &self.key, prev, s).await
     }
 }
 
@@ -555,13 +569,20 @@ impl TokenStore for StateStore {
         let raw = get_secret(self.state, &self.key).await.map_err(StorageError::other)?;
         Ok(raw.and_then(|r| token::parse_stored(&r)))
     }
-    async fn save(&self, s: &Stored) -> SResult<()> {
+    async fn save(&self, prev: &Stored, s: &Stored) -> SResult<()> {
         // the app may have changed the vault since this state read it: read it again first, so
         // writing the new token back never drops a secret saved meanwhile
         *self.state.secrets.lock().await = None;
-        let raw = serde_json::to_string(s).map_err(|e| StorageError::other(e.to_string()))?;
-        set_secret(self.state, &self.key, &raw).await.map_err(StorageError::other)
+        save_if_same(self.state, &self.key, prev, s).await
     }
+}
+
+/// A renewed token into the vault under `key`, only while it still holds the session `prev`
+/// ([`TokenStore::save`]), checked and written in one step under the vault lock.
+async fn save_if_same(state: &AppState, key: &str, prev: &Stored, s: &Stored) -> SResult<()> {
+    let raw = serde_json::to_string(s).map_err(|e| StorageError::other(e.to_string()))?;
+    let same = |now: Option<&String>| token::same_session(now.and_then(|r| token::parse_stored(r)).as_ref(), prev);
+    crate::state::change_secret_if(state, key, same, Some(raw)).await.map(|_| ()).map_err(StorageError::other)
 }
 
 /// [`open`] without an `AppHandle`: tokens from `state`'s vault, no Reconnect event (the backup

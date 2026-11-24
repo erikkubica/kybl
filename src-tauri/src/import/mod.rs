@@ -554,8 +554,9 @@ pub async fn import_apply(app: AppHandle, state: State<'_, AppState>, source: St
     {
         drop(held);
         // nothing is listed, so every secret stored for them in this run goes again
+        let mut e = e;
         for id in &stored {
-            crate::commands::forget_unsaved(&state, id, true).await;
+            e = crate::commands::forget_unsaved(&state, id, true, e).await;
         }
         return Err(e);
     }

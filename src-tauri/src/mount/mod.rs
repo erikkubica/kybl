@@ -126,8 +126,11 @@ fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app.path().app_config_dir().map_err(err)?.join("mounts.json"))
 }
 
+/// The saved drives, one by one: one this version can't read is left out here (and kept by the
+/// next save), not the whole list (B5-4).
 fn load_configs(app: &AppHandle) -> Vec<MountConfig> {
-    config_path(app).ok().and_then(|p| std::fs::read(p).ok()).and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default()
+    let v = config_path(app).ok().and_then(|p| std::fs::read(p).ok()).and_then(|raw| serde_json::from_slice::<serde_json::Value>(&raw).ok());
+    crate::state::parse_list(v.as_ref())
 }
 
 pub(crate) fn write_configs(p: &std::path::Path, list: &[MountConfig]) -> Result<(), String> {
@@ -136,7 +139,11 @@ pub(crate) fn write_configs(p: &std::path::Path, list: &[MountConfig]) -> Result
     }
     // the file holds each drive's path token: `write_atomic` makes it this account's only (0600),
     // one an earlier build wrote readable by others included
-    crate::state::write_atomic(p, &serde_json::to_vec_pretty(list).map_err(err)?).map_err(err)
+    // drives this version can't read stay listed, so their pending saves keep their drive
+    let old = crate::state::json_before_save(p)?;
+    let mine = list.iter().map(serde_json::to_value).collect::<Result<Vec<_>, _>>().map_err(err)?;
+    let all = crate::state::keep_unreadable::<MountConfig>(old.as_ref(), mine);
+    crate::state::write_atomic(p, &serde_json::to_vec_pretty(&all).map_err(err)?).map_err(err)
 }
 
 /// Writes the drives as they are now. One write at a time, each of the list as it is then, so
@@ -399,6 +406,12 @@ async fn mount_one(app: &AppHandle, id: &str) {
     if need_server {
         // a fresh path token for every mount: the system's mount list shows the drive's address
         // to every app on this computer, so a token seen there stops working with the mount
+        let stale = (!c.token.is_empty() && c.port != 0).then(|| format!("http://127.0.0.1:{}/{}/", c.port, c.token));
+        if let Some(stale) = stale {
+            // Linux: a mount of the previous token left by a crash is found by that address
+            // only, so it goes before the token changes (B5-8). Other systems: nothing to do.
+            let _ = tokio::task::spawn_blocking(move || os::forget_stale(&stale)).await;
+        }
         c.token = server::random_token();
         match server::start(fs, c.port, c.token.clone(), read_only).await {
             Ok(s) => {

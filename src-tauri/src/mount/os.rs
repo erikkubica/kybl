@@ -169,6 +169,20 @@ pub fn unmount(m: &Mounted, url: &str, force: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Unmounts a drive's GVFS mount from an earlier run (`url`: its address then), still listed
+/// after a crash: the next mount gets a new address, so nothing else would ever remove it and
+/// the file manager would show a dead copy of the drive (B5-8).
+#[cfg(target_os = "linux")]
+pub fn forget_stale(url: &str) {
+    if gvfs_point(url).is_some() {
+        let _ = Command::new("gio").arg("mount").arg("-u").arg("-f").arg(dav_url(url)).status();
+    }
+}
+
+/// Elsewhere the mount point stays the same across runs, so the next mount replaces it.
+#[cfg(not(target_os = "linux"))]
+pub fn forget_stale(_url: &str) {}
+
 #[cfg(target_os = "linux")]
 pub fn is_mounted(m: &Mounted) -> bool {
     Path::new(&m.point).is_dir()

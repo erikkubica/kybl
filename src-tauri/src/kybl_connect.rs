@@ -313,13 +313,17 @@ async fn finish(app: &AppHandle, state: &AppState, tok: TokenResponse, replace_i
         None => profiles.push(profile.clone()),
     }
     if let Err(e) = save_profiles(app, &profiles, &held) {
-        drop(held);
-        match replaced {
+        // still under the list lock, so "before" is what this save replaced
+        let e = match replaced {
             // a new connection: none of its secrets may stay unseen
-            Some(None) => crate::commands::forget_unsaved(state, &profile.id, true).await,
-            Some(Some(prev)) => crate::state::undo_secret(state, &profile.id, Some(prev)).await,
-            None => {}
-        }
+            Some(None) if existing.is_none() => crate::commands::forget_unsaved(state, &profile.id, true, e).await,
+            Some(prev) => {
+                crate::state::undo_secret(state, &profile.id, Some(&tok.secret_access_key), prev).await;
+                e
+            }
+            None => e,
+        };
+        drop(held);
         return Err(e);
     }
     drop(held);

@@ -214,12 +214,75 @@ fn cache_name(kind: ConnKind, profile_id: &str, bucket: &str, key: &str, etag: &
     format!("{:016x}.jpg", fnv1a(&id))
 }
 
+/// One connection's folder in the cache (`<cache>/thumbs/<hash of its id>`), so a deleted
+/// connection's thumbnails can go with it (B5-6).
+fn profile_dir(dir: &Path, profile_id: &str) -> PathBuf {
+    dir.join(format!("{:016x}", fnv1a(profile_id)))
+}
+
+/// Where the thumbnail of one file version is kept, if it is there. One an older Kybl kept at
+/// the top of the cache moves into its connection's folder, so it stays valid.
+fn find_cached(dir: &Path, kind: ConnKind, profile_id: &str, bucket: &str, key: &str, etag: &str, size: i64) -> Option<PathBuf> {
+    let name = cache_name(kind, profile_id, bucket, key, etag, size);
+    let path = profile_dir(dir, profile_id).join(&name);
+    if path.is_file() {
+        return Some(path);
+    }
+    let old = dir.join(&name);
+    if !old.is_file() {
+        return None;
+    }
+    let moved = path.parent().is_some_and(|p| crate::filecache::private_dir(p).is_ok()) && std::fs::rename(&old, &path).is_ok();
+    Some(if moved { path } else { old })
+}
+
+/// Where a new thumbnail of one file version goes.
+fn new_path(dir: &Path, kind: ConnKind, profile_id: &str, bucket: &str, key: &str, etag: &str, size: i64) -> PathBuf {
+    profile_dir(dir, profile_id).join(cache_name(kind, profile_id, bucket, key, etag, size))
+}
+
+/// A connection was deleted: its thumbnails go. `kind`: what it was (older thumbnails at the top
+/// of the cache are found through the placeholder index, which names its files).
+pub async fn forget_profile<R: Runtime>(app: &AppHandle<R>, profile_id: &str, kind: Option<ConnKind>) {
+    let Ok(dir) = cache_dir(app) else { return };
+    let old: Vec<PathBuf> = kind
+        .map(|k| {
+            crate::placeholders::files_of(profile_id)
+                .into_iter()
+                .flat_map(|(root, key, etag, size)| {
+                    [etag.clone(), format!("\"{etag}\"")].map(|e| dir.join(cache_name(k, profile_id, &root, &key, &e, size)))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mine = profile_dir(&dir, profile_id);
+    let _ = tokio::task::spawn_blocking(move || {
+        let _ = std::fs::remove_dir_all(mine);
+        for p in old {
+            let _ = std::fs::remove_file(p);
+        }
+    })
+    .await;
+}
+
 async fn save(path: &Path, jpeg: &[u8]) {
     // a temporary name of its own: the same thumbnail can be made twice at once
     // (made private to this account)
     let tmp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4().simple()));
     let (t, bytes) = (tmp.clone(), jpeg.to_vec());
-    let wrote = tokio::task::spawn_blocking(move || crate::filecache::write_private(&t, &bytes)).await.is_ok_and(|r| r.is_ok());
+    let wrote = tokio::task::spawn_blocking(move || {
+        crate::filecache::write_private(&t, &bytes).or_else(|e| {
+            // its folder isn't there (yet, or any more: a cache cleaner removed the cache while
+            // Kybl ran): made again, once (B5-2)
+            if e.kind() != std::io::ErrorKind::NotFound {
+                return Err(e);
+            }
+            crate::filecache::private_dir(t.parent().ok_or(e)?)?;
+            crate::filecache::write_private(&t, &bytes)
+        })
+    })
+    .await
+    .is_ok_and(|r| r.is_ok());
     if !wrote || tokio::fs::rename(&tmp, path).await.is_err() {
         let _ = tokio::fs::remove_file(&tmp).await;
         return;
@@ -227,7 +290,7 @@ async fn save(path: &Path, jpeg: &[u8]) {
     let len = jpeg.len() as u64;
     if WRITTEN.fetch_add(len, Ordering::Relaxed) + len >= TRIM_AFTER && !TRIMMING.swap(true, Ordering::SeqCst) {
         WRITTEN.store(0, Ordering::Relaxed);
-        if let Some(dir) = path.parent().map(Path::to_path_buf) {
+        if let Some(dir) = DIR.get().cloned().or_else(|| path.parent().map(Path::to_path_buf)) {
             tauri::async_runtime::spawn(async move {
                 let _ = tokio::task::spawn_blocking(move || trim(&dir, CACHE_MAX, CACHE_KEEP)).await;
                 TRIMMING.store(false, Ordering::SeqCst);
@@ -240,8 +303,7 @@ async fn save(path: &Path, jpeg: &[u8]) {
 
 /// The cached thumbnail of one file version, if it was made before.
 pub(crate) fn cached_path<R: Runtime>(app: &AppHandle<R>, profile_id: &str, bucket: &str, key: &str, etag: &str, size: i64) -> Option<PathBuf> {
-    let path = cache_dir(app).ok()?.join(cache_name(kind_of(app, profile_id), profile_id, bucket, key, etag, size));
-    path.is_file().then_some(path)
+    find_cached(&cache_dir(app).ok()?, kind_of(app, profile_id), profile_id, bucket, key, etag, size)
 }
 
 /// Puts a thumbnail made elsewhere (from a photo just uploaded, see placeholders.rs) into the
@@ -254,7 +316,7 @@ pub(crate) fn encode_thumb(img: DynamicImage) -> Option<Vec<u8>> {
 pub(crate) async fn seed(profile_id: &str, bucket: &str, key: &str, etag: &str, size: i64, jpeg: &[u8]) {
     // the folder is known once the app has started (start-up pruning opens it)
     if let Some(dir) = DIR.get() {
-        save(&dir.join(cache_name(ConnKind::S3, profile_id, bucket, key, etag, size)), jpeg).await;
+        save(&new_path(dir, ConnKind::S3, profile_id, bucket, key, etag, size), jpeg).await;
     }
 }
 
@@ -283,10 +345,13 @@ async fn make_thumbnail<R: Runtime>(
     etag: &str,
 ) -> Result<Vec<u8>, String> {
     let kind = kind_of(app, profile_id);
-    let path = cache_dir(app)?.join(cache_name(kind, profile_id, bucket, key, etag, size));
-    if let Ok(bytes) = tokio::fs::read(&path).await {
+    let dir = cache_dir(app)?;
+    if let Some(cached) = find_cached(&dir, kind, profile_id, bucket, key, etag, size)
+        && let Ok(bytes) = tokio::fs::read(&cached).await
+    {
         return Ok(bytes);
     }
+    let path = new_path(&dir, kind, profile_id, bucket, key, etag, size);
 
     // the whole photo is already in the file cache (opened in Quick Look or the phone's details screen):
     // made from those bytes, with no request
@@ -502,14 +567,7 @@ pub async fn prune_cache<R: Runtime>(app: AppHandle<R>) {
 /// Removes the oldest files in `dir` until it holds `keep` bytes or less, once it holds more than
 /// `max`.
 fn trim(dir: &Path, max: u64, keep: u64) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
-    let mut files: Vec<(SystemTime, u64, PathBuf)> = rd
-        .filter_map(|e| e.ok())
-        .filter_map(|e| {
-            let m = e.metadata().ok()?;
-            m.is_file().then(|| (m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len(), e.path()))
-        })
-        .collect();
+    let mut files = cache_files(dir);
     let mut total: u64 = files.iter().map(|f| f.1).sum();
     if total <= max {
         return;
@@ -523,6 +581,36 @@ fn trim(dir: &Path, max: u64, keep: u64) {
             total -= len;
         }
     }
+    // connection folders left empty (only removes empty ones)
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let _ = std::fs::remove_dir(e.path());
+        }
+    }
+}
+
+/// Every file of the cache: at its top (older Kybl) and in the connections' folders, with when
+/// it was last written and its size.
+fn cache_files(dir: &Path) -> Vec<(SystemTime, u64, PathBuf)> {
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else { return out };
+    for e in rd.flatten() {
+        let Ok(m) = e.metadata() else { continue };
+        if m.is_dir() {
+            if let Ok(sub) = std::fs::read_dir(e.path()) {
+                for f in sub.flatten() {
+                    if let Ok(fm) = f.metadata()
+                        && fm.is_file()
+                    {
+                        out.push((fm.modified().unwrap_or(SystemTime::UNIX_EPOCH), fm.len(), f.path()));
+                    }
+                }
+            }
+        } else if m.is_file() {
+            out.push((m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len(), e.path()));
+        }
+    }
+    out
 }
 
 /// Deletes all cached thumbnails. Returns the number of bytes freed.
@@ -534,29 +622,28 @@ pub async fn clear_thumbnail_cache(app: AppHandle) -> Result<u64, String> {
 /// Bytes of cached thumbnails (for Settings).
 pub async fn usage<R: Runtime>(app: &AppHandle<R>) -> u64 {
     let Ok(dir) = cache_dir(app) else { return 0 };
-    let mut sum = 0u64;
-    if let Ok(mut rd) = tokio::fs::read_dir(&dir).await {
-        while let Ok(Some(e)) = rd.next_entry().await {
-            if let Ok(m) = e.metadata().await {
-                sum += m.len();
-            }
-        }
-    }
-    sum
+    tokio::task::spawn_blocking(move || cache_files(&dir).iter().map(|f| f.1).sum()).await.unwrap_or(0)
 }
 
 /// Deletes all cached thumbnails. Returns the number of bytes freed.
 pub async fn clear<R: Runtime>(app: &AppHandle<R>) -> Result<u64, String> {
     let dir = cache_dir(app)?;
-    let mut freed = 0u64;
-    let mut rd = tokio::fs::read_dir(&dir).await.map_err(err)?;
-    while let Some(e) = rd.next_entry().await.map_err(err)? {
-        if let Ok(m) = e.metadata().await {
-            freed += m.len();
+    tokio::task::spawn_blocking(move || {
+        let mut freed = 0u64;
+        for (_, len, path) in cache_files(&dir) {
+            if std::fs::remove_file(&path).is_ok() {
+                freed += len;
+            }
         }
-        let _ = tokio::fs::remove_file(e.path()).await;
-    }
-    Ok(freed)
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            for e in rd.flatten() {
+                let _ = std::fs::remove_dir(e.path());
+            }
+        }
+        freed
+    })
+    .await
+    .map_err(err)
 }
 
 #[cfg(test)]
@@ -593,6 +680,32 @@ mod tests {
         tokio::join!(save(&p, b"one"), save(&p, b"two"), save(&p, b"three"));
         let names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(names, ["a.jpg"]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Thumbnails live in their connection's folder (so a deletion can remove them), older ones
+    /// move there when next used, a removed cache folder is made again, and trimming counts
+    /// every folder (B5-2, B5-6).
+    #[tokio::test]
+    async fn thumbnails_are_kept_per_connection_and_survive_a_removed_folder() {
+        let dir = std::env::temp_dir().join(format!("kybl-thumb-dirs-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // an older Kybl's thumbnail, at the top
+        let old = dir.join(cache_name(ConnKind::S3, "p1", "b", "a.jpg", "e", 5));
+        std::fs::write(&old, b"old").unwrap();
+        let found = find_cached(&dir, ConnKind::S3, "p1", "b", "a.jpg", "e", 5).unwrap();
+        assert_eq!(found, new_path(&dir, ConnKind::S3, "p1", "b", "a.jpg", "e", 5));
+        assert!(!old.exists() && std::fs::read(&found).unwrap() == b"old", "moved into its connection's folder");
+        // the whole cache removed while running: the next save makes it again
+        std::fs::remove_dir_all(&dir).unwrap();
+        let p2 = new_path(&dir, ConnKind::S3, "p2", "b", "c.jpg", "e", 7);
+        save(&p2, b"new").await;
+        assert_eq!(std::fs::read(&p2).unwrap(), b"new");
+        assert!(find_cached(&dir, ConnKind::S3, "p1", "b", "a.jpg", "e", 5).is_none());
+        // one connection's folder goes as a whole
+        assert_eq!(cache_files(&dir).len(), 1);
+        std::fs::remove_dir_all(profile_dir(&dir, "p2")).unwrap();
+        assert!(cache_files(&dir).is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
 

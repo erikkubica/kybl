@@ -481,6 +481,45 @@ fn profiles_to_save(old: Option<Vec<serde_json::Value>>, profiles: &[Profile]) -
     Ok(out)
 }
 
+/// The entries of a JSON list this version can read; one it can't (a value a newer Kybl wrote)
+/// is left out, not the whole list (B5-4). Anything but a list: none.
+pub fn parse_list<T: serde::de::DeserializeOwned>(v: Option<&serde_json::Value>) -> Vec<T> {
+    v.and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|e| serde_json::from_value(e.clone()).ok()).collect()).unwrap_or_default()
+}
+
+/// A list about to replace `old`: `new`, plus the entries of `old` this version can't read as
+/// `T` (whose ids `new` doesn't have), kept as they were, so a save never drops them (B5-4).
+pub fn keep_unreadable<T: serde::de::DeserializeOwned>(old: Option<&serde_json::Value>, mut new: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    let id_of = |v: &serde_json::Value| v.get("id").and_then(|i| i.as_str()).map(str::to_string);
+    let ids: std::collections::HashSet<String> = new.iter().filter_map(id_of).collect();
+    for v in old.and_then(|o| o.as_array()).into_iter().flatten() {
+        if serde_json::from_value::<T>(v.clone()).is_err() && id_of(v).is_none_or(|i| !ids.contains(&i)) {
+            new.push(v.clone());
+        }
+    }
+    new
+}
+
+/// What the state file at `path` holds before a save replaces it (`None`: no file). One that
+/// can't be read is an error, so nothing is written over it; one that isn't JSON is copied aside
+/// first (`<name>.unreadable-<time>`), so a save never silently drops what it held (B5-4).
+pub fn json_before_save(path: &std::path::Path) -> Result<Option<serde_json::Value>, String> {
+    let raw = match std::fs::read(path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("Couldn't read {} to update it: {e}", path.display())),
+    };
+    match serde_json::from_slice(&raw) {
+        Ok(v) => Ok(Some(v)),
+        Err(_) => {
+            let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            std::fs::copy(path, path.with_file_name(format!("{name}.unreadable-{secs}"))).map_err(|e| format!("Couldn't set the damaged {name} aside: {e}"))?;
+            Ok(None)
+        }
+    }
+}
+
 /// Held from loading the connections to saving them, so two changes can't each save the list
 /// they loaded and lose the other's ([`lock_profiles`]).
 pub struct ProfilesLock(#[allow(dead_code)] tokio::sync::MutexGuard<'static, ()>);
@@ -516,13 +555,10 @@ pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()>
             use std::os::unix::fs::OpenOptionsExt;
             o.mode(0o600);
         }
+        // a new file: 0600 from its creation (the umask can only take bits away), so the old
+        // file's mode never carries over. No chmod after it: a filesystem that refuses chmod
+        // (exFAT, some network and FUSE mounts) must not make every save fail (B5-1).
         let mut f = o.open(&tmp)?;
-        // 0600 whatever the old file had (earlier builds wrote some of these files 0644)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-        }
         #[cfg(not(unix))]
         if let Ok(meta) = std::fs::metadata(path) {
             let _ = f.set_permissions(meta.permissions());
@@ -702,14 +738,47 @@ pub async fn set_secret(state: &AppState, profile_id: &str, secret: &str) -> Res
     Ok(())
 }
 
-/// Undoes a [`set_secret`] whose profile list then couldn't be saved: `prev` goes back, or with
-/// none (a new connection) the secret is removed, since no listed connection would ever show or
-/// remove it. Best effort: the save's error is what the user sees.
-pub async fn undo_secret(state: &AppState, profile_id: &str, prev: Option<String>) {
-    let _ = match prev {
-        Some(p) => set_secret(state, profile_id, &p).await,
-        None => remove_main_secret(state, profile_id).await,
-    };
+/// Sets (`Some`) or removes (`None`) the secret `key`, only if `expect` accepts what it holds now
+/// (`None`: nothing), in one step under the vault lock. `Ok(false)`: it held something else and
+/// was left alone.
+pub async fn change_secret_if(
+    state: &AppState,
+    key: &str,
+    expect: impl FnOnce(Option<&String>) -> bool,
+    new: Option<String>,
+) -> Result<bool, String> {
+    let mut matched = false;
+    change_vault(state, |m| {
+        let (yes, changed) = swap_if(m, key, expect, new);
+        matched = yes;
+        changed
+    })
+    .await?;
+    Ok(matched)
+}
+
+/// [`change_secret_if`] on the map: (whether `expect` accepted it, whether `m` changed).
+fn swap_if(m: &mut HashMap<String, String>, key: &str, expect: impl FnOnce(Option<&String>) -> bool, new: Option<String>) -> (bool, bool) {
+    if !expect(m.get(key)) {
+        return (false, false);
+    }
+    (true, put_secret(m, key, new))
+}
+
+/// `new` into `m` under `key` (`None`: removed); true when that changed something.
+fn put_secret(m: &mut HashMap<String, String>, key: &str, new: Option<String>) -> bool {
+    match new {
+        Some(v) => m.insert(key.to_string(), v.clone()).is_none_or(|old| old != v),
+        None => m.remove(key).is_some(),
+    }
+}
+
+/// Undoes a change of the secret `key` (to `wrote`, `None`: removed) whose profile list then
+/// couldn't be saved: `prev` goes back (`None`: none). Only while the vault still holds what this
+/// change left there, so a newer secret (another save, a renewed sign-in) is never rewound
+/// (S3-4). Best effort: the save's error is what the user sees.
+pub async fn undo_secret(state: &AppState, key: &str, wrote: Option<&str>, prev: Option<String>) {
+    let _ = change_secret_if(state, key, |now| now.map(String::as_str) == wrote, prev).await;
 }
 
 /// Removes the oldest kind of item (one per connection) for a secret removed on purpose. One that
@@ -754,17 +823,43 @@ fn left_secrets_path(state: &AppState) -> Option<PathBuf> {
     state.vault_dir.get().map(|d| d.join(LEFT_SECRETS))
 }
 
-fn read_left(path: &std::path::Path) -> Vec<String> {
-    std::fs::read(path).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default()
+/// The ids in the list. Missing: none. Unreadable (a locked file, an I/O error): an error, so
+/// the list is never rewritten from nothing and the ids in it lost (B3-6). Damaged (cut off,
+/// not JSON): the ids still found in it, and a copy is set aside; `true` then, so the caller
+/// writes the list again even when it doesn't change it.
+fn read_left(path: &std::path::Path) -> Result<(Vec<String>, bool), String> {
+    let raw = match std::fs::read(path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((vec![], false)),
+        Err(e) => return Err(format!("Couldn't read the list of secrets to remove: {e}")),
+    };
+    if let Ok(list) = serde_json::from_slice(&raw) {
+        return Ok((list, false));
+    }
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let aside = path.with_file_name(format!("{LEFT_SECRETS}.unreadable-{secs}"));
+    std::fs::copy(path, &aside).map_err(|e| format!("Couldn't set the damaged list of secrets to remove aside: {e}"))?;
+    Ok((salvage_ids(&raw), true))
+}
+
+/// Connection ids (UUIDs) still readable in a damaged list.
+fn salvage_ids(raw: &[u8]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for t in String::from_utf8_lossy(raw).split('"') {
+        if uuid::Uuid::parse_str(t).is_ok() && !out.iter().any(|x| x == t) {
+            out.push(t.to_string());
+        }
+    }
+    out
 }
 
 /// Changes the list of connections whose secrets are still to be removed.
 fn change_left(path: &std::path::Path, f: impl FnOnce(&mut Vec<String>)) -> Result<(), String> {
     let _one = LEFT_SECRETS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut list = read_left(path);
+    let (mut list, damaged) = read_left(path)?;
     let before = list.clone();
     f(&mut list);
-    if list == before {
+    if list == before && !damaged {
         return Ok(());
     }
     if list.is_empty() {
@@ -776,7 +871,9 @@ fn change_left(path: &std::path::Path, f: impl FnOnce(&mut Vec<String>)) -> Resu
     write_atomic(path, &serde_json::to_vec(&list).map_err(err)?).map_err(err)
 }
 
-/// Remembers that the secrets of the deleted connection `id` are still to be removed.
+/// Remembers that the secrets of connection `id` are to be removed. Written ahead of the change
+/// that leaves them without a connection (S3-1), so a crash in between still removes them at the
+/// next start; [`retry_left_secrets`] drops the entry when the connection is still saved.
 pub fn remember_left_secrets(state: &AppState, id: &str) -> Result<(), String> {
     let path = left_secrets_path(state).ok_or("No private storage folder")?;
     change_left(&path, |l| {
@@ -786,15 +883,44 @@ pub fn remember_left_secrets(state: &AppState, id: &str) -> Result<(), String> {
     })
 }
 
-/// Removes every secret of a connection that is not saved (any more), now or, if that fails,
-/// at the next start: a deleted one, or a new one whose save failed after its secret was stored.
-/// The error says why they are still there.
-pub async fn forget_secrets_of_gone(state: &AppState, id: &str) -> Result<(), String> {
-    let Err(e) = delete_secret(state, id).await else { return Ok(()) };
-    if let Err(e2) = remember_left_secrets(state, id) {
-        eprintln!("kybl: couldn't note the secrets of {id} for removal at the next start: {e2}");
+/// Drops `id` from the list (its secrets are gone, or its connection stays after all).
+pub fn unremember_left_secrets(state: &AppState, id: &str) {
+    if let Some(path) = left_secrets_path(state) {
+        let _ = change_left(&path, |l| l.retain(|x| x != id));
     }
-    Err(e)
+}
+
+/// Secrets of a connection that is gone but couldn't be removed now.
+#[derive(Debug)]
+pub struct LeftSecrets {
+    /// why they couldn't be removed
+    pub error: String,
+    /// whether they are noted for removal at the next start
+    pub queued: bool,
+}
+
+/// Removes every secret of a connection that is not saved (any more): a deleted one, or a new
+/// one whose save failed after its secret was stored. Noted first, so what can't be removed now
+/// is removed at the next start.
+pub async fn forget_secrets_of_gone(state: &AppState, id: &str) -> Result<(), LeftSecrets> {
+    let queued = remember_left_secrets(state, id);
+    if let Err(e) = &queued {
+        eprintln!("kybl: couldn't note a connection's secrets for removal: {e}");
+    }
+    finish_forgetting(state, id, queued.is_ok()).await
+}
+
+/// The removal of [`forget_secrets_of_gone`], once `id` was noted (`queued`) or couldn't be.
+pub async fn finish_forgetting(state: &AppState, id: &str, queued: bool) -> Result<(), LeftSecrets> {
+    match delete_secret(state, id).await {
+        Ok(()) => {
+            if queued {
+                unremember_left_secrets(state, id);
+            }
+            Ok(())
+        }
+        Err(error) => Err(LeftSecrets { error, queued }),
+    }
 }
 
 /// Removes the secrets of deleted connections that a deletion couldn't remove. `exists`: whether
@@ -803,7 +929,13 @@ pub async fn retry_left_secrets(state: &AppState, exists: impl Fn(&str) -> bool)
     let Some(path) = left_secrets_path(state) else { return };
     let ids = {
         let _one = LEFT_SECRETS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        read_left(&path)
+        match read_left(&path) {
+            Ok((ids, _)) => ids,
+            Err(e) => {
+                eprintln!("kybl: {e}");
+                return;
+            }
+        }
     };
     for id in ids {
         if exists(&id) || delete_secret(state, &id).await.is_ok() {
@@ -948,17 +1080,71 @@ mod tests {
         add("a").unwrap();
         add("b").unwrap();
         add("a").unwrap();
-        assert_eq!(read_left(&path), ["a", "b"]);
+        assert_eq!(read_left(&path).unwrap().0, ["a", "b"]);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
         }
         change_left(&path, |l| l.retain(|x| x != "a")).unwrap();
-        assert_eq!(read_left(&path), ["b"]);
+        assert_eq!(read_left(&path).unwrap().0, ["b"]);
         change_left(&path, |l| l.retain(|x| x != "b")).unwrap();
         assert!(!path.exists(), "nothing left to remove: no file");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A list that can't be read is never rewritten from nothing: an I/O error stops the change,
+    /// a damaged file keeps the ids still in it and a copy (B3-6).
+    #[test]
+    fn an_unreadable_list_of_secrets_to_remove_keeps_its_ids() {
+        let dir = std::env::temp_dir().join(format!("kybl-left-bad-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // can't be read at all (a folder in its place stands in for a locked file or EIO)
+        let path = dir.join(LEFT_SECRETS);
+        std::fs::create_dir(&path).unwrap();
+        assert!(change_left(&path, |l| l.push("x".into())).is_err());
+        assert!(path.is_dir(), "left alone");
+        std::fs::remove_dir(&path).unwrap();
+        // cut off mid-write
+        let a = "0b8f6c3e-6a52-4b9e-9a7e-1d2f3a4b5c6d";
+        let b = "1c9e7d4f-7b63-4caf-8b8f-2e3f4a5b6c7e";
+        std::fs::write(&path, format!("[\"{a}\",\"{b}\",\"2d")).unwrap();
+        let c = "3e0f8e5a-8c74-4db0-9c90-3f4a5b6c7d8f";
+        change_left(&path, |l| l.push(c.into())).unwrap();
+        assert_eq!(read_left(&path).unwrap().0, [a, b, c]);
+        let aside = std::fs::read_dir(&dir).unwrap().filter_map(Result::ok).filter(|e| e.file_name().to_string_lossy().contains(".unreadable-")).count();
+        assert_eq!(aside, 1, "the damaged file is kept");
+        // damaged, and the change itself changes nothing: still written back with its ids
+        std::fs::write(&path, format!("[\"{a}\"")).unwrap();
+        change_left(&path, |l| l.retain(|x| x != "nothing")).unwrap();
+        assert_eq!(read_left(&path).unwrap(), (vec![a.to_string()], false));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A conditional change only happens while the vault holds what the caller expects, so an
+    /// undo never rewinds a newer secret (S3-4) and a renewed sign-in never comes back after a
+    /// deletion or over a newer sign-in (S3-2).
+    #[test]
+    fn conditional_secret_changes_leave_newer_values_alone() {
+        let mut m = HashMap::new();
+        fn is(v: Option<&'static str>) -> impl FnOnce(Option<&String>) -> bool {
+            move |now| now.map(String::as_str) == v
+        }
+        // save A wrote s1, save B then s2: A's undo (back to s0) leaves s2 alone
+        m.insert("k".to_string(), "s2".to_string());
+        assert_eq!(swap_if(&mut m, "k", is(Some("s1")), Some("s0".into())), (false, false));
+        assert_eq!(m["k"], "s2");
+        // nothing changed it meanwhile: s0 goes back
+        assert_eq!(swap_if(&mut m, "k", is(Some("s2")), Some("s0".into())), (true, true));
+        assert_eq!(m["k"], "s0");
+        // "Remove saved password" undone only while there is still none
+        m.remove("k");
+        assert_eq!(swap_if(&mut m, "k", is(None), Some("old".into())), (true, true));
+        assert_eq!(m["k"], "old");
+        // a renewed token after a deletion: nothing there, nothing written
+        assert_eq!(swap_if(&mut m, "t", |now| now.is_some(), Some("rt".into())), (false, false));
+        assert!(!m.contains_key("t"));
+        assert!(!put_secret(&mut m, "k", Some("old".into())), "same value: nothing to write");
     }
 
     #[test]

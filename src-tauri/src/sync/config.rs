@@ -89,15 +89,35 @@ pub fn config_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
 }
 
 pub fn load_config<R: Runtime>(app: &AppHandle<R>) -> SyncConfig {
-    config_path(app).ok().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|raw| serde_json::from_str(&raw).ok()).unwrap_or_default()
+    let v = config_path(app).ok().and_then(|p| std::fs::read(p).ok()).and_then(|raw| serde_json::from_slice::<serde_json::Value>(&raw).ok());
+    config_from(v.as_ref())
+}
+
+/// The sync folders in `sync.json`, one by one: one this version can't read (a newer Kybl's
+/// setting) is left out here and kept by the next save, not the whole list (B5-4).
+fn config_from(v: Option<&serde_json::Value>) -> SyncConfig {
+    SyncConfig {
+        paused_all: v.and_then(|v| v.get("pausedAll")).and_then(|p| p.as_bool()).unwrap_or(false),
+        mappings: crate::state::parse_list(v.and_then(|v| v.get("mappings"))),
+    }
+}
+
+/// What `sync.json` becomes: `cfg`, plus the sync folders of `old` this version can't read.
+fn config_to_save(old: Option<&serde_json::Value>, cfg: &SyncConfig) -> Result<serde_json::Value, String> {
+    let mut v = serde_json::to_value(cfg).map_err(err)?;
+    let mine = v.get("mappings").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+    v["mappings"] = serde_json::Value::Array(crate::state::keep_unreadable::<SyncMapping>(old.and_then(|o| o.get("mappings")), mine));
+    Ok(v)
 }
 
 /// Written through a temporary file of its own and a rename (`state::write_atomic`): a crash,
 /// or a second Kybl saving at the same moment, never leaves half a file that would read as no
 /// sync folders at all.
 pub fn save_config<R: Runtime>(app: &AppHandle<R>, cfg: &SyncConfig) -> Result<(), String> {
-    let raw = serde_json::to_vec_pretty(cfg).map_err(err)?;
-    crate::state::write_atomic(&config_path(app)?, &raw).map_err(err)
+    let path = config_path(app)?;
+    let old = crate::state::json_before_save(&path)?;
+    let raw = serde_json::to_vec_pretty(&config_to_save(old.as_ref(), cfg)?).map_err(err)?;
+    crate::state::write_atomic(&path, &raw).map_err(err)
 }
 
 pub fn norm_prefix(p: &str) -> String {
@@ -113,6 +133,30 @@ pub fn overlaps(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A sync folder this version can't read (a direction a newer Kybl added) doesn't empty the
+    /// list, and the next save keeps it (B5-4).
+    #[test]
+    fn sync_folders_a_newer_kybl_wrote_survive_a_save() {
+        let file = serde_json::json!({"pausedAll": true, "mappings": [
+            {"id":"a","profileId":"p","bucket":"b","prefix":"","localPath":"/x","direction":"upload"},
+            {"id":"n","profileId":"p","bucket":"b","prefix":"","localPath":"/y","direction":"mirror-later"}
+        ]});
+        let cfg = config_from(Some(&file));
+        assert!(cfg.paused_all);
+        assert_eq!(cfg.mappings.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["a"]);
+        let saved = config_to_save(Some(&file), &SyncConfig { paused_all: false, mappings: vec![] }).unwrap();
+        let ids: Vec<&str> = saved["mappings"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["n"], "the removed one goes, the unreadable one stays");
+        // damaged on disk: set aside before it is replaced, never read as empty and overwritten
+        let dir = std::env::temp_dir().join(format!("kybl-sync-bad-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("sync.json");
+        std::fs::write(&p, b"{\"mappings\": [").unwrap();
+        assert_eq!(crate::state::json_before_save(&p).unwrap(), None);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2, "a copy is kept");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn old_mappings_load_with_the_new_defaults() {
