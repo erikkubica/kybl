@@ -17,6 +17,7 @@ import { api, errMessage, LOCAL_ID } from "../api";
 import { parentPrefix } from "../format";
 import { joinPath, safeRelPath } from "../desktop/paths";
 import { eachFileUnder, ListingStopped } from "../streamFiles";
+import { holdBatch } from "../transferLog";
 import type { Pane } from "../browser/usePane";
 import type { FileOps } from "../desktop/fileOps";
 import type { Entry } from "../types";
@@ -171,12 +172,16 @@ async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx
     const base = parentPrefix(e.key);
     const run = eachFileUnder(profileId, bucket, e.key, (files) => start(files.flatMap((f) => item(f.key, f.size, f.key.slice(base.length)))));
     stopNow = run.stop;
+    // the Activity log keeps this download as one while files are still being found
+    const release = holdBatch(profileId, bucket, dir);
     try {
       await run.done;
     } catch (err) {
       if (err instanceof ListingStopped) break;
       // one folder that can't be listed doesn't stop the others; it is said once at the end
       failed = `Couldn't list “${e.name}”: ${errMessage(err)}`;
+    } finally {
+      release();
     }
   }
   stopNow = null;

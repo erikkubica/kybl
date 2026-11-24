@@ -246,6 +246,7 @@ export function PromptDialog({
   onSubmit,
   onClose,
   onLostError,
+  onBusy,
 }: {
   title: string;
   label: string;
@@ -265,12 +266,18 @@ export function PromptDialog({
   onClose: () => void;
   /** what went wrong after this dialog was already gone (a newer question replaced it): shown elsewhere, a toast */
   onLostError?: (why: string) => void;
+  /** tells whether the value is being run (the dialog won't close itself then): a caller with another way to close it (the phone's back) waits too */
+  onBusy?: (busy: boolean) => void;
 }) {
   const [value, setValue] = useState(initial);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const live = useRef(true);
+  useEffect(() => {
+    onBusy?.(busy);
+    return () => onBusy?.(false);
+  }, [busy, onBusy]);
   useEffect(() => {
     // (set again on mount: React's dev double mount runs the cleanup once in between)
     live.current = true;

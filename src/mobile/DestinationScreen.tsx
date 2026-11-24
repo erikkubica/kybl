@@ -86,7 +86,10 @@ export function DestinationScreen({
     setError(null);
     setNaming(false);
     setNext(null);
-    void readFolders(at, null);
+    // a folder made here doesn't exist yet (FTP, SFTP, local…): nothing to list, and listing it
+    // would only show an error
+    if (made.includes(at.prefix)) setFolders([]);
+    else void readFolders(at, null);
     return () => void gen.current++;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [at]);

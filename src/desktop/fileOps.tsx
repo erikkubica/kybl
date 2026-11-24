@@ -25,6 +25,7 @@ import { itemClipboard } from "./clipboard";
 import { crossesDiskAt, viaJobAt, type Place } from "../shell/crossPane";
 import { localCopies, type LocalCopyVerb } from "../localCopyProgress";
 import { eachFileUnder, ListingStopped } from "../streamFiles";
+import { holdBatch } from "../transferLog";
 
 /** `localCopy` calls under way, by file and version: a second one waits for the first. */
 const inFlightCopies = new Map<string, Promise<string | null>>();
@@ -80,6 +81,9 @@ export type OpsContext = {
 
 /** Undo of a copy deletes the copied objects; past this many it asks first. */
 const UNDO_CONFIRM_OVER = 100;
+
+/** A file this big (64 MB) renamed by copy-and-delete takes long enough to run as a job. */
+const BIG_RENAME = 64 * 1024 * 1024;
 
 import { plural } from "../format";
 const whatOf = (list: { name: string }[]) => (list.length === 1 ? `“${list[0].name}”` : plural(list.length, "item"));
@@ -283,6 +287,8 @@ export function makeFileOps(c: OpsContext) {
           c.setBusy(`Listing ${e.name}… ${plural(found, "file")} found`, run.stop);
         });
         c.setBusy(`Listing ${e.name}…`, run.stop);
+        // the Activity log keeps this download as one while files are still being found
+        const release = holdBatch(pid, bucket, dir);
         try {
           await run.done;
         } catch (err) {
@@ -292,6 +298,8 @@ export function makeFileOps(c: OpsContext) {
           }
           // one folder that can't be listed doesn't stop the others; it is said once at the end
           failed = `Couldn't list “${e.name}”: ${errMessage(err)}`;
+        } finally {
+          release();
         }
       }
       c.setBusy(null);
@@ -582,14 +590,15 @@ ${picked.etag ?? ""}` : null;
     const pid = profile.id;
     const b = bucket;
     const isFolder = e.kind === "folder";
-    // folders that are key prefixes (S3, Azure, GCS) have no rename: every file is copied
-    const slow = isFolder && peekCaps(pid)?.rename === "copy-delete";
+    // folders that are key prefixes (S3, Azure, GCS) have no rename: every file is copied. A big
+    // file is copied too and takes as long: it runs as a job, not in a dialog nobody can leave
+    const slow = (isFolder || e.size >= BIG_RENAME) && peekCaps(pid)?.rename === "copy-delete";
     c.prompt({
       title: isFolder ? "Rename folder" : "Rename file",
       label: "New name",
       initial: e.name,
       confirmLabel: "Rename",
-      note: slow ? "Renaming a folder here copies every file in it, so it can take a while." : undefined,
+      note: slow ? (isFolder ? "Renaming a folder here copies every file in it, so it can take a while." : "Renaming a big file here copies it, so it can take a while. It carries on in Activity.") : undefined,
       check: nameProblem,
       // what stops the rename (a name taken, the server refusing) shows in the dialog, with the name kept
       run: async (name) => {
@@ -626,7 +635,7 @@ ${picked.etag ?? ""}` : null;
     /** Renames `e` to `to`. `inDialog`: a refusal that renamed nothing comes back as the dialog's message instead of a toast. */
     const renameTo = async (name: string, parent: string, to: string, replaced: boolean, inDialog: boolean): Promise<string | null> => {
       const id = jobs.start({ kind: "rename", title: `Renaming “${e.name}” to “${name}”`, dest: parent, profileId: pid, bucket: b });
-      if (isFolder) c.autoShowActivity();
+      if (!inDialog) c.autoShowActivity();
       let renamed = false;
       let refused: string | null = null;
       const items = [{ from: e.key, to, isPrefix: isFolder }];

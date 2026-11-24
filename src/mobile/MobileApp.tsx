@@ -210,6 +210,11 @@ export default function MobileApp() {
   const openTransfers = useCallback(() => setTransfersOpen(true), []);
   const [connDialog, setConnDialog] = useState<{ profile: Profile | null; reconnect?: boolean } | null>(null);
   const connRef = useRef<ConnectionDialogHandle>(null);
+  /** the name sheet is running its work: back leaves it be, as Escape does on the desktop */
+  const promptBusy = useRef(false);
+  const setPromptBusy = useCallback((b: boolean) => {
+    promptBusy.current = b;
+  }, []);
   const [kyblDialog, setKyblDialog] = useState<{ existing: Profile | null; reconnect?: boolean } | null>(null);
   /** Kybl Storage connections have their own editor: there are no keys to edit. */
   const editProfile = useCallback((p: Profile) => {
@@ -638,7 +643,9 @@ export default function MobileApp() {
       confirm?.cancel?.();
       setConfirm(null);
     },
-    prompt: () => setPrompt(null),
+    prompt: () => {
+      if (!promptBusy.current) setPrompt(null);
+    },
     kybl: () => setKyblDialog(null),
     // something typed into the form asks first; the dialog closes itself through onClose
     conn: () => (connRef.current ? connRef.current.requestClose() : setConnDialog(null)),
@@ -677,6 +684,13 @@ export default function MobileApp() {
    * iPhone edge swipe and every on-screen back arrow go here.
    */
   const freeModals = useFreeModals();
+  /** A connection signed in again (either dialog): what it learned and what stopped for it start over. */
+  const afterSignIn = (p: Profile) => {
+    forgetCaps(p.id);
+    clearAuthNeeded(p.id);
+    // backups that stopped for this sign-in go on now, not at their next run
+    for (const s of backup.overview?.sets ?? []) if (s.set.profileId === p.id && s.state === "needsAuth") void backupApi.runNow(s.set.id).catch(() => {});
+  };
   const back = (): boolean => {
     // the lock screen has nothing to go back to: the system back leaves the app
     if (locked) return false;
@@ -1820,10 +1834,7 @@ export default function MobileApp() {
             kyblFirst={!profiles?.some((p) => p.provider === KYBL)}
             onSaved={async (p) => {
               setConnDialog(null);
-              forgetCaps(p.id);
-              clearAuthNeeded(p.id);
-              // backups that stopped for this sign-in go on now, not at their next run
-              for (const s of backup.overview?.sets ?? []) if (s.set.profileId === p.id && s.state === "needsAuth") void backupApi.runNow(s.set.id).catch(() => {});
+              afterSignIn(p);
               await reloadProfiles();
               await loadBuckets(p);
               // a server has one root: open it, as the desktop does after saving
@@ -1848,8 +1859,11 @@ export default function MobileApp() {
             reconnect={kyblDialog.reconnect}
             onClose={() => setKyblDialog(null)}
             onConnected={async (p) => {
+              afterSignIn(p);
               await reloadProfiles();
               loadBuckets(p);
+              // signed in again: the folder on screen that failed with the old token loads now
+              if (locRef.current?.profileId === p.id) void reloadListing({ quiet: true });
             }}
             onDeleted={async (id) => {
               forgetCaps(id);
@@ -1892,6 +1906,9 @@ export default function MobileApp() {
             // a problem keeps the sheet open with the name as typed; it closes itself when done
             onSubmit={prompt.run}
             onClose={() => setPrompt(null)}
+            onBusy={setPromptBusy}
+            // (a sheet that was replaced while working: its refusal still shows)
+            onLostError={(why) => toast("error", errSummary(why))}
           />
         </Layer>
       )}
