@@ -142,7 +142,8 @@ const PLACEHOLDERS: [&str; 6] = ["path", "name", "ext", "stem", "paths", "dir"];
 /// here-document or a comment, in the word after `>&`/`<&`, as what a builtin reads as code
 /// (see [`operand_problem`]), or after something shells read differently (a `#` inside a word,
 /// `case`, a comment or a `)` in `${ … }` inside `$( … )`, a line continuation inside a word, `\'`
-/// in `$'…'`), a placeholder is refused. Mirrored in src/actions/templateCheck.ts; both run
+/// in `$'…'`), a placeholder is refused. A template with any placeholder that evaluates anything
+/// (arithmetic, an array index, `eval`) is refused whole, see [`evaluation_problem`]. Mirrored in src/actions/templateCheck.ts; both run
 /// tests/actions/template-vectors.json. The error names the placeholder.
 pub fn check_template(template: &str) -> Result<(), String> {
     #[derive(Clone, Copy, PartialEq)]
@@ -352,12 +353,71 @@ pub fn check_template(template: &str) -> Result<(), String> {
         }
         i += 1;
     }
+    if PLACEHOLDERS.iter().any(|w| uses(template, w)) {
+        if let Some(why) = evaluation_problem(template) {
+            return Err(why.to_string());
+        }
+    }
     Ok(())
+}
+
+const ARITH_WHY: &str = "This template has a placeholder and also does arithmetic (`$(( ))`, `(( ))`, `$[ ]`, let, -eq and the like, declare -i, an array index). A shell reads a variable it is used with as code there, so a file name such as a[$(cmd)] would run as a command, even though the placeholder is quoted. Do the arithmetic in a script of your own, or take the placeholder out of this template.";
+const EVAL_WHY: &str = "This template has a placeholder and also eval, which runs text as code, so a file name could run as a command even though the placeholder is quoted. Take eval out of this template.";
+
+/// Why a template that has a placeholder can't be used however its placeholders are placed, or
+/// None. Quoting only keeps the value one word; a shell that later evaluates a variable holding
+/// it (arithmetic, an array index, `eval`) reads it as code. So the whole template is refused,
+/// not just the command with the placeholder, whenever it evaluates anything: `$((`, `((`, `$[`,
+/// `let`, `-eq`/`-ne`/`-lt`/`-le`/`-gt`/`-ge`, `integer`, `float`, `declare`/`typeset`/`local`/
+/// `export`/`readonly` with an `-i`, `-F` or `-E` flag, an array index (`${a[…]}`, `a[…]=`), and
+/// `eval`. Text is looked at whatever quotes it is in: a false alarm costs a rewrite, a miss runs
+/// a file name. Mirrored in templateCheck.ts.
+fn evaluation_problem(t: &str) -> Option<&'static str> {
+    if t.contains("((") || t.contains("$[") {
+        return Some(ARITH_WHY);
+    }
+    let word_break = |c: char| c.is_ascii_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')' | '`' | '<' | '>' | '"' | '\'' | '{' | '}' | '$');
+    for w in t.split(word_break) {
+        if w == "eval" {
+            return Some(EVAL_WHY);
+        }
+        if matches!(w, "let" | "integer" | "float") || NUMERIC_TESTS.contains(&w) {
+            return Some(ARITH_WHY);
+        }
+    }
+    // a declaring builtin given a flag that makes the variable numeric
+    for command in t.split([';', '&', '|', '\n', '(', ')']) {
+        let mut words = command.split_ascii_whitespace().map(|w| w.trim_matches(['"', '\'']));
+        if words.any(|w| ["declare", "typeset", "local", "export", "readonly"].contains(&w)) && words.any(|w| w.starts_with('-') && !w.starts_with("--") && w.contains(['i', 'F', 'E'])) {
+            return Some(ARITH_WHY);
+        }
+    }
+    // an array index is evaluated as arithmetic: `${a[$n]}`, `$a[$n]` (zsh), `a[$n]=1`
+    let b = t.as_bytes();
+    for (j, _) in b.iter().enumerate().filter(|&(_, &c)| c == b'[') {
+        let mut k = j;
+        while k > 0 && (b[k - 1].is_ascii_alphanumeric() || b[k - 1] == b'_') {
+            k -= 1;
+        }
+        if k == j || b[k].is_ascii_digit() {
+            continue;
+        }
+        let read = (k > 0 && b[k - 1] == b'$') || (k > 1 && b[k - 1] == b'{' && b[k - 2] == b'$');
+        let assigned = t[j..].find(']').is_some_and(|e| b[j + e + 1..].starts_with(b"=") || b[j + e + 1..].starts_with(b"+="));
+        if read || assigned {
+            return Some(ARITH_WHY);
+        }
+    }
+    None
 }
 
 /// Builtins that read their operand as code: an arithmetic expression, a variable name with an
 /// array index (`x[$(cmd)]`), or a command. Quoting can't help there, the value itself is read.
-const CODE_BUILTINS: [&str; 9] = ["let", "eval", "trap", "read", "unset", "compgen", "complete", "mapfile", "readarray"];
+/// `exit` and its kin read their operand as arithmetic in zsh, `shift` and `ulimit` in ksh,
+/// `repeat` and `vared` are zsh's.
+const CODE_BUILTINS: [&str; 18] = [
+    "let", "eval", "trap", "read", "unset", "compgen", "complete", "mapfile", "readarray", "exit", "return", "break", "continue", "shift", "logout", "repeat", "vared", "ulimit",
+];
 /// Builtins whose operands are variable names (an `x[$(cmd)]` there runs), unless given as `name=value`.
 const NAME_BUILTINS: [&str; 6] = ["declare", "typeset", "local", "export", "readonly", "integer"];
 /// Test operators that read both sides as numbers (ksh and `[[` evaluate them as arithmetic).
@@ -371,8 +431,16 @@ const NUMERIC_TESTS: [&str; 6] = ["-eq", "-ne", "-lt", "-le", "-gt", "-ge"];
 fn operand_problem(template: &str, at: usize) -> Option<&'static str> {
     let b = template.as_bytes();
     let sep = |x: &u8| matches!(x, b';' | b'&' | b'|' | b'\n' | b'(' | b')' | b'`');
-    let start = b[..at].iter().rposition(sep).map_or(0, |p| p + 1);
-    let end = b[at..].iter().position(sep).map_or(b.len(), |p| at + p);
+    let mut start = b[..at].iter().rposition(sep).map_or(0, |p| p + 1);
+    let mut end = b[at..].iter().position(sep).map_or(b.len(), |p| at + p);
+    // inside `[[ … ]]`, `&`, `|`, `(` and `)` group tests and don't end the command: one test
+    if let Some(open) = template[..at].rfind("[[") {
+        let word = (open == 0 || b[open - 1].is_ascii_whitespace() || sep(&b[open - 1])) && b.get(open + 2).is_some_and(u8::is_ascii_whitespace);
+        if word && !template[open..at].contains("]]") {
+            start = open;
+            end = template[at..].find("]]").map_or(b.len(), |p| at + p);
+        }
+    }
     let before = &template[start..at];
     let words: Vec<&str> = before.split_ascii_whitespace().collect();
     // the part of the placeholder's own word before it ("" when it starts a word), and the word before
@@ -391,7 +459,7 @@ fn operand_problem(template: &str, at: usize) -> Option<&'static str> {
     if NAME_BUILTINS.contains(&cmd) && !cur.contains('=') {
         return Some(code);
     }
-    if cmd == "printf" && prev == "-v" {
+    if matches!(cmd, "printf" | "print") && prev == "-v" {
         return Some(code);
     }
     if matches!(cmd, "[[" | "[" | "test") {
@@ -1008,6 +1076,9 @@ mod tests {
             (r#"echo "$(echo ${x:-)} {name})""#, subst, if bash3 { vec!["/bin/bash"] } else { vec![] }),
             ("[[ 5 -eq {name} ]]", index, vec!["/bin/bash"]),
             ("let n={name}", index, vec!["/bin/bash"]),
+            // round 6: a variable set from the placeholder and used in arithmetic later
+            ("n={name}; echo $((n+1))", index, vec!["/bin/bash"]),
+            ("declare -i n={name}", index, vec!["/bin/bash"]),
         ];
         for (t, name, shells) in cases {
             assert!(check_template(t).is_err(), "{t}");

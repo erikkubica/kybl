@@ -95,29 +95,72 @@ function bareHost(host: string): string {
   return h.toLowerCase();
 }
 
-/** A WebDAV address's server: host and port (dav:// and webdav:// read as https://). */
-function davOrigin(n: NetConfig): string {
-  const raw = n.url?.trim() || `${n.tls === "none" ? "http" : "https"}://${n.host.trim()}${n.port ? `:${n.port}` : ""}/`;
+/** A port typed into the Server field ("example.com:2222"), as the app's `port_in_host` reads it. */
+function portInHost(host: string): number | null {
+  let h = host.trim();
+  const i = h.indexOf("://");
+  if (i >= 0) h = h.slice(i + 3);
+  h = h.split("/")[0];
+  let tail: string | undefined;
+  if (h.startsWith("[")) tail = h.split("]:")[1];
+  else if ((h.match(/:/g) ?? []).length === 1) tail = h.split(":")[1];
+  return tail && /^\d{1,5}$/.test(tail) && Number(tail) < 65536 ? Number(tail) : null;
+}
+
+/** `scheme://host:port` with the default port spelled out, as the app's `url_origin` writes it. */
+function originOf(raw: string): string | null {
   try {
-    return new URL(raw.replace(/^(web)?davs?:/i, "https:")).host.toLowerCase();
+    const u = new URL(raw.trim());
+    const port = u.port || (u.protocol === "https:" ? "443" : u.protocol === "http:" ? "80" : "");
+    return `${u.protocol}//${u.hostname.toLowerCase()}:${port}`;
   } catch {
-    return raw.toLowerCase();
+    return null;
   }
 }
 
 /**
- * Where a server connection's saved password is sent: server and user name (null: nothing sent,
- * as for SFTP keys, which only sign). Same rule as the app's `password_target`: a saved password
- * never follows a change of server or user name.
+ * A WebDAV connection's server as the connection reaches it: scheme, host and port. `dav://` and
+ * `webdav://` are plain http there, `davs://` and `webdavs://` are https, an address without a
+ * scheme is https (the app's `dav_origin`).
+ */
+function davOrigin(n: NetConfig): string {
+  const typed = n.url?.trim();
+  const port = n.port || portInHost(n.host);
+  const raw = typed ? (typed.includes("://") ? typed : `https://${typed}`) : `${n.tls === "none" ? "http" : "https"}://${bareHost(n.host)}${port ? `:${port}` : ""}/`;
+  const m = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/i.exec(raw);
+  const secure = !!m && ["https", "davs", "webdavs"].includes(m[1].toLowerCase());
+  return originOf(m ? `${secure ? "https" : "http"}://${m[2]}` : raw) ?? raw.toLowerCase();
+}
+
+/**
+ * Where a server connection's saved password is sent: server, how it connects (TLS or plain)
+ * and user name (null: nothing sent, as for SFTP keys, which only sign). Same rule as the app's
+ * `password_target`: a saved password never follows a change of server, user name or transport.
  */
 export function passwordTarget(kind: NetKind, n: NetConfig): string | null {
-  const port = (d: number) => n.port || d;
+  const port = (d: number) => n.port || portInHost(n.host) || d;
   let place: string;
-  if (kind === "ftp") place = `${bareHost(n.host)}:${port(n.tls === "implicit" ? 990 : 21)}`;
-  else if (kind === "sftp" && n.auth === "password") place = `${bareHost(n.host)}:${port(22)}`;
+  if (kind === "ftp") {
+    // "auto" falls back to plain FTP, so it counts as plain
+    const secure = n.tls === "explicit" || n.tls === "implicit";
+    place = `${secure ? "tls" : "plain"}:${bareHost(n.host)}:${port(n.tls === "implicit" ? 990 : 21)}`;
+  } else if (kind === "sftp" && n.auth === "password") place = `${bareHost(n.host)}:${port(22)}`;
   else if (kind === "webdav") place = davOrigin(n);
   else return null;
   return `${place}|${n.user.trim()}`;
+}
+
+/**
+ * Where an Azure or Google Cloud Storage connection's saved key goes: its endpoint (the
+ * service's own address when empty) and, for Azure, the account. A SAS token or service
+ * account key is the credential itself, so it never follows a new endpoint or account.
+ */
+export function blobTarget(kind: BlobKind, b: BlobConfig): string {
+  const ep = b.endpoint.trim();
+  const account = b.account.trim();
+  const fallback = kind === "azblob" ? `https://${account}.blob.core.windows.net` : "https://storage.googleapis.com";
+  const place = originOf(ep || fallback) ?? (ep || fallback).replace(/\/+$/, "").toLowerCase();
+  return kind === "azblob" ? `${place}|${account.toLowerCase()}` : place;
 }
 
 export const emptyBlob =(): BlobConfig => ({ account: "", endpoint: "", container: "" });

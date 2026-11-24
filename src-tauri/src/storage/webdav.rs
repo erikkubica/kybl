@@ -724,7 +724,7 @@ impl Storage for WebdavBackend {
 
 /// The addresses to try, best first: what was typed (with the folder), then, when that is just
 /// a server, Nextcloud's and ownCloud's WebDAV folders for the user.
-fn candidate_urls(cfg: &NetConfig) -> SResult<Vec<Url>> {
+pub(crate) fn candidate_urls(cfg: &NetConfig) -> SResult<Vec<Url>> {
     let typed = match cfg.url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
         Some(u) if u.contains("://") => u.to_string(),
         Some(u) => format!("https://{u}"),

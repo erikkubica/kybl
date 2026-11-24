@@ -2,7 +2,7 @@
 import { useImperativeHandle, useRef, useState } from "react";
 import { Icon } from "../Icons";
 import type { BlobConfig, Profile } from "../types";
-import { baseProfile, emptyBlob, keepsSavedSecret, type BlobKind } from "./kinds";
+import { baseProfile, blobTarget, emptyBlob, type BlobKind } from "./kinds";
 import { Field, RAW, SecretInput, type FormApi } from "./fields";
 
 export function BlobForm({ kind, initial, tried, formApi, onEdit }: { kind: BlobKind; initial: Profile | null; tried: boolean; formApi: React.Ref<FormApi>; onEdit: () => void }) {
@@ -15,8 +15,9 @@ export function BlobForm({ kind, initial, tried, formApi, onEdit }: { kind: Blob
   const [fileNote, setFileNote] = useState<string | null>(null);
   const jsonFile = useRef<HTMLInputElement>(null);
   const azure = kind === "azblob";
-  // Azure: the saved key belongs to the saved account; a new account needs its own
-  const editing = !!initial && (!azure || keepsSavedSecret(initial.blob?.account, account));
+  // the saved key (a SAS token or service account key is the credential itself) belongs to the
+  // endpoint and account it was saved for: a new one needs its own, never sent on to a new server
+  const editing = !!initial && blobTarget(kind, start) === blobTarget(kind, { account: azure ? account : "", endpoint, container });
 
   const edit =
     <T,>(set: (v: T) => void) =>
@@ -34,9 +35,11 @@ export function BlobForm({ kind, initial, tried, formApi, onEdit }: { kind: Blob
       !secret.trim() && !editing
         ? azure
           ? initial
-            ? "Enter the key for the new account."
+            ? "Enter the key again for the new account or endpoint."
             : "Enter the account key or a SAS token."
-          : "Paste the service account key or choose its file."
+          : initial
+            ? "Paste the service account key again for the new endpoint."
+            : "Paste the service account key or choose its file."
         : !azure && secret.trim() && !/"private_key"/.test(secret)
           ? "This doesn't look like a service account key. It's a JSON file with a “private_key” in it."
           : null,

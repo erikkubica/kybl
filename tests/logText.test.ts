@@ -29,6 +29,22 @@ test("secrets never reach the log", () => {
   assert.equal(redact('{"client_secret":"s3cr3t"}'), '{"client_secret":"•••"}');
   assert.equal(redact("refresh_token: 1//0gAbc"), "refresh_token: •••");
   assert.equal(redact("key:\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaA\n-----END OPENSSH PRIVATE KEY-----\nok"), "key:\n[private key removed]\nok");
+  // round 6 (S-5): upload sessions, Google and Azure signatures, AWS header signatures, cookies, JSON tokens, env names, trust tags
+  const gone = (text: string, secret: string) => assert.ok(!redact(text).includes(secret), `${text} -> ${redact(text)}`);
+  gone("PUT https://x.sharepoint.com/up?tempauth=eyJSECRET1&x=1", "SECRET1");
+  gone("https://u.googleapis.com/upload?upload_id=SECRET2&n=1", "SECRET2");
+  gone("https://s.storage.googleapis.com/o?X-Goog-Signature=SECRET3&X-Goog-Credential=SECRET4", "SECRET3");
+  gone("https://s.storage.googleapis.com/o?X-Goog-Signature=SECRET3&X-Goog-Credential=SECRET4", "SECRET4");
+  gone("Authorization: AWS4-HMAC-SHA256 Credential=AKIA/x, SignedHeaders=host, Signature=SECRET5", "SECRET5");
+  gone("Cookie: sid=SECRET6; theme=dark", "SECRET6");
+  gone('{"token":"SECRET7","ok":true}', "SECRET7");
+  gone('{"SessionToken": "SECRET8"}', "SECRET8");
+  gone("AWS_SECRET_ACCESS_KEY=SECRET9 AWS_REGION=eu", "SECRET9");
+  assert.equal(redact("kybl:0123456789abcdef0123456789abcdef host-key-unknown"), "host-key-unknown");
+  // a long run of dots and letters is cheap to scan (S-6)
+  const t0 = Date.now();
+  redact("a.".repeat(60_000));
+  assert.ok(Date.now() - t0 < 500, "redact stays linear");
   // plain sentences stay as they are
   for (const s of ["Wrong user name or password.", "ftp.example.sk didn't answer in time.", "Downloaded “a.txt” from X to Downloads"]) assert.equal(redact(s), s);
 });

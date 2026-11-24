@@ -26,7 +26,9 @@ export async function zipTooBig(bytes: Uint8Array, caps = { part: PART_MAX, tota
   try {
     parts = directory(bytes);
   } catch {
-    parts = null;
+    // a directory the parsers might read from another place than this check does (bytes in
+    // front, a comment, a ZIP64 record only one reader uses): not worth the risk
+    return "unusual zip layout";
   }
   // not a zip at all (an old .xls, a CSV): nothing to inflate
   if (!parts) return isZip ? "unreadable zip directory" : null;
@@ -57,7 +59,16 @@ export async function zipTooBig(bytes: Uint8Array, caps = { part: PART_MAX, tota
 
 const view = (b: Uint8Array) => new DataView(b.buffer, b.byteOffset, b.byteLength);
 
-/** The central directory's entries; null when there is no end-of-directory record (not a zip). */
+/**
+ * The central directory's entries; null when there is no end-of-directory record (not a zip).
+ * Throws unless the file is laid out the plain way every reader agrees on: nothing in front of
+ * the first part, no zip comment, the directory ending exactly where the end record (or the ZIP64
+ * record before it) starts, and no entries beyond the counted ones. JSZip, which the Word and
+ * PowerPoint previews use, finds the end record from the back, shifts every offset by bytes in
+ * front, goes to ZIP64 on more triggers than a size or an offset, and reads entries until the
+ * signature stops. A file that only some of those rules fit would be read as another directory
+ * than the one checked here (S-2).
+ */
 function directory(b: Uint8Array): Part[] | null {
   const dv = view(b);
   let eocd = -1;
@@ -68,16 +79,26 @@ function directory(b: Uint8Array): Part[] | null {
     }
   }
   if (eocd < 0) return null;
+  if (dv.getUint32(0, true) !== LOC) throw new Error("bytes before the first part");
+  if (eocd + 22 !== b.length) throw new Error("zip comment or trailing bytes");
   let count = dv.getUint16(eocd + 10, true);
+  let cdSize = dv.getUint32(eocd + 12, true);
   let cdOff = dv.getUint32(eocd + 16, true);
-  if (count === 0xffff || cdOff === 0xffffffff) {
-    const loc = eocd - 20;
-    if (loc < 0 || dv.getUint32(loc, true) !== EOCD64_LOC) throw new Error("zip64 locator");
+  // the same triggers JSZip uses for the ZIP64 record
+  const wide = [4, 6, 8, 10].some((o) => dv.getUint16(eocd + o, true) === 0xffff) || cdSize === 0xffffffff || cdOff === 0xffffffff;
+  const loc = eocd - 20;
+  const located = loc >= 0 && dv.getUint32(loc, true) === EOCD64_LOC;
+  let end = eocd;
+  if (wide) {
+    if (!located) throw new Error("zip64 locator");
     const at = num64(dv, loc + 8);
-    if (dv.getUint32(at, true) !== EOCD64) throw new Error("zip64 record");
+    if (at + 56 !== loc || dv.getUint32(at, true) !== EOCD64) throw new Error("zip64 record");
     count = num64(dv, at + 32);
+    cdSize = num64(dv, at + 40);
     cdOff = num64(dv, at + 48);
-  }
+    end = at;
+  } else if (located) throw new Error("zip64 locator that is not used");
+  if (cdOff + cdSize !== end) throw new Error("gap around the directory");
   const parts: Part[] = [];
   let p = cdOff;
   for (let i = 0; i < count; i++) {
@@ -111,6 +132,7 @@ function directory(b: Uint8Array): Part[] | null {
     parts.push({ name, method, flags, csize, usize, local });
     p += 46 + nameLen + extraLen + commentLen;
   }
+  if (p !== end) throw new Error("directory entries left over");
   return parts;
 }
 

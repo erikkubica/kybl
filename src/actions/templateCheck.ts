@@ -154,11 +154,55 @@ export function templateProblem(template: string): string | null {
       }
     }
   }
+  if (PLACEHOLDERS.some((p) => uses(t, p))) return evaluationProblem(t);
   return null;
 }
 
-/** Builtins that read their operand as code (an arithmetic expression, `x[$(cmd)]`, a command). */
-const CODE_BUILTINS = ["let", "eval", "trap", "read", "unset", "compgen", "complete", "mapfile", "readarray"];
+/** Mirror of `uses` in actions.rs: the placeholder's word, not the shell's `${word}`. */
+function uses(t: string, word: string): boolean {
+  const needle = `{${word}}`;
+  for (let i = t.indexOf(needle); i >= 0; i = t.indexOf(needle, i + 1)) if (t[i - 1] !== "$") return true;
+  return false;
+}
+
+const ARITH_WHY =
+  "This template has a placeholder and also does arithmetic (`$(( ))`, `(( ))`, `$[ ]`, let, -eq and the like, declare -i, an array index). A shell reads a variable it is used with as code there, so a file name such as a[$(cmd)] would run as a command, even though the placeholder is quoted. Do the arithmetic in a script of your own, or take the placeholder out of this template.";
+const EVAL_WHY =
+  "This template has a placeholder and also eval, which runs text as code, so a file name could run as a command even though the placeholder is quoted. Take eval out of this template.";
+const DECLARING = ["declare", "typeset", "local", "export", "readonly"];
+
+/**
+ * Mirror of `evaluation_problem` in actions.rs. A template with a placeholder that evaluates
+ * anything (arithmetic, a numeric test, an array index, `eval`) is refused whole: quoting only
+ * keeps the value one word, and a shell that later evaluates a variable holding it reads it as code.
+ */
+function evaluationProblem(t: string): string | null {
+  if (t.includes("((") || t.includes("$[")) return ARITH_WHY;
+  for (const w of t.split(/[ \t\n\f\r;&|()`<>"'{}$]/)) {
+    if (w === "eval") return EVAL_WHY;
+    if (w === "let" || w === "integer" || w === "float" || NUMERIC_TESTS.includes(w)) return ARITH_WHY;
+  }
+  // a declaring builtin given a flag that makes the variable numeric
+  for (const command of t.split(/[;&|\n()]/)) {
+    const words = command.split(ASCII_WS).filter(Boolean).map((w) => w.replace(/^["']+|["']+$/g, ""));
+    const at = words.findIndex((w) => DECLARING.includes(w));
+    if (at >= 0 && words.slice(at + 1).some((w) => w.startsWith("-") && !w.startsWith("--") && /[iFE]/.test(w))) return ARITH_WHY;
+  }
+  // an array index is evaluated as arithmetic: `${a[$n]}`, `$a[$n]` (zsh), `a[$n]=1`
+  for (let j = t.indexOf("["); j >= 0; j = t.indexOf("[", j + 1)) {
+    let k = j;
+    while (k > 0 && /[A-Za-z0-9_]/.test(t[k - 1])) k--;
+    if (k === j || /[0-9]/.test(t[k])) continue;
+    const read = t[k - 1] === "$" || (t[k - 1] === "{" && t[k - 2] === "$");
+    const close = t.indexOf("]", j);
+    const assigned = close >= 0 && (t[close + 1] === "=" || t.startsWith("+=", close + 1));
+    if (read || assigned) return ARITH_WHY;
+  }
+  return null;
+}
+
+/** Builtins that read their operand as code (an arithmetic expression, `x[$(cmd)]`, a command); `exit` and kin in zsh, `shift` and `ulimit` in ksh, `repeat` and `vared` in zsh. */
+const CODE_BUILTINS = ["let", "eval", "trap", "read", "unset", "compgen", "complete", "mapfile", "readarray", "exit", "return", "break", "continue", "shift", "logout", "repeat", "vared", "ulimit"];
 /** Builtins whose operands are variable names, unless given as `name=value`. */
 const NAME_BUILTINS = ["declare", "typeset", "local", "export", "readonly", "integer"];
 /** Test operators that read both sides as numbers (ksh and `[[` evaluate them as arithmetic). */
@@ -174,6 +218,16 @@ function operandProblem(t: string, at: number): string | null {
   while (start > 0 && !SEP.has(t[start - 1])) start--;
   let end = at;
   while (end < t.length && !SEP.has(t[end])) end++;
+  // inside `[[ … ]]`, `&`, `|`, `(` and `)` group tests and don't end the command: one test
+  const open = t.lastIndexOf("[[", at - 1);
+  if (open >= 0 && open < at) {
+    const word = (open === 0 || /[ \t\n\f\r]/.test(t[open - 1]) || SEP.has(t[open - 1])) && /[ \t\n\f\r]/.test(t[open + 2] ?? "x");
+    if (word && !t.slice(open, at).includes("]]")) {
+      start = open;
+      const close = t.indexOf("]]", at);
+      end = close < 0 ? t.length : close;
+    }
+  }
   const before = t.slice(start, at);
   const words = before.split(ASCII_WS).filter(Boolean);
   const glued = before.length > 0 && !/[ \t\n\f\r]$/.test(before);
@@ -188,7 +242,7 @@ function operandProblem(t: string, at: number): string | null {
   const code = "goes where the shell reads the value as code (let, read, trap, eval, -eq, an array index…), and a file name could run there. Pass it as a plain argument instead.";
   if (CODE_BUILTINS.includes(cmd)) return code;
   if (NAME_BUILTINS.includes(cmd) && !cur.includes("=")) return code;
-  if (cmd === "printf" && prev === "-v") return code;
+  if ((cmd === "printf" || cmd === "print") && prev === "-v") return code;
   if (cmd === "[[" || cmd === "[" || cmd === "test") {
     const all = t.slice(start, end).split(ASCII_WS);
     if (prev === "-v" || prev === "-R" || all.some((w) => NUMERIC_TESTS.includes(w))) return code;
