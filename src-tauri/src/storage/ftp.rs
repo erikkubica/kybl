@@ -529,7 +529,7 @@ impl FtpBackend {
             }
             let user = if self.user.is_empty() { "anonymous" } else { self.user.as_str() };
             ftp.login(user, self.password.as_str()).await.map_err(|e| match e {
-                FtpError::UnexpectedResponse(r) if matches!(r.status.code(), 530 | 430) && crowded_login(&one_line(&r.to_string()).to_lowercase()) => {
+                FtpError::UnexpectedResponse(r) if matches!(r.status.code(), 530 | 430) && crowded_login(&one_line(&r.to_string())) => {
                     ftp_error(FtpError::UnexpectedResponse(r), &self.host)
                 }
                 FtpError::UnexpectedResponse(r) if matches!(r.status.code(), 530 | 430 | 331 | 332) => wrong_login().with_detail(one_line(&r.to_string())),
@@ -777,7 +777,7 @@ impl FtpBackend {
             return match e {
                 FtpError::UnexpectedResponse(r) => {
                     let code = r.status.code();
-                    Ok(Stored::Refused(ftp_error(FtpError::UnexpectedResponse(r), &self.host), code))
+                    Ok(Stored::Refused(ftp_error_at(FtpError::UnexpectedResponse(r), &self.host, path), code))
                 }
                 e => Err(ftp_error(e, &self.host)),
             };
@@ -790,7 +790,7 @@ impl FtpBackend {
             Err(FtpError::UnexpectedResponse(r)) => {
                 lease.healthy = offset.is_none();
                 let code = r.status.code();
-                return Ok(Stored::Refused(ftp_error(FtpError::UnexpectedResponse(r), &self.host), code));
+                return Ok(Stored::Refused(ftp_error_at(FtpError::UnexpectedResponse(r), &self.host, path), code));
             }
             Err(e) => {
                 lease.healthy = false;
@@ -854,6 +854,8 @@ impl FtpBackend {
                     match ftp.size(&p).await {
                         Ok(n) => Ok((SizeProbe::Size(n as u64), Some(true))),
                         Err(FtpError::UnexpectedResponse(r)) => Ok(match r.status.code() {
+                            // a "file in use" answer isn't "no such file": the listing settles it
+                            550 if in_use_reply(&one_line(&r.to_string()), &p) => (SizeProbe::NoAnswer, None),
                             550 => (SizeProbe::Missing, Some(true)),
                             500 | 502 | 504 => (SizeProbe::NoAnswer, Some(false)),
                             // something about this name (a 501 for its characters): the listing
@@ -909,7 +911,9 @@ enum SizeProbe {
 fn rest_refused(code: u32, e: &StorageError, path: &str) -> bool {
     match code {
         500 | 501 | 502 | 504 | 554 => true,
-        550 | 553 => !about_space(e, path),
+        // a "file in use" answer is "ask again in a moment", whatever its code: the partial file
+        // stays (`ftp_error_at` judged it with the full path's words out of the way)
+        550 | 553 => !about_space(e, path) && e.message != IN_USE_SAY,
         _ => false,
     }
 }
@@ -918,11 +922,27 @@ fn rest_refused(code: u32, e: &StorageError, path: &str) -> bool {
 /// words of `path`: servers repeat the path in their answer, and a folder called "Workspace" or
 /// "Full Backup" says nothing about space.
 fn reply_words(e: &StorageError, path: &str) -> String {
+    let text = format!("{} {}", e.message, e.detail.as_deref().unwrap_or_default());
+    text_words(&text, path)
+}
+
+/// `text` as whole lower-case words between spaces, without the words of `path`.
+fn text_words(text: &str, path: &str) -> String {
     let words = |t: &str| t.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_string).collect::<Vec<_>>();
     let own = words(path);
-    let text = format!("{} {}", e.message, e.detail.as_deref().unwrap_or_default());
-    let kept: Vec<String> = words(&text).into_iter().filter(|w| !own.contains(w)).collect();
+    let kept: Vec<String> = words(text).into_iter().filter(|w| !own.contains(w)).collect();
     format!(" {} ", kept.join(" "))
+}
+
+/// What a "file in use" answer says to the user.
+const IN_USE_SAY: &str = "The file is in use on the server. Try again in a moment.";
+
+/// Whether a reply says the file is held by something else (a dropped session the server still
+/// counts, another process). Whole words only, and not the path's own: "blocked", "unlocked" and
+/// a folder called "busybox" say nothing about it.
+fn in_use_reply(text: &str, path: &str) -> bool {
+    let words = text_words(text, path);
+    [" busy ", " in use ", " being used ", " locked ", " another process ", " sharing violation "].iter().any(|w| words.contains(w))
 }
 
 /// A refusal about space or quota (whatever its code: servers answer "550 Quota exceeded").
@@ -1029,7 +1049,13 @@ impl Storage for FtpBackend {
             Ok(Ok(n)) => Some(n as u64),
             Ok(Err(FtpError::UnexpectedResponse(r))) if matches!(r.status.code(), 550 | 551) => {
                 lease.healthy = true;
-                return Err(StorageError::not_found().with_detail(one_line(&r.to_string())));
+                let text = one_line(&r.to_string());
+                // a server that still holds a dropped session's file says so: not "gone", so the
+                // resume loop asks again
+                if in_use_reply(&text, &full) {
+                    return Err(ftp_error_at(FtpError::UnexpectedResponse(r), &self.host, &full));
+                }
+                return Err(StorageError::not_found().with_detail(text));
             }
             // a server without SIZE (or that won't say for this file): read on without it
             Ok(Err(FtpError::UnexpectedResponse(_))) => None,
@@ -1573,11 +1599,18 @@ fn cert_refused(e: &FtpError, seen: &Seen) -> Option<StorageError> {
 
 /// FTP errors, said plainly.
 /// A login refusal that is about how many are connected, not about the password.
-fn crowded_login(lower: &str) -> bool {
-    ["too many", "maximum number", "max clients", "clients", "connection limit", "limit of"].iter().any(|w| lower.contains(w))
+fn crowded_login(text: &str) -> bool {
+    let words = text_words(text, "");
+    [" too many ", " maximum number ", " max clients ", " clients ", " connection limit ", " limit of "].iter().any(|w| words.contains(w))
 }
 
 fn ftp_error(e: FtpError, host: &str) -> StorageError {
+    ftp_error_at(e, host, "")
+}
+
+/// `ftp_error` for a command about `path`: servers repeat the path in their answer, and its
+/// words must not be taken for the server's own ("550 /srv/Unlocked/x: No such file").
+fn ftp_error_at(e: FtpError, host: &str, path: &str) -> StorageError {
     match e {
         FtpError::ConnectionError(io) => connect_error(&io, host),
         FtpError::SecureError(s) => tls_error(s),
@@ -1588,11 +1621,11 @@ fn ftp_error(e: FtpError, host: &str) -> StorageError {
             // a server that still counts a dropped session answers the new login or the same
             // file with these; asking again a moment later works, so they must not read as a
             // wrong password or a missing file
-            let crowded = crowded_login(&low);
-            let in_use = ["busy", "in use", "being used", "locked", "another process", "sharing violation"].iter().any(|w| low.contains(w));
+            let crowded = crowded_login(&text);
+            let in_use = in_use_reply(&text, path);
             let (kind, say) = match code {
                 530 | 430 if crowded => (ErrKind::RateLimited, "The server has too many connections open for this account. Try again in a moment."),
-                450 | 550 if in_use => (ErrKind::Other, "The file is in use on the server. Try again in a moment."),
+                450 | 550 if in_use => (ErrKind::Other, IN_USE_SAY),
                 530 | 430 => (ErrKind::NeedsAuth, "Wrong user name or password."),
                 421 => (ErrKind::RateLimited, "The server closed the connection. It may allow only a few connections at a time; try again in a moment."),
                 425 | 426 => (ErrKind::Network, "Couldn't open a data connection to the server. A firewall may be blocking passive mode."),
@@ -1958,6 +1991,27 @@ mod tests {
         assert_eq!(ftp_error(FtpError::UnexpectedResponse(r), "h").kind, ErrKind::Other);
         let r = suppaftp::types::Response::new(Status::FileUnavailable, b"550 The process cannot access the file because it is being used by another process.".to_vec());
         assert_eq!(ftp_error(FtpError::UnexpectedResponse(r), "h").kind, ErrKind::Other);
+    }
+
+    /// The path's own words and look-alike words ("unlocked", "blocked", "busybox") don't make a
+    /// reply "in use", and a real "in use" reply keeps a resumed upload's partial file.
+    #[test]
+    fn in_use_is_judged_on_whole_words_outside_the_path() {
+        let at = |code: Status, text: &str, path: &str| ftp_error_at(FtpError::UnexpectedResponse(suppaftp::types::Response::new(code, text.as_bytes().to_vec())), "h", path);
+        let gone = at(Status::FileUnavailable, "550 /srv/Unlocked/x.txt: No such file or directory", "/srv/Unlocked/x.txt");
+        assert_eq!(gone.kind, ErrKind::NotFound);
+        let busy_dir = at(Status::FileUnavailable, "550 /data/busy/a: No such file or directory", "/data/busy/a");
+        assert_eq!(busy_dir.kind, ErrKind::NotFound);
+        assert_ne!(at(Status::FileUnavailable, "550 Upload blocked", "/a").message, IN_USE_SAY);
+        assert_eq!(at(Status::FileUnavailable, "550 Permission denied, extension blocked", "/a").kind, ErrKind::PermissionDenied);
+        assert_eq!(at(Status::FileUnavailable, "550 Can't open /data/busybox/a: No such file", "/data/busybox/a").kind, ErrKind::NotFound);
+        // a real in-use reply, even for a path that has the word elsewhere
+        let busy = at(Status::FileUnavailable, "550 /data/Busy Folder/a.bin: file is locked", "/data/Busy Folder/a.bin");
+        assert_eq!(busy.message, IN_USE_SAY);
+        // and a resumed upload doesn't start over for it
+        assert!(!rest_refused(550, &busy, "a.bin"));
+        let refused = at(Status::FileUnavailable, "550 Restart not allowed", "/a");
+        assert!(rest_refused(550, &refused, "a"));
     }
 }
 

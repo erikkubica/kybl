@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { Note } from "./ui";
 import type { ViewerProps } from "./types";
 import { openCapped, zipTooBig, type CappedZip } from "./zipCheck";
-import { REFUSED, REFUSED_TEXT } from "./refused";
+import { DAMAGED, DAMAGED_TEXT, REFUSED, REFUSED_TEXT, refusalKind } from "./refused";
 
 const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const P = "http://schemas.openxmlformats.org/presentationml/2006/main";
@@ -61,7 +61,8 @@ async function imageUrl(zip: CappedZip, path: string, made: Map<string, string |
 async function readDeck(bytes: Uint8Array, pictures: boolean): Promise<Deck> {
   // a few MB can inflate to GBs: refused before anything is inflated for real, and every part
   // below is read with a cap on what it may inflate to
-  if (await zipTooBig(bytes)) throw new Error(REFUSED);
+  const why = await zipTooBig(bytes);
+  if (why) throw new Error(refusalKind(why, bytes));
   const zip = await openCapped(bytes);
   const made = new Map<string, string | null>();
   // slide order comes from presentation.xml, not from the file names
@@ -146,7 +147,7 @@ export default function PptxView({ bytes, mode }: ViewerProps) {
     };
   }, [bytes, mode]);
 
-  if (error) return <Note icon="alert">{error === REFUSED ? REFUSED_TEXT : "This presentation couldn't be read. It may be damaged, or saved in the older .ppt format."}</Note>;
+  if (error) return <Note icon="alert">{error === REFUSED ? REFUSED_TEXT : error === DAMAGED ? DAMAGED_TEXT : "This presentation couldn't be read. It may be damaged, or saved in the older .ppt format."}</Note>;
   if (!deck) return <Note spinner>Reading the slides…</Note>;
   return (
     <div className={`dv-viewer dv-pptx ${mode}`}>

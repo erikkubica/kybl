@@ -480,6 +480,8 @@ export function useFileOps(c: FileOpsCtx) {
     } catch (err) {
       c.jobs.finish(id, { error: errMessage(err) });
       if (o.refused) o.refused(errSummary(errMessage(err)));
+      // the move rejected (no connection, same place): nothing moved, so the name is said here too
+      else if (o.failed) c.toast("error", `${o.failed}: ${errSummary(errMessage(err))}`);
       else toastErr(err);
     }
     const scope = c.loc?.prefix ?? "";
