@@ -1,0 +1,10 @@
+{"s3b.workspaces": {"active":"w1","list":[
+ {"id":"w1","name":"Shop","color":"green","start":"restore","recipe":null,"links":[],"recent":["p3","right","left"],
+  "tree":{"t":"split","dir":"row","kids":[{"t":"pane","id":"left"},{"t":"split","dir":"col","kids":[{"t":"pane","id":"right"},{"t":"pane","id":"p3"}],"sizes":[0.42,0.58]}],"sizes":[0.5,0.5]},
+  "panes":{
+   "left":{"loc":{"profileId":"p1","bucket":"media-prod","prefix":"photos/"},"view":{"view":"grid","sort":null,"hidden":null,"compact":null,"tile":150,"info":null}},
+   "right":{"loc":{"profileId":"s1","bucket":"","prefix":""},"view":{"view":"list","sort":null,"hidden":null,"compact":true,"tile":null,"info":null}},
+   "p3":{"loc":null,"view":{"view":"list","sort":null,"hidden":null,"compact":null,"tile":null,"info":null},"term":{"profileId":"s1","bucket":"","prefix":"","sid":"tshot1","from":"right"}}}},
+ {"id":"w2","name":"Photos","color":"blue","start":"restore","recipe":null,"links":[],"recent":["left"],"tree":{"t":"pane","id":"left"},"panes":{"left":{"loc":{"profileId":"g1","bucket":"","prefix":""},"view":{"view":"grid","sort":null,"hidden":null,"compact":null,"tile":null,"info":null}}}},
+ {"id":"w3","name":"Backups","color":null,"start":"restore","recipe":null,"links":[],"recent":["left"],"tree":{"t":"pane","id":"left"},"panes":{"left":{"loc":null,"view":{"view":"list","sort":null,"hidden":null,"compact":null,"tile":null,"info":null}}}}
+]}}
