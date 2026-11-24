@@ -529,6 +529,9 @@ impl FtpBackend {
             }
             let user = if self.user.is_empty() { "anonymous" } else { self.user.as_str() };
             ftp.login(user, self.password.as_str()).await.map_err(|e| match e {
+                FtpError::UnexpectedResponse(r) if matches!(r.status.code(), 530 | 430) && crowded_login(&one_line(&r.to_string()).to_lowercase()) => {
+                    ftp_error(FtpError::UnexpectedResponse(r), &self.host)
+                }
                 FtpError::UnexpectedResponse(r) if matches!(r.status.code(), 530 | 430 | 331 | 332) => wrong_login().with_detail(one_line(&r.to_string())),
                 FtpError::UnexpectedResponse(r) if matches!(r.status.code(), 534 | 550) && self.tls == TlsMode::None => {
                     StorageError::new(ErrKind::PermissionDenied, "The server requires encryption. Turn on encryption in this connection's settings.").with_detail(one_line(&r.to_string()))
@@ -1569,6 +1572,11 @@ fn cert_refused(e: &FtpError, seen: &Seen) -> Option<StorageError> {
 }
 
 /// FTP errors, said plainly.
+/// A login refusal that is about how many are connected, not about the password.
+fn crowded_login(lower: &str) -> bool {
+    ["too many", "maximum number", "max clients", "clients", "connection limit", "limit of"].iter().any(|w| lower.contains(w))
+}
+
 fn ftp_error(e: FtpError, host: &str) -> StorageError {
     match e {
         FtpError::ConnectionError(io) => connect_error(&io, host),
@@ -1577,7 +1585,14 @@ fn ftp_error(e: FtpError, host: &str) -> StorageError {
             let code = r.status.code();
             let text = one_line(&r.to_string());
             let low = text.to_lowercase();
+            // a server that still counts a dropped session answers the new login or the same
+            // file with these; asking again a moment later works, so they must not read as a
+            // wrong password or a missing file
+            let crowded = crowded_login(&low);
+            let in_use = ["busy", "in use", "being used", "locked", "another process", "sharing violation"].iter().any(|w| low.contains(w));
             let (kind, say) = match code {
+                530 | 430 if crowded => (ErrKind::RateLimited, "The server has too many connections open for this account. Try again in a moment."),
+                450 | 550 if in_use => (ErrKind::Other, "The file is in use on the server. Try again in a moment."),
                 530 | 430 => (ErrKind::NeedsAuth, "Wrong user name or password."),
                 421 => (ErrKind::RateLimited, "The server closed the connection. It may allow only a few connections at a time; try again in a moment."),
                 425 | 426 => (ErrKind::Network, "Couldn't open a data connection to the server. A firewall may be blocking passive mode."),
@@ -1936,6 +1951,13 @@ mod tests {
         assert_eq!(ftp_error(FtpError::UnexpectedResponse(r), "h").kind, ErrKind::NotFound);
         let r = suppaftp::types::Response::new(Status::FileUnavailable, b"550 Permission denied".to_vec());
         assert_eq!(ftp_error(FtpError::UnexpectedResponse(r), "h").kind, ErrKind::PermissionDenied);
+        // answers that pass when asked again must not look like a wrong password or a missing file
+        let r = suppaftp::types::Response::new(Status::NotLoggedIn, b"530 Sorry, the maximum number of clients (2) from your host are already connected.".to_vec());
+        assert_eq!(ftp_error(FtpError::UnexpectedResponse(r), "h").kind, ErrKind::RateLimited);
+        let r = suppaftp::types::Response::new(Status::RequestFileActionIgnored, b"450 File busy".to_vec());
+        assert_eq!(ftp_error(FtpError::UnexpectedResponse(r), "h").kind, ErrKind::Other);
+        let r = suppaftp::types::Response::new(Status::FileUnavailable, b"550 The process cannot access the file because it is being used by another process.".to_vec());
+        assert_eq!(ftp_error(FtpError::UnexpectedResponse(r), "h").kind, ErrKind::Other);
     }
 }
 

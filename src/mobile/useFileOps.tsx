@@ -444,6 +444,8 @@ export function useFileOps(c: FileOpsCtx) {
       onUndone?: () => void;
       /** a refusal that moved nothing goes here (the rename sheet shows it) instead of a toast */
       refused?: (why: string) => void;
+      /** names what failed ("Couldn’t rename “a.mov”") in the error toast when nothing moved */
+      failed?: string;
     },
   ) => {
     const id = c.jobs.start({ kind: mode, title: o.title, dest: o.dest, profileId: pid, bucket: b });
@@ -453,7 +455,7 @@ export function useFileOps(c: FileOpsCtx) {
       c.jobs.finish(id, r);
       if (r.error && r.error !== "Cancelled") {
         if (o.refused && !r.done) o.refused(errSummary(r.error));
-        else c.toast("error", errSummary(r.error));
+        else c.toast("error", o.failed && !r.done ? `${o.failed}: ${errSummary(r.error)}` : errSummary(r.error));
       }
       else if (r.error !== "Cancelled") {
         ok = true;
@@ -557,6 +559,7 @@ export function useFileOps(c: FileOpsCtx) {
             // the detail screen follows the file back to its old name
             onUndone: () => c.renamedDetail(to, e),
             refused: inSheet ? (why) => (refused = why) : undefined,
+            failed: `Couldn’t rename “${e.name}”`,
           });
           if (ok) c.renamedDetail(e.key, { ...e, key: to, name });
           return refused;

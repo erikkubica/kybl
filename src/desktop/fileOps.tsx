@@ -28,7 +28,7 @@ import { eachFileUnder, ListingStopped } from "../streamFiles";
 import { holdBatch } from "../transferLog";
 
 /** Which folder download owns each pane's busy line (keyed by the pane's setBusy). */
-const busyOwner = new WeakMap<object, symbol>();
+export const busyOwner = new WeakMap<object, symbol>();
 /** `localCopy` calls under way, by file and version: a second one waits for the first. */
 const inFlightCopies = new Map<string, Promise<string | null>>();
 import { parentOf, renameRounds } from "../batchRename";
@@ -56,7 +56,7 @@ export type OpsContext = {
   showActivity: () => void;
   showFailed?: () => void;
   /** with `stop`, the busy line shows a Stop button that runs it */
-  setBusy: (text: string | null, stop?: () => void) => void;
+  setBusy: (text: string | null, stop?: () => void, owner?: symbol) => void;
   confirm: (o: ConfirmOptions) => Promise<boolean>;
   prompt: (o: PromptOptions) => void;
   /** shows a dialog of its own (the Batch rename dialog) */
@@ -230,8 +230,8 @@ export function makeFileOps(c: OpsContext) {
     if (skipped) toast("info", NO_EXPORT);
     if (!list.length) return;
     const pid = profile.id;
-    // the busy line is one slot per pane: only the latest listing owns it, so an earlier one
-    // that ends first doesn't wipe the later one's text and Stop
+    // the busy line is one slot per pane: a listing takes it when it starts and only repaints
+    // while it still has it, so an earlier one that ends first doesn't wipe a later text and Stop
     const setBusy = c.setBusy;
     const mine = Symbol();
     const clearBusy = () => {
@@ -286,17 +286,17 @@ export function makeFileOps(c: OpsContext) {
       let cancelledAll = false;
       let failed: string | null = null;
       let failures = 0;
-      for (const e of folders) {
+      let notListed = 0;
+      for (const [i, e] of folders.entries()) {
         const base = relBase !== null && e.key.startsWith(relBase) ? relBase : parentPrefix(e.key);
         let found = 0;
         const run = eachFileUnder(pid, bucket, e.key, (files) => {
           found += files.length;
           start(files.flatMap((f) => item(f.key, f.size, f.key.slice(base.length))));
-          busyOwner.set(setBusy, mine);
-          setBusy(`Listing ${e.name}… ${plural(found, "file")} found`, run.stop);
+          // an older listing keeps quiet once a later download (or another writer) has the line
+          if (busyOwner.get(setBusy) === mine) setBusy(`Listing ${e.name}… ${plural(found, "file")} found`, run.stop, mine);
         });
-        busyOwner.set(setBusy, mine);
-        setBusy(`Listing ${e.name}…`, run.stop);
+        setBusy(`Listing ${e.name}…`, run.stop, mine);
         // the Activity log keeps this download as one while files are still being found
         const release = holdBatch(pid, bucket, dir);
         try {
@@ -304,6 +304,7 @@ export function makeFileOps(c: OpsContext) {
         } catch (err) {
           if (err instanceof ListingStopped) {
             stoppedAt = e.name;
+            notListed = folders.length - i - 1;
             cancelledAll = err.reason === "all";
             break;
           }
@@ -322,7 +323,8 @@ export function makeFileOps(c: OpsContext) {
       if (stoppedAt !== null) {
         // Cancel all cancelled the downloads too: nothing more to say
         if (cancelledAll) return;
-        toast("info", started ? `Stopped listing “${stoppedAt}”. ${plural(started, "file")} found so far keep downloading.` : `Stopped listing “${stoppedAt}”`);
+        const rest = notListed > 0 ? ` ${notListed === 1 ? "1 more folder wasn't" : `${notListed} more folders weren't`} listed.` : "";
+        toast("info", started ? `Stopped listing “${stoppedAt}”. ${plural(started, "file")} found so far keep downloading.${rest}` : `Stopped listing “${stoppedAt}”.${rest}`);
         return;
       }
       if (started === 0) {

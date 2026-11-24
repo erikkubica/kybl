@@ -10,7 +10,7 @@ export type XlsxRequest = { id: number; open: Uint8Array } | { id: number; sheet
 export type XlsxResponse =
   | { id: number; sheets: { name: string; hidden: boolean }[] }
   | { id: number; rows: string[][]; cut: { rows: number; cols: number } | null }
-  | { id: number; error: true };
+  | { id: number; error: true; refused?: true };
 
 let book: WorkBook | null = null;
 
@@ -25,7 +25,7 @@ self.onmessage = async (ev: MessageEvent<XlsxRequest>) => {
       // refused before SheetJS inflates anything (it even allocates what a part's header claims).
       // SheetJS unzips with its own code, so this check inflates every part once through JSZip with
       // a cap, and only a plain zip layout (where both readers see the same parts) is let through.
-      if (await zipTooBig(req.open)) return post({ id: req.id, error: true });
+      if (await zipTooBig(req.open)) return post({ id: req.id, error: true, refused: true });
       book = read(req.open, { type: "array", dense: true, cellHTML: false, cellStyles: false, bookVBA: false });
       const b = book;
       post({ id: req.id, sheets: b.SheetNames.map((name, i) => ({ name, hidden: !!b.Workbook?.Sheets?.[i]?.Hidden })) });
