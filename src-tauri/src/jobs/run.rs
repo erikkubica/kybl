@@ -193,6 +193,13 @@ async fn work(r: &mut Runner<'_>, spec: &Arc<JobSpec>, ctl: &Arc<Ctl>) -> JobSta
         stop: ctl.stop.clone(),
     });
 
+    // two saved connections to one store: their folders can hold each other (the page's checks
+    // only know a connection by its id)
+    if super::mirror::overlaps_in_one_place(spec, &*src, &*dst) {
+        r.set(JobState::Failed, Phase::Finished, Some("One of these folders is inside the other (both connections reach the same storage). Pick two separate folders.".into()));
+        return JobState::Failed;
+    }
+
     // 1. plan
     let planned = db::job(&inner.db.lock().unwrap(), &id).ok().flatten().is_some_and(|j| j.planned);
     if !planned && spec.mirror.is_some() {
@@ -405,6 +412,21 @@ async fn work(r: &mut Runner<'_>, spec: &Arc<JobSpec>, ctl: &Arc<Ctl>) -> JobSta
         if let Err(state) = delete_originals(r, &ctx, ctl).await {
             return state;
         }
+    }
+    // an item that failed for good keeps the upload it had begun (for a retry carrying on); a
+    // finished job's parts would cost storage for as long as it stays in the list, so they go
+    // now, and Retry failed starts those files afresh
+    let open = db::open_uploads(&inner.db.lock().unwrap(), &id).unwrap_or_default();
+    if !open.is_empty() {
+        let _ = db::clear_uploads(&inner.db.lock().unwrap(), &id);
+        let (dst, root) = (dst.clone(), spec.dst.root.clone());
+        tokio::spawn(async move {
+            if let Some(s3) = dst.as_s3() {
+                for (key, upload_id) in open {
+                    crate::storage::s3_stream::abort(s3, &root, &key, &upload_id).await;
+                }
+            }
+        });
     }
     r.reload();
     r.live.current.lock().unwrap().clear();

@@ -94,6 +94,28 @@ pub struct S3Backend {
 }
 
 impl S3Backend {
+    /// Copies a file or a folder and answers the source keys it copied.
+    async fn copy_keys(&self, from: &Loc, to: &Loc, is_dir: bool) -> SResult<Vec<String>> {
+        if from == to {
+            return Err(StorageError::other("Source and destination are the same"));
+        }
+        if !is_dir {
+            let h = self.client.head_object().bucket(&from.root).key(&from.path).send().await.map_err(sdk_err)?;
+            copy_object(&self.client, &from.root, &from.path, &to.root, &to.path, h.content_length().unwrap_or(0), None).await?;
+            return Ok(vec![from.path.clone()]);
+        }
+        if from.root == to.root && to.path.starts_with(&from.path) {
+            return Err(StorageError::other("Cannot copy a folder into itself"));
+        }
+        let mut copied = Vec::new();
+        for o in list_all(&self.client, &from.root, &from.path).await? {
+            let dst = format!("{}{}", to.path, &o.key[from.path.len()..]);
+            copy_object(&self.client, &from.root, &o.key, &to.root, &dst, o.size, None).await?;
+            copied.push(o.key);
+        }
+        Ok(copied)
+    }
+
     pub fn new(client: Client, profile: &Profile) -> Self {
         let quirks = Quirks::for_provider(&profile.provider);
         let ep = profile.endpoint.trim().to_ascii_lowercase();
@@ -441,29 +463,16 @@ impl Storage for S3Backend {
     }
 
     async fn copy(&self, from: &Loc, to: &Loc, is_dir: bool) -> SResult<()> {
-        if from == to {
-            return Err(StorageError::other("Source and destination are the same"));
-        }
-        if !is_dir {
-            let h = self.client.head_object().bucket(&from.root).key(&from.path).send().await.map_err(sdk_err)?;
-            return Ok(copy_object(&self.client, &from.root, &from.path, &to.root, &to.path, h.content_length().unwrap_or(0), None).await?);
-        }
-        if from.root == to.root && to.path.starts_with(&from.path) {
-            return Err(StorageError::other("Cannot copy a folder into itself"));
-        }
-        for o in list_all(&self.client, &from.root, &from.path).await? {
-            let dst = format!("{}{}", to.path, &o.key[from.path.len()..]);
-            copy_object(&self.client, &from.root, &o.key, &to.root, &dst, o.size, None).await?;
-        }
-        Ok(())
+        self.copy_keys(from, to, is_dir).await.map(|_| ())
     }
 
-    /// S3 has no rename: copy, then delete the originals once every copy made it.
+    /// S3 has no rename: copy, then delete the originals once every copy made it. Only the keys
+    /// that were copied are deleted: one that turned up in the folder meanwhile (another
+    /// device's upload) was never copied and stays.
     async fn rename(&self, from: &Loc, to: &Loc, is_dir: bool) -> SResult<()> {
-        self.copy(from, to, is_dir).await?;
+        let copied = self.copy_keys(from, to, is_dir).await?;
         let never = AtomicBool::new(false);
-        let (files, dirs) = if is_dir { (vec![], vec![from.path.clone()]) } else { (vec![from.path.clone()], vec![]) };
-        self.delete(&from.root, &files, &dirs, &never, &|_, _| {}).await?;
+        self.delete(&from.root, &copied, &[], &never, &|_, _| {}).await?;
         Ok(())
     }
 

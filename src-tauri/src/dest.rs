@@ -227,6 +227,28 @@ pub fn remove_part(part: &Path) {
     let _ = std::fs::remove_file(part);
 }
 
+/// What a file at the destination must still be when a download that replaces it is done.
+#[derive(Clone, Copy, Debug)]
+pub enum Stamp {
+    Absent,
+    /// size and modified time (ms) as the plan saw them
+    Matches(u64, i64),
+}
+
+/// What a download answers when the file at its destination changed while it ran.
+pub const CHANGED: &str = "The file here changed while it was downloaded, so it was left as it is.";
+
+impl Stamp {
+    /// Whether the file at `dest` is still the one this stamp describes.
+    pub fn holds(self, dest: &Path) -> bool {
+        match (self, std::fs::symlink_metadata(dest)) {
+            (Stamp::Absent, Err(e)) => e.kind() == std::io::ErrorKind::NotFound,
+            (Stamp::Matches(s, m), Ok(meta)) => meta.is_file() && meta.len() == s && crate::sync::local::mtime_ms(&meta) == m,
+            _ => false,
+        }
+    }
+}
+
 /// Puts a whole download in place: its partial file `part` becomes `dest`. With `replace`, a
 /// file at `dest` is replaced (the user asked to overwrite, or sync updates its own copy).
 /// Otherwise a file that turned up at `dest` while the download ran (the user saved one, another

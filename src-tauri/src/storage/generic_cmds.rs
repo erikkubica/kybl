@@ -631,10 +631,11 @@ pub(crate) async fn download(
     cancel: &AtomicBool,
     progress: Progress<'_>,
     hold: crate::transfers::Hold<'_>,
+    expect: Option<dest::Stamp>,
 ) -> Result<Outcome, String> {
     // held like any download's name: never two writers on one file (sync runs several at once)
     let _held = dest::hold_exact(dest)?;
-    let mut dl = Dl { replace: true, ..Default::default() };
+    let mut dl = Dl { replace: true, expect, ..Default::default() };
     download_resumable(s, bucket, key, dest, None, false, cancel, progress, hold, &mut dl).await
 }
 
@@ -865,6 +866,9 @@ pub(crate) struct Dl<'a> {
     /// a file at the destination may be replaced; otherwise one that turned up there while it
     /// ran is kept and the download lands under a free name (see `dest::finish`)
     pub replace: bool,
+    /// with `replace`: the file at the destination must still be this when the download is whole
+    /// (sync: an edit made during the download is not overwritten)
+    pub expect: Option<dest::Stamp>,
     /// where it landed, when that isn't the destination it was given
     pub landed: Option<PathBuf>,
 }
@@ -873,6 +877,11 @@ impl Dl<'_> {
     /// Puts the whole download `part` in place at `dest` (see `dest::finish`), noting a name
     /// other than `dest`.
     pub fn finish(&mut self, part: &Path, dest: &Path) -> std::io::Result<()> {
+        if self.replace && self.expect.is_some_and(|e| !e.holds(dest)) {
+            // the next run plans it again from what is there now
+            let _ = std::fs::remove_file(part);
+            return Err(std::io::Error::other(dest::CHANGED));
+        }
         let at = dest::finish(part, dest, self.replace)?;
         self.landed = (at != dest).then_some(at);
         Ok(())
@@ -1033,18 +1042,51 @@ mod tests {
             let report = |d: u64, total: u64| *seen.lock().unwrap() = (d, total);
             let dest = t.0.join("down/cat.jpg");
             let never = Arc::new(AtomicBool::new(false));
-            assert!(matches!(download(&b, &root, "photos/2026/cat.jpg", &dest, &never, &report, None).await.unwrap(), Outcome::Done));
+            assert!(matches!(download(&b, &root, "photos/2026/cat.jpg", &dest, &never, &report, None, None).await.unwrap(), Outcome::Done));
             assert_eq!(std::fs::read(&dest).unwrap().len(), 1000);
             assert_eq!(*seen.lock().unwrap(), (1000, 1000));
             assert!(!dest::part_path(&dest).exists());
 
             let stop = AtomicBool::new(true);
             let dest2 = t.0.join("down/stopped.jpg");
-            assert!(matches!(download(&b, &root, "photos/2026/cat.jpg", &dest2, &stop, &report, None).await.unwrap(), Outcome::Cancelled));
+            assert!(matches!(download(&b, &root, "photos/2026/cat.jpg", &dest2, &stop, &report, None, None).await.unwrap(), Outcome::Cancelled));
             assert!(!dest2.exists() && !dest::part_path(&dest2).exists());
 
             assert!(matches!(upload(&b, &root, "up/again.jpg", dest.to_str().unwrap(), &never, &report).await.unwrap(), Outcome::Done));
             assert_eq!(std::fs::read(t.0.join("root/up/again.jpg")).unwrap().len(), 1000);
+        });
+    }
+
+    #[test]
+    fn a_download_that_replaces_a_file_keeps_an_edit_made_while_it_ran() {
+        let (t, b, root) = setup();
+        futures_executor_block(async {
+            let never = Arc::new(AtomicBool::new(false));
+            let dest = t.0.join("down/sync.jpg");
+            std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+            std::fs::write(&dest, b"mine").unwrap();
+            let meta = std::fs::metadata(&dest).unwrap();
+            let stamp = dest::Stamp::Matches(meta.len(), crate::sync::local::mtime_ms(&meta));
+            // the user saves the file while the download is under way
+            let edit = || std::fs::write(&dest, b"mine, edited").unwrap();
+            let report = |_: u64, _: u64| edit();
+            let r = download(&b, &root, "photos/2026/cat.jpg", &dest, &never, &report, None, Some(stamp)).await;
+            assert!(matches!(&r, Err(e) if e == dest::CHANGED));
+            assert_eq!(std::fs::read(&dest).unwrap(), b"mine, edited", "the edit survives");
+            assert!(!dest::part_path(&dest).exists(), "nothing is left to resume");
+
+            // unchanged: replaced as before
+            let meta = std::fs::metadata(&dest).unwrap();
+            let stamp = dest::Stamp::Matches(meta.len(), crate::sync::local::mtime_ms(&meta));
+            assert!(matches!(download(&b, &root, "photos/2026/cat.jpg", &dest, &never, &|_, _| {}, None, Some(stamp)).await.unwrap(), Outcome::Done));
+            assert_eq!(std::fs::read(&dest).unwrap().len(), 1000);
+
+            // a file that turned up where there was none
+            let fresh = t.0.join("down/new.jpg");
+            let report = |_: u64, _: u64| std::fs::write(&fresh, b"theirs").unwrap();
+            let r = download(&b, &root, "photos/2026/cat.jpg", &fresh, &never, &report, None, Some(dest::Stamp::Absent)).await;
+            assert!(matches!(&r, Err(e) if e == dest::CHANGED));
+            assert_eq!(std::fs::read(&fresh).unwrap(), b"theirs");
         });
     }
 

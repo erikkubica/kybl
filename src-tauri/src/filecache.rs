@@ -488,6 +488,9 @@ pub async fn serve_download<R: Runtime>(
     };
     match copied {
         Ok(Some(held)) if std::fs::metadata(&part).map(|m| m.len()).ok() == Some(id.size) => {
+            // the version it was copied from, which the check afterwards compares the server's
+            // file with (a newer one there is no mismatch)
+            dl.etag.clone_from(&id.etag);
             // as a fetched download: a file that turned up at `dest` meanwhile is kept
             let r = dl.finish(&part, dest);
             drop(held);

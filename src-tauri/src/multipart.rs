@@ -499,14 +499,14 @@ async fn upload(
 }
 
 /// What the upload being completed looks like once the server has put it together.
-struct Ours<'a> {
-    total: u64,
-    parts: usize,
+pub(crate) struct Ours<'a> {
+    pub total: u64,
+    pub parts: usize,
     /// the multipart ETag its parts make, when the part ETags are MD5s
-    expected: Option<&'a str>,
+    pub expected: Option<&'a str>,
     /// the key's ETag before Complete was asked (looked up only without `expected`)
-    before: Option<&'a str>,
-    asked: SystemTime,
+    pub before: Option<&'a str>,
+    pub asked: SystemTime,
 }
 
 /// Did a CompleteMultipartUpload whose answer went missing go through anyway? The object is
@@ -514,7 +514,7 @@ struct Ours<'a> {
 /// (encrypting servers), it has a multipart ETag of as many parts (`"…-3"`) other than the one
 /// there before, written around the time it was asked for (servers' clocks may be up to 15
 /// minutes off). An earlier upload of the same size and part count is never taken for this one.
-async fn completed_anyway(client: &Client, bucket: &str, key: &str, ours: &Ours<'_>) -> bool {
+pub(crate) async fn completed_anyway(client: &Client, bucket: &str, key: &str, ours: &Ours<'_>) -> bool {
     let Ok(head) = client.head_object().bucket(bucket).key(key).send().await else { return false };
     let modified = head.last_modified().and_then(|d| SystemTime::try_from(*d).ok());
     looks_completed(head.content_length(), head.e_tag(), modified, ours)
