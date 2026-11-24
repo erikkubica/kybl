@@ -44,7 +44,7 @@ pub fn compress_script(dir: &str, names: &[String], dest: &str) -> String {
     let tmp = format!(".{}.kybl-{}.part", crate::storage::net::fit_name(dest, 1 + 6 + 8 + 5), tag());
     let list = names.iter().map(|n| q(n)).collect::<Vec<_>>().join(" ");
     format!(
-        "command -v zip >/dev/null 2>&1 || exit {NO_TOOL}; cd {d} || exit 1; T={t}; {stop}; {zip} || {{ rm -f \"$T\"; exit 1; }}; if [ -d {f} ]; then rm -f \"$T\"; echo \"A folder has that name.\" >&2; exit 1; fi; {gone}; if ln \"$T\" {f} 2>/dev/null; then rm -f \"$T\"; else {gone}; mv \"$T\" {f}; fi",
+        "command -v zip >/dev/null 2>&1 || exit {NO_TOOL}; cd {d} || exit 1; T={t}; {stop}; {zip} || {{ rm -f \"$T\"; exit 1; }}; if [ -d {f} ]; then rm -f \"$T\"; echo \"A folder has that name.\" >&2; exit 1; fi; {gone}; if ln -- \"$T\" {f} 2>/dev/null; then rm -f \"$T\"; else {gone}; mv -- \"$T\" {f}; fi",
         d = q(dir),
         t = q(&tmp),
         f = q(dest),

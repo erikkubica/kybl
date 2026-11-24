@@ -56,3 +56,43 @@ test("not a zip (an old .xls, a CSV): nothing to check", async () => {
   // starts like a zip but has no directory: refused rather than guessed at
   assert.notEqual(await zipTooBig(new Uint8Array([0x50, 0x4b, 3, 4, 0, 0, 0, 0]), caps), null);
 });
+
+// S-2: files JSZip reads differently from a plain zip. Each holds a part that inflates past the cap.
+const bomb = () => zip({ "word/document.xml": new Uint8Array(3 << 20) });
+const eocdOf = (z: Uint8Array) => {
+  const dv = new DataView(z.buffer, z.byteOffset, z.byteLength);
+  for (let i = z.length - 22; i >= 0; i--) if (dv.getUint32(i, true) === 0x06054b50) return i;
+  throw new Error("no end record");
+};
+
+test("a byte in front of the zip (JSZip shifts every offset) is refused, not taken for 'not a zip'", async () => {
+  const z = await bomb();
+  const prefixed = new Uint8Array(z.length + 1);
+  prefixed[0] = 10;
+  prefixed.set(z, 1);
+  assert.notEqual(await zipTooBig(prefixed, caps), null);
+  // and JSZip really does read it
+  assert.ok((await JSZip.loadAsync(prefixed)).files["word/document.xml"]);
+});
+
+test("a ZIP64 trigger JSZip honours but the 32-bit directory doesn't mention is refused", async () => {
+  const z = await bomb();
+  new DataView(z.buffer, z.byteOffset, z.byteLength).setUint32(eocdOf(z) + 12, 0xffffffff, true);
+  assert.notEqual(await zipTooBig(z, caps), null);
+});
+
+test("a zip comment, entries beyond the counted ones, and a gap before the end record are refused", async () => {
+  const z = await bomb();
+  const e = eocdOf(z);
+  const commented = new Uint8Array(z.length + 4);
+  commented.set(z);
+  new DataView(commented.buffer).setUint16(e + 20, 4, true);
+  assert.notEqual(await zipTooBig(commented, caps), null);
+  const fewer = z.slice();
+  new DataView(fewer.buffer).setUint16(e + 10, 0, true);
+  assert.notEqual(await zipTooBig(fewer, caps), null);
+  const gap = new Uint8Array(z.length + 3);
+  gap.set(z.subarray(0, e));
+  gap.set(z.subarray(e), e + 3);
+  assert.notEqual(await zipTooBig(gap, caps), null);
+});

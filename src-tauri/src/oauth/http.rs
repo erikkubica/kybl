@@ -360,7 +360,18 @@ pub fn net_error(kind: ConnKind, e: &reqwest::Error) -> StorageError {
     } else {
         format!("The connection to {} dropped. Try again.", kind.label())
     };
-    StorageError::new(ErrKind::Network, say).with_detail(e.to_string())
+    StorageError::new(ErrKind::Network, say).with_detail(without_url(e.to_string()))
+}
+
+/// A reqwest error's text with its URL taken out (`error sending request for url (…)`): the
+/// address of an upload session or a download link is a capability, and the detail goes into the
+/// Activity log, which people copy and send on (S-5).
+fn without_url(text: String) -> String {
+    const HEAD: &str = " for url (";
+    match text.find(HEAD) {
+        Some(i) if text.ends_with(')') => format!("{}hidden)", &text[..i + HEAD.len()]),
+        _ => text,
+    }
 }
 
 /// "HTTP 403: storageQuotaExceeded: The user's Drive storage quota has been exceeded."
@@ -446,6 +457,13 @@ pub fn enc(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_network_error_detail_has_no_url() {
+        let e = without_url("error sending request for url (https://x.example/up?tempauth=SECRET&upload_id=abc)".into());
+        assert_eq!(e, "error sending request for url (hidden)");
+        assert_eq!(without_url("operation timed out".into()), "operation timed out");
+    }
 
     /// B3-6 (round 4): a piece is ended by a stall, not by how long it takes. Bytes that keep
     /// moving keep it alive past the stall time; a piece that stops moving is a network error.

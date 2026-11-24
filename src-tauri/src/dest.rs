@@ -22,10 +22,12 @@ pub fn part_path(dest: &Path) -> PathBuf {
         return PathBuf::from(s);
     }
     // a name of 249-255 bytes has no room for ".s3part": the partial file gets a shorter name
-    // (the start of the name and a hash of all of it), the download keeps its own whole
+    // (the start of the name and a hash of all of it), the download keeps its own whole. 64 bits
+    // of hash: with 32, someone who names a file could find another name sharing the partial
+    // of a long-named file and make a retry carry on from the wrong bytes (S-9)
     use md5::{Digest, Md5};
     let full = name.to_string_lossy();
-    let hash: String = Md5::digest(full.as_bytes()).iter().take(4).map(|b| format!("{b:02x}")).collect();
+    let hash: String = Md5::digest(full.as_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect();
     let short = crate::storage::net::fit_name(&full, PART_SUFFIX.len() + 1 + hash.len());
     dest.with_file_name(format!("{short}~{hash}{PART_SUFFIX}"))
 }

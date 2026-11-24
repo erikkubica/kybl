@@ -150,46 +150,62 @@ pub async fn save_profile(
 /// A saved password is never sent to another server or user (S3-3).
 const PASSWORD_AGAIN: &str = "Enter the password again. A saved password isn't sent to a new server or user name.";
 
-/// Where a server connection's saved password is sent: its server and user name. `None`: no
-/// password to send (SFTP with a key or the agent, other kinds, whose secrets only sign).
+/// Where a connection's saved secret is sent: the server it connects to, the way it connects
+/// (TLS or plain) and, for passwords, the user name. Built from the same functions the connection
+/// itself uses, so a port typed into the host field, a `dav://` address (plain http) or a switch
+/// from TLS to plain count as a new place (S-4, B3-6). `None`: no secret that could be sent
+/// anywhere new (SFTP with a key or the agent, which only sign, and the other kinds, whose
+/// secrets only sign). An Azure SAS token or a Google service account key is the credential
+/// itself and goes to the endpoint, so those kinds follow the same rule (S-3).
 pub(crate) fn password_target(p: &Profile) -> Option<String> {
+    use crate::storage::net::socket_addr;
+    if matches!(p.kind, ConnKind::Azblob | ConnKind::Gcs) {
+        let b = p.blob.as_ref()?;
+        let place = blob_origin(p.kind, b);
+        return Some(if p.kind == ConnKind::Azblob { format!("{place}|{}", b.account.trim().to_lowercase()) } else { place });
+    }
     let n = p.net.as_ref()?;
-    let port = |default: u16| if n.port != 0 { n.port } else { default };
-    let host = || crate::storage::net::bare_host(&n.host).to_lowercase();
     let place = match p.kind {
-        ConnKind::Ftp => format!("{}:{}", host(), port(if n.tls == crate::state::TlsMode::Implicit { 990 } else { 21 })),
-        ConnKind::Sftp if n.auth == crate::state::NetAuth::Password => format!("{}:{}", host(), port(22)),
+        ConnKind::Ftp => {
+            let (host, port) = socket_addr(n, if n.tls == crate::state::TlsMode::Implicit { 990 } else { 21 });
+            // "Auto" falls back to plain FTP, so it is no better than plain for a password
+            let secure = matches!(n.tls, crate::state::TlsMode::Explicit | crate::state::TlsMode::Implicit);
+            format!("{}:{}:{port}", if secure { "tls" } else { "plain" }, host.to_lowercase())
+        }
+        ConnKind::Sftp if n.auth == crate::state::NetAuth::Password => {
+            let (host, port) = socket_addr(n, 22);
+            format!("{}:{port}", host.to_lowercase())
+        }
         ConnKind::Webdav => dav_origin(n),
         _ => return None,
     };
     Some(format!("{place}|{}", n.user.trim()))
 }
 
-/// A WebDAV connection's server: host and port of its address (`dav://` and `webdav://` read as
-/// `https://`), as the form compares it (NetForm `hostOf`).
+/// `scheme://host:port` of a URL, the default port spelled out; `None` when it isn't a URL.
+fn url_origin(raw: &str) -> Option<String> {
+    let u = reqwest::Url::parse(raw.trim()).ok()?;
+    Some(format!("{}://{}:{}", u.scheme(), u.host_str()?.to_lowercase(), u.port_or_known_default()?))
+}
+
+/// The server an Azure or Google Cloud Storage connection talks to (its endpoint, or the
+/// service's own address when none is set).
+fn blob_origin(kind: ConnKind, b: &crate::state::BlobConfig) -> String {
+    let ep = b.endpoint.trim();
+    let default = if kind == ConnKind::Azblob { format!("https://{}.blob.core.windows.net", b.account.trim()) } else { "https://storage.googleapis.com".to_string() };
+    let ep = if ep.is_empty() { default.as_str() } else { ep };
+    url_origin(ep).unwrap_or_else(|| ep.trim_end_matches('/').to_lowercase())
+}
+
+/// A WebDAV connection's server as the connection reaches it: scheme, host and port of the first
+/// address it tries (`dav://` and `webdav://` are plain http there, `davs://` is https).
 fn dav_origin(n: &crate::state::NetConfig) -> String {
-    let raw = match n.url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
-        Some(u) => u.to_string(),
-        None => {
-            let scheme = if n.tls == crate::state::TlsMode::None { "http" } else { "https" };
-            let port = if n.port != 0 { format!(":{}", n.port) } else { String::new() };
-            format!("{scheme}://{}{port}/", n.host.trim())
+    if let Some(u) = crate::storage::webdav::candidate_urls(n).ok().and_then(|c| c.into_iter().next()) {
+        if let Some(o) = url_origin(u.as_str()) {
+            return o;
         }
-    };
-    let fixed = match raw.split_once(':') {
-        Some((scheme, rest)) if ["dav", "davs", "webdav", "webdavs"].contains(&scheme.to_ascii_lowercase().as_str()) => format!("https:{rest}"),
-        _ => raw.clone(),
-    };
-    match reqwest::Url::parse(&fixed) {
-        Ok(u) if u.host_str().is_some() => {
-            let host = u.host_str().unwrap_or_default().to_lowercase();
-            match u.port() {
-                Some(p) => format!("{host}:{p}"),
-                None => host,
-            }
-        }
-        _ => raw.to_lowercase(),
     }
+    n.url.as_deref().unwrap_or(&n.host).trim().to_lowercase()
 }
 
 /// Whether `now`, an edit of the saved connection `saved`, would send its saved password to
@@ -1638,6 +1654,39 @@ mod tests {
         // a profile saved with host and port instead of an address
         let old = t(ConnKind::Webdav, NetConfig { host: "cloud.example.com".into(), tls: TlsMode::Implicit, user: "u".into(), ..Default::default() });
         assert_eq!(old, dav("https://cloud.example.com/"));
+        // the transport counts: https to http (or dav://, which is plain http) is a new place (B3-6, S-4)
+        assert_ne!(dav("https://cloud.example.com/"), dav("http://cloud.example.com/"));
+        assert_ne!(dav("https://cloud.example.com/"), dav("dav://cloud.example.com/"));
+        assert_ne!(dav("https://cloud.example.com/"), dav("ftp://cloud.example.com/"));
+        let tls = |tls| t(ConnKind::Ftp, NetConfig { tls, ..ftp.clone() });
+        assert_ne!(tls(TlsMode::Explicit), tls(TlsMode::None));
+        assert_ne!(tls(TlsMode::Explicit), tls(TlsMode::Auto));
+        // a port typed in the host field is the port connected to
+        assert_ne!(t(ConnKind::Ftp, ftp.clone()), t(ConnKind::Ftp, NetConfig { host: "files.example.com:2121".into(), ..ftp.clone() }));
+        assert_eq!(t(ConnKind::Ftp, NetConfig { host: "files.example.com:2121".into(), ..ftp.clone() }), t(ConnKind::Ftp, NetConfig { port: 2121, ..ftp.clone() }));
+    }
+
+    /// An Azure SAS token or a Google service account key is the credential itself: it must not
+    /// follow a new endpoint or account (S-3).
+    #[test]
+    fn a_saved_blob_secret_belongs_to_its_endpoint() {
+        use crate::state::BlobConfig;
+        let p = |kind: ConnKind, account: &str, endpoint: &str, container: &str| Profile {
+            kind,
+            blob: Some(BlobConfig { account: account.into(), endpoint: endpoint.into(), container: Some(container.into()) }),
+            ..Default::default()
+        };
+        let t = |q: Profile| password_target(&q);
+        let az = t(p(ConnKind::Azblob, "acct", "", "photos"));
+        assert!(az.is_some());
+        assert_eq!(az, t(p(ConnKind::Azblob, " Acct", "https://acct.blob.core.windows.net/", "other")), "the container may change");
+        assert_ne!(az, t(p(ConnKind::Azblob, "acct", "https://attacker.example", "photos")));
+        assert_ne!(az, t(p(ConnKind::Azblob, "acct", "http://acct.blob.core.windows.net", "photos")), "https to http");
+        assert_ne!(az, t(p(ConnKind::Azblob, "other", "", "photos")));
+        let g = t(p(ConnKind::Gcs, "", "", "bucket"));
+        assert!(g.is_some());
+        assert_eq!(g, t(p(ConnKind::Gcs, "", "https://storage.googleapis.com/", "other")));
+        assert_ne!(g, t(p(ConnKind::Gcs, "", "https://attacker.example", "bucket")));
     }
 
     #[test]

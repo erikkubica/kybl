@@ -10,7 +10,7 @@ import { formatBytes } from "./format.ts";
 const HIDDEN = "•••";
 /** query parameters that carry a credential or a signature (presigned S3 URLs, SAS, OAuth) */
 const SECRET_PARAMS =
-  /([?&;](?:x-amz-(?:signature|credential|security-token)|signature|sig|token|access_token|refresh_token|id_token|client_secret|password|passwd|pwd|secret|api_?key|key|code|se|sv|sp|skoid|sktid|skt|ske|sks|skv)=)[^&#\s"'<>]+/gi;
+  /([?&;](?:x-amz-(?:signature|credential|security-token)|signature|sig|token|access_token|refresh_token|id_token|client_secret|password|passwd|pwd|secret|api_?key|key|code|se|sv|sp|skoid|sktid|skt|ske|sks|skv|tempauth|upload_?id|x-goog-[a-z-]+|sharedaccesssignature|access_?key|auth)=)[^&#\s"'<>]+/gi;
 
 /**
  * Takes credentials out of text bound for the log: user:password in URLs, signed URL parameters,
@@ -21,9 +21,20 @@ export function redact(text: string): string {
     text
       // PEM blocks first: their body has no spaces the other rules could stop at
       .replace(/-----BEGIN [A-Z0-9 ]*-----[\s\S]*?(?:-----END [A-Z0-9 ]*-----|$)/g, "[private key removed]")
-      // scheme://user:password@host (and scheme://token@host)
-      .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@"'<>]+@/gi, `$1${HIDDEN}@`)
+      // scheme://user:password@host (and scheme://token@host); the scheme is capped so a long
+      // run of dots and letters can't make the scan quadratic (S-6)
+      .replace(/\b([a-z][a-z0-9+.-]{0,31}:\/\/)[^\s/@"'<>]+@/gi, `$1${HIDDEN}@`)
       .replace(SECRET_PARAMS, `$1${HIDDEN}`)
+      // the signature of an AWS `Authorization: AWS4-HMAC-SHA256 Credential=…, Signature=…` header
+      .replace(/\b(signature=)[^\s,&"']+/gi, `$1${HIDDEN}`)
+      // cookies and session headers, to the end of the line
+      .replace(/\b((?:set-)?cookie|x-auth-token)(\s*:\s*)[^\r\n]+/gi, `$1$2${HIDDEN}`)
+      // JSON tokens: {"token":"…"}, "id_token", "SessionToken"
+      .replace(/("(?:token|id_?token|session_?token)"\s*:\s*")[^"]*/gi, `$1${HIDDEN}`)
+      // environment style names: AWS_SECRET_ACCESS_KEY=…
+      .replace(/\b([A-Z0-9_]*SECRET[A-Z0-9_]*=)[^\s"',;&]+/g, `$1${HIDDEN}`)
+      // the per-run trust tag the app puts into host key and certificate errors
+      .replace(/\bkybl:[0-9a-f]{32}\b ?/g, "")
       .replace(/\b(authorization\s*[:=]\s*)(?:(bearer|basic|aws4-hmac-sha256)\s+)?[^\s,"']+/gi, (_m, head: string, scheme?: string) => `${head}${scheme ? `${scheme} ` : ""}${HIDDEN}`)
       .replace(/\b(bearer|basic)\s+[a-z0-9._~+/=-]{8,}/gi, `$1 ${HIDDEN}`)
       .replace(
