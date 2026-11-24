@@ -13,13 +13,14 @@ const later = new Set<string>();
 export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?: boolean }) {
   const [, rerender] = useState(0);
   const [started, setStarted] = useState(false);
-  const [busy, setBusy] = useState(false);
+  // what is still running when a restart was refused: transfers, or a program in a terminal
+  const [busy, setBusy] = useState<"transfers" | "terminal" | null>(null);
   const [restartError, setRestartError] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
   // once the transfers end, the next click is a plain restart again (it asks anew if still busy)
   const transfersActive = useTransfersActive();
   useEffect(() => {
-    if (!transfersActive) setBusy(false);
+    if (!transfersActive) setBusy((b) => (b === "transfers" ? null : b));
   }, [transfersActive]);
   const rel = st?.available;
   if (!st || !rel) return null;
@@ -34,7 +35,7 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
   };
   const go = () => {
     setStarted(true);
-    setBusy(false);
+    setBusy(null);
     setRestartError(null);
     setInstallError(null);
     if (rel.how !== "install") {
@@ -42,7 +43,7 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
       updatesApi.install().then(hide, (e) => setInstallError(errMessage(e)));
       return;
     }
-    installAndRestart(() => setBusy(true)).catch((e) =>
+    installAndRestart(setBusy).catch((e) =>
       e instanceof UpdateStepError && e.step === "install" ? setInstallError(e.message) : setRestartError(e instanceof Error ? e.message : String(e)),
     );
   };
@@ -76,7 +77,11 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
           <>
             <b>Kybl {rel.version} is installed</b>
             <small className={restartError ? "update-err" : undefined}>
-              {restartError ?? (busy ? "Transfers are still running. Restart when they finish, or now to stop them." : "Restart to start using it.")}
+              {restartError ?? (busy === "terminal"
+                ? "A program is still running in a terminal. Restart when it ends, or now to stop it."
+                : busy
+                  ? "Transfers are still running. Restart when they finish, or now to stop them."
+                  : "Restart to start using it.")}
             </small>
             <div className="update-actions">
               <button
@@ -85,10 +90,15 @@ export function UpdateBanner({ st, mobile }: { st: UpdateStatus | null; mobile?:
                   setRestartError(null);
                   setStarted(true);
                   // forced only once the user was told transfers are running
-                  updatesApi.restart(busy).catch((e) => (String(e) === "busy" ? setBusy(true) : setRestartError(String(e))));
+                  updatesApi.restart(!!busy).catch((e) => {
+                    const m = String(e);
+                    if (m === "busy") setBusy("transfers");
+                    else if (m === "busy:terminal") setBusy("terminal");
+                    else setRestartError(m);
+                  });
                 }}
               >
-                {busy ? "Restart and stop transfers" : "Restart now"}
+                {busy === "terminal" ? "Restart and close terminals" : busy ? "Restart and stop transfers" : "Restart now"}
               </button>
             </div>
           </>

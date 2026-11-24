@@ -1610,7 +1610,8 @@ fn parse_line(line: &str, mlsd: bool) -> Result<Option<Listed>, ()> {
             return Ok(None);
         }
         let f = ListParser::parse_posix(line).ok().or_else(|| ListParser::parse_posix(&p.canonical()).ok()).ok_or(())?;
-        let (name, link) = match p.name.split_once(" -> ") {
+        // only a link has a target: a file or folder may well have " -> " in its name
+        let (name, link) = match p.name.split_once(" -> ").filter(|_| p.kind == 'l') {
             Some((n, t)) => (n, Some(t.to_string())),
             None => (p.name, None),
         };
@@ -1705,8 +1706,18 @@ fn posix_parts<'a>(line: &'a str) -> Option<PosixLine<'a>> {
         return None;
     }
     let _links = tok()?;
-    let (owner, group, size) = (tok()?, tok()?, tok()?);
-    let (month, day, year_or_time) = (tok()?, tok()?, tok()?);
+    let owner = tok()?;
+    let (t1, t2, t3) = (tok()?, tok()?, tok()?);
+    let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
+    // owner, group, size, month, day, time; some servers leave the group out
+    let (group, size, month, day) = if digits(t2) && month_number(t3).is_some() {
+        (t1, t2, t3, tok()?)
+    } else if digits(t1) && month_number(t2).is_some() {
+        (owner, t1, t2, t3)
+    } else {
+        (t1, t2, t3, tok()?)
+    };
+    let year_or_time = tok()?;
     if !size.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
@@ -2272,6 +2283,17 @@ mod tests {
         for l in ["srwxr-xr-x 1 a b 0 Nov  5 13:46 sock", "prw-r--r-- 1 a b 0 Nov  5 13:46 fifo", "total 12", ""] {
             assert!(parse_line(l, false).unwrap().is_none(), "{l}");
         }
+        // a folder or file with " -> " in its name is no link
+        let d = read("drwxr-xr-x 2 ftp ftp 4096 Nov  5 13:46 a -> b", false);
+        assert_eq!((d.name(), d.link.is_none(), d.is_directory()), ("a -> b", true, true));
+        assert!(read("-rw-r--r-- 1 ftp ftp 12 Nov  5 13:46 x -> y.txt", false).link.is_none());
+        // servers that leave the group out
+        let f = read("-rw-r--r-- 1 owner 1234 Nov  5 13:46 a.txt", false);
+        assert_eq!((f.name(), f.size(), f.is_file()), ("a.txt", 1234, true));
+        let f = read("drwxr-xr-x 2 owner 4096 Nov  5  2025 my dir", false);
+        assert_eq!((f.name(), f.is_directory()), ("my dir", true));
+        // a numeric group still reads as a group
+        assert_eq!(read("-rw-r--r-- 1 owner 100 1234 Nov  5 13:46 a.txt", false).size(), 1234);
         // MLSD: the RFC 3659 OS-specific link type, odd modes
         let f = read("type=OS.unix=slink:/etc/x;size=5;modify=20261122100000; cur", true);
         assert_eq!((f.name(), f.link.as_deref(), f.is_symlink()), ("cur", Some("/etc/x"), true));

@@ -214,11 +214,13 @@ pub fn judge(r: &Remote, l: &Local, local_size: u64) -> Result<Checked, String> 
 const CHANGED: &str = "The file on the server changed since it was downloaded.";
 
 /// Whether the server's ETag now is another version than the one downloaded. Unknown on either
-/// side is no change: only two ETags that both say something can disagree.
+/// side is no change: only two ETags that both say something can disagree. Tags of another kind
+/// (FTP's own `mdtm:` version tag against a listing's stand-in) say nothing about each other.
 fn moved_on(downloaded: Option<&str>, now: Option<&str>) -> bool {
     let plain = |t: &str| t.trim().trim_start_matches("W/").trim_matches('"').to_ascii_lowercase();
+    let own = |t: &str| t.starts_with("mdtm:");
     match (downloaded.map(plain), now.map(plain)) {
-        (Some(a), Some(b)) => !a.is_empty() && !b.is_empty() && a != b,
+        (Some(a), Some(b)) => !a.is_empty() && !b.is_empty() && own(&a) == own(&b) && a != b,
         _ => false,
     }
 }
@@ -354,6 +356,10 @@ mod tests {
         assert!(!moved_on(None, Some("\"bb\"")));
         assert!(!moved_on(Some("\"aa\""), None));
         assert!(!moved_on(Some(""), Some("\"bb\"")));
+        // FTP: the read tag and the listing's stand-in for the same file can't be compared
+        assert!(!moved_on(Some("mdtm:400-20260101000000"), Some("65a1b2c3-400")));
+        assert!(!moved_on(Some("65a1b2c3-400"), Some("mdtm:400-20260101000000")));
+        assert!(moved_on(Some("mdtm:400-20260101000000"), Some("mdtm:400-20260102000000")));
     }
 
     #[test]

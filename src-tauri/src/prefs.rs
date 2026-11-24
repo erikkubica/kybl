@@ -13,6 +13,8 @@ use tauri::State;
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::{state::err, tuning::TransferPrefs};
+#[cfg(test)]
+use crate::tuning::VerifyMode;
 
 #[derive(Clone, PartialEq)]
 struct Stored {
@@ -32,11 +34,7 @@ impl Stored {
     fn from_map(m: &Map) -> Self {
         Self {
             close_to_tray: m.get(CLOSE_TO_TRAY).and_then(|v| v.as_bool()).unwrap_or(true),
-            transfers: m
-                .get(TRANSFERS)
-                .and_then(|v| serde_json::from_value::<TransferPrefs>(v.clone()).ok())
-                .unwrap_or_default()
-                .clamped(),
+            transfers: read_transfers(m.get(TRANSFERS)),
         }
     }
 
@@ -46,13 +44,47 @@ impl Stored {
         if self.close_to_tray != before.close_to_tray {
             m.insert(CLOSE_TO_TRAY.into(), self.close_to_tray.into());
         }
-        // (an old file's shared cap is only in `before`'s source, so a clamped copy always differs
-        // from it; writing it is what migrates the file)
-        if self.transfers != before.transfers || m.get(TRANSFERS).is_some_and(|v| v.get("bandwidthLimitKbps").is_some()) {
-            m.insert(TRANSFERS.into(), serde_json::to_value(self.transfers).unwrap_or_default());
+        if let Some(Ok(new)) = (self.transfers != before.transfers || m.get(TRANSFERS).is_some_and(|v| v.get("bandwidthLimitKbps").is_some()))
+            .then(|| serde_json::to_value(self.transfers))
+        {
+            let old = serde_json::to_value(before.transfers).unwrap_or_default();
+            if !m.get(TRANSFERS).is_some_and(|v| v.is_object()) {
+                m.insert(TRANSFERS.into(), Map::new().into());
+            }
+            let t = m.get_mut(TRANSFERS).and_then(|v| v.as_object_mut()).expect("an object, set above");
+            // an old file's shared cap moves into both directions, so the rewrite carries it over
+            let migrate = t.remove("bandwidthLimitKbps").is_some();
+            // only the fields that changed are written: a value this build couldn't read, or a
+            // key a newer build added, stays as it was
+            for (k, v) in new.as_object().into_iter().flatten() {
+                let limit = k == "downloadLimitKbps" || k == "uploadLimitKbps";
+                if old.get(k) != Some(v) || (migrate && limit) {
+                    t.insert(k.clone(), v.clone());
+                }
+            }
         }
         m
     }
+}
+
+/// Each transfer setting is read on its own, so one value this build can't read (a newer
+/// build's verify mode) falls back to its default without resetting the others.
+fn read_transfers(v: Option<&serde_json::Value>) -> TransferPrefs {
+    fn field<T: serde::de::DeserializeOwned>(o: &Map, k: &str) -> Option<T> {
+        o.get(k).and_then(|v| serde_json::from_value(v.clone()).ok())
+    }
+    let Some(o) = v.and_then(|v| v.as_object()) else { return TransferPrefs::default().clamped() };
+    let d = TransferPrefs::default();
+    TransferPrefs {
+        concurrency: field(o, "concurrency").unwrap_or(d.concurrency),
+        part_concurrency: field(o, "partConcurrency").unwrap_or(d.part_concurrency),
+        download_limit_kbps: field(o, "downloadLimitKbps").unwrap_or(d.download_limit_kbps),
+        upload_limit_kbps: field(o, "uploadLimitKbps").unwrap_or(d.upload_limit_kbps),
+        bandwidth_limit_kbps: field(o, "bandwidthLimitKbps").unwrap_or(d.bandwidth_limit_kbps),
+        wifi_only: field(o, "wifiOnly").unwrap_or(d.wifi_only),
+        verify: field(o, "verify").unwrap_or(d.verify),
+    }
+    .clamped()
 }
 
 #[cfg(desktop)]
@@ -177,15 +209,30 @@ mod tests {
     fn what_this_build_cannot_read_is_kept() {
         let m = map(json!({ "closeToTray": false, "transfers": { "verify": "someNewMode", "concurrency": 8 }, "newer": { "a": 1 } }));
         let before = Stored::from_map(&m);
-        // the unreadable transfers fall back, the readable setting still reads
+        // the unreadable value falls back alone, the readable ones still read
         assert!(!before.close_to_tray);
-        assert_eq!(before.transfers, TransferPrefs::default());
+        assert_eq!(before.transfers.concurrency, 8);
+        assert_eq!(before.transfers.verify, VerifyMode::Off);
         let mut s = before.clone();
         s.close_to_tray = true;
         let out = s.merged_into(&before, m);
         assert_eq!(out["closeToTray"], json!(true));
         assert_eq!(out["newer"], json!({ "a": 1 }));
         assert_eq!(out[TRANSFERS]["verify"], json!("someNewMode"));
+    }
+
+    #[test]
+    fn changing_one_transfer_setting_keeps_the_others_and_unknown_keys() {
+        let m = map(json!({ "transfers": { "verify": "someNewMode", "concurrency": 8, "extra": true } }));
+        let before = Stored::from_map(&m);
+        let mut s = before.clone();
+        s.transfers.upload_limit_kbps = 100;
+        let out = s.merged_into(&before, m);
+        assert_eq!(out[TRANSFERS]["verify"], json!("someNewMode"));
+        assert_eq!(out[TRANSFERS]["concurrency"], json!(8));
+        assert_eq!(out[TRANSFERS]["extra"], json!(true));
+        assert_eq!(out[TRANSFERS]["uploadLimitKbps"], json!(100));
+        assert!(out[TRANSFERS].get("partConcurrency").is_none());
     }
 
     #[test]

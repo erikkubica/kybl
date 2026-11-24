@@ -757,7 +757,9 @@ impl Storage for GDrive {
 
     async fn unpin_sources(&self, from: &[(Loc, bool)]) {
         for (loc, is_dir) in from {
-            self.cache.forget(&loc.root, &if *is_dir { dir_key(&loc.path) } else { loc.path.clone() });
+            let key = if *is_dir { dir_key(&loc.path) } else { loc.path.clone() };
+            self.cache.unpin(&loc.root, &key);
+            self.cache.forget(&loc.root, &key);
         }
     }
 

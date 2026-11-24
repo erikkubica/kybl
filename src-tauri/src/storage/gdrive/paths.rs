@@ -37,6 +37,9 @@ pub struct Node {
 #[derive(Default)]
 pub struct PathCache {
     map: Mutex<HashMap<(String, String), (Node, Instant)>>,
+    /// answers fixed for the length of a multi-item move: no listing, change poll or forget
+    /// replaces them, only `unpin` (or `PIN` running out) does
+    pins: Mutex<HashMap<(String, String), (Node, Instant)>>,
 }
 
 impl PathCache {
@@ -45,6 +48,17 @@ impl PathCache {
     }
 
     pub fn get_at(&self, root: &str, key: &str, now: Instant) -> Option<Node> {
+        {
+            let mut p = self.pins.lock().unwrap();
+            let k = (root.to_string(), key.to_string());
+            match p.get(&k) {
+                Some((n, until)) if now < *until => return Some(n.clone()),
+                Some(_) => {
+                    p.remove(&k);
+                }
+                None => {}
+            }
+        }
         let mut m = self.map.lock().unwrap();
         let k = (root.to_string(), key.to_string());
         match m.get(&k) {
@@ -71,11 +85,20 @@ impl PathCache {
         m.insert((root.to_string(), key.to_string()), (node, now));
     }
 
-    /// Keeps `key` → `node` for `PIN` instead of `TTL`: a multi-item move resolves all its sources
-    /// first, and numbered duplicates ("a (2).txt") must not be looked up again after an earlier
-    /// item changed which file is the second one. `forget` (or the end of the move) unpins.
+    /// Keeps `key` → `node` for `PIN`, whatever is listed or forgotten meanwhile: a multi-item move
+    /// resolves all its sources first, and numbered duplicates ("a (2).txt") must not be looked up
+    /// again after an earlier item (or a listing of the folder) changed which file is the second
+    /// one. Only `unpin` (the end of the move) lets go.
     pub fn pin(&self, root: &str, key: &str, node: Node) {
-        self.put_at(root, key, node, Instant::now() + PIN);
+        self.pin_at(root, key, node, Instant::now());
+    }
+
+    pub fn pin_at(&self, root: &str, key: &str, node: Node, now: Instant) {
+        self.pins.lock().unwrap().insert((root.to_string(), key.to_string()), (node, now + PIN));
+    }
+
+    pub fn unpin(&self, root: &str, key: &str) {
+        self.pins.lock().unwrap().remove(&(root.to_string(), key.to_string()));
     }
 
     /// Forgets `key` and, for a folder (or a name that may be one), everything inside it.
@@ -203,12 +226,17 @@ mod tests {
     }
 
     #[test]
-    fn a_pinned_answer_outlives_the_ttl_until_forgotten() {
+    fn a_pinned_answer_survives_listings_and_forgets_until_unpinned() {
         let c = PathCache::default();
         c.pin("root", "a (2).txt", node("B"));
+        // a listing of the folder renumbers the files: "a (2).txt" is another one now
+        c.put("root", "a (2).txt", node("C"));
         let later = Instant::now() + TTL + Duration::from_secs(30);
         assert_eq!(c.get_at("root", "a (2).txt", later).unwrap().id, "B");
+        c.forget_root("root");
         c.forget("root", "a (2).txt");
+        assert_eq!(c.get_at("root", "a (2).txt", later).unwrap().id, "B");
+        c.unpin("root", "a (2).txt");
         assert_eq!(c.get_at("root", "a (2).txt", later), None);
     }
 
