@@ -131,6 +131,8 @@ pub fn shell_quote(s: &str) -> String {
     crate::actions::quote(s)
 }
 
+pub(crate) const FILES_ONLY: &str = "This account is for file transfers only: the server gives it no shell, so a terminal can't open here.";
+
 /// The line typed into a fresh remote shell to go to folder `dir` (absolute, "~" or "~/…"), with
 /// a space in front so shells that skip such lines keep it out of their history. None when there
 /// is nothing to do (the home folder) or `dir` holds control characters, which typing would act on.
@@ -240,6 +242,11 @@ pub async fn terminal_open<R: Runtime>(
         open_local(&app, &state, &bucket, &prefix, cols, rows, cmd_rx, out_tx, exit_tx).await?
     } else {
         let backend = registry::sftp_for(&app, &state, &profile_id).await?;
+        // an account for file transfers only has no shell: say so, rather than open a "terminal"
+        // that is the SFTP server, silent until the first key ends it
+        if let Ok(Ok(crate::storage::sftp::command::Shell::FilesOnly)) = tokio::time::timeout(Duration::from_secs(10), backend.login_shell()).await {
+            return Err(FILES_ONLY.into());
+        }
         let base = backend.shell_dir("")?;
         let dir = backend.shell_dir(&prefix)?;
         let cd = remote_cd(&backend, &dir).await;
@@ -745,5 +752,52 @@ mod tests {
             let out = std::process::Command::new("/bin/sh").arg("-c").arg(format!("printf %s {}", shell_quote(s))).output().unwrap();
             assert_eq!(String::from_utf8(out.stdout).unwrap(), s);
         }
+    }
+
+    /// Against a real sshd (env KYBL_SSH_PORT, KYBL_SSH_KEY file, KYBL_SSH_FP, KYBL_SSH_USER): ignored by default.
+    #[cfg(unix)]
+    #[test]
+    #[ignore]
+    fn real_sshd_shell() {
+        use crate::state::{NetAuth, NetConfig};
+        use crate::storage::{net::{Secrets, SshKey}, sftp::SftpBackend};
+        let env = |k: &str| std::env::var(k).unwrap();
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let cfg = NetConfig { host: "127.0.0.1".into(), port: env("KYBL_SSH_PORT").parse().unwrap(), user: env("KYBL_SSH_USER"), host_key: Some(env("KYBL_SSH_FP")), auth: NetAuth::Key, base_path: "/tmp".into(), ..Default::default() };
+            let key = std::fs::read_to_string(env("KYBL_SSH_KEY")).unwrap();
+            let b = SftpBackend::new(&cfg, Secrets { password: None, ssh: Some(SshKey { private_key: key, passphrase: None }) }).unwrap();
+            let t0 = std::time::Instant::now();
+            let sh = b.login_shell().await;
+            eprintln!("SHELL = {sh:?} in {:?}", t0.elapsed());
+            if std::env::var("KYBL_SSH_FILES_ONLY").is_ok() {
+                assert!(matches!(sh, Ok(crate::storage::sftp::command::Shell::FilesOnly)));
+                assert!(t0.elapsed() < Duration::from_secs(3));
+                return;
+            }
+            let cd = remote_cd(&b, &b.shell_dir("").unwrap()).await;
+            eprintln!("cd = {cd:?}");
+            let (handle, ch) = b.open_shell(80, 24, Some("en_US.UTF-8")).await.unwrap();
+            let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+            let (out_tx, mut out_rx) = mpsc::channel(batch::QUEUE);
+            let (exit_tx, mut exit_rx) = oneshot::channel();
+            tokio::spawn(run_ssh(handle, ch, cd, cmd_rx, out_tx, exit_tx));
+            let mut out = String::new();
+            let mut sent = false;
+            let t = std::time::Instant::now();
+            while t.elapsed() < Duration::from_secs(6) {
+                if !sent && t.elapsed() > Duration::from_secs(2) {
+                    eprintln!("--- typing");
+                    cmd_tx.send(Cmd::Write(b"echo KYBL-$((40+2))\r".to_vec())).unwrap();
+                    sent = true;
+                }
+                if let Ok(Some(c)) = tokio::time::timeout(Duration::from_millis(200), out_rx.recv()).await {
+                    out.push_str(&String::from_utf8_lossy(&c));
+                }
+                if let Ok(code) = exit_rx.try_recv() { eprintln!("EXIT {code:?} at {:?}", t.elapsed()); break; }
+            }
+            eprintln!("OUTPUT: {out:?}");
+            assert!(out.contains("KYBL-42"));
+        });
     }
 }

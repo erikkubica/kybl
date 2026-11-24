@@ -59,6 +59,9 @@ pub(crate) enum Shell {
     Csh,
     /// cmd.exe, PowerShell, nushell, a menu: no commands are sent
     Other,
+    /// none at all: an account for file transfers only, whose every session runs the SFTP server
+    /// (a forced `sftp-server`, or it as the login shell). The probe ends at once, silent
+    FilesOnly,
 }
 
 /// Servers (`user@host:port#host key`) and their login shell, once known for sure.
@@ -86,8 +89,14 @@ fn read_probe(out: &str, exited: bool) -> Option<Shell> {
     if lines.iter().rev().any(|l| csh(l)) {
         return Some(Shell::Csh);
     }
+    // OpenSSH's own refusal under `ForceCommand internal-sftp`
+    if exited && lines.iter().any(|l| l.contains("allows sftp connections only")) {
+        return Some(Shell::FilesOnly);
+    }
     match lines.last() {
         Some(_) if exited => Some(Shell::Other),
+        // it ended without a word: what ran was no shell (any shell prints the echo)
+        None if exited && out.trim().is_empty() => Some(Shell::FilesOnly),
         _ => None,
     }
 }
@@ -202,7 +211,7 @@ impl SftpBackend {
         match self.login_shell().await? {
             Shell::Posix => self.exec_raw(command, cancel, on_data).await,
             Shell::Csh => self.exec_raw(&for_csh(command), cancel, on_data).await,
-            Shell::Other => Err(StorageError::other(NOT_POSIX)),
+            Shell::Other | Shell::FilesOnly => Err(StorageError::other(NOT_POSIX)),
         }
     }
 
@@ -222,7 +231,9 @@ impl SftpBackend {
         let stop = AtomicBool::new(false);
         // the end of what it prints is enough (startup files can print a lot before the answer)
         let mut out = Vec::new();
-        let run = self.exec_raw(PROBE, &stop, |err, d| {
+        // its input is closed at once: on an account for file transfers only the command is the
+        // SFTP server, which would otherwise wait for packets until the time limit
+        let run = self.exec_raw_with(PROBE, true, &stop, |err, d| {
             if !err {
                 out.extend_from_slice(d);
                 if out.len() > 4096 {
@@ -236,12 +247,20 @@ impl SftpBackend {
         Ok(sh)
     }
 
-    async fn exec_raw(&self, command: &str, cancel: &AtomicBool, mut on_data: impl FnMut(bool, &[u8])) -> SResult<ExecEnd> {
+    async fn exec_raw(&self, command: &str, cancel: &AtomicBool, on_data: impl FnMut(bool, &[u8])) -> SResult<ExecEnd> {
+        self.exec_raw_with(command, false, cancel, on_data).await
+    }
+
+    /// `no_input`: the command's input is closed right after it starts.
+    async fn exec_raw_with(&self, command: &str, no_input: bool, cancel: &AtomicBool, mut on_data: impl FnMut(bool, &[u8])) -> SResult<ExecEnd> {
         let c = self.conn().await?;
         let mut ch = c.handle.channel_open_session().await.map_err(|e| ssh_error(e, &self.host))?;
         ch.exec(true, command)
             .await
             .map_err(|e| StorageError::other("The server didn't run the command.").with_detail(e.to_string()))?;
+        if no_input {
+            let _ = ch.eof().await;
+        }
         let mut code = None;
         let mut stopped_at: Option<tokio::time::Instant> = None;
         let mut tick = tokio::time::interval(Duration::from_millis(100));
@@ -434,17 +453,21 @@ mod tests {
             assert_eq!(read_probe(&String::from_utf8_lossy(&out.stdout), true), Some(want), "{sh}");
         }
         assert_eq!(read_probe("kybl'sh a!#b c\\!d\r\n", true), Some(Shell::Posix));
+        // an account for file transfers only: the SFTP server ran, said nothing and ended
+        assert_eq!(read_probe("", true), Some(Shell::FilesOnly));
+        assert_eq!(read_probe("This service allows sftp connections only.\r\n", true), Some(Shell::FilesOnly));
+        // nothing because the connection dropped: asked again
+        assert_eq!(read_probe("", false), None);
         // startup files that print something first
         assert_eq!(read_probe("Welcome!\nconda: base\n\nkybl'sh a!#b c\\!d\n\n", true), Some(Shell::Posix));
         // and something printed after it (an EXIT trap, a login wrapper's footer)
         assert_eq!(read_probe("kybl'sh a!#b c\\!d\nLogged out at 12:00.\n", true), Some(Shell::Posix));
         assert_eq!(read_probe("motd\nkybl'sh a<words>b c!d\r\nbye\r\n", true), Some(Shell::Csh));
         // cmd.exe prints the line as it is; PowerShell's echo puts each word on its own line
-        for not in [r"'kybl'\''sh' 'a!#b' 'c\!d'", "kybl\n\\'sh\na!#b\nc\\!d", "This service allows sftp connections only.\n"] {
+        for not in [r"'kybl'\''sh' 'a!#b' 'c\!d'", "kybl\n\\'sh\na!#b\nc\\!d"] {
             assert_eq!(read_probe(not, true), Some(Shell::Other), "{not:?}");
         }
-        // no answer (dropped, or nothing came back) is not kept: asked again
-        assert_eq!(read_probe("", true), None);
+        // no answer because the connection dropped (no exit status) is not kept: asked again
         assert_eq!(read_probe("", false), None);
         assert_eq!(read_probe("kybl", false), None);
     }
