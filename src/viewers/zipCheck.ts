@@ -50,16 +50,17 @@ export async function plainForSheetJS(bytes: Uint8Array, caps = { part: PART_MAX
   if ("plain" in r) return { refused: "not a zip" };
   // SheetJS opens a part named Index.zip with its own unbounded unzip, and reads Numbers'
   // Index/Document.iwa with a quadratic decompressor (R9 S-2, S-3). A part that is itself a zip
-  // or a compound file is refused whatever it is called.
-  for (const [name, data] of r.parts) {
+  // or a compound file (an embedded chart, Word document or OLE object in an ordinary sheet) is
+  // left out of the copy SheetJS gets: it never needs them to show the cells, so the sheet still
+  // previews and SheetJS never sees a nested container.
+  const kept = r.parts.filter(([name, data]) => {
     const lower = name.toLowerCase();
-    if (lower.endsWith(".zip") || lower.endsWith(".iwa")) return { refused: `nested archive: ${name}` };
-    if (nestedContainer(data)) return { refused: `nested container: ${name}` };
-  }
+    return !(lower.endsWith(".zip") || lower.endsWith(".iwa") || nestedContainer(data));
+  });
   const out = new JSZip();
   // a fixed date: the rebuilt zip is only ever read by SheetJS
   const date = new Date(Date.UTC(1980, 0, 1));
-  for (const [name, data] of r.parts) out.file(name, data, { binary: true, compression: "STORE", createFolders: false, date });
+  for (const [name, data] of kept) out.file(name, data, { binary: true, compression: "STORE", createFolders: false, date });
   return { bytes: await out.generateAsync({ type: "uint8array", compression: "STORE" }) };
 }
 

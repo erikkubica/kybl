@@ -321,18 +321,23 @@ test("a real xlsx and ods survive the rebuild and still read (S-1)", async () =>
   assert.ok("refused" in (await plainForSheetJS(cfb)));
 });
 
-test("a part that is an archive, or named like one SheetJS reads itself, is refused (R9 S-2, S-3)", async () => {
+test("a part that is an archive, or named like one SheetJS reads itself, is left out of SheetJS's copy (R9 S-2, S-3)", async () => {
   const inner = await zip({ "a.txt": new TextEncoder().encode("x") });
+  const names = async (r: { bytes: Uint8Array } | { refused: string }) => {
+    assert.ok("bytes" in r);
+    return Object.keys((await JSZip.loadAsync(r.bytes)).files).sort();
+  };
+  // named like an archive SheetJS opens itself (whatever the content), or holding a zip (an embedded object)
   for (const name of ["Index.zip", "index.ZIP", "Index/Document.iwa", "x/y.IWA", "xl/media/image1.png"]) {
     const r = await plainForSheetJS(await zip({ "xl/workbook.xml": new TextEncoder().encode("<w/>"), [name]: inner }));
-    assert.ok("refused" in r, name);
+    assert.deepEqual(await names(r), ["xl/workbook.xml"], name);
   }
-  // a part that starts like a zip or a compound file, whatever its name
+  // a part that starts like a compound file (an embedded OLE object): left out, the sheet still previews
   const cfb = new Uint8Array(600);
   cfb.set([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
-  assert.ok("refused" in (await plainForSheetJS(await zip({ "xl/embeddings/o.bin": cfb }))));
-  // a plain workbook part is fine
-  assert.ok("bytes" in (await plainForSheetJS(await zip({ "xl/workbook.xml": new TextEncoder().encode("<w/>") }))));
+  assert.deepEqual(await names(await plainForSheetJS(await zip({ "xl/workbook.xml": new TextEncoder().encode("<w/>"), "xl/embeddings/o.bin": cfb }))), ["xl/workbook.xml"]);
+  // a plain workbook part is kept
+  assert.deepEqual(await names(await plainForSheetJS(await zip({ "xl/workbook.xml": new TextEncoder().encode("<w/>") }))), ["xl/workbook.xml"]);
 });
 
 test("a part that really inflates past the cap is refused before SheetJS (S-1)", async () => {
