@@ -15,8 +15,11 @@ import type { ListResult, ObjInfo } from "../types";
 import { watchConn } from "../connLog";
 
 /** One page of a folder; connecting, and failures, are noted in the Activity log (connLog.ts). */
-const listPage = (loc: Loc, token: string | null) =>
-  watchConn(loc.profileId, { root: loc.bucket, prefix: loc.prefix }, () => api.listObjects(loc.profileId, loc.bucket, loc.prefix, token));
+const listPage = (loc: Loc, token: string | null, quiet = false) =>
+  quiet
+    ? // a background refresh stays out of the Activity log: it neither announces connecting nor a failure
+      api.listObjects(loc.profileId, loc.bucket, loc.prefix, token)
+    : watchConn(loc.profileId, { root: loc.bucket, prefix: loc.prefix }, () => api.listObjects(loc.profileId, loc.bucket, loc.prefix, token));
 
 export type Loc = { profileId: string; bucket: string; prefix: string };
 /** `folderInfo`: what the server said about some folders (permissions, links; servers only). */
@@ -67,6 +70,8 @@ export function useListing(limit: number) {
    */
   const seed = useCallback((l: Listing) => {
     reqId.current++;
+    // read by refresh() right after, before the next render
+    current.current = l;
     setListing(l);
     setLoading(false);
     setError(null);
@@ -77,12 +82,15 @@ export function useListing(limit: number) {
    * as many items as before, then swapped in at once, so the scroll position and selection stay.
    */
   const refresh = useCallback(
-    async (loc: Loc): Promise<ListResult | null> => {
+    async (loc: Loc, quiet = false): Promise<ListResult | null> => {
       const before = current.current;
       if (!sameLoc(before.loc, loc)) return open(loc);
       const id = ++reqId.current;
-      setLoading(true);
-      setError(null);
+      // quiet: no loading state and no error, so a failure leaves the rows as they are
+      if (!quiet) {
+        setLoading(true);
+        setError(null);
+      }
       const want = Math.min(Math.max(before.folders.length + before.objects.length, 1), limit);
       const folders: string[] = [];
       const objects: ObjInfo[] = [];
@@ -91,7 +99,7 @@ export function useListing(limit: number) {
       let first: ListResult | null = null;
       try {
         do {
-          const res = await listPage(loc, next);
+          const res = await listPage(loc, next, quiet);
           if (id !== reqId.current) return null;
           first ??= res;
           folders.push(...res.folders);
@@ -103,10 +111,10 @@ export function useListing(limit: number) {
         return first;
       } catch (e) {
         if (id !== reqId.current) return null;
-        setError(errMessage(e));
+        if (!quiet) setError(errMessage(e));
         return null;
       } finally {
-        if (id === reqId.current) setLoading(false);
+        if (!quiet && id === reqId.current) setLoading(false);
       }
     },
     [open, limit],

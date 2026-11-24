@@ -192,9 +192,12 @@ function usePaneCore(env: PaneEnv) {
       setSelected(new Set());
       setCursor(null, true);
       pendingSelect.current = opts.selectKey ? { profileId: p.id, bucket: b, key: opts.selectKey } : null;
-      // a workspace coming back brings the listing it left with: no request, nothing reloads
-      if (opts.seed && sameLoc(opts.seed.loc, to)) lst.seed(opts.seed);
-      else void lst.open(to);
+      // a workspace coming back shows the listing it left with at once, then
+      // refreshes it quietly: no spinner, and a failure keeps the rows (a manual refresh shows it)
+      if (opts.seed && sameLoc(opts.seed.loc, to)) {
+        lst.seed(opts.seed);
+        void lst.refresh(to, true);
+      } else void lst.open(to);
       envRef.current.onNavigated?.(from, to);
     },
     [loc, sr, ent, lst, setSelected, setCursor],
