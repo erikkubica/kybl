@@ -144,7 +144,7 @@ export function SyncDialog({
   const deletes = twoway || m.mirrorDeletes;
 
   return (
-    <Modal title={existing ? "Edit synced folder" : "Sync a folder"} onClose={onClose} width={600}>
+    <Modal title={existing ? "Edit synced folder" : "Sync a folder"} onClose={onClose} width={600} locked={saving}>
       <div className="modal-body sync-form">
         <div className="field">
           <span>Folder on {ON_OS.here}</span>
@@ -292,18 +292,29 @@ export function SyncDialog({
           </div>
         </div>
 
-        <label className="field">
+        {/* not a <label>: a click on its words would press "Reset to defaults" (the first control in it) */}
+        <div className="field">
           <span className="field-head">
-            Ignore <em>· one pattern per line, like .gitignore</em>
+            <span id="sync-ignore-label">
+              Ignore <em>· one pattern per line, like .gitignore</em>
+            </span>
             <button type="button" className="link-btn" onClick={() => setIgnoreText(DEFAULT_IGNORE.join("\n"))}>
               Reset to defaults
             </button>
           </span>
-          <textarea className="ignore-input mono" rows={5} value={ignoreText} onChange={(e) => setIgnoreText(e.target.value)} spellCheck={false} />
-          <small className="field-hint">
+          <textarea
+            className="ignore-input mono"
+            rows={5}
+            value={ignoreText}
+            onChange={(e) => setIgnoreText(e.target.value)}
+            spellCheck={false}
+            aria-labelledby="sync-ignore-label"
+            aria-describedby="sync-ignore-hint"
+          />
+          <small className="field-hint" id="sync-ignore-hint">
             <code>*.log</code> any .log file · <code>cache/</code> any folder named cache · <code>/drafts</code> only at the top · <code>!keep.log</code> exception
           </small>
-        </label>
+        </div>
 
         {changingTarget && (
           <p className="hint warn">
@@ -319,7 +330,7 @@ export function SyncDialog({
         {!valid && !m.localPath && <p className="hint">Choose a folder on {ON_OS.here} to start.</p>}
       </div>
       <div className="modal-foot">
-        <button className="btn" onClick={onClose}>
+        <button className="btn" onClick={onClose} disabled={saving}>
           Cancel
         </button>
         <button className="btn btn-primary" disabled={!valid || saving} onClick={save}>

@@ -11,7 +11,7 @@
  * Recipes are kept per device (useRecipes.ts), apart from the workspaces, so closing a workspace
  * doesn't lose its recipe. Everything here is pure (the tests run it under node).
  */
-import type { PaneId } from "../browser/types";
+import type { Loc, PaneId } from "../browser/types";
 import type { PaneNode } from "./paneLayout";
 import type { Layout, PaneSnap } from "./workspaces";
 import type { TermPlace } from "../terminal/api";
@@ -103,6 +103,20 @@ export function openRecipe(r: Layout, sid: () => string, known: ((profileId: str
 
 /** The panes of a layout that are terminals, in the order they sit. */
 export const terminalPanes = (l: Layout): PaneId[] => ids(l.tree).filter((id) => !!l.panes[id]?.term);
+
+/**
+ * Where files dropped on a workspace's tab land: its most recently active file pane with a folder
+ * open (a terminal pane has no folder of its own), else null.
+ */
+export function dropPlace(l: Layout): Loc | null {
+  const ls = ids(l.tree);
+  const order = [...l.recent.filter((id) => ls.includes(id)), ...ls];
+  for (const id of order) {
+    const p = l.panes[id];
+    if (p && !p.term && p.loc) return p.loc;
+  }
+  return null;
+}
 
 /** What a recipe compares on: splits, links, and each pane's place, view and terminal folder. */
 function shape(l: Layout) {

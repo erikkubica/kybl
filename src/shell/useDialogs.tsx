@@ -127,6 +127,7 @@ export function DialogsProvider({ children }: { children: ReactNode }) {
           check={prompt.check}
           onSubmit={prompt.run}
           onClose={() => setPrompt((p) => (p?.seq === prompt.seq ? null : p))}
+          onLostError={(why) => toast("error", why)}
         />
       )}
       {modals.map((m) => (

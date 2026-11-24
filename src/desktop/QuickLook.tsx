@@ -18,6 +18,7 @@ import { LazyDocumentView, viewerFor } from "../viewers/registry";
 import { releaseOnUnmount } from "../releaseMedia";
 import { useLocalCopy } from "../localCopyProgress";
 import { useRevealHit } from "./revealHit";
+import { listKeyHeldByPreview } from "./quickKeys";
 import type { ContentHit } from "../browser/devtoolsApi";
 
 const MAX_TEXT = 50 * 1000 * 1000;
@@ -158,6 +159,10 @@ export function QuickLook({
         if (!working) onCopyFile(entry);
       } else handled = false;
       if (handled) {
+        e.preventDefault();
+        e.stopPropagation();
+      } else if (t.closest?.("[data-list-focus]") && listKeyHeldByPreview(e)) {
+        // the list underneath still has focus: Home, paging and type-to-select would move the selection off this file
         e.preventDefault();
         e.stopPropagation();
       }

@@ -69,18 +69,21 @@ const FIRST_COMMANDS = ["app:split-right", "app:new-folder", "app:upload-files",
 const isMacLike = /Mac|iPhone|iPad/i.test(navigator.userAgent);
 const MOD = isMacLike ? "⌘" : "Ctrl+";
 
-/** This computer's home folder (the root of kind "home"), asked once. */
+/** This computer's home folder (the root of kind "home"), asked once it is found; null when it couldn't be (asked again on the next open). */
 let homeAsk: Promise<string | null> | null = null;
 function homeDir(): Promise<string | null> {
-  homeAsk ??= api
+  const ask = (homeAsk ??= api
     .listRoots(THIS_MAC.id)
     .then((rs) => {
       // (the roots' names also tell closestLocalRoot which root holds a typed path)
       setRootNames(THIS_MAC.id, rs);
       return rs.find((r) => r.kind === "home")?.id ?? null;
     })
-    .catch(() => null);
-  return homeAsk;
+    .catch(() => null));
+  void ask.then((h) => {
+    if (h == null && homeAsk === ask) homeAsk = null;
+  });
+  return ask;
 }
 
 const trimSlash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
@@ -117,11 +120,15 @@ export default function CommandPalette({
   const [cursor, setCursor] = useState(0);
   const [expanded, setExpanded] = useState<Set<SectionId>>(new Set());
   const [home, setHome] = useState<string | null>(null);
+  const [noHome, setNoHome] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => {
     input.current?.focus();
-    void homeDir().then(setHome);
+    void homeDir().then((h) => {
+      setHome(h);
+      setNoHome(h == null);
+    });
   }, []);
 
   const a = host.active;
@@ -511,7 +518,7 @@ export default function CommandPalette({
 
   const placeholder = mode === "path" ? "Type a path…" : "Search connections, folders, commands and files…";
   const hint = current?.disabled ? null : current;
-  const pathHelp = mode === "path" && path?.pending ? "Finding your home folder…" : null;
+  const pathHelp = mode === "path" && path?.pending ? (noHome ? "Can't find your home folder. Type the full path." : "Finding your home folder…") : null;
 
   return (
     <div className="palette-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>

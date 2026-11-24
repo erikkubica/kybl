@@ -40,3 +40,6 @@ export const trashName = (onDisk: boolean, os: Os = OS) => (onDisk ? osNames(os)
 
 /** What a Delete button or menu item says: "Move to Trash" ("Recycle Bin") where deleted items can be restored, else "Delete". */
 export const deleteLabel = (trash: boolean, onDisk: boolean, os: Os = OS) => (trash ? `Move to ${trashName(onDisk, os)}` : "Delete");
+
+/** Where terminals open, for a refusal: this computer (not on Windows yet) and SFTP servers. */
+export const terminalsWhere = (os: Os = OS) => (os === "win" ? "Terminals open on SFTP connections" : `Terminals open on ${osNames(os).device} and on SFTP connections`);

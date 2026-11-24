@@ -10,7 +10,7 @@ import { peekCaps } from "../useCaps";
 import type { ReactNode } from "react";
 import type { ConfirmOptions, PromptOptions } from "../shell/useDialogs";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { api, errMessage, errSummary } from "../api";
+import { api, errMessage, errSummary, type OpResult } from "../api";
 import { formatBytes, parentPrefix, sumSizes } from "../format";
 import { destKey, entryParent, placeLabel } from "../moving";
 import type { Settings } from "../settings";
@@ -870,15 +870,19 @@ export function makeFileOps(c: OpsContext) {
     return ok;
   };
 
-  /** Says a copy is done, with an Undo that deletes exactly the objects it made (never anything added there later). */
+  /**
+   * Says a copy is done, with an Undo that deletes exactly the objects it made (never anything added
+   * there later), then the folders it made once nothing is left in them.
+   */
   const offerCopyUndo = async (pid: string, b: string, items: MoveItem[], label: string, done: string) => {
     let made: string[] | null = items.filter((i) => !i.isPrefix).map((i) => i.to);
+    const folders = items.filter((x) => x.isPrefix).map((i) => i.to);
     try {
-      for (const i of items.filter((x) => x.isPrefix)) made.push(...(await api.listAllUnder(pid, b, i.to, true)).map((o) => o.key));
+      for (const f of folders) made.push(...(await api.listAllUnder(pid, b, f, true)).map((o) => o.key));
     } catch {
       made = null;
     }
-    if (made) offerUndo({ label, run: deleteCopies(pid, b, made, label) }, done);
+    if (made) offerUndo({ label, run: deleteCopies(pid, b, made, label, folders) }, done);
     else toast("success", done);
   };
 
@@ -928,7 +932,7 @@ export function makeFileOps(c: OpsContext) {
   };
 
   /** Undo of a copy: deletes exactly the objects it made (asks first when that's a lot). */
-  const deleteCopies = (pid: string, b: string, keys: string[], label: string) => async () => {
+  const deleteCopies = (pid: string, b: string, keys: string[], label: string, folders: string[] = []) => async () => {
     if (keys.length > UNDO_CONFIRM_OVER) {
       const go = await c.confirm({
         title: `Delete ${plural(keys.length, "copied object")}?`,
@@ -940,9 +944,19 @@ export function makeFileOps(c: OpsContext) {
     }
     const uid = jobs.start({ kind: "delete", title: `Undoing: ${label}` });
     // deleting what is gone already is a no-op: a retry deletes the same list again
-    const again = () => void deleteCopies(pid, b, keys, label)();
+    const again = () => void deleteCopies(pid, b, keys, label, folders)();
     try {
-      const r = await api.deleteObjects(pid, b, keys, [], uid);
+      let r: OpResult = keys.length ? await api.deleteObjects(pid, b, keys, [], uid) : { done: 0, total: 0, error: null };
+      // the copied folders themselves (a folder copy made them all): only those still empty, so
+      // anything put in them since stays, folder and all
+      if (!r.error && folders.length) {
+        const empty: string[] = [];
+        for (const f of folders) if (!(await api.listAllUnder(pid, b, f, true)).length) empty.push(f);
+        if (empty.length) {
+          const f = await api.deleteObjects(pid, b, [], empty, uid);
+          r = { done: r.done + f.done, total: r.total + f.total, error: f.error };
+        }
+      }
       jobs.finish(uid, r, again);
       if (r.error && r.error !== "Cancelled") toast("error", r.error, showAction);
     } catch (e) {
@@ -964,7 +978,7 @@ export function makeFileOps(c: OpsContext) {
     const kind = addressKind({ roots: peekCaps(profile.id)?.roots, localPaths: c.localPaths, kind: profile.kind });
     const label = rootsMode(profile, peekCaps(profile.id)) === "drives" ? rootName(profile.id, bucket) : undefined;
     navigator.clipboard?.writeText(list.map((e) => itemAddress(kind, bucket, e.key, label)).join("\n")).catch(() => {});
-    toast("info", keys(`${mode === "cut" ? "Cut" : "Copied"} ${whatOf(list)}. Paste with ⌘V in another folder.`));
+    toast("info", `${mode === "cut" ? "Cut" : "Copied"} ${whatOf(list)}. ${keys("Paste with ⌘V in another folder.")}`);
   };
 
   /** ⌘V: copies or moves the clipped items into `dest` of the bucket on screen. */

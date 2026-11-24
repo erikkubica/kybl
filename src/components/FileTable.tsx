@@ -366,7 +366,7 @@ export function FileTable({
     // place it just selects the row); on the name or icon, or on a selected row, it drags
     const t = ev.target as HTMLElement;
     const plain = ev.button === 0 && !ev.shiftKey && !ev.metaKey && !ev.ctrlKey && !ev.altKey;
-    if (plain && onSelectKeys && !selected.has(e.key) && !t.closest(".name-text, .file-icon, svg, button, a")) {
+    if (plain && onSelectKeys && !selected.has(e.key) && !t.closest(".name-text, .ico, svg, button, a")) {
       nav.setKbd(false);
       marquee.begin(ev, () => onSelectKeys([e.key], e.key));
       return;

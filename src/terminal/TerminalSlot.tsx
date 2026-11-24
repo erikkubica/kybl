@@ -25,6 +25,8 @@ export type TerminalSlotProps = {
   active: boolean;
   dual: boolean;
   lifted?: boolean;
+  /** files from Finder over it: "paste" types their paths in, "refuse" (a server's shell) takes none */
+  drop?: "paste" | "refuse" | null;
   style?: CSSProperties;
   onActivate: () => void;
   onGrip?: (e: React.PointerEvent<HTMLElement>) => void;
@@ -116,6 +118,23 @@ export function TerminalSlot(p: TerminalSlotProps) {
         <Suspense fallback={null}>
           <TermView spec={spec} onToggle={p.onToggle} />
         </Suspense>
+        {p.drop && (
+          <div className="drop-overlay">
+            {p.drop === "paste" ? (
+              <div className="drop-card">
+                <Icon name="terminal" size={34} />
+                <strong>Drop to paste the paths</strong>
+                <span>into this terminal</span>
+              </div>
+            ) : (
+              <div className="drop-card refused">
+                <Icon name="alert" size={34} />
+                <strong>Can't drop here</strong>
+                <span>This terminal runs on a server</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );

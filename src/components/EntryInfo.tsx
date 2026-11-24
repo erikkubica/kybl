@@ -170,7 +170,9 @@ export function EntryInfo({
   const isS3 = caps?.roots === "buckets";
   // S3 has object keys; elsewhere it is a path (the full one on this computer, as ⌘C copies it)
   const kind = caps ? addressKind({ roots: caps.roots, localPaths: caps.localPaths }) : "s3";
-  const keyRow = kind === "s3" ? { label: "Object key", text: entry.key } : { label: "Path", text: itemAddress(kind, bucket, entry.key) };
+  // (named roots, Drive's "My Drive" or a shared drive, lead the path, as ⌘C copies it)
+  const rootLabel = caps?.roots === "drives" ? rootName(profileId, bucket) : undefined;
+  const keyRow = kind === "s3" ? { label: "Object key", text: entry.key } : { label: "Path", text: itemAddress(kind, bucket, entry.key, rootLabel) };
   // as the menu says it: "Move to Trash" where deleted items can be restored
   const delLabel = deleteLabel(!!caps?.trash, !!caps?.localPaths);
   const s3Uri = `s3://${bucket}/${entry.key}`;

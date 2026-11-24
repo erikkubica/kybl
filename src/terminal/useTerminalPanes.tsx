@@ -21,7 +21,7 @@ import { registerCommands } from "../palette/commands";
 import type { Entry, Profile } from "../types";
 import { TerminalSlot } from "./TerminalSlot";
 import { pastePreview } from "./quote";
-import { ON_OS } from "../osNames";
+import { ON_OS, terminalsWhere } from "../osNames";
 import {
   canTerminal,
   gcTerminals,
@@ -203,7 +203,7 @@ export function useTerminalPanes(initial: Layout) {
       return null;
     }
     if (!canTerminal(profileOf(loc.profileId))) {
-      h.toast("info", `Terminals open on ${ON_OS.device} and on SFTP connections.`);
+      h.toast("info", `${terminalsWhere()}.`);
       return null;
     }
     let made: PaneId | null = null;
@@ -314,7 +314,10 @@ export function useTerminalPanes(initial: Layout) {
   };
 
   /** Draws terminal pane `id`. */
-  const render = (id: PaneId, o: { style?: CSSProperties; active: boolean; dual: boolean; lifted?: boolean; onGrip?: (e: React.PointerEvent<HTMLElement>) => void }) => {
+  const render = (
+    id: PaneId,
+    o: { style?: CSSProperties; active: boolean; dual: boolean; lifted?: boolean; onGrip?: (e: React.PointerEvent<HTMLElement>) => void; drop?: "paste" | "refuse" | null },
+  ) => {
     const t = termsRef.current[id]!;
     const h = host.current!;
     const prof = profileOf(t.profileId);
@@ -334,6 +337,7 @@ export function useTerminalPanes(initial: Layout) {
         active={o.active}
         dual={o.dual}
         lifted={o.lifted}
+        drop={o.drop ?? null}
         style={o.style}
         onGrip={o.onGrip}
         onActivate={() => {
@@ -363,7 +367,7 @@ export function useTerminalPanes(initial: Layout) {
       const h = host.current;
       if (!h) return [];
       const src = h.fileId ? h.slot(h.fileId) : null;
-      const why = !src?.here ? "Open a folder first" : !canTerminal(src.profile) ? `Terminals open on ${ON_OS.device} and on SFTP connections` : null;
+      const why = !src?.here ? "Open a folder first" : !canTerminal(src.profile) ? terminalsWhere() : null;
       const mac = profileOf(LOCAL_PROFILE) ?? { id: LOCAL_PROFILE, kind: "local" as const };
       return [
         { id: "terminal:here", title: "Open Terminal Here", group: "Terminal", icon: "terminal", keywords: "shell console command line ssh", disabled: why, run: () => void (h.fileId && latest.current.open(h.fileId)) },

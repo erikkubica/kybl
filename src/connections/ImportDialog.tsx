@@ -184,7 +184,7 @@ export function ImportDialog({ onClose, onImported, toast }: Props) {
 
   return (
     // an import under way finishes here: closing now would lose what still needs a password
-    <Modal title={`Import from ${source.name}`} onClose={busy ? () => {} : onClose} width={640}>
+    <Modal title={`Import from ${source.name}`} onClose={onClose} locked={busy} width={640}>
       {loading ? (
         <div className="modal-body">
           <p className="hint">Reading {source.name}'s sites…</p>
