@@ -90,6 +90,11 @@ export function useConflictPrompt(toast?: (kind: Toast["kind"], text: string, ac
   const resolve = useCallback(
     (clashes: Clash[], verb: string, where: string, opts: ResolveOpts = {}): Promise<Map<string, Choice> | null> => {
       if (!clashes.length) return Promise.resolve(new Map());
+      // every clash already answered (remembered, or "all" said earlier in this action): nothing
+      // is asked, so it must not wait behind a dialog that belongs to something else
+      const sticky = opts.sticky ?? {};
+      const settled = clashes.every((c) => (opts.remember && rememberedChoice(opts.remember, c.folder)) || sticky[c.folder ? "folder" : "file"]);
+      if (settled) return askAll(clashes, verb, where, opts);
       const run = queue.current.then(() => askAll(clashes, verb, where, opts)).finally(() => setAsk(null));
       queue.current = run.catch(() => {});
       return run;
@@ -158,7 +163,7 @@ function ConflictDialog({ ask }: { ask: Ask }) {
           )}
           {more && (
             <button className="btn btn-ghost" onClick={() => pick("keep", true)} title={`Keep the existing ${folder ? "folder" : "file"} and add a number to the new one’s name, for all of them`}>
-              Keep both all
+              Keep both, all
             </button>
           )}
           <button className="btn btn-danger-ghost" onClick={() => pick("replace")}>

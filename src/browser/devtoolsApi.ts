@@ -49,8 +49,6 @@ export type GitOverview = {
   commits: GitCommit[];
   tag: string | null;
   stashes: number;
-  /** the last commit that touched the selected file, when one was asked about */
-  file: GitCommit | null;
 };
 
 export type ContentHit = {
@@ -87,7 +85,9 @@ export const devtoolsApi = {
   gitStatus: (profileId: string, bucket: string, prefix: string, force = false) =>
     invoke<GitInfo | null>("git_status", { profileId, bucket, prefix, force }),
   /** Tracking branch, remote, recent commits, tag, stashes and (for `file`, a file of the folder) its last commit; null when not a repository. */
-  gitOverview: (profileId: string, bucket: string, prefix: string, file?: string) => invoke<GitOverview | null>("git_overview", { profileId, bucket, prefix, file: file ?? null }),
+  gitOverview: (profileId: string, bucket: string, prefix: string) => invoke<GitOverview | null>("git_overview", { profileId, bucket, prefix }),
+  /** the last commit that touched one file of the folder */
+  gitFileCommit: (profileId: string, bucket: string, prefix: string, file: string) => invoke<GitCommit | null>("git_file_commit", { profileId, bucket, prefix, file }),
   /** A cloud drive's used and total space (total null: unlimited or not said); null when it doesn't say. */
   storageQuota: (profileId: string) => invoke<{ used: number; total: number | null } | null>("storage_quota", { profileId }),
   /** Files found stream in as `content-search-progress`; `cancelTransfer(opId)` stops it. */

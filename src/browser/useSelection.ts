@@ -84,9 +84,11 @@ export function useSelection(entries: Entry[], stale: boolean) {
     [entries, setCursor],
   );
 
-  // only the selection goes: the cursor stays as the arrow keys' starting point
+  // the selection and the highlight go (a ring left on the row just deselected reads as still
+  // selected); the cursor ref stays as the arrow keys' starting point
   const clear = useCallback(() => {
     setSelected(new Set());
+    setCursorKey(null);
   }, []);
   const deselect = useCallback(
     (keys: string[]) =>

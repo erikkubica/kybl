@@ -42,11 +42,14 @@ export async function findExistingLocal(paths: string[]): Promise<Set<string>> {
   return found;
 }
 
+/** Names per check call: one call lists each folder once, so this is large (a call per 1000 names listed it again each time). */
+const CHECK_CHUNK = 20_000;
+
 /** Which of `targets` already exist in the bucket (folders by prefix). */
 export async function findExisting(profileId: string, bucket: string, targets: { key: string; folder: boolean }[]): Promise<Set<string>> {
   const found = new Set<string>();
-  for (let i = 0; i < targets.length; i += CHUNK) {
-    const part = targets.slice(i, i + CHUNK);
+  for (let i = 0; i < targets.length; i += CHECK_CHUNK) {
+    const part = targets.slice(i, i + CHECK_CHUNK);
     const r = await api.existing(
       profileId,
       bucket,

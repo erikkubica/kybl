@@ -1629,7 +1629,7 @@ fn ftp_error_at(e: FtpError, host: &str, path: &str) -> StorageError {
             // joined by a slash, like `Permission/denied`, stay)
             let echoed = text
                 .split_whitespace()
-                .filter(|w| w.starts_with('/') || (!path.is_empty() && w.contains(path)))
+                .filter(|w| w.starts_with('/') || (path.trim_start_matches('/').chars().count() >= 2 && w.contains(path)))
                 .collect::<Vec<_>>()
                 .join(" ");
             let path = format!("{path} {echoed}");

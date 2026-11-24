@@ -15,6 +15,7 @@ use std::{
 };
 
 use futures_util::StreamExt;
+use unicode_normalization::UnicodeNormalization;
 use tauri::{AppHandle, Emitter, Runtime, State};
 use tokio::io::AsyncWriteExt;
 
@@ -487,6 +488,9 @@ pub async fn copy_or_move<R: Runtime>(
 const LIST_FROM: usize = 20;
 /// Pages of a folder read for that, so a huge folder is never walked to compare a few names.
 const LIST_PAGES: usize = 10;
+/// Names kept from one folder listing. FTP and SFTP return a whole folder as one "page", so the
+/// page cap alone bounds nothing there; past this the rest is checked name by name.
+const LIST_NAMES_MAX: usize = 20_000;
 
 /// Whether `names` going to one folder are worth one listing of it (never on this computer's disk).
 fn worth_listing(names: usize, local: bool) -> bool {
@@ -506,6 +510,10 @@ fn worth_listing(names: usize, local: bool) -> bool {
 pub async fn existing_keys(s: &dyn Storage, bucket: &str, keys: Vec<String>, prefixes: Vec<String>) -> Result<Existing, String> {
     use std::collections::{HashMap, HashSet};
     let local = s.caps().local_paths;
+    // object stores keep names exact; any other backend may treat `A.txt` and `a.txt` as one file,
+    // so a listing match ignores case and Unicode form (a false match only asks one more question)
+    let fold_names = s.caps().folders != FolderMode::Prefix;
+    let fold = move |k: &str| -> String { if fold_names { k.nfc().collect::<String>().to_lowercase() } else { k.to_string() } };
     let parent = |k: &str| -> String {
         let t = k.trim_end_matches('/');
         t.rfind('/').map_or(String::new(), |i| t[..=i].to_string())
@@ -522,13 +530,15 @@ pub async fn existing_keys(s: &dyn Storage, bucket: &str, keys: Vec<String>, pre
         for page_no in 1.. {
             match s.list(bucket, &dir, token).await {
                 Ok(page) => {
-                    names.extend(page.folders);
-                    names.extend(page.objects.into_iter().map(|e| e.key));
+                    names.extend(page.folders.iter().map(|k| fold(k)));
+                    names.extend(page.objects.into_iter().map(|e| fold(&e.key)));
                     token = page.next_token;
                     if token.is_none() {
-                        return (dir, Some((names, true)));
+                        // a one-page folder that is over the cap is not vouched for as a whole
+                        let whole = names.len() < LIST_NAMES_MAX;
+                        return (dir, Some((names, whole)));
                     }
-                    if page_no >= LIST_PAGES {
+                    if page_no >= LIST_PAGES || names.len() >= LIST_NAMES_MAX {
                         return (dir, Some((names, false)));
                     }
                 }
@@ -547,7 +557,7 @@ pub async fn existing_keys(s: &dyn Storage, bucket: &str, keys: Vec<String>, pre
             let probe = if dir && !k.ends_with('/') { format!("{k}/") } else { k.clone() };
             if let Some((names, whole)) = known {
                 // a folder can be listed as a file-like entry on some stores (a link): either counts
-                let there = names.contains(&probe) || names.contains(probe.trim_end_matches('/'));
+                let there = names.contains(&fold(&probe)) || names.contains(&fold(probe.trim_end_matches('/')));
                 // not seen in a part of the folder only: ask about this name itself
                 if there || *whole {
                     return Ok(there.then_some(k));

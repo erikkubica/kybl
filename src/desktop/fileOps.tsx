@@ -112,8 +112,10 @@ export function makeFileOps(c: OpsContext) {
     // ...but only rows a real load read from the server a moment ago: older rows may miss what
     // someone else added since, and a replace would then go through without a question
     const shown = c.shownKeys && Date.now() - c.shownKeys.at < SHOWN_KEYS_MAX_AGE ? c.shownKeys : null;
-    // this computer's disk treats names that differ only in case or Unicode form as one file
-    const disk = pid === LOCAL_ID;
+    // every store except an S3-like one may treat names that differ only in case or Unicode form
+    // as one file (this computer's disk, Windows FTP/SFTP/SMB servers, WebDAV, cloud drives): an
+    // extra question for two different names is harmless, a silent replace is not
+    const disk = pid === LOCAL_ID || (c.profile?.id === pid && (c.profile.kind ?? "s3") !== "s3");
     const fold = (k: string) => (disk ? k.normalize("NFC").toLowerCase() : k);
     const shownSet = shown ? new Set(disk ? [...shown.keys].map(fold) : shown.keys) : null;
     const parentOf = (k: string) => k.slice(0, k.replace(/\/$/, "").lastIndexOf("/") + 1);

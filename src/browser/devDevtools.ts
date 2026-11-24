@@ -5,7 +5,7 @@
  */
 import { emit } from "@tauri-apps/api/event";
 import type { ObjInfo } from "../types";
-import type { ContentHit, ContentResult, GitChange, GitInfo, GitOverview } from "./devtoolsApi";
+import type { ContentHit, ContentResult, GitChange, GitCommit, GitInfo, GitOverview } from "./devtoolsApi";
 
 type Dir = { folders: string[]; objects: ObjInfo[] };
 
@@ -87,7 +87,7 @@ const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
 const TEXTY = /\.(md|txt|ts|tsx|js|json|csv|ya?ml|toml|html|css|gitignore)$|^\.gitignore$/i;
 
 /** A made-up overview of the mock repository: ten commits, a tracking branch, a tag, a stash. */
-export function mockGitOverview(file?: string): GitOverview {
+export function mockGitOverview(): GitOverview {
   const now = Math.floor(Date.now() / 1000);
   const log: [string, string, string, number][] = [
     ["3f9c2ab", "Tidy the settings page", "Erik", 1.5],
@@ -109,8 +109,13 @@ export function mockGitOverview(file?: string): GitOverview {
     commits,
     tag: "v0.4.0",
     stashes: 1,
-    file: file ? commits[file.endsWith(".md") ? 8 : 1] : null,
   };
+}
+
+/** The mock's last commit of one file. */
+export function mockGitFileCommit(file: string): GitCommit {
+  const { commits } = mockGitOverview();
+  return commits[file.endsWith(".md") ? 8 : 1];
 }
 
 /** A content search over the files the mock lists (`files`), streaming like the backend. */

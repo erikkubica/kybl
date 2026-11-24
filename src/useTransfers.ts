@@ -672,7 +672,8 @@ export function runTotals(list: Transfer[]): { total: number; done: number } {
   let done = runPrunedBytes;
   for (const t of list) {
     if (!currentRun.has(t.id)) continue;
-    if (t.state !== "running" && t.state !== "queued" && t.state !== "done") continue;
+    // the same rule as `runCounts`: only what the user cancelled is left out
+    if (t.state === "cancelled") continue;
     total += t.total;
     done += t.state === "done" ? t.total : t.bytes;
   }
@@ -694,6 +695,9 @@ export function runCounts(list: Transfer[], recentMax = 5): { total: number; run
   const recent: Transfer[] = [];
   for (const t of list) {
     if (!currentRun.has(t.id)) continue;
+    // a cancelled row is the user's own choice: it leaves the total (and the bytes), so the
+    // header can still reach "of N"; failed and paused rows stay, they are still unfinished
+    if (t.state === "cancelled") continue;
     if (t.state === "running") running++;
     else if (t.state === "queued") queued++;
     else if (t.state === "done") {
@@ -701,7 +705,7 @@ export function runCounts(list: Transfer[], recentMax = 5): { total: number; run
       recent.push(t);
       if (recent.length > recentMax) recent.shift();
     } else if (t.state === "error") failed++;
-    // paused and cancelled rows are part of the run too, so the total doesn't shrink or read as finished
+    // failed and paused rows are part of the run too, so the total doesn't read as finished
     total++;
   }
   return { total, running, queued, done, failed, recent: recent.reverse() };
