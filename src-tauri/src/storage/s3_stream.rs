@@ -675,10 +675,15 @@ async fn send_sequential(
                     return Err(StorageError::other("The file changed while it was being copied.").with_detail(format!("expected {want} bytes, read {n}")));
                 }
                 let sent = Arc::new(AtomicU64::new(0));
-                let etag = ticking(put_single(client, bucket, key, content_type, data, etag_is_md5, sent.clone()), || {
+                // the speed cap waits inside the request body, so a Stop has to drop the request
+                // itself, or a stopped copy would finish (and a move would delete its source)
+                let put = ticking(put_single(client, bucket, key, content_type, data, etag_is_md5, sent.clone()), || {
                     progress(sent.load(Ordering::Relaxed).min(n), n)
-                })
-                .await?;
+                });
+                let etag = tokio::select! {
+                    r = put => r?,
+                    _ = wait_cancel(cancel) => return Ok(Sent::Cancelled),
+                };
                 return Ok(Sent::Single(etag, n));
             }
             if data.is_empty() {

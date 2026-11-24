@@ -13,6 +13,7 @@ import { SandboxFrame } from "./SandboxFrame";
 import { Note } from "./ui";
 import type { ViewerProps } from "./types";
 import { zipTooBig } from "./zipCheck";
+import { REFUSED, REFUSED_TEXT } from "./refused";
 
 /** A Word page (8.5in) plus the gap around it, in CSS pixels. */
 const PAGE_W = 816 + 40;
@@ -45,7 +46,7 @@ export default function DocxView({ name, bytes }: ViewerProps) {
         ignoreLastRenderedPageBreak: true,
       };
       // a few MB can inflate to GBs (on this thread): refused before anything is inflated for real
-      if (await zipTooBig(bytes)) throw new Error("too big to preview");
+      if (await zipTooBig(bytes)) throw new Error(REFUSED);
       const doc = await parseAsync(new Blob([bytes as BlobPart]), options);
       const nodes = await renderDocument(doc, options);
       // the nodes were made by docx-preview but never attached to the page
@@ -65,7 +66,7 @@ export default function DocxView({ name, bytes }: ViewerProps) {
     };
   }, [bytes]);
 
-  if (error) return <Note icon="alert">This document couldn't be shown. It may be damaged or use features the preview doesn't support.</Note>;
+  if (error) return <Note icon="alert">{error === REFUSED ? REFUSED_TEXT : "This document couldn't be shown. It may be damaged or use features the preview doesn't support."}</Note>;
   if (html === null) return <Note spinner>Laying out the pages…</Note>;
   return (
     <div className="dv-viewer dv-docx">

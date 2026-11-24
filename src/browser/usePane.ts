@@ -9,7 +9,7 @@ import { baseName, parentPrefix } from "../format";
 import { localParent } from "../connections/roots";
 import { useFolderSizes } from "../useFolderSizes";
 import { peekCaps, useCaps } from "../useCaps";
-import { makeFileOps, type FileOps } from "../desktop/fileOps";
+import { busyOwner, makeFileOps, type FileOps } from "../desktop/fileOps";
 import type { Place } from "../shell/crossPane";
 import type { Sort } from "../components/FileTable";
 import type { MenuItem } from "../components/Dialogs";
@@ -138,7 +138,11 @@ function usePaneCore(env: PaneEnv) {
   const [busy, setBusyText] = useState<string | null>(null);
   // a Stop next to the busy text (opening a big .tar.gz)
   const [busyStop, setBusyStop] = useState<(() => void) | null>(null);
-  const setBusy = useCallback((text: string | null, stop?: () => void) => {
+  const setBusy = useCallback(function setBusy(text: string | null, stop?: () => void, owner?: symbol) {
+    // a writer that doesn't say who it is takes the line from whoever had it, so a download
+    // listing that ends later doesn't clear this writer's text
+    if (owner) busyOwner.set(setBusy, owner);
+    else busyOwner.delete(setBusy);
     setBusyText(text);
     setBusyStop(() => (text && stop ? stop : null));
   }, []);

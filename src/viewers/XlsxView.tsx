@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { DataGrid } from "./DataGrid";
 import { columnCount, cutNote } from "./gridShape";
 import { Note } from "./ui";
+import { REFUSED_TEXT } from "./refused";
 import type { XlsxRequest, XlsxResponse } from "./xlsx.worker";
 import type { ViewerProps } from "./types";
 
@@ -16,7 +17,7 @@ type Rows = { rows: string[][]; cut: { rows: number; cols: number } | null };
 
 export default function XlsxView({ name, bytes, mode }: ViewerProps) {
   const [sheets, setSheets] = useState<Sheet[] | null>(null);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<"refused" | "failed" | null>(null);
   const [sheet, setSheet] = useState(0);
   const [data, setData] = useState<(Rows & { sheet: number }) | null>(null);
   const worker = useRef<Worker | null>(null);
@@ -34,7 +35,7 @@ export default function XlsxView({ name, bytes, mode }: ViewerProps) {
   useEffect(() => {
     setSheets(null);
     setData(null);
-    setError(false);
+    setError(null);
     setSheet(0);
     const w = new Worker(new URL("./xlsx.worker.ts", import.meta.url), { type: "module" });
     worker.current = w;
@@ -44,9 +45,9 @@ export default function XlsxView({ name, bytes, mode }: ViewerProps) {
       pending.delete(ev.data.id);
       then?.(ev.data);
     };
-    w.onerror = () => setError(true);
+    w.onerror = () => setError("failed");
     ask({ open: bytes }, (m) => {
-      if (!("sheets" in m)) return setError(true);
+      if (!("sheets" in m)) return setError("refused" in m && m.refused ? "refused" : "failed");
       const all = m.sheets.map((s, i) => ({ ...s, i }));
       const shown = all.filter((s) => !s.hidden);
       setSheets(shown.length ? shown : all);
@@ -65,14 +66,14 @@ export default function XlsxView({ name, bytes, mode }: ViewerProps) {
     ask({ sheet: s.name }, (m) => {
       if (!live) return;
       if ("rows" in m) setData({ rows: m.rows, cut: m.cut, sheet });
-      else setError(true);
+      else setError("failed");
     });
     return () => {
       live = false;
     };
   }, [sheets, sheet]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (error) return <Note icon="alert">This spreadsheet couldn't be read. It may be damaged or password-protected.</Note>;
+  if (error) return <Note icon="alert">{error === "refused" ? REFUSED_TEXT : "This spreadsheet couldn't be read. It may be damaged or password-protected."}</Note>;
   if (!sheets) return <Note spinner>Reading the spreadsheet…</Note>;
   if (!sheets.length) return <Note icon="text">This workbook has no sheets.</Note>;
   const rows = data?.sheet === sheet ? data : null;
