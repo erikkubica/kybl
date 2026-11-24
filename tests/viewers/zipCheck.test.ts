@@ -313,10 +313,26 @@ test("a real xlsx and ods survive the rebuild and still read (S-1)", async () =>
     assert.ok("bytes" in r, bookType);
     assert.deepEqual(XLSX.utils.sheet_to_json(XLSX.read(r.bytes, { type: "array" }).Sheets.S, { header: 1 }), [["a", "b"], [1, 2]], bookType);
   }
-  // not a zip (an old .xls is a compound file, a CSV is text): handed on untouched
+  // not a zip (an old .xls is a compound file, a CSV is text): refused, SheetJS would read them with its own code (R9 S-4)
   const csv = new TextEncoder().encode("a,b\n1,2\n");
-  const r = await plainForSheetJS(csv);
-  assert.ok("bytes" in r && r.bytes === csv);
+  assert.ok("refused" in (await plainForSheetJS(csv)));
+  const cfb = new Uint8Array(1024);
+  cfb.set([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+  assert.ok("refused" in (await plainForSheetJS(cfb)));
+});
+
+test("a part that is an archive, or named like one SheetJS reads itself, is refused (R9 S-2, S-3)", async () => {
+  const inner = await zip({ "a.txt": new TextEncoder().encode("x") });
+  for (const name of ["Index.zip", "index.ZIP", "Index/Document.iwa", "x/y.IWA", "xl/media/image1.png"]) {
+    const r = await plainForSheetJS(await zip({ "xl/workbook.xml": new TextEncoder().encode("<w/>"), [name]: inner }));
+    assert.ok("refused" in r, name);
+  }
+  // a part that starts like a zip or a compound file, whatever its name
+  const cfb = new Uint8Array(600);
+  cfb.set([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+  assert.ok("refused" in (await plainForSheetJS(await zip({ "xl/embeddings/o.bin": cfb }))));
+  // a plain workbook part is fine
+  assert.ok("bytes" in (await plainForSheetJS(await zip({ "xl/workbook.xml": new TextEncoder().encode("<w/>") }))));
 });
 
 test("a part that really inflates past the cap is refused before SheetJS (S-1)", async () => {

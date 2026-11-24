@@ -12,6 +12,9 @@ import { DAMAGED_TEXT, REFUSED_TEXT } from "./refused";
 import type { XlsxRequest, XlsxResponse } from "./xlsx.worker";
 import type { ViewerProps } from "./types";
 
+/** How long the worker may take for one request before it is ended. */
+const WORKER_LIMIT_MS = 15_000;
+
 type Sheet = { name: string; i: number };
 type Rows = { rows: string[][]; cut: { rows: number; cols: number } | null };
 
@@ -24,11 +27,28 @@ export default function XlsxView({ name, bytes, mode }: ViewerProps) {
   const seq = useRef(0);
   const waiting = useRef(new Map<number, (m: XlsxResponse) => void>());
 
+  const timers = useRef(new Set<number>());
+
   const ask = (req: { open: Uint8Array } | { sheet: string }, then: (m: XlsxResponse) => void) => {
     const w = worker.current;
     if (!w) return;
     const id = ++seq.current;
-    waiting.current.set(id, then);
+    // a file built to keep SheetJS busy for minutes would leave the spinner up for ever: past
+    // the limit the worker is ended and the file is called too big (R9 S-3)
+    const timer = window.setTimeout(() => {
+      timers.current.delete(timer);
+      if (worker.current !== w) return;
+      w.terminate();
+      worker.current = null;
+      waiting.current.clear();
+      setError("refused");
+    }, WORKER_LIMIT_MS);
+    timers.current.add(timer);
+    waiting.current.set(id, (m) => {
+      window.clearTimeout(timer);
+      timers.current.delete(timer);
+      then(m);
+    });
     w.postMessage({ ...req, id } satisfies XlsxRequest);
   };
 
@@ -52,10 +72,13 @@ export default function XlsxView({ name, bytes, mode }: ViewerProps) {
       const shown = all.filter((s) => !s.hidden);
       setSheets(shown.length ? shown : all);
     });
+    const running = timers.current;
     return () => {
       w.terminate();
       if (worker.current === w) worker.current = null;
       pending.clear();
+      running.forEach((t) => window.clearTimeout(t));
+      running.clear();
     };
   }, [bytes]); // eslint-disable-line react-hooks/exhaustive-deps
 

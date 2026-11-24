@@ -38,19 +38,36 @@ export async function zipTooBig(bytes: Uint8Array, caps = { part: PART_MAX, tota
  * it never gets the uploaded zip. Every part is read through the capped reader (one budget for the
  * whole file) and a fresh, plain zip is written from exactly those bytes: STORE only, honest sizes,
  * no data descriptors, no comment, no extra fields, one entry per name, no directory entries.
- * Anything that isn't a zip (an old .xls, which is a compound file, or a CSV) comes back as it
- * was. A compound file has no compression, so what SheetJS reads from it can't be bigger than the
- * file itself, which the registry already caps (30 MB).
+ * Anything that isn't a zip is refused (an old .xls is a compound file, which SheetJS reads in a
+ * way that multiplies memory), and so is a part that is itself an archive.
  */
 export async function plainForSheetJS(bytes: Uint8Array, caps = { part: PART_MAX, total: TOTAL_MAX }): Promise<{ bytes: Uint8Array } | { refused: string }> {
   const r = await scan(bytes, caps, true);
   if ("refused" in r) return r;
-  if ("plain" in r) return { bytes };
+  // not a zip: a compound file (an old .xls, or anything renamed to .xlsx) is read by SheetJS's
+  // own code, where many directory entries can share one chain of sectors and a 2 MB file
+  // costs GBs (R9 S-4). The viewer no longer previews those, so a non-zip is refused here too.
+  if ("plain" in r) return { refused: "not a zip" };
+  // SheetJS opens a part named Index.zip with its own unbounded unzip, and reads Numbers'
+  // Index/Document.iwa with a quadratic decompressor (R9 S-2, S-3). A part that is itself a zip
+  // or a compound file is refused whatever it is called.
+  for (const [name, data] of r.parts) {
+    const lower = name.toLowerCase();
+    if (lower.endsWith(".zip") || lower.endsWith(".iwa")) return { refused: `nested archive: ${name}` };
+    if (nestedContainer(data)) return { refused: `nested container: ${name}` };
+  }
   const out = new JSZip();
   // a fixed date: the rebuilt zip is only ever read by SheetJS
   const date = new Date(Date.UTC(1980, 0, 1));
   for (const [name, data] of r.parts) out.file(name, data, { binary: true, compression: "STORE", createFolders: false, date });
   return { bytes: await out.generateAsync({ type: "uint8array", compression: "STORE" }) };
+}
+
+/** Starts like a zip (`PK`) or an old Office compound file. */
+function nestedContainer(d: Uint8Array): boolean {
+  if (d.length >= 2 && d[0] === 0x50 && d[1] === 0x4b) return true;
+  const cfb = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+  return d.length >= 8 && cfb.every((x, i) => d[i] === x);
 }
 
 async function scan(bytes: Uint8Array, caps: { part: number; total: number }, keep: boolean): Promise<Scan> {

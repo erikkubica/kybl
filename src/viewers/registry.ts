@@ -66,7 +66,10 @@ function kindOf(name: string, contentType?: string | null): ViewerKind | null {
   if (ext === "csv" || ext === "tsv") return "csv";
   if (ext === "json" || ext === "jsonl" || ext === "ndjson" || ext === "geojson" || ext === "webmanifest") return "json";
   if (ext === "docx") return "docx";
-  if (ext === "xlsx" || ext === "xlsm" || ext === "xls" || ext === "ods") return "xlsx";
+  if (ext === "xlsx" || ext === "xlsm" || ext === "ods") return "xlsx";
+  // old compound-file spreadsheets and Numbers are read by SheetJS's own unbounded code: no
+  // in-app preview, so they get "Open in another app" like any file without a viewer (R9 S-4)
+  if (ext === "xls" || ext === "xlsb" || ext === "numbers") return null;
   if (ext === "pptx") return "pptx";
   if (IMAGES.includes(ext)) return "image";
   if (CODE.includes(ext)) return "text";
