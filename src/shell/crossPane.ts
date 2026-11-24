@@ -14,7 +14,8 @@
  * Between this computer and the cloud nothing is moved: the originals stay, so F6 there copies.
  */
 import { api, errMessage, LOCAL_ID } from "../api";
-import { parentPrefix } from "../format";
+import { busyOwner } from "../desktop/fileOps";
+import { parentPrefix, plural } from "../format";
 import { joinPath, safeRelPath } from "../desktop/paths";
 import { eachFileUnder, ListingStopped } from "../streamFiles";
 import { holdBatch } from "../transferLog";
@@ -61,6 +62,11 @@ export type CrossCtx = {
   autoShowActivity: () => void;
   /** refreshes the panes showing this place */
   reloadIfShowing: (profileId: string, bucket: string) => boolean;
+  /**
+   * The busy-line writer of a pane showing this place, if one is on screen: a listing that runs
+   * before any file is found says so there (as a download from the pane itself does).
+   */
+  busyFor?: (profileId: string, bucket: string) => Pane["setBusy"] | undefined;
   /** the quick confirm that starts a job between connections */
   confirmMigration?: ConfirmMigration;
 };
@@ -129,7 +135,7 @@ export async function sendItems(
       c.dialogs.toast("error", errMessage(e));
       return;
     }
-    if (await downloadInto(a, items, dir, c, () => c.reloadIfShowing(b.profileId, b.bucket))) onStarted?.();
+    if (await downloadInto(a, items, dir, c, b, () => c.reloadIfShowing(b.profileId, b.bucket))) onStarted?.();
     return;
   }
   if (await srcOps.relocate(items, dest, mode, { srcBucket: a.bucket, destBucket: b.bucket })) onStarted?.();
@@ -141,7 +147,7 @@ export async function sendItems(
  * sit silent while it is listed. A file already there is kept and the copy gets a free name, like
  * Finder. `done` runs once all ended. True when downloads were started.
  */
-async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx, done: () => void): Promise<boolean> {
+async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx, dest: Place, done: () => void): Promise<boolean> {
   const { profileId, bucket } = src;
   const ids: string[] = [];
   const item = (key: string, size: number, rel: string) => {
@@ -157,22 +163,50 @@ async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx
   start(items.filter((e) => e.kind === "file").flatMap((e) => item(e.key, e.size, e.name)));
   let stopped = false;
   let stopNow: (() => void) | null = null;
+  // the listing shows on the busy line of the folder it lands in (the source pane if that isn't
+  // on screen), where Stop sits next to the count; the toast only carries Stop without one
+  const setBusy = c.busyFor?.(dest.profileId, dest.bucket) ?? c.busyFor?.(profileId, bucket);
+  const mine = Symbol();
+  let listing = true;
+  // the line is ours to paint when we hold it or nobody does (another writer finished)
+  const mayPaint = () => {
+    if (!setBusy) return false;
+    const o = busyOwner.get(setBusy);
+    return listing && (o === mine || o === undefined);
+  };
   if (folders.length) {
-    c.dialogs.toast("info", `${folders.length === 1 ? `Copying “${folders[0].name}”` : `Copying ${folders.length} folders`} here. Files start as they're found.`, {
-      label: "Stop listing",
-      run: () => {
-        stopped = true;
-        stopNow?.();
-      },
-    });
+    const what = folders.length === 1 ? `Copying “${folders[0].name}”` : `Copying ${folders.length} folders`;
+    c.dialogs.toast(
+      "info",
+      `${what} here. Files start as they're found.`,
+      setBusy
+        ? undefined
+        : {
+            label: "Stop listing",
+            run: () => {
+              stopped = true;
+              stopNow?.();
+            },
+          },
+    );
   }
   let failed: string | null = null;
   let failures = 0;
-  for (const e of folders) {
+  for (const [i, e] of folders.entries()) {
     if (stopped) break;
     const base = parentPrefix(e.key);
-    const run = eachFileUnder(profileId, bucket, e.key, (files) => start(files.flatMap((f) => item(f.key, f.size, f.key.slice(base.length)))));
+    let found = 0;
+    const stop = () => {
+      stopped = true;
+      run.stop();
+    };
+    const run = eachFileUnder(profileId, bucket, e.key, (files) => {
+      found += files.length;
+      start(files.flatMap((f) => item(f.key, f.size, f.key.slice(base.length))));
+      if (mayPaint()) setBusy!(`Listing ${e.name}… ${plural(found, "file")} found`, stop, mine);
+    });
     stopNow = run.stop;
+    if (setBusy && (i === 0 || mayPaint())) setBusy(`Listing ${e.name}…`, stop, mine);
     // the Activity log keeps this download as one while files are still being found
     const release = holdBatch(profileId, bucket, dir);
     try {
@@ -191,6 +225,8 @@ async function downloadInto(src: Place, items: Entry[], dir: string, c: CrossCtx
     }
   }
   stopNow = null;
+  listing = false;
+  if (setBusy && busyOwner.get(setBusy) === mine) setBusy(null);
   if (failed) {
     const more = failures > 1 ? ` (${failures} of ${folders.length} folders couldn't be listed)` : "";
     c.dialogs.toast("error", ids.length ? `${failed}${more}. The files found so far are copying.` : `${failed}${more}`);

@@ -20,7 +20,7 @@ import type { Pane, PaneEnv } from "../browser/usePane";
 import type { Loc, PaneId } from "../browser/types";
 import { compareFolders, diffSelection, etagsComparable } from "../compare/compareFolders";
 import { CompareSummary } from "../compare/CompareSummary";
-import { crossesDisk, sendToPane, viaJob } from "./crossPane";
+import { crossesDisk, sendToPane, viaJob, type CrossCtx } from "./crossPane";
 import type { Dialogs } from "./useDialogs";
 import type { ConfirmMigration } from "./useMigrationHost";
 import { ON_OS } from "../osNames";
@@ -48,6 +48,7 @@ export type DualContext = {
   autoShowActivity: () => void;
   focusPane: (id: PaneId) => void;
   reloadIfShowing: (profileId: string, bucket: string) => boolean;
+  busyFor?: CrossCtx["busyFor"];
   /** F5 / F6 between connections: the job's quick confirm (destination editable) */
   confirmMigration?: ConfirmMigration;
 };

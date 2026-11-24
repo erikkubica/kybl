@@ -21,6 +21,7 @@ import type { Dialogs } from "../shell/useDialogs";
 import type { Connections } from "../shell/useConnections";
 import type { OpenMigration } from "../shell/useMigrationHost";
 import { useEntries } from "./useEntries";
+import { sameLoc, type Listing } from "./useListing";
 import { useLocation } from "./useLocation";
 import { useSelection } from "./useSelection";
 import { useEntryActions } from "./useEntryActions";
@@ -181,7 +182,7 @@ function usePaneCore(env: PaneEnv) {
   // ------------------------------------------------------------ navigation
   /** Shows a place: the one central way to change connection, bucket or folder. */
   const go = useCallback(
-    (p: Profile, b: string, pre: string, opts: { selectKey?: string; history?: boolean } = {}) => {
+    (p: Profile, b: string, pre: string, opts: { selectKey?: string; history?: boolean; seed?: Listing } = {}) => {
       const to = { profileId: p.id, bucket: b, prefix: pre };
       const from = hereRef.current;
       loc.set(to, { history: opts.history });
@@ -191,7 +192,12 @@ function usePaneCore(env: PaneEnv) {
       setSelected(new Set());
       setCursor(null, true);
       pendingSelect.current = opts.selectKey ? { profileId: p.id, bucket: b, key: opts.selectKey } : null;
-      void lst.open(to);
+      // a workspace coming back shows the listing it left with at once, then
+      // refreshes it quietly: no spinner, and a failure keeps the rows (a manual refresh shows it)
+      if (opts.seed && sameLoc(opts.seed.loc, to)) {
+        lst.seed(opts.seed);
+        void lst.refresh(to, true);
+      } else void lst.open(to);
       envRef.current.onNavigated?.(from, to);
     },
     [loc, sr, ent, lst, setSelected, setCursor],
