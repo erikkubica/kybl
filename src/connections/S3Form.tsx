@@ -1,6 +1,5 @@
 /** S3-compatible storage: a provider preset, an endpoint, and an access key pair. */
 import { useImperativeHandle, useState } from "react";
-import { Icon } from "../Icons";
 import { providerMeta } from "../providers";
 import type { Profile } from "../types";
 import { Field, RAW, SecretInput, type FormApi } from "./fields";
@@ -29,7 +28,7 @@ export const PRESETS: Preset[] = [
     endpoint: (r) => `https://${r}.your-objectstorage.com`,
     defaultRegion: "nbg1",
     pathStyle: false,
-    hint: "Hetzner keys cannot list all buckets, so enter your bucket name in the Bucket field.",
+    hint: "Hetzner keys can't list buckets: enter yours.",
   },
   {
     id: "aws",
@@ -44,7 +43,6 @@ export const PRESETS: Preset[] = [
     endpoint: () => "https://<account-id>.r2.cloudflarestorage.com",
     defaultRegion: "auto",
     pathStyle: false,
-    hint: "Replace <account-id> in the endpoint with your Cloudflare account id.",
   },
   {
     id: "b2",
@@ -87,6 +85,15 @@ export function S3Form({ initial, tried, formApi, onEdit }: { initial: Profile |
   const [bucket, setBucket] = useState(initial?.bucket ?? "");
   const [pathStyle, setPathStyle] = useState(initial?.pathStyle ?? startPreset.pathStyle);
   const preset = PRESETS.find((p) => p.id === provider) ?? PRESETS[0];
+  // a provider's usual endpoint (and path style) follow from the region: shown as a line, with
+  // Change for the rare custom one. Other S3, R2 (an account id to fill in) and anything already
+  // changed show the fields
+  const usual = provider !== "custom" && provider !== "r2";
+  const [showEndpoint, setShowEndpoint] = useState(false);
+  // (Amazon may be saved with none: the SDK picks it from the region)
+  const isUsual = endpoint.trim() === preset.endpoint(region) || (provider === "aws" && !endpoint.trim());
+  const endpointField = !usual || showEndpoint || !isUsual;
+  const pathField = provider === "custom" || pathStyle !== preset.pathStyle;
 
   const edit =
     <T,>(set: (v: T) => void) =>
@@ -163,7 +170,7 @@ export function S3Form({ initial, tried, formApi, onEdit }: { initial: Profile |
         )}
       </Field>
 
-      <Field label="Name" optional wide>
+      <Field label="Name" wide>
         {(c) => <input {...c} value={name} onChange={(e) => edit(setName)(e.target.value)} placeholder={preset.label} />}
       </Field>
 
@@ -183,13 +190,24 @@ export function S3Form({ initial, tried, formApi, onEdit }: { initial: Profile |
         }
       </Field>
 
-      <Field label="Bucket" optional>
-        {(c) => <input {...c} value={bucket} onChange={(e) => edit(setBucket)(e.target.value)} placeholder="my-bucket" {...RAW} />}
+      <Field label="Bucket" hint={preset.hint}>
+        {(c) => <input {...c} value={bucket} onChange={(e) => edit(setBucket)(e.target.value)} placeholder={provider === "hetzner" ? "my-bucket" : "All buckets"} {...RAW} />}
       </Field>
 
-      <Field label="Endpoint" wide error={show("endpoint")}>
-        {(c) => <input {...c} className="mono" value={endpoint} onChange={(e) => edit(setEndpoint)(e.target.value)} placeholder="https://…" inputMode="url" {...RAW} />}
-      </Field>
+      {endpointField ? (
+        <Field label="Endpoint" wide error={show("endpoint")}>
+          {(c) => <input {...c} className="mono" value={endpoint} onChange={(e) => edit(setEndpoint)(e.target.value)} placeholder="https://…" inputMode="url" {...RAW} />}
+        </Field>
+      ) : (
+        <p className="hint span2 conn-endpoint">
+          <span className="mono" title="Endpoint">
+            {endpoint || "Amazon's endpoint for the region"}
+          </span>
+          <button type="button" className="link-btn" onClick={() => setShowEndpoint(true)}>
+            Change
+          </button>
+        </p>
+      )}
 
       <Field label="Access key ID" error={show("accessKeyId")}>
         {(c) => <input {...c} className="mono" value={accessKeyId} onChange={(e) => edit(setAccessKeyId)(e.target.value)} {...RAW} />}
@@ -198,19 +216,11 @@ export function S3Form({ initial, tried, formApi, onEdit }: { initial: Profile |
         {(c) => <SecretInput control={c} value={secret} onChange={edit(setSecret)} editing={keepSecret} />}
       </Field>
 
-      <label className="check span2">
-        <input type="checkbox" checked={pathStyle} onChange={(e) => edit(setPathStyle)(e.target.checked)} />
-        <span>
-          Use path-style addressing
-          <em>Needed by MinIO and many self-hosted servers.</em>
-        </span>
-      </label>
-
-      {preset.hint && (
-        <p className="hint span2">
-          <Icon name="info" size={13} />
-          {preset.hint}
-        </p>
+      {pathField && (
+        <label className="check span2" title="Needed by MinIO and many self-hosted servers">
+          <input type="checkbox" checked={pathStyle} onChange={(e) => edit(setPathStyle)(e.target.checked)} />
+          <span>Path-style addressing</span>
+        </label>
       )}
     </>
   );

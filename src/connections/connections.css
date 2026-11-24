@@ -701,3 +701,20 @@
   display: inline-flex;
   align-items: center;
 }
+.conn-endpoint {
+  align-items: baseline;
+  margin-top: -4px;
+}
+.conn-endpoint .mono {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conn-endpoint .mono {
+  flex: 0 1 auto;
+}
+.conn-endpoint .link-btn {
+  flex: none;
+  margin-left: 0;
+}

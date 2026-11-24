@@ -11,6 +11,7 @@ export function BlobForm({ kind, initial, tried, formApi, onEdit }: { kind: Blob
   const [account, setAccount] = useState(start.account);
   const [container, setContainer] = useState(start.container ?? "");
   const [endpoint, setEndpoint] = useState(start.endpoint);
+  const [showEndpoint, setShowEndpoint] = useState(!!start.endpoint.trim());
   const [secret, setSecret] = useState("");
   const [fileNote, setFileNote] = useState<string | null>(null);
   const jsonFile = useRef<HTMLInputElement>(null);
@@ -69,8 +70,8 @@ export function BlobForm({ kind, initial, tried, formApi, onEdit }: { kind: Blob
 
   return (
     <>
-      <Field label="Name" optional wide>
-        {(c) => <input {...c} value={name} onChange={(e) => edit(setName)(e.target.value)} placeholder={azure ? "My Azure container" : "My GCS bucket"} />}
+      <Field label="Name" wide>
+        {(c) => <input {...c} value={name} onChange={(e) => edit(setName)(e.target.value)} placeholder={azure ? "Same as the container" : "Same as the bucket"} />}
       </Field>
       {azure && (
         <Field label="Storage account" error={show("account")}>
@@ -82,11 +83,11 @@ export function BlobForm({ kind, initial, tried, formApi, onEdit }: { kind: Blob
       </Field>
 
       {azure ? (
-        <Field label="Account key or SAS token" wide error={show("secret")} hint="From the storage account's Access keys page, or a SAS token starting with “?”.">
+        <Field label="Account key or SAS token" wide error={show("secret")} hint="From Access keys, or a SAS token starting with “?”.">
           {(c) => <SecretInput control={c} value={secret} onChange={edit(setSecret)} editing={editing} label="key" />}
         </Field>
       ) : (
-        <Field label="Service account key" wide error={show("secret")} hint={fileNote ?? "The JSON key file from Google Cloud: IAM › Service accounts › Keys."}>
+        <Field label="Service account key" wide error={show("secret")} hint={fileNote ?? "The JSON key from IAM › Service accounts › Keys."}>
           {(c) => (
             <div className="conn-key">
               <textarea
@@ -121,9 +122,18 @@ export function BlobForm({ kind, initial, tried, formApi, onEdit }: { kind: Blob
         </Field>
       )}
 
-      <Field label="Endpoint" optional wide error={show("endpoint")} hint={azure ? "Only for Azurite or a national cloud." : "Only for an emulator or a compatible service."}>
-        {(c) => <input {...c} className="mono" value={endpoint} onChange={(e) => edit(setEndpoint)(e.target.value)} placeholder={azure ? "https://mystorageaccount.blob.core.windows.net" : "https://storage.googleapis.com"} inputMode="url" {...RAW} />}
-      </Field>
+      {/* only emulators and national clouds need another endpoint: tucked away until asked for */}
+      {showEndpoint ? (
+        <Field label="Endpoint" wide error={show("endpoint")}>
+          {(c) => <input {...c} className="mono" value={endpoint} onChange={(e) => edit(setEndpoint)(e.target.value)} placeholder={azure ? "https://mystorageaccount.blob.core.windows.net" : "https://storage.googleapis.com"} inputMode="url" {...RAW} />}
+        </Field>
+      ) : (
+        <p className="hint span2">
+          <button type="button" className="link-btn" onClick={() => setShowEndpoint(true)}>
+            {azure ? "Use another endpoint (Azurite, national cloud)…" : "Use another endpoint (emulator)…"}
+          </button>
+        </p>
+      )}
     </>
   );
 }
