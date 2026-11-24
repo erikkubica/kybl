@@ -146,6 +146,10 @@ const PLACEHOLDERS: [&str; 6] = ["path", "name", "ext", "stem", "paths", "dir"];
 /// (arithmetic, an array index, `eval`) is refused whole, see [`evaluation_problem`]. Mirrored in src/actions/templateCheck.ts; both run
 /// tests/actions/template-vectors.json. The error names the placeholder.
 pub fn check_template(template: &str) -> Result<(), String> {
+    // the shell deletes every backslash + line break before it reads a word, so scan what it will
+    // read: a placeholder after `>&\⏎   ` or `$\⏎'` is then judged where the shell puts it (R8 S-6)
+    let unfolded = unfold(template);
+    let template = unfolded.as_str();
     #[derive(Clone, Copy, PartialEq)]
     enum Ctx {
         Plain,
@@ -168,7 +172,6 @@ pub fn check_template(template: &str) -> Result<(), String> {
     let placeholder_at = |i: usize| PLACEHOLDERS.iter().find(|w| template[i..].starts_with(&format!("{{{w}}}")));
     // where a word can start (a `#` there begins a comment)
     let word_start = |i: usize| i == 0 || matches!(b[i - 1], b' ' | b'\t' | b'\n' | b'\r' | b';' | b'&' | b'|' | b'(' | b')' | b'<' | b'>');
-    let blank = |x: u8| matches!(x, b' ' | b'\t' | b'\n');
     // a here-document (`<<`, not bash's `<<<`) seen: its body is read like double quotes
     let mut heredoc = false;
     // something seen that shells read differently: what follows can't be proven
@@ -176,6 +179,9 @@ pub fn check_template(template: &str) -> Result<(), String> {
     // in the word after `>&` or `<&` (bash 3.2 expands it once more): the stack depth there, and
     // whether the word has begun
     let mut dup: Option<(usize, bool)> = None;
+    // an expansion (`$…` or backticks) seen in a word after `>&` or `<&`: bash 3.2 expands that
+    // word twice, so a variable holding a file name runs there (R8 S-3). Refused with a placeholder.
+    let mut dup_expansion = false;
     let mut i = 0;
     while i < b.len() {
         let ctx = *stack.last().unwrap();
@@ -193,14 +199,13 @@ pub fn check_template(template: &str) -> Result<(), String> {
                 dup = Some((depth, true));
             }
         }
+        if dup.is_some_and(|(depth, _)| stack.len() >= depth) && (c == b'$' || c == b'`') {
+            dup_expansion = true;
+        }
         // `\{path}`: the backslash would then sit right before the opening quote of the value
         if c == b'\\' && ctx != Ctx::Single {
             if let Some(w) = placeholder_at(i + 1) {
                 return Err(format!("{{{w}}} comes right after a backslash. Take the backslash away: it would undo Kybl's quoting of the file name."));
-            }
-            // a line continuation inside a word joins two pieces the scan reads apart (`$\⏎'`)
-            if b.get(i + 1) == Some(&b'\n') && i > 0 && !blank(b[i - 1]) && b.get(i + 2).is_some_and(|&x| !blank(x)) {
-                unsure = true;
             }
             // dash and ash end `$'…'` at `\'` (no ANSI-C quoting there)
             if ctx == Ctx::AnsiC && b.get(i + 1) == Some(&b'\'') {
@@ -354,11 +359,33 @@ pub fn check_template(template: &str) -> Result<(), String> {
         i += 1;
     }
     if PLACEHOLDERS.iter().any(|w| uses(template, w)) {
+        if dup_expansion {
+            return Err(code_why("an expansion after `>&` or `<&` (bash on macOS reads that word twice)"));
+        }
         if let Some(why) = evaluation_problem(template) {
             return Err(why);
         }
     }
     Ok(())
+}
+
+/// The template as the shell reads it: every backslash + line break removed (an odd run of
+/// backslashes before the break; an even run is escaped backslashes and a real line break).
+/// Removed inside single quotes too, which can only make the scan stricter there.
+fn unfold(t: &str) -> String {
+    let mut out = Vec::with_capacity(t.len());
+    let mut run = 0;
+    for &c in t.as_bytes() {
+        if c == b'\n' && run % 2 == 1 {
+            out.pop();
+            run = 0;
+            continue;
+        }
+        run = if c == b'\\' { run + 1 } else { 0 };
+        out.push(c);
+    }
+    // only ASCII bytes were dropped, so this is still valid UTF-8
+    String::from_utf8(out).unwrap_or_else(|_| t.to_string())
 }
 
 const ARITH_WHY: &str = "This template has a placeholder and also does arithmetic (`$(( ))`, `(( ))`, `$[ ]`, let, -eq and the like, declare -i, an array index). A shell reads a variable it is used with as code there, so a file name such as a[$(cmd)] would run as a command, even though the placeholder is quoted. Do the arithmetic in a script of your own, or take the placeholder out of this template.";
@@ -378,6 +405,11 @@ const BANNED_WORDS: [&str; 9] = ["read", "unset", "trap", "mapfile", "readarray"
 const NUMBER_BUILTINS: [&str; 7] = ["exit", "return", "break", "continue", "shift", "logout", "ulimit"];
 /// Variables whose value the shell runs (every traced line, every prompt, the next shell).
 const RUNNING_VARS: [&str; 3] = ["PS4", "PROMPT_COMMAND", "BASH_ENV"];
+/// Variables the shell itself evaluates or runs when they are set (integer ones read the value as
+/// arithmetic, so `a[$(cmd)]` runs; `ENV` is read by an interactive sh; the rest change how
+/// words split or where commands come from). Assigning any of them is refused (R8 S-3).
+const SPECIAL_VARS: [&str; 14] =
+    ["OPTIND", "OPTARG", "RANDOM", "SECONDS", "TMOUT", "LINENO", "SHLVL", "MAILCHECK", "ENV", "BASH_ENV", "PS4", "PROMPT_COMMAND", "IFS", "PATH"];
 
 /// What `${body}` is, when it is not one of the allowed forms; None when it is allowed. The
 /// allow-list (a name is `[A-Za-z_][A-Za-z0-9_]*`, w, p and r hold no quote, bracket or brace):
@@ -473,7 +505,8 @@ fn evaluation_problem(t: &str) -> Option<String> {
             return Some(code_why(&format!("`{w}`, which the shell runs as code")));
         }
     }
-    for command in plain.split([';', '&', '|', '\n', '(', ')', '`']) {
+    // `(` and backticks stay inside the words here, so an expansion given as a name shows
+    for command in plain.split([';', '&', '|', '\n']) {
         let words: Vec<&str> = command.split_ascii_whitespace().collect();
         let has = |x: &str| words.contains(&x);
         // a declaring builtin given a flag that makes the variable numeric or a name reference
@@ -491,6 +524,31 @@ fn evaluation_problem(t: &str) -> Option<String> {
         }
         if (has("[") || has("[[") || has("test")) && (has("-v") || has("-R")) {
             return Some(code_why("a `-v` or `-R` test, which takes its variable name as code"));
+        }
+        // the command word: the first after keywords, prefixes and `NAME=value` assignments
+        // (`f() {` before it is a function header)
+        let cmd_at = words.iter().position(|w| !LEAD.contains(w) && !is_assignment(w) && !w.ends_with("()"));
+        // an assignment (`X=…`, `export X=…`, `for X in …`) to a variable the shell evaluates
+        for (k, w) in words.iter().enumerate() {
+            let name = w.split_once('=').map(|(n, _)| n.trim_end_matches('+')).filter(|n| !n.is_empty()).or_else(|| (k > 0 && words[k - 1] == "for").then_some(*w));
+            if let Some(n) = name.filter(|n| SPECIAL_VARS.contains(n)) {
+                return Some(code_why(&format!("an assignment to `{n}`, which the shell evaluates or runs")));
+            }
+        }
+        // a variable name given to a declaring builtin as an expansion: the shell reads a name with a
+        // subscript (`a[$(cmd)]`) as code, so `declare "$v"=1` or `export "$v"` runs a file name in $v
+        if let Some(at) = cmd_at.filter(|&at| NAME_BUILTINS.contains(&words[at])) {
+            let named = words[at + 1..].iter().filter(|w| !w.starts_with(['-', '+'])).map(|w| w.split('=').next().unwrap_or(w));
+            if named.into_iter().any(|n| n.contains(['$', '`', '('])) {
+                return Some(code_why(&format!("an expansion as the variable name for `{}` (a name with a subscript runs as code)", words[at])));
+            }
+        }
+        // ksh reads a bare variable name as arithmetic too (`shift n`, `ulimit -n n`)
+        if let Some(at) = cmd_at.filter(|&at| matches!(words[at], "shift" | "ulimit")) {
+            let literal = |w: &str| w.bytes().all(|c| c.is_ascii_digit()) || matches!(w, "$?" | "$#" | "$$" | "unlimited" | "hard" | "soft");
+            if words[at + 1..].iter().any(|w| !w.starts_with('-') && !literal(w)) {
+                return Some(code_why(&format!("`{}` with a variable or expression (ksh reads it as arithmetic)", words[at])));
+            }
         }
         if let Some(at) = words.iter().position(|w| NUMBER_BUILTINS.contains(w)) {
             if words[at + 1..].iter().any(|w| w.contains('$') && !matches!(*w, "$?" | "$#" | "$$")) {
@@ -548,6 +606,12 @@ const CODE_BUILTINS: [&str; 18] = [
 ];
 /// Builtins whose operands are variable names (an `x[$(cmd)]` there runs), unless given as `name=value`.
 const NAME_BUILTINS: [&str; 6] = ["declare", "typeset", "local", "export", "readonly", "integer"];
+/// Words that come before the command word in a command line.
+const LEAD: [&str; 14] = ["!", "{", "time", "command", "builtin", "exec", "nohup", "then", "do", "else", "elif", "if", "while", "until"];
+/// `NAME=value` as a command prefix.
+fn is_assignment(w: &str) -> bool {
+    w.find('=').is_some_and(|e| e > 0 && w[..e].bytes().all(|x| x.is_ascii_alphanumeric() || x == b'_'))
+}
 /// Test operators that read both sides as numbers (ksh and `[[` evaluate them as arithmetic).
 const NUMERIC_TESTS: [&str; 6] = ["-eq", "-ne", "-lt", "-le", "-gt", "-ge"];
 
@@ -577,9 +641,7 @@ fn operand_problem(template: &str, at: usize) -> Option<&'static str> {
     let done = &words[..words.len() - glued as usize];
     let prev = done.last().copied().unwrap_or("");
     // the command: the first word after keywords, prefixes and `NAME=value` assignments
-    let assignment = |w: &str| w.find('=').is_some_and(|e| e > 0 && w[..e].bytes().all(|x| x.is_ascii_alphanumeric() || x == b'_'));
-    const LEAD: [&str; 14] = ["!", "{", "time", "command", "builtin", "exec", "nohup", "then", "do", "else", "elif", "if", "while", "until"];
-    let cmd = done.iter().copied().find(|w| !LEAD.contains(w) && !assignment(w)).unwrap_or("");
+    let cmd = done.iter().copied().find(|w| !LEAD.contains(w) && !is_assignment(w)).unwrap_or("");
     let code = "goes where the shell reads the value as code (let, read, trap, eval, -eq, an array index…), and a file name could run there. Pass it as a plain argument instead.";
     if CODE_BUILTINS.contains(&cmd) {
         return Some(code);
@@ -1224,6 +1286,71 @@ mod tests {
             }
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Round-8 holes, each refused now: a variable holding the name used as a variable NAME,
+    /// assignments to variables the shell evaluates, ksh `shift`/`ulimit` operands, `>&$v`, and a
+    /// continuation carrying the `>&` word to the next line. Each really runs the name in the
+    /// shells listed (when installed), so the refusals are not guesses.
+    #[cfg(unix)]
+    #[test]
+    fn round8_refusals_really_run_names() {
+        let dir = std::env::temp_dir().join(format!("kybl-tpl8-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("pwned");
+        let (subst, index) = ("x$(touch pwned)y", "x[$(touch pwned)]");
+        let bash3 = std::process::Command::new("/bin/bash").arg("-c").arg("echo $BASH_VERSION").output().is_ok_and(|o| o.stdout.starts_with(b"3."));
+        let b3 = |s: Vec<&'static str>| if bash3 { s } else { vec![] };
+        let cases: Vec<(&str, &str, Vec<&str>)> = vec![
+            (r#"v={name}; export "$v""#, index, vec!["/bin/zsh"]),
+            (r#"v={name}; typeset +x "$v""#, index, vec!["/bin/zsh"]),
+            (r#"v={name}; declare "$v"=1"#, index, b3(vec!["/bin/bash"])),
+            (r#"v={name}; typeset "$v=1""#, index, b3(vec!["/bin/bash"])),
+            ("OPTIND={name}", index, b3(vec!["/bin/bash", "/bin/sh"])),
+            ("v={name}; RANDOM=$v", index, vec!["/bin/ksh"]),
+            ("n={name}; shift n", index, vec!["/bin/ksh"]),
+            ("n={name}; ulimit -n n", index, vec!["/bin/ksh"]),
+            ("ENV={name} sh -ic true", subst, b3(vec!["/bin/bash"])),
+            ("v={name}; echo hi >&$v", subst, b3(vec!["/bin/sh"])),
+            ("echo hi >&\\\n  {name}", subst, b3(vec!["/bin/bash", "/bin/sh"])),
+            // refused all the same; the `2>&word` form is not read twice by these shells, so no run here
+            ("echo hi 2>&\\\n\t{name}", subst, vec![]),
+        ];
+        for (t, name, shells) in cases {
+            assert!(check_template(t).is_err(), "{t}");
+            for sh in shells.into_iter().filter(|p| std::path::Path::new(p).exists()) {
+                let _ = std::fs::remove_file(&marker);
+                let line = expand(t, &[item(&format!("{}/{name}", dir.display()))], &dir.to_string_lossy(), false).remove(0);
+                run_limited(sh, &line, &dir);
+                assert!(marker.exists(), "{sh}: {t} did not run the name, the test is stale");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Runs `line` in `sh` for at most 5 seconds; at the deadline the whole process group is
+    /// killed, so a shell that loops (or a child it started) never outlives the test.
+    #[cfg(unix)]
+    fn run_limited(sh: &str, line: &str, dir: &std::path::Path) {
+        use std::os::unix::process::CommandExt;
+        let mut child = std::process::Command::new(sh)
+            .arg("-c")
+            .arg(line)
+            .current_dir(dir)
+            .process_group(0)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while child.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // the group, whether or not the shell itself has ended (a no-op when nothing is left)
+        let _ = std::process::Command::new("kill").arg("-KILL").arg(format!("-{}", child.id())).output();
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     /// Server scripts never carry a line break or control character (csh would end the command

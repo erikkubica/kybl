@@ -13,6 +13,8 @@ export type LogEntry = { id: number; at: number; kind: "success" | "error" | "in
 const MAX = 500;
 /** a detail longer than this is cut (a listing's whole HTML error page helps nobody) */
 const MAX_DETAIL = 4000;
+/** a line longer than this is cut before it is cleaned up and redacted */
+const MAX_LINE = 4000;
 let entries: LogEntry[] = [];
 let seq = 0;
 const subs = new Set<() => void>();
@@ -28,7 +30,9 @@ export function logMessage(kind: LogEntry["kind"], text: string, detail?: string
     line = errorSentence(text);
     more = errorDetail(text);
   }
-  line = redact(line.replace(/\s*\n+\s*/g, " ").trim());
+  // one line: each break and the blanks around it become one space. Split and trim rather than a
+  // `\s*\n+\s*` pattern, which is quadratic on a long run of blanks (R8 S-5); a runaway sentence is cut
+  line = redact(line.slice(0, MAX_LINE).split("\n").map((l) => l.trim()).filter(Boolean).join(" "));
   more = more ? redact(more.trim()) : null;
   if (more && more.length > MAX_DETAIL) more = `${more.slice(0, MAX_DETAIL)}…`;
   const entry: LogEntry = { id: ++seq, at: Date.now(), kind, text: line };

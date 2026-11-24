@@ -3,7 +3,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
-import { openCapped, readCapped, zipTooBig } from "../../src/viewers/zipCheck.ts";
+import { deflateRawSync } from "node:zlib";
+import { openCapped, plainForSheetJS, readCapped, zipTooBig } from "../../src/viewers/zipCheck.ts";
 
 const caps = { part: 1 << 20, total: 2 << 20 };
 
@@ -181,4 +182,144 @@ test("real docx, xlsx and pptx files pass, and open through the capped reader", 
   const opened = await openCapped(pptx);
   assert.deepEqual([opened.has("ppt/slides/slide1.xml"), opened.has("nope")], [true, false]);
   assert.equal((await opened.bytes("docProps/thumbnail.jpeg"))?.length, 2000);
+});
+
+// R8 S-1: SheetJS unzips with its own code and reads parts JSZip drops or sizes differently. It is
+// only given a plain zip rebuilt from what the capped reader produced, so none of these reach it.
+type RawEntry = { name: string; method: 0 | 8; packed: Uint8Array; usize: number; localUsize?: number; flags?: number; ext?: number; descriptor?: boolean };
+
+/** A zip written by hand (nothing in front, no comment, directory right after the data). */
+function rawZip(entries: RawEntry[]): Uint8Array {
+  const chunks: Uint8Array[] = [];
+  const cd: Uint8Array[] = [];
+  let at = 0;
+  const push = (c: Uint8Array) => (chunks.push(c), (at += c.length));
+  for (const e of entries) {
+    const name = new TextEncoder().encode(e.name);
+    const flags = (e.flags ?? 0) | (e.descriptor ? 8 : 0);
+    const local = new Uint8Array(30 + name.length);
+    const l = new DataView(local.buffer);
+    l.setUint32(0, 0x04034b50, true);
+    l.setUint16(4, 20, true);
+    l.setUint16(6, flags, true);
+    l.setUint16(8, e.method, true);
+    l.setUint32(18, e.descriptor ? 0 : e.packed.length, true);
+    l.setUint32(22, e.localUsize ?? (e.descriptor ? 0 : e.usize), true);
+    l.setUint16(26, name.length, true);
+    local.set(name, 30);
+    const offset = at;
+    push(local);
+    push(e.packed);
+    if (e.descriptor) {
+      const d = new Uint8Array(16);
+      const dd = new DataView(d.buffer);
+      dd.setUint32(0, 0x08074b50, true);
+      dd.setUint32(8, e.packed.length, true);
+      dd.setUint32(12, e.usize, true);
+      push(d);
+    }
+    const c = new Uint8Array(46 + name.length);
+    const v = new DataView(c.buffer);
+    v.setUint32(0, 0x02014b50, true);
+    v.setUint16(4, 20, true);
+    v.setUint16(6, 20, true);
+    v.setUint16(8, flags, true);
+    v.setUint16(10, e.method, true);
+    v.setUint32(20, e.packed.length, true);
+    v.setUint32(24, e.usize, true);
+    v.setUint16(28, name.length, true);
+    v.setUint32(38, e.ext ?? 0, true);
+    v.setUint32(42, offset, true);
+    c.set(name, 46);
+    cd.push(c);
+  }
+  const start = at;
+  for (const c of cd) push(c);
+  const end = new Uint8Array(22);
+  const ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, entries.length, true);
+  ev.setUint16(10, entries.length, true);
+  ev.setUint32(12, at - start, true);
+  ev.setUint32(16, start, true);
+  push(end);
+  const out = new Uint8Array(at);
+  let o = 0;
+  for (const c of chunks) (out.set(c, o), (o += c.length));
+  return out;
+}
+
+const zeros = (n: number) => new Uint8Array(deflateRawSync(new Uint8Array(n)));
+const sheet = { name: "xl/workbook.xml", method: 0 as const, packed: new TextEncoder().encode("<workbook/>"), usize: 11 };
+
+/** Either refused, or a zip whose every part is plain, honest and inside the caps. */
+async function assertPlain(z: Uint8Array) {
+  const r = await plainForSheetJS(z, caps);
+  if ("refused" in r) return r;
+  assert.ok(r.bytes.length < caps.total, "the rebuilt zip is small");
+  const dv = new DataView(r.bytes.buffer, r.bytes.byteOffset, r.bytes.byteLength);
+  let at = 0;
+  let sum = 0;
+  while (dv.getUint32(at, true) === 0x04034b50) {
+    const flags = dv.getUint16(at + 6, true);
+    const method = dv.getUint16(at + 8, true);
+    const csize = dv.getUint32(at + 18, true);
+    const usize = dv.getUint32(at + 22, true);
+    assert.deepEqual([flags & 8, method, usize], [0, 0, csize], "STORE, no data descriptor, sizes that are true");
+    assert.ok(usize <= caps.part);
+    sum += usize;
+    at += 30 + dv.getUint16(at + 26, true) + dv.getUint16(at + 28, true) + csize;
+  }
+  assert.ok(sum <= caps.total);
+  // SheetJS can now read it without inflating anything past the caps (it returns at once)
+  try {
+    XLSX.read(r.bytes, { type: "array" });
+  } catch {
+    // not a workbook: fine, the point is that it returned
+  }
+  return r;
+}
+
+test("an entry that claims 0 bytes but inflates to a bomb never reaches SheetJS as one (S-1)", async () => {
+  const z = rawZip([sheet, { name: "xl/junk.bin", method: 8, packed: zeros(3 << 20), usize: 0 }]);
+  assert.ok(z.length < 64 * 1024, "small on disk");
+  const r = await assertPlain(z);
+  // JSZip never inflates an entry that says it is empty, so it arrives as an empty part
+  if ("bytes" in r) assert.ok(r.bytes.length < 4096);
+});
+
+test("a directory entry, by name or by DOS attribute, that holds a bomb never reaches SheetJS (S-1)", async () => {
+  for (const e of [{ name: "xl/junk/", ext: 0 }, { name: "xl/junk.bin", ext: 0x10 }]) {
+    const z = rawZip([sheet, { ...e, method: 8, packed: zeros(3 << 20), usize: 0 }]);
+    const r = await assertPlain(z);
+    if ("bytes" in r) assert.ok(r.bytes.length < 4096, e.name);
+  }
+});
+
+test("a data-descriptor entry whose local header claims 2 GB is rebuilt with its real size (S-1)", async () => {
+  const packed = new Uint8Array(deflateRawSync(new TextEncoder().encode("<sheet/>")));
+  const z = rawZip([sheet, { name: "xl/worksheets/sheet1.xml", method: 8, packed, usize: 8, localUsize: 0x7fffffff, descriptor: true }]);
+  const r = await assertPlain(z);
+  assert.ok("bytes" in r);
+  const back = await JSZip.loadAsync(r.bytes);
+  assert.equal(await back.file("xl/worksheets/sheet1.xml")!.async("string"), "<sheet/>");
+});
+
+test("a real xlsx and ods survive the rebuild and still read (S-1)", async () => {
+  const book = { SheetNames: ["S"], Sheets: { S: XLSX.utils.aoa_to_sheet([["a", "b"], [1, 2]]) } };
+  for (const bookType of ["xlsx", "ods"] as const) {
+    const z = new Uint8Array(XLSX.write(book, { type: "array", bookType }) as ArrayBuffer);
+    const r = await plainForSheetJS(z);
+    assert.ok("bytes" in r, bookType);
+    assert.deepEqual(XLSX.utils.sheet_to_json(XLSX.read(r.bytes, { type: "array" }).Sheets.S, { header: 1 }), [["a", "b"], [1, 2]], bookType);
+  }
+  // not a zip (an old .xls is a compound file, a CSV is text): handed on untouched
+  const csv = new TextEncoder().encode("a,b\n1,2\n");
+  const r = await plainForSheetJS(csv);
+  assert.ok("bytes" in r && r.bytes === csv);
+});
+
+test("a part that really inflates past the cap is refused before SheetJS (S-1)", async () => {
+  const z = await zip({ "xl/worksheets/sheet1.xml": new Uint8Array(3 << 20) });
+  assert.match(((await plainForSheetJS(z, caps)) as { refused: string }).refused, /too big|too far/);
 });

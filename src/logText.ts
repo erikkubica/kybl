@@ -12,6 +12,31 @@ const HIDDEN = "•••";
 const SECRET_PARAMS =
   /([?&;](?:x-amz-(?:signature|credential|security-token)|signature|sig|token|access_token|refresh_token|id_token|client_secret|password|passwd|pwd|secret|api_?key|key|code|se|sv|sp|skoid|sktid|skt|ske|sks|skv|tempauth|upload_?id|x-goog-[a-z-]+|sharedaccesssignature|access_?key|auth)=)[^&#\s"'<>]+/gi;
 
+/** Names that hold a credential when they appear anywhere in the name (`secretKey`, `X-Amz-Security-Token`, `auth_key`). */
+const CRED_WORDS = "secret|passw(?:or)?d|pwd|passphrase|token|account[_-]?key|access[_-]?key|api[_-]?key|private[_-]?key|credential|auth[_-]?key|session[_-]?(?:id|key)";
+/** Words too short to match inside other names (`monkey`, `hotplug`): only a whole name counts. */
+const CRED_WHOLE = "pass|pw|pswd|sid|jwt|otp|key|session|authkey";
+/**
+ * `name = value`, `"name": "value"`, `\"name\":\"value\"` (JSON inside a string). The name scan starts at the
+ * credential word and reaches at most 80 name characters after it, so a long name is still found and a long
+ * run of letters stays linear. A quoted value runs to its closing quote (spaces, commas and `&` in it are part
+ * of it, so is a missing end quote: to the end of the line); a bare one runs to the next whitespace, except
+ * in a URL query (`?a=b&c=d`), where `&` starts the next parameter.
+ */
+function namedValue(inQuery: boolean) {
+  const q = String.raw`(?:\\?["'])?[ \t]*[:=][ \t]*`;
+  // in a query the scan starts at the `?`, `&` or `;` (not at every letter), so it stays cheap
+  const name = inQuery
+    ? String.raw`[?&;][\w-]{0,80}?(?:(?:${CRED_WORDS})[\w-]{0,80}|(?:${CRED_WHOLE}))${q}`
+    : String.raw`(?:${CRED_WORDS})[\w-]{0,80}${q}|(?<![\w-])(?:${CRED_WHOLE})${q}`;
+  // a value already hidden by an earlier rule is left alone, so `•••&x=1` is not read as one long value
+  const bare = inQuery ? String.raw`[^\s&#"'<>]+` : String.raw`(?!•••)[^\s"'][^\s]*`;
+  return new RegExp(String.raw`(${name})(?:(\\")((?:(?!\\")[^\n])*)|(")((?:\\.|[^"\\\n])*)|(')([^'\n]*)|${bare})`, "gi");
+}
+const QUERY_VALUE = namedValue(true);
+const NAMED_VALUE = namedValue(false);
+const hideValue = (_m: string, head: string, q1?: string, _v1?: string, q2?: string, _v2?: string, q3?: string) => `${head}${q1 ?? q2 ?? q3 ?? ""}${HIDDEN}`;
+
 /**
  * Takes credentials out of text bound for the log: user:password in URLs, signed URL parameters,
  * Authorization headers, `password=…`-style pairs and private key blocks.
@@ -20,7 +45,7 @@ export function redact(text: string): string {
   return (
     text
       // PEM blocks first: their body has no spaces the other rules could stop at
-      .replace(/-----BEGIN [A-Z0-9 ]*-----[\s\S]*?(?:-----END [A-Z0-9 ]*-----|$)/g, "[private key removed]")
+      .replace(/-----BEGIN [A-Z0-9 ]*-----[\s\S]*?(?:-----END [A-Z0-9 ]*-----|$)/gi, "[private key removed]")
       // scheme://user:password@host (and scheme://token@host); the scheme is capped so a long
       // run of dots and letters can't make the scan quadratic (S-6)
       .replace(/\b([a-z][a-z0-9+.-]{0,31}:\/\/)[^\s/@"'<>]+@/gi, `$1${HIDDEN}@`)
@@ -39,12 +64,12 @@ export function redact(text: string): string {
       .replace(/\b(authorization\s*[:=]\s*)(?:(bearer|basic|aws4-hmac-sha256)\s+)?[^\r\n]+/gi, (_m, head: string, scheme?: string) => `${head}${scheme ? `${scheme} ` : ""}${HIDDEN}`)
       .replace(/\b(bearer|basic)\s+[a-z0-9._~+/=-]{8,}/gi, `$1 ${HIDDEN}`)
       // any name that has a credential word in it, whatever comes before or after (`aws_secret_access_key = …`,
-      // `AccountKey=…`, `X-Amz-Security-Token: …`, `?auth_token=…`): by the shape of the name, not a list. The
-      // lookbehind starts the scan at the start of a name only, so a long run of letters stays linear.
-      .replace(
-        /(?<![\w-])([\w-]{0,40}(?:secret|passw(?:or)?d|pwd|passphrase|token|account[_-]?key|access[_-]?key|api[_-]?key|private[_-]?key)[\w-]{0,40}["']?\s*[:=]\s*["']?)[^\s"',;&]+/gi,
-        `$1${HIDDEN}`,
-      )
+      // `AccountKey=…`, `X-Amz-Security-Token: …`, `?auth_token=…`): by the shape of the name, not a list
+      .replace(QUERY_VALUE, hideValue)
+      .replace(NAMED_VALUE, hideValue)
+      // a command line flag with its value after a space, and the FTP PASS command
+      .replace(/(?<![\w-])(--?(?:password|passwd|pwd|passphrase|secret|token|pass|pw)[ \t]+)(?!-)\S+/gi, `$1${HIDDEN}`)
+      .replace(/\b(PASS[ \t]+)\S+/g, `$1${HIDDEN}`)
   );
 }
 
