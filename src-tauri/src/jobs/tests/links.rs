@@ -120,3 +120,29 @@ fn files_from_elsewhere_are_not_written_through_links_at_the_destination() {
         assert!(f.iter().any(|f| f.path == "pull/notes.txt") && f.iter().all(|f| f.error.contains("is a link")), "{f:?}");
     });
 }
+
+/// B4-3 (round 4): the same rule for a copy (or mirror) from one folder on this computer to
+/// another: the source's names don't go through links in the destination either.
+#[test]
+fn a_local_copy_is_not_written_through_links_at_the_destination() {
+    tauri::async_runtime::block_on(async {
+        let (s, d) = (tmp(), tmp());
+        let home = Tmp(d.0.join("home"));
+        write(&s.0, "pull/Documents/report.docx", b"new");
+        write(&s.0, "pull/ok.txt", b"fine");
+        write(&home.0, "Documents/report.docx", b"mine");
+        std::fs::create_dir_all(d.0.join("dl/pull")).unwrap();
+        std::os::unix::fs::symlink(home.0.join("Documents"), d.0.join("dl/pull/Documents")).unwrap();
+        let (src, sr) = local(&s.0);
+        let (dst, dr) = local(&d.0);
+        let m = JobManager::open(None, TestHost::with(vec![("src", src), ("dst", dst)])).unwrap();
+        let mut sp = spec(&sr, &[("pull/", true)], &dr, "dl/");
+        sp.conflict = Conflict::Overwrite;
+        let id = m.create(sp).unwrap();
+        finished(&m, &id).await;
+        assert_eq!(std::fs::read(home.0.join("Documents/report.docx")).unwrap(), b"mine", "not overwritten through the link");
+        assert_eq!(std::fs::read(d.0.join("dl/pull/ok.txt")).unwrap(), b"fine");
+        let f = m.failures(&id, 0, 10).unwrap();
+        assert!(f.iter().any(|f| f.path == "pull/Documents/report.docx" && f.error.contains("is a link")), "{f:?}");
+    });
+}

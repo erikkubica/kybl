@@ -7,7 +7,7 @@
 //!   downloaded project must not be uploaded or zipped under the link's name. What the user picked
 //!   directly (a link itself) is still followed: that's their choice.
 //! - **Writing into a folder** with names that came from elsewhere (a server, a bucket, an
-//!   archive): no part of the path below the folder the user picked may be a link, the file
+//!   archive, another folder on this computer): no part of the path below the folder the user picked may be a link, the file
 //!   itself included. `Documents -> ~/Documents` or `notes.txt -> ~/.zshrc` in the destination
 //!   would otherwise have a remote name write into, or over, something outside it.
 

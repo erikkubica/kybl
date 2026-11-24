@@ -40,6 +40,11 @@ pub async fn plan_pack(s: &dyn Storage, root: &str, items: &[String]) -> SResult
     let mut out = Vec::new();
     let mut left_out = Vec::new();
     for key in items {
+        // the picked items' own names go through the same check as what is found inside them
+        if !zip_name_ok(&rel(key)) {
+            left_out.push(key.clone());
+            continue;
+        }
         if key.ends_with('/') {
             out.push(PackItem { name: rel(key), key: key.clone(), size: 0, modified: None });
             let mut walk = s.walk(root, key);
@@ -66,10 +71,17 @@ pub async fn plan_pack(s: &dyn Storage, root: &str, items: &[String]) -> SResult
     Ok((out, left_out))
 }
 
-/// A name that is safe inside a zip: relative, every part a plain name.
+/// A name that is safe inside a zip: relative, every part a plain name of at most 255 bytes, and
+/// no drive-style start (`C:x`, which a Windows unzip reads as "on drive C"). Other colons stay
+/// allowed: keys such as `2024-01-01T10:00.log` are common and harmless past the first part.
 pub fn zip_name_ok(name: &str) -> bool {
     let body = name.strip_suffix('/').unwrap_or(name);
-    !body.is_empty() && !name.starts_with('/') && !name.contains(['\\', '\0']) && body.split('/').all(|p| !p.is_empty() && p != "." && p != "..")
+    let drive = |p: &str| p.len() >= 2 && p.as_bytes()[0].is_ascii_alphabetic() && p.as_bytes()[1] == b':';
+    !body.is_empty()
+        && !name.starts_with('/')
+        && !name.contains(['\\', '\0'])
+        && !drive(body)
+        && body.split('/').all(|p| !p.is_empty() && p != "." && p != ".." && p.len() <= 255)
 }
 
 /// What a finished compress says about the entries it left out.

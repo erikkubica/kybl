@@ -754,10 +754,28 @@ async fn links_are_never_followed_in_or_out() {
 
 #[test]
 fn zip_names_stay_inside() {
-    for ok in ["a.txt", "a/b/", "a..b", ".env"] {
+    let long = "x".repeat(256);
+    for ok in ["a.txt", "a/b/", "a..b", ".env", "logs/2024-01-01T10:00.log", "1:2.txt"] {
         assert!(ops::zip_name_ok(ok), "{ok}");
     }
-    for bad in ["", "/etc/passwd", "a/../../x", "./a", "a//b", "a\\b", "..", "a/./b"] {
+    for bad in ["", "/etc/passwd", "a/../../x", "./a", "a//b", "a\\b", "..", "a/./b", "C:x", "c:/x", long.as_str()] {
         assert!(!ops::zip_name_ok(bad), "{bad}");
     }
+}
+
+#[tokio::test]
+async fn picked_items_with_unsafe_names_are_left_out_of_the_zip() {
+    let s = Scratch::new();
+    let src = s.0.join("src");
+    std::fs::create_dir_all(src.join("C:evil")).unwrap();
+    std::fs::write(src.join("C:evil/x.txt"), "x").unwrap();
+    std::fs::write(src.join("..\\..\\run.bat"), "boom").unwrap();
+    std::fs::write(src.join("ok.txt"), "fine").unwrap();
+    let st: Arc<dyn Storage> = Arc::new(LocalBackend::with_roots(vec![("src".into(), RootKind::Folder, src.clone())], false));
+    let root = src.to_string_lossy().into_owned();
+    let picked = vec!["..\\..\\run.bat".to_string(), "C:evil/".to_string(), "ok.txt".to_string()];
+    let (plan, left_out) = ops::plan_pack(&*st, &root, &picked).await.unwrap();
+    let names: Vec<&str> = plan.iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(names, vec!["ok.txt"]);
+    assert_eq!(left_out, vec!["..\\..\\run.bat".to_string(), "C:evil/".to_string()]);
 }

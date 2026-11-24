@@ -166,7 +166,11 @@ pub fn read_stream(res: reqwest::Response, asked: Option<&Range<u64>>, etag: Opt
 enum Inner {
     File(tokio::fs::File),
     Bytes(Bytes),
-    Stream { body: ByteStream, buf: BytesMut, reopen: Option<Reopen>, ended: bool },
+    /// `last` is the most recent piece handed out and where it started: a stream that can't be
+    /// reopened can still go back inside it, so a piece the network dropped is sent again (the
+    /// cloud upload loops ask the server how far it got and carry on from there). It holds one
+    /// piece at most, so memory stays bounded by the piece size.
+    Stream { body: ByteStream, buf: BytesMut, reopen: Option<Reopen>, ended: bool, last: Option<(u64, Bytes)> },
 }
 
 /// An upload's bytes, read a piece at a time and from any offset (to resume). The bandwidth cap
@@ -203,7 +207,7 @@ impl Source {
                 let n = b.len() as u64;
                 (Inner::Bytes(b), Some(n))
             }
-            WriteSource::Stream { len, body, reopen } => (Inner::Stream { body, buf: BytesMut::new(), reopen, ended: false }, len),
+            WriteSource::Stream { len, body, reopen } => (Inner::Stream { body, buf: BytesMut::new(), reopen, ended: false, last: None }, len),
         };
         Ok(Self { inner, len, pos: 0, spooled: None })
     }
@@ -235,7 +239,7 @@ impl Source {
                 }
                 buf.freeze()
             }
-            Inner::Stream { body, buf, ended, .. } => {
+            Inner::Stream { body, buf, ended, reopen, last } => {
                 while buf.len() < n && !*ended {
                     if cancel.load(Ordering::Relaxed) {
                         return Err(StorageError::cancelled());
@@ -250,7 +254,11 @@ impl Source {
                     }
                 }
                 let take = n.min(buf.len());
-                buf.split_to(take).freeze()
+                let out = buf.split_to(take).freeze();
+                if reopen.is_none() {
+                    *last = Some((self.pos, out.clone()));
+                }
+                out
             }
         };
         if cancel.load(Ordering::Relaxed) {
@@ -285,11 +293,18 @@ impl Source {
             Inner::File(f) => {
                 f.seek(SeekFrom::Start(to)).await?;
             }
-            Inner::Stream { body, buf, reopen, ended } => {
+            Inner::Stream { body, buf, reopen, ended, last } => {
                 if let Some(open) = reopen.as_ref() {
                     *body = open(to).await?;
                     buf.clear();
                     *ended = false;
+                } else if let Some((start, piece)) = last.as_ref().filter(|(start, piece)| *start <= to && to < self.pos && self.pos <= start + piece.len() as u64) {
+                    // back inside the last piece: put its unsent end in front of what is buffered
+                    let back = piece.slice((to - start) as usize..(self.pos - start) as usize);
+                    let mut joined = BytesMut::with_capacity(back.len() + buf.len());
+                    joined.extend_from_slice(&back);
+                    joined.extend_from_slice(buf);
+                    *buf = joined;
                 } else if to > self.pos {
                     // only forwards: skip what the server already has
                     let mut skip = to - self.pos;
@@ -446,6 +461,30 @@ mod tests {
 
         let r = read_stream(get("/short").await, Some(&asked), None);
         assert!(r.collect(1000).await.is_err(), "less than the range it claims");
+    }
+
+    /// B3-2 (round 4): a stream that can't be reopened goes back inside the last piece (a piece
+    /// the network dropped is sent again), but no further.
+    #[tokio::test]
+    async fn streams_go_back_inside_the_last_piece() {
+        let data: Vec<u8> = (0..100u8).collect();
+        let parts: Vec<Result<Bytes, io::Error>> = data.chunks(7).map(|c| Ok(Bytes::copy_from_slice(c))).collect();
+        let body: ByteStream = Box::pin(futures_util::stream::iter(parts));
+        let mut s = Source::open(WriteSource::Stream { len: Some(100), body, reopen: None }).await.unwrap();
+        let no = AtomicBool::new(false);
+        assert_eq!(s.chunk(30, &no).await.unwrap(), &data[0..30]);
+        assert_eq!(s.chunk(30, &no).await.unwrap(), &data[30..60]);
+        s.seek(45).await.unwrap();
+        s.seek(40).await.unwrap(); // twice before reading again
+        assert_eq!(s.chunk(30, &no).await.unwrap(), &data[40..70]);
+        s.seek(70).await.unwrap();
+        assert_eq!(s.chunk(30, &no).await.unwrap(), &data[70..100]);
+        assert!(s.seek(60).await.is_err(), "before the last piece: can't go back");
+        let body: ByteStream = Box::pin(futures_util::stream::iter([Ok::<Bytes, io::Error>(Bytes::from(data.clone()))]));
+        let mut s = Source::open(WriteSource::Stream { len: Some(100), body, reopen: None }).await.unwrap();
+        assert_eq!(s.chunk(50, &no).await.unwrap(), &data[0..50]);
+        s.seek(80).await.unwrap(); // forwards past what is buffered
+        assert_eq!(s.rest(1000, &no).await.unwrap(), &data[80..]);
     }
 
     #[test]

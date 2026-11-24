@@ -622,3 +622,47 @@ fn a_change_left_for_the_next_run_keeps_the_listing_unhandled() {
         assert_eq!(p.db.cursor("m").unwrap().last_full_scan, first, "the other side's edit is read again next time");
     });
 }
+
+#[cfg(unix)]
+#[test]
+fn links_in_the_other_folder_on_this_computer_are_left_alone() {
+    run(async {
+        // B4-3 (round 4), the sync side: the other folder is on this computer too, and holds a
+        // link to a folder and one to a file (both inside its root, which the store allows).
+        // Nothing is written through them, nothing read from them, and no run fails over them
+        let p = pair().await;
+        write(&p.r("real/secret.txt"), "theirs");
+        std::os::unix::fs::symlink(p.r("real"), p.r("work")).unwrap();
+        std::os::unix::fs::symlink(p.r("real/secret.txt"), p.r("notes.txt")).unwrap();
+        write(&p.l("work/a.txt"), "mine");
+        write(&p.l("notes.txt"), "mine too");
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(true, None).await.unwrap();
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(!p.r("real/a.txt").exists(), "nothing written through the folder link");
+        assert_eq!(read(&p.r("real/secret.txt")), "theirs", "nor through the file link");
+        assert_eq!(read(&p.l("notes.txt")), "mine too");
+        assert_eq!(read(&p.l("real/secret.txt")), "theirs", "the real folder syncs as usual");
+    });
+}
+
+#[test]
+fn a_pull_blocked_by_a_folder_here_is_a_standing_notice() {
+    run(async {
+        // B4-2 (round 4): the other side has a file `a`, this computer a folder `a` (holding only
+        // ignored files). The download can't happen until the user renames one: it is said every
+        // run, and the listing still counts as handled
+        let p = pair().await;
+        write(&p.l("a/scratch.tmp"), "ignored");
+        write(&p.r("a"), "theirs");
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(true, None).await.unwrap();
+        assert_eq!(r.errors.len(), 1, "{:?}", r.errors);
+        assert!(r.errors[0].starts_with("a: a folder with this name is here"), "{:?}", r.errors);
+        let first = p.db.cursor("m").unwrap().last_full_scan;
+        assert!(first.is_some(), "not held back by a clash that only the user can settle");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let r = p.engine(Arc::new(AtomicBool::new(false)), &noop).twoway(true, None).await.unwrap();
+        assert_eq!(r.errors.len(), 1, "still said: {:?}", r.errors);
+        assert!(p.db.cursor("m").unwrap().last_full_scan > first);
+        assert_eq!(read(&p.l("a/scratch.tmp")), "ignored");
+    });
+}

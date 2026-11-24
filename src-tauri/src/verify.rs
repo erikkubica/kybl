@@ -57,7 +57,7 @@ pub struct Local {
 /// What was checked: "size", "md5", "etag" (an S3 multipart ETag), "sha256", "quickxor", "dropbox".
 pub type Checked = &'static str;
 
-fn hex(d: &[u8]) -> String {
+pub fn hex(d: &[u8]) -> String {
     d.iter().map(|b| format!("{b:02x}")).collect()
 }
 

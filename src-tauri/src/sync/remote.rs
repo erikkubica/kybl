@@ -24,6 +24,9 @@ pub struct RemoteSnapshot {
     /// NFC keys that more than one stored key normalises to: all of them are left out, and the
     /// run leaves the path alone on both sides
     pub dupes: Vec<String>,
+    /// links in the other folder when it is one on this computer (NFC, relative): left alone
+    /// like links here, so nothing is written through them or read from them (`local_links`)
+    pub links: Vec<String>,
 }
 
 impl RemoteSnapshot {
@@ -87,6 +90,10 @@ pub async fn scan_remote(s: &dyn Storage, root: &str, prefix: &str, gi: &Gitigno
         }
         for e in batch? {
             if let Some(rel) = rel_of(&e.key, prefix, gi) {
+                if crate::local_links::skip_listed_link(s.caps(), &e) {
+                    out.links.push(super::plan::nfc(rel));
+                    continue;
+                }
                 out.insert(rel, remote_meta(&e, md5));
             }
         }

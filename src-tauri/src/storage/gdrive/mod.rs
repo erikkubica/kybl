@@ -654,9 +654,19 @@ impl Storage for GDrive {
         let mime = opts.content_type.clone().unwrap_or_else(|| mime_guess::from_path(name).first_or_octet_stream().to_string());
         let source = extras::Source::open(src).await?;
         let drive_name = drive_name(name);
-        let target = upload::Target { existing: existing.as_ref().map(|f| f.id.as_str()), parent: &parent, name: &drive_name, mime: &mime };
+        // a shortcut to a file is saved through to its target (Drive takes no content on the
+        // shortcut itself); the shortcut stays what the path names, so rename and delete still
+        // act on it and never on the target
+        let target = upload::Target { existing: existing.as_ref().map(|f| f.target().0), parent: &parent, name: &drive_name, mime: &mime };
         match upload::upload(&self.api, &self.base, target, source, &opts, progress, cancel).await? {
             Some(f) => {
+                let f = match existing {
+                    Some(mut link) if link.target().0 != link.id => {
+                        link.take_target(f);
+                        link
+                    }
+                    _ => f,
+                };
                 self.cache.put(root, path, f.node());
                 Ok(WriteOutcome::Done(f.entry(path.to_string())))
             }

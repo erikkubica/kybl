@@ -146,6 +146,9 @@ enum Done {
     Synced(BaseEntry),
     /// changed again while the run was going: the next run looks at it afresh
     Skipped,
+    /// can't happen until the user acts (a folder here where the other side has a file of that
+    /// name): a notice that stands, and not a reason to read the same changes again (B4-2)
+    Blocked(String),
     Cancelled,
 }
 
@@ -201,6 +204,10 @@ async fn exec_transfer(job: Job, ctx: &JobCtx, progress: &(dyn Fn(u64, u64) + Se
             // the file looks absent here: writing it would land outside the synced folder
             local::no_link_on_the_way(&ctx.local_root, &dest)?;
             let now = std::fs::metadata(&dest).ok();
+            if now.as_ref().is_some_and(|m| !m.is_file()) {
+                // not a race that the next run settles: it stays so until the user renames one
+                return Ok(Done::Blocked("a folder with this name is here, where the other side has a file. Rename one of them to sync it.".into()));
+            }
             let still = match (expect, &now) {
                 (Expect::Absent, None) => true,
                 (Expect::Matches(s, m), Some(meta)) => meta.len() == s && local::mtime_ms(meta) == m,
@@ -295,12 +302,21 @@ impl Engine<'_> {
         if local.unreadable.iter().any(|p| p.is_empty()) {
             return Err(format!("Kybl can't read the folder {}. Check that it is allowed to, then sync again.", self.local_root.display()));
         }
+        if local.partial
+            && let Some(r) = &remote
+        {
+            // a quick run looked only at what changed here: a change the other side reports
+            // below a link that was already here is left alone too, not failed (B4-1)
+            let fresh = r.files.keys().filter(|k| !base.contains_key(*k) && !local.files.contains_key(*k)).map(String::as_str);
+            let found = local::links_above(&self.local_root, fresh, &mut HashMap::new());
+            local.links.extend(found);
+        }
         let mut ex = plan::Excluded::default();
         for p in local.unreadable.iter().chain(&local.dupes).chain(&local.links) {
             ex.add(p);
         }
         if let Some(r) = &remote {
-            for p in &r.dupes {
+            for p in r.dupes.iter().chain(&r.links) {
                 ex.add(p);
             }
         }
@@ -371,7 +387,8 @@ impl Engine<'_> {
     /// Runs the transfers with limited parallelism, writing the base and reporting as they
     /// finish. Answers how many uploads and downloads made it, and whether any was skipped
     /// because its file changed again meanwhile (left for the next run to look at afresh).
-    async fn run_jobs(&self, jobs: Vec<Job>, total: u32, errors: &mut Vec<String>) -> (usize, usize, bool) {
+    /// Transfers that wait for the user ([`Done::Blocked`]) go to `notices`, not `errors`.
+    async fn run_jobs(&self, jobs: Vec<Job>, total: u32, errors: &mut Vec<String>, notices: &mut Vec<String>) -> (usize, usize, bool) {
         let ups: HashSet<String> = jobs.iter().filter(|j| matches!(j, Job::Up { .. })).map(|j| j.rel().to_string()).collect();
         let total_bytes: u64 = jobs.iter().map(Job::size).sum();
         let bytes = Arc::new(RunBytes::default());
@@ -402,6 +419,7 @@ impl Engine<'_> {
                                 Err(e) => errors.push(format!("{rel}: {e}")),
                             },
                             Ok(Done::Skipped) => skipped = true,
+                            Ok(Done::Blocked(why)) => notices.push(format!("{rel}: {why}")),
                             Ok(Done::Cancelled) => {}
                             Err(e) if e == crate::storage::CANCELLED => {}
                             Err(e) => errors.push(format!("{rel}: {e}")),
@@ -620,7 +638,9 @@ impl Engine<'_> {
         if total > 0 {
             (self.report)(Tick { total, ..Default::default() });
         }
-        let (uploaded, _, _) = self.run_jobs(jobs, total, &mut errors).await;
+        let mut notices = Vec::new();
+        let (uploaded, _, _) = self.run_jobs(jobs, total, &mut errors, &mut notices).await;
+        errors.append(&mut notices);
         let dels: Vec<(String, String)> = p.delete_remote.iter().map(|rel| (rel.clone(), self.push_key(rel, &local, rs))).collect();
         let deleted = self.delete_remote(&dels, &mut errors).await;
         self.db.drop_base_many(&self.id, &deleted)?;
@@ -677,7 +697,9 @@ impl Engine<'_> {
         if total > 0 {
             (self.report)(Tick { total, ..Default::default() });
         }
-        let (_, downloaded, _) = self.run_jobs(jobs, total, &mut errors).await;
+        let mut notices = Vec::new();
+        let (_, downloaded, _) = self.run_jobs(jobs, total, &mut errors, &mut notices).await;
+        errors.append(&mut notices);
         let trash: Vec<(String, PathBuf)> = p.trash_local.iter().map(|rel| (rel.clone(), local.path(&self.local_root, rel))).collect();
         let trashed = self.delete_local(trash, &base, &mut errors).await;
         self.db.drop_base_many(&self.id, &trashed)?;
@@ -755,7 +777,7 @@ impl Engine<'_> {
         let pending = self.note_held(&plan.held, &local, Some(&remote), &base, &mut errors)?;
         // the notices so far stand until the user acts (an unreadable folder, deletions waiting
         // for a confirmation); only what comes after them is a failure of this run
-        let standing = errors.len();
+        let mut standing = errors.len();
         // a deletion here that waits for a confirmation came from the other side's changes:
         // they are read again until it is confirmed
         let held_from_feed = plan.held.as_ref().is_some_and(|h| h.items.iter().any(|(_, side)| *side == Side::Local));
@@ -908,8 +930,15 @@ impl Engine<'_> {
         if total > 0 {
             (self.report)(Tick { total, ..Default::default() });
         }
-        let (ups, downs, skipped_jobs) = self.run_jobs(jobs, total, &mut errors).await;
+        let mut notices = Vec::new();
+        let (ups, downs, skipped_jobs) = self.run_jobs(jobs, total, &mut errors, &mut notices).await;
         left_alone |= skipped_jobs;
+        // they stand with the notices before them: shown each run until the user acts, without
+        // holding the change feed back
+        for n in notices {
+            errors.insert(standing, n);
+            standing += 1;
+        }
 
         // ---- deletions last, each remembered first so a lagging listing can't undo it
         let mut deleted = 0usize;
