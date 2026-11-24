@@ -1,7 +1,8 @@
 import { useCallback, useRef, useState } from "react";
 import { Icon } from "../Icons";
-import { Modal } from "./Dialogs";
-import { rememberChoice, rememberedChoice, type Choice, type Clash, type Direction, type Sticky } from "../desktop/conflicts";
+import { Modal, type Toast } from "./Dialogs";
+import type { ToastAction } from "../desktop/fileOps";
+import { forgetChoices, rememberChoice, rememberedChoice, type Choice, type Clash, type Direction, type Sticky } from "../desktop/conflicts";
 
 /** What a caller can add to `resolve` for work that goes on while it asks (a streaming download). */
 export type ResolveOpts = {
@@ -33,47 +34,68 @@ type Ask = {
  * Keep both, each with an "all" button that answers the rest at once. Closing the dialog
  * cancels the whole action.
  */
-export function useConflictPrompt() {
+export function useConflictPrompt(toast?: (kind: Toast["kind"], text: string, action?: ToastAction) => void) {
   const [ask, setAsk] = useState<Ask | null>(null);
-  const busy = useRef(false);
+  // one question at a time: a second `resolve` waits for the open one instead of reading as a cancel
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+  // actions (by their `sticky`) already told that a remembered answer was applied
+  const told = useRef(new WeakSet<Sticky>());
+
+  const askAll = useCallback(async (clashes: Clash[], verb: string, where: string, opts: ResolveOpts): Promise<Map<string, Choice> | null> => {
+    const out = new Map<string, Choice>();
+    const sticky: Sticky = opts.sticky ?? {};
+    for (let i = 0; i < clashes.length; i++) {
+      const c = clashes[i];
+      const kind = c.folder ? "folder" : "file";
+      // "Remember until Kybl quits" first, then "all" of this action
+      const kept = opts.remember ? rememberedChoice(opts.remember, c.folder) : undefined;
+      const remembered = kept || sticky[kind];
+      if (remembered) {
+        out.set(c.key, remembered);
+        // a rule from earlier is deciding here: say so once per action, with a way out
+        if (kept && !told.current.has(sticky)) {
+          told.current.add(sticky);
+          const word = { replace: c.folder ? "Merge" : "Replace", skip: "Skip", keep: "Keep both" }[kept];
+          toastRef.current?.("info", `Using your remembered answer for name clashes: ${word}.`, {
+            label: "Forget",
+            run: () => {
+              forgetChoices();
+              toastRef.current?.("info", "Kybl will ask again.");
+            },
+          });
+        }
+        continue;
+      }
+      // one "all" answers folders and files alike (Replace merges a folder, overwrites a file):
+      // asking once for the folders and again for their files was the same question twice
+      const sameLeft = clashes.length - i - 1;
+      const r = await new Promise<{ choice: Choice; all: boolean; remember: boolean } | null>((done) =>
+        setAsk({ clash: c, sameLeft, verb, where, more: !!opts.more, remember: opts.remember, done }),
+      );
+      if (!r) return null;
+      out.set(c.key, r.choice);
+      if (r.all || r.remember) sticky.file = sticky.folder = r.choice;
+      if (r.remember && opts.remember) {
+        told.current.add(sticky); // they just chose it: no need to announce it
+        rememberChoice(opts.remember, false, r.choice);
+        rememberChoice(opts.remember, true, r.choice);
+      }
+    }
+    return out;
+  }, []);
 
   /** Resolves with a choice per clashing key, or null when the user cancelled. */
-  const resolve = useCallback(async (clashes: Clash[], verb: string, where: string, opts: ResolveOpts = {}): Promise<Map<string, Choice> | null> => {
-    const out = new Map<string, Choice>();
-    if (!clashes.length) return out;
-    if (busy.current) return null;
-    busy.current = true;
-    try {
-      const sticky: Sticky = opts.sticky ?? {};
-      for (let i = 0; i < clashes.length; i++) {
-        const c = clashes[i];
-        const kind = c.folder ? "folder" : "file";
-        // "Remember until Kybl quits" first, then "all" of this action
-        const remembered = (opts.remember && rememberedChoice(opts.remember, c.folder)) || sticky[kind];
-        if (remembered) {
-          out.set(c.key, remembered);
-          continue;
-        }
-        // one "all" answers folders and files alike (Replace merges a folder, overwrites a file):
-        // asking once for the folders and again for their files was the same question twice
-        const sameLeft = clashes.length - i - 1;
-        const r = await new Promise<{ choice: Choice; all: boolean; remember: boolean } | null>((done) =>
-          setAsk({ clash: c, sameLeft, verb, where, more: !!opts.more, remember: opts.remember, done }),
-        );
-        if (!r) return null;
-        out.set(c.key, r.choice);
-        if (r.all || r.remember) sticky.file = sticky.folder = r.choice;
-        if (r.remember && opts.remember) {
-          rememberChoice(opts.remember, false, r.choice);
-          rememberChoice(opts.remember, true, r.choice);
-        }
-      }
-      return out;
-    } finally {
-      busy.current = false;
-      setAsk(null);
-    }
-  }, []);
+  const resolve = useCallback(
+    (clashes: Clash[], verb: string, where: string, opts: ResolveOpts = {}): Promise<Map<string, Choice> | null> => {
+      if (!clashes.length) return Promise.resolve(new Map());
+      const run = queue.current.then(() => askAll(clashes, verb, where, opts)).finally(() => setAsk(null));
+      queue.current = run.catch(() => {});
+      return run;
+    },
+    [askAll],
+  );
 
   const element = ask ? <ConflictDialog key={ask.clash.key} ask={ask} /> : null;
   return { resolve, element, open: !!ask };
@@ -88,6 +110,8 @@ function ConflictDialog({ ask }: { ask: Ask }) {
   // found every clash yet (a "2" would be wrong once the rest turn up).
   const more = ask.sameLeft > 0 || ask.more;
   const pick = (choice: Choice, all = false) => ask.done({ choice, all: all || remember, remember });
+  // what is being done, as a noun for the hint ("in this download")
+  const noun = ({ Uploading: "upload", Downloading: "download", Moving: "move", Copying: "copy", Extracting: "extraction" } as Record<string, string>)[verb] ?? "action";
   const replace = folder ? "Merge" : "Replace";
   return (
     <Modal title={folder ? `A folder named “${clash.name}” already exists` : `“${clash.name}” already exists`} onClose={() => ask.done(null)} width={more ? 600 : 480}>
@@ -103,12 +127,12 @@ function ConflictDialog({ ask }: { ask: Ask }) {
             {folder
               ? "Merge puts everything into the existing folder and replaces files with the same names. Keep both adds a number to the new folder’s name."
               : `Replace overwrites the existing file. Keep both adds a number to the name of the one you’re ${verb.toLowerCase()}.`}
-            {more && ` “All” answers every other name that already exists in this ${verb.toLowerCase()}, including ones still being found: Replace all overwrites files and merges folders.`}
+            {more && ` “All” answers every other name that already exists in this ${noun}, including ones still being found: Replace all overwrites files and merges folders.`}
           </p>
           {ask.remember && (
             <label className="check conflict-all">
               <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-              <span>Remember my choice until Kybl quits</span>
+              <span>Do this every time until Kybl quits</span>
             </label>
           )}
         </div>
@@ -118,8 +142,8 @@ function ConflictDialog({ ask }: { ask: Ask }) {
           <button className="btn" onClick={() => ask.done(null)}>
             Cancel
           </button>
-          <button className="btn btn-ghost" onClick={() => pick("keep", more)} title={`Keep the existing ${folder ? "folder" : "file"} and add a number to the new one’s name${more ? ", for all of them" : ""}`}>
-            {more ? "Keep both, all" : "Keep both"}
+          <button className="btn btn-ghost" onClick={() => pick("keep")} title={`Keep the existing ${folder ? "folder" : "file"} and add a number to the new one’s name`}>
+            Keep both
           </button>
         </div>
         <div className="btn-row">
@@ -130,6 +154,11 @@ function ConflictDialog({ ask }: { ask: Ask }) {
           {more && (
             <button className="btn" onClick={() => pick("skip", true)}>
               Skip all
+            </button>
+          )}
+          {more && (
+            <button className="btn btn-ghost" onClick={() => pick("keep", true)} title={`Keep the existing ${folder ? "folder" : "file"} and add a number to the new one’s name, for all of them`}>
+              Keep both all
             </button>
           )}
           <button className="btn btn-danger-ghost" onClick={() => pick("replace")}>

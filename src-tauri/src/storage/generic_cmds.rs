@@ -483,15 +483,29 @@ pub async fn copy_or_move<R: Runtime>(
     }
 }
 
+/// Names to one folder from which on a listing of it is cheaper than a check per name.
+const LIST_FROM: usize = 20;
+/// Pages of a folder read for that, so a huge folder is never walked to compare a few names.
+const LIST_PAGES: usize = 10;
+
+/// Whether `names` going to one folder are worth one listing of it (never on this computer's disk).
+fn worth_listing(names: usize, local: bool) -> bool {
+    !local && names >= LIST_FROM
+}
+
 /// Which keys (and folders) are already there, in the order asked.
 ///
 /// Names that share a folder are checked against one listing of it, the way FileZilla compares
 /// with the folder it already shows: on FTP every lone check is a listing of its own (and a data
 /// connection), so pasting 40 files asked the server 40 times. A folder with only a name or two
-/// is checked name by name, which stays cheaper than listing a big folder.
+/// is checked name by name, which stays cheaper than listing a big folder: a folder is listed only
+/// when at least `LIST_FROM` names go to it, and at most `LIST_PAGES` pages of it are read (the
+/// names not seen by then are checked one by one). This computer's disk is always checked name by
+/// name: a `stat` is fast there, and the disk decides what the same name is (case, Unicode form),
+/// which an exact comparison with a listing would not.
 pub async fn existing_keys(s: &dyn Storage, bucket: &str, keys: Vec<String>, prefixes: Vec<String>) -> Result<Existing, String> {
     use std::collections::{HashMap, HashSet};
-    const LIST_FROM: usize = 3;
+    let local = s.caps().local_paths;
     let parent = |k: &str| -> String {
         let t = k.trim_end_matches('/');
         t.rfind('/').map_or(String::new(), |i| t[..=i].to_string())
@@ -501,23 +515,28 @@ pub async fn existing_keys(s: &dyn Storage, bucket: &str, keys: Vec<String>, pre
         *per_dir.entry(parent(k)).or_default() += 1;
     }
     // the folders worth one listing: everything in each, as full keys (folders end with `/`)
-    let listed: HashMap<String, Option<HashSet<String>>> = futures_util::stream::iter(per_dir.into_iter().filter(|(_, n)| *n >= LIST_FROM).map(|(dir, _)| async move {
+    // (names, whether that is the whole folder)
+    let listed: HashMap<String, Option<(HashSet<String>, bool)>> = futures_util::stream::iter(per_dir.into_iter().filter(|(_, n)| worth_listing(*n, local)).map(|(dir, _)| async move {
         let mut names = HashSet::new();
         let mut token = None;
-        loop {
+        for page_no in 1.. {
             match s.list(bucket, &dir, token).await {
                 Ok(page) => {
                     names.extend(page.folders);
                     names.extend(page.objects.into_iter().map(|e| e.key));
                     token = page.next_token;
                     if token.is_none() {
-                        break (dir, Some(names));
+                        return (dir, Some((names, true)));
+                    }
+                    if page_no >= LIST_PAGES {
+                        return (dir, Some((names, false)));
                     }
                 }
                 // can't list it: those names are checked one by one instead
-                Err(_) => break (dir, None),
+                Err(_) => return (dir, None),
             }
         }
+        unreachable!()
     }))
     .buffer_unordered(4)
     .collect()
@@ -526,10 +545,13 @@ pub async fn existing_keys(s: &dyn Storage, bucket: &str, keys: Vec<String>, pre
         let known = listed.get(&parent(&k)).and_then(Option::as_ref);
         async move {
             let probe = if dir && !k.ends_with('/') { format!("{k}/") } else { k.clone() };
-            if let Some(names) = known {
+            if let Some((names, whole)) = known {
                 // a folder can be listed as a file-like entry on some stores (a link): either counts
                 let there = names.contains(&probe) || names.contains(probe.trim_end_matches('/'));
-                return Ok(there.then_some(k));
+                // not seen in a part of the folder only: ask about this name itself
+                if there || *whole {
+                    return Ok(there.then_some(k));
+                }
             }
             s.stat(bucket, &probe).await.map(|e| e.is_some().then_some(k))
         }
@@ -849,7 +871,16 @@ impl Dl<'_> {
 
 #[cfg(test)]
 mod tests {
+
     //! The generic commands against the local disk.
+    #[test]
+    fn listing_is_for_many_names_off_this_computer() {
+        use super::worth_listing;
+        assert!(!worth_listing(3, false));
+        assert!(!worth_listing(19, false));
+        assert!(worth_listing(20, false));
+        assert!(!worth_listing(5000, true));
+    }
     use super::*;
     use crate::storage::local::LocalBackend;
     use std::path::PathBuf;

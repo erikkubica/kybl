@@ -152,11 +152,14 @@ export function useEntries(
   /**
    * Every key in the folder on screen, once all of it is loaded (else null): a paste or upload
    * into this folder checks its name clashes against it at once, as FileZilla does, instead of
-   * asking the server about each name.
+   * asking the server about each name. Only rows a real load read from the server count (`at`
+   * says when; the caller also wants them young): a listing restored from a workspace is no proof
+   * until its refresh succeeded.
    */
+  const loadedAt = lst.loadedAt;
   const shownKeys = useMemo(
-    () => (fresh && !listing.next && listing.loc ? { loc: listing.loc, keys: new Set([...listing.folders, ...listing.objects.map((o) => o.key)]) } : null),
-    [fresh, listing.next, listing.loc, listing.folders, listing.objects],
+    () => (fresh && !listing.next && listing.loc && loadedAt != null ? { loc: listing.loc, at: loadedAt, keys: new Set([...listing.folders, ...listing.objects.map((o) => o.key)]) } : null),
+    [fresh, listing.next, listing.loc, listing.folders, listing.objects, loadedAt],
   );
 
   // read by refresh, so leaving search takes effect before the next render
