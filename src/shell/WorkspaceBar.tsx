@@ -19,6 +19,7 @@ import { isMenuKey } from "../components/Dialogs";
 import type { PaneId } from "../browser/types";
 import { colorValue } from "./workspaces";
 import { keys } from "../components/osText";
+import { NotificationBell } from "./NotificationBell";
 
 export type WorkspaceTab = { id: string; name: string; color: string | null; panes: number };
 
@@ -348,6 +349,7 @@ export function WorkspaceBar(p: WorkspaceBarProps) {
       </button>
       <div className="ws-fill" data-tauri-drag-region />
       {p.switcher && <PaneSwitcherView {...p.switcher} />}
+      <NotificationBell />
     </div>
   );
 }

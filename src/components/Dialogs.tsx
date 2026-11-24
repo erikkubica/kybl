@@ -934,7 +934,7 @@ export type Toast = {
  * the pointer or keyboard focus is on it, so there is time to read the details. The toasts
  * dismiss themselves after this; callers leave the timing to them.
  */
-const TOAST_MS = { info: 3200, success: 3200, error: 12000, action: 8000 };
+const TOAST_MS = { info: 2500, success: 2500, error: 12000, action: 8000 };
 
 export function Toasts({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number) => void }) {
   return (
