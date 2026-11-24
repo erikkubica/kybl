@@ -341,20 +341,60 @@ impl JobManager {
 
 // ---------------------------------------------------------------- app wiring and commands
 
+/// Whether `e` says the file isn't a database at all (damaged), as opposed to one made by a
+/// newer build, or one that's just locked for the moment: those are left as they are.
+fn is_damaged(e: &str) -> bool {
+    e.contains("file is not a database") || e.contains("malformed")
+}
+
+/// Opens the job database. A damaged file is moved aside (`jobs.db.unreadable-<time>`) and a fresh
+/// one started, instead of running without a file on every start from then on.
+fn open_or_start_over(path: &Path, host: Arc<dyn Host>) -> Result<JobManager, String> {
+    match JobManager::open(Some(path), host.clone()) {
+        Err(e) if is_damaged(&e) => {
+            let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let aside = path.with_file_name(format!("jobs.db.unreadable-{secs}"));
+            std::fs::rename(path, &aside).map_err(|r| format!("{e} (and the file couldn't be set aside: {r})"))?;
+            // its write-ahead files belong to it
+            for ext in ["-wal", "-shm"] {
+                let mut side = path.as_os_str().to_owned();
+                side.push(ext);
+                let mut to = aside.as_os_str().to_owned();
+                to.push(ext);
+                let _ = std::fs::rename(side, to);
+            }
+            JobManager::open(Some(path), host)
+        }
+        r => r,
+    }
+}
+
 /// Opens jobs.db, resumes the jobs that were at work and listens for the app coming back.
 pub fn setup(app: &AppHandle) {
     let host: Arc<dyn Host> = Arc::new(host::TauriHost { app: app.clone() });
     let path = app.path().app_data_dir().ok().map(|d| d.join("jobs.db"));
-    let manager = match path.as_deref().map(|p| JobManager::open(Some(p), host.clone())) {
+    let mut failed = None;
+    let manager = match path.as_deref().map(|p| open_or_start_over(p, host.clone())) {
         Some(Ok(m)) => m,
         other => {
             // keep the feature working for this session rather than failing every command
             if let Some(Err(e)) = other {
                 eprintln!("jobs.db: {e}");
+                failed = Some(e);
             }
             JobManager::open(None, host).expect("an in-memory database opens")
         }
     };
+    // jobs queued now would be gone at quit, which their "resume after restart" says they aren't:
+    // say so once, instead of looking normal
+    if let Some(e) = failed {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+        app.dialog()
+            .message(format!("Copy and move jobs can't be saved this time, so they won't resume after a restart: {e}"))
+            .title("Kybl")
+            .kind(MessageDialogKind::Warning)
+            .show(|_| {});
+    }
     if let Err(e) = manager.resume_all() {
         eprintln!("jobs: {e}");
     }

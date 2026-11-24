@@ -48,6 +48,8 @@ struct Session {
     cmds: mpsc::UnboundedSender<Cmd>,
     credit: Arc<Credit>,
     task: tokio::task::AbortHandle,
+    /// an SSH session: the server doesn't say whether a program runs in it
+    remote: bool,
 }
 
 static SESSIONS: LazyLock<Mutex<HashMap<u32, Session>>> = LazyLock::new(Default::default);
@@ -63,6 +65,34 @@ fn page_gen(label: &str) -> u64 {
 /// How many terminals web view `label` has open (a window hidden to the tray keeps them).
 pub fn count_for(label: &str) -> usize {
     SESSIONS.lock().unwrap().values().filter(|s| s.label == label).count()
+}
+
+/// How long a local shell may take to say whether a program runs in it.
+const BUSY_WAIT: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// How many terminals hold something that quitting would end: a local one with a program in the
+/// foreground (or one that doesn't answer in time: when in doubt, busy), and every open SSH one
+/// (the server can't say what runs there, and closing it ends the program).
+pub async fn busy_sessions() -> usize {
+    let asks: Vec<(bool, mpsc::UnboundedSender<Cmd>)> =
+        SESSIONS.lock().unwrap().values().map(|s| (s.remote, s.cmds.clone())).collect();
+    let mut n = 0;
+    for (remote, cmds) in asks {
+        if remote {
+            n += 1;
+            continue;
+        }
+        let (tx, rx) = oneshot::channel();
+        if cmds.send(Cmd::Busy(tx)).is_err() {
+            continue;
+        }
+        // a shell that already ended (its sender dropped) isn't running anything
+        match tokio::time::timeout(BUSY_WAIT, rx).await {
+            Ok(Ok(true)) | Err(_) => n += 1,
+            _ => {}
+        }
+    }
+    n
 }
 
 /// Ends every terminal of web view `label`: its page is loading anew, or it is gone.
@@ -227,7 +257,7 @@ pub async fn terminal_open<R: Runtime>(
             task.abort();
             return Err("The page reloaded.".into());
         }
-        all.insert(id, Session { label, cmds: cmd_tx, credit: credit.clone(), task });
+        all.insert(id, Session { label, cmds: cmd_tx, credit: credit.clone(), task, remote: remote_base.is_some() });
     }
     tokio::spawn(async move {
         batch::pump(out_rx, credit, batch::WINDOW, batch::MAX_BATCH, |b| on_output.send(InvokeResponseBody::Raw(b)).is_ok()).await;

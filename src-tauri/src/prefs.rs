@@ -5,7 +5,7 @@
 #[cfg(desktop)]
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime};
 #[cfg(desktop)]
 use tauri::State;
@@ -14,22 +14,44 @@ use tauri_plugin_autostart::ManagerExt;
 
 use crate::{state::err, tuning::TransferPrefs};
 
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, PartialEq)]
 struct Stored {
-    #[serde(default = "yes")]
     close_to_tray: bool,
-    #[serde(default)]
     transfers: TransferPrefs,
 }
 
-fn yes() -> bool {
-    true
-}
+type Map = serde_json::Map<String, serde_json::Value>;
 
-impl Default for Stored {
-    fn default() -> Self {
-        Self { close_to_tray: true, transfers: TransferPrefs::default() }
+const CLOSE_TO_TRAY: &str = "closeToTray";
+const TRANSFERS: &str = "transfers";
+
+impl Stored {
+    /// Each setting is read on its own, so a value this build can't read (a newer build's)
+    /// falls back to its default without taking the others with it. An old file's shared speed
+    /// cap moves into both directions here, so the first rewrite, whatever it changes, keeps it.
+    fn from_map(m: &Map) -> Self {
+        Self {
+            close_to_tray: m.get(CLOSE_TO_TRAY).and_then(|v| v.as_bool()).unwrap_or(true),
+            transfers: m
+                .get(TRANSFERS)
+                .and_then(|v| serde_json::from_value::<TransferPrefs>(v.clone()).ok())
+                .unwrap_or_default()
+                .clamped(),
+        }
+    }
+
+    /// `m` with the settings that differ from `before` replaced; every other key, including
+    /// ones a newer build wrote and settings this build couldn't read, stays as it was.
+    fn merged_into(&self, before: &Self, mut m: Map) -> Map {
+        if self.close_to_tray != before.close_to_tray {
+            m.insert(CLOSE_TO_TRAY.into(), self.close_to_tray.into());
+        }
+        // (an old file's shared cap is only in `before`'s source, so a clamped copy always differs
+        // from it; writing it is what migrates the file)
+        if self.transfers != before.transfers || m.get(TRANSFERS).is_some_and(|v| v.get("bandwidthLimitKbps").is_some()) {
+            m.insert(TRANSFERS.into(), serde_json::to_value(self.transfers).unwrap_or_default());
+        }
+        m
     }
 }
 
@@ -43,10 +65,11 @@ fn path<R: Runtime>(app: &AppHandle<R>) -> Option<std::path::PathBuf> {
 }
 
 fn read<R: Runtime>(app: &AppHandle<R>) -> Stored {
-    path(app)
+    let map = path(app)
         .and_then(|p| std::fs::read(p).ok())
-        .and_then(|raw| serde_json::from_slice(&raw).ok())
-        .unwrap_or_default()
+        .and_then(|raw| serde_json::from_slice::<Map>(&raw).ok())
+        .unwrap_or_default();
+    Stored::from_map(&map)
 }
 
 /// One change at a time: read, change and written back as one step, so two saves at once (the
@@ -56,12 +79,18 @@ static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn update<R: Runtime>(app: &AppHandle<R>, f: impl FnOnce(&mut Stored)) -> Result<(), String> {
     let p = path(app).ok_or("No config folder")?;
     let _one = WRITING.lock().unwrap();
-    let mut s = read(app);
+    // a file that isn't JSON is set aside before it is replaced
+    let map = match crate::state::json_before_save(&p)? {
+        Some(serde_json::Value::Object(m)) => m,
+        _ => Map::new(),
+    };
+    let before = Stored::from_map(&map);
+    let mut s = before.clone();
     f(&mut s);
-    write_to(&p, &s)
+    write_to(&p, &s.merged_into(&before, map))
 }
 
-fn write_to(p: &std::path::Path, s: &Stored) -> Result<(), String> {
+fn write_to(p: &std::path::Path, s: &Map) -> Result<(), String> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(err)?;
     }
@@ -119,4 +148,53 @@ pub fn set_app_prefs(
         if v { al.enable() } else { al.disable() }.map_err(|e| format!("Could not change the login item: {e}"))?;
     }
     Ok(get_app_prefs(app.clone(), prefs))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn map(v: serde_json::Value) -> Map {
+        v.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn an_old_shared_cap_survives_an_unrelated_save() {
+        let m = map(json!({ "closeToTray": true, "transfers": { "bandwidthLimitKbps": 500 } }));
+        let before = Stored::from_map(&m);
+        assert_eq!((before.transfers.download_limit_kbps, before.transfers.upload_limit_kbps), (500, 500));
+        let mut s = before.clone();
+        s.close_to_tray = false;
+        let out = s.merged_into(&before, m);
+        let again = Stored::from_map(&out);
+        assert!(!again.close_to_tray);
+        assert_eq!((again.transfers.download_limit_kbps, again.transfers.upload_limit_kbps), (500, 500));
+        assert!(out[TRANSFERS].get("bandwidthLimitKbps").is_none());
+    }
+
+    #[test]
+    fn what_this_build_cannot_read_is_kept() {
+        let m = map(json!({ "closeToTray": false, "transfers": { "verify": "someNewMode", "concurrency": 8 }, "newer": { "a": 1 } }));
+        let before = Stored::from_map(&m);
+        // the unreadable transfers fall back, the readable setting still reads
+        assert!(!before.close_to_tray);
+        assert_eq!(before.transfers, TransferPrefs::default());
+        let mut s = before.clone();
+        s.close_to_tray = true;
+        let out = s.merged_into(&before, m);
+        assert_eq!(out["closeToTray"], json!(true));
+        assert_eq!(out["newer"], json!({ "a": 1 }));
+        assert_eq!(out[TRANSFERS]["verify"], json!("someNewMode"));
+    }
+
+    #[test]
+    fn a_changed_setting_is_written() {
+        let m = Map::new();
+        let before = Stored::from_map(&m);
+        let mut s = before.clone();
+        s.transfers.concurrency = 7;
+        let out = s.merged_into(&before, m);
+        assert_eq!(Stored::from_map(&out).transfers.concurrency, 7);
+    }
 }

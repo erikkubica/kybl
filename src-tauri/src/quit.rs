@@ -85,6 +85,26 @@ fn question_with_drives(transfers: usize, jobs: usize, drives: usize) -> String 
     format!("{q} Also, {files} still waiting to upload (they'll upload next time you open Kybl). Quit anyway?")
 }
 
+/// The question with terminals that hold a running program (or an open SSH session) too.
+fn question_all(transfers: usize, jobs: usize, drives: usize, terminals: usize) -> String {
+    if terminals == 0 {
+        return question_with_drives(transfers, jobs, drives);
+    }
+    let term = if terminals == 1 {
+        "a terminal has a program running".to_string()
+    } else {
+        format!("{terminals} terminals have programs running")
+    };
+    if transfers + jobs + drives == 0 {
+        let mut t = term;
+        t[..1].make_ascii_uppercase();
+        return format!("{t}. Quit anyway?");
+    }
+    let q = question_with_drives(transfers, jobs, drives);
+    let q = q.trim_end_matches(" Quit anyway?");
+    format!("{q} Also, {term}. Quit anyway?")
+}
+
 /// The prompt's question for `n` things running.
 fn question(transfers: usize, jobs: usize) -> String {
     let plural = |n: usize, one: &str, many: &str| if n == 1 { format!("1 {one} is") } else { format!("{n} {many} are") };
@@ -143,11 +163,29 @@ pub fn request(app: &AppHandle) {
     });
 }
 
-/// Quits, asking first when transfers or bucket operations are running.
+/// Terminals with a program running or an SSH session open (they end with the app). Asking the
+/// shells takes a moment, so quitting waits for it off the main thread.
+pub fn terminals_open() -> bool {
+    crate::terminal::count_for("main") > 0
+}
+
+/// Quits, asking first when transfers, bucket operations or terminal programs are running.
 fn request_busy(app: &AppHandle) {
+    if !terminals_open() {
+        request_busy_with(app, 0);
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let terminals = crate::terminal::busy_sessions().await;
+        request_busy_with(&app, terminals);
+    });
+}
+
+fn request_busy_with(app: &AppHandle, terminals: usize) {
     // WP-B1: copy/move jobs between connections count as copies (they resume on the next start)
     let (transfers, jobs, drives) = busy_quitting(app);
-    if transfers + jobs + drives == 0 {
+    if transfers + jobs + drives + terminals == 0 {
         // failed uploads kept for Retry still hold parts on the server: abort those on the way out
         exit_cleanly(app.clone());
         return;
@@ -157,7 +195,7 @@ fn request_busy(app: &AppHandle) {
     }
     let mut dialog = app
         .dialog()
-        .message(question_with_drives(transfers, jobs, drives))
+        .message(question_all(transfers, jobs, drives, terminals))
         .title("Quit Kybl?")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom("Quit".into(), "Keep running".into()));
@@ -227,6 +265,10 @@ mod tests {
             question_with_drives(1, 0, 1),
             "1 transfer is still running. Also, 1 file on a drive is still waiting to upload (they'll upload next time you open Kybl). Quit anyway?"
         );
+        assert_eq!(question_all(0, 0, 0, 1), "A terminal has a program running. Quit anyway?");
+        assert_eq!(question_all(0, 0, 0, 2), "2 terminals have programs running. Quit anyway?");
+        assert_eq!(question_all(2, 0, 0, 1), "2 transfers are still running. Also, a terminal has a program running. Quit anyway?");
+        assert_eq!(question_all(1, 0, 0, 0), question(1, 0));
         assert_eq!(unsaved_question(1), "You have unsaved changes in 1 document. Quit anyway?");
         assert_eq!(unsaved_question(3), "You have unsaved changes in 3 documents. Quit anyway?");
     }

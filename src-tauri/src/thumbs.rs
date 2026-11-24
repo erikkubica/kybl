@@ -41,6 +41,9 @@ use crate::storage::{self, registry::LOCAL_ID, Conn, ConnKind, Entry, Loc, Stora
 const THUMB_PX: u32 = 360;
 /// Embedded EXIF thumbnails smaller than this look blurry in the grid: fall back to the full image.
 const MIN_EXIF_THUMB_PX: u32 = 200;
+/// The largest embedded thumbnail taken in, per side, and the memory its decode may use.
+const MAX_EXIF_THUMB_PX: u32 = 2048;
+const MAX_EXIF_THUMB_ALLOC: u64 = 32 << 20;
 /// Largest object downloaded whole to make a thumbnail. The web view uses the same limit
 /// (`MAX_BYTES` in thumbs.ts), so it never asks for one that is bound to fail.
 pub const MAX_FULL_DOWNLOAD: i64 = 40 * 1000 * 1000;
@@ -172,7 +175,19 @@ fn thumb_from_exif(head: &[u8]) -> Option<Vec<u8>> {
 /// The camera's embedded thumbnail, decoded and turned upright, however small.
 pub(crate) fn exif_image(head: &[u8]) -> Option<DynamicImage> {
     let (bytes, orientation) = exif_thumbnail(head)?;
-    let mut img = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg).ok()?;
+    // camera thumbnails are small (1920 px at most): a bigger "thumbnail" is a crafted file, and
+    // is refused by its header before anything is allocated
+    let mut reader = ImageReader::with_format(Cursor::new(&bytes), image::ImageFormat::Jpeg);
+    let mut l = Limits::default();
+    l.max_image_width = Some(MAX_EXIF_THUMB_PX);
+    l.max_image_height = Some(MAX_EXIF_THUMB_PX);
+    l.max_alloc = Some(MAX_EXIF_THUMB_ALLOC);
+    reader.limits(l);
+    let decoder = reader.into_decoder().ok()?;
+    if decoder.total_bytes() > MAX_EXIF_THUMB_ALLOC {
+        return None;
+    }
+    let mut img = DynamicImage::from_decoder(decoder).ok()?;
     if let Some(o) = Orientation::from_exif(orientation) {
         img.apply_orientation(o);
     }

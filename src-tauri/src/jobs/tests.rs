@@ -394,6 +394,23 @@ fn a_move_inside_one_connection_renames() {
 }
 
 #[test]
+fn a_damaged_job_file_is_set_aside_and_a_new_one_started() {
+    let state = tmp();
+    let db_path = state.0.join("jobs.db");
+    std::fs::write(&db_path, vec![b'x'; 4096]).unwrap();
+    assert!(super::open_or_start_over(&db_path, TestHost::with(vec![])).is_ok());
+    let aside = std::fs::read_dir(&state.0).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("jobs.db.unreadable-")).count();
+    assert_eq!(aside, 1);
+    // a file from a newer build isn't touched: that is the user's to update
+    drop(super::open_or_start_over(&db_path, TestHost::with(vec![])));
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch("PRAGMA user_version = 99").unwrap();
+    drop(conn);
+    assert!(super::open_or_start_over(&db_path, TestHost::with(vec![])).is_err());
+    assert!(db_path.exists());
+}
+
+#[test]
 fn resumes_after_a_crash_without_duplicates() {
     tauri::async_runtime::block_on(async {
         let (s, d, state) = (tmp(), tmp(), tmp());
