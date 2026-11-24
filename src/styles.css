@@ -5760,3 +5760,13 @@ input[type="range"]:focus-visible {
     width: 200px;
   }
 }
+
+/* an SFTP server's tunnels in the info panel: the popover's rows, flush with the panel */
+.info-tunnels .tunnel-row {
+  padding-left: 0;
+  padding-right: 0;
+}
+.info-tunnels .info-add {
+  margin-top: 8px;
+  gap: 5px;
+}

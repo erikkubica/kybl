@@ -64,6 +64,10 @@ export type PaneEnv = {
   splitItems?: () => MenuItem[];
   /** "Open terminal here" for folder `key` of this pane's root (the shell's; none where a terminal can't open) */
   terminalItems?: (key: string, label?: string) => MenuItem[];
+  /** the "…" menu's Tunnels ▸ (an SFTP connection's tunnels, and adding one) */
+  tunnelItems?: () => MenuItem[];
+  /** opens this pane's connection in its form (Tunnels are made there) */
+  editConnection?: () => void;
   /** extra items for the menu of selected items */
   extraItemItems?: (list: Entry[]) => (MenuItem | false)[];
   /** opens a file in the app's full-window viewer/editor; false when it should open in its own app */
@@ -538,7 +542,7 @@ export type PaneCore = ReturnType<typeof usePaneCore>;
 export function usePane(env: PaneEnv) {
   const core = usePaneCore(env);
   const actions = useEntryActions(core, env);
-  return { ...core, actions };
+  return { ...core, actions, editConnection: env.editConnection };
 }
 
 export type Pane = ReturnType<typeof usePane>;

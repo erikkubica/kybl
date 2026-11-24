@@ -32,24 +32,31 @@ export async function toggleTunnel(p: Profile, d: TunnelDef, toast: Toast, want?
   }
 }
 
-/** The connection menu's "Tunnels ▸" (SFTP connections with tunnels, on a computer). */
-export function tunnelMenuItems(p: Profile, toast: Toast): MenuItem[] {
+/**
+ * The connection menu's "Tunnels ▸" (SFTP connections, on a computer): each saved tunnel as a
+ * toggle, and with `onEdit` "Add or edit tunnels…" (the connection's form), so an SFTP connection
+ * without any yet still shows where tunnels are made.
+ */
+export function tunnelMenuItems(p: Profile, toast: Toast, onEdit?: () => void): MenuItem[] {
   const defs = tunnelsOf(p);
-  if (PHONE || !defs.length) return [];
+  if (PHONE || p.kind !== "sftp" || (!defs.length && !onEdit)) return [];
+  const edit: MenuItem[] = onEdit ? [...(defs.length ? [{ type: "sep" as const }] : []), { type: "item", label: defs.length ? "Add or edit tunnels…" : "Add a tunnel…", icon: "plus", onClick: onEdit }] : [];
   return [
     { type: "sep" },
     {
       type: "submenu",
       label: "Tunnels",
       icon: "tunnel",
-      items: () =>
-        defs.map((d) => ({
+      items: () => [
+        ...defs.map((d) => ({
           type: "item" as const,
           label: `${tunnelLabel(d)}  (${d.localPort})`,
           checked: !!runningTunnel(p.id, d.id),
           disabled: isStarting(p.id, d.id),
           onClick: () => void toggleTunnel(p, d, toast),
         })),
+        ...edit,
+      ],
     },
   ];
 }

@@ -67,17 +67,8 @@ export function TunnelPopover({ p, anchor, onDismiss }: { p: Profile; anchor: DO
   const { running: all } = useTunnels();
   const running = all.filter((t) => t.profileId === p.id);
   const stopped = tunnelsOf(p).filter((d) => !running.some((t) => t.tunnelId === d.id));
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState<string | null>(null);
-  const [copied, setCopied] = useState<number | null>(null);
   const dismiss = useRef(onDismiss);
   dismiss.current = onDismiss;
-
-  // bytes move without events: read them again while it is open
-  useEffect(() => {
-    const t = window.setInterval(() => void reloadTunnels(), 1000);
-    return () => window.clearInterval(t);
-  }, []);
   useEffect(() => {
     const down = (e: PointerEvent) => {
       const t = e.target as Element;
@@ -107,24 +98,6 @@ export function TunnelPopover({ p, anchor, onDismiss }: { p: Profile; anchor: DO
     if (!running.length && !stopped.length) dismiss.current();
   }, [running.length, stopped.length]);
 
-  const act = async (id: string, f: () => Promise<unknown>) => {
-    setBusy(id);
-    setErrors(({ [id]: _, ...rest }) => rest);
-    try {
-      await f();
-    } catch (e) {
-      setErrors((x) => ({ ...x, [id]: e instanceof Error ? e.message : String(e) }));
-    } finally {
-      setBusy(null);
-    }
-  };
-  const copy = async (port: number) => {
-    if (await copyAddress(port)) {
-      setCopied(port);
-      window.setTimeout(() => setCopied((c) => (c === port ? null : c)), 1400);
-    }
-  };
-
   const left = Math.max(8, Math.min(window.innerWidth - WIDTH - 8, anchor.left - 8));
   // under the mark, or above it when there's no room below (a connection low in the sidebar)
   const [top, setTop] = useState(anchor.bottom + 6);
@@ -153,6 +126,50 @@ export function TunnelPopover({ p, anchor, onDismiss }: { p: Profile; anchor: DO
         <Icon name="tunnel" size={13} />
         <span>Tunnels · {p.name}</span>
       </div>
+      <TunnelList p={p} />
+    </div>
+  );
+}
+
+/**
+ * A connection's tunnels: the running ones (address to copy, traffic, Stop), then the others
+ * (Start). Shared by the sidebar's popover and the pane's info panel.
+ */
+export function TunnelList({ p }: { p: Profile }) {
+  const { running: all } = useTunnels();
+  const running = all.filter((t) => t.profileId === p.id);
+  const stopped = tunnelsOf(p).filter((d) => !running.some((t) => t.tunnelId === d.id));
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [copied, setCopied] = useState<number | null>(null);
+  // bytes move without events: read them again while one runs and this is on screen
+  const live = running.length > 0;
+  useEffect(() => {
+    if (!live) return;
+    const t = window.setInterval(() => void reloadTunnels(), 1000);
+    return () => window.clearInterval(t);
+  }, [live]);
+
+  const act = async (id: string, f: () => Promise<unknown>) => {
+    setBusy(id);
+    setErrors(({ [id]: _, ...rest }) => rest);
+    try {
+      await f();
+    } catch (e) {
+      setErrors((x) => ({ ...x, [id]: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const copy = async (port: number) => {
+    if (await copyAddress(port)) {
+      setCopied(port);
+      window.setTimeout(() => setCopied((c) => (c === port ? null : c)), 1400);
+    }
+  };
+
+  return (
+    <>
       {running.map((t) => (
         <Running key={t.tunnelId} t={t} copied={copied === t.localPort} busy={busy === t.tunnelId} error={errors[t.tunnelId]} onCopy={() => void copy(t.localPort)} onStop={() => void act(t.tunnelId, () => stopTunnel(p.id, t.tunnelId))} />
       ))}
@@ -160,7 +177,7 @@ export function TunnelPopover({ p, anchor, onDismiss }: { p: Profile; anchor: DO
       {stopped.map((d) => (
         <Stopped key={d.id} d={d} busy={busy === d.id} error={errors[d.id]} onStart={() => void act(d.id, () => startTunnel(p.id, d.id))} />
       ))}
-    </div>
+    </>
   );
 }
 

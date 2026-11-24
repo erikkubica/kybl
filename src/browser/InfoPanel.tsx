@@ -16,6 +16,9 @@ import { devtoolsApi, type GitCommit, type GitOverview } from "./devtoolsApi";
 import { ago, connectionFacts, gitChips, gitCounts, type Fact } from "./infoFacts";
 import type { Pane } from "./usePane";
 import type { Entry } from "../types";
+import { TunnelList } from "../tunnels/TunnelBadge";
+import { tunnelsOf } from "../tunnels/tunnels";
+import { PHONE } from "../connections/fields";
 
 /** How many changed files the panel lists before saying how many more there are. */
 const LIST_MAX = 8;
@@ -167,6 +170,19 @@ export default function InfoPanel({ pane }: { pane: Pane }) {
         </p>
         {facts.length > 0 && <Rows facts={facts} />}
       </section>
+
+      {/* an SFTP server's tunnels: what runs, Start / Stop, and where new ones are made */}
+      {profile.kind === "sftp" && !PHONE && (
+        <section className="info-tunnels">
+          <h3>Tunnels</h3>
+          {tunnelsOf(profile).length > 0 ? <TunnelList p={profile} /> : <p className="info-note">Forward a port on this computer to a service the server can reach, like a database.</p>}
+          {pane.editConnection && (
+            <button type="button" className="btn btn-sm info-add" onClick={pane.editConnection}>
+              <Icon name="plus" size={12} /> {tunnelsOf(profile).length ? "Add or edit tunnels" : "Add a tunnel"}
+            </button>
+          )}
+        </section>
+      )}
 
       <section>
         <h3>Folder</h3>

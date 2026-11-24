@@ -497,6 +497,14 @@ export function AppShell() {
     splitItems: () => [{ type: "submenu", label: "Split", icon: "dual-pane", items: () => splitItems(id) }],
     beginItemDrag: (...a) => beginItemDrag.current?.(...a),
     terminalItems: (key, label) => term.items(id, key, label),
+    tunnelItems: () => {
+      const p = paneById(id).profile;
+      return p ? tunnelMenuItems(p, toast, () => setConnDialog({ profile: p })) : [];
+    },
+    editConnection: () => {
+      const p = paneById(id).profile;
+      if (p && p.kind !== "local") setConnDialog({ profile: p });
+    },
     ...dualPane.envFor(id),
   });
   // one pane per slot, always (hooks can't come and go with the layout); a slot that isn't on

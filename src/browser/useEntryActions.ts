@@ -384,6 +384,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
           { type: "item", label: "Calculate folder size", icon: "info", onClick: () => calcSizes([prefix]) },
           onDisk && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: pane.showHidden, onClick: toggleHidden },
           ...(env.terminalItems?.(prefix) ?? []),
+          ...(env.tunnelItems?.() ?? []),
           { type: "sep" },
           keepSyncMenu([
             !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(prefix) },
