@@ -482,7 +482,10 @@ export function useTerminalPanes(initial: Layout) {
     const path =
       t.profileId === LOCAL_PROFILE
         ? [t.bucket.replace(/\/+$/, ""), sub].filter(Boolean).join("/") || "/"
-        : [h.rootLabel(t.profileId, t.bucket) || t.bucket, sub].filter(Boolean).join("/") || "/";
+        : prof?.net && !t.bucket
+          ? // a server with one root: its start folder, not the connection's name a second time
+            [(prof.net.basePath || "~").replace(/\/+$/, ""), sub].filter(Boolean).join("/") || "/"
+          : [h.rootLabel(t.profileId, t.bucket) || t.bucket, sub].filter(Boolean).join("/") || "/";
     return (
       <TerminalSlot
         key={t.sid}

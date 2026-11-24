@@ -38,7 +38,7 @@ import { UpdateBanner } from "../components/UpdateBanner";
 import { KYBL } from "../kybl";
 import { useSyncOverall } from "../sync";
 import { useUpdates } from "../updates";
-import { applySettings, loadSettings, saveSettings, type Favorite, type Settings } from "../settings";
+import { applySettings, isDark, loadSettings, saveSettings, type Favorite, type Settings } from "../settings";
 import { undoStack } from "../desktop/undo";
 import { usePane, type Pane, type PaneEnv } from "../browser/usePane";
 import { BrowserPane } from "../browser/BrowserPane";
@@ -2439,6 +2439,9 @@ export function AppShell() {
           onSettings={(id, anchor) => setWsSettings((cur) => (cur?.id === id ? null : { id, anchor }))}
           onReorder={moveWorkspace}
           switcher={paneSwitcher}
+          onFind={palette.toggle}
+          dark={isDark(settings)}
+          onTheme={() => updateSettings({ theme: isDark(settings) ? "light" : "dark" })}
           drop={paneDrag.tabDrop ?? fileDrag.tabDrop ?? finderTab}
         />
         {paneDrag.view}

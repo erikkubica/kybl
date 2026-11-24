@@ -761,7 +761,12 @@ body.resizing-row * {
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
-/* ---------------------------------------------------------------- the notification bell */
+/* ---------------------------------------------------------------- find anything, light or dark, the bell */
+.ws-tool {
+  flex: none;
+  width: 26px;
+  height: 26px;
+}
 .ws-bell {
   position: relative;
   flex: none;

@@ -48,6 +48,11 @@ export type WorkspaceBarProps = {
   onReorder: (from: number, to: number) => void;
   /** the window can't show every pane: pick the one to show */
   switcher: PaneSwitcher | null;
+  /** the command palette (⌘K), as a button by the bell */
+  onFind: () => void;
+  /** the window is dark now; `onTheme` flips light and dark */
+  dark: boolean;
+  onTheme: () => void;
   /** something dragged is over a tab (TabDropTarget) */
   drop?: TabDropTarget | null;
 };
@@ -349,6 +354,12 @@ export function WorkspaceBar(p: WorkspaceBarProps) {
       </button>
       <div className="ws-fill" data-tauri-drag-region />
       {p.switcher && <PaneSwitcherView {...p.switcher} />}
+      <button type="button" className="icon-btn ws-tool" onClick={p.onFind} title={keys("Find anything (⌘K)")} aria-label="Find anything">
+        <Icon name="search" size={15} />
+      </button>
+      <button type="button" className="icon-btn ws-tool" onClick={p.onTheme} title={p.dark ? "Light appearance" : "Dark appearance"} aria-label={p.dark ? "Switch to light appearance" : "Switch to dark appearance"}>
+        <Icon name={p.dark ? "sun" : "moon"} size={15} />
+      </button>
       <NotificationBell />
     </div>
   );

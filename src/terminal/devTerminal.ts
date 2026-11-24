@@ -7,7 +7,9 @@ import type { Channel } from "@tauri-apps/api/core";
 import type { Profile } from "../types";
 import { ON_OS, terminalsWhere } from "../osNames";
 
-type Fake = { out: Channel<unknown>; cwd: string; cols: number; rows: number; line: string; acked: number; sent: number; busy?: boolean };
+type Fake = { out: Channel<unknown>; cwd: string; cols: number; rows: number; line: string; acked: number; sent: number; busy?: boolean; who?: string };
+/** `?shots`: the website's screenshots: a real-looking prompt and session instead of the mock's own words */
+const SHOTS = new URLSearchParams(location.search).has("shots");
 const live = new Map<number, Fake>();
 let next = 1;
 (window as unknown as { __kyblTerms: typeof live }).__kyblTerms = live;
@@ -19,7 +21,21 @@ const send = (f: Fake, s: string) => {
   // the real channel hands raw bytes over as an ArrayBuffer
   (f.out.onmessage as (m: unknown) => void)(b.buffer);
 };
-const prompt = (f: Fake) => send(f, `\x1b[32mmock\x1b[0m:\x1b[34m${f.cwd}\x1b[0m$ `);
+const prompt = (f: Fake) => send(f, `\x1b[32m${f.who ?? "mock"}\x1b[0m:\x1b[34m${f.cwd}\x1b[0m$ `);
+/** what a screenshot's terminal on a server shows when it opens */
+const shotSession = (f: Fake) => {
+  const P = () => `\x1b[32m${f.who}\x1b[0m:\x1b[34m${f.cwd}\x1b[0m$ `;
+  send(f, "Last login: Tue Nov 24 18:02:11 2026 from 10.0.0.4\r\n");
+  send(f, `${P()}git pull --ff-only\r\n`);
+  send(f, "Updating 3f2a91c..8be04d7\r\nFast-forward\r\n");
+  send(f, " app/Http/Controllers/CheckoutController.php | 38 \x1b[32m+++++++++\x1b[31m--\x1b[0m\r\n");
+  send(f, " resources/views/checkout.blade.php          |  6 \x1b[32m++\x1b[0m\r\n");
+  send(f, " 2 files changed, 41 insertions(+), 3 deletions(-)\r\n");
+  send(f, `${P()}sudo systemctl reload php8.3-fpm\r\n`);
+  send(f, `${P()}tail -n 2 storage/logs/laravel.log\r\n`);
+  send(f, "[2026-11-25 09:41:07] production.INFO: Order 10482 paid (card, 129.00 EUR)\r\n");
+  send(f, "[2026-11-25 09:41:12] production.INFO: Order 10483 paid (PayPal, 54.90 EUR)\r\n");
+};
 
 function run(id: number, f: Fake, cmd: string) {
   const [name, ...args] = cmd.trim().split(/\s+/);
@@ -84,8 +100,10 @@ export async function handleTerminal(cmd: string, a: any, profiles: Profile[]): 
       const id = next++;
       const f: Fake = { out: a.onOutput, cwd, cols: a.cols, rows: a.rows, line: "", acked: 0, sent: 0 };
       live.set(id, f);
+      if (SHOTS) f.who = a.profileId === "local" ? "you@macbook" : `${p?.net?.user || "deploy"}@${(p?.net?.host ?? "server").split(".")[0]}`;
       setTimeout(() => {
-        send(f, `Kybl mock shell on ${p?.name ?? ON_OS.device} (${a.cols}x${a.rows})\r\n`);
+        if (SHOTS && a.profileId !== "local") shotSession(f);
+        else if (!SHOTS) send(f, `Kybl mock shell on ${p?.name ?? ON_OS.device} (${a.cols}x${a.rows})\r\n`);
         prompt(f);
       }, 10);
       return { id, remoteBase: base };
