@@ -110,6 +110,15 @@ impl Store {
         );
     }
 
+    /// The files of `profile` the index knows: (root, key, etag, size).
+    fn files_of(&self, profile: &str) -> Vec<(String, String, String, i64)> {
+        let c = self.0.lock().unwrap();
+        let Ok(mut q) = c.prepare("SELECT root, key, etag, size FROM hashes WHERE profile = ?1") else { return vec![] };
+        q.query_map(params![profile], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map(|rows| rows.filter_map(Result::ok).collect())
+            .unwrap_or_default()
+    }
+
     fn forget_profile(&self, profile: &str) {
         let _ = self.0.lock().unwrap().execute("DELETE FROM hashes WHERE profile = ?1", params![profile]);
     }
@@ -151,6 +160,11 @@ pub async fn clear() -> u64 {
         let _ = tokio::task::spawn_blocking(move || s.clear()).await;
     }
     before.saturating_sub(usage())
+}
+
+/// The files of connection `profile` with a placeholder: (root, key, etag without quotes, size).
+pub fn files_of(profile: &str) -> Vec<(String, String, String, i64)> {
+    store().map(|s| s.files_of(profile)).unwrap_or_default()
 }
 
 /// A connection was deleted: its placeholders go too.

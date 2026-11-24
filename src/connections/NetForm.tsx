@@ -3,7 +3,7 @@ import { useEffect, useImperativeHandle, useRef, useState } from "react";
 import { api } from "../api";
 import { Icon } from "../Icons";
 import type { NetConfig, Profile } from "../types";
-import { baseProfile, defaultPort, emptyNet, netTitle, type NetKind } from "./kinds";
+import { baseProfile, defaultPort, emptyNet, netTitle, passwordTarget, type NetKind } from "./kinds";
 import { Field, PHONE, RAW, SecretInput, Segmented, Warning, type FormApi } from "./fields";
 import { TunnelsSection, tidyTunnels, tunnelProblem } from "../tunnels/TunnelsSection";
 
@@ -68,7 +68,6 @@ export function NetForm({
       live = false;
     };
   }, [initial, kind]);
-  const savedPassword = kind === "sftp" ? editing && initial?.net?.auth === "password" : !!hasSecret && !clearSecret;
 
   const edit =
     <T,>(set: (v: T) => void) =>
@@ -110,13 +109,38 @@ export function NetForm({
   const portNum = port.trim() ? Number(port.trim()) : 0;
   const davHref = url.trim();
   const davInsecure = kind === "webdav" && /^(http|dav|webdav):\/\//i.test(davHref);
+  // a saved password only goes to the server and user name it was saved for: another one asks
+  // for it again (the app refuses it too). Name, folder and other changes keep it.
+  const nowNet: NetConfig = {
+    ...start,
+    host: host.trim(),
+    port: Number.isInteger(portNum) ? portNum : 0,
+    user,
+    tls: kind === "webdav" ? (davInsecure ? "none" : "implicit") : tls,
+    auth: kind === "sftp" ? auth : "password",
+    url: kind === "webdav" ? davHref : null,
+  };
+  const target = passwordTarget(kind, nowNet);
+  const moved = editing && target !== null && target !== passwordTarget(kind, start);
+  const savedPassword = kind === "sftp" ? editing && initial?.net?.auth === "password" && !moved : !!hasSecret && !clearSecret && !moved;
 
   const problems = {
     url: kind !== "webdav" ? null : !davHref ? "Enter the server's address." : !/^(https?|(web)?davs?):\/\/[^\s/]+/i.test(davHref) ? "Start with https:// (for example https://cloud.example.com)." : null,
     host: kind === "webdav" ? null : host.trim() ? null : "Enter the server's name or address.",
     port: kind === "webdav" || !port.trim() ? null : Number.isInteger(portNum) && portNum > 0 && portNum < 65536 ? null : "Ports are numbers from 1 to 65535.",
     user: kind === "sftp" && !user.trim() ? "Enter your user name on the server." : null,
-    password: kind === "sftp" && auth === "password" && !password && !(editing && initial?.net?.auth === "password") ? "Enter the password." : null,
+    password:
+      password || clearSecret
+        ? null
+        : kind === "sftp"
+          ? auth === "password" && !savedPassword
+            ? moved
+              ? "The server or user name changed. Enter the password again."
+              : "Enter the password."
+            : null
+          : moved && hasSecret
+            ? "The server or user name changed. Enter the password again, or remove the saved one."
+            : null,
     privateKey:
       kind !== "sftp" || auth !== "key"
         ? null

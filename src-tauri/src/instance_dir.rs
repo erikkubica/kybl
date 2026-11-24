@@ -65,7 +65,12 @@ fn claim_with(base: &Path, plain: bool, mut adopt: impl FnMut(&Path, &Path) -> b
     private(base);
     let name = format!("{}-{}", std::process::id(), &uuid::Uuid::new_v4().simple().to_string()[..8]);
     let lock = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(base.join(format!("{name}.{LOCK}")))?;
-    lock.try_lock().map_err(|e| io::Error::other(e.to_string()))?;
+    // a fresh lock file is never held by another run: any other error means this filesystem has
+    // no locks (NFS without lockd, some FUSE and SMB mounts). Carry on without one, as the drive
+    // owner lock does; sweeps leave a folder whose lock they can't test alone (B5-3).
+    if let Err(std::fs::TryLockError::WouldBlock) = lock.try_lock() {
+        return Err(io::Error::other("This run's folder is in use"));
+    }
     let dir = base.join(&name);
     std::fs::create_dir_all(&dir)?;
     private(&dir);

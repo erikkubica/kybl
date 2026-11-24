@@ -82,7 +82,45 @@ export const emptyNet = (kind: NetKind): NetConfig => ({
  */
 export const keepsSavedSecret = (saved: string | null | undefined, now: string) => saved != null && saved.trim() === now.trim();
 
-export const emptyBlob = (): BlobConfig => ({ account: "", endpoint: "", container: "" });
+/** "files.example.com" from what people type in Server ("ftp://user@files.example.com:21/x" too). */
+function bareHost(host: string): string {
+  let h = host.trim();
+  const i = h.indexOf("://");
+  if (i >= 0) h = h.slice(i + 3);
+  h = h.split("/")[0];
+  const at = h.lastIndexOf("@");
+  if (at >= 0) h = h.slice(at + 1);
+  if (h.startsWith("[")) h = h.slice(1).split("]")[0];
+  else if ((h.match(/:/g) ?? []).length === 1) h = h.split(":")[0];
+  return h.toLowerCase();
+}
+
+/** A WebDAV address's server: host and port (dav:// and webdav:// read as https://). */
+function davOrigin(n: NetConfig): string {
+  const raw = n.url?.trim() || `${n.tls === "none" ? "http" : "https"}://${n.host.trim()}${n.port ? `:${n.port}` : ""}/`;
+  try {
+    return new URL(raw.replace(/^(web)?davs?:/i, "https:")).host.toLowerCase();
+  } catch {
+    return raw.toLowerCase();
+  }
+}
+
+/**
+ * Where a server connection's saved password is sent: server and user name (null: nothing sent,
+ * as for SFTP keys, which only sign). Same rule as the app's `password_target`: a saved password
+ * never follows a change of server or user name.
+ */
+export function passwordTarget(kind: NetKind, n: NetConfig): string | null {
+  const port = (d: number) => n.port || d;
+  let place: string;
+  if (kind === "ftp") place = `${bareHost(n.host)}:${port(n.tls === "implicit" ? 990 : 21)}`;
+  else if (kind === "sftp" && n.auth === "password") place = `${bareHost(n.host)}:${port(22)}`;
+  else if (kind === "webdav") place = davOrigin(n);
+  else return null;
+  return `${place}|${n.user.trim()}`;
+}
+
+export const emptyBlob =(): BlobConfig => ({ account: "", endpoint: "", container: "" });
 
 /** A profile of a non-S3 kind: the S3 fields stay empty, `provider` is the kind (its badge). */
 export function baseProfile(id: string, name: string, kind: ConnKind): Profile {

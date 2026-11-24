@@ -73,36 +73,45 @@ pub async fn save_profile(
     if profile.id == registry::LOCAL_ID {
         return Err("This connection can't be changed.".into());
     }
-    // what the vault held before a new secret went in, to put back if the list can't be saved
-    let mut replaced: Option<Option<String>> = None;
-    if let Some(s) = secret.as_deref().filter(|s| !s.is_empty()) {
-        // unreadable (a refused keychain prompt): nothing is put back then
-        replaced = get_secret(&state, &profile.id).await.ok();
-        set_secret(&state, &profile.id, s).await?;
+    // held for the whole save: what the vault held before, the change, the list save and an undo
+    // all belong to this save, never to another one of the same connection (S3-4)
+    let held = lock_profiles().await;
+    let mut profiles = load_profiles(&app)?;
+    let saved = profiles.iter().find(|p| p.id == profile.id).cloned();
+    // what the vault held before this save changed it, and what it left there, to put back if
+    // the list can't be saved (an unreadable "before", a refused keychain prompt: nothing is)
+    let mut undo: Option<(Option<String>, Option<String>)> = None;
+    if let Some(s) = secret.filter(|s| !s.is_empty()) {
+        let before = get_secret(&state, &profile.id).await.ok();
+        set_secret(&state, &profile.id, &s).await?;
+        undo = before.map(|b| (b, Some(s)));
     } else if clear_secret.unwrap_or(false) && matches!(profile.kind, ConnKind::Ftp | ConnKind::Webdav) {
         // "Remove saved password": the server takes an anonymous / password-less sign-in now
+        let before = get_secret(&state, &profile.id).await.ok();
         crate::state::remove_main_secret(&state, &profile.id).await?;
+        undo = before.map(|b| (b, None));
     } else if profile.kind == ConnKind::S3 && get_secret(&state, &profile.id).await?.is_none() {
         return Err("A secret key is required for a new connection".into());
+    } else if password_moved(&state, saved.as_ref(), &profile).await? {
+        return Err(PASSWORD_AGAIN.into());
     }
-    let held = lock_profiles().await;
-    let saved = load_profiles(&app).and_then(|mut profiles| {
-        match profiles.iter_mut().find(|p| p.id == profile.id) {
-            Some(existing) => *existing = profile.clone(),
-            None => profiles.push(profile.clone()),
-        }
-        save_profiles(&app, &profiles, &held)
-    });
-    drop(held);
-    if let Err(e) = saved {
+    match profiles.iter_mut().find(|p| p.id == profile.id) {
+        Some(existing) => *existing = profile.clone(),
+        None => profiles.push(profile.clone()),
+    }
+    if let Err(e) = save_profiles(&app, &profiles, &held) {
         // a new connection's secrets all go; an edited one gets its old secret back
-        if was_new {
-            forget_unsaved(&state, &profile.id, true).await;
-        } else if let Some(prev) = replaced {
-            crate::state::undo_secret(&state, &profile.id, prev).await;
-        }
+        let e = if was_new {
+            forget_unsaved(&state, &profile.id, true, e).await
+        } else {
+            if let Some((before, wrote)) = undo {
+                crate::state::undo_secret(&state, &profile.id, wrote.as_deref(), before).await;
+            }
+            e
+        };
         return Err(e);
     }
+    drop(held);
     state.clients.lock().await.remove(&profile.id);
     registry::forget(&profile.id);
     #[cfg(desktop)]
@@ -110,6 +119,62 @@ pub async fn save_profile(
     // the connection may point somewhere else now (another endpoint or account)
     crate::filecache::forget_profile(&app, &profile.id).await;
     Ok(profile)
+}
+
+/// A saved password is never sent to another server or user (S3-3).
+const PASSWORD_AGAIN: &str = "Enter the password again. A saved password isn't sent to a new server or user name.";
+
+/// Where a server connection's saved password is sent: its server and user name. `None`: no
+/// password to send (SFTP with a key or the agent, other kinds, whose secrets only sign).
+pub(crate) fn password_target(p: &Profile) -> Option<String> {
+    let n = p.net.as_ref()?;
+    let port = |default: u16| if n.port != 0 { n.port } else { default };
+    let host = || crate::storage::net::bare_host(&n.host).to_lowercase();
+    let place = match p.kind {
+        ConnKind::Ftp => format!("{}:{}", host(), port(if n.tls == crate::state::TlsMode::Implicit { 990 } else { 21 })),
+        ConnKind::Sftp if n.auth == crate::state::NetAuth::Password => format!("{}:{}", host(), port(22)),
+        ConnKind::Webdav => dav_origin(n),
+        _ => return None,
+    };
+    Some(format!("{place}|{}", n.user.trim()))
+}
+
+/// A WebDAV connection's server: host and port of its address (`dav://` and `webdav://` read as
+/// `https://`), as the form compares it (NetForm `hostOf`).
+fn dav_origin(n: &crate::state::NetConfig) -> String {
+    let raw = match n.url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+        Some(u) => u.to_string(),
+        None => {
+            let scheme = if n.tls == crate::state::TlsMode::None { "http" } else { "https" };
+            let port = if n.port != 0 { format!(":{}", n.port) } else { String::new() };
+            format!("{scheme}://{}{port}/", n.host.trim())
+        }
+    };
+    let fixed = match raw.split_once(':') {
+        Some((scheme, rest)) if ["dav", "davs", "webdav", "webdavs"].contains(&scheme.to_ascii_lowercase().as_str()) => format!("https:{rest}"),
+        _ => raw.clone(),
+    };
+    match reqwest::Url::parse(&fixed) {
+        Ok(u) if u.host_str().is_some() => {
+            let host = u.host_str().unwrap_or_default().to_lowercase();
+            match u.port() {
+                Some(p) => format!("{host}:{p}"),
+                None => host,
+            }
+        }
+        _ => raw.to_lowercase(),
+    }
+}
+
+/// Whether `now`, an edit of the saved connection `saved`, would send its saved password to
+/// another server or user name (a new connection has none to send).
+async fn password_moved(state: &AppState, saved: Option<&Profile>, now: &Profile) -> Result<bool, String> {
+    let Some(target) = password_target(now) else { return Ok(false) };
+    let Some(saved) = saved else { return Ok(false) };
+    if password_target(saved).as_deref() == Some(target.as_str()) {
+        return Ok(false);
+    }
+    Ok(get_secret(state, &now.id).await?.is_some_and(|s| !s.is_empty()))
 }
 
 /// Whether a saved connection has a password (main secret) in the vault, so its form can say
@@ -140,8 +205,9 @@ fn apply_groups(profiles: &mut [Profile], groups: &std::collections::HashMap<Str
 
 /// Deletes a connection. Once it is out of the saved list everything else of it goes, whatever
 /// fails: an error from then on would leave a connection that can't be deleted again with its
-/// tunnels, open client and cached files still there (B3-1). Secrets that can't be removed now
-/// are removed at the next start; the answer is then a note saying so (`None`: all gone).
+/// tunnels, open client and cached files still there (B3-1). Its id is noted for secret removal
+/// before the list loses it, so a crash in between still removes its secrets at the next start
+/// (S3-1). Secrets that can't be removed now: the answer is a note saying so (`None`: all gone).
 #[tauri::command]
 pub async fn delete_profile(
     app: AppHandle,
@@ -153,29 +219,55 @@ pub async fn delete_profile(
     crate::mount::forget_profile(&app, &id).await?;
     let held = lock_profiles().await;
     let mut profiles = load_profiles(&app)?;
+    let kind = profiles.iter().find(|p| p.id == id).map(|p| p.kind);
+    let queued = crate::state::remember_left_secrets(&state, &id);
+    if let Err(e) = &queued {
+        eprintln!("kybl: couldn't note a connection's secrets for removal: {e}");
+    }
     profiles.retain(|p| p.id != id);
-    save_profiles(&app, &profiles, &held)?;
+    if let Err(e) = save_profiles(&app, &profiles, &held) {
+        // still saved: its secrets stay
+        if queued.is_ok() {
+            crate::state::unremember_left_secrets(&state, &id);
+        }
+        return Err(e);
+    }
     drop(held);
     state.clients.lock().await.remove(&id);
     registry::forget(&id);
     #[cfg(desktop)]
     crate::tunnels::run::connection_changed(&app, &id, None);
-    // files of a deleted connection don't stay on this computer
+    // files of a deleted connection don't stay on this computer, thumbnails included
     crate::filecache::forget_profile(&app, &id).await;
+    crate::thumbs::forget_profile(&app, &id, kind).await;
     crate::placeholders::forget_profile(&id);
-    Ok(crate::state::forget_secrets_of_gone(&state, &id).await.err().map(left_secrets_note))
+    Ok(crate::state::finish_forgetting(&state, &id, queued.is_ok()).await.err().map(left_secrets_note))
 }
 
 /// What the page says when a deleted connection's secrets are still stored.
-fn left_secrets_note(e: String) -> String {
-    format!("The connection was deleted, but its saved password or sign-in couldn't be removed yet. Kybl removes it the next time it starts.\n\n{e}")
+fn left_secrets_note(left: crate::state::LeftSecrets) -> String {
+    let then = if left.queued {
+        "Kybl removes it the next time it starts."
+    } else {
+        "Kybl couldn't note it for later either, so it stays in Kybl's encrypted secret store."
+    };
+    format!("The connection was deleted, but its saved password or sign-in couldn't be removed yet. {then}\n\n{}", left.error)
 }
 
 /// A new connection whose save failed after its secret was stored: the secret goes too (now, or
-/// at the next start), so nothing of it is left in the vault.
-pub(crate) async fn forget_unsaved(state: &AppState, id: &str, was_new: bool) {
-    if was_new {
-        let _ = crate::state::forget_secrets_of_gone(state, id).await;
+/// at the next start), so nothing of it is left in the vault. Answers the save's error `e`, with
+/// a word added when the secret stays for good.
+pub(crate) async fn forget_unsaved(state: &AppState, id: &str, was_new: bool, e: String) -> String {
+    if !was_new {
+        return e;
+    }
+    match crate::state::forget_secrets_of_gone(state, id).await {
+        Err(left) if !left.queued => {
+            let (say, details) = e.split_once("\n\n").unwrap_or((e.as_str(), ""));
+            let more = if details.is_empty() { left.error } else { format!("{details}\n{}", left.error) };
+            format!("{say} The password or sign-in stored for it couldn't be removed either.\n\n{more}")
+        }
+        _ => e,
     }
 }
 
@@ -191,9 +283,17 @@ pub async fn test_connection(
 ) -> Result<String, String> {
     if profile.kind != ConnKind::S3 {
         let no_password = clear_secret.unwrap_or(false) && matches!(profile.kind, ConnKind::Ftp | ConnKind::Webdav);
-        let s = if no_password && secret.as_deref().is_none_or(str::is_empty) {
+        let typed = secret.as_deref().is_some_and(|s| !s.is_empty());
+        let s = if no_password && !typed {
             registry::build_without_password(&profile)?
         } else {
+            // the saved password only for the server and user it was saved for (S3-3)
+            if !typed && !profile.id.is_empty() {
+                let saved = load_profiles(&app)?.into_iter().find(|p| p.id == profile.id);
+                if password_moved(&state, saved.as_ref(), &profile).await? {
+                    return Err(PASSWORD_AGAIN.into());
+                }
+            }
             registry::build(&app, &state, &profile, secret).await?
         };
         s.roots().await?;
@@ -1405,6 +1505,30 @@ pub async fn list_all_under(
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    /// A saved password belongs to a server and user name: another one needs it typed again,
+    /// while a name, folder or other change keeps it. Keys only sign, so they follow (S3-3).
+    #[test]
+    fn a_saved_password_belongs_to_its_server_and_user() {
+        use crate::state::{NetAuth, NetConfig, TlsMode};
+        let p = |kind: ConnKind, net: NetConfig| Profile { kind, net: Some(net), ..Default::default() };
+        let ftp = NetConfig { host: "Files.Example.com".into(), user: "alice".into(), tls: TlsMode::Explicit, ..Default::default() };
+        let t = |kind, net| password_target(&p(kind, net));
+        assert_eq!(t(ConnKind::Ftp, ftp.clone()), t(ConnKind::Ftp, NetConfig { host: " files.example.com".into(), port: 21, base_path: "/x".into(), ..ftp.clone() }));
+        assert_ne!(t(ConnKind::Ftp, ftp.clone()), t(ConnKind::Ftp, NetConfig { host: "other.example.com".into(), ..ftp.clone() }));
+        assert_ne!(t(ConnKind::Ftp, ftp.clone()), t(ConnKind::Ftp, NetConfig { user: "bob".into(), ..ftp.clone() }));
+        assert_ne!(t(ConnKind::Ftp, ftp.clone()), t(ConnKind::Ftp, NetConfig { port: 2121, ..ftp.clone() }));
+        let sftp = NetConfig { host: "h".into(), user: "u".into(), auth: NetAuth::Password, ..Default::default() };
+        assert!(t(ConnKind::Sftp, sftp.clone()).is_some());
+        assert_eq!(t(ConnKind::Sftp, NetConfig { auth: NetAuth::Key, ..sftp.clone() }), None, "a key only signs");
+        let dav = |u: &str| t(ConnKind::Webdav, NetConfig { url: Some(u.into()), user: "u".into(), ..Default::default() });
+        assert_eq!(dav("https://Cloud.example.com/remote.php/dav/"), dav("davs://cloud.example.com:443/other/"));
+        assert_ne!(dav("https://cloud.example.com/"), dav("https://evil.example.net/"));
+        assert_ne!(dav("https://cloud.example.com/"), dav("https://cloud.example.com:8443/"));
+        // a profile saved with host and port instead of an address
+        let old = t(ConnKind::Webdav, NetConfig { host: "cloud.example.com".into(), tls: TlsMode::Implicit, user: "u".into(), ..Default::default() });
+        assert_eq!(old, dav("https://cloud.example.com/"));
+    }
 
     #[test]
     fn groups_change_only_the_named_connections() {

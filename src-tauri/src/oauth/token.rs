@@ -38,7 +38,10 @@ pub struct Stored {
 #[async_trait::async_trait]
 pub trait TokenStore: Send + Sync {
     async fn load(&self) -> SResult<Option<Stored>>;
-    async fn save(&self, s: &Stored) -> SResult<()>;
+    /// Writes `s` in place of `prev`, the token this source used, only while the store still
+    /// holds `prev`: after a deletion (nothing there) or a newer sign-in (another token) a
+    /// renewed token of an old session is dropped, never written back (S3-2).
+    async fn save(&self, prev: &Stored, s: &Stored) -> SResult<()>;
 }
 
 #[derive(Default)]
@@ -199,11 +202,11 @@ impl TokenSource {
         let life = Duration::from_secs(ans.expires_in.unwrap_or(3600));
         g.access = Some((ans.access_token.clone(), Instant::now() + life, life));
         if let Some(new) = ans.refresh_token.filter(|r| !r.is_empty() && *r != stored.refresh_token) {
-            let next = Stored { refresh_token: new, ..stored };
+            let next = Stored { refresh_token: new, ..stored.clone() };
             g.stored = Some(next.clone());
             // a failed save keeps this session going on the new token; Microsoft still takes the
             // previous one for a while, so the next launch can refresh again
-            if let Err(e) = self.store.save(&next).await {
+            if let Err(e) = self.store.save(&stored, &next).await {
                 eprintln!("kybl: couldn't save the renewed sign-in for a connection: {}", e.message);
             }
         }
@@ -215,6 +218,11 @@ fn fresh(g: &Inner) -> Option<String> {
     let (t, exp, life) = g.access.as_ref()?;
     let margin = EARLY.min(*life / 2);
     (exp.checked_duration_since(Instant::now())? > margin).then(|| t.clone())
+}
+
+/// Whether `now` (what the store holds) is still the session `prev` this source used.
+pub fn same_session(now: Option<&Stored>, prev: &Stored) -> bool {
+    now.is_some_and(|n| n.refresh_token == prev.refresh_token && n.client_id == prev.client_id)
 }
 
 /// Parses what the vault holds.
@@ -237,9 +245,12 @@ pub mod tests {
         async fn load(&self) -> SResult<Option<Stored>> {
             Ok(self.0.lock().unwrap().clone())
         }
-        async fn save(&self, s: &Stored) -> SResult<()> {
+        async fn save(&self, prev: &Stored, s: &Stored) -> SResult<()> {
             self.1.fetch_add(1, Ordering::Relaxed);
-            *self.0.lock().unwrap() = Some(s.clone());
+            let mut g = self.0.lock().unwrap();
+            if super::same_session(g.as_ref(), prev) {
+                *g = Some(s.clone());
+            }
             Ok(())
         }
     }
@@ -309,6 +320,28 @@ pub mod tests {
         assert!(got.iter().all(|t| t == "at-2"), "{got:?}");
         assert_eq!(n.load(Ordering::SeqCst), 2);
         assert_eq!(store.1.load(Ordering::SeqCst), 2);
+    }
+
+    /// A refresh still running when the connection is reconnected or deleted doesn't write its
+    /// renewed token over the new sign-in, or back after the deletion (S3-2, B3-7).
+    #[tokio::test]
+    async fn a_renewed_token_never_replaces_a_newer_sign_in_or_comes_back() {
+        let store = stored("rt-0");
+        let during = store.clone();
+        let step = Arc::new(AtomicU32::new(0));
+        let step2 = step.clone();
+        let mock = Mock::start(move |_| {
+            let i = step2.fetch_add(1, Ordering::SeqCst) + 1;
+            // while the answer is on its way: reconnected (1st), deleted (2nd)
+            *during.0.lock().unwrap() = (i == 1).then(|| Stored { refresh_token: "rt-new".into(), client_id: "cid2".into(), client_secret: None });
+            Resp::json(200, &serde_json::json!({"access_token": format!("at-{i}"), "expires_in": 3600, "refresh_token": format!("rt-{i}")}))
+        })
+        .await;
+        let ts = source(&mock.base, store.clone(), Arc::new(AtomicU32::new(0)));
+        assert_eq!(ts.access_token().await.unwrap(), "at-1");
+        assert_eq!(store.0.lock().unwrap().as_ref().unwrap().refresh_token, "rt-new", "the newer sign-in stays");
+        assert_eq!(ts.force_refresh("at-1").await.unwrap(), "at-2");
+        assert!(store.0.lock().unwrap().is_none(), "nothing written back after the deletion");
     }
 
     #[tokio::test]
