@@ -62,6 +62,8 @@ export type TermHost = {
   fileId: PaneId | null;
   /** splits pane `src` downwards; `fill` gets the new slot (nothing when there's no room: the shell says why) */
   splitBelow: (src: PaneId, fill: (fresh: PaneId) => void) => void;
+  /** the same, upwards (the new pane above `src`) */
+  splitAbove: (src: PaneId, fill: (fresh: PaneId) => void) => void;
   setActive: (id: PaneId) => void;
   focus: (id: PaneId) => void;
   close: (id: PaneId) => void;
@@ -319,7 +321,37 @@ export function useTerminalPanes(initial: Layout) {
       h.focus(there);
       return there;
     }
-    return open(h.activeId, { profileId, bucket: "", prefix: "" });
+    const at = { profileId, bucket: "", prefix: "" };
+    // a file pane becomes the terminal, as it would show another connection's files (its files
+    // are a click away: Folders); a terminal stays, with this one below it
+    if (ts[h.activeId] || !canTerminal(profileOf(profileId))) return open(h.activeId, at);
+    const sid = newSid();
+    focusWhenShown(sid);
+    h.slot(h.activeId).showConnection(null);
+    assign(h.activeId, { ...at, sid });
+    return h.activeId;
+  };
+
+  /**
+   * Folders in a terminal's header: its file pane when that is on screen, else one above it, in
+   * the connection and folder the terminal started in (⌘J then goes back and forth between them).
+   */
+  const showFiles = (id: PaneId) => {
+    const h = host.current;
+    const t = termsRef.current[id];
+    if (!h || !t) return;
+    const linked = t.from && h.ids.includes(t.from) && !termsRef.current[t.from] && h.slot(t.from).profile?.id === t.profileId ? t.from : null;
+    if (linked) {
+      h.setActive(linked);
+      h.focus(linked);
+      return;
+    }
+    const p = profileOf(t.profileId);
+    if (!p) return;
+    h.splitAbove(id, (fresh) => {
+      h.slot(fresh).openBucket(p, t.bucket, t.prefix);
+      setTerms((cur) => (cur[id] ? { ...cur, [id]: { ...cur[id]!, from: fresh } } : cur));
+    });
   };
 
   /** "Open terminal here" / "Open in terminal" for folder `key` of file pane `id`'s root; none where a terminal can't open. */
@@ -388,6 +420,11 @@ export function useTerminalPanes(initial: Layout) {
     return `Terminal · ${t.prefix ? baseName(t.prefix) : profileOf(t.profileId)?.name || "Terminal"}`;
   };
 
+  /** Connection `profileId` was deleted: its terminal panes go back to (empty) file panes. */
+  const forget = (profileId: string) => {
+    for (const [id, t] of Object.entries(termsRef.current)) if (t?.profileId === profileId) assign(id as PaneId, undefined);
+  };
+
   /** Ends the shells of terminal panes no workspace has any more (closed, or their workspace closed). */
   const gc = (ws: WorkspaceStore) => {
     const keep = new Set<string>();
@@ -428,6 +465,7 @@ export function useTerminalPanes(initial: Layout) {
         }}
         onClose={() => host.current?.close(id)}
         onToggle={toggle}
+        onFolders={() => showFiles(id)}
         follow={!!t.follow}
         canFollow={!!t.from && h.ids.includes(t.from) && !termsRef.current[t.from]}
         onFollow={() => setFollow(id, !t.follow)}
@@ -487,7 +525,7 @@ export function useTerminalPanes(initial: Layout) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { terms, setTerms, assign, host, open, openLocal, openFor, openRemote, toggle, items, dropTarget, drop, dropPaths, nameOf, gc, render };
+  return { terms, setTerms, assign, host, open, openLocal, openFor, openRemote, forget, toggle, items, dropTarget, drop, dropPaths, nameOf, gc, render };
 }
 
 /**

@@ -664,6 +664,7 @@ export function AppShell() {
     forgetCaps(id);
     conns.dropProfile(id);
     for (const p of allPanes.current) p.forgetProfile(id);
+    term.forget(id);
   };
 
   // initial load
@@ -1562,6 +1563,7 @@ export function AppShell() {
     activeId,
     fileId,
     splitBelow: (src, fill) => split("col", src, false, fill),
+    splitAbove: (src, fill) => split("col", src, true, fill),
     setActive: setActiveId,
     focus: focusSoon,
     // the terminal's own Close: asks first when a program runs in it
@@ -2333,7 +2335,7 @@ export function AppShell() {
             syncState={syncState}
             onTerminal={canTerminal({ id: LOCAL_PROFILE, kind: "local" }) ? () => void term.openLocal(undefined, { reuse: true }) : undefined}
           onOpenSync={() => openSettings("sync")}
-            onSelectBucket={(p, b) => openHere((pane) => pane.openBucket(p, b))}
+            onSelectBucket={(p, b) => (isShellConn(p) ? openShell(p) : openHere((pane) => pane.openBucket(p, b)))}
             onOpenBucketByName={(p) => askBucketName(p)}
             onNewBucket={(p) => askNewBucket(p)}
             hiddenBuckets={conns.hiddenBuckets}

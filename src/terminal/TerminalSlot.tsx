@@ -33,6 +33,8 @@ export type TerminalSlotProps = {
   onClose: () => void;
   /** ⌃` inside the terminal: back to the file pane */
   onToggle: () => void;
+  /** the folders of this terminal's connection, in a file pane */
+  onFolders: () => void;
   /** it `cd`s wherever the file pane it opened from goes; `canFollow`: that pane is on screen */
   follow: boolean;
   canFollow: boolean;
@@ -109,6 +111,9 @@ export function TerminalSlot(p: TerminalSlotProps) {
             </span>
           )}
           <div className="spacer" />
+          <button className="icon-btn" onClick={p.onFolders} title={`Folders on ${p.connName}`} aria-label={`Folders on ${p.connName}`}>
+            <Icon name="folder" />
+          </button>
           <button className="icon-btn" onClick={more} title="Terminal actions" aria-label="Terminal actions" aria-haspopup="menu">
             <Icon name="more" />
           </button>
