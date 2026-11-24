@@ -64,6 +64,8 @@ export type TermHost = {
   splitBelow: (src: PaneId, fill: (fresh: PaneId) => void) => void;
   /** the same, upwards (the new pane above `src`) */
   splitAbove: (src: PaneId, fill: (fresh: PaneId) => void) => void;
+  /** the panes menu's items for pane `id` (split, move, size, close the others), for the terminal's ⋯ */
+  paneItems: (id: PaneId) => MenuItem[];
   setActive: (id: PaneId) => void;
   focus: (id: PaneId) => void;
   close: (id: PaneId) => void;
@@ -511,6 +513,7 @@ export function useTerminalPanes(initial: Layout) {
         onFollow={() => setFollow(id, !t.follow)}
         note={t.follow ? (notes[t.sid] ?? null) : null}
         menu={h.menu}
+        paneItems={() => h.paneItems(id)}
       />
     );
   };

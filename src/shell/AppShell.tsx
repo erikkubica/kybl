@@ -604,9 +604,7 @@ export function AppShell() {
       run(activeRef.current);
       return focusListSoon();
     }
-    const why = splitRefusal("row", activeId);
-    if (why) return toast("info", why);
-    split("row", activeId, false, (fresh) => run(slot(fresh)));
+    split("row", activeId, false, (fresh) => run(slot(fresh)), true);
   };
 
   /** the latest connectIn per pane: an older one whose bucket list comes late opens nothing */
@@ -784,12 +782,33 @@ export function AppShell() {
     return r.ok === "no" ? r.why : null;
   };
   /**
-   * Splits a pane: the new one opens the same place (and view) and becomes the active pane. It
-   * goes right of or below the pane, or with `before` left of or above it.
+   * Where a new pane can go when the way asked for (`dir` of pane `id`) has no room: that pane the
+   * other way, else the roomiest other pane either way, so a 2 + 1 layout becomes 2 + 2 rather
+   * than refusing. One that fits as it is beats one that needs the sidebar folded; null: nowhere.
    */
-  const split = (dir: Dir, id: PaneId = activeId, before = false, fill?: (fresh: PaneId) => void) => {
-    const room = splitRoom(dir, id);
-    if (room.ok === "no") return toast("info", room.why);
+  const roomyPlace = (dir: Dir, id: PaneId): { dir: Dir; id: PaneId; room: "ok" | "fold" } | null => {
+    const t = treeRef.current;
+    const other: Dir = dir === "row" ? "col" : "row";
+    const area = (x: PaneId) => {
+      const el = document.querySelector<HTMLElement>(`[data-pane="${x}"]`);
+      return el ? el.clientWidth * el.clientHeight : 0;
+    };
+    const rest = leaves(t).filter((x) => x !== id).sort((a, b) => area(b) - area(a));
+    const tries = [{ dir, id }, { dir: other, id }, ...rest.flatMap((x) => [{ dir, id: x }, { dir: other, id: x }])].map((c) => ({ ...c, r: splitRoom(c.dir, c.id) }));
+    const pick = tries.find((c) => c.r.ok === "ok") ?? tries.find((c) => c.r.ok === "fold");
+    return pick && pick.r.ok !== "no" ? { dir: pick.dir, id: pick.id, room: pick.r.ok } : null;
+  };
+  /**
+   * Splits a pane: the new one opens the same place (and view) and becomes the active pane. It
+   * goes right of or below the pane, or with `before` left of or above it. With `anywhere` (a new
+   * terminal, ⌘↵ in the palette) it goes wherever there's room when that way has none.
+   */
+  const split = (dir: Dir, id: PaneId = activeId, before = false, fill?: (fresh: PaneId) => void, anywhere = false) => {
+    const asked = splitRoom(dir, id);
+    const place = asked.ok !== "no" || !anywhere ? null : roomyPlace(dir, id);
+    if (asked.ok === "no" && !place) return toast("info", asked.why);
+    const at = place ?? { dir, id, room: asked.ok as "ok" | "fold" };
+    const room = { ok: at.room };
     // the panes need the sidebar's width: it folds to its rail, as a narrow Finder window hides its sidebar
     if (room.ok === "fold") {
       autoFold.current = sideSpare();
@@ -810,7 +829,7 @@ export function AppShell() {
     } else p.showConnection(src.profile?.id ?? null);
     if (p.view !== src.view) p.setView(src.view);
     keepScrolls();
-    setTree(splitPane(t, id, dir, fresh, before));
+    setTree(splitPane(t, at.id, at.dir, fresh, place ? place.id === id && place.dir === dir && before : before));
     setActiveId(fresh);
     focusSoon(fresh);
   };
@@ -1574,8 +1593,18 @@ export function AppShell() {
     ids,
     activeId,
     fileId,
-    splitBelow: (src, fill) => split("col", src, false, fill),
-    splitAbove: (src, fill) => split("col", src, true, fill),
+    splitBelow: (src, fill) => split("col", src, false, fill, true),
+    splitAbove: (src, fill) => split("col", src, true, fill, true),
+    paneItems: (id) => [
+      { type: "submenu", label: "Split", icon: "dual-pane", items: () => splitItems(id) },
+      ...(leaves(treeRef.current).length > 1
+        ? ([
+            { type: "submenu", label: "Move pane", icon: "move", items: () => moveItems(id) },
+            { type: "item", label: "Make panes the same size", onClick: () => setTree((t) => equalize(t)) },
+            { type: "item", label: "Close other panes", onClick: () => closeOthers(id) },
+          ] satisfies MenuItem[])
+        : []),
+    ],
     setActive: setActiveId,
     focus: focusSoon,
     // the terminal's own Close: asks first when a program runs in it
@@ -2131,9 +2160,7 @@ export function AppShell() {
   routeRef.current = route;
   /** ⌘↵ in the palette: a new pane to the right, opened at `fill`'s place */
   const inNewPane = (fill: (fresh: PaneId) => void) => {
-    const why = splitRefusal("row", activeId);
-    if (why) return toast("info", why);
-    split("row", activeId, false, fill);
+    split("row", activeId, false, fill, true);
   };
   const palette = usePalette({
     here: active.here,

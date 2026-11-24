@@ -44,6 +44,8 @@ export type TerminalSlotProps = {
   /** why it didn't follow last time ("not following: busy"), or null */
   note: string | null;
   menu: (x: number, y: number, items: MenuItem[]) => void;
+  /** split, move, size and close the other panes, as a file pane's panes menu has them */
+  paneItems: () => MenuItem[];
 };
 
 export function TerminalSlot(p: TerminalSlotProps) {
@@ -63,6 +65,8 @@ export function TerminalSlot(p: TerminalSlotProps) {
       { type: "item", label: "Bigger text", icon: "plus", hint: K("+"), onClick: act("font+") },
       { type: "item", label: "Smaller text", hint: K("−"), onClick: act("font-") },
       { type: "item", label: "Actual size", hint: K("0"), onClick: act("font0") },
+      { type: "sep" },
+      ...p.paneItems(),
       { type: "sep" },
       { type: "item", label: "Close terminal", icon: "x", hint: MAC ? "⌘W" : undefined, onClick: p.onClose },
     ]);
