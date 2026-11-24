@@ -12,7 +12,7 @@ import { tidyMenu } from "../desktop/menus";
 import { menuFromKey } from "../desktop/menuKeyWatch";
 import { trustOnProfile } from "../connections/ConnFix";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useTerminalPanes } from "../terminal/useTerminalPanes";
+import { REMOTE_TERM_DROP, useTerminalPanes } from "../terminal/useTerminalPanes";
 import { terminalBusy } from "../terminal/api";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
@@ -546,6 +546,12 @@ export function AppShell() {
     const id = activeRef.current.id;
     requestAnimationFrame(() => focusPaneList(id));
   };
+  /** A cramped window draws only the active pane: when a terminal has it, the file pane comes forward so what opens there is seen. */
+  const showFilePane = () => {
+    if (!crampedRef.current || fileId == null || activeId === fileId) return;
+    keepScrolls();
+    setActiveId(fileId);
+  };
   /**
    * Opens something "here" (sidebar, favorites, ⌘K, Activity): in the active file pane, or, when
    * every pane on screen is a terminal, in a new file pane next to the active one (the slot
@@ -553,6 +559,7 @@ export function AppShell() {
    */
   const openHere = (run: (pane: Pane) => void) => {
     if (fileId != null) {
+      showFilePane();
       run(activeRef.current);
       return focusListSoon();
     }
@@ -1012,6 +1019,8 @@ export function AppShell() {
       void conns.loadBuckets(prof);
       if (s?.query) p.ent.setQuery(s.query);
       if ((s?.scroll || s?.selected?.length) && s.loc) pendingScroll.current.set(id, { loc: s.loc, top: s.scroll ?? 0, selected: s.selected });
+      // (its own place, also while a cramped window leaves it undrawn)
+      if (s?.scroll && s.loc) lastTop.current.set(id, { loc: s.loc, top: s.scroll });
     } else {
       p.showConnection(null);
       p.history.load(null, null);
@@ -1024,6 +1033,8 @@ export function AppShell() {
     const nextIds = leaves(l.tree);
     const hist = histories.current.get(wsId) ?? {};
     pendingScroll.current.clear();
+    // places seen in the layout that leaves (snapshotted by then) would land on the panes that come in
+    lastTop.current.clear();
     rec.clearNotes();
     dualPane.quietly(() => {
       for (const id of PANE_IDS) {
@@ -1514,17 +1525,18 @@ export function AppShell() {
       label: `Bucket name in ${p.name}`,
       initial: "",
       confirmLabel: "Create",
-      run: (raw) => {
+      // a name the server refuses (taken, not allowed) shows in the dialog, with the name kept
+      run: async (raw) => {
         const name = raw.trim();
-        api
-          .createBucket(p.id, name)
-          .then(async () => {
-            await conns.loadBuckets(p, true);
-            conns.setBucketHidden(p, name, false);
-            paneById(id).openBucket(p, name);
-            toast("success", `Created ${name}`);
-          })
-          .catch((e) => toast("error", errSummary(errMessage(e))));
+        try {
+          await api.createBucket(p.id, name);
+        } catch (e) {
+          return errSummary(errMessage(e));
+        }
+        await conns.loadBuckets(p, true);
+        conns.setBucketHidden(p, name, false);
+        paneById(id).openBucket(p, name);
+        toast("success", `Created ${name}`);
       },
     });
   };
@@ -1596,6 +1608,7 @@ export function AppShell() {
   const openConnection = (p: Profile) => {
     if (sideHidden) sidePeek.close();
     if (fileId == null) return openHere((pane) => void connectIn(pane.id, p));
+    showFilePane();
     if (active.profile?.id !== p.id || active.bucket == null) void connectIn(active.id, p);
     // (two frames: the overlay holding the field that had the keyboard goes first)
     focusSoon(active.id);
@@ -1665,10 +1678,10 @@ export function AppShell() {
             initial: path,
             confirmLabel: "Rename",
             note: "Use / to put it inside another group. A name that's already a group joins the two.",
+            check: (v) => (normalizeGroup(v).startsWith(`${path}/`) ? "A group can’t go inside itself." : null),
             run: (v) => {
               const to = normalizeGroup(v);
               if (!to || to === path) return;
-              if (to.startsWith(`${path}/`)) return toast("info", "A group can’t go inside itself.");
               void applyGroups(renameGroup(listed, path, to));
               openGroups.update((cur) => renamedOpen(cur, path, to, scope));
             },
@@ -1971,25 +1984,42 @@ export function AppShell() {
 
   // ------------------------------------------------------------ drag & drop from Finder
   const dropOnArchive = useRef(false);
+  /** why a drop on a terminal can't go there (one on a server: these are paths of this computer) */
+  const dropOnTermWhy = useRef<string | null>(null);
   const { over: dropOver, tab: finderTab } = useFinderDrop({
     target: (x, y) => {
+      dropOnTermWhy.current = null;
+      dropOnArchive.current = false;
       // a dialog owns the screen: nothing lands behind it
       if (overlayUp()) return null;
-      // with several panes, the one under the pointer; else (or without a position) the active one
-      const under = x != null && y != null ? document.elementFromPoint(x, y)?.closest("[data-pane]")?.getAttribute("data-pane") : null;
-      const p = (dualCtx.current?.panes.length ?? 0) > 1 && under ? paneById(under as PaneId) : activeRef.current;
+      // the pane under the pointer, terminals included; without one (sidebar, no position) the active file pane
+      const under = (x != null && y != null ? document.elementFromPoint(x, y)?.closest("[data-pane]")?.getAttribute("data-pane") : null) as PaneId | null;
+      // a terminal takes the paths typed in (never an upload), and only one running here
+      const t = under ? term.terms[under] : undefined;
+      if (under && t) {
+        if (t.profileId === THIS_MAC.id) return under;
+        dropOnTermWhy.current = REMOTE_TERM_DROP;
+        return null;
+      }
+      const p = under ? paneById(under) : activeRef.current;
       // (an archive opens read-only: it takes nothing)
       dropOnArchive.current = !!p.profile && p.archive.inArchive;
       return p.profile && p.bucket != null && !p.archive.inArchive ? p.id : null;
     },
-    onDrop: (id, paths) => void paneById(id).ops.uploadPaths(paths),
+    onDrop: (id, paths) => {
+      const why = term.dropPaths(id, paths);
+      if (why === undefined) void paneById(id).ops.uploadPaths(paths);
+      else if (why) toast("info", why);
+    },
     // dropped where nothing takes them: behind a dialog, on a pane with no folder open, on a terminal, in an archive
     onRefused: () =>
       toast(
         "info",
         overlayUp()
           ? "Finish what’s open first, then drop the files again."
-          : dropOnArchive.current
+          : dropOnTermWhy.current
+            ? dropOnTermWhy.current
+            : dropOnArchive.current
             ? "Archives open read-only. Drop the files on a folder to upload them."
             : "Drop the files on a pane with a folder open to upload them there.",
       ),
@@ -2287,7 +2317,7 @@ export function AppShell() {
           onConnected={(p) => {
             forgetCaps(p.id);
             conns.upsertProfile(p);
-            void connectIn(activeRef.current.id, p);
+            openHere((pane) => void connectIn(pane.id, p));
           }}
           onDeleted={forgetProfile}
         />
@@ -2312,7 +2342,7 @@ export function AppShell() {
             forgetCaps(p.id);
             clearAuthNeeded(p.id);
             conns.upsertProfile(p);
-            void connectIn(activeRef.current.id, p);
+            openHere((pane) => void connectIn(pane.id, p));
           }}
           onDeleted={forgetProfile}
         />

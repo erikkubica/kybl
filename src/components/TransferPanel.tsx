@@ -14,6 +14,7 @@ import { clearLog, logMessage, useActivityLog } from "../activityLog";
 import type { JobSummary } from "../api";
 import { JobsPanel, isActive as migrationActive, migrations as migrationStore, useMigrations } from "../jobs";
 import { useJobs } from "../useJobs";
+import { ON_OS } from "../osNames";
 
 /** A synced folder that is busy right now (shown read-only). */
 export type SyncActivity = { id: string; name: string; direction: "upload" | "download" | "twoway"; state: "scanning" | "syncing"; done: number; total: number; current: string | null; bytes: number; totalBytes: number };
@@ -751,7 +752,7 @@ function TransferPanelView({
                       <button className="icon-btn" onClick={() => openLocal(t)} title="Open" aria-label={`Open ${t.name}`}>
                         <Icon name="external" size={13} />
                       </button>
-                      <button className="icon-btn" onClick={() => onReveal(t)} title="Show in Finder" aria-label={`Show ${t.name} in Finder`}>
+                      <button className="icon-btn" onClick={() => onReveal(t)} title={ON_OS.showInFiles} aria-label={`Show ${t.name} in ${ON_OS.fileManager}`}>
                         <Icon name="reveal" size={13} />
                       </button>
                     </>

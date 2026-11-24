@@ -23,6 +23,8 @@ import { rootName } from "../connections/roots";
 import { editableInKybl } from "../edit/editable";
 import { useLocalCopy } from "../localCopyProgress";
 import { ServerProps } from "../perms/ServerProps";
+import { deleteLabel } from "../osNames";
+import { addressKind, itemAddress } from "../itemText";
 
 /** A details request for a key that no longer exists (deleted or moved elsewhere). */
 export const isNotFound = (msg: string) => /NotFound|NoSuchKey|status: 404|\b404\b/i.test(msg);
@@ -166,6 +168,11 @@ export function EntryInfo({
 
   // an s3:// address only means something on S3 (the one kind with buckets for roots)
   const isS3 = caps?.roots === "buckets";
+  // S3 has object keys; elsewhere it is a path (the full one on this computer, as ⌘C copies it)
+  const kind = caps ? addressKind({ roots: caps.roots, localPaths: caps.localPaths }) : "s3";
+  const keyRow = kind === "s3" ? { label: "Object key", text: entry.key } : { label: "Path", text: itemAddress(kind, bucket, entry.key) };
+  // as the menu says it: "Move to Trash" where deleted items can be restored
+  const delLabel = deleteLabel(!!caps?.trash, !!caps?.localPaths);
   const s3Uri = `s3://${bucket}/${entry.key}`;
   // "Photos / 2026" instead of a raw key; the full key lives under Technical details
   const folderPath = entry.key.slice(0, entry.key.length - entry.name.length - (isFolder ? 1 : 0)).replace(/\/$/, "");
@@ -277,7 +284,7 @@ export function EntryInfo({
         <button className="btn" onClick={onRename} title="Rename" aria-label="Rename">
           <Icon name="edit" size={15} />
         </button>
-        <button className="btn btn-danger-ghost" onClick={onDelete} title="Delete" aria-label="Delete">
+        <button className="btn btn-danger-ghost" onClick={onDelete} title={delLabel} aria-label={delLabel}>
           <Icon name="trash" size={15} />
         </button>
       </div>
@@ -374,8 +381,8 @@ export function EntryInfo({
               {details?.contentDisposition && <Prop label="Disposition">{details.contentDisposition}</Prop>}
               {details?.contentEncoding && <Prop label="Encoding">{details.contentEncoding}</Prop>}
               {storageClass && <Prop label="Storage class">{storageClassLabel(storageClass)}</Prop>}
-              <Prop label="Object key" mono onCopy={() => onCopyText(entry.key, "Object key")}>
-                {entry.key}
+              <Prop label={keyRow.label} mono onCopy={() => onCopyText(keyRow.text, keyRow.label)}>
+                {keyRow.text}
               </Prop>
               {isS3 && (
                 <Prop label="S3 URI" mono onCopy={() => onCopyText(s3Uri, "S3 URI")}>
@@ -420,14 +427,19 @@ export function SelectionInfo({
   onDownload,
   onMoveTo,
   moveLabel = "Move to…",
+  profileId,
   onDelete,
 }: SizeProps & {
   selection: Entry[];
+  /** the connection: its Delete button says "Move to Trash" where deleted items can be restored */
+  profileId?: string;
   onDownload?: () => void;
   onMoveTo: () => void;
   moveLabel?: string;
   onDelete: () => void;
 }) {
+  const caps = useCaps(profileId);
+  const delLabel = deleteLabel(!!caps?.trash, !!caps?.localPaths);
   // folders count once their size is known (worked out from the menu or the Size column)
   let total = 0;
   let files = 0;
@@ -476,7 +488,7 @@ export function SelectionInfo({
           <Icon name="move" size={15} /> {moveLabel}
         </button>
         <button className="btn btn-danger-ghost" onClick={onDelete}>
-          <Icon name="trash" size={15} /> Delete
+          <Icon name="trash" size={15} /> {delLabel}
         </button>
       </div>
     </div>

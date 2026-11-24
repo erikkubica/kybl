@@ -20,8 +20,7 @@ import type { TransferActions } from "../useTransfers";
 import type { Entry } from "../types";
 import { editApi, findSession, onUploaded, startEditing, type EditSession, type SaveRule } from "./editStore";
 
-const UA = typeof navigator === "undefined" ? "" : navigator.userAgent;
-const OS: "mac" | "win" | "linux" = /Mac/.test(UA) ? "mac" : /Win/.test(UA) ? "win" : "linux";
+import { OS } from "../osNames";
 
 /** Where a file to edit is: its connection and root, and how its pane opens files. */
 export type EditPlace = {

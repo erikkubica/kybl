@@ -22,6 +22,7 @@ import { shellCommands } from "./shellCommands";
 import { keys } from "../components/osText";
 import type { PaletteHost } from "./types";
 import "./palette.css";
+import { ON_OS } from "../osNames";
 
 type SectionId = "recent" | "connections" | "places" | "commands" | "files" | "path";
 type Mode = "all" | "commands" | "connections" | "path";
@@ -343,7 +344,7 @@ export default function CommandPalette({
       key: `path:${expanded}`,
       section: "path",
       title: frag ? `${shownDir}${frag}` : shownDir || "/",
-      detail: got?.error ?? (local ? "This Mac" : `${a.profile?.name ?? ""}${a.bucket ? ` · ${h.current.rootLabel(a.profile!.id, a.bucket)}` : ""}`),
+      detail: got?.error ?? (local ? ON_OS.device : `${a.profile?.name ?? ""}${a.bucket ? ` · ${h.current.rootLabel(a.profile!.id, a.bucket)}` : ""}`),
       icon: "arrow-right",
       alt: "new pane",
       run: (alt) => {

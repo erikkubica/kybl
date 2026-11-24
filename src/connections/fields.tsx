@@ -2,6 +2,7 @@
 import { useId, useState, type ReactNode } from "react";
 import { Icon } from "../Icons";
 import type { Profile } from "../types";
+import { ON_OS } from "../osNames";
 
 /** Addresses, keys and user names are typed exactly: no autocorrect or capitals on phones. */
 export const RAW = {
@@ -20,7 +21,7 @@ export const PHONE = ANDROID || IOS;
 export const SAVED_WHERE = ANDROID ? "Saved on this device" : "Saved encrypted";
 export const SECRET_NOTE = ANDROID
   ? "Passwords and keys stay on this device, in Kybl's private storage, and are left out of backups."
-  : "Passwords and keys are saved encrypted, with the key in your system keychain.";
+  : `Passwords and keys are saved encrypted, with the key in ${ON_OS.keychain}.`;
 
 /** The fields of a form that need fixing; messages show once Save or Test was tried. */
 export type Problems = Record<string, string | null>;

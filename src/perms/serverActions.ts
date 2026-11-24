@@ -4,7 +4,8 @@
  * (`caps.permissions`, `caps.links`); S3 and the cloud drives never show these.
  */
 import { createElement } from "react";
-import { errMessage } from "../api";
+import { errMessage, errSummary } from "../api";
+import { nameProblem } from "../itemText";
 import { parentPrefix } from "../format";
 import { entryParent } from "../moving";
 import type { MenuItem } from "../components/Dialogs";
@@ -59,16 +60,17 @@ export function serverActions(pane: PaneCore, env: PaneEnv) {
       label: `A link to “${e.name}”, in the same folder`,
       initial: dot > 0 ? `${e.name.slice(0, dot)} link${e.name.slice(dot)}` : `${e.name} link`,
       confirmLabel: "Make link",
-      run: (name) => {
+      check: (name) => nameProblem(name.replace(/\/+$/, "")),
+      // a name taken or the server refusing shows in the dialog, with the name kept
+      run: async (name) => {
         const n = name.trim().replace(/\/+$/, "");
-        if (!n || n.includes("/")) return toast("error", "A link's name can't be empty or contain “/”.");
-        permsApi
-          .makeLink(pid, b, dir + n, e.name)
-          .then(() => {
-            pane.ent.refresh();
-            toast("success", `Made “${n}”`);
-          })
-          .catch((err) => toast("error", errMessage(err)));
+        try {
+          await permsApi.makeLink(pid, b, dir + n, e.name);
+        } catch (err) {
+          return errSummary(errMessage(err));
+        }
+        pane.ent.refresh();
+        toast("success", `Made “${n}”`);
       },
     });
   };

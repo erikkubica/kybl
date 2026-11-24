@@ -10,6 +10,7 @@ import { deviceIcon, rootIcon } from "../connections/roots";
 import { ProviderBadge } from "../components/Sidebar";
 import { capsFor } from "../useCaps";
 import type { Profile } from "../types";
+import { ON_OS } from "../osNames";
 import "./jobs.css";
 
 /** A folder somewhere: `dir` is "" for the top of the root, else ends with "/". */
@@ -23,9 +24,7 @@ export function deviceName(): string {
   // iPadOS asks for the desktop site: a Mac with a touch screen is an iPad
   if (/iPad/i.test(ua) || (/Macintosh/.test(ua) && typeof navigator !== "undefined" && navigator.maxTouchPoints > 1)) return "On this iPad";
   if (/Android|iPhone|iPod/i.test(ua) || new URLSearchParams(location.search).has("mobile")) return "On this phone";
-  if (/Macintosh|Mac OS X/i.test(ua)) return "This Mac";
-  if (/Windows/i.test(ua)) return "This PC";
-  return "This computer";
+  return ON_OS.device;
 }
 
 /** A folder path for people: "media-prod / photos / 2026". */

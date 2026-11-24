@@ -12,7 +12,7 @@ import type { Dialogs } from "./useDialogs";
 import { registerCommands } from "../palette/commands";
 import { newSid, setStartup, terminalBusy } from "../terminal/api";
 import { leaves } from "./paneLayout";
-import { captureRecipe, freeName, matchesRecipe, openRecipe, recipeId, terminalPanes, type OpenedRecipe, type Recipe } from "./recipes";
+import { captureRecipe, freeName, layoutOnly, matchesRecipe, openRecipe, recipeId, terminalPanes, type OpenedRecipe, type Recipe } from "./recipes";
 import { useRecipes } from "./useRecipes";
 import { newId, type Layout, type Workspace, type WorkspaceStore } from "./workspaces";
 import type { RecipeView } from "./WorkspaceSettings";
@@ -95,7 +95,8 @@ export function useWorkspaceRecipes() {
     const w = h?.ws.list.find((x) => x.id === wsId);
     const r = recipeOf(w);
     if (!h || !w || !r) return;
-    const now = h.layoutOf(wsId);
+    // (layout only: an Undo must not take back a rename or recolor made meanwhile)
+    const now = layoutOnly(h.layoutOf(wsId));
     const terms = terminalPanes(now);
     if (terms.length) {
       const busy = (await Promise.all(terms.map((id) => (now.panes[id]?.term?.sid ? terminalBusy(now.panes[id]!.term!.sid!) : null)))).filter((b) => b).length;

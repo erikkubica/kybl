@@ -42,7 +42,9 @@ export function itemAddress(kind: AddressKind, root: string, key: string, rootLa
  * can be restored (Drive, OneDrive, Dropbox, this computer with "Move to Trash" on). A permanent
  * delete's `text` goes on with "and cannot be undone".
  */
-export function deleteWording(o: { what: string; count: number; folders: boolean; trash: boolean; local: boolean; windows?: boolean }) {
+/** `folders`: real folders among the items (not links to one); `links`: a link to a folder among them (only the link goes). */
+export function deleteWording(o: { what: string; count: number; folders: boolean; links?: boolean; trash: boolean; local: boolean; windows?: boolean }) {
+  const link = o.links ? "A link goes on its own; what it points to stays. " : "";
   const them = o.count === 1 ? "it" : "them";
   if (o.trash) {
     const bin = o.local && o.windows ? "Recycle Bin" : "Trash";
@@ -50,14 +52,14 @@ export function deleteWording(o: { what: string; count: number; folders: boolean
       title: `Move ${o.what} to the ${bin}?`,
       label: `Move to ${bin}`,
       danger: false,
-      text: `${o.folders ? "Folders go with everything inside them. " : ""}You can restore ${them} from the ${o.local ? bin : "trash of this drive"}.`,
+      text: `${o.folders ? "Folders go with everything inside them. " : ""}${link}You can restore ${them} from the ${o.local ? bin : "trash of this drive"}.`,
     };
   }
   return {
     title: `Delete ${o.what}?`,
     label: "Delete",
     danger: true,
-    text: `${o.folders ? "Folders are deleted with everything inside them. " : ""}This permanently removes ${them}`,
+    text: `${o.folders ? "Folders are deleted with everything inside them. " : ""}${link}This permanently removes ${them}`,
   };
 }
 
@@ -98,3 +100,22 @@ export function resolveLocalPath(input: string, roots: string[]): { root: string
   }
   return best && { root: best.root, prefix: best.prefix };
 }
+
+/** What is wrong with a new item name typed in (Rename, New folder, Make link); null when it is fine. */
+export function nameProblem(name: string): string | null {
+  const n = name.trim();
+  if (!n) return "Type a name.";
+  if (n.includes("/")) return "A name can’t contain “/”.";
+  if (n === "." || n === "..") return "That name is reserved. Pick another.";
+  return null;
+}
+
+/** What Enter / ⌘O says about a selection of `files` files and `folders` folders (folders open one at a time); null: nothing to say. */
+export function openNote(files: number, folders: number): string | null {
+  if (!files) return folders > 1 ? "Open one folder at a time." : null;
+  const first = files > 10 ? "Opening the first 10 files." : folders ? `Opening ${files === 1 ? "the file" : `the ${files} files`}.` : null;
+  return folders ? `${first} Folders open one at a time.` : first;
+}
+
+/** A name already used in the folder. */
+export const takenName = (name: string, folder: boolean) => `There’s already a ${folder ? "folder" : "file"} named “${name}” here.`;

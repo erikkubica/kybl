@@ -55,6 +55,7 @@ export function Toolbar({
   panesItems,
   provider,
   connName,
+  switchLabel = "Switch connection or bucket",
   onSwitchConnection,
   onGoTo,
   goTo,
@@ -120,6 +121,8 @@ export function Toolbar({
   provider?: string;
   /** the pane's connection, named after the badge so it's clear which server this is */
   connName?: string;
+  /** what the badge does, in this connection's words ("Switch connection or bucket" on S3) */
+  switchLabel?: string;
   /** the badge before the folder's name: pick another connection or bucket for this pane */
   onSwitchConnection?: (x: number, y: number) => void;
   /** typing a path into the bar (Go to folder) */
@@ -215,8 +218,8 @@ export function Toolbar({
             <button
               className="icon-btn conn-switch"
               onClick={(e) => onSwitchConnection(...anchorOf(e))}
-              title={connName ? `${connName} · switch connection or bucket` : "Switch connection or bucket"}
-              aria-label="Switch connection or bucket"
+              title={connName ? `${connName} · ${switchLabel[0].toLowerCase()}${switchLabel.slice(1)}` : switchLabel}
+              aria-label={switchLabel}
               aria-haspopup="menu"
             >
               <ProviderBadge provider={provider} />

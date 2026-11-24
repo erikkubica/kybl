@@ -8,9 +8,9 @@ import { keys } from "../components/osText";
 import { NO_EXPORT, asExport, exportable } from "../connections/native";
 import { peekCaps } from "../useCaps";
 import type { ReactNode } from "react";
-import type { ConfirmOptions } from "../shell/useDialogs";
+import type { ConfirmOptions, PromptOptions } from "../shell/useDialogs";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { api, errMessage } from "../api";
+import { api, errMessage, errSummary } from "../api";
 import { formatBytes, parentPrefix, sumSizes } from "../format";
 import { destKey, entryParent, placeLabel } from "../moving";
 import type { Settings } from "../settings";
@@ -27,7 +27,7 @@ import { localCopies, type LocalCopyVerb } from "../localCopyProgress";
 import { parentOf, renameRounds } from "../batchRename";
 import { BatchRenameDialog } from "./BatchRenameDialog";
 import { OS } from "./openWith";
-import { addressKind, deleteWording, itemAddress } from "../itemText";
+import { addressKind, deleteWording, itemAddress, nameProblem, takenName } from "../itemText";
 import { rootName, rootsMode } from "../connections/roots";
 import { okToRun as askToRun, openFromConnection, openOwnFile, type OpenApp } from "./openGuard";
 
@@ -50,7 +50,7 @@ export type OpsContext = {
   showFailed?: () => void;
   setBusy: (text: string | null) => void;
   confirm: (o: ConfirmOptions) => Promise<boolean>;
-  prompt: (o: { title: string; label: string; initial: string; confirmLabel: string; note?: string; run: (v: string) => void }) => void;
+  prompt: (o: PromptOptions) => void;
   /** shows a dialog of its own (the Batch rename dialog) */
   show?: (render: (close: () => void) => ReactNode) => void;
   resolveConflicts: (clashes: Clash[], verb: string, where: string) => Promise<Map<string, Choice> | null>;
@@ -396,7 +396,7 @@ export function makeFileOps(c: OpsContext) {
       return;
     }
     // drives and this computer (with "Move to Trash" on) keep deleted items to restore
-    const say = deleteWording({ what, count: list.length, folders: folders.length > 0, trash: !!peekCaps(pid)?.trash, local: !!c.localPaths, windows: OS === "win" });
+    const say = deleteWording({ what, count: list.length, folders: folders.some((f) => f.link === undefined), links: folders.some((f) => f.link !== undefined), trash: !!peekCaps(pid)?.trash, local: !!c.localPaths, windows: OS === "win" });
     c.confirm({
       title: say.title,
       label: say.label,
@@ -528,33 +528,29 @@ export function makeFileOps(c: OpsContext) {
     if (!profile || bucket == null) return;
     const pid = profile.id;
     const b = bucket;
+    const isFolder = e.kind === "folder";
+    // folders that are key prefixes (S3, Azure, GCS) have no rename: every file is copied
+    const slow = isFolder && peekCaps(pid)?.rename === "copy-delete";
     c.prompt({
-      title: e.kind === "folder" ? "Rename folder" : "Rename file",
+      title: isFolder ? "Rename folder" : "Rename file",
       label: "New name",
       initial: e.name,
       confirmLabel: "Rename",
-      // folders that are key prefixes (S3, Azure, GCS) have no rename: every file is copied
-      note: e.kind === "folder" && peekCaps(pid)?.rename === "copy-delete" ? "Renaming a folder here copies every file in it, so it can take a while." : undefined,
+      note: slow ? "Renaming a folder here copies every file in it, so it can take a while." : undefined,
+      check: nameProblem,
+      // what stops the rename (a name taken, the server refusing) shows in the dialog, with the name kept
       run: async (name) => {
-        if (name.includes("/")) {
-          toast("error", "A name can’t contain “/”");
-          return;
-        }
         if (name === e.name) return;
-        const isFolder = e.kind === "folder";
         const parent = entryParent(e);
         const to = isFolder ? `${parent}${name}/` : `${parent}${name}`;
         const found = await existing(pid, b, [{ key: to, folder: isFolder }]);
-        if (!found) return;
+        if (!found) return "";
         let replaced = false;
         // on this computer's case-blind disks a new spelling of the same name finds the item itself:
         // only a listed item spelled exactly so is another one (a case-sensitive disk)
         const caseOnly = !!c.localPaths && to.toLowerCase() === e.key.toLowerCase() && found.has(to) && !(await spelledSo(pid, b, parent, to));
         if (found.has(to) && !caseOnly) {
-          if (isFolder) {
-            toast("error", `There’s already a folder named “${name}” here. Pick another name.`);
-            return;
-          }
+          if (isFolder) return `${takenName(name, true)} Pick another name.`;
           const ok = await c.confirm({
             title: `Replace “${name}”?`,
             label: "Replace",
@@ -562,36 +558,51 @@ export function makeFileOps(c: OpsContext) {
             icon: "alert",
             message: <p>A file with this name already exists here. Renaming “{e.name}” will overwrite it, and that can’t be undone.</p>,
           });
-          if (!ok) return;
+          if (!ok) return "";
           replaced = true;
         }
-        const id = jobs.start({ kind: "rename", title: `Renaming “${e.name}” to “${name}”`, dest: parent, profileId: pid, bucket: b });
-        if (isFolder) c.autoShowActivity();
-        let renamed = false;
-        const items = [{ from: e.key, to, isPrefix: isFolder }];
-        const retry = runRest("rename", pid, b, b, items, `Renaming “${e.name}” to “${name}”`, parent);
-        try {
-          const r = await api.moveMany(pid, b, items, true, id);
-          jobs.finish(id, r, retry);
-          if (r.error && r.error !== "Cancelled")
-            toast("error", `Renaming stopped after ${r.done.toLocaleString()} of ${plural(r.total, "object")}. ${r.error}`, showAction);
-          else renamed = !r.error;
-        } catch (err) {
-          jobs.finish(id, { error: errMessage(err) }, retry);
-          toast("error", errMessage(err), showAction);
+        const work = renameTo(name, parent, to, replaced, !slow);
+        // a slow folder rename runs as a job (Activity); a quick one is answered in the dialog
+        if (slow) {
+          void work;
+          return;
         }
-        if (renamed) {
-          c.selectAfterReload(pid, b, to);
-          if (!replaced) {
-            const label = `rename of “${e.name}”`;
-            offerUndo({ label, run: moveBack(pid, b, b, items, label) }, `Renamed to “${name}”`);
-          }
-        }
-        if (isFolder) c.clearSizes();
-        c.reloadIfShowing(pid, b);
-        if (renamed && isFolder) c.foldersChanged?.(pid, b, b, [{ from: e.key, to }]);
+        return work;
       },
     });
+    /** Renames `e` to `to`. `inDialog`: a refusal that renamed nothing comes back as the dialog's message instead of a toast. */
+    const renameTo = async (name: string, parent: string, to: string, replaced: boolean, inDialog: boolean): Promise<string | null> => {
+      const id = jobs.start({ kind: "rename", title: `Renaming “${e.name}” to “${name}”`, dest: parent, profileId: pid, bucket: b });
+      if (isFolder) c.autoShowActivity();
+      let renamed = false;
+      let refused: string | null = null;
+      const items = [{ from: e.key, to, isPrefix: isFolder }];
+      const retry = runRest("rename", pid, b, b, items, `Renaming “${e.name}” to “${name}”`, parent);
+      try {
+        const r = await api.moveMany(pid, b, items, true, id);
+        jobs.finish(id, r, retry);
+        if (r.error && r.error !== "Cancelled") {
+          if (inDialog && r.done === 0) refused = errSummary(r.error);
+          else toast("error", `Renaming stopped after ${r.done.toLocaleString()} of ${plural(r.total, "object")}. ${r.error}`, showAction);
+        } else renamed = !r.error;
+      } catch (err) {
+        jobs.finish(id, { error: errMessage(err) }, retry);
+        if (inDialog) refused = errSummary(errMessage(err));
+        else toast("error", errMessage(err), showAction);
+      }
+      if (refused != null) return refused;
+      if (renamed) {
+        c.selectAfterReload(pid, b, to);
+        if (!replaced) {
+          const label = `rename of “${e.name}”`;
+          offerUndo({ label, run: moveBack(pid, b, b, items, label) }, `Renamed to “${name}”`);
+        }
+      }
+      if (isFolder) c.clearSizes();
+      c.reloadIfShowing(pid, b);
+      if (renamed && isFolder) c.foldersChanged?.(pid, b, b, [{ from: e.key, to }]);
+      return null;
+    };
   };
 
   // ---------------------------------------------------------------- batch rename
@@ -761,25 +772,20 @@ export function makeFileOps(c: OpsContext) {
       label: "Folder name",
       initial,
       confirmLabel: "Create",
+      // a bad or taken name, or the server refusing, shows in the dialog with the name kept
+      check: (name) => nameProblem(name) ?? (dest === c.prefix && c.folderKeys.has(`${dest}${name}/`) ? takenName(name, true) : null),
       run: async (name) => {
-        if (name.includes("/")) {
-          toast("error", "A name can’t contain “/”");
-          return;
-        }
         const key = `${dest}${name}/`;
         try {
           const found = await findExisting(pid, b, [{ key, folder: true }]).catch(() => new Set<string>());
-          if (found.has(key)) {
-            toast("error", `There’s already a folder named “${name}” here.`);
-            return;
-          }
+          if (found.has(key)) return takenName(name, true);
           await api.createFolder(pid, b, key);
           c.selectAfterReload(pid, b, key);
           // in search results the new folder wouldn't show: back to the folder, with it selected
           c.leaveSearch?.();
           c.reloadIfShowing(pid, b);
         } catch (e) {
-          toast("error", errMessage(e));
+          return errSummary(errMessage(e));
         }
       },
     });

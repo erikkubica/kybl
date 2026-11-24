@@ -7,6 +7,7 @@
 import { LOCAL_ID } from "../api";
 import type { Profile } from "../types";
 import type { Settings } from "../settings";
+import { ON_OS } from "../osNames";
 
 export type { Loc } from "./useListing";
 
@@ -50,10 +51,10 @@ export function paneKeys(id: PaneId) {
  */
 export const LOCAL_PROFILE = LOCAL_ID;
 
-/** The sidebar's "This Mac": built in, never saved, edited or deleted. */
+/** The sidebar's "This Mac" ("This PC", "This computer"): built in, never saved, edited or deleted. */
 export const THIS_MAC: Profile = {
   id: LOCAL_ID,
-  name: "This Mac",
+  name: ON_OS.device,
   kind: "local",
   provider: "local",
   endpoint: "",

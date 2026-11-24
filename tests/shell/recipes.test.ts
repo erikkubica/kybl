@@ -1,7 +1,7 @@
 // Workspace recipes (src/shell/recipes.ts): saving a layout, opening it again. Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { captureRecipe, freeName, matchesRecipe, openRecipe, startupLines, terminalPanes } from "../../src/shell/recipes.ts";
+import { captureRecipe, freeName, layoutOnly, matchesRecipe, openRecipe, startupLines, terminalPanes } from "../../src/shell/recipes.ts";
 import type { Layout } from "../../src/shell/workspaces.ts";
 
 const view = { view: "list" as const, sort: null, hidden: null, compact: null, tile: null };
@@ -109,4 +109,11 @@ test("startup lines and names", () => {
   assert.deepEqual(startupLines(undefined), []);
   assert.equal(freeName(["Acme dev"], "Photos"), "Photos");
   assert.equal(freeName(["Acme dev", "acme dev 2"], "Acme dev"), "Acme dev 3");
+});
+
+test("layoutOnly: a whole workspace's name, color and start mode stay out of an Undo", () => {
+  const l: Layout = { tree: { leaf: "left" } as never, links: [], recent: ["left"], panes: {} };
+  const w = { ...l, id: "w1", name: "Old", color: "red", start: "saved", recipe: "r1" };
+  assert.deepEqual(Object.keys(layoutOnly(w)).sort(), ["links", "panes", "recent", "tree"]);
+  assert.equal(layoutOnly(w).tree, l.tree);
 });

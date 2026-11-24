@@ -92,7 +92,7 @@ export function PreviewPane({
   if (selection.length > 1) {
     return (
       <aside className="preview" onContextMenu={quiet}>
-        <SelectionInfo selection={selection} folderSize={folderSize} onCalcSize={onCalcSize} onDownload={onDownload} onMoveTo={onMoveTo} onDelete={onDelete} />
+        <SelectionInfo profileId={profileId} selection={selection} folderSize={folderSize} onCalcSize={onCalcSize} onDownload={onDownload} onMoveTo={onMoveTo} onDelete={onDelete} />
       </aside>
     );
   }

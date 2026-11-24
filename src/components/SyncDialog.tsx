@@ -6,6 +6,7 @@ import { DEFAULT_IGNORE, INTERVALS, prettyPath, remoteTrashOn, type SyncDirectio
 import type { Profile } from "../types";
 import { Modal } from "./Dialogs";
 import { ErrorText } from "./ErrorText";
+import { ON_OS } from "../osNames";
 import "./sync.css";
 
 /** Where a new synced folder should point, e.g. "Sync this folder…" from the file browser. */
@@ -16,7 +17,7 @@ const DIRECTIONS: { id: SyncDirection; icon: IconName; title: string; text: stri
     id: "upload",
     icon: "upload",
     title: "Upload only",
-    text: "Changes in this folder go up within seconds. The folder on this Mac is the original.",
+    text: `Changes in this folder go up within seconds. The folder on ${ON_OS.here} is the original.`,
   },
   {
     id: "download",
@@ -146,7 +147,7 @@ export function SyncDialog({
     <Modal title={existing ? "Edit synced folder" : "Sync a folder"} onClose={onClose} width={600}>
       <div className="modal-body sync-form">
         <div className="field">
-          <span>Folder on this Mac</span>
+          <span>Folder on {ON_OS.here}</span>
           <div className="path-pick">
             <span className={`path-value ${m.localPath ? "" : "is-unset"}`} title={m.localPath}>
               <Icon name="folder" size={15} />
@@ -231,7 +232,7 @@ export function SyncDialog({
                 <small>
                   {m.direction === "upload"
                     ? "Deleting a file here also deletes it there. Off: the remote folder keeps everything ever uploaded."
-                    : "Files removed there are moved to the Trash here. Files you edited here are never removed."}
+                    : `Files removed there are moved to the ${ON_OS.trash} here. Files you edited here are never removed.`}
                 </small>
               </div>
               <button className={`switch ${m.mirrorDeletes ? "on" : ""}`} role="switch" aria-checked={m.mirrorDeletes} aria-label="Mirror deletions" onClick={() => set({ mirrorDeletes: !m.mirrorDeletes })} />
@@ -242,8 +243,8 @@ export function SyncDialog({
               <div className="set-label">
                 Keep deleted files in a trash folder
                 <small>
-                  Files deleted on this Mac move to <code>.kybl-trash</code> in the remote folder instead of disappearing. Connections with their own trash use that.
-                  {twoway && " Files deleted there go to this Mac’s Trash."}
+                  Files deleted on {ON_OS.here} move to <code>.kybl-trash</code> in the remote folder instead of disappearing. Connections with their own trash use that.
+                  {twoway && ` Files deleted there go to the ${ON_OS.trash} here.`}
                 </small>
               </div>
               <button
@@ -315,7 +316,7 @@ export function SyncDialog({
             <ErrorText message={error} />
           </div>
         )}
-        {!valid && !m.localPath && <p className="hint">Choose a folder on this Mac to start.</p>}
+        {!valid && !m.localPath && <p className="hint">Choose a folder on {ON_OS.here} to start.</p>}
       </div>
       <div className="modal-foot">
         <button className="btn" onClick={onClose}>

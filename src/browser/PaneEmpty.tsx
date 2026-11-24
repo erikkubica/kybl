@@ -10,6 +10,7 @@ import { useCaps } from "../useCaps";
 import { rootsMode } from "../connections/roots";
 import { isCloudKind } from "../connections/kinds";
 import { ConnFixButton, connTrouble } from "../connections/ConnFix";
+import { ON_OS } from "../osNames";
 
 /** The shell's ways out of an empty pane. */
 export type EmptyActions = {
@@ -50,7 +51,7 @@ export function Welcome({ actions }: { actions: EmptyActions }) {
       <div className="welcome-card">
         <KyblMark size={76} className="welcome-mark" />
         <h1>Welcome to Kybl</h1>
-        <p>Browse, upload, download and share files on any S3-compatible storage. Your secret keys are saved encrypted, with the key in the system keychain.</p>
+        <p>Browse, upload, download and share files on S3, SFTP, FTP, WebDAV and cloud drives. Passwords and keys are saved encrypted, with the key in {ON_OS.keychain}.</p>
         <button className="btn btn-primary" onClick={actions.onConnectKybl}>
           <Icon name="cloud" size={15} /> Connect Kybl Storage
         </button>

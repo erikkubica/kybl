@@ -2,6 +2,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { MOUNT_STATUS_EVENT, mountApi, type MountInfo } from "../api";
 import { createStore, useStore } from "../store";
+import { ON_OS } from "../osNames";
 
 type MountData = { loaded: boolean; mounts: MountInfo[] };
 
@@ -45,10 +46,7 @@ export function findMount(mounts: MountInfo[], profileId: string, bucket: string
 
 /** What the system's file browser is called here, for "Show in …". */
 export function fileManagerName(): string {
-  const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
-  if (/Mac/i.test(ua)) return "Finder";
-  if (/Windows/i.test(ua)) return "File Explorer";
-  return "file manager";
+  return ON_OS.fileManager;
 }
 
 /** "media-prod › photos/2026" — where a drive points, for people. */

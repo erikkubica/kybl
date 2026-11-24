@@ -14,9 +14,10 @@ import { baseName, parentPrefix } from "../format";
 import { destLabel, entryParent } from "../moving";
 import { expiryLabel, type Favorite } from "../settings";
 import { tidyMenu } from "../desktop/menus";
-import { OS, openInItems } from "../desktop/openWith";
+import { openInItems } from "../desktop/openWith";
+import { trashName } from "../osNames";
 import { parseLocation } from "../desktop/paths";
-import { addressKind, goToText, isAbsolutePath, resolveLocalPath } from "../itemText";
+import { addressKind, goToText, isAbsolutePath, openNote, resolveLocalPath } from "../itemText";
 import { GoToDialog } from "../desktop/GoToDialog";
 import { SyncThisFolder } from "../desktop/SyncThisFolder";
 import { MountDialog } from "../mount/MountDialog";
@@ -96,9 +97,12 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     if (list.length === 1 && list[0].kind === "folder") return pane.navigate(list[0].key);
     if (list.length === 1 && isArchiveName(list[0].name)) return void pane.archive.open(list[0]);
     const files = list.filter((e) => e.kind === "file");
+    // folders in a selection of several are left (one opens at a time): said, never silently
+    const note = openNote(files.length, list.length - files.length);
+    if (note) toast("info", note);
+    if (!files.length) return;
     // one document opens in the app's editor; several go to their own apps
     if (files.length === 1 && env.openDocument?.(files[0])) return;
-    if (files.length > 10) toast("info", "Opening the first 10 files");
     // one question about the programs among them, for all of them
     void ops.openFiles(files.slice(0, 10));
   };
@@ -493,7 +497,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       { type: "sep" },
       { type: "item", label: one ? "Rename…" : `Rename ${list.length} items…`, icon: "edit", hint: "F2", onClick: () => rename(list) },
       caps?.trash
-        ? { type: "item", label: `Move to ${onDisk && OS === "win" ? "Recycle Bin" : "Trash"}${settings.confirmDelete ? "…" : ""}`, icon: "trash", hint: "⌘⌫", onClick: () => ops.askDelete(list) }
+        ? { type: "item", label: `Move to ${trashName(onDisk)}${settings.confirmDelete ? "…" : ""}`, icon: "trash", hint: "⌘⌫", onClick: () => ops.askDelete(list) }
         : { type: "item", label: list.length > 1 ? `Delete ${list.length} items…` : "Delete…", icon: "trash", hint: "⌘⌫", danger: true, onClick: () => ops.askDelete(list) },
     ]));
     dialogs.menu(ev.clientX, ev.clientY, items);

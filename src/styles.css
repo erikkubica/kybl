@@ -1395,6 +1395,9 @@ kbd {
 .drop-card span {
   font-size: 12px;
   opacity: 0.85;
+  max-width: 360px;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 .drop-card svg {
   animation: bob 1.1s ease-in-out infinite alternate;
