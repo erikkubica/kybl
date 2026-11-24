@@ -1,9 +1,11 @@
 import { MIcon, type MIconName } from "./icons";
+import { SheetBackdrop } from "./ui";
 
 export type SheetItem = { icon: MIconName; label: string; run: () => void; danger?: boolean; keepOpen?: boolean };
 
-/** A bottom sheet of actions, the phone's stand-in for a context menu. Tapping outside it or
- * the system back closes it, so it has no Cancel button. */
+/** A bottom sheet of actions, the phone's stand-in for a context menu. Tapping outside it, the
+ * system back or Escape closes it, so it shows no Cancel button (a hidden one is there for
+ * screen readers and switches). */
 export function ActionSheet({
   title,
   message,
@@ -19,7 +21,7 @@ export function ActionSheet({
   onClose: () => void;
 }) {
   return (
-    <div className="m-sheet-backdrop" onClick={onClose}>
+    <SheetBackdrop onClose={onClose}>
       <div className="m-sheet" role="menu" aria-label={title ?? "Actions"} onClick={(e) => e.stopPropagation()}>
         <div className="m-sheet-grip" />
         {title && <div className="m-sheet-title">{title}</div>}
@@ -31,6 +33,6 @@ export function ActionSheet({
           </button>
         ))}
       </div>
-    </div>
+    </SheetBackdrop>
   );
 }

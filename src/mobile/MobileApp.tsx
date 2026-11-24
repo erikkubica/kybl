@@ -20,7 +20,7 @@ import { ConnectionDialog } from "../components/ConnectionDialog";
 import type { ConnectionDialogHandle } from "../connections/ConnectionDialog";
 import { KyblConnectDialog } from "../components/KyblConnectDialog";
 import { KYBL, REVOKED_SAY, isRevokedKey } from "../kybl";
-import { ConfirmDialog, PromptDialog, Toasts, type Toast } from "../components/Dialogs";
+import { ConfirmDialog, PromptDialog, Toasts, closeFreeModal, useFreeModals, type Toast } from "../components/Dialogs";
 import { MoveDialog } from "../components/MoveDialog";
 import { PreviewPane } from "../components/PreviewPane";
 import { FileIcon } from "../components/FileIcon";
@@ -557,10 +557,10 @@ export default function MobileApp() {
   const stoppedAll = useRef(new Set<string>());
   const here = loc ? locKey(loc) : "";
   useEffect(() => {
-    if (!loc || sort === "name" || search || !listing.next || lst.loadingAll !== null || lst.loading || lst.error) return;
+    if (!loc || sort === "name" || search || !listing.next || lst.loadingAll !== null || lst.loading || lst.pageError) return;
     if (stoppedAll.current.has(here)) return;
     void loadAll();
-  }, [loc, here, sort, search, listing.next, loadAll, lst.loadingAll, lst.loading, lst.error]);
+  }, [loc, here, sort, search, listing.next, loadAll, lst.loadingAll, lst.loading, lst.pageError]);
 
   // ------------------------------------------------------------ downloads watch
   const batches = useRef(new Map<string, { ids: Set<string>; done: (ok: string[], failed: number) => void }>());
@@ -633,7 +633,15 @@ export default function MobileApp() {
     // "Upload to…" walks back up the folders it went into, then closes
     intake: () => {
       const at = intake?.at;
-      if (!at) setIntake(null);
+      // the shared files were taken from the system's queue: leaving drops them, so it asks
+      if (!at)
+        setConfirm({
+          title: "Don't upload?",
+          message: <p>{intake && intake.files.length > 1 ? "The shared files are" : "The shared file is"} not uploaded. To upload later, share again from the other app.</p>,
+          label: "Don't upload",
+          danger: true,
+          run: () => setIntake(null),
+        });
       else setIntake((cur) => cur && { ...cur, at: at.prefix ? { ...at, prefix: parentPrefix(at.prefix) } : null });
     },
     // a document with unsaved changes asks first; it closes itself through onClose
@@ -652,9 +660,12 @@ export default function MobileApp() {
    * the folders up to the connection list. The system back (Android button, the history), the
    * iPhone edge swipe and every on-screen back arrow go here.
    */
+  const freeModals = useFreeModals();
   const back = (): boolean => {
     // the lock screen has nothing to go back to: the system back leaves the app
     if (locked) return false;
+    // a dialog outside the stack (a trust sheet) sits over everything: it closes first
+    if (closeFreeModal()) return true;
     if (top) closeLayer[top]();
     else if (selecting) setSelecting(null);
     else if (searchOpen || search) {
@@ -667,8 +678,28 @@ export default function MobileApp() {
     else return false;
     return true;
   };
-  const depth = locked ? 0 : stack.length + Number(!!selecting) + Number(searchOpen || !!search) + Number(!!choosing) + (loc ? 1 : 0);
+  const depth = locked ? 0 : freeModals + stack.length + Number(!!selecting) + Number(searchOpen || !!search) + Number(!!choosing) + (loc ? 1 : 0);
   const backRef = useSystemBack(back, depth);
+  // Escape (a hardware keyboard, Switch Control) steps back out of the layer on top, as the
+  // system back does. Asked after every other handler ran: dialogs and the document take their
+  // own Escape (and mark it handled), and only one step is taken.
+  const layerUp = !!top && !locked;
+  useEffect(() => {
+    if (!layerUp) return;
+    let timer = 0;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (!e.defaultPrevented) backRef.current();
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.clearTimeout(timer);
+    };
+  }, [layerUp, backRef]);
   useKeyboardFit(IOS);
   // iPhone: swipe from the left edge (Android has its own back gesture). It moves the screen on
   // top of the stack, or the folder page when nothing is open; never a sheet, dialog or the viewer.
@@ -886,7 +917,7 @@ export default function MobileApp() {
   useEffect(() => {
     const el = sentinel.current;
     // (not after a failure: "Load more" or the note's Retry try again, instead of a loop)
-    if (!el || !listing.next || search || lst.loadingAll !== null || lst.error) return;
+    if (!el || !listing.next || search || lst.loadingAll !== null || lst.pageError) return;
     // rooted at the list's scroller: rooted at the screen, the margin would be clipped away
     const io = new IntersectionObserver(
       (xs) => {
@@ -896,7 +927,7 @@ export default function MobileApp() {
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [listing.next, loadMore, lst.loadingAll, lst.error, search, scrollEl]);
+  }, [listing.next, loadMore, lst.loadingAll, lst.pageError, search, scrollEl]);
 
   // ------------------------------------------------------------ photo previews, asked once
   const [askedThumbs, setAskedThumbs] = useState(() => !!LS.get("m.askedThumbs"));
@@ -1581,6 +1612,10 @@ export default function MobileApp() {
             // originals of the neighbours only on a network known not to cost anything
             lowData={!net.unmetered || thumbsPaused()}
             photos={PHONE_OS}
+            online={net.online}
+            more={!!listing.next && !search}
+            // (not after a page failed: "Load more" in the folder tries again, instead of a loop)
+            onNearEnd={() => !lst.pageError && lst.loadingAll === null && void loadMore()}
             onIndex={(i) => viewerOpen.current && media[i] && setViewerKey(media[i].key)}
             onClose={() => setViewerKey(null)}
             onInfo={(e) => setDetail(e)}
@@ -1625,6 +1660,7 @@ export default function MobileApp() {
               setIntake(null);
             }}
             onBack={() => backRef.current()}
+            onRetry={(p) => void loadBuckets(p)}
             fixes={connFixes}
           />
         )}

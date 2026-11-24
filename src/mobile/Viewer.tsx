@@ -26,6 +26,11 @@ type Props = {
   lowData: boolean;
   /** Save to Photos is offered (phones) */
   photos: boolean;
+  /** the network is up: originals that failed are asked again when it comes back */
+  online: boolean;
+  /** the folder has pages not loaded yet: asked for as the last loaded photos come up */
+  more: boolean;
+  onNearEnd: () => void;
   onIndex: (i: number) => void;
   onClose: () => void;
   onInfo: (e: Entry) => void;
@@ -40,10 +45,12 @@ const isVideo = (e: Entry) => classify(e.name) === "video";
 /** the strip along the bottom of a video where its own controls sit */
 const VIDEO_CONTROLS_PX = 76;
 
-export function Viewer({ items, index, profileId, bucket, lowData, photos, onIndex, onClose, onInfo, onShare, onDownload, onSaveToPhotos, onOpenIn, onDelete }: Props) {
+export function Viewer({ items, index, profileId, bucket, lowData, photos, online, more, onNearEnd, onIndex, onClose, onInfo, onShare, onDownload, onSaveToPhotos, onOpenIn, onDelete }: Props) {
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [failed, setFailed] = useState<Record<string, string>>({});
+  /** bumped by Retry and when the network comes back: originals that failed are asked again */
+  const [retryTick, setRetryTick] = useState(0);
   /** videos the web view couldn't play */
   const [unplayable, setUnplayable] = useState<Record<string, boolean>>({});
   /** originals that finished loading (their thumbnail can go) */
@@ -109,7 +116,37 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onInd
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, items, profileId, bucket, lowData]);
+  }, [index, items, profileId, bucket, lowData, retryTick]);
+
+  const failedRef = useRef(failed);
+  failedRef.current = failed;
+  /** Asks for originals that failed again (`key`, or all of them), with a fresh link. */
+  const retry = useCallback((key?: string) => {
+    const keys = key === undefined ? Object.keys(failedRef.current) : [key];
+    if (!keys.length) return;
+    const drop = <T,>(m: Record<string, T>) => {
+      const rest = { ...m };
+      for (const k of keys) delete rest[k];
+      return rest;
+    };
+    setFailed(drop);
+    setUrls(drop);
+    setReady(drop);
+    setRetryTick((t) => t + 1);
+  }, []);
+  // a failure while offline (a tunnel, a lift) is over when the network is back
+  const wasOnline = useRef(online);
+  useEffect(() => {
+    if (online && !wasOnline.current) retry();
+    wasOnline.current = online;
+  }, [online, retry]);
+
+  // near the end of what is loaded: the folder's next page, so swiping goes on
+  const nearEnd = useRef(onNearEnd);
+  nearEnd.current = onNearEnd;
+  useEffect(() => {
+    if (more && index >= items.length - 3) nearEnd.current();
+  }, [more, index, items]);
 
   const resetZoom = () => setZoom({ s: 1, x: 0, y: 0 });
 
@@ -306,10 +343,17 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onInd
     return (
       <div key={e.key} className={`m-vslide ${anim ? "anim" : ""}`} style={{ transform: t }}>
         {failed[e.key] ? (
-          <div className="m-verror">
-            <Icon name="alert" size={26} />
-            <span>{failed[e.key]}</span>
-          </div>
+          <>
+            {/* the thumbnail already on screen stays, under the note */}
+            {thumb && <img className="m-vthumb" src={thumb} alt="" draggable={false} />}
+            <div className={`m-verror ${thumb ? "on-thumb" : ""}`}>
+              <Icon name="alert" size={26} />
+              <span>{failed[e.key]}</span>
+              <button className="btn btn-sm" onClick={() => retry(e.key)}>
+                <Icon name="retry" size={14} /> Try again
+              </button>
+            </div>
+          </>
         ) : cantPlay ? (
           <div className="m-verror m-vfallback">
             <Icon name="video" size={30} />
@@ -347,8 +391,9 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onInd
                 alt={e.name}
                 draggable={false}
                 onLoad={() => setReady((m) => ({ ...m, [e.key]: true }))}
-                // fetched, but not drawable (damaged, a format the phone can't show, or the link went stale)
-                onError={() => setFailed((m) => ({ ...m, [e.key]: "This photo couldn’t be shown. It may be damaged, or in a format this phone can’t open." }))}
+                // the connection dropped mid-way, the link went stale, or it isn't drawable (damaged,
+                // a format the phone can't show): Try again sorts out the first two
+                onError={() => setFailed((m) => ({ ...m, [e.key]: "This photo couldn’t be loaded." }))}
               />
             )}
             {!url && !thumb && <span className="spinner m-vspin" />}
@@ -359,7 +404,7 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onInd
   };
 
   return (
-    <div className={`m-viewer ${chrome ? "" : "bare"}`} style={{ background: `rgba(0,0,0,${fade})` }}>
+    <div className={`m-viewer ${chrome ? "" : "bare"}`} role="dialog" aria-modal="true" aria-label="Photo viewer" style={{ background: `rgba(0,0,0,${fade})` }}>
       <div ref={stage} className="m-vstage" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
         {slide(items[index - 1], -1)}
         {slide(cur, 0)}
@@ -385,7 +430,8 @@ export function Viewer({ items, index, profileId, bucket, lowData, photos, onInd
         <div className="m-title">
           <h1>{cur.name}</h1>
           <p>
-            {index + 1} of {items.length} · {formatBytes(cur.size)}
+            {index + 1} of {items.length.toLocaleString()}
+            {more ? "+" : ""} · {formatBytes(cur.size)}
           </p>
         </div>
       </header>
