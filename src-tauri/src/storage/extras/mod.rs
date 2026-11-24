@@ -235,7 +235,7 @@ impl Source {
                     if got == 0 {
                         break;
                     }
-                    UP.throttle(got).await;
+                    UP.throttle_unless(got, Some(cancel)).await;
                 }
                 buf.freeze()
             }
@@ -247,7 +247,7 @@ impl Source {
                     match body.next().await {
                         Some(c) => {
                             let c = c?;
-                            UP.throttle(c.len()).await;
+                            UP.throttle_unless(c.len(), Some(cancel)).await;
                             buf.extend_from_slice(&c);
                         }
                         None => *ended = true,

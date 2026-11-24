@@ -448,16 +448,20 @@ async fn source_changed(ctx: &Ctx, item: &Item) -> SResult<Option<Outcome>> {
 }
 
 /// Holds reads to the bandwidth cap (bytes from the network; this device's own disk isn't).
-fn throttled(body: ByteStream, remote: bool) -> ByteStream {
+fn throttled(body: ByteStream, remote: bool, stop: Arc<AtomicBool>) -> ByteStream {
     if !remote {
         return body;
     }
-    Box::pin(futures_util::stream::unfold((body, DOWN.lane()), |(mut body, mut lane)| async move {
-        let chunk = body.next().await?;
-        if let Ok(c) = &chunk {
-            lane.throttle(c.len()).await;
+    Box::pin(futures_util::stream::unfold((body, DOWN.lane()), move |(mut body, mut lane)| {
+        let stop = stop.clone();
+        async move {
+            let chunk = body.next().await?;
+            if let Ok(c) = &chunk {
+                // a Pause or Stop must not sit out a long wait at a low cap
+                lane.throttle_unless(c.len(), Some(&stop)).await;
+            }
+            Some((chunk, (body, lane)))
         }
-        Some((chunk, (body, lane)))
     }))
 }
 
@@ -529,7 +533,7 @@ async fn open_whole(ctx: &Ctx, item: &Item, remote: bool, hasher: Option<&Runnin
     {
         return Err(changed(t, size));
     }
-    let body = throttled(exactly(r.body, size), remote);
+    let body = throttled(exactly(r.body, size), remote, ctx.stop.clone());
     Ok(match hasher {
         Some(h) => hash::tap(body, h),
         None => body,
@@ -573,11 +577,11 @@ async fn stream(ctx: &Ctx, item: &Item, dst_path: &str, inflight: &Arc<AtomicU64
         };
         let ranged = ctx.src.caps().range_read && size > SINGLE_PUT_LIMIT;
         let (body, reopen): (ByteStream, Option<Reopen>) = if ranged {
-            let (src, root, path, etag) = (ctx.src.clone(), spec.src.root.clone(), item.src_path.clone(), item.etag.clone());
+            let (src, root, path, etag, stop) = (ctx.src.clone(), spec.src.root.clone(), item.src_path.clone(), item.etag.clone(), ctx.stop.clone());
             // each part read on its own, several at once, each from the version planned (so a
             // file changing midway can't end up as a mix of two versions)
             let reopen: Reopen = Box::new(move |off| {
-                let (src, root, path, etag) = (src.clone(), root.clone(), path.clone(), etag.clone());
+                let (src, root, path, etag, stop) = (src.clone(), root.clone(), path.clone(), etag.clone(), stop.clone());
                 Box::pin(async move {
                     let end = (off + part).min(size);
                     let r = src.read(&root, &path, Some(off..end), etag.as_deref()).await.map_err(io::Error::other)?;
@@ -586,7 +590,7 @@ async fn stream(ctx: &Ctx, item: &Item, dst_path: &str, inflight: &Arc<AtomicU64
                     {
                         return Err(io::Error::other(changed(t, size)));
                     }
-                    Ok(throttled(ranged_body(r, off..end).map_err(io::Error::other)?, remote))
+                    Ok(throttled(ranged_body(r, off..end).map_err(io::Error::other)?, remote, stop))
                 })
             });
             (Box::pin(futures_util::stream::empty()), Some(reopen))

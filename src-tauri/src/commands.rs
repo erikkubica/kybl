@@ -1572,6 +1572,10 @@ pub async fn stream_files_under(
 ) -> Result<u64, String> {
     let flag = Arc::new(AtomicBool::new(false));
     state.cancels.lock().await.insert(op_id.clone(), flag.clone());
+    // a Stop that reached the backend before this id was registered
+    if crate::transfers::take_early_cancel(&op_id) {
+        flag.store(true, Ordering::Relaxed);
+    }
     let r = stream_files(&app, &state, &profile_id, &bucket, &prefix, &flag, &|batch| on_batch.send(batch).map_err(|e| e.to_string())).await;
     state.cancels.lock().await.remove(&op_id);
     r
@@ -1610,7 +1614,14 @@ async fn stream_files(
         Conn::Other(s) => {
             use futures_util::StreamExt;
             let mut walk = s.walk(bucket, prefix);
-            while let Some(batch) = walk.next().await {
+            // A slow FTP group can take a minute to yield; Stop must not wait for it, so the
+            // wait for the next batch is raced against the flag (dropping the walk ends it).
+            loop {
+                let next = tokio::select! {
+                    n = walk.next() => n,
+                    _ = storage::s3_stream::wait_cancel(cancel) => return Err(storage::StorageError::cancelled().into()),
+                };
+                let Some(batch) = next else { break };
                 if stopped() {
                     return Err(storage::StorageError::cancelled().into());
                 }

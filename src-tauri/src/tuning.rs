@@ -339,8 +339,9 @@ impl Limiter {
         }
     }
 
-    /// Waits as long as the cap asks after `n` bytes went through, a quantum at a time.
-    pub async fn throttle(&self, mut n: usize) {
+    /// Waits as long as the cap asks after `n` bytes went through, a quantum at a time; the wait
+    /// ends as soon as `stop` is set.
+    pub async fn throttle_unless(&self, mut n: usize, stop: Option<&AtomicBool>) {
         while n > 0 {
             let rate = self.rate();
             if rate == 0 {
@@ -348,7 +349,10 @@ impl Limiter {
             }
             let q = n.min(quantum(rate));
             n -= q;
-            self.pause(self.take(q)).await;
+            self.pause_unless(self.take(q), stop).await;
+            if stop.is_some_and(|s| s.load(Ordering::Relaxed)) {
+                return;
+            }
         }
     }
 
@@ -374,12 +378,7 @@ pub struct Lane {
 }
 
 impl Lane {
-    /// After `n` more bytes went through.
-    pub async fn throttle(&mut self, n: usize) {
-        self.throttle_unless(n, None).await;
-    }
-
-    /// [`throttle`](Self::throttle) that ends its wait as soon as `stop` is set.
+    /// After `n` more bytes went through; the wait ends as soon as `stop` is set.
     pub async fn throttle_unless(&mut self, n: usize, stop: Option<&AtomicBool>) {
         let rate = self.limiter.rate();
         if rate == 0 {
