@@ -1,5 +1,6 @@
 /** Servers: WebDAV (Nextcloud and friends), FTP / FTPS and SFTP. */
 import { useEffect, useImperativeHandle, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../api";
 import { Icon } from "../Icons";
 import type { NetConfig, Profile } from "../types";
@@ -24,8 +25,14 @@ export function NetForm({
   tried,
   formApi,
   onEdit,
+  tunnelsHost,
+  onTunnelCount,
 }: {
   kind: NetKind;
+  /** SFTP: where the tunnel list goes (the dialog's Tunnels tab) */
+  tunnelsHost?: HTMLElement | null;
+  /** SFTP: how many tunnels there are now, for the tab's label */
+  onTunnelCount?: (n: number) => void;
   initial: Profile | null;
   tried: boolean;
   formApi: React.Ref<FormApi>;
@@ -54,6 +61,7 @@ export function NetForm({
   const [keyNote, setKeyNote] = useState<string | null>(null);
   // SFTP: SSH tunnels through the server (src/tunnels)
   const [tunnels, setTunnels] = useState(start.tunnels ?? []);
+  useEffect(() => onTunnelCount?.(tunnels.length), [tunnels.length, onTunnelCount]);
   const editing = !!initial;
   // ask the vault whether a password or key is saved (null: not known yet). FTP / WebDAV: a
   // password is optional; SFTP: an imported connection may have none yet
@@ -242,7 +250,7 @@ export function NetForm({
                   placeChanged(e.target.value, port);
                 }} onBlur={tidyServer} placeholder={placeholderHost} inputMode="url" {...RAW} />}
           </Field>
-          <Field label="Port" optional error={show("port")}>
+          <Field label="Port" error={show("port")}>
             {(c) => (
               <input {...c} className="mono" value={port} onChange={(e) => {
                 const p = e.target.value.replace(/[^\d]/g, "");
@@ -383,56 +391,39 @@ export function NetForm({
         </p>
       )}
 
-      <Field
-        label="Start in folder"
-        optional
-        wide={kind !== "sftp" || auth !== "key"}
-        hint={kind === "webdav" ? undefined : kind === "sftp" ? "Empty: your home folder." : "Empty: the folder you land in after signing in."}
-      >
-        {(c) => <input {...c} className="mono" value={basePath} onChange={(e) => edit(setBasePath)(e.target.value)} placeholder={kind === "sftp" ? "/var/www" : "/"} {...RAW} />}
+      <Field label="Start in folder" wide={kind !== "sftp" || auth !== "key"}>
+        {(c) => (
+          <input
+            {...c}
+            className="mono"
+            value={basePath}
+            onChange={(e) => edit(setBasePath)(e.target.value)}
+            placeholder={kind === "sftp" ? "Your home folder" : kind === "ftp" ? "Where you land after signing in" : "/"}
+            {...RAW}
+          />
+        )}
       </Field>
 
       {kind === "sftp" && hostKey && (
-        <div className="conn-fp span2">
-          <Icon name="check-circle" size={14} />
-          <span>
-            Trusted server key
-            <code className="selectable">{hostKey}</code>
-          </span>
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost"
-            onClick={() => {
-              setHostKey(null);
-              onEdit();
-            }}
-          >
-            Forget
-          </button>
-        </div>
+        <Trusted what="Server key trusted" fp={hostKey} onForget={() => (setHostKey(null), onEdit())} />
       )}
-      {kind === "sftp" && !PHONE && <TunnelsSection profileId={initial?.id ?? ""} tunnels={tunnels} tried={tried} onChange={edit(setTunnels)} />}
+      {kind === "sftp" && !PHONE && tunnelsHost && createPortal(<TunnelsSection profileId={initial?.id ?? ""} tunnels={tunnels} tried={tried} onChange={edit(setTunnels)} />, tunnelsHost)}
       {kind !== "sftp" && certFp && (
-        <div className="conn-fp span2">
-          <Icon name="check-circle" size={14} />
-          <span>
-            Trusted server certificate
-            <code className="selectable" title={certFp}>
-              {certFp}
-            </code>
-          </span>
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost"
-            onClick={() => {
-              setCertFingerprint(null);
-              onEdit();
-            }}
-          >
-            Forget
-          </button>
-        </div>
+        <Trusted what="Server certificate trusted" fp={certFp} onForget={() => (setCertFingerprint(null), onEdit())} />
       )}
     </>
+  );
+}
+
+/** One quiet line: the server's key or certificate is trusted (its fingerprint on hover), and Forget. */
+function Trusted({ what, fp, onForget }: { what: string; fp: string; onForget: () => void }) {
+  return (
+    <p className="hint span2 conn-trusted">
+      <Icon name="check-circle" size={13} />
+      <span title={fp}>{what}</span>
+      <button type="button" className="link-btn" onClick={onForget} title={`Forget ${fp}`}>
+        Forget
+      </button>
+    </p>
   );
 }

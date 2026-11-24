@@ -1,5 +1,5 @@
 /**
- * The SFTP connection form's "Tunnels" section (folded until opened): local port forwards through
+ * The SFTP connection form's "Tunnels" tab: local port forwards through
  * the server, each `local port → host:port` as the server sees it, with an optional name and
  * "Start when the connection opens". A local port that something else already uses is a warning
  * (it may be free again by the time the tunnel starts); everything else must be right to save.
@@ -62,38 +62,25 @@ export function TunnelsSection({
   tried: boolean;
   onChange: (t: TunnelDef[]) => void;
 }) {
-  const [open, setOpen] = useState(false);
   // a tunnel just added takes the keyboard at its local port
   const [added, setAdded] = useState<string | null>(null);
   const problems = tunnelProblems(tunnels);
   const set = (i: number, patch: Partial<TunnelDef>) => onChange(tunnels.map((t, j) => (j === i ? { ...t, ...patch } : t)));
   const add = () => {
     const t = blank();
-    setOpen(true);
     setAdded(t.id);
     onChange([...tunnels, t]);
   };
-  // problems show once Save was tried, and open the section so they can be seen
-  const shown = tried && problems.some((p) => p.local || p.host || p.remote);
-  const isOpen = open || shown;
 
   return (
-    <div className="span2 tunnels">
-      <button type="button" className="conn-disclose" aria-expanded={isOpen} aria-controls="conn-tunnels" onClick={() => setOpen(!isOpen)}>
-        <Icon name="chevron" size={12} className={isOpen ? "open" : ""} />
-        Tunnels{tunnels.length > 0 && <span className="tunnels-count">{tunnels.length}</span>}
+    <div className="tunnels">
+      <p className="hint">Reach a database or admin panel only the server can see, as a port on this computer.</p>
+      {tunnels.map((t, i) => (
+        <TunnelRow key={t.id || i} t={t} focus={t.id === added} profileId={profileId} problems={tried ? problems[i] : {}} onChange={(patch) => set(i, patch)} onRemove={() => onChange(tunnels.filter((_, j) => j !== i))} />
+      ))}
+      <button type="button" className="btn btn-sm btn-ghost tunnels-add" onClick={add}>
+        <Icon name="plus" size={13} /> Add tunnel
       </button>
-      {isOpen && (
-        <div id="conn-tunnels" className="tunnels-body">
-          {tunnels.length === 0 && <p className="tunnels-empty">Reach a database or admin panel only the server can see, as a port on this computer: 127.0.0.1:5433 → db.internal:5432.</p>}
-          {tunnels.map((t, i) => (
-            <TunnelRow key={t.id || i} t={t} focus={t.id === added} profileId={profileId} problems={tried ? problems[i] : {}} onChange={(patch) => set(i, patch)} onRemove={() => onChange(tunnels.filter((_, j) => j !== i))} />
-          ))}
-          <button type="button" className="btn btn-sm btn-ghost tunnels-add" onClick={add}>
-            <Icon name="plus" size={13} /> Add tunnel
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -121,54 +108,62 @@ function TunnelRow({
   return (
     <div className="tunnel-edit" role="group" aria-label={t.name || "Tunnel"}>
       <div className="tunnel-edit-route">
-        <input
-          className="mono tunnel-port"
-          aria-label="Local port"
-          autoFocus={focus}
-          title="The port on this computer (127.0.0.1) that apps connect to"
-          value={t.localPort || ""}
-          onChange={(e) => onChange({ localPort: num(e.target.value) })}
-          placeholder="5433"
-          inputMode="numeric"
-          aria-invalid={!!problems.local}
-          {...RAW}
-        />
-        <span className="tunnel-arrow" aria-hidden="true">
-          →
-        </span>
-        <input
-          className="mono tunnel-host"
-          aria-label="Remote host, as the server sees it"
-          title="Where the server connects to: localhost is the server itself"
-          value={t.remoteHost}
-          onChange={(e) => onChange({ remoteHost: e.target.value })}
-          placeholder="localhost"
-          inputMode="url"
-          aria-invalid={!!problems.host}
-          {...RAW}
-        />
-        <span className="tunnel-colon" aria-hidden="true">
-          :
-        </span>
-        <input
-          className="mono tunnel-port"
-          aria-label="Remote port"
-          value={t.remotePort || ""}
-          onChange={(e) => onChange({ remotePort: num(e.target.value) })}
-          placeholder="5432"
-          inputMode="numeric"
-          aria-invalid={!!problems.remote}
-          {...RAW}
-        />
+        <div className={`tunnel-route${err ? " bad" : ""}`} role="group" aria-label="Local port to remote host and port">
+          <input
+            className="mono tunnel-port"
+            aria-label="Local port"
+            autoFocus={focus}
+            title="The port on this computer (127.0.0.1) that apps connect to"
+            value={t.localPort || ""}
+            onChange={(e) => onChange({ localPort: num(e.target.value) })}
+            placeholder="5433"
+            inputMode="numeric"
+            aria-invalid={!!problems.local}
+            {...RAW}
+          />
+          <span className="tunnel-arrow" aria-hidden="true">
+            →
+          </span>
+          <input
+            className="mono tunnel-host"
+            aria-label="Remote host, as the server sees it"
+            title="Where the server connects to: localhost is the server itself"
+            value={t.remoteHost}
+            onChange={(e) => onChange({ remoteHost: e.target.value })}
+            placeholder="localhost"
+            inputMode="url"
+            aria-invalid={!!problems.host}
+            {...RAW}
+          />
+          <span className="tunnel-colon" aria-hidden="true">
+            :
+          </span>
+          <input
+            className="mono tunnel-port"
+            aria-label="Remote port"
+            value={t.remotePort || ""}
+            onChange={(e) => onChange({ remotePort: num(e.target.value) })}
+            placeholder="5432"
+            inputMode="numeric"
+            aria-invalid={!!problems.remote}
+            {...RAW}
+          />
+        </div>
         <button type="button" className="icon-btn tunnel-remove" onClick={onRemove} title="Remove this tunnel" aria-label="Remove this tunnel">
           <Icon name="x" size={13} />
         </button>
       </div>
       <div className="tunnel-edit-more">
-        <input className="tunnel-name-input" aria-label="Tunnel name" value={t.name} onChange={(e) => onChange({ name: e.target.value })} placeholder="Name (optional)" {...RAW} />
-        <label className="check tunnel-auto" title="Starts the first time Kybl opens this connection">
+        <input className="tunnel-name-input" aria-label="Tunnel name" value={t.name} onChange={(e) => onChange({ name: e.target.value })} placeholder="Name" {...RAW} />
+        {running && (
+          <span className="tunnel-running" title="Running now. Saving a new port or address stops it.">
+            <span className="tunnel-dot" aria-hidden="true" />
+            Running
+          </span>
+        )}
+        <label className="check tunnel-auto" title="Starts when Kybl opens this connection">
           <input type="checkbox" checked={t.autoStart} onChange={(e) => onChange({ autoStart: e.target.checked })} />
-          <span>Start when the connection opens</span>
+          <span>Auto-start</span>
         </label>
       </div>
       {err ? (
@@ -177,8 +172,6 @@ function TunnelRow({
         <small className="tunnel-warn">
           <Icon name="alert" size={12} /> {taken}
         </small>
-      ) : running ? (
-        <small className="field-hint">Running now. Saving a new port or address stops it.</small>
       ) : null}
     </div>
   );

@@ -16,7 +16,7 @@ import { ErrorText } from "../components/ErrorText";
 import type { Profile } from "../types";
 import { KINDS, certTrouble, hostKeyChanged, hostKeyUnknown, isCloudKind, kindInfo, pickOf, plainFtpUnconfirmed, type BlobKind, type NetKind, type PickId } from "./kinds";
 import { trustHost } from "./connTrouble";
-import { Field, RAW, SECRET_NOTE, Segmented, type Draft, type FormApi } from "./fields";
+import { Field, PHONE, RAW, SECRET_NOTE, Segmented, type Draft, type FormApi } from "./fields";
 import { normalizeGroup } from "./groups";
 import { KindPicker } from "./KindPicker";
 import { S3Form } from "./S3Form";
@@ -41,6 +41,8 @@ export type ConnectionDialogProps = {
   onImport?: () => void;
   /** computers: the sidebar's groups; the form gets a Group field offering them */
   groups?: string[];
+  /** Open on this tab of the form ("Add or edit tunnels…") */
+  startTab?: "tunnels";
   /** A sign-in connection whose access ended: start signing in again right away. */
   reconnect?: boolean;
   onSaved: (p: Profile) => void;
@@ -58,7 +60,7 @@ export type ConnectionDialogHandle = {
 /** Kinds this version can edit; anything else was saved by a newer Kybl and can only be deleted. */
 const editable = (p: Profile) => p.provider === "kybl" || KINDS.some((k) => k.id === (p.kind ?? "s3"));
 
-export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl, kyblFirst, startKind, reconnect, onImport, groups, ref }: ConnectionDialogProps) {
+export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl, kyblFirst, startKind, startTab, reconnect, onImport, groups, ref }: ConnectionDialogProps) {
   const [pick, setPick] = useState<PickId | null>(initial ? pickOf(initial) : (startKind ?? null));
   // the keyboard follows the step: the form's first field after a kind is chosen, the first kind
   // again after "Back" or a discard (the dialog box can stay the same, so it won't refocus by itself)
@@ -159,6 +161,7 @@ export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl,
           onBack={back}
           onDirty={() => (dirty.current = true)}
           groups={groups}
+          startTab={startTab}
         />
       </Modal>
       {discardAsk}
@@ -176,7 +179,9 @@ function KeyedForm({
   onBack,
   onDirty,
   groups,
+  startTab,
 }: {
+  startTab?: "tunnels";
   pick: Exclude<PickId, CloudKind | "kybl">;
   /** the sidebar's groups, offered in the Group field (no field without them: phones) */
   groups?: string[];
@@ -220,7 +225,16 @@ function KeyedForm({
   const draft = (): Draft | null => {
     setTried(true);
     const d = form.current?.draft() ?? null;
-    if (!d) requestAnimationFrame(() => formEl.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+    // the first field that needs work, on whichever tab it is
+    if (!d)
+      requestAnimationFrame(() => {
+        const bad = formEl.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
+        const on = bad?.closest<HTMLElement>("[data-tab]")?.dataset.tab as typeof tab | undefined;
+        if (on && on !== "main") {
+          setTab(on);
+          requestAnimationFrame(() => bad?.focus());
+        } else bad?.focus();
+      });
     // the forms build the profile afresh: the group comes from here (or stays as it was)
     return d && { ...d, profile: { ...d.profile, group: (groups ? normalizeGroup(group) : normalizeGroup(initial?.group)) || null } };
   };
@@ -264,7 +278,11 @@ function KeyedForm({
 
   // the connection's own fields first; where it sits and how photos show under Options. Both stay
   // mounted (hidden), so what was typed survives a switch
-  const [tab, setTab] = useState<"main" | "options">("main");
+  const [tab, setTab] = useState<"main" | "options" | "tunnels">(pick === "sftp" && !PHONE && startTab ? startTab : "main");
+  // SFTP: the tunnel list lives in its own tab; NetForm draws it there and says how many
+  const [tunnelsHost, setTunnelsHost] = useState<HTMLDivElement | null>(null);
+  const [tunnelCount, setTunnelCount] = useState(() => initial?.net?.tunnels?.length ?? 0);
+  const tunnelTab = pick === "sftp" && !PHONE;
   const [shareMore, setShareMore] = useState(false);
   const test = () => {
     if (busy) return;
@@ -331,26 +349,35 @@ function KeyedForm({
           <button type="button" role="tab" aria-selected={tab === "main"} className={tab === "main" ? "on" : ""} onClick={() => setTab("main")}>
             Connection
           </button>
+          {tunnelTab && (
+            <button type="button" role="tab" aria-selected={tab === "tunnels"} className={tab === "tunnels" ? "on" : ""} onClick={() => setTab("tunnels")}>
+              Tunnels{tunnelCount > 0 && <span className="tab-count">{tunnelCount}</span>}
+            </button>
+          )}
           <button type="button" role="tab" aria-selected={tab === "options"} className={tab === "options" ? "on" : ""} onClick={() => setTab("options")}>
             Options
           </button>
         </div>
 
-        <div className="conn-tab" style={{ display: tab === "main" ? "contents" : "none" }}>
+        <div className="conn-tab" data-tab="main" style={{ display: tab === "main" ? "contents" : "none" }}>
         {pick === "s3" ? (
           <S3Form {...common} />
         ) : pick === "webdav" || pick === "ftp" || pick === "sftp" ? (
-          <NetForm kind={pick as NetKind} {...common} />
+          <NetForm kind={pick as NetKind} {...common} tunnelsHost={tunnelsHost} onTunnelCount={setTunnelCount} />
         ) : (
           <BlobForm kind={pick as BlobKind} {...common} />
         )}
-          <p className="hint span2">
-          <Icon name="check-circle" size={13} />
-          {SECRET_NOTE}
-        </p>
+          {/* editing: the password box already says it's saved encrypted */}
+          {!initial && (
+            <p className="hint span2">
+              <Icon name="check-circle" size={13} />
+              {SECRET_NOTE}
+            </p>
+          )}
         </div>
+        {tunnelTab && <div ref={setTunnelsHost} className="span2" data-tab="tunnels" style={{ display: tab === "tunnels" ? "block" : "none" }} />}
 
-        <div className="conn-tab" style={{ display: tab === "options" ? "contents" : "none" }}>
+        <div className="conn-tab" data-tab="options" style={{ display: tab === "options" ? "contents" : "none" }}>
         {groups && (
           <Field label="Group" optional wide hint="A folder in the sidebar. Use / for a group inside a group, like Clients/Acme.">
             {(c) => (

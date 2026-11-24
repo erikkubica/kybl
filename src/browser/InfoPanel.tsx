@@ -176,8 +176,8 @@ export default function InfoPanel({ pane }: { pane: Pane }) {
         <section className="info-tunnels">
           <h3>Tunnels</h3>
           {tunnelsOf(profile).length > 0 ? <TunnelList p={profile} /> : <p className="info-note">Forward a port on this computer to a service the server can reach, like a database.</p>}
-          {pane.editConnection && (
-            <button type="button" className="btn btn-sm btn-ghost info-add" onClick={pane.editConnection}>
+          {pane.editTunnels && (
+            <button type="button" className="btn btn-sm btn-ghost info-add" onClick={pane.editTunnels}>
               <Icon name="plus" size={12} /> {tunnelsOf(profile).length ? "Add or edit tunnels" : "Add a tunnel"}
             </button>
           )}

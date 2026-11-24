@@ -148,7 +148,7 @@ import {
 } from "../connections/groups";
 
 /** The connection dialog: editing `profile`, or a new one (on `startKind`'s form, when given). */
-type ConnDialogAsk = { profile: Profile | null; reconnect?: boolean; startKind?: PickId };
+type ConnDialogAsk = { profile: Profile | null; reconnect?: boolean; startKind?: PickId; startTab?: "tunnels" };
 
 /** Gives a pane's file list keyboard focus (after a sidebar click the arrows should move in it). */
 export function focusPaneList(id: PaneId) {
@@ -500,11 +500,11 @@ export function AppShell() {
     terminalItems: (key, label) => term.items(id, key, label),
     tunnelItems: () => {
       const p = paneById(id).profile;
-      return p ? tunnelMenuItems(p, toast, () => setConnDialog({ profile: p })) : [];
+      return p ? tunnelMenuItems(p, toast, () => setConnDialog({ profile: p, startTab: "tunnels" })) : [];
     },
-    editConnection: () => {
+    editTunnels: () => {
       const p = paneById(id).profile;
-      if (p && p.kind !== "local") setConnDialog({ profile: p });
+      if (p && p.kind !== "local") setConnDialog({ profile: p, startTab: "tunnels" });
     },
     ...dualPane.envFor(id),
   });
@@ -2459,6 +2459,7 @@ export function AppShell() {
           initial={connDialog.profile}
           reconnect={connDialog.reconnect}
           startKind={connDialog.startKind}
+          startTab={connDialog.startTab}
           onClose={() => setConnDialog(null)}
           onKybl={() => {
             setConnDialog(null);

@@ -133,31 +133,11 @@
 .conn-key .btn svg {
   margin-right: 2px;
 }
-.conn-fp {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: var(--r);
-  background: var(--ok-soft);
-  color: var(--text);
-  font-size: 12px;
-}
-.conn-fp > svg {
-  flex: none;
+.conn-trusted > svg {
   color: var(--ok);
 }
-.conn-fp > span {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-}
-.conn-fp code {
-  overflow: hidden;
-  font: 11px var(--mono);
-  color: var(--dim);
-  text-overflow: ellipsis;
+.conn-trusted .link-btn {
+  margin-left: 2px;
 }
 
 /* ---------------------------------------------------------------- browser sign-in */
@@ -707,4 +687,17 @@
   min-width: 84px;
   height: 26px;
   padding: 0 14px;
+}
+.conn-tabs .tab-count {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--hover);
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 15px;
+}
+.conn-tabs button {
+  display: inline-flex;
+  align-items: center;
 }
