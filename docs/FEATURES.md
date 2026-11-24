@@ -507,7 +507,7 @@ A large preview over the list, with the info column beside it (the same as Get I
 - Images the web view can draw (jpg, jpeg, png, gif, webp, avif, svg, bmp, ico, and HEIC on Apple systems). For other image types (tif, tiff, RAW and the like) it shows the thumbnail. A blurry placeholder shows while loading.
 - Video (mp4, mov, m4v, webm, mkv, avi, and so on) and audio (mp3, m4a, wav, flac, ogg, aac, opus) with controls and autoplay. They stream (presigned link, or through the app) without downloading first.
 - PDF (up to 60 MB), drawn in the app.
-- Documents in the document viewer: text, code, YAML, JSON, Markdown, CSV and TSV, Word .docx, Excel .xlsx / .xlsm / .xls / .ods, PowerPoint .pptx. Google Docs, Sheets and Slides show as their Office export.
+- Documents in the document viewer: text, code, YAML, JSON, Markdown, CSV and TSV, Word .docx, Excel .xlsx / .xlsm / .ods (an old .xls, .xlsb or Numbers file opens in another app), PowerPoint .pptx. Google Docs, Sheets and Slides show as their Office export.
 - Plain text files that have no viewer (up to 50 MB) show as text.
 - A folder shows its art, name and size (with "Calculate").
 - Several items selected: a sheet of up to 240 tiles (thumbnail, name, size); click one to show it alone.
@@ -524,7 +524,7 @@ A large preview over the list, with the info column beside it (the same as Get I
 | Markdown | md, markdown, mdx | 10 MB | Yes up to 5 MB, with Edit / Split / Preview layouts |
 | CSV | csv, tsv | 50 MB | Yes up to 5 MB, as a table or as text |
 | Word | docx | 30 MB | No, read-only, laid out like pages |
-| Excel | xlsx, xlsm, xls, ods | 30 MB | No, read-only, every sheet as a tab, formulas show cached results |
+| Excel | xlsx, xlsm, ods (plus CSV or HTML saved as .xlsx) | 30 MB | No, read-only, every sheet as a tab, formulas show cached results |
 | PowerPoint | pptx | 100 MB | No, read-only outline: cover picture, each slide's title, text and first picture |
 | Image | jpg, png, gif, webp, avif, svg, bmp, ico | 40 MB | No, with zoom |
 

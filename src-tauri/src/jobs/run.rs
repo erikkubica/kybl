@@ -156,6 +156,9 @@ async fn work(r: &mut Runner<'_>, spec: &Arc<JobSpec>, ctl: &Arc<Ctl>) -> JobSta
             SResult::Ok((src, dst))
         };
         match open.await {
+            // stopped (Cancel, Pause, Delete) while it connected: wind down as asked, whatever
+            // the attempt answered, instead of turning it into a failure
+            Err(_) if ctl.stop.load(Ordering::Relaxed) => return stopped_at(r, ctl, None).await,
             // a server that still counts a dropped session ("too many clients") lets go in a
             // moment: wait and ask again, as planning does, instead of failing the job
             Err(e) if e.kind == ErrKind::RateLimited && !ctl.stop.load(Ordering::Relaxed) => {

@@ -17,6 +17,12 @@ let book: WorkBook | null = null;
 
 const post = (m: XlsxResponse) => (self as unknown as Worker).postMessage(m);
 
+/** Starts like an old Office compound file (a password-protected workbook, an .xls). */
+function compound(b: Uint8Array): boolean {
+  const magic = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+  return b.length >= 8 && magic.every((m, i) => b[i] === m);
+}
+
 self.onmessage = async (ev: MessageEvent<XlsxRequest>) => {
   const req = ev.data;
   try {
@@ -28,8 +34,16 @@ self.onmessage = async (ev: MessageEvent<XlsxRequest>) => {
       // uploaded zip: every part is inflated here under a cap and SheetJS gets a plain zip
       // rebuilt from those bytes. This holds for .xlsx and .ods alike; an old .xls isn't a zip.
       const plain = await plainForSheetJS(req.open);
-      if ("refused" in plain) return post({ id: req.id, error: true, refused: refusalKind(plain.refused, req.open) });
-      book = read(plain.bytes, { type: "array", dense: true, cellHTML: false, cellStyles: false, bookVBA: false });
+      let bytes: Uint8Array;
+      if (!("refused" in plain)) bytes = plain.bytes;
+      else if (plain.refused !== "not a zip") return post({ id: req.id, error: true, refused: refusalKind(plain.refused, req.open) });
+      // not a zip: a password-protected workbook or an old .xls is a compound file, which SheetJS
+      // reads with code a small file can blow up to GBs (R9 S-4): left as "couldn't be read"
+      // (it says password-protected). Plain text saved as .xlsx (CSV, HTML from a web export)
+      // costs no more than its own size, so it still previews.
+      else if (compound(req.open)) return post({ id: req.id, error: true });
+      else bytes = req.open;
+      book = read(bytes, { type: "array", dense: true, cellHTML: false, cellStyles: false, bookVBA: false });
       const b = book;
       post({ id: req.id, sheets: b.SheetNames.map((name, i) => ({ name, hidden: !!b.Workbook?.Sheets?.[i]?.Hidden })) });
       return;
