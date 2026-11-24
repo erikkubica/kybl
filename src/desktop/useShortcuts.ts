@@ -5,6 +5,7 @@
  * open dialog, menu or preview.
  */
 import { useEffect, useRef } from "react";
+import { IS_MAC } from "../components/pointer";
 import { listen } from "@tauri-apps/api/event";
 import { MENU_ACCELERATORS, MENU_OWNS_SHORTCUTS, menuKeydown } from "./menus";
 import { menuFromKey, watchMenuKeys } from "./menuKeyWatch";
@@ -58,8 +59,8 @@ export function useShortcuts(opts: ShortcutOptions) {
       if (ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.key === "Tab") id = ev.shiftKey ? "prev-workspace" : "next-workspace";
       // ⌃`: a terminal below the active pane, or to it and back (by code: layouts put ` elsewhere)
       else if (ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey && (ev.code === "Backquote" || ev.key === "`")) id = "toggle-terminal";
-      // ⌘J too: the same on every keyboard layout (a Slovak or German one has no plain ` key)
-      else if (ev.metaKey && !ev.ctrlKey && !ev.altKey && !ev.shiftKey && ev.code === "KeyJ") id = "toggle-terminal";
+      // ⌘J too (Ctrl+J off a Mac): the same on every keyboard layout (a Slovak or German one has no plain ` key)
+      else if ((IS_MAC ? ev.metaKey && !ev.ctrlKey : ev.ctrlKey && !ev.metaKey) && !ev.altKey && !ev.shiftKey && ev.code === "KeyJ") id = "toggle-terminal";
       else if (mod && ev.shiftKey && (ev.code === "BracketLeft" || ev.code === "BracketRight"))
         id = ev.altKey ? (ev.code === "BracketLeft" ? "move-workspace-left" : "move-workspace-right") : ev.code === "BracketLeft" ? "prev-workspace" : "next-workspace";
       else if (mod && ev.altKey && !ev.shiftKey && /^Digit[1-9]$/.test(ev.code)) id = `workspace-${ev.code.slice(5)}`;

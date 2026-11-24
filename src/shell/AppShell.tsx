@@ -2254,7 +2254,7 @@ export function AppShell() {
           onPick={(p, x, y) => void railPick(p, x, y)}
           onOpenFavorite={openFavorite}
           onNewProfile={() => setConnDialog({ profile: null })}
-          onTerminal={canTerminal({ id: LOCAL_PROFILE, kind: "local" }) ? () => void term.openLocal() : undefined}
+          onTerminal={canTerminal({ id: LOCAL_PROFILE, kind: "local" }) ? () => void term.openLocal(undefined, { reuse: true }) : undefined}
           onOpenSync={() => openSettings("sync")}
           onOpenSettings={() => openSettings()}
           onConnectionMenu={connectionMenu}
@@ -2285,7 +2285,7 @@ export function AppShell() {
             onNewProfile={() => setConnDialog({ profile: null })}
             onOpenSettings={() => openSettings()}
             syncState={syncState}
-            onTerminal={canTerminal({ id: LOCAL_PROFILE, kind: "local" }) ? () => void term.openLocal() : undefined}
+            onTerminal={canTerminal({ id: LOCAL_PROFILE, kind: "local" }) ? () => void term.openLocal(undefined, { reuse: true }) : undefined}
           onOpenSync={() => openSettings("sync")}
             onSelectBucket={(p, b) => openHere((pane) => pane.openBucket(p, b))}
             onOpenBucketByName={(p) => askBucketName(p)}

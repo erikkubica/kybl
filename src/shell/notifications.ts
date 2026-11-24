@@ -65,6 +65,16 @@ const ANSWER_MS = 1500;
 
 export const answersUser = () => bgDepth === 0 && Date.now() - lastInput < ANSWER_MS;
 
+/** Inside `inBackground`: the toast being made reports background work. */
+export const inBackgroundNow = () => bgDepth > 0;
+
+/**
+ * An Undo is offered only while its toast would have been up: later, what it puts back may have
+ * changed since (a workspace edited after a reset). Show, Retry and the like stay.
+ */
+export const UNDO_MS = 10_000;
+export const actionLive = (n: Notification, now = Date.now()) => !!n.action && (n.action.label !== "Undo" || now - n.at < UNDO_MS);
+
 /**
  * Toasts made inside `fn` report background work (a job, uploads or an archive finishing): they go
  * to the bell however recently the user clicked or typed, which only says they were busy with

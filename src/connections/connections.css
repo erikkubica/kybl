@@ -718,3 +718,14 @@
   flex: none;
   margin-left: 0;
 }
+.conn-tabs .tab-dot {
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+/* a link inside a hint sits by its words, not pushed to the far edge */
+.modal-body .hint .link-btn {
+  margin-left: 0;
+}

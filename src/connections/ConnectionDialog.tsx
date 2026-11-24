@@ -230,7 +230,7 @@ function KeyedForm({
       requestAnimationFrame(() => {
         const bad = formEl.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
         const on = bad?.closest<HTMLElement>("[data-tab]")?.dataset.tab as typeof tab | undefined;
-        if (on && on !== "main") {
+        if (on && on !== tab) {
           setTab(on);
           requestAnimationFrame(() => bad?.focus());
         } else bad?.focus();
@@ -284,18 +284,42 @@ function KeyedForm({
   const [tunnelCount, setTunnelCount] = useState(() => initial?.net?.tunnels?.length ?? 0);
   const tunnelTab = pick === "sftp" && !PHONE;
   const [shareMore, setShareMore] = useState(false);
+  // opened for its tunnels: the keyboard starts there (the first field is on a hidden tab)
+  const focusedStart = useRef(false);
+  useEffect(() => {
+    if (focusedStart.current || tab !== "tunnels" || !tunnelsHost) return;
+    focusedStart.current = true;
+    const raf = requestAnimationFrame(() => tunnelsHost.querySelector<HTMLElement>("input, .tunnels-add")?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(raf);
+  }, [tab, tunnelsHost]);
+  // what Options holds that isn't the default: a dot on its tab, so it isn't missed
+  const optionsSet = !!normalizeGroup(group) || photos !== "app" || sharing;
+  // the tab stays where it is: a field that needs fixing brings its own tab forward (draft), and
+  // the result shows under every tab
   const test = () => {
     if (busy) return;
-    setTab("main");
     const d = draft();
     if (d) void run("test", d);
   };
   const save = () => {
     if (busy) return;
-    // a field that needs fixing, and the result, are on the first tab
-    setTab("main");
     const d = draft();
     if (d) void run("save", d);
+  };
+  const tabs: { id: typeof tab; label: React.ReactNode }[] = [
+    { id: "main", label: "Connection" },
+    ...(tunnelTab ? [{ id: "tunnels" as const, label: <>Tunnels{tunnelCount > 0 && <span className="tab-count">{tunnelCount}</span>}</> }] : []),
+    { id: "options", label: <>Options{optionsSet && <span className="tab-dot" aria-label="(changed)" />}</> },
+  ];
+  // one stop for the keyboard; the arrows (and Home / End) move between the tabs
+  const tabKey = (e: React.KeyboardEvent) => {
+    const i = tabs.findIndex((t) => t.id === tab);
+    const n = e.key === "ArrowRight" ? i + 1 : e.key === "ArrowLeft" ? i - 1 : e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : null;
+    if (n === null) return;
+    e.preventDefault();
+    const next = tabs[(n + tabs.length) % tabs.length].id;
+    setTab(next);
+    requestAnimationFrame(() => document.getElementById(`conn-tab-${next}`)?.focus());
   };
 
   const trust = (fp: string) => {
@@ -345,21 +369,25 @@ function KeyedForm({
           save();
         }}
       >
-        <div className="seg conn-tabs span2" role="tablist" aria-label="Connection settings">
-          <button type="button" role="tab" aria-selected={tab === "main"} className={tab === "main" ? "on" : ""} onClick={() => setTab("main")}>
-            Connection
-          </button>
-          {tunnelTab && (
-            <button type="button" role="tab" aria-selected={tab === "tunnels"} className={tab === "tunnels" ? "on" : ""} onClick={() => setTab("tunnels")}>
-              Tunnels{tunnelCount > 0 && <span className="tab-count">{tunnelCount}</span>}
+        <div className="seg conn-tabs span2" role="tablist" aria-label="Connection settings" onKeyDown={tabKey}>
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              id={`conn-tab-${t.id}`}
+              aria-selected={tab === t.id}
+              aria-controls={`conn-panel-${t.id}`}
+              tabIndex={tab === t.id ? 0 : -1}
+              className={tab === t.id ? "on" : ""}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
             </button>
-          )}
-          <button type="button" role="tab" aria-selected={tab === "options"} className={tab === "options" ? "on" : ""} onClick={() => setTab("options")}>
-            Options
-          </button>
+          ))}
         </div>
 
-        <div className="conn-tab" data-tab="main" style={{ display: tab === "main" ? "contents" : "none" }}>
+        <div className="conn-tab" data-tab="main" role="tabpanel" id="conn-panel-main" aria-labelledby="conn-tab-main" style={{ display: tab === "main" ? "contents" : "none" }}>
         {pick === "s3" ? (
           <S3Form {...common} />
         ) : pick === "webdav" || pick === "ftp" || pick === "sftp" ? (
@@ -368,9 +396,9 @@ function KeyedForm({
           <BlobForm kind={pick as BlobKind} {...common} />
         )}
         </div>
-        {tunnelTab && <div ref={setTunnelsHost} className="span2" data-tab="tunnels" style={{ display: tab === "tunnels" ? "block" : "none" }} />}
+        {tunnelTab && <div ref={setTunnelsHost} className="span2" data-tab="tunnels" role="tabpanel" id="conn-panel-tunnels" aria-labelledby="conn-tab-tunnels" style={{ display: tab === "tunnels" ? "block" : "none" }} />}
 
-        <div className="conn-tab" data-tab="options" style={{ display: tab === "options" ? "contents" : "none" }}>
+        <div className="conn-tab" data-tab="options" role="tabpanel" id="conn-panel-options" aria-labelledby="conn-tab-options" style={{ display: tab === "options" ? "contents" : "none" }}>
         {groups && (
           <Field label="Group" optional wide hint="A folder in the sidebar. Use / for a group inside a group, like Clients/Acme.">
             {(c) => (

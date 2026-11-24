@@ -6,7 +6,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../Icons";
 import { ago } from "../updates";
-import { clearNotifications, markAllRead, useNotifications } from "./notifications";
+import { actionLive, clearNotifications, markAllRead, useNotifications } from "./notifications";
 import { errSummary } from "../api";
 
 export function NotificationBell() {
@@ -52,10 +52,12 @@ export function NotificationBell() {
     };
     window.addEventListener("pointerdown", down, true);
     window.addEventListener("keydown", key, true);
-    window.addEventListener("resize", () => setOpen(false), { once: true });
+    const resize = () => setOpen(false);
+    window.addEventListener("resize", resize);
     return () => {
       window.removeEventListener("pointerdown", down, true);
       window.removeEventListener("keydown", key, true);
+      window.removeEventListener("resize", resize);
     };
   }, [open]);
 
@@ -95,7 +97,7 @@ export function NotificationBell() {
                     <span className="notif-text">{errSummary(n.text)}</span>
                     <span className="notif-time">{ago(n.at)}</span>
                   </div>
-                  {n.action && (
+                  {actionLive(n) && n.action && (
                     <button
                       type="button"
                       className="toast-action"

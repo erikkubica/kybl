@@ -816,7 +816,7 @@ export function Sidebar({
           <span className="side-label">New connection</span>
         </button>
         {onTerminal && (
-          <button className="icon-btn" onClick={onTerminal} title={keys("Terminal on this computer (⌘J)")} aria-label="Terminal on this computer">
+          <button className="icon-btn" onClick={onTerminal} title="Terminal on this computer" aria-label="Terminal on this computer">
             <Icon name="terminal" size={15} />
           </button>
         )}
@@ -1239,7 +1239,7 @@ export function SidebarRail({
           <Icon name="plus" size={16} />
         </button>
         {onTerminal && (
-          <button type="button" className="icon-btn" onClick={onTerminal} title={keys("Terminal on this computer (⌘J)")} aria-label="Terminal on this computer">
+          <button type="button" className="icon-btn" onClick={onTerminal} title="Terminal on this computer" aria-label="Terminal on this computer">
             <Icon name="terminal" size={15} />
           </button>
         )}

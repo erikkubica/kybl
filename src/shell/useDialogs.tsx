@@ -5,7 +5,7 @@
  * `isOpen` tells the keyboard handling that something owns the keyboard.
  */
 import { logMessage } from "../activityLog";
-import { addNotification, answersUser, dragging } from "./notifications";
+import { addNotification, answersUser, dragging, inBackgroundNow } from "./notifications";
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConfirmDialog, ContextMenu, PromptDialog, Toasts, type MenuItem, type PromptResult, type Toast } from "../components/Dialogs";
 import { useConflictPrompt, type ResolveOpts } from "../components/ConflictDialog";
@@ -63,16 +63,14 @@ export function DialogsProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [modals, setModals] = useState<{ id: number; render: (close: () => void) => ReactNode }[]>([]);
   // each toast leaves by itself (see Toasts: longer for errors, held while hovered or focused)
-  // Every toast goes into the bell's list. It pops up only when it answers the user (input just
-  // before it) and nothing is in the way (a menu, dialog or drag); otherwise it waits in the bell as
+  // Every toast goes into the bell's list. It pops up when it answers the user (input just before
+  // it), and an error always does (a rename that failed after a slow server took its time) unless
+  // it comes from background work; nothing pops up over a drag. The rest waits in the bell as
   // unread, so background work never lands over what is being done.
   const open = useRef(false);
   const toast = useCallback((kind: Toast["kind"], text: string, action?: ToastAction) => {
     logMessage(kind, text);
-    // only the answer to what the user just did pops up (a menu item's "Copied", a rename that
-    // failed); work finishing in the background, which is what used to land on top of an open
-    // menu, waits under the bell. Nothing pops up over a drag.
-    const popUp = answersUser() && !dragging();
+    const popUp = (answersUser() || (kind === "error" && !inBackgroundNow())) && !dragging();
     addNotification(kind, text, action, popUp);
     if (!popUp) return;
     const id = Date.now() + Math.random();

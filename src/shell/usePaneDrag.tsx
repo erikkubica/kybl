@@ -46,6 +46,11 @@ type Drag = {
   startX: number;
   startY: number;
   started: boolean;
+  /**
+   * The outer edges are offered only once the pointer has been away from them: a pane lifted by
+   * its header starts inside the top band, and mustn't offer "full width at the top" at once
+   */
+  outerArmed: boolean;
   /** what the ghost shows, read when the drag began (the slot may show another pane after a workspace switch) */
   ghost: { provider?: string; name: string };
   hover: Hover | null;
@@ -151,7 +156,8 @@ export function usePaneDrag(o: PaneDragOptions) {
     // panes only when the layout shows them all (not one at a time in a window too small for them)
     if (document.querySelector(".split-cramped")) return null;
     const outer = outerAt(x, y);
-    if (outer) {
+    if (!outer) d.outerArmed = true;
+    else if (d.outerArmed) {
       const c = opts.current.check(d.id, "outer", outer.side);
       if (c) return { kind: "pane", target: "outer", zone: outer.side, ok: c === "ok", why: c === "ok" ? undefined : c.why, box: outer.box };
     }
@@ -249,6 +255,7 @@ export function usePaneDrag(o: PaneDragOptions) {
     const d: Drag = {
       id,
       pointerId,
+      outerArmed: false,
       startX: e.clientX,
       startY: e.clientY,
       started: false,

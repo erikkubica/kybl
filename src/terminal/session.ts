@@ -12,6 +12,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { LS } from "../browser/types";
+import { IS_MAC } from "../components/pointer";
 import { confirmPaste, pasteTrusts, setPasteTrust, setTermImpl, takeFocusWhenShown, takeStartup, termNotice, termWriteWhy, type TermAction, type TermSpec, type TermWrite } from "./api";
 import { cleanPaste, PASTE_ASK_ALWAYS, PASTE_MAX, pasteNeedsConfirm } from "./quote";
 
@@ -364,7 +365,10 @@ class Session {
 /** ⌃` or ⌘J: back and forth between a terminal and its file pane. */
 export const isToggleKey = (e: KeyboardEvent) =>
   (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.code === "Backquote" || e.key === "`")) ||
-  (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.code === "KeyJ");
+  (cmdKey(e) && !e.altKey && !e.shiftKey && e.code === "KeyJ");
+
+/** ⌘ on a Mac, Ctrl elsewhere (alone), where the app's shortcuts sit. */
+const cmdKey = (e: KeyboardEvent) => (IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey);
 
 /** App shortcuts the shell never gets: ⌃Tab / ⌃⇧Tab (next / previous workspace). */
 const passKey = (e: KeyboardEvent) => e.ctrlKey && !e.metaKey && !e.altKey && e.key === "Tab";

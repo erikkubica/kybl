@@ -265,9 +265,18 @@ export function useTerminalPanes(initial: Layout) {
    * A terminal on this computer below pane `src` (the active one by default): in the folder a pane
    * of this computer shows, when one is open, else in the home folder. No file pane is needed first.
    */
-  const openLocal = async (src?: PaneId): Promise<PaneId | null> => {
+  const localBusy = useRef(false);
+  const openLocal = async (src?: PaneId, opts?: { reuse?: boolean }): Promise<PaneId | null> => {
     const h = host.current;
-    if (!h) return null;
+    if (!h || localBusy.current) return null;
+    // a terminal on this computer is already open: go to it (the sidebar button is pressed again)
+    const ts = termsRef.current;
+    const there = opts?.reuse ? h.ids.find((x) => ts[x]?.profileId === LOCAL_PROFILE) : undefined;
+    if (there) {
+      h.setActive(there);
+      h.focus(there);
+      return there;
+    }
     const mac = profileOf(LOCAL_PROFILE) ?? { id: LOCAL_PROFILE, kind: "local" as const };
     if (!canTerminal(mac)) {
       h.toast("info", `${terminalsWhere()}.`);
@@ -277,14 +286,18 @@ export function useTerminalPanes(initial: Layout) {
     const shown = [from, ...h.ids].map((id) => h.slot(id).here).find((l) => l?.profileId === LOCAL_PROFILE);
     let at: Loc | null = shown ?? null;
     if (!at) {
+      // one press at a time: a double click mustn't open two while the home folder is looked up
+      localBusy.current = true;
       const home = (await api.listRoots(LOCAL_PROFILE).catch(() => []))[0]?.id;
+      localBusy.current = false;
       if (home == null) {
         h.toast("info", "Couldn't find your home folder for the terminal.");
         return null;
       }
       at = { profileId: LOCAL_PROFILE, bucket: home, prefix: "" };
     }
-    return latest.current.open(from, at);
+    // the pane it was asked from may have closed meanwhile: below the active one then
+    return latest.current.open(h.ids.includes(from) ? from : h.activeId, at);
   };
 
   /** "Open terminal here" / "Open in terminal" for folder `key` of file pane `id`'s root; none where a terminal can't open. */
