@@ -32,16 +32,10 @@ export function Toolbar({
   searchInput,
   disabled,
   working,
-  view,
-  compact,
   sort,
-  onView,
-  onCompact,
   onSortChange,
   groupBy = "none",
   onGroupBy,
-  tile,
-  onTile,
   hidden,
   onToggleHidden,
   onNavigate,
@@ -93,19 +87,11 @@ export function Toolbar({
   disabled: boolean;
   /** something is loading: show the thin progress line */
   working: boolean;
-  view: "list" | "grid";
-  /** denser rows, applies to both views */
-  compact: boolean;
   sort: Sort;
-  onView: (v: "list" | "grid") => void;
-  onCompact: (c: boolean) => void;
   onSortChange: (s: Sort) => void;
   /** rows in headed groups ("none": not grouped) */
   groupBy?: GroupBy;
   onGroupBy?: (g: GroupBy) => void;
-  /** grid view's tile size, for the view menu's Bigger / Smaller icons */
-  tile: number;
-  onTile: (px: number) => void;
   /** this computer's disk only: hidden files are showing (undefined: nothing to toggle) */
   hidden?: boolean;
   onToggleHidden?: () => void;
@@ -213,12 +199,7 @@ export function Toolbar({
       ["created", "Date created"],
     ];
     const items: (MenuItem | false)[] = [
-      { type: "item", label: "As list", icon: "list", checked: view === "list", onClick: () => onView("list") },
-      { type: "item", label: "As grid", icon: "grid", checked: view === "grid", onClick: () => onView("grid") },
-      { type: "item", label: "Compact layout", icon: "density", checked: compact, onClick: () => onCompact(!compact) },
-      view === "grid" && { type: "item", label: "Bigger icons", hint: "⌘+", disabled: tile >= TILE_MAX, onClick: () => onTile(Math.min(TILE_MAX, tile + 24)) },
-      view === "grid" && { type: "item", label: "Smaller icons", hint: "⌘−", disabled: tile <= TILE_MIN, onClick: () => onTile(Math.max(TILE_MIN, tile - 24)) },
-      { type: "sep" },
+      // list / grid, compact and the icon size are in the pane's footer (PaneStatusBar)
       { type: "label", label: "Sort by" },
       ...keys.map(([key, label]) => ({ type: "item" as const, label, checked: sort.key === key, onClick: () => onSortChange({ ...sort, key }) })),
       { type: "sep" },
@@ -343,11 +324,11 @@ export function Toolbar({
         <button
           className="icon-btn tb-view"
           onClick={viewMenu}
-          title={`View: ${view === "grid" ? "grid" : "list"}${compact ? ", compact" : ""}, sorted by ${sortName} ${sort.dir === "asc" ? "ascending" : "descending"}`}
-          aria-label="View options"
+          title={`Sorted by ${sortName}, ${sort.dir === "asc" ? "ascending" : "descending"}${groupBy !== "none" ? ` · grouped` : ""}`}
+          aria-label="Sort and group"
           aria-haspopup="menu"
         >
-          <Icon name="eye" />
+          <Icon name="sort" />
         </button>
 
         {/* the filter lives in its own row under this one (open while focused, or while a filter or

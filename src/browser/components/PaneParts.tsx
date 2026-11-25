@@ -9,6 +9,7 @@ import { errorHint, freshConnection } from "../../log/connLog";
 import { classifyError } from "../../log/logText.ts";
 import type { DragState } from "../hooks/useItemDrag";
 import { MAX_SORT_ITEMS } from "../hooks/useEntries";
+import { TILE_MAX, TILE_MIN } from "./Toolbar";
 import type { Pane } from "../hooks/usePane";
 
 /** Deep-search results, the filter's match count, and a failed reload above rows still shown. */
@@ -177,6 +178,31 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
           )}
         </span>
       )}
+      {/* how the list looks: list or grid, compact, and the grid's icon size (⌘+ / ⌘−) */}
+      <span className="sb-view">
+        {pane.view === "grid" && (
+          <input
+            type="range"
+            className="sb-tile"
+            min={TILE_MIN}
+            max={TILE_MAX}
+            step={8}
+            value={pane.tile}
+            onChange={(e) => pane.setTile(Number(e.target.value))}
+            title="Icon size (⌘+ / ⌘−)"
+            aria-label="Icon size"
+          />
+        )}
+        <button type="button" className={`statusbar-btn ${pane.view === "list" ? "on" : ""}`} onClick={() => pane.setView("list")} aria-pressed={pane.view === "list"} title="As list" aria-label="As list">
+          <Icon name="list" size={14} />
+        </button>
+        <button type="button" className={`statusbar-btn ${pane.view === "grid" ? "on" : ""}`} onClick={() => pane.setView("grid")} aria-pressed={pane.view === "grid"} title="As grid" aria-label="As grid">
+          <Icon name="grid" size={14} />
+        </button>
+        <button type="button" className={`statusbar-btn ${pane.compact ? "on" : ""}`} onClick={() => pane.setCompact(!pane.compact)} aria-pressed={pane.compact} title="Compact layout" aria-label="Compact layout">
+          <Icon name="density" size={14} />
+        </button>
+      </span>
       {/* the folder's info panel (connection, path, git), remembered for this pane */}
       <button
         type="button"

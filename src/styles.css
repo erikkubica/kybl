@@ -5772,6 +5772,29 @@ input[type="range"]:focus-visible {
 .statusbar-btn.on {
   color: var(--accent);
 }
+/* the footer's view switches: list / grid / compact, and the icon size in grid view */
+.sb-view {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+  margin-right: 2px;
+  border-right: 1px solid var(--border);
+}
+.sb-view .statusbar-btn {
+  margin-right: 0;
+}
+.sb-tile {
+  width: 72px;
+  height: 14px;
+  margin: 0 6px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  accent-color: var(--accent);
+}
 .info-panel {
   flex: none;
   width: 248px;
@@ -6083,7 +6106,8 @@ input[type="range"]:focus-visible {
   overflow: hidden;
 }
 .search-row .search,
-.search-row .search:focus-within {
+.search-row .search:focus-within,
+.search-row .search:has(.search-modes):focus-within {
   width: 100%;
   flex: none;
   min-width: 0;

@@ -184,16 +184,10 @@ export function BrowserPane(p: BrowserPaneProps) {
         searchInput={pane.searchInput}
         disabled={!profile || bucket == null}
         working={working}
-        view={pane.view}
-        compact={pane.compact}
         sort={sort}
-        onView={pane.setView}
-        onCompact={pane.setCompact}
         onSortChange={setSort}
         groupBy={pane.groupBy}
         onGroupBy={(g) => pane.setGroupBy(g)}
-        tile={pane.tile}
-        onTile={pane.setTile}
         hidden={pane.caps?.localPaths ? pane.showHidden : undefined}
         onToggleHidden={actions.commands["toggle-hidden"]}
         onNavigate={pane.navigate}
