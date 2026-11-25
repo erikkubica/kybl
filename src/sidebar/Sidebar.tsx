@@ -65,6 +65,41 @@ const onActivate = (fn: () => void) => (e: React.KeyboardEvent) => {
 };
 
 /**
+ * What a click does in the sidebar, for connections and places alike (buckets, this computer's
+ * folders, favorites): it marks the row with an Open button, so a stray click never replaces what
+ * the pane shows; a double click, ↵ or Open opens it, and into an empty pane a click opens at once.
+ */
+type Choice = { chosen: string | null; choose: (key: string) => void; paneEmpty: boolean };
+/** a place row's click and ↵; `showing`: the pane shows it already (nothing to do) */
+function placeProps(c: Choice, key: string, open: () => void, showing: boolean) {
+  return {
+    onClick: (e: React.MouseEvent) => {
+      if (showing) return;
+      if (e.detail > 1 || c.paneEmpty) return open();
+      c.choose(key);
+    },
+    onKeyDown: onActivate(() => !showing && open()),
+  };
+}
+/** the Open button on a marked row */
+function OpenButton({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button
+      className="side-open"
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen();
+      }}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+      title="Open in the pane in use (or double-click the row)"
+    >
+      Open
+    </button>
+  );
+}
+
+/**
  * A place that is mounted as a drive: a small eject mark at the row's end, like a disk in
  * Finder's sidebar (a warning while it can't mount). A click opens the drive's menu.
  */
@@ -461,6 +496,7 @@ export function Sidebar({
   const [query, setQuery] = useState("");
   // the connection clicked once: marked, with its Open button
   const [chosenId, setChosenId] = useState<string | null>(null);
+  const choice: Choice = { chosen: chosenId, choose: setChosenId, paneEmpty };
   const [cursor, setCursor] = useState(0);
   // ⌥⌘F shows the field even for a short list, until it's left empty
   const [findAsked, setFindAsked] = useState(false);
@@ -622,9 +658,7 @@ export function Sidebar({
       pickMode={pickedSet.size > 0}
       onPick={onTogglePick}
       dragProps={dragProps(p)}
-      chosen={chosenId === p.id}
-      onChoose={(x) => setChosenId(x.id)}
-      paneEmpty={paneEmpty}
+      choice={choice}
     />
   );
 
@@ -732,12 +766,13 @@ export function Sidebar({
                 // a server's one root ("") is the connection itself: no second name for it
                 const where = [p?.name ?? "Removed connection", ...(f.bucket === "" ? [] : [rootLabel(f.profileId, f.bucket)]), ...f.prefix.split("/").filter(Boolean)].join(" › ");
                 const open = () => p && onOpenFavorite?.(f);
+                const key = `f:${f.profileId}|${f.bucket}|${f.prefix}`;
+                const marked = chosenId === key && !paneEmpty;
                 return (
                   <div
-                    key={`${f.profileId}|${f.bucket}|${f.prefix}`}
-                    className={`side-item fav-row ${p ? "" : "is-hidden"}`}
-                    onClick={open}
-                    onKeyDown={onActivate(open)}
+                    key={key}
+                    className={`side-item fav-row ${p ? "" : "is-hidden"} ${marked ? "chosen" : ""}`}
+                    {...placeProps(choice, key, open, false)}
                     role="button"
                     tabIndex={0}
                     aria-disabled={!p || undefined}
@@ -745,7 +780,8 @@ export function Sidebar({
                   >
                     <Icon name={f.prefix ? "folder" : rootIcon(f.profileId, f.bucket)} size={14} />
                     <span className="side-label">{f.name}</span>
-                    {onRemoveFavorite && (
+                    {marked && p && <OpenButton onOpen={open} />}
+                    {onRemoveFavorite && !marked && (
                       <button
                         className="icon-btn side-hide"
                         onClick={(e) => {
@@ -795,6 +831,7 @@ export function Sidebar({
                 onBucketMenu={onBucketMenu}
                 mounts={mounts}
                 onDriveMenu={onDriveMenu}
+                choice={choice}
               />
             )}
           </div>
@@ -932,7 +969,9 @@ function DeviceRoots({
   onBucketMenu,
   mounts = [],
   onDriveMenu,
+  choice,
 }: {
+  choice: Choice;
   p: Profile;
   roots: string[];
   list: BucketList | undefined;
@@ -958,12 +997,13 @@ function DeviceRoots({
         const here = active && b === bucket;
         const isHidden = hidden.has(b);
         if (isHidden && !revealing && !here) return null;
+        const key = `b:${p.id}|${b}`;
+        const marked = choice.chosen === key && !choice.paneEmpty && !here;
         return (
           <div
             key={b}
-            className={`side-item sub bucket-row device-row ${here ? "selected" : ""} ${isHidden ? "is-hidden" : ""}`}
-            onClick={() => onSelectBucket(p, b)}
-            onKeyDown={onActivate(() => onSelectBucket(p, b))}
+            className={`side-item sub bucket-row device-row ${here ? "selected" : ""} ${isHidden ? "is-hidden" : ""} ${marked ? "chosen" : ""}`}
+            {...placeProps(choice, key, () => onSelectBucket(p, b), here)}
             role="button"
             tabIndex={0}
             aria-current={here}
@@ -981,6 +1021,7 @@ function DeviceRoots({
             <Icon name={ico} size={14} />
             <span className="side-label">{rootLabel(p.id, b)}</span>
             <DriveBadge m={findMount(mounts, p.id, b, "")} onMenu={onDriveMenu} />
+            {marked && <OpenButton onOpen={() => onSelectBucket(p, b)} />}
             <button
               className="icon-btn side-hide"
               onClick={(e) => {
@@ -1042,9 +1083,7 @@ function SidebarConnection({
   pickMode = false,
   onPick,
   dragProps,
-  chosen = false,
-  onChoose,
-  paneEmpty = false,
+  choice,
 }: {
   p: Profile;
   active: boolean;
@@ -1079,11 +1118,10 @@ function SidebarConnection({
   /** the row's drag handlers (useConnectionDrag) */
   dragProps?: React.HTMLAttributes<HTMLDivElement>;
   /** clicked once: marked, with an Open button (a click alone doesn't replace what the pane shows) */
-  chosen?: boolean;
-  onChoose?(p: Profile): void;
-  /** the pane in use shows nothing: a click opens at once, there's nothing to lose */
-  paneEmpty?: boolean;
+  choice?: Choice;
 }) {
+  const paneEmpty = choice?.paneEmpty ?? false;
+  const chosen = choice?.chosen === `c:${p.id}`;
   const caps = useCaps(p.id);
   const mode = rootsMode(p, caps);
   const single = mode === "single";
@@ -1097,13 +1135,13 @@ function SidebarConnection({
   // already what the pane shows: opening it again would only reload it
   const showing = single ? here : active;
   const open_ = () => (single ? onSelectBucket(p, "") : onOpen(p));
-  const asks = !!onChoose && !paneEmpty && !showing;
+  const asks = !!choice && !paneEmpty && !showing;
   // ⌘/Ctrl-click (or any click while some are picked) picks the connection instead of opening it
   const click = (e: React.MouseEvent) => {
     if (onPick && !own && (e.metaKey || e.ctrlKey || e.shiftKey || pickMode)) return onPick(p);
     if (e.detail > 1) return asks || !showing ? open_() : undefined;
     if (!single && !(paneEmpty && open)) onFold(p);
-    if (asks) return onChoose!(p);
+    if (asks) return choice!.choose(`c:${p.id}`);
     if (!showing) open_();
   };
   // the error a server gave, as a dot with the message on hover (the pane says it in full)
@@ -1167,19 +1205,7 @@ function SidebarConnection({
           </button>
         )}
         {trouble && <span className="side-trouble" role="img" aria-label={`Couldn't connect: ${trouble}`} />}
-        {chosen && asks && (
-          <button
-            className="side-open"
-            onClick={(e) => {
-              e.stopPropagation();
-              open_();
-            }}
-            onKeyDown={(e) => e.stopPropagation()}
-            title="Open in the pane in use (or double-click the row)"
-          >
-            Open
-          </button>
-        )}
+        {chosen && asks && <OpenButton onOpen={open_} />}
         {!single && (
           <button
             type="button"
@@ -1204,12 +1230,14 @@ function SidebarConnection({
             const isHidden = hidden.has(b);
             // the bucket on screen stays listed even when hidden, so you can see where you are
             if (isHidden && !revealing && !here) return null;
+            const key = `b:${p.id}|${b}`;
+            const marked = !!choice && choice.chosen === key && !paneEmpty && !here;
+            const openIt = () => onSelectBucket(p, b);
             return (
               <div
                 key={b}
-                className={`side-item sub bucket-row ${here ? "selected" : ""} ${isHidden ? "is-hidden" : ""}`}
-                onClick={() => onSelectBucket(p, b)}
-                onKeyDown={onActivate(() => onSelectBucket(p, b))}
+                className={`side-item sub bucket-row ${here ? "selected" : ""} ${isHidden ? "is-hidden" : ""} ${marked ? "chosen" : ""}`}
+                {...(choice ? placeProps(choice, key, openIt, here) : { onClick: openIt, onKeyDown: onActivate(openIt) })}
                 role="button"
                 tabIndex={0}
                 aria-current={here}
@@ -1229,6 +1257,7 @@ function SidebarConnection({
                   {rootLabel(p.id, b)}
                 </span>
                 <DriveBadge m={findMount(mounts, p.id, b, "")} onMenu={onDriveMenu} />
+                {marked && <OpenButton onOpen={openIt} />}
                 <button
                   className="icon-btn side-hide"
                   onClick={(e) => {
