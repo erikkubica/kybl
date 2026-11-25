@@ -41,11 +41,8 @@ const ROWS_MAX = 800;
 /** How long a preview may be acted on before it is checked again. */
 const PREVIEW_MS = 5 * 60_000;
 
-/** "Web server › public_html › site" (the saved list's tooltips) */
-function endLabel(e: MirrorEnd) {
-  const parts = [e.rootName, ...e.dir.split("/").filter(Boolean)].filter(Boolean);
-  return { conn: e.connectionName || deviceName(), path: parts.join(" › ") || "/" };
-}
+/** "Web server /public_html/site" (the saved list's tooltips) */
+const endText = (e: MirrorEnd) => `${e.connectionName || deviceName()} ${endPath(e)}`;
 
 /** The folder as a path: "/Users/demo/Sites/acme", "media/photos", "/". */
 function endPath(e: MirrorEnd) {
@@ -251,6 +248,21 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
     setExcludes(m.excludes);
     setUseGitignore(m.useGitignore);
     setPicking(null);
+    setPreview(null);
+  };
+
+  /** back to a mirror of the folders it opened with, not saved */
+  const startNew = () => {
+    abort.current?.abort();
+    setSavedId(null);
+    setName("");
+    setSrc(src0);
+    setDst(dst0);
+    setDeleteExtra(false);
+    setCompare("time");
+    setExcludes(DEFAULT_EXCLUDES);
+    setUseGitignore(true);
+    setPicking(dst0 ? null : "dst");
     setPreview(null);
   };
 
@@ -485,12 +497,24 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
                     <>
                       <div className="mirror-menu-veil" onClick={() => setSavedMenu(false)} />
                       <div className="mirror-menu" role="menu">
+                        <button
+                          role="menuitem"
+                          className={savedId ? "" : "on"}
+                          onClick={() => {
+                            setSavedMenu(false);
+                            if (savedId) startNew();
+                          }}
+                        >
+                          <Icon name={savedId ? "plus" : "check"} size={13} />
+                          <span>New mirror</span>
+                        </button>
+                        <div className="mirror-menu-sep" />
                         {savedList.map((m) => (
                           <button
                             key={m.id}
                             role="menuitem"
                             className={m.id === savedId ? "on" : ""}
-                            title={`${endLabel(m.src).conn} › ${endLabel(m.src).path} → ${endLabel(m.dst).conn} › ${endLabel(m.dst).path}`}
+                            title={`${endText(m.src)} → ${endText(m.dst)}`}
                             onClick={() => {
                               setSavedMenu(false);
                               load(m);
