@@ -3252,11 +3252,14 @@ input[type="checkbox"] {
   gap: 8px;
 }
 .set-label {
+  flex: 1;
   min-width: 0;
   font-weight: 500;
 }
+/* every description wraps at the same width, whatever control sits beside it */
 .set-label small {
   display: block;
+  max-width: 440px;
   margin-top: 1px;
   color: var(--faint);
   font-size: 12px;
