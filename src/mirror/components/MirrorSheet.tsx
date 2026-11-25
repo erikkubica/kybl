@@ -2,7 +2,7 @@
  * The Mirror sheet: source → destination (swap to pull instead of push), what to do, how
  * "changed" is decided, what to leave out, and a dry run of exactly what will be copied and
  * deleted, grouped by folder. "Mirror" then runs that as one job. Mirrors can be saved by name
- * and loaded again from the row at the top.
+ * and loaded again from the Saved menu at the bottom; the options fold to one line.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { errMessage, type Capabilities } from "../../core/api";
@@ -41,30 +41,34 @@ const ROWS_MAX = 800;
 /** How long a preview may be acted on before it is checked again. */
 const PREVIEW_MS = 5 * 60_000;
 
-/** "Web server › public_html › site" */
+/** "Web server › public_html › site" (the saved list's tooltips) */
 function endLabel(e: MirrorEnd) {
   const parts = [e.rootName, ...e.dir.split("/").filter(Boolean)].filter(Boolean);
   return { conn: e.connectionName || deviceName(), path: parts.join(" › ") || "/" };
 }
 
-function End({ end, label, onPick, picking }: { end: MirrorEnd | null; label: string; onPick?: () => void; picking?: boolean }) {
-  const l = end ? endLabel(end) : null;
+/** The folder as a path: "/Users/demo/Sites/acme", "media/photos", "/". */
+function endPath(e: MirrorEnd) {
+  const dir = e.dir.replace(/\/+$/, "");
+  const root = e.rootName === "/" ? "" : e.rootName.replace(/\/+$/, "");
+  return root ? (dir ? `${root}/${dir}` : root) : "/" + dir;
+}
+
+function End({ end, label, onPick, picking }: { end: MirrorEnd | null; label: string; onPick: () => void; picking: boolean }) {
   return (
-    <div className={`mirror-end ${end ? "" : "empty"}`}>
+    <div className={`mirror-end ${picking ? "picking" : ""}`}>
       <span className="mirror-end-k">{label}</span>
-      {l ? (
-        <span className="mirror-end-v" title={`${l.conn} › ${l.path}`}>
-          <strong>{l.conn}</strong>
-          <span>{l.path}</span>
+      {end ? (
+        <span className="mirror-end-v" title={`${end.connectionName || deviceName()} · ${endPath(end)}`}>
+          <strong>{end.connectionName || deviceName()}</strong>
+          <span className="mirror-end-path">{"\u200e" + endPath(end)}</span>
         </span>
       ) : (
         <span className="mirror-end-v dim">Not picked yet</span>
       )}
-      {onPick && (
-        <button className="btn btn-ghost btn-sm mirror-end-pick" onClick={onPick} aria-expanded={picking}>
-          {picking ? "Done" : end ? "Change…" : "Choose…"}
-        </button>
-      )}
+      <button className="btn btn-ghost btn-sm" onClick={onPick} aria-expanded={picking}>
+        {picking ? "Done" : end ? "Change" : "Choose"}
+      </button>
     </div>
   );
 }
@@ -127,6 +131,11 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>(preview0?.plan.remove.length ? "remove" : "upload");
   const [savedNote, setSavedNote] = useState<string | null>(null);
+  /** the options, folded to one line until opened (open when a saved mirror deletes) */
+  const [optsOpen, setOptsOpen] = useState(false);
+  /** the name being typed, to save (or rename) */
+  const [naming, setNaming] = useState<string | null>(null);
+  const [savedMenu, setSavedMenu] = useState(false);
   const abort = useRef<AbortController | null>(null);
 
   const config: MirrorConfig | null = src && dst ? { src, dst, deleteExtra, compare, excludes, useGitignore } : null;
@@ -218,14 +227,18 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
     }
   };
 
-  const save = () => {
+  const save = (as = name) => {
     if (!config) return;
-    const m = saveMirror({ ...config, id: savedId ?? undefined, name: name.trim() || defaultMirrorName(config) });
+    const m = saveMirror({ ...config, id: savedId ?? undefined, name: as.trim() || defaultMirrorName(config) });
     setSavedId(m.id);
     setName(m.name);
-    setSavedNote(savedId ? "Saved" : "Saved on this device");
-    setTimeout(() => setSavedNote(null), 2200);
+    setNaming(null);
+    setSavedNote("Saved");
+    setTimeout(() => setSavedNote(null), 1800);
   };
+  const savedNow = savedList.find((m) => m.id === savedId) ?? null;
+  /** the settings differ from the saved mirror's */
+  const dirty = !!savedNow && !!config && JSON.stringify([savedNow.src, savedNow.dst, savedNow.deleteExtra, savedNow.compare, savedNow.excludes, savedNow.useGitignore]) !== JSON.stringify([config.src, config.dst, config.deleteExtra, config.compare, config.excludes, config.useGitignore]);
 
   const load = (m: SavedMirror) => {
     abort.current?.abort();
@@ -271,32 +284,35 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
 
   const primary = !fresh ? (
     <button className="btn btn-primary" disabled={!config || !!blocked || busy === "preview" || !!picking} onClick={() => void runPreview()}>
-      {busy === "preview" ? "Checking…" : "Preview"}
+      {busy === "preview" ? "Checking…" : "Check"}
     </button>
   ) : (
-    <button className={`btn ${removes ? "btn-danger" : "btn-primary"}`} disabled={busy === "start" || planIsEmpty(plan!)} onClick={() => void start()}>
-      {busy === "start" ? "Starting…" : planIsEmpty(plan!) ? "Up to date" : removes ? `Mirror and delete ${n(removes)}` : "Mirror"}
-    </button>
+    planIsEmpty(plan!) ? (
+      <button className="btn btn-primary" onClick={onClose}>
+        Done
+      </button>
+    ) : (
+      <button className={`btn ${removes ? "btn-danger" : "btn-primary"}`} disabled={busy === "start"} onClick={() => void start()}>
+        {busy === "start" ? "Starting…" : removes ? `Mirror and delete ${n(removes)}` : `Mirror ${files(plan!.upload.length)}`}
+      </button>
+    )
   );
 
-  return (
-    <Modal title={saved0 || savedId ? `Mirror · ${name || "saved"}` : "Mirror"} onClose={onClose} width={640}>
-      <div className="modal-body mirror-sheet">
-        {savedList.length > 0 && (
-          <div className="mirror-saved" role="group" aria-label="Saved mirrors">
-            <span className="mirror-saved-k">Saved</span>
-            {savedList.map((m) => (
-              <button key={m.id} className={`mirror-chip ${m.id === savedId ? "on" : ""}`} onClick={() => load(m)} title={`${endLabel(m.src).path} → ${endLabel(m.dst).conn} › ${endLabel(m.dst).path}`}>
-                {m.name}
-              </button>
-            ))}
-          </div>
-        )}
+  const excl = excludes.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+  const optsSummary = [
+    deleteExtra ? null : "Copies new and changed files",
+    compare === "size" ? "by size" : compare === "checksum" ? "by checksum" : null,
+    excl.length ? `leaves out ${excl.length === 1 ? excl[0] : `${excl.length} patterns`}` : null,
+  ].filter(Boolean).join(" · ");
+  const empty = !!plan && planIsEmpty(plan);
 
+  return (
+    <Modal title={savedId ? name || "Mirror" : "Mirror"} onClose={onClose} width={620}>
+      <div className="modal-body mirror-sheet">
         <div className="mirror-route">
           <End end={src} label="From" onPick={() => pick("src")} picking={picking === "src"} />
-          <button className="mirror-swap" onClick={swap} disabled={!src || !dst} title="Swap direction: pull instead of push" aria-label="Swap direction">
-            <Icon name="swap" size={15} />
+          <button className="mirror-swap" onClick={swap} disabled={!src || !dst} title="Swap: copy the other way" aria-label="Swap direction">
+            <Icon name="arrow-down" size={14} />
           </button>
           <End end={dst} label="To" onPick={() => pick("dst")} picking={picking === "dst"} />
         </div>
@@ -317,58 +333,62 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
           </div>
         )}
 
-        <div className="mirror-opts">
-          <label className="mirror-check">
-            <input type="checkbox" checked readOnly disabled />
-            <span>Upload new and changed files</span>
-          </label>
-          <label className="mirror-check">
-            <input
-              type="checkbox"
-              checked={deleteExtra}
-              onChange={(e) => {
-                setDeleteExtra(e.target.checked);
-                setTab(e.target.checked ? "remove" : "upload");
-              }}
-            />
-            <span>Also delete what's gone from the source</span>
-          </label>
-          {deleteExtra && (
-            <div className="mirror-warn" role="note">
-              <Icon name="alert" size={14} />
-              <span>
-                Files at the destination that aren't in the source are deleted{trash && localDst ? ` (to the ${ON_OS.trash})` : ""}, so it ends up exactly like the source. Excluded files are left
-                alone. Check the list before you mirror.
+        <div className="mirror-opts-wrap">
+          <button className="mirror-opts-head" aria-expanded={optsOpen} onClick={() => setOptsOpen((o) => !o)}>
+            <Icon name={optsOpen ? "chevron-down" : "chevron-right"} size={13} />
+            <span className="mirror-opts-k">Options</span>
+            {!optsOpen && (
+              <span className="mirror-opts-sum">
+                {deleteExtra && <b>Makes it exactly like the source (deletes extras){optsSummary ? " · " : ""}</b>}
+                {optsSummary}
               </span>
+            )}
+          </button>
+          {optsOpen && (
+            <div className="mirror-opts">
+              <label className="mirror-check">
+                <input
+                  type="checkbox"
+                  checked={deleteExtra}
+                  onChange={(e) => {
+                    setDeleteExtra(e.target.checked);
+                    setTab(e.target.checked ? "remove" : "upload");
+                  }}
+                />
+                <span>
+                  Delete what isn't in the source
+                  <small>The destination ends up exactly like the source{trash && localDst ? `; deleted files go to the ${ON_OS.trash}` : ""}. Left-out files stay.</small>
+                </span>
+              </label>
+              <label className="mirror-field">
+                <span>Copy a file when</span>
+                <select value={compare} onChange={(e) => setCompare(e.target.value as CompareMode)}>
+                  <option value="time">its size or date differs</option>
+                  <option value="size">its size differs</option>
+                  <option value="checksum" disabled={!checksumOk}>
+                    its checksum differs{checksumOk ? "" : " (not on these connections)"}
+                  </option>
+                </select>
+              </label>
+              <label className="mirror-field top">
+                <span>
+                  Leave out
+                  <small>One per line, like .gitignore</small>
+                </span>
+                <textarea value={excludes} rows={3} spellCheck={false} autoCorrect="off" autoCapitalize="off" onChange={(e) => setExcludes(e.target.value)} />
+              </label>
+              {gitignore != null && (
+                <label className="mirror-check indent">
+                  <input type="checkbox" checked={useGitignore} onChange={(e) => setUseGitignore(e.target.checked)} />
+                  <span>
+                    Also what the folder's .gitignore lists{" "}
+                    <small className="inline">
+                      ({n(gitRules)} {gitRules === 1 ? "rule" : "rules"})
+                    </small>
+                  </span>
+                </label>
+              )}
             </div>
-          )}
-          <label className="mirror-field">
-            <span>Changed means</span>
-            <select value={compare} onChange={(e) => setCompare(e.target.value as CompareMode)}>
-              <option value="time">Another size, or modified more recently</option>
-              <option value="size">Another size</option>
-              <option value="checksum" disabled={!checksumOk}>
-                Different checksum (MD5){checksumOk ? "" : " – not on these connections"}
-              </option>
-            </select>
-          </label>
-          <label className="mirror-field top">
-            <span>
-              Leave out
-              <small>Like a .gitignore, one per line</small>
-            </span>
-            <textarea value={excludes} rows={4} spellCheck={false} autoCorrect="off" autoCapitalize="off" onChange={(e) => setExcludes(e.target.value)} />
-          </label>
-          {gitignore != null && (
-            <label className="mirror-check indent">
-              <input type="checkbox" checked={useGitignore} onChange={(e) => setUseGitignore(e.target.checked)} />
-              <span>
-                Also leave out what the folder's .gitignore lists
-                <small>
-                  {n(gitRules)} {gitRules === 1 ? "rule" : "rules"}
-                </small>
-              </span>
-            </label>
           )}
         </div>
 
@@ -377,37 +397,42 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
             <div className="mirror-status">
               <span className="spinner" /> {statusText(status)}
             </div>
+          ) : empty ? (
+            <div className="mirror-status ok">
+              <Icon name="check" size={15} /> Already the same. Nothing to copy{deleteExtra ? " or delete" : ""}.
+              {shown!.excluded > 0 && <span className="mirror-excl">{n(shown!.excluded)} left out</span>}
+            </div>
           ) : (
             !plan && (
               <div className="mirror-status dim">
-                {!config ? "Pick both folders to see what would change." : shown ? "Settings changed. Preview again to update this list." : "Preview shows exactly what would change before anything does."}
+                {!config ? "Choose both folders to see what would change." : shown ? "Options changed. Check again to update the list." : "Nothing changes until you look at the list and mirror."}
               </div>
             )
           )}
-          {shown && (
+          {shown && !empty && busy !== "preview" && (
             <div className={`mirror-result ${plan ? "" : "faded"}`}>
               <div className="mirror-tabs" role="tablist">
                 <button role="tab" aria-selected={tab === "upload"} className={tab === "upload" ? "on" : ""} onClick={() => setTab("upload")}>
-                  <Icon name="upload" size={13} /> Copy <b>{n(shown.upload.length)}</b>
-                  <small>{formatBytes(shown.uploadBytes)}</small>
+                  Copy <b>{n(shown.upload.length)}</b>
+                  {shown.uploadBytes > 0 && <small>{formatBytes(shown.uploadBytes)}</small>}
                 </button>
-                <button role="tab" aria-selected={tab === "remove"} className={`${tab === "remove" ? "on" : ""} ${removes ? "danger" : ""}`} onClick={() => setTab("remove")}>
-                  <Icon name="trash" size={13} /> Delete <b>{n(removes)}</b>
-                  {shown.removeBytes > 0 && <small>{formatBytes(shown.removeBytes)}</small>}
-                </button>
+                {(deleteExtra || removes > 0) && (
+                  <button role="tab" aria-selected={tab === "remove"} className={`${tab === "remove" ? "on" : ""} ${removes ? "danger" : ""}`} onClick={() => setTab("remove")}>
+                    Delete <b>{n(removes)}</b>
+                    {shown.removeBytes > 0 && <small>{formatBytes(shown.removeBytes)}</small>}
+                  </button>
+                )}
                 <button role="tab" aria-selected={tab === "skip"} className={tab === "skip" ? "on" : ""} onClick={() => setTab("skip")}>
-                  <Icon name="check" size={13} /> Skip <b>{n(skipItems.length)}</b>
+                  Same <b>{n(skipItems.length)}</b>
                 </button>
-                <span className="mirror-excl" title="Left out by the exclude rules, on both sides">
-                  {n(shown.excluded)} excluded
-                </span>
+                {shown.excluded > 0 && (
+                  <span className="mirror-excl" title="Left out by the Leave out list, on both sides">
+                    {n(shown.excluded)} left out
+                  </span>
+                )}
               </div>
               <Rows items={tab === "upload" ? [...shown.mkdirs.map((rel): Change => ({ rel, size: 0, why: "new", note: "new folder" })), ...shown.upload] : tab === "remove" ? [...shown.remove, ...shown.removeDirs.map((rel): Change => ({ rel, size: 0, why: "gone", note: "folder, once empty" }))] : skipItems} tab={tab} />
-              {!deleteExtra && shown.kept.length > 0 && tab !== "skip" && (
-                <div className="mirror-note">
-                  {files(shown.kept.length)} only at the destination stay. Turn on “Also delete” to remove them.
-                </div>
-              )}
+              {!deleteExtra && shown.kept.length > 0 && tab !== "skip" && <div className="mirror-note">{files(shown.kept.length)} only at the destination stay there.</div>}
               {notes.map((t) => (
                 <div key={t} className="mirror-note">
                   {t}
@@ -420,35 +445,107 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
       </div>
       <div className="modal-foot split">
         <div className="mirror-save">
-          <input
-            type="text"
-            value={name}
-            placeholder={config ? defaultMirrorName(config) : "Name, to save it"}
-            aria-label="Name of this mirror"
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && save()}
-          />
-          <button className="btn" disabled={!config || !!blocked} onClick={save} title="Keep it to run again with one click (on this device)">
-            {savedNote ?? (savedId ? "Update" : "Save")}
-          </button>
-          {savedId && (
-            <button
-              className="btn btn-ghost"
-              title="Forget this saved mirror"
-              aria-label="Forget this saved mirror"
-              onClick={() => {
-                deleteMirror(savedId);
-                setSavedId(null);
-              }}
-            >
-              <Icon name="trash" size={14} />
-            </button>
+          {naming != null ? (
+            <>
+              <input
+                type="text"
+                autoFocus
+                value={naming}
+                placeholder={config ? defaultMirrorName(config) : "Name"}
+                aria-label="Name of this mirror"
+                onChange={(e) => setNaming(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") save(naming);
+                  if (e.key === "Escape") {
+                    e.stopPropagation();
+                    setNaming(null);
+                  }
+                }}
+              />
+              <button className="btn" onClick={() => save(naming)}>
+                Save
+              </button>
+              <button className="btn btn-ghost" onClick={() => setNaming(null)}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              {(savedList.length > 0 || savedId) && (
+                <div className="mirror-saved-wrap">
+                  <button className="btn btn-ghost" aria-expanded={savedMenu} onClick={() => setSavedMenu((o) => !o)}>
+                    <Icon name="star" size={14} /> Saved <Icon name="chevron-down" size={12} />
+                  </button>
+                  {savedMenu && (
+                    <>
+                      <div className="mirror-menu-veil" onClick={() => setSavedMenu(false)} />
+                      <div className="mirror-menu" role="menu">
+                        {savedList.map((m) => (
+                          <button
+                            key={m.id}
+                            role="menuitem"
+                            className={m.id === savedId ? "on" : ""}
+                            title={`${endLabel(m.src).conn} › ${endLabel(m.src).path} → ${endLabel(m.dst).conn} › ${endLabel(m.dst).path}`}
+                            onClick={() => {
+                              setSavedMenu(false);
+                              load(m);
+                            }}
+                          >
+                            <Icon name={m.id === savedId ? "check" : "star"} size={13} />
+                            <span>{m.name}</span>
+                          </button>
+                        ))}
+                        {savedId && (
+                          <>
+                            <div className="mirror-menu-sep" />
+                            <button role="menuitem" onClick={() => (setSavedMenu(false), setNaming(name))}>
+                              <Icon name="edit" size={13} />
+                              <span>Rename…</span>
+                            </button>
+                            <button
+                              role="menuitem"
+                              className="danger"
+                              onClick={() => {
+                                setSavedMenu(false);
+                                deleteMirror(savedId);
+                                setSavedId(null);
+                                setName("");
+                              }}
+                            >
+                              <Icon name="trash" size={13} />
+                              <span>Forget this one</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+              {savedNote ? (
+                <span className="mirror-saved-note">
+                  <Icon name="check" size={13} /> {savedNote}
+                </span>
+              ) : savedId ? (
+                dirty && (
+                  <button className="btn btn-ghost" onClick={() => save()}>
+                    Save changes
+                  </button>
+                )
+              ) : (
+                <button className="btn btn-ghost" disabled={!config || !!blocked} onClick={() => setNaming("")} title="Keep it, to run again with one click">
+                  Save…
+                </button>
+              )}
+            </>
           )}
         </div>
         <div className="btn-row">
-          <button className="btn" onClick={onClose}>
-            Cancel
-          </button>
+          {!empty && (
+            <button className="btn" onClick={onClose}>
+              Cancel
+            </button>
+          )}
           {primary}
         </div>
       </div>

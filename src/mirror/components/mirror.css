@@ -7,102 +7,69 @@
   gap: 12px;
 }
 
-/* ---------------------------------------------------------------- saved mirrors */
-.mirror-saved {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-.mirror-saved-k {
-  margin-right: 2px;
-  color: var(--faint);
-  font-size: 11.5px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.mirror-chip {
-  max-width: 220px;
-  height: 24px;
-  padding: 0 10px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--panel);
-  color: var(--text);
-  font: inherit;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.mirror-chip:hover {
-  background: var(--hover);
-}
-.mirror-chip.on {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-/* ---------------------------------------------------------------- from → to */
+/* ---------------------------------------------------------------- from → to: one card, two rows */
 .mirror-route {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: stretch;
-  gap: 8px;
-}
-.mirror-end {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto auto;
-  column-gap: 6px;
-  padding: 8px 10px;
+  position: relative;
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   background: var(--panel);
 }
-.mirror-end.empty {
-  border-style: dashed;
+.mirror-end {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 6px 8px 6px 14px;
+}
+.mirror-swap + .mirror-end {
+  border-top: 1px solid var(--border);
+}
+.mirror-end.picking {
+  background: var(--accent-soft);
 }
 .mirror-end-k {
   color: var(--faint);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 .mirror-end-v {
   display: flex;
-  flex-direction: column;
-  grid-column: 1;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
 }
-.mirror-end-v strong,
-.mirror-end-v span {
+.mirror-end-v strong {
+  flex: none;
+  max-width: 45%;
   overflow: hidden;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mirror-end-v strong {
-  font-weight: 600;
-}
-.mirror-end-v span,
-.mirror-end-v.dim {
+/* the end of a long path is the part that matters: cut from the start */
+.mirror-end-path {
+  min-width: 0;
+  overflow: hidden;
   color: var(--dim);
-  font-size: 12px;
+  direction: rtl;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.mirror-end-pick {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  align-self: center;
+.mirror-end-v.dim {
+  color: var(--faint);
 }
 .mirror-swap {
+  position: absolute;
+  top: 50%;
+  left: 18px;
+  z-index: 1;
   display: grid;
   place-items: center;
-  align-self: center;
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
+  margin-top: -12px;
   border: 1px solid var(--border);
   border-radius: 50%;
   background: var(--raised);
@@ -119,10 +86,42 @@
   height: clamp(180px, calc(100vh - 520px), 300px);
 }
 
-/* ---------------------------------------------------------------- options */
+/* ---------------------------------------------------------------- options: one line until opened */
+.mirror-opts-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  text-align: left;
+}
+.mirror-opts-head:hover .mirror-opts-k {
+  color: var(--text);
+}
+.mirror-opts-k {
+  flex: none;
+  font-weight: 600;
+}
+.mirror-opts-sum {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mirror-opts-sum b {
+  color: var(--danger);
+  font-weight: 500;
+}
 .mirror-opts {
   display: grid;
-  gap: 8px;
+  gap: 10px;
+  padding: 10px 0 2px 19px;
 }
 .mirror-check {
   display: flex;
@@ -134,7 +133,7 @@
   margin: 2px 0 0;
 }
 .mirror-check.indent {
-  padding-left: 180px;
+  padding-left: 140px;
 }
 .mirror-check small,
 .mirror-field small {
@@ -142,22 +141,12 @@
   color: var(--faint);
   font-size: 11.5px;
 }
-.mirror-warn {
-  display: flex;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: var(--r);
-  background: var(--danger-soft);
-  color: var(--danger);
-  line-height: 1.45;
-}
-.mirror-warn svg {
-  flex: none;
-  margin-top: 2px;
+.mirror-check small.inline {
+  display: inline;
 }
 .mirror-field {
   display: grid;
-  grid-template-columns: 170px minmax(0, 1fr);
+  grid-template-columns: 130px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   color: var(--dim);
@@ -192,6 +181,12 @@
 }
 .mirror-status.dim {
   color: var(--faint);
+}
+.mirror-status.ok svg {
+  color: var(--ok);
+}
+.mirror-status .mirror-excl {
+  font-size: 12px;
 }
 .mirror-tabs {
   display: flex;
@@ -338,15 +333,78 @@
   flex: 1;
   max-width: 240px;
 }
+.mirror-save .btn svg {
+  margin-right: 2px;
+}
+.mirror-saved-wrap {
+  position: relative;
+}
+.mirror-saved-note {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ok);
+  font-size: 12.5px;
+}
+.mirror-menu-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+}
+.mirror-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 11;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--raised);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgb(0 0 0 / 0.3));
+}
+.mirror-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+.mirror-menu button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mirror-menu button svg {
+  flex: none;
+  color: var(--dim);
+}
+.mirror-menu button.on svg {
+  color: var(--accent);
+}
+.mirror-menu button:hover {
+  background: var(--hover);
+}
+.mirror-menu button.danger,
+.mirror-menu button.danger svg {
+  color: var(--danger);
+}
+.mirror-menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
 
 @media (max-width: 620px) {
-  .mirror-route {
-    grid-template-columns: 1fr;
-  }
-  .mirror-swap {
-    justify-self: center;
-    transform: rotate(90deg);
-  }
   .mirror-field {
     grid-template-columns: 1fr;
     gap: 4px;
