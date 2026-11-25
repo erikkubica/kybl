@@ -2,7 +2,7 @@ import { openManual, type ManualTopic } from "../../core/manual";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { errDetail, errSummary } from "../../core/api";
 import { Icon, type IconName } from "./Icons";
-import { ariaKey, keys } from "../lib/osText";
+import { ariaKey, keys, keys as keyText } from "../lib/osText";
 
 /** Elements Tab can reach inside a dialog or menu. */
 const FOCUSABLE =
@@ -397,7 +397,7 @@ export type MenuItem =
    * A row that opens a submenu (hover, → or Enter). `items` runs when it opens and may return a
    * promise: the submenu says "Loading…" until it settles.
    */
-  | { type: "submenu"; label: string; icon?: IconName; disabled?: boolean; items: () => MenuItem[] | Promise<MenuItem[]> }
+  | { type: "submenu"; label: string; icon?: IconName; disabled?: boolean; hint?: string; items: () => MenuItem[] | Promise<MenuItem[]> }
   | { type: "sep" }
   /**
    * The menu's find field, always there: typing swaps the rows for what `find` returns (plain
@@ -807,6 +807,7 @@ export function ContextMenu({
             >
               <ItemIcon it={it} />
               <span className="ctx-label">{it.label}</span>
+              {it.hint && <span className="ctx-hint">{keyText(it.hint)}</span>}
               <Icon name="chevron" size={13} className="ctx-more" />
             </button>
           ) : (

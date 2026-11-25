@@ -19,8 +19,8 @@ On macOS, shortcuts use ⌘ ⌥ ⇧ ⌃. On Windows and Linux, ⌘ becomes Ctrl 
 
 | Platform | Shipped as | Notes (from code and `.github/workflows/release.yml`) |
 |---|---|---|
-| macOS (Apple Silicon and Intel) | Two builds, `Kybl_<arch>.app.tar.gz` and a .dmg/app | Native menu bar, menu-bar (tray) icon, Dock hide when running in the tray, overlay title bar with traffic lights. Signing is ad hoc (`signingIdentity: "-"`), so the updater checks the new app's code signature against the running one. |
-| Windows | NSIS `-setup.exe` (or `.msi`) | No menu bar. The page's own shortcuts cover the keys. System tray icon. Update runs the installer in passive mode and relaunches. |
+| macOS (Apple Silicon and Intel) | Two builds, `Kybl_<arch>.app.tar.gz` and a .dmg/app | Native menu bar, menu-bar (tray) icon, Dock hide when running in the tray, overlay title bar with traffic lights. Signing is ad hoc in the config (`signingIdentity: "-"`; CI uses a self-signed certificate when its secrets are set), so the updater checks the new app's code signature against the running one. |
+| Windows | NSIS `-setup.exe` (or `.msi`) | No menu bar. The page's own shortcuts cover the keys. No system title bar either: the workspace bar is the title bar, with its own minimize, maximize / restore and close at its right end. System tray icon. Terminals on this computer run through ConPTY. Update runs the installer in passive mode and relaunches. |
 | Linux | AppImage, `.deb`, `.rpm` | No menu bar. Tray icon. AppImage updates itself in place; `.deb` and `.rpm` just open the download. |
 | Android | `Kybl.apk` (universal, arm64 + armv7) | Min SDK 24, target 36. Bundle id `app.kybl.mobile`. System back button wired to the app. Share target ("Kybl" in other apps' share sheets). `kybl://` deep links for sign-in. Foreground service keeps transfers alive. |
 | iPhone and iPad | Unsigned `Kybl.ipa` for sideloading (AltStore, SideStore, Sideloadly) | iOS 15 minimum. An AltStore source JSON is published with each release. Face ID, Photos access, background task for transfers, Files app sharing (`UIFileSharingEnabled`). Not on the App Store. |
@@ -34,7 +34,7 @@ On macOS, shortcuts use ⌘ ⌥ ⇧ ⌃. On Windows and Linux, ⌘ becomes Ctrl 
 
 #### 2.1 Window itself
 - Default size 1320 x 820, minimum 960 x 560.
-- Overlay title bar with a hidden title. Traffic lights sit at x15, y27. Empty stretches of the workspace bar and the sidebar top act as the drag region.
+- macOS: overlay title bar with a hidden title, traffic lights at x15, y27. Windows: no system title bar (the workspace bar is it, with its own window buttons, and the window still drags by the bar's empty room and resizes by its edges). Linux: the system's title bar. Empty stretches of the workspace bar and the sidebar top act as the drag region.
 - Drag and drop from other apps is enabled (`dragDropEnabled`). Files dropped from Finder or Explorer upload into the pane under the pointer.
 - The native title bar and menus follow the chosen theme (System follows the OS).
 - **Window state persistence:**
@@ -43,85 +43,92 @@ On macOS, shortcuts use ⌘ ⌥ ⇧ ⌃. On Windows and Linux, ⌘ becomes Ctrl 
 - **Closing the window:**
   - By default the window hides and Kybl keeps running in the menu bar or tray (setting "Keep running in the menu bar").
   - After 60 seconds hidden with nothing running, the window (and its web view) is destroyed to free memory. It is rebuilt when opened again.
-  - With "keep running" off, closing the window quits. If transfers or bucket operations are running, or the in-app editor has unsaved documents, a native prompt asks first.
-  - Quit (the menu item, Cmd+Q, or the tray) runs the same check. On confirmed quit it stops transfers, aborts open multipart uploads, and removes partial downloads.
+  - With "keep running" off, closing the window quits. If transfers or bucket operations are running, the in-app editor has unsaved documents, or a terminal has a program running, a native prompt asks first.
+  - Quit (the menu item, Cmd+Q, or the tray) runs the same check, and so does an update's "Restart now". On confirmed quit it stops transfers, aborts open multipart uploads, and removes partial downloads.
 - **Started at login:** launches with `--hidden`, so only the tray icon shows (on macOS the Dock icon is hidden until the window is opened).
 - Clicking the Dock icon while the window is hidden brings it back.
 
 #### 2.2 Sidebar
 Top to bottom (in the full sidebar):
-1. **Fold button** next to the window controls. Shortcut Alt+Cmd+S (or Show or Hide Sidebar in the View menu).
-2. **Find connection** field. Only shown automatically when there are more than 8 connections; Alt+Cmd+F shows it for a short list too. It searches names, servers, user names, kinds and groups, highlights hits, and arrow keys plus Enter open the result. Esc clears, then leaves.
-3. **Favorites** list (pinned folders or roots). Each row opens the place; hover shows an x to remove. A favorite whose connection was deleted is greyed with an explanation.
-4. **Recent** list. Only appears when there are more than 10 connections; shows the 5 most recently opened (not the one on screen).
-5. **Connections** list (count shown when many):
-   - Connections with buckets or roots fold open to show them: S3 buckets, drive volumes, or This Mac's folders (Home, Documents and so on).
-   - A connection with a single root (FTP, SFTP, WebDAV and similar) is one row that opens directly.
-   - **Kind sections:** once there are 3 or more connections of one server kind, they go into a folding section called FTP, SFTP or WebDAV.
-   - **Groups:** connections can be filed into nested groups (slash paths such as `Clients/Acme`). Groups fold open like folders. Groups are listed before connections.
-   - Per-bucket actions: hide or show a bucket in the sidebar (eye icon), "show hidden" reveal, New bucket (Kybl Storage), Open bucket by name (S3).
-   - Badges: a provider monogram per connection (Kybl uses its own mark, This Mac a device icon). A "Kybl's access to this account ended. Sign in again" badge on cloud-drive or Kybl connections whose access was revoked. A tunnel badge. A drive badge on mounted connections or buckets (opens a drive menu).
-6. **Footer:** "New connection", a folder-sync indicator (idle, scanning, syncing, error or paused; clicking opens Settings, Folder sync), and Settings (Cmd+,).
+1. **Sidebar button** next to the window controls. Shortcut ⌥⌘S (or Show or Hide Sidebar in the View menu). On macOS it sits right of the traffic lights; on Windows and Linux it starts the sidebar's top row.
+2. **Find connection** field. Only shown automatically when there are more than 8 connections; ⌥⌘F shows it for a short list too. It searches names, servers, user names, kinds and groups, highlights hits, and arrow keys plus Enter open the result. Esc clears, then leaves.
+3. A bar with **Move to group…**, **Pin** / **Unpin** and a clear button, while connections are picked (see 2.1a).
+4. **Four sections**, each with a heading that folds it shut on a click and a button with its **Sort** menu (kept per device; pinned connections stay first whatever the order):
+   - **Favorites** (pinned folders or roots; sort: As added, Name). Each row opens the place; hover shows an x to remove. A favorite whose connection was deleted is greyed with an explanation.
+   - **This Mac / This PC** (named after the device; its folders such as Home, Documents as rows; sort: As the system lists them, Name). Right-click the heading for the connection's menu.
+   - **Groups** (connections filed into nested groups; slash paths such as `Clients/Acme`; sort: Name A to Z, Name Z to A, Most connections). Groups fold open like folders and list before connections.
+   - **Connections** (the ones in no group; sort: Name, Type, Last opened; the count shows when many).
+   There is no Recent section and no Pinned section in the sidebar (recent connections live in an empty pane's launcher and in the command palette). The FTP, SFTP and WebDAV "kind sections" exist in the code but are switched off: a connection's kind is its row's badge.
+5. **Footer:** "New connection", a terminal button (a shell on this computer, reusing the one already open), a folder-sync indicator (idle, scanning, syncing, error or paused; clicking opens Settings, Folder sync), and Settings (Cmd+,).
+
+**What a click does.** A remote connection, bucket, drive or favorite is marked with an **Open** button on a click; a double click, Enter or the button opens it in the active pane, and into an empty pane a click opens at once. This computer's folders (and favorites on it) open on one click. A connection with buckets or drives (S3, Kybl Storage, Google Drive, OneDrive) folds open and shut with its own caret and never opens itself; each bucket row is its own place. A connection with a single root (FTP, SFTP, WebDAV, Dropbox, Azure, Google Cloud Storage) is one row that opens directly. An SSH connection opens as a terminal on the server (see 4.10). Dragging items onto a bucket row moves or copies them there.
+
+**Row details**
+- Per-bucket actions: hide or show a bucket in the sidebar (eye icon), "show hidden" reveal, New bucket (Kybl Storage), Open bucket by name (S3).
+- Badges: a provider monogram per connection (Kybl uses its own mark, This Mac a device icon; FTP, SSH, DAV and SFTP marks are smaller). A "Kybl's access to this account ended. Sign in again" badge on cloud-drive or Kybl connections whose access was revoked. A tunnel badge on SFTP connections. A drive badge on mounted connections or buckets (opens a drive menu). A red dot with the message on hover on a server that could not connect.
+- Space, or a ⌘/Ctrl- or Shift-click, picks connections to organize; dragging picked or single connections onto a group row files them there; dropping on the "Connections" heading takes them out of a group.
 
 **Context menus in the sidebar**
-- Connection: Sign in again (if needed), Open or Expand or Collapse, Copy / Move to…, Move to group (list of groups, New group…, No group), Edit connection…. Also drive items and share-placeholders items.
-- Bucket: Open, Copy / Move to…, hide or show in the sidebar, New bucket and similar.
-- Group: Rename group…, Ungroup, Collapse all, New connection in the group.
-- Kind section: Expand or Collapse, Collapse all, "New FTP connection…" and so on.
+- Connection: Sign in again… (if needed); for an SSH connection Open terminal, New terminal, Browse files; Open (a server's single root) or Expand / Collapse; Add to / Remove from favorites (a single-root server); Copy / Move to… (not for This computer); the drive group; Photos in lists; Tunnels ▸ (SFTP); Pin to the top / Unpin; Select to organize; Move to group ▸ (New group…, No group, every group); Edit connection….
+- Bucket, drive root or one of This computer's folders: Open, Add to / Remove from favorites, Copy / Move to…, the drive group (not on This computer), hide or show in the sidebar.
+- Group: Rename group…, Delete group (its connections stay, one level up), Collapse all.
+- A section's Sort button: Sort by with that section's choices.
 
-**Folded sidebar (icon rail)**
-- Folding the sidebar leaves a narrow rail (like a code editor's activity bar): favorites as starred icons, then each connection as an icon, then a kind section icon with a count.
-- Clicking a connection icon opens a menu of its buckets next to it. Right-click gives the connection menu.
-- Resting the pointer on an icon for about 0.3 s slides the full sidebar in over the panes ("peek"). It goes away when the pointer leaves, a menu closes, and focus leaves it. Opening a place from it puts it away again.
-- With more than 10 connections the rail keeps only the one on screen plus recent ones, and adds an "All connections" button (Alt+Cmd+F) that brings up the full sidebar with the find field ready.
-- The rail has the same footer buttons (New connection, sync indicator, Settings).
+**Folded sidebar**
+- Folding the sidebar leaves only its button, right of the window controls; the workspace bar starts after it. There is no icon rail and nothing slides in on hover.
+- ⌥⌘F still brings the whole sidebar in over the panes with the find field ready (the "peek"). It goes away when the pointer leaves, a menu closes and focus leaves it. Opening a place from it puts it away again.
+- The sidebar folds or unfolds only when you say so: a split, switching workspaces or closing panes never changes it.
 - Hidden or shown is remembered (`sidebarHidden` setting).
 
 #### 2.3 Panes
 - **Count and layout:** up to **6 panes**, arranged as a tree of splits (like editor groups in a code editor). Each split is a row (side by side) or a column (stacked). Same-direction splits are kept flat.
 - Each pane is either a **file pane** (a connection, a root and a folder) or a **terminal pane** (see 2.5).
-- **Minimum sizes:** a pane needs at least 340 px wide and 220 px high. If the window is too small to show all panes, only the active pane is drawn and the workspace bar shows a small numbered **pane switcher** (with the active pane's folder name). Making the window bigger brings the full layout back. Saved sizes are never changed by shrinking.
-- **Splitting:** Split Right (Cmd+\), Split Down (Shift+Cmd+\), or from the pane button's menu: Split Right, Down, Left or Up. The new pane starts in the same place.
+- **Minimum sizes:** a pane needs at least 340 px wide and 220 px high. If the window is too small to show all panes, only the active pane is drawn and a row of **pane tabs** appears (each pane with its connection's badge, or a terminal's icon, and its folder's name; the one on screen is raised, and a "+" adds a pane). Short of room the other tabs' names give way first. Making the window bigger brings the full layout back. Saved sizes are never changed by shrinking.
+- **Splitting:** Split Right (Cmd+\), Split Down (Shift+Cmd+\), or from the pane button's menu: Split Right, Down, Left or Up. The new pane opens empty with a **launcher** (see below) that offers the place of the pane it came from first, so Enter right away gives the same folder. When the direction has no room, the pane goes wherever there is (a 2 + 1 layout becomes 2 + 2).
 - **Resizing:** drag a divider. Double-click shares that split's room evenly. The divider is keyboard focusable (arrow keys nudge it), with `aria-valuenow` and a "Resize the panes" label. "Make panes the same size" is in the panes menu.
 - **Moving panes:**
   - Drag a pane by the empty part of its header. A ghost follows the pointer. Over another pane an overlay shows where it would land: an edge half docks it there (that pane splits that way), the middle swaps the two. Zones that would leave too little room show as refused. Escape cancels.
   - Keyboard: "Move pane" submenu (Left, Right, Up, Down) swaps with the neighbour or steps out of a stack.
   - Swap Panes (Shift+Cmd+S).
+  - A pane dragged to the outer edge of all the panes docks along that whole side (full width at the top or bottom, full height at the left or right).
   - Dropping a dragged pane on a **workspace tab** moves it into that workspace. Resting on a tab for 0.5 s opens that workspace so it can be dropped into the layout.
 - **Focus:** click a pane, Tab (with two or more file panes), or Alt+Cmd+Arrow to focus the pane in that direction (in a cramped window, previous or next). The active pane is marked. Menu items such as Switch Pane and Same Folder in Other Pane act on it.
 - **Closing:** Close Pane (Cmd+W while several panes are open), or "Close other panes". Closing one of several asks first when a terminal has a busy shell.
 - **Synchronized browsing:** each divider carries a small round link button for every pair of panes that face each other across it. Switching one on makes the two panes follow each other into subfolders and back up. A lit button or divider shows which are linked. Links can chain (1-2 and 2-3 moves all three). Also in the pane's "..." menu and the command palette ("Synchronize Browsing with ...").
 - **Two-pane (commander) tools:** need a second file pane.
-  - Copy to Other Pane (F5), Move to Other Pane (F6), Quick Look (F3), New Folder (F7), Delete (F8).
-  - Same Folder in Other Pane, Compare Folders, mirror to pane, Swap Panes.
-  - Dragging across panes: drop copies, hold Cmd to move (as listed in Keyboard shortcuts).
+  - Copy to (F5), Move to (F6), Quick Look (F3), New Folder (F7), Delete (F8). With exactly two panes F5 and F6 send the selection straight to the other pane after a confirm; with more they open the Copy to / Move to list at the selection.
+  - Same Folder in Other Pane, Compare Folders, Swap Panes. ("Mirror to the other pane" is gone: Mirror is under Keep & sync, "Mirror to…" and saved mirrors.)
+  - Dragging across panes: a drop moves, hold ⌥ to copy (between This computer and a cloud it always copies).
+  - With three or more panes F5 and F6 ask where to send the selection, from the same list as Copy to ▸ / Move to ▸.
 
 **What each pane shows**
-- **Header toolbar** (also the drag handle for moving the pane):
-  - Connection badge button (opens a menu to switch the pane's connection or bucket; label depends on kind).
-  - Connection name (clicking goes to the top).
-  - Enclosing-folder button (Cmd+Up) and an editable path title or breadcrumbs. Typing a path acts as Go to folder.
-  - Star to add or remove the folder from favorites.
+- **Header toolbar** (also the drag handle for moving the pane), left to right:
+  - Connection badge button (opens a menu of every connection, each with its buckets as a submenu, to switch the pane; an SSH connection opens as its terminal there).
+  - Connection name (clicking goes to the top; at the top of a place it goes up to all of the connection's places or buckets, shown as tiles to open).
+  - A "..." enclosing-folder button (Cmd+Up) when the path is two or more folders deep, then the current folder's name. Clicking the name turns it into a text field for a path (Go to folder, Shift+Cmd+G); right-click or Cmd-click lists the enclosing folders. The full breadcrumb trail is used on phones only.
   - A git branch chip after the path when the folder is in a git repo.
-  - "..." more actions (also holds items the narrow pane folded away).
-  - Upload or create menu (Upload files Cmd+U, Upload folder Shift+Cmd+U, New folder Shift+Cmd+N). Read-only for archives.
-  - View options menu: As list or grid, Compact layout, Bigger or Smaller icons (grid), Sort by Name, Date modified, Size, Kind, Ascending or Descending, Show hidden files (this-computer panes).
-  - Search or filter field (Cmd+F). Type to filter; Return searches subfolders. Names or Contents mode extras. Stop and Clear buttons.
-  - Panes button (menu: split four ways, make same size, move pane, mirror, close, close others).
+  - "..." more actions (also holds items the narrow pane folded away, such as Add to favorites).
+  - Upload or create menu (Upload files Cmd+U, Upload folder Shift+Cmd+U, New folder Shift+Cmd+N, New file Alt+Cmd+N; on This computer the upload items read Copy files here / Copy folders here and there are Move files here / Move folders here). Disabled for archives.
+  - Sort and group menu: Sort by Name, Date modified, Date created, Size, Kind, Type; Ascending or Descending; Group by (None, Name, Kind, Type, Size, Date modified, Date created); Show hidden files (this-computer panes).
+  - Filter or search button (Cmd+F) that opens a row of its own under the header: type to filter; Return searches subfolders. Names / Contents switch, Match case (Aa) and Regular expression (.*). Stop and Clear buttons.
+  - Terminal button (Cmd+J): this folder's shell, or a shell on this computer where the pane can't have one.
+  - Panes button (menu: split four ways, make same size, move pane, close, close others).
 - **Status bar per pane** (not one for the whole window), shown under the list:
   - Item count and total size ("+" when the server has more).
   - Selection count and size, with a clear button.
   - "Whole folder: X in N objects" (folder size, computed in the background), or "Adding up the folder..." or a failure note.
-  - Right side: "Loading the rest of the folder... N so far" with spinner, "Sorted the first N items only", "In order: the first N items. More load as you scroll", and a busy line with a Stop button (long operations).
-- **Banners** under the header for search results, "Search inside files", and listing errors with "Try again".
+  - Middle: "Loading the rest of the folder... N so far" with spinner, "Sorted the first N items only", "In order: the first N items. More load as you scroll", and a busy line with a Stop button (long operations).
+  - Right end: list, grid and compact switches, then the **info panel** button (see the folder info panel in the File browser section). The grid's tile size is set with Cmd+ / Cmd- or a pinch.
+- **Banners** under the header for search results, the filter line ("N of M items in this folder match…", an "Invalid expression" note for a broken regular expression, and an "Include folders" button that searches subfolders), and listing errors with "Try again".
+- **Launcher** in an empty pane (after a split, in a new workspace, or after a connection closed): the place of the pane it came from first, then the six connections opened last, favorites and a terminal, with a find field over every connection and favorite. Enter opens the first row.
 - **Empty states** (see section 7).
 
-**Sort, view and hidden files are per pane**, saved with the pane (a list/grid choice, sort, hidden-files toggle, compact flag, tile size).
+**Sort, grouping, view and hidden files are per pane**, saved with the pane (a list/grid choice, sort, group by, hidden-files toggle, compact flag, tile size, info panel open or not and its width).
 
 #### 2.4 Workspaces
 Workspaces are named pane layouts the window switches between, shown as **tabs** in the **workspace bar** along the top, right of the sidebar. They work like browser tabs.
 
-- **Create:** the "+" button or Cmd+T. The "+" opens a menu of saved workspace recipes (see below) plus a blank one. A new workspace opens where the active pane is, named "Workspace 2", "Workspace 3"... (lowest free number).
+- **Create:** the "+" button or Cmd+T. The "+" opens a menu: Empty workspace (Cmd+T), Copy of this workspace, and the saved workspace recipes (see below). An empty workspace has one empty pane with the launcher and its name field open for typing, named "Workspace 2", "Workspace 3"... (lowest free number).
 - **Switch:** click a tab; Ctrl+Tab and Ctrl+Shift+Tab; Shift+Cmd+] and Shift+Cmd+[; Alt+Cmd+1 to 8 for the first eight, Alt+Cmd+9 for the last. Also via the command palette ("Switch to Workspace ...").
 - **Rename:** double-click the tab, press F2 on a focused tab, or Window > Rename Workspace. Return keeps, Escape cancels. Names up to 80 characters.
 - **Reorder:** drag a tab sideways (live reflow, animated drop), or Alt+Shift+Left or Right with a tab focused. Window menu: Move Workspace Left or Right (Alt+Shift+Cmd+[ or ]).
@@ -132,6 +139,7 @@ Workspaces are named pane layouts the window switches between, shown as **tabs**
   - A long strip scrolls (mouse wheel works sideways) and fades at hidden edges. The active tab is always scrolled into view.
   - Tabs are a proper tab list (arrow keys, Home, End, Enter or Space, F2, context-menu key).
 - **Tab context menu:** Rename (F2), Settings..., Duplicate, Close workspace, Close other workspaces.
+- **Right end of the bar:** Find anything (Cmd+K), a light / dark switch, the notification bell (see 7.2), and on Windows the window buttons. With too little room for every name the tabs show their numbers and the one on screen keeps its name.
 - **Closing:** Close Workspace (menu or tab menu); there is always at least one. A toast says "Closed 'Name'" (adding "; its terminal ended" when shells were running) with an **Undo** button that restores the workspace in its old position (terminals come back fresh).
 - **Workspace settings popover** (cog): Name, Color, **Recipe**, Duplicate, Close workspace.
   - **Recipe:** a saved copy of the layout (splits, each pane's place and view, terminal folders and their startup commands). Buttons: Save layout as recipe, Update, Reset to recipe (closes what the workspace shows and reopens the recipe), Delete recipe. Each terminal in the recipe has a "runs on start" textarea (one command per line). "Open from the recipe when Kybl starts" makes the workspace start from its recipe at launch instead of where it was left.
@@ -145,13 +153,14 @@ Workspaces are named pane layouts the window switches between, shown as **tabs**
   - Files dragged in from Finder or Explorer onto a tab (or "+") are uploaded to that workspace's active pane. Resting 0.5 s on a tab switches to it.
 
 #### 2.5 Other tabs and panels that exist
-- **Workspace tabs** (above) are the only tabs in the main window. There is no per-pane tab strip.
-- **Terminal pane:** a pane slot can be a terminal (toggle with View > Terminal, Ctrl+`, opens one below the active pane in the same folder). It is saved in workspaces and recipes (with startup commands). Pasting several lines asks first (Settings, General, Safety). Terminals end with their window or workspace.
-- **Activity panel** (bottom of the window, collapsible, "Activity"): tabs Activity (in progress), Failed, Done, Log (message log), and Jobs (copies and moves between connections). Header buttons: speed limit menu, Resume all, Pause all, Retry failed, Cancel transfers, Clear finished, Clear failed. Per-row: move to top, pause or resume, cancel, retry, open, show in Finder or Explorer, verified badge. A "Copy the log as text" button. Synced folders and custom actions show as rows too. Opens by itself when a transfer starts (setting). Shown with "editing" chip when files are open in the in-app editor.
+- **Workspace tabs** (above) are the tabs of the main window. The only other tab row is the pane tabs a too-small window shows in place of side-by-side panes (2.3).
+- **Terminal pane:** a pane slot can be a terminal (toggle with View > Terminal, Cmd+J or Ctrl+`, the sidebar's terminal button, or a pane's Terminal button; it opens one below the active pane in the same folder, or goes back and forth between the terminal and its file pane). It is saved in workspaces and recipes (with startup commands). Pasting several lines asks first (Settings, General, Safety). Terminals end with their window or workspace.
+- **Activity panel** (bottom of the window, collapsible, "Activity"): tabs In progress (headed Running, Queued and Paused), Failed, Done, Log (message log), and Jobs (copies and moves between connections). Header buttons: speed limit menu, Resume all, Pause all, Retry failed, Cancel transfers (asks first: "Keep transfers" or cancel), Clear finished, Clear failed. Per-row: move to top, pause or resume, cancel, retry, open, show in Finder or Explorer, verified badge. A "Copy the log as text" button. Synced folders and custom actions show as rows too. Opens by itself when a transfer starts (setting). Shown with "editing" chip when files are open in the in-app editor.
 - **Settings page:** a full-window page (not a modal), see section 3.
-- **Document editor:** full-window "Open" or a sheet ("Edit in Kybl"), see other slices.
+- **Document editor:** the full-window viewer and editor opened by Open, Edit in Kybl or Quick Look's Edit (see Viewers).
 - **Command palette** (Cmd+K): see 2.7.
-- **Quick Look** (Space) with optional info column.
+- **Quick Look** (Space) with optional info column, and the per-pane **info panel** (status bar button).
+- **Notification bell** at the right end of the workspace bar (see 7.2).
 
 #### 2.6 Menu bar (macOS only)
 Windows and Linux get **no menu bar** (it would be drawn inside the window, which does not fit the design); their shortcuts work from the page. Keys the page already handles (Cmd+R, Cmd+F, Cmd+A, Cmd+Up, Delete, Cmd+Backspace) have no menu accelerator so a key never acts twice.
@@ -165,6 +174,7 @@ Windows and Linux get **no menu bar** (it would be drawn inside the window, whic
 | | Quit Kybl (asks if transfers run) | Cmd+Q |
 | **File** | New Connection... | |
 | | New Folder | Shift+Cmd+N |
+| | New File | Alt+Cmd+N |
 | | Upload Files... | Cmd+U |
 | | Upload Folder... | Shift+Cmd+U |
 | | Download | Shift+Cmd+D |
@@ -191,9 +201,8 @@ Windows and Linux get **no menu bar** (it would be drawn inside the window, whic
 | | Swap Panes | Shift+Cmd+S |
 | | Same Folder in Other Pane | |
 | | Compare Folders | |
-| | Copy to Other Pane | (F5) |
-| | Move to Other Pane | (F6) |
-| | Terminal | Ctrl+` |
+| | Copy to… / Move to… (palette: File group) | (F5) / (F6) |
+| | Terminal | Cmd+J (the page also takes Ctrl+`) |
 | | Enter Full Screen | system |
 | **Go** | Back | Cmd+[ |
 | | Forward | Cmd+] |
@@ -208,29 +217,34 @@ Windows and Linux get **no menu bar** (it would be drawn inside the window, whic
 | | Workspace Settings... | |
 | | Close Workspace | |
 | | (macOS also lists open windows here) | |
+| **Help** | Kybl Manual (opens kybl.app/manual in the browser) | Shift+Cmd+/ |
+| | Keyboard Shortcuts (opens Settings, Keyboard shortcuts) | |
+| | What's New in Kybl (GitHub releases) | |
+| | Report a Problem... (GitHub issues) | |
 
-Menu events are sent to the page as a `menu` event with the item id; the same ids are used by keyboard shortcuts and the command palette, so all three behave identically.
+F1 opens the manual on every OS, and the same four Help commands are in the command palette (Help group). macOS puts the system's help search field in the Help menu. Menu events are sent to the page as a `menu` event with the item id; the same ids are used by keyboard shortcuts and the command palette, so all three behave identically.
 
-**Tray (menu-bar or system tray) menu** (desktop): a status line ("No folders synced yet", "Syncing... X of Y files", "N folders need attention", "Up to date . N folders"), Open Kybl, Sync now, Pause syncing, Sync settings..., Drives submenu (one item per mounted drive, opens it in Finder), Check for updates... (becomes "Update to Kybl x.y.z..." when one is found), Quit Kybl. Extra items "Review N conflicts..." and "Confirm deletions in N folders..." appear only while something waits. The tray tooltip repeats the status. Left click shows the menu.
+**Tray (menu-bar or system tray) menu** (desktop): a status line ("No folders synced yet", "Syncing... X of Y files", "N folders need attention", "Up to date . N folders"), Open Kybl, Sync now, Pause syncing, Sync settings..., Drives submenu (one item per mounted drive, opens it in Finder; Drive settings...), Check for updates... (becomes "Update to Kybl x.y.z..." when one is found), Quit Kybl. Extra items "Review N conflicts..." and "Confirm deletions in N folders..." appear only while something waits. The tray tooltip repeats the status. Left click shows the menu.
 
 #### 2.7 Command palette (Cmd+K)
 - One field that finds connections, places, commands and the files of the folder on screen, ranked together. Loaded on first use as its own chunk. Recent picks and recent places are remembered.
 - Prefixes: `>` commands only, `@` connections only, `/` or `~` types a path (Tab completes a folder).
 - Enter opens in the active pane; Cmd+Enter opens in a new pane to the right (or shows a file in the list).
 - Commands disabled for the current state are listed greyed with the reason ("Open a folder first", "Only one pane is open", ...).
-- Command groups: File (new folder, upload, download, open, quick look, get info, rename, duplicate, copy, cut, paste, delete, select all, undo), Connections (new, import from FileZilla/Transmit/Cyberduck, find in sidebar), View (refresh, search, hidden files, sidebar, list or icons, sort by name, date, size, kind, reverse order, bigger or smaller icons, compact or roomy, show activity), Go (back, forward, enclosing folder, go to folder), Panes (split right, split down, close, close others, same size, switch, swap, same folder, compare, copy or move to other pane, synchronize browsing with a named pane, focus pane left, right, up, down), Workspaces (new, switch to a named one, next, previous, rename, settings, move, close), Kybl (Settings, Settings: each page, Theme: System, Light, Dark).
-- Other features can register their own commands (for example drives or mirrors).
+- Command groups: File (new folder, new file, upload, download, open, quick look, get info, rename, duplicate, copy, cut, paste, delete, select all, undo), Connections (new, Import Connections from FileZilla or ssh config, find in sidebar), Help (Kybl Manual, Keyboard Shortcuts, What's New in Kybl, Report a Problem), View (refresh, search, hidden files, sidebar, list or icons, sort by name, date modified, size, kind, reverse order, bigger or smaller icons, compact or roomy, show activity), Go (back, forward, enclosing folder, go to folder), Panes (split right, split down, close, close others, same size, switch, swap, same folder, compare, Copy To… / Move To… (F5 / F6), synchronize browsing with a named pane, focus pane left, right, up, down), Workspaces (new, switch to a named one, next, previous, rename, settings, move, close), Kybl (Settings, Settings: each page, Theme: System, Light, Dark), Terminal (Open Terminal Here, Toggle Terminal, New Terminal on this computer).
+- Other features register their own commands: saved mirrors, tunnels, workspace recipes, custom actions, terminal and content search.
+- Sections in results: Recent, Connections, Places, Commands, Files, Go to.
 
 #### 2.8 Keyboard navigation and accessibility
-- Full shortcut list (also on Settings, Keyboard shortcuts): palette, search, go to folder (Shift+Cmd+G or Cmd+L), back and forward, up, refresh, arrow selection, Home and End, Page Up and Down, type to jump to a name, select all, extend (Shift+click) and add (Cmd+click) to selection, drag-select an area, open (Cmd+O), edit (Cmd+E), Quick Look (Space), Get Info, actions menu (Shift+F10), copy, cut, paste, duplicate, undo (Cmd+Z), Alt while dragging to copy, rename (F2), new folder, upload, download, delete, Esc to clear or close, settings, show hidden, grid tile size, split, close pane, focus pane, terminal, pane commander keys, workspace shortcuts. On Windows and Linux the Cmd glyphs show as Ctrl, Alt and Shift.
+- Full shortcut list (also on Settings, Keyboard shortcuts): palette, search, go to folder (Shift+Cmd+G or Cmd+L), back and forward, up, refresh, arrow selection, Home and End, Page Up and Down, type to jump to a name, select all, extend (Shift+click) and add (Cmd+click) to selection, drag-select an area, open (Cmd+O), edit (Cmd+E), Quick Look (Space), Get Info, actions menu (Shift+F10), copy, cut, paste, duplicate, undo (Cmd+Z), Alt while dragging to copy, rename (F2), new folder, new file, upload, download, delete, Esc to clear or close, settings, F1 for the manual, show hidden, grid tile size, split, close pane, focus pane, terminal (Cmd+J), pane commander keys, workspace shortcuts. On Windows and Linux the Cmd glyphs show as Ctrl, Alt and Shift.
 - Lists are real ARIA grids (`role="grid"`, `aria-multiselectable`, rows); the sidebar find field is an ARIA combobox with `aria-activedescendant`; workspace tabs, pane switcher and settings sections are tab lists or groups with `aria-selected` and `aria-pressed`; switches use `role="switch"`; toasts are in an `aria-live` region (errors use `role="alert"`); the update card is a live status; dividers are labeled and keyboard-resizable. Icon buttons carry `aria-label`s.
-- Sidebar rows: Enter or Space activates; Left and Right arrows fold groups.
+- Sidebar rows: Enter opens the place; Space picks or lets go of a connection to organize; Left and Right arrows fold groups.
 - `prefers-reduced-motion` is respected in 5 places in the CSS. Text size is scalable (see settings). There is no screen reader mode or high-contrast setting beyond choosing a colour scheme.
 - Text over native webview zoom (not font-size only), so everything scales together.
 - Workspace-bar tab order and dialogs keep the keyboard: clicking a tab does not steal focus from the list.
 
 #### 2.9 Drag and drop
-- **Between panes (same window):** drag items from a list onto another pane or folder. Plain drop in the same pane's folder moves; across panes a drop copies and Cmd moves (see shortcuts); Alt copies instead of moving.
+- **Between panes (same window):** drag items from a list onto another pane or folder. A drop moves and holding ⌥ (Alt) copies, within a pane and across panes (checked in `src/browser/hooks/useItemDrag.ts`; Cmd only adds to the selection). Places that can only take copies, such as between This computer and a cloud, always copy.
 - **Between workspaces:** drag items onto a workspace tab (drops into that workspace's active pane, with a Show toast), rest on a tab to switch, rest on "+" to open a new workspace at the source root.
 - **Panes themselves:** drag a pane header to rearrange (2.3).
 - **From Finder or Explorer into Kybl:** files and folders go to the pane under the pointer (or the active one) as uploads; into a terminal pane, the paths are typed in instead.
@@ -241,7 +255,7 @@ Menu events are sent to the page as a `menu` event with the item id; the same id
 - Sync indicator, tray, and "Open at login" described above.
 - Stale window refresh: the page refreshes what it shows when the window returns to the front after a while away (`app-resumed`).
 - Mouse back and forward buttons navigate history.
-- The web view's own context menu (Reload, Inspect) is suppressed in the sidebar.
+- The web view's own context menu (Reload, Inspect) is suppressed everywhere except in text fields and over selected text.
 - Per-connection image mode (Photos setting) overrides can be set from a connection's context menu.
 
 ## File browser
@@ -250,7 +264,7 @@ Menu events are sent to the page as a `menu` event with the item id; the same id
 
 Conventions used here: on macOS the shortcuts use ⌘ ⌥ ⇧ ⌃. On Windows and Linux the app swaps ⌘ for Ctrl and ⌥ for Alt. "This computer" is the built-in local-disk connection ("This Mac" / "This PC"). Where a menu item only exists for some connections, the condition is stated.
 
-What the app does not have (checked in code): no "New file" command (only New folder), no column (Miller) view (only list and grid), no object-versions or version history screen on desktop, no right-click "Properties" item (Get Info is the equivalent), no redo (Undo only), and no Back or Forward buttons in the toolbar (history is keyboard and mouse buttons only).
+What the app does not have (checked in code): no column (Miller) view (only list and grid), no object-versions or version history screen on desktop, no right-click "Properties" item (Get Info is the equivalent), no redo (Undo only), and no Back or Forward buttons in the toolbar (history is keyboard and mouse buttons only).
 
 ---
 
@@ -266,7 +280,7 @@ Where: backend capability flags, read by the menus.
 | S3 properties, tags, storage class | S3-compatible (including Kybl Storage) | Get Info "Edit properties", Storage class column |
 | S3 URI | S3-compatible (and Kybl Storage) | "Copy S3 URI" |
 | Local paths | This computer only | Show in Finder, no Download, no Sync/Keep/Mount, hidden-files toggle, git marks |
-| Terminal | This computer (not on Windows), SFTP servers | "Open terminal here", "Open in terminal" |
+| Terminal | This computer (macOS, Linux and Windows), SFTP and SSH servers | "Open terminal here", "Open in terminal"; where a pane can't have a shell the Terminal button opens one on this computer |
 | Search inside files | This computer, SFTP | "Contents" search mode |
 | Server-side Actions | SFTP only (Where = on the server) | custom actions that run over SSH |
 
@@ -278,9 +292,9 @@ Where: item menu, empty-space menu, toolbar "…" menu, sidebar menus.
 Opened by right-click, Ctrl+click on a Mac, the menu key, or Shift+F10 (from the keyboard the menu opens next to the selected row, or the list if nothing is selected). Separators that would end up first, last or doubled are dropped. Items that don't apply to the situation are left out rather than greyed, unless noted "greyed".
 
 #### Right-click on a file or folder (one item, or several selected)
-If the clicked item is already part of the selection the menu works on the whole selection; otherwise the click first selects only that item. Inside an opened archive (read-only) every item that writes is removed: Cut, Duplicate, Rename, Delete / Move to Trash, Move to, Paste, Sync, Keep on this device, Mount as drive, Copy or move to…, Copy share link, Copy to another connection.
+If the clicked item is already part of the selection the menu works on the whole selection; otherwise the click first selects only that item.
 
-In order, top to bottom, in groups divided by lines (like Finder or Explorer). Inside an opened archive every item that writes is removed, and the "Keep & sync" submenu disappears when nothing in it is left.
+In order, top to bottom, in groups divided by lines (like Finder or Explorer). Inside an opened archive (read-only) the items that write are removed (Cut, Duplicate, Rename, Delete / Move to Trash, Paste, Upload, Sync, Keep on this device, Mount as drive, Copy / Move to…, Copy share link), and the "Keep & sync" submenu disappears when nothing in it is left. The submenus Copy to ▸ and Move to ▸ are not filtered out there (found in `src/archive/archiveOps.ts`, whose filter only drops plain items).
 
 | Item | When it appears |
 |---|---|
@@ -289,7 +303,7 @@ In order, top to bottom, in groups divided by lines (like Finder or Explorer). I
 | **Open with ▸** | One file (any connection; the file is downloaded to a temporary copy first), or a folder on This computer or in a synced folder. Lists the apps for that file type, the default one first and marked "default", icons shown. Ends with "Other…" (macOS, pick any .app) or "Choose another app…" (Windows). Programs, scripts and installers from a connection ask "Run …?" before opening. A Google Doc opens as what it exports to. |
 | **Edit** (⌘E) | One file on a connection other than This computer (not a Google Doc). Opens a private copy in the default app and uploads each save. |
 | **Edit with ▸** | Same condition. Lists apps like Open with, plus Other…/Choose another app…. |
-| **Edit in Kybl** | One text-like file (text, code, JSON, Markdown, CSV) on any connection including This computer. Greyed with "over 5 MB" for larger files. This is the only edit item shown on This computer, where Open and Open with already edit in place. |
+| **Edit in Kybl** | One text-like file (text, code, JSON, Markdown, CSV) up to 5 MB (greyed "over 5 MB" above). Shown only where Open does not already show the file in Kybl's editor: on This computer, and for the files that only Kybl reads as text. Quick Look's Edit button always offers it. It opens the same full-window editor as a double click, with no save-rule question first. |
 | **Quick Look** (Space) | One file. |
 | **Show in folder** | One item, only inside search results. |
 | separator | |
@@ -299,9 +313,7 @@ In order, top to bottom, in groups divided by lines (like Finder or Explorer). I
 | **Duplicate** (⌘D) | Always. |
 | **Rename…** (F2) or **Rename N items…** | Always. One item opens a name prompt, several open the Batch rename dialog. |
 | separator | |
-| **Copy to “<other pane>”** (F5) | Several panes open. Greyed when both panes show the same folder. |
-| **Move to “<other pane>”** (F6) | Several panes open, except between This computer and a cloud (those only copy). |
-| **Copy or move to…** | Always. Opens the destination picker (a tree of every connection, opened at this folder). Copy/Move is chosen in the picker. |
+| **Copy to ▸** / **Move to ▸** (hints F5 / F6 when several panes are open) | Always. Submenus listing the other open panes' folders, the places sent to lately (the last 6) and favorites, each with its connection and path, then "Choose folder…" (the destination picker: a tree of every connection, opened at this folder). Where the items already are, and a folder into itself, are left out; Move to also leaves out moves between This computer and a cloud (those only copy). |
 | **Move to “<parent folder>”** | When not at the top level and not in search results. Moves the selection up one level. |
 | **Download** (⇧⌘D), or **Download as <format>** | Not on This computer. For a Google Doc, Sheet or Slides the first export is the main item. |
 | **Download as <other format>** | One Google Doc/Sheet/Slides: one item per further export format (for example PDF). |
@@ -318,7 +330,7 @@ In order, top to bottom, in groups divided by lines (like Finder or Explorer). I
 | **Copy path** / **Copy paths** | Every other connection. Puts the full path on the clipboard: the real path on This computer, the path inside the connection elsewhere (one line per item). |
 | **Copy share link (24 hours)** | Connections with share links. The label shows the lifetime set in Settings. Greyed unless exactly one file is selected. |
 | **Show in Finder / Show in Explorer** | One item on This computer, or inside a folder kept on this device by sync (its copy on disk). |
-| **Open in terminal** | One folder, on This computer or an SFTP server. |
+| **Open in terminal** | One folder, on This computer or an SFTP / SSH server. |
 | **Show original** | One symbolic link, on SFTP. Jumps to the folder the link points into and selects the target. |
 | **Permissions…** (or "Permissions of N items…") | SFTP and FTP. |
 | **Make link…** | One item, on SFTP. Makes a symbolic link next to it ("report link.pdf"). |
@@ -329,14 +341,18 @@ In order, top to bottom, in groups divided by lines (like Finder or Explorer). I
 | **Move to Trash** (⌘⌫), with "…" when confirmation is on | Connections with a restorable trash. Called "Recycle Bin" on a Windows PC. |
 | **Delete…** (⌘⌫), red, or **Delete N items…** | All other connections. |
 
+Refresh is not in this menu (⌘R, the empty-space menu and the pane's "…" have it).
+
 #### Right-click on empty space in a pane
 Opened on the blank area of a list or grid.
 
 | Item | When it appears |
 |---|---|
 | **New folder…** (⇧⌘N) | Always (not in archives). |
-| **Upload files…** (⌘U) | Always (not in archives). |
-| **Upload folder…** (⇧⌘U) | Always (not in archives). |
+| **New file…** (⌥⌘N) | Always (not in archives). Asks for a name (untitled.txt, the name before the extension selected) and makes an empty file; it never replaces a file already there. |
+| **Upload files…** (⌘U) | Not on This computer, not in archives. |
+| **Upload folder…** (⇧⌘U) | Not on This computer, not in archives. |
+| **Copy files here…** (⌘U), **Copy folders here…** (⇧⌘U), **Move files here…**, **Move folders here…** | This computer, instead of the Upload items. Picked anywhere on the computer. |
 | **Paste** (⌘V), shown as Paste “name” or Paste N items | Always, greyed when the clipboard is empty or from another connection. |
 | **Select all** (⌘A) | Always, greyed when the folder is empty. |
 | **Refresh** (⌘R), or **Search again** during a search | Always. |
@@ -344,21 +360,22 @@ Opened on the blank area of a list or grid.
 | **Copy S3 URI** / **Copy path** | S3-compatible / every other connection. The folder on screen. |
 | **Calculate folder size** | Always. |
 | **Show hidden files** (⇧⌘.), ticked when on | This computer only. |
-| **Open terminal here** (⌃`) | This computer (not Windows) and SFTP. |
-| **Keep & sync ▸** | Holds **Sync this folder…**, **Keep on this device** / **Kept on this device**, **Mount as drive…** and the drive group (those three not on This computer), **Copy / Move to…** (the folder, or a whole bucket at its top, to another connection; when that feature is available) and **Mirror to…** with saved mirrors. |
+| **Open terminal here** (⌘J) | This computer and SFTP / SSH. |
+| **Tunnels ▸** | SFTP connections with tunnels (each a toggle, plus "Add or edit tunnels…"). |
+| **Keep & sync ▸** | Holds **Sync this folder…**, **Keep on this device** / **Kept on this device**, **Mount as drive…** and the drive group (those three not on This computer), **Copy / Move to…** (the folder, or a whole bucket at its top, to another connection) and **Mirror to…** with saved mirrors. |
 | **Split ▸ Right / Down / Left / Up** | Always. Items grey out when there is no room or no free slot. Right = ⌘\, Down = ⇧⌘\. |
 
 #### The toolbar "…" menu ("More actions")
-Refresh (or Search again), Go to folder… (⇧⌘G), then: Add to / Remove from favorites, and a "Panes ▸" submenu when the pane is narrow. With several panes it also holds: "Open this folder in the <right/left/above/below> pane too", "Swap with the other pane" (⇧⌘S), "Compare with the other pane", "Synced browsing with…" (ticked when linked; a submenu when more than one pane faces this one), and "Mirror to the other pane…". Then the empty-space items (Copy S3 URI or Copy path, Calculate folder size, Show hidden files, Open terminal here, Keep & sync ▸), and last "Show activity".
+Refresh (or Search again), Go to folder… (⇧⌘G), then: Add to / Remove from favorites, and a "Panes ▸" submenu when the pane is narrow. With several panes it also holds, each as one item naming the other pane ("the right pane", or its folder) or, with more than one other pane, a submenu listing them by folder, connection and arrow: "Same folder in…", "Swap with…" (⇧⌘S), "Compare with…", and "Synced browsing with…" (ticked when linked). Then the empty-space items (Copy S3 URI or Copy path, Calculate folder size, Show hidden files, Open terminal here, Tunnels ▸, Keep & sync ▸), and last "Show activity". "Mirror to the other pane…" is not here any more: use Keep & sync ▸ Mirror to….
 
 #### The toolbar "Upload or create" button
-Upload files… (⌘U), Upload folder… (⇧⌘U), New folder… (⇧⌘N). Disabled in an archive.
+Upload files… (⌘U), Upload folder… (⇧⌘U) (on This computer: Copy files here…, Copy folders here…, Move files here…, Move folders here…), then New folder… (⇧⌘N) and New file… (⌥⌘N). Disabled in an archive.
 
-#### The toolbar "View options" button
-As list, As grid, Compact layout, and (grid only) Bigger icons (⌘+), Smaller icons (⌘−). Then Sort by Name / Date modified / Size / Kind (ticked), Ascending / Descending, and "Show hidden files" (This computer only).
+#### The toolbar "Sort and group" button
+Sort by Name / Date modified / Date created / Size / Kind / Type (ticked), Ascending / Descending, Group by ▸ (None, Name, Kind, Type, Size, Date modified, Date created), and "Show hidden files" (This computer only). List, grid and compact are switches in the pane's footer, not in this menu.
 
 #### The "Panes" button menu
-Split right / down / left / up. With several panes it adds: Make panes the same size, Move pane ▸ (left, right, up, down), Mirror to the other pane…, Close pane (⌘W), Close other panes.
+Split right / down / left / up. With several panes it adds: Make panes the same size, Move pane ▸ (left, right, up, down), Close pane (⌘W), Close other panes.
 
 #### Right-click on the list header (list view)
 Column picker: Name (always on), Size, Modified, Kind, Storage class (S3-compatible only), ETag, and "Reset columns". Column widths are dragged on the header edge; double-click resets a width. Clicking a header sorts by it (Size, Modified, Kind, Name).
@@ -366,14 +383,13 @@ Column picker: Name (always on), Size, Modified, Kind, Storage class (S3-compati
 #### Right-click in the sidebar
 | Where | Items |
 |---|---|
-| A connection | "Sign in again…" (when its sign-in expired), Open (a server's single root) or Expand / Collapse, "Copy / Move to…" (not for This computer), the drive group ("Mount as drive…", see below), "Photos in lists" submenu-style group (As in Settings, Off, Placeholders, Thumbnails, and for remote connections "Share placeholders with other devices"), "Tunnels ▸" (SFTP connections that have saved tunnels, tick marks running ones), then for saved connections: "Move to group ▸" (New group…, No group, every group, current one ticked) and "Edit connection…". This computer is built in, so it has no group or Edit items. |
-| A bucket (or one of This computer's folders) | Open, Copy / Move to…, the drive group (not on This computer), Hide from the sidebar / Show in the sidebar. |
-| A group folder | Rename group…, Ungroup, Collapse all. |
-| A kind section (S3, SFTP, FTP…) | Expand / Collapse, Collapse all, "New <kind> connection…". |
+| A connection | "Sign in again…" (when its sign-in expired); for an SSH connection "Open terminal", "New terminal", "Browse files"; Open (a server's single root) or Expand / Collapse; "Add to favorites" / "Remove from favorites" (a single-root server); "Copy / Move to…" (not for This computer), the drive group ("Mount as drive…", see below), "Photos in lists" submenu-style group (As in Settings, Off, Placeholders, Thumbnails, and for remote connections "Share placeholders with other devices"), "Tunnels ▸" (SFTP connections that have saved tunnels, tick marks running ones), then for saved connections: "Pin to the top" / "Unpin", "Select to organize", "Move to group ▸" (New group…, No group, every group, current one ticked) and "Edit connection…". This computer is built in, so it has no group or Edit items. |
+| A bucket, drive root or one of This computer's folders | Open, Add to favorites / Remove from favorites, Copy / Move to…, the drive group (not on This computer), Hide from the sidebar / Show in the sidebar. |
+| A group folder | Rename group…, Delete group (its connections stay, one level up), Collapse all. |
+| A section heading's button | Sort by, with that section's choices. |
 | A mounted-drive badge | The drive group below. |
-| The folded icon rail | Click an icon: a list of the connection's buckets (current one ticked), plus "New bucket…" (where a connection can create buckets) or "Open bucket by name…" (S3). Right-click a kind icon: its connections grouped, plus "New <kind> connection…". |
 | A favorite | No right-click menu; it has a hover × button, "Remove from favorites". |
-| The pane's connection badge (before the path) | A list of every connection, each with its buckets as a submenu, current one ticked, and "New connection…". |
+| The pane's connection badge (before the path) | Pinned connections, recent ones, groups and the rest, with a search over all of them; each connection with buckets is a submenu of them (current one ticked, "New bucket…" or "Open bucket by name…" at its foot), and "New connection…" last. |
 | A workspace tab | Rename (F2), Settings…, Duplicate, Close workspace, Close other workspaces. |
 
 The drive group appears in folder, bucket and connection menus. Not yet a drive: "Mount as drive…". Mounted: a heading "Mounted as drive “name”" with "Show drive in Finder" and "Eject" ("Unmount" off macOS). Mounting: a "Mounting as drive…" heading and "Drive settings…". Failed: "Try mounting again" and "Drive settings…" (or "Another copy of Kybl has this drive"). Ejected but still saved: "Mount as drive".
@@ -387,10 +403,10 @@ Where: file operations and the dialogs behind them.
 - **Copy / Cut (⌘C / ⌘X)** remember the items and also put their addresses on the system clipboard as text (S3 URIs on S3, full paths on This computer, paths in the root elsewhere), one per line.
 - **Paste (⌘V)** drops into the folder on screen, or into a folder via "Paste into “folder”". A cut is used up only once the move actually ran.
 - Paste works across connections: it takes the same route as dragging or F5/F6. Between two clouds a background job copies (a confirm with a path to edit comes first). Between This computer and a cloud the files are uploaded or downloaded, and the originals always stay (a cut becomes a copy there).
-- **Copy or move to…** opens the destination picker. Folders on the same connection are copied or moved on the spot; anywhere else becomes a background job.
+- **Copy to ▸ / Move to ▸** (item menu) send the selection to another open pane's folder, a place sent to lately or a favorite, or "Choose folder…" for the destination picker. Folders on the same connection are copied or moved on the spot; anywhere else becomes a background job. **Copy / Move to…** (Keep & sync, and the sidebar's connection and bucket menus) does the same for a whole folder, bucket or connection through the job dialog (it replaced "Copy this folder to…" and "Copy everything to…").
 - **Move to “<parent>”** moves up one level.
 - Copying into the folder the items are already in duplicates them as "name (1).ext" without asking.
-- Dragging works too (see Drag and drop).
+- Dragging works too (see Drag and drop). On This computer the + menu's Copy files here… and Move files here… bring files in from anywhere on the computer.
 
 #### Rename and batch rename
 - **Rename… (F2)** on one item opens a name prompt. It refuses empty or invalid names and names already taken in the folder. A file (not a folder) whose new name already exists asks "Replace…?". On S3, Azure and GCS a folder rename copies every file, so it carries a note; big files (64 MB and over) and folders there run as a job in Activity instead of a dialog.
@@ -410,12 +426,12 @@ Where: file operations and the dialogs behind them.
 
 #### New folder, upload, duplicate
 - **New folder (⇧⌘N, F7 with several panes)** prompts with "New folder" (numbered if taken), refuses names already taken, and selects the new folder.
+- **New file (⌥⌘N; + menu, empty-space menu, File menu, palette)** asks for a name in a dialog (untitled.txt, the name before the extension selected) and makes an empty file. It never replaces an existing file: the server is asked, and the write only lands if the name is still free.
 - **Upload files / folder (⌘U, ⇧⌘U)** use the system picker (several at once). Folders keep their structure. Each upload is a transfer row in Activity (multipart for big files). Names that clash with the destination go through the conflict dialog.
 - **Duplicate (⌘D)** copies each item next to itself as "name copy.ext", then "name copy 2.ext" if taken, selects the copy, and offers Undo (which deletes exactly what the duplicate made).
-- No "New file".
 
 #### Download and open
-- **Download (⇧⌘D)**: one file goes to a Save dialog, or straight to the Downloads folder when "Ask where to save downloads" is off in Settings (a file that already exists is kept and the new one is numbered). Several items, or folders, ask for a download folder; folders are listed first, and files start downloading as they are found (Stop is on the busy line). Google Docs, Sheets and Slides download as their export (Office formats, PDF). Not offered on This computer (it says to Copy instead).
+- **Download (⇧⌘D)**: one file goes to a Save dialog (which asks about replacing), or straight to the Downloads folder when "Ask where to save downloads" is off in Settings (a file already at that name asks Replace, Keep both or Skip). Several items, or folders, ask for a download folder; folders are listed first, and files start downloading as they are found (Stop is on the busy line). Files that already exist in the chosen folder ask first, a batch at a time: Replace, Keep both, Skip, Skip all, Replace all and "Do this every time until Kybl quits". Google Docs, Sheets and Slides download as their export (Office formats, PDF). Not offered on This computer (it says to Copy instead).
 - **Open (↵, ⌘O, double-click)**: a folder opens in the list; a .zip/.tar/.tar.gz opens like a read-only folder; text, code, Markdown, CSV, JSON, Word, Excel and PowerPoint open in Kybl's full-window viewer; anything else downloads a temporary copy and opens in the default app. This computer's own files always open in their own app. Several files open at once in their own apps, up to 10 (folders in the selection are skipped with a note).
 - Files from a connection that would run as a program are asked about first ("Run …?").
 - A second Open of the same file while it downloads joins the first.
@@ -446,7 +462,7 @@ Opens Quick Look with its info column shown. Shows name, action buttons (copy th
 
 #### Edit in another app with sync-back
 - **Edit (⌘E)** and **Edit with ▸** on a remote file: asks "When you save this file:" (Upload changes automatically, or Upload only if the file on the server hasn't changed since you opened it, Recommended; the last answer is preselected, there is no "don't ask again"). Then it downloads a private copy, opens it in the chosen app, and uploads on every save. A toast confirms. Programs and scripts ask before opening, except when a known text editor is the opener.
-- **Edit in Kybl**: the same rule question, then Kybl's own sheet editor, saving under that rule. Files up to 5 MB.
+- **Edit in Kybl**: opens Kybl's own full-window editor, the same one a double click opens, with no rule question (a save checks whether the file changed meanwhile and offers Reload, Overwrite or Save as copy). Files up to 5 MB.
 - **Conflict** (the server's copy changed or was deleted): a dialog shows both versions with Compare and offers "Overwrite the server's copy" (or "Upload mine again" if deleted), "Keep both" (uploads yours as "name (edited).ext"), "Discard my changes and reload the server's", and "Stop editing and discard my changes".
 - The Activity panel header has an "Editing (n)" chip listing the files being edited: state (Waiting for a save, Uploading, Uploaded <time>, Changed on the server, Upload failed), Open it again, Show the copy on this computer, and Stop editing (asks first if there are unsent changes, then deletes the local copy).
 - This computer's files are not copied: they open and save in place.
@@ -455,7 +471,7 @@ Opens Quick Look with its info column shown. Shows name, action buttons (copy th
 #### Sync, keep, mirror and copy-to-connection
 - **Sync this folder…** opens the folder-sync dialog prefilled with this place. Directions: Upload only, Download only, Two-way (edited on both sides: you keep both).
 - **Keep on this device**: a two-way synced copy in a Kybl folder in your home folder (~/Kybl/…), shown in Finder when ready; the first time it explains that deleting there deletes online too. The ticked item stops it (the copy stays on disk).
-- **Mirror to…**: source and destination (swappable), "Upload new and changed files", "Also delete what's gone from the source", "Changed means" (another size or newer / another size / different MD5 checksum where both sides have one), "Leave out" rules (one per line, like .gitignore), and a dry-run preview grouped by folder before it runs as one job. Mirrors can be saved by name and re-run from the folder menu or the palette ("Run mirror “name”").
+- **Mirror to…** (Keep & sync): From and To in one card with full paths and a swap button between them (each end drops down a folder tree with a find field), then folded **Options** (summarised on one line, deleting shown in red): "Delete what isn't in the source" (off by default; deleted files go to the Trash on this device), "Copy a file when" (Size or date differs, Size differs, Checksum differs where both sides can), "Leave out" rules (one per line, like .gitignore) and "Also leave out what .gitignore lists". **Check** makes a dry run (tabs Copy, Delete, Same, with a count of what is left out); then "Mirror N files" (or "Mirror and delete N") runs it as one job. A **Saved** menu holds New mirror, each saved mirror, Rename… and Forget this one; Save… keeps the current setup, and saved mirrors re-run from the folder menu or the palette ("Run mirror “name”").
 - **Copy / Move to…** (a folder, a bucket or a whole connection) and the destination picker's "other connection" button start a background job. Options: "If a file is already there" (Skip if it's the same, Always skip, Replace if older, Always replace, Keep both), "Check contents after copying", "Keep modification dates", and "Leave out" patterns. Progress and Stop are in Activity.
 
 #### Undo
@@ -466,13 +482,15 @@ Opens Quick Look with its info column shown. Shows name, action buttons (copy th
 ### Conflicts (name clashes)
 Where: conflict dialog, used by upload, move, copy, paste, extract, rename and new folder.
 
-Every action that writes names first checks the destination (in batches, so a 50,000-file upload costs a few calls). For each clash a dialog asks:
-- **Replace** (called **Merge** for folders: everything goes into the existing folder and same-named files are replaced).
-- **Skip**.
-- **Keep both**: the new item gets a number, "name (1).ext".
-- A checkbox "Do this for the other N" applies the answer to the remaining clashes of the same kind (files or folders).
+Every action that writes names first checks the destination (in batches, so a 50,000-file upload costs a few calls). For each clash a dialog asks, with plain buttons:
+- **Skip** (the default on Return: it loses nothing and makes no second copy) and **Skip all**.
+- **Replace** (called **Merge** for folders: everything goes into the existing folder and same-named files are replaced) and **Replace all** (overwrites files and merges folders alike).
+- **Keep both**: the new item gets a number, "name (1).ext"; with more clashes pending, **Keep both, all**.
+- "All" buttons show only when more clashes are waiting or still being found, and cover files and folders alike. There is no count, because a folder still being listed has not found every clash yet.
 - Closing the dialog cancels the whole action. If checking for existing items fails, it asks whether to continue anyway.
 - Rename never overwrites a folder; for a file it asks "Replace “name”?". Batch rename never overwrites at all.
+- Questions queue one at a time. Name checks against a listing already on screen cost no request; others cost one listing per folder.
+- Downloads ask the same way when a local file is already there, and also offer "Do this every time until Kybl quits"; a toast says when a remembered answer is applied, with Forget.
 - A background job copy uses its own five options instead (listed above).
 
 ---
@@ -482,14 +500,14 @@ Where: pointer-driven drag of items, plus drops from the operating system.
 
 #### Dragging items from a list or grid
 - A plain mouse drag (starts after about 5 pixels). A drop moves; **hold ⌥ (Alt) to copy** (at the press or any time during the drag). Places that can only take copies always copy. ⌘-press on an item adds it to the selection and drags the lot. Pressing an item of a multi-selection keeps the selection so it can be dragged.
-- **Drop targets**: a folder row or tile, a breadcrumb segment (including the folded "…" and the enclosing-folder row), the empty space of another pane, a bucket in the sidebar (items land at its top level, also on another connection), a workspace tab, a terminal pane.
+- **Drop targets**: a folder row or tile, the connection name at the start of the path and the "…" enclosing-folder button (the top and the parent folder), the empty space of another pane, a bucket in the sidebar (items land at its top level, also on another connection), a workspace tab, a terminal pane.
 - **Within a pane**: onto a folder moves into it. Hover on a folder for a moment (about 0.9 s) and it opens (spring-loaded).
 - **Between panes**: dropping on another pane's folder, breadcrumb or empty space sends the items to that place. Between two clouds that the server can't copy between, and between connections, the same background-job route as F5/F6 applies, with its quick confirm. Between This computer and a cloud it is a copy (upload or download); the originals stay.
 - **To a sidebar bucket**: same connection moves or copies; another connection copies via job.
 - **To a workspace tab**: letting go drops into the folder of that workspace's active pane, with a toast and Show; resting on the tab opens that workspace so you can drop into one of its panes; resting on "+" opens a new workspace at the root the items came from.
 - **To a terminal pane**: types the items' quoted paths into the shell (local paths, or paths on the server for SFTP).
 - **Out to the OS** (Finder, Mail, a chat, an editor): when the pointer leaves the window the drag becomes the system's. Items on This computer and synced folders go as real files. Small files from other connections (up to 64 MB each, 20 files and 256 MB in all) are fetched ahead, from the file cache when possible, and the hand-over waits up to 1.5 s for them. On macOS everything else goes as a file promise that downloads where the receiver asks. Windows and Linux leave such items behind.
-- The drag ghost shows "Move to X · ⌥ to copy" or "Copy to X".
+- The drag ghost shows "Move to X · ⌥ to copy" or "Copy to X". (The in-app shortcut list's line "Two panes: … drop copies, ⌘ moves" is wrong: see Settings shortcuts list below.)
 - Pane headers themselves can be dragged (by their empty part) to dock a pane elsewhere in the layout.
 
 #### Dropping from the OS
@@ -531,11 +549,11 @@ Bigger files say how big they are and offer "Open in another app". Archives (.zi
 Viewer features: text and code have syntax colours, Find and replace (⌘F), Wrap lines. Markdown renders in a sandbox (cleaned, no scripts); big files draw the preview on request ("Render preview" / "Update preview"). CSV has Show as Table / Text, "First row is the header", and a worker-parsed table that renders rows as they scroll. Images have fit to window, actual size, zoom buttons, ⌘+ ⌘− ⌘0, ⌘/Ctrl scroll or pinch zoom, and double-click to switch between fit and actual size.
 
 #### Full-window viewer and editor
-Opened by Open on a supported file, "Edit in Kybl" (as a sheet), or Quick Look. Shows an unsaved-changes dot, a Save button, "Open in another app", and Close. Keys: ⌘S saves, ⇧⌘S saves a copy, ⌘W or Esc closes (asking about unsaved changes). Saving checks whether the file changed on the server; a conflict offers Reload (or "Discard mine and reload"), Overwrite, and Save as copy. While it is open, no other shortcut runs. Reload and the location bar are kept from the web view.
+Opened by Open on a supported file, "Edit in Kybl", or Quick Look. Shows an unsaved-changes dot, a Save button, "Open in another app", and Close. Keys: ⌘S saves, ⇧⌘S saves a copy, ⌘W or Esc closes (asking about unsaved changes). Saving checks whether the file changed on the server; a conflict offers Reload (or "Discard mine and reload"), Overwrite, and Save as copy. While it is open, no other shortcut runs. Reload and the location bar are kept from the web view.
 
 #### Thumbnails and photo modes
 - Thumbnails show in grid view for jpg, jpeg, png, gif, webp, bmp, tif, tiff (full decode up to 40 MB; jpg and tif use the small embedded thumbnail at any size), and HEIC on Apple systems (up to 25 MB). Videos and other files show a file icon. The list view shows icons, not thumbnails.
-- "Photos" mode (Settings → Browsing, and per connection in its right-click menu): **Off** (file icons only), **Placeholders** (a blurry preview where one is known, nothing is downloaded), **Thumbnails** (the blurry preview at once, then the thumbnail; default). Connections can share placeholders through a hidden file in each photo folder (not on This computer).
+- "Photos" mode (Settings → Browsing, and per connection in its right-click menu): **Off** (file icons only), **Placeholders** (a blurry preview where one is known, nothing is downloaded), **Thumbnails** (the blurry preview at once, then the thumbnail). The default for new installs is **Off**; a setting already saved stays. Connections can share placeholders through a hidden file in each photo folder (not on This computer).
 - Phones on mobile data with "Wi-Fi only" pause new thumbnails.
 
 ---
@@ -551,57 +569,63 @@ Opened by Open on a supported file, "Edit in Kybl" (as a sheet), or Quick Look. 
 - With several selected, the pane's right-click menu acts on all of them.
 
 #### Views and layout
-- **List** (Name plus Size, Modified, Kind, Storage class, ETag columns; sizing and choice remembered; a ".." row at the top goes up; double-click opens) and **Grid** (tiles with thumbnails, size from 96 to 320 px, Bigger/Smaller icons ⌘+ ⌘−, 24 px steps). Compact layout (tighter rows and smaller tiles). View, sort and compact are kept per pane.
-- Folders first (Settings, on by default). Dates friendly or full. Sizes decimal (MB) or binary (MiB). Columns also set in Settings → Browsing.
+- **List** (Name plus columns: Size, Modified, Created, Kind, Type, Permissions, Owner, Storage class, ETag; the header's right-click menu offers the ones the connection can fill: Created on This computer and Google Drive, Permissions and Owner on servers that report them, Storage class on S3; a ".." row at the top goes up; double-click opens) and **Grid** (tiles with thumbnails, size from 96 to 320 px, Bigger/Smaller icons ⌘+ ⌘−, 24 px steps). Compact layout (tighter rows and smaller tiles). View, sort, grouping and compact are kept per pane and per workspace.
+- **Columns** resize as in Finder and Explorer: dragging a column's right edge widens that column and moves the ones after it along (the list scrolls sideways when they don't fit; Name resizes too). Double-click an edge to fit the column to its longest text, ⌥-double-click (Alt) to reset it. "Reset columns" is in the header menu.
+- **Group by** (Name, Kind, Type, Size, Date modified, Date created) draws headed groups in both views; clicking a heading selects its items. Grouping loads the whole folder, as sorting does.
+- Folders first (Settings, on by default). Dates in the format chosen in Settings (Friendly, System or a pattern). Sizes decimal (MB) or binary (MiB). Columns also set in Settings → Browsing.
 - Large S3 folders list in pages; the status bar says when only the first N items are loaded.
 - Git awareness on This computer: a branch chip next to the path and per-item marks (M modified, A added, D deleted, R renamed, C conflicted, U untracked, ignored; a dot on folders with changes inside).
 
 #### Sorting
-By Name, Date modified, Size or Kind, ascending or descending: click a column header, or the View options menu, or the palette ("Sort by…", "Reverse Sort Order"). Name sort starts ascending; Size, Modified and Kind sort descending when chosen from the palette. Sorting by size or date loads the whole folder first (up to a limit).
+By Name, Date modified, Date created, Size, Kind or Type (the extension), ascending or descending: click a column header, or the Sort and group menu, or the palette ("Sort by Name / Date Modified / Size / Kind", "Reverse Sort Order"). Name sort starts ascending; Size, Modified and Kind sort descending when chosen from the palette. Sorting by size or date, and grouping, load the whole folder first (up to a limit).
 
 #### Search and filter (⌘F)
-- Typing in the toolbar search field filters the current folder by name (substring, instantly). Enter searches all subfolders by name. Matches stream in while it scans; "Stop searching" stops it; the status shows counts and whether the scan was cut short.
-- **Contents mode** (This computer and SFTP only): search inside files; each file shows its first matching line, and Quick Look opens at the line. Options: Names / Contents, case sensitive, regular expression. The palette also has "Search Inside Files". Uses ripgrep, grep, or a built-in scan.
+- Typing in the filter row (opened by the magnifier or ⌘F) filters the current folder by name (substring, instantly). Enter, or the "Include folders" button on the filter line, searches all subfolders by name. **Match case (Aa)** and **Regular expression (.*)** apply to names as well as contents; a pattern that doesn't compile says "Invalid expression" and why. Matches stream in while it scans; "Stop searching" stops it; the status shows counts and whether the scan was cut short.
+- **Contents mode** (This computer and SFTP only): search inside files; each file shows its first matching line, and Quick Look opens at the line. The Names / Contents switch sits in the search field next to Match case and Regular expression. The palette also has "Search Inside Files". Uses ripgrep, grep, or a built-in scan.
 - In results: "Show in folder" jumps to the item's folder with it selected; most write actions still work. "Compress" and "Calculate" are limited. Esc or Clear search returns to the folder.
 
 #### Hidden files
-Dot-files are hidden on This computer by default. "Show hidden files" (⇧⌘. , View menu, View options, empty-space menu, palette "Show/Hide Hidden Files") toggles it for that pane only. Other connections always show everything (Kybl's own `.kybl` placeholder folder is never shown).
+Dot-files are hidden on This computer by default. "Show hidden files" (⇧⌘. , View menu, Sort and group menu, empty-space menu, palette "Show/Hide Hidden Files") toggles it for that pane only. Other connections always show everything (Kybl's own `.kybl` placeholder folder is never shown).
 
 #### Path bar, breadcrumbs, Go to folder
-- The path is a row of clickable crumbs (bucket or root, then folders). Long paths fold the middle into "…" starting from the top. The enclosing-folder button (⌘↑, Backspace) goes up; at the top of an archive it goes to the folder holding it; at the top of This computer's Documents it goes on up to Home. The root name is clickable to go to the top. Crumbs are drop targets.
-- Click the current folder's name (or press ⇧⌘G / ⌘L) and the bar turns into a text field. Type a path and press Enter (Esc cancels). Accepts a path in this root, `bucket/path`, or `s3://bucket/path` on S3; a full path on This computer; a file's path opens its folder with the file selected. Without the bar on screen it opens a "Go to folder" dialog.
-- The star in the toolbar adds or removes the folder from the sidebar Favorites. Favorites follow renames and moves of their folder and go when it is deleted.
+- The path is the connection's name (click: the top of the place; at the top, all of the connection's places or buckets as tiles), a "…" button once the path is two folders deep, and the current folder's name. The enclosing-folder command (⌘↑, Backspace) goes up; at the top of an archive it goes to the folder holding it; at the top of This computer's Documents it goes on up to Home. The connection name and the "…" button are drop targets. Right-click or ⌘-click the folder name for the list of enclosing folders. Phones draw the full crumb trail.
+- Click the current folder's name (or press ⇧⌘G / ⌘L) and it turns into a text field. Type a path and press Enter (Esc cancels). Accepts a path in this root, `bucket/path`, or `s3://bucket/path` on S3; a full path on This computer; a file's path opens its folder with the file selected. Without the bar on screen it opens a "Go to folder" dialog.
+- "Add to favorites" / "Remove from favorites" (the pane's "…" menu, a folder's menu, the sidebar's bucket and single-root connection menus) adds or removes a place in the sidebar Favorites. Favorites follow renames and moves of their folder and go when it is deleted.
 
 #### History
 Per pane, last 100 places. Back and Forward: ⌘[ and ⌘], the mouse side buttons (button 4 and 5), the Go menu, the palette. There is no toolbar button. Not cleared by switching connections; entries for a removed connection are dropped.
 
 #### Other pane features
-Up to six panes (split right, down, left, up), each with its own connection, view, sort and selection. Swap, same folder in the other pane, compare folders, synced browsing (follow into subfolders; turn off from the toast or the link on the divider), F5/F6 copy and move, a terminal pane (⌃`), workspaces (tabs of saved layouts, recipes) with ⌘T, ⌃Tab and ⌥⌘1–9.
+Up to six panes (split right, down, left, up), each with its own connection, view, sort and selection. Swap, same folder in the other pane, compare folders, synced browsing (follow into subfolders; turn off from the toast or the link on the divider), F5/F6 copy and move, a terminal pane (⌘J), workspaces (tabs of saved layouts, recipes) with ⌘T, ⌃Tab and ⌥⌘1–9.
 
 #### Command palette (⌘K, Ctrl+K elsewhere)
 One field for connections, places, commands and the folder's files, ranked together. Prefixes: `>` commands only, `@` connections only, `/` or `~` types a path (Tab completes a folder). ↵ opens in the active pane; ⌘↵ opens in a new pane to the right (for a file it shows it in the list). Keys: ↑ ↓ (or Ctrl+N / Ctrl+P), PageUp / PageDown move eight, Tab completes, Esc or ⌘W closes. Sections: Recent, Connections, Places, Commands, Files, Go to.
-Commands it holds: every menu-bar command (File: New Folder, Upload Files / Folder, Download, Open, Quick Look, Get Info, Rename, Duplicate, Copy, Cut, Paste, Delete, Select All, Undo; Connections: New Connection, Import Connections, Find Connection in Sidebar; View: Refresh, Search This Folder, Show/Hide Hidden Files, Show/Hide Sidebar, View as List, View as Icons, Sort by Name / Date Modified / Size / Kind, Reverse Sort Order, Bigger / Smaller Icons, Compact/Roomy Layout, Show Activity; Go: Back, Forward, Enclosing Folder, Go to Folder; Panes: Split Right / Down, Close Pane, Close Other Panes, Make Panes the Same Size, Switch Pane, Swap Panes, Same Folder in Other Pane, Compare Folders, Copy / Move to Other Pane, Synchronize Browsing, Focus Pane Left / Right / Up / Down; Workspaces: New, Switch to, Next, Previous, Rename, Settings, Move left/right, Close, Open / Reset / Save Workspace Recipe; Settings and each settings page; Theme System / Light / Dark). Plus Compress to .zip, Extract here and Compare files (for the selection), Search Inside Files, Open Terminal Here and Toggle Terminal, "Run mirror “name”", start/stop each saved tunnel, and "Run “name”" for each enabled custom action (greyed with the reason when it can't run on the selection). Commands that can't run say why in grey.
+Commands it holds: every menu-bar command (File: New Folder, Upload Files / Folder, Download, Open, Quick Look, Get Info, Rename, Duplicate, Copy, Cut, Paste, Delete, Select All, Undo; Connections: New Connection, Import Connections, Find Connection in Sidebar; View: Refresh, Search This Folder, Show/Hide Hidden Files, Show/Hide Sidebar, View as List, View as Icons, Sort by Name / Date Modified / Size / Kind, Reverse Sort Order, Bigger / Smaller Icons, Compact/Roomy Layout, Show Activity; Go: Back, Forward, Enclosing Folder, Go to Folder; Panes: Split Right / Down, Close Pane, Close Other Panes, Make Panes the Same Size, Switch Pane, Swap Panes, Same Folder in Other Pane, Compare Folders, Copy To… / Move To… (F5 / F6), Synchronize Browsing, Focus Pane Left / Right / Up / Down; Workspaces: New, Switch to, Next, Previous, Rename, Settings, Move left/right, Close, Open / Reset / Save Workspace Recipe; Settings and each settings page; Theme System / Light / Dark). Plus Compress to .zip, Extract here and Compare files (for the selection), Search Inside Files, Open Terminal Here and Toggle Terminal, "Run mirror “name”", start/stop each saved tunnel, and "Run “name”" for each enabled custom action (greyed with the reason when it can't run on the selection). Commands that can't run say why in grey.
 
 ---
 
 
-#### Folder info panel (computers)
+#### Info panel (per pane)
 
-A compact panel inside each pane, opened and closed by the icon at the right end of that pane's bottom status row. It gives context for the folder on screen; it is not a file preview.
+A panel inside each pane, opened and closed by the icon at the right end of that pane's footer (disabled where no folder is open). It first says what is selected, then gives context for the folder on screen. It is not a file preview.
 
-- **Remembered per pane.** The open or closed state is part of the pane's view choices, so workspaces keep it. The panel's code loads the first time one is opened.
-- **Always:** the connection (kind, server or bucket, user), the current path with a copy button, and the folder's item count and size (and the whole-folder size once worked out).
+- **Remembered per pane.** Open or closed, and its width, are part of the pane's view choices, so workspaces keep them. Drag its left edge (or use the arrow keys) to resize between 200 px and half the pane; double-click the edge for the default 248 px. The panel's code loads the first time one is opened.
+- **The selection first.** One item: its icon and name, path with a copy button, kind, size (a folder's: "Calculate"), modified and created. Several: how many folders and files and their total size.
+- **The folder:** the connection (kind, server or bucket, user), the current path with a copy button, and the folder's item count and size (and the whole-folder size once worked out).
 - **By connection:**
   - S3: bucket, region and endpoint.
   - SFTP, FTP and WebDAV: server, protocol (TLS on or off, FTPS) and user.
   - Cloud drives: the account and, when the drive says, the space used.
   - Azure and Google Cloud Storage: account or project and container or bucket.
+  - SFTP: its tunnels (address, traffic, Start / Stop, and a way to add one).
 - **Git, for a folder of this computer inside a work tree:**
-  - the branch (or the commit when detached) and how far it is ahead of and behind its upstream;
+  - the branch (or the commit when detached), the branch it tracks and how far it is ahead of and behind it, the last fetch and the remote;
   - changed, staged and untracked counts for the folder, with the first 8 changed files (a click opens the file or folder);
-  - the last commit: short hash, subject and age.
-- **How git is run:** the backend runs the user's own `git` with an argument list in the repository's folder, never a shell, with a time limit and the repository's own programs switched off (`git status --porcelain=v2 --branch`, `git log -1`). Without git, or outside a work tree, the git section is simply not shown.
-- **When it refreshes:** when the folder changes and when the window comes back to the front. There is no polling.
+  - the last 10 commits (short hash, subject, age), a tag, and stashes;
+  - for the one file selected, its last commit.
+- **How git is run:** the backend runs the user's own `git` with an argument list in the repository's folder, never a shell, with a time limit and the repository's own programs switched off (`git status --porcelain=v2`, `git log`, `git remote`). Without git, or outside a work tree, the git section is simply not shown.
+- **When it refreshes:** when the folder changes, the status refreshes or the selected file changes. There is no polling.
+
 ### Custom actions
 Where: Settings → Actions; the item menu's "Actions ▸"; the palette; their own shortcuts.
 
@@ -651,6 +675,7 @@ On macOS the menu bar owns the keys marked "menu"; they behave the same as the t
 | ⌘D | Duplicate (menu) |
 | ⌘Z | Undo the last move, copy, duplicate or rename |
 | ⇧⌘N | New folder (menu) |
+| ⌥⌘N | New file (menu) |
 | ⌘U / ⇧⌘U | Upload files / folder (menu) |
 | ⇧⌘D | Download (menu) |
 | ⌘R | Refresh |
@@ -662,6 +687,7 @@ On macOS the menu bar owns the keys marked "menu"; they behave the same as the t
 | ⌘+ / ⌘− | Bigger / smaller grid tiles (menu) |
 | ⌥⌘S | Show or hide the sidebar (menu) |
 | ⌘, | Settings (menu) |
+| F1 | The manual (⇧⌘/ on a Mac, from the Help menu) |
 | ⌘K | Command palette |
 | ⇧F10 or the menu key | Open the context menu for the selection |
 | Ctrl + click (Mac) | Right-click |
@@ -675,8 +701,8 @@ On macOS the menu bar owns the keys marked "menu"; they behave the same as the t
 | ⌥⌘ + arrow | Focus the pane in that direction |
 | ⇧⌘S | Swap panes (menu) |
 | Tab | Switch pane (when several panes are open and the list has focus) |
-| F3 / F5 / F6 / F7 / F8 | With several panes: Quick Look / copy to other pane / move to other pane / new folder / delete |
-| ⌃` | Open or toggle a terminal below the active pane |
+| F3 / F5 / F6 / F7 / F8 | With several panes: Quick Look / Copy to / Move to / new folder / delete. F5 and F6 go straight to the other pane after a confirm when there are exactly two panes; with more they open the Copy to / Move to list at the selection |
+| ⌘J or ⌃` | Open or toggle a terminal below the active pane (Ctrl+J off a Mac) |
 | ⌘T | New workspace |
 | ⌃Tab / ⌃⇧Tab, or ⇧⌘] / ⇧⌘[ | Next / previous workspace |
 | ⌥⌘1 … 9 | Go to workspace 1 to 9 |
@@ -707,7 +733,7 @@ On macOS the menu bar owns the keys marked "menu"; they behave the same as the t
 ↑ ↓ (or Ctrl+N / Ctrl+P), PageUp / PageDown, Enter (open), ⌘Enter (open in a new pane or reveal), Tab (complete a path), Esc or ⌘W (close), and prefixes `>`, `@`, `/`, `~`.
 
 #### Settings shortcuts list
-Settings → Keyboard shortcuts shows the same list for reference (including "Select an area: drag on empty space", "Extend selection: Shift-click", "Add to selection: ⌘-click", and "Rename a workspace: double-click its tab"). Its "Two panes: copy instead of moving while dragging across: drop copies, ⌘ moves" line does not match the code: the drag code copies with ⌥ held, and ⌘ is only used to add to the selection.
+Settings → Keyboard shortcuts shows the same list for reference (including "Select an area: drag on empty space", "Extend selection: Shift-click", "Add to selection: ⌘-click", and "Rename a workspace: double-click its tab"). Its line "Two panes: copy instead of moving while dragging across" with the keys "drop copies, ⌘ moves" (`src/settings/SettingsPage.tsx`) does not match the code and should be fixed there: in `src/browser/hooks/useItemDrag.ts` a drop moves and ⌥ copies, and ⌘ only adds to the selection. The list's separate "Copy instead of moving while dragging: ⌥" line is right. The list has no entries yet for F1 (the manual) or ⌥⌘N (New file), and says ⌘J only together with ⌃`.
 
 #### Custom action shortcuts
 Each custom action can have its own ⌘ (or Ctrl) plus key, or F-key combo. It runs the action on the selection through the same routing as the built-in keys (so nothing runs behind a dialog).
@@ -729,9 +755,9 @@ The "New connection" picker offers these, in three groups:
 
 | Group | Entries |
 |---|---|
-| Object storage | Kybl Storage, S3-compatible, Azure Blob Storage, Google Cloud Storage |
 | Cloud drives | Google Drive, OneDrive, Dropbox |
-| Servers | WebDAV, SFTP, FTP / FTPS |
+| Object storage | Kybl Storage (offered first when there is no Kybl connection yet), S3 Compatible, Azure Blob Storage, Google Cloud Storage |
+| Servers | WebDAV, SSH (computers only), SFTP, FTP / FTPS |
 
 Besides these:
 
@@ -739,13 +765,15 @@ Besides these:
 - **Box** exists as a name in the code (badge, kind list) but is **not usable**. Opening one says "Box connections aren't supported by this version of Kybl yet." It is not in the picker.
 - A connection saved by a newer Kybl is shown as "made with a newer version of Kybl". It can only be deleted, not edited or opened.
 
-Every form also has these shared extras:
+The form has two tabs, **Connection** (the kind's own fields) and **Options** (a dot on its tab shows when something there is not the default); SFTP and SSH connections on computers get a third, **Tunnels**. Options holds these shared extras:
 
-- **Name** (optional; Kybl makes one up, such as "alice@files.example.com").
+- **Name** (optional; Kybl makes one up, such as "alice@files.example.com") is on the Connection tab.
 - **Group** (computers only): a sidebar folder; use `/` for nested groups such as `Clients/Acme`.
+- **A click opens** (SFTP and SSH): Files or Terminal. This is the difference between the SSH and SFTP types, so a saved SFTP server can become an SSH one.
 - **Photos in lists**: per connection, either "As in Settings" or one of the photo display modes.
-- **Share placeholders with other devices** (a checkbox, shown when photos are on).
-- **Test connection** and **Save** buttons, and **Delete** when editing.
+- **Share placeholders with other devices** (behind "More…", shown when photos are on).
+- **Test connection** and **Save** buttons, and **Delete** when editing. Save only saves: nothing connects first (not even for an SFTP server whose key is not trusted yet; Test still connects, and the key is met on first use, where the error offers to trust it), and editing a connection only saves it while panes already on it refresh.
+- SSH is the SFTP form (sign-in, host key, tunnels) for a server that opens as a terminal; its badge reads SSH, SFTP's reads SFTP.
 
 #### Comparison table (what each connection can do)
 
@@ -766,7 +794,7 @@ Every form also has these shared extras:
 | Unix permissions (chmod) | no | no | no | no | no | no | no | yes | yes (needs `SITE CHMOD`) | no |
 | Symbolic links | no | no | no | no | no | no | no | yes | seen in LIST only | shown as files, never descended into |
 | Create a new root from the app | Kybl Storage only | no | no | no | no | no | no | no | no | no |
-| Server terminal | no | no | no | no | no | no | no | yes (desktop) | no | local shell (Mac/Linux) |
+| Server terminal | no | no | no | no | no | no | no | yes (desktop) | no | local shell (Mac, Linux, Windows) |
 | SSH tunnels | no | no | no | no | no | no | no | yes (desktop) | no | no |
 | Mount as a drive, sync, mirror, copy jobs | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes |
 
@@ -790,11 +818,11 @@ S3 storage run by Kybl for people with no bucket of their own.
   - It can **create buckets** from the app ("New bucket"). This is the only connection that can.
   - No conditional writes.
   - Checksums fall back to size only, because the files are encrypted at rest.
-- Encryption at rest is done by the storage service, not by the app. The README says files are encrypted with a per-bucket key (SSE-C, AES-256), that this is not end-to-end, that the free plan is 10 GB, and that storage is in Germany. The app code holds no encryption key of its own and has no master-key feature.
+- Encryption at rest is done by the storage service, not by the app: every file is encrypted with a key of its own bucket (SSE-C, AES-256), which is not end-to-end. The free plan is 10 GB and storage is in Germany (README). The app code holds no encryption key of its own and has no master-key feature.
 
 #### 1.2 S3-compatible
 
-**Provider presets** (tiles at the top of the form; picking one fills region, endpoint and path-style):
+**Provider presets** (the Provider drop-down at the top of the form; picking one fills region, endpoint and path-style):
 
 | Preset | Endpoint it fills in | Default region | Notes |
 |---|---|---|---|
@@ -810,14 +838,14 @@ Kybl Storage has its own flow and badge (1.1). Changing the region follows the p
 
 **Form fields:**
 
-- Provider tile.
+- Provider drop-down.
 - Name (optional).
 - Region (a drop-down for Hetzner, free text elsewhere).
-- Bucket (optional; if you set it, the connection opens straight into it. Needed for keys that cannot list buckets).
-- Endpoint (must start with http:// or https://; required except for Amazon S3).
+- Bucket (optional, placeholder "All buckets"; if you set it, the connection opens straight into it. Needed for keys that cannot list buckets).
+- Endpoint (must start with http:// or https://; required except for Amazon S3). A provider's usual endpoint shows as one line with **Change**; the field itself shows for Other S3-compatible and Cloudflare R2 (which needs your account id), or once changed.
 - Access key ID.
 - Secret access key. When editing, leaving it empty keeps the saved one, but only while the access key ID is unchanged.
-- "Use path-style addressing" checkbox (needed by MinIO and many self-hosted servers).
+- "Path-style addressing" checkbox (needed by MinIO and many self-hosted servers), shown only for Other S3-compatible or when it differs from the preset.
 - Whitespace is trimmed from secrets, because a pasted space or newline would break the signature.
 
 **Special capabilities and limits:**
@@ -833,13 +861,13 @@ Kybl Storage has its own flow and badge (1.1). Changing the region follows the p
 
 #### 1.3 Azure Blob Storage
 
-- **Fields:** Name, Storage account, Container (required; one container per connection), Account key or SAS token (a SAS starts with `?` or contains `sig=`), optional Endpoint (only for Azurite or national clouds; default `https://<account>.blob.core.windows.net`).
+- **Fields:** Name, Storage account, Container (required; one container per connection), Account key or SAS token (a SAS starts with `?` or contains `sig=`), optional Endpoint behind "Use another endpoint (Azurite, national cloud)…" (default `https://<account>.blob.core.windows.net`).
 - **Capabilities:** prefix folders, rename by copy and delete, server copy, range reads, if-match conditional writes, MD5 hashes. No share links, no multipart, no trash.
 - Editing: a saved key stays only while the account and endpoint are the same. Change either and the key must be entered again.
 
 #### 1.4 Google Cloud Storage
 
-- **Fields:** Name, Bucket (required), Service account key (paste the JSON, or "Choose file…"; files over 256 KB are refused; the JSON must contain a `private_key`), optional Endpoint (emulators and compatible services).
+- **Fields:** Name, Bucket (required), Service account key (paste the JSON, or "Choose file…"; files over 256 KB are refused; the JSON must contain a `private_key`), optional Endpoint behind "Use another endpoint (emulator)…".
 - **Capabilities:** same as Azure, with conditional writes done by comparing.
 - Editing: a changed endpoint needs the key again.
 
@@ -874,6 +902,7 @@ Kybl Storage has its own flow and badge (1.1). Changing the region follows the p
   - User name (optional).
   - Password (optional).
   - Start in folder.
+  - Typed user names and passwords are never kept in the address: userinfo in a pasted address is split off, and saved profiles that had it were cleaned once.
 - **Hints in the form:**
   - Nextcloud and ownCloud: the server address alone is enough. Kybl also tries `/remote.php/dav/files/<user>/` and `/nextcloud/...`.
   - Synology: include the WebDAV port, for example `https://nas.local:5006`.
@@ -893,17 +922,16 @@ Kybl Storage has its own flow and badge (1.1). Changing the region follows the p
   - Password (when using a password).
   - Private key (when using a key; paste or "Choose file…", files over 64 KB refused; must start with `-----BEGIN` or be a PuTTY key) and Key passphrase (optional).
   - Start in folder (empty means your home folder).
-  - SSH tunnels section (computers only; see 4.9).
+  - A **Tunnels** tab (computers only; see 4.9) and, under Options, "A click opens: Files or Terminal" (Terminal makes it an SSH connection, see 4.10).
 - **Keys:** OpenSSH, PEM (PKCS#1/PKCS#8) and PuTTY `.ppk`; Ed25519, ECDSA and RSA. Keys and passphrases are stored in the vault under their own entry. A passphrase can be changed without re-pasting the key. Editing shows "Unchanged" for a saved key.
 - **Password:** also answers keyboard-interactive prompts.
 - **SSH agent:** asks the agent already running (ssh-agent on macOS/Linux; the OpenSSH agent pipe or Pageant on Windows; 1Password's agent works too). Nothing is stored. A profile saved with agent on a computer falls back to Key on a phone.
 - **Host key trust (trust on first use):**
-  - First connection shows "Trust this server?" with the SHA256 fingerprint. Test or Save asks before continuing.
+  - First connection shows "Trust this server?" with the SHA256 fingerprint. Test asks before continuing; Save does not connect, and the key is met on first use, where the error offers to trust it.
   - If the key later changes, Kybl stops hard. It is treated as possible interception, and the safe answer is the default. You can look at the new key and replace the trusted fingerprint with a deliberate click.
   - The trusted fingerprint is shown in the form with a **Forget** button. Changing server or port clears it.
-  - "Save without connecting" is offered if Save's first connection failed.
 - **Capabilities:** real folders; native (posix) rename; range reads; conditional writes by comparing; no server copy; Unix permissions (chmod, with recursive options); symbolic links (shown, followed, traced, created). One SSH connection per server with keepalives, reopened when dropped. Uploads go to a temporary name then rename. Quota via statvfs on OpenSSH servers. Checksums run `sha256sum`, `shasum` or `md5sum` on the server when allowed.
-- **Extras only SFTP has:** a terminal on the server (4.10) and SSH tunnels (4.9).
+- **Extras only SFTP has:** a terminal on the server (4.10) and SSH tunnels (4.9). Hetzner Storage Boxes and other ProFTPD mod_sftp servers connect (fixed Diffie-Hellman groups and NIST ECDH are tried before group exchange). A web host's files-only SFTP account is recognised when a terminal is asked for.
 
 #### 1.8 FTP / FTPS
 
@@ -911,14 +939,13 @@ Kybl Storage has its own flow and badge (1.1). Changing the region follows the p
   - Name.
   - Server (accepts `host:port`).
   - Port (empty means 21, or 990 for implicit).
-  - Encryption: **FTPS** (explicit, the usual, port 21), **FTPS, implicit** (older, port 990), **None** (plain).
-  - A checkbox "Fall back to plain FTP if the server doesn't support encryption", like FileZilla's "TLS if available".
+  - Encryption (one drop-down with a one-line hint): **FTPS (explicit TLS)** (the default, the usual, port 21), **FTPS if available** (like FileZilla's "TLS if available"; it asks once before a password is sent unencrypted), **FTPS, implicit TLS** (older, port 990), **None (plain FTP)**. There is no "Fall back to plain FTP" checkbox any more.
   - User name (empty means anonymous).
   - Password (optional, with "Remove saved password").
   - Start in folder (must exist).
 - **Encryption starts on explicit FTPS.** Plain FTP must be chosen on purpose and shows a warning: password and files cross the network readable.
-- **The fallback is cautious.**
-  - Kybl asks once ("Connect without encryption") per user, host and port before it ever sends a password unencrypted.
+- **"FTPS if available" is cautious.**
+  - Kybl asks once (the error offers "Connect without encryption") per user, host and port before it ever sends a password unencrypted.
   - A server that has encrypted before, or lists AUTH TLS, is never used unencrypted again.
 - **Capabilities:**
   - Passive mode with the NAT fix, UTF-8 names, MLSD listings with LIST as fallback, up to 4 connections per server.
@@ -940,10 +967,10 @@ Kybl Storage has its own flow and badge (1.1). Changing the region follows the p
 
 #### 2.1 Add, edit, delete, test
 
-- **Add:** the picker offers the kinds above. When no Kybl Storage connection exists yet, it is offered first. "Import connections…" is on the picker on computers. Phones show the same dialog as a bottom sheet.
-- **Edit:** Settings › Connections lists every connection with its address and an **Edit** button; the sidebar menu also edits. Typed edits are guarded: closing asks "Discard your changes?".
+- **Add:** the picker offers the kinds above (SSH on computers only). When no Kybl Storage connection exists yet, it is offered first. "Import connections…" is on the picker on computers. Phones show the same dialog as a bottom sheet.
+- **Edit:** Settings › Connections lists every connection with its address and an **Edit** button; the sidebar menu (Edit connection…) also edits; there is no edit button on hover in the sidebar. Typed edits are guarded: closing asks "Discard your changes?".
 - **Test connection:** opens the backend and lists its roots. That connects, signs in and checks the start folder, so the error shown is the real one. For SFTP it also meets the host key.
-- **Save:** runs the test first for SFTP (to learn the host key). Other kinds save straight away.
+- **Save:** only saves, for every kind. Nothing connects first; a new connection, or one signed in again, then opens where you are.
 - **Delete:** a confirm control in the dialog. It removes the connection and its stored secrets, including sign-in tokens and SSH keys.
 - Field errors appear only after the first Save or Test attempt.
 - **Secrets are tied to where they go.**
@@ -955,16 +982,16 @@ Kybl Storage has its own flow and badge (1.1). Changing the region follows the p
 
 #### 2.1a Organizing many connections
 
-One model (`src/connections/lib/organize.ts`) lays connections out the same way everywhere they are listed: the pane's connection menu, the sidebar, the destination picker, the command palette and the phone's list.
+One model (`src/connections/lib/organize.ts`) lays connections out the same way wherever they are listed: the pane's connection menu, the destination picker, the command palette and the phone's list. The desktop sidebar has its own four-section layout (2.2) with the same groups and pins.
 
 - **Pinned** connections come first, by name. A pinned connection also stays in its group.
-- **Recent** lists the last 5 opened, once there are more than 10 connections. Pinned ones are not repeated there.
+- **Recent** lists the last 5 opened, once there are more than 10 connections. Pinned ones are not repeated there. (Menus and pickers use this layout; the sidebar itself has its four sections, see 2.2, with no Pinned or Recent section.)
 - **Groups** are folders (submenus in menus, folders that fold open elsewhere). Connections in no group follow, by name. This computer is always first and is never filed.
-- **By type:** with more than 15 connections in no group, they are listed under Servers, Cloud drives and Object storage instead of one long list. The sidebar already has a section per server kind (FTP, SFTP, WebDAV), so there it folds the rest by type.
+- **By type:** with more than 15 connections in no group, they are listed under Servers, Cloud drives and Object storage instead of one long list. 
 - **Find** searches every group at once. In menus, a match shows the group it is in beside it.
 - **Long menus scroll**, with arrows at the edges. Menus open one level deep, so a nested group is one row with its whole path ("Clients › Acme").
 - **Making groups (computers):**
-  - ⌘/Ctrl-click (or "Select to organize" in a connection's menu) picks connections. A bar appears with **Move to group…** (existing groups, no group, or a new one) and **Pin** / **Unpin**. Esc clears the selection.
+  - ⌘/Ctrl- or Shift-click, Space on a focused row, or "Select to organize" in a connection's menu picks connections. A bar appears with **Move to group…** (existing groups, no group, or a new one) and **Pin** / **Unpin**. Esc clears the selection.
   - Drag connections onto a group row to file them there. Drop them on the "Connections" heading to take them out of a group.
   - A group's menu has **Rename group…** and **Delete group**. Deleting a group only ungroups: its connections stay, one level up.
   - **Pin to the top** / **Unpin** is in a connection's menu.
@@ -1004,7 +1031,8 @@ One model (`src/connections/lib/organize.ts`) lays connections out the same way 
   - A sheet shows why it failed in plain sentences (the server signed it itself; not from a known authority; made out to another name; expired on a date; not valid until a date), plus Made out to, Issued by, Valid until and the SHA-256 fingerprint.
   - If a different certificate was trusted before ("changed"), the same default applies: not connecting is the default, and trusting the new one takes a deliberate click.
   - The trusted certificate is shown in the form with **Forget**. Changing the server clears it.
-- **Plain FTP fallback** asks once, see 1.8.
+- **"FTPS if available"** asks once before going unencrypted ("Connect without encryption"), see 1.8.
+- **Trusted roots:** Mozilla's set (bundled) is used beside the system's on every platform, for update checks, Kybl Storage, S3, WebDAV, FTPS and the cloud drives, so a fresh Windows without GitHub's root still works.
 - **Anti-spoofing:** trust questions are only believed when the error carries a secret per-run tag that only Kybl's backend knows, so a server cannot fake a "trust me" prompt through its error text. The host shown is always the connection's own.
 - These trust fixes are offered in the connection dialog's test result, in the file pane when a folder fails, and on phone error screens.
 
@@ -1080,7 +1108,7 @@ Only Kybl Storage can create a bucket from the app ("New bucket"). The account o
 #### 3.3 Pause, resume, cancel, Cancel all, retry
 
 - **Per row:** pause, resume, cancel, retry, and "move to top of the queue" (uploads and downloads).
-- **Panel buttons** (shown for the tab you are on): **Pause all**, **Resume all**, **Cancel all**, **Retry failed / Retry all N failed**, **Clear** (Done tab), **Clear failed** (Failed tab).
+- **Panel buttons** (shown for the tab you are on): **Pause all**, **Resume all**, **Cancel transfers** (asks first, with "Keep transfers" as the safe button), **Retry failed / Retry all N failed**, **Clear** (Done tab), **Clear failed** (Failed tab).
 - Pause and Cancel also cut a speed-limiter wait short, so they take effect at once, on uploads too.
 - Stop on a folder listing ends the "finding files" step. What was found keeps going. Cancel all stops everything, including listings that are still feeding downloads.
 - Retry all also covers failed moves, copies and deletes, and failed copy jobs.
@@ -1128,11 +1156,11 @@ Settings › Transfers and sharing › Checking › **Verify files after copying
 
 #### 3.6 Conflict choices
 
-- **Uploads, moves, copies, renames, new folders** check the destination first, in chunks of 1,000, so a 50,000-file upload costs a few calls. If a name exists, a dialog asks:
+- **Uploads, moves, copies, renames, new folders, new files** check the destination first, in chunks of 1,000, so a 50,000-file upload costs a few calls. If a name exists, a dialog asks:
   - Files: **Replace**, **Skip** or **Keep both** (adds a number, "name (1).ext").
   - Folders: **Merge** (files with the same names are replaced), **Skip** or **Keep both**.
   - "Do this for the other N" answers all the rest of that kind. Closing the dialog cancels the whole action.
-- **Downloads:** an existing local file is kept and the new one gets a number, unless you picked the path in a Save dialog (that means replace). A download that finds a file turn up at its name while it runs moves to a free name, and the row shows the path really written.
+- **Downloads:** an existing local file asks first (Replace, Keep both, Skip, Skip all, Replace all, and "Do this every time until Kybl quits", remembered per direction), unless you picked the path in a Save dialog (that already asked). Folder downloads ask a batch at a time while the listing runs. A download that finds a file turn up at its name while it runs moves to a free name, and the row shows the path really written.
 - **Copy jobs** have five choices:
   - Skip if it's the same (the default, by size and hash or time).
   - Always skip.
@@ -1153,9 +1181,9 @@ Settings › Transfers and sharing › Checking › **Verify files after copying
 
 A panel at the bottom with a speed menu (gauge icon) and these tabs, each with a count:
 
-- **In progress:** running, queued, paused and waiting items, plus running sync, move/delete jobs and copy jobs. Lists up to 40 paused rows, and says how many more.
-- **Failed:** failed transfers, jobs, moves and copies. Up to 50 are listed with the rest counted, and Retry all and Clear failed cover all of them.
-- **Done:** finished and cancelled items (the latest 40 done and 20 cancelled, plus 30 finished jobs), with what was checked. **Clear** empties it.
+- **In progress:** under headings Running, Queued (up to 40 listed, the rest counted) and Paused (up to 40), plus running sync, move/delete jobs and copy jobs. Rows say where they go (an upload's connection and folder, a download's folder and source).
+- **Failed:** failed transfers, jobs, moves and copies. Up to 200 are listed with the rest counted, and Retry all and Clear failed cover all of them.
+- **Done:** finished and cancelled items (the latest 200 done and 20 cancelled, plus 30 finished jobs), with what was checked. Finished rows stay here and no longer also show under In progress. **Clear** empties it.
 - **Log:** the plain-language message log (below).
 - **Jobs:** copies and moves between connections (4.1).
 
@@ -1169,7 +1197,7 @@ Empty tabs say "Nothing in progress right now.", "Nothing has failed." or "Nothi
 
 #### 4.1 Copy and move between connections (migration)
 
-- Menu item "Copy to another connection…" (also move) on any selection, folder or connection root, to any folder on any other connection or this device. A dialog on desktop; a full-screen layer on phones. A **LocationPicker** can create a new folder on the way.
+- **Copy / Move to…** (Keep & sync in folder and empty-space menus, and the sidebar's connection, bucket and single-root-server menus) for a folder, a bucket or a whole connection; the item menu's Copy to ▸ / Move to ▸ → "Choose folder…" for a selection. The dialog has Copy and Move, and picks any folder on any other connection or this device. A dialog on desktop; a full-screen layer on phones. A **LocationPicker** can create a new folder on the way.
 - Jobs are stored in a small database (`jobs.db`), so they continue after a crash, a quit or a phone killing the app. Startup resumes jobs that were running (S3 uploads from their confirmed parts).
 - **How it works:**
   1. It plans (walks the source).
@@ -1193,16 +1221,15 @@ Empty tabs say "Nothing in progress right now.", "Nothing has failed." or "Nothi
 
 #### 4.2 Mirror (deploy a folder, or pull one down)
 
-- From a folder's menu: **Mirror**. A sheet shows From and To (with a swap-direction button, so you can pull instead of push), saved mirrors you can run in one click, and a **dry run** first.
-- **Planning** compares both listings without touching either side, and shows new, changed, same and gone files in tabs (upload / remove).
+- From a folder's menu: **Keep & sync ▸ Mirror to…** (the old "Mirror to the other pane" is gone). The sheet shows From and To in one card with full paths and a swap button (so you can pull instead of push; each end opens a folder tree with a find field), folded **Options**, and a **Saved** menu. **Check** makes the dry run first.
+- **Planning** compares both listings without touching either side, and shows tabs Copy, Delete (when deleting is on or something would go) and Same, with what is left out counted.
 - Options:
-  - "Upload new and changed files" (always on).
-  - **"Also delete what's gone from the source"** (off by default, with a warning; deletions go to the Trash on this device).
-  - **"Changed means"**: another size, or modified more recently (the default, with a tolerance for FAT and FTP clocks and hour-offset detection); another size only; or a different MD5 checksum (disabled when not available on those connections).
-  - **Leave out**: gitignore-style, one per line, with an optional "also leave out what the folder's .gitignore lists".
+  - **Delete what isn't in the source** (off by default; "Mirror and delete N" then shows in red; deletions go to the Trash on this device).
+  - **Copy a file when**: Size or date differs (the default, with a tolerance for FAT and FTP clocks and hour-offset detection); Size differs; Checksum differs (disabled when the two connections can't compare checksums; files without a checksum on both sides fall back to size and date, with a note).
+  - **Leave out**: gitignore-style, one per line, with an optional "Also leave out what .gitignore lists" for the folder's own `.gitignore` (shown when the folder has one).
 - Case-insensitive destinations (This Mac or PC, OneDrive, Dropbox, Box) are matched by name in any case.
 - The job then carries out exactly the previewed list: copies, then deletions last. Nothing outside the preview is touched. Each copy is still checked by the copier, so an identical file is skipped.
-- Mirrors can be saved and named. A saved mirror runs from a command and checks first. If it would delete something, the sheet opens to confirm.
+- Mirrors can be saved and named (Save…, then the Saved menu: New mirror, each saved one, Rename…, Forget this one). A saved mirror runs from the folder menu or the palette and checks first. If it would delete something, the sheet opens to confirm. Mirrors saved by older versions load again.
 - Links are never followed, and neither side's link nor anything under its name is copied or deleted.
 - It appears in Jobs like any other job.
 
@@ -1296,26 +1323,28 @@ Phones also have: share sheet and photo-picker uploads (Android `content://` fil
 
 Not connection-specific, but jobs depend on it: on computers "Keep running in the menu bar/tray" keeps sync, jobs and drives alive with the window closed, and updates check at start and every few hours.
 
-#### 4.9 SSH tunnels (SFTP connections, computers only)
+#### 4.9 SSH tunnels (SFTP and SSH connections, computers only)
 
-- In an SFTP connection's form, a **Tunnels** section lets you add local port forwards. Each tunnel has:
+- In the connection's form, a **Tunnels** tab (with a count; "Add or edit tunnels…" in menus opens it) lets you add local port forwards, each route one input group with a status dot (green while running, hollow when not). Each tunnel has:
   - Local port (on 127.0.0.1).
   - Remote host, as the server sees it (for example `db.internal` or `localhost`).
   - Remote port.
   - Optional name.
   - **Auto start** (started when Kybl first opens the connection in a run).
 - Each tunnel listens on 127.0.0.1 only and carries every accepted TCP connection over an SSH channel on a connection of its own.
-- Start and stop from Settings, the connection's sidebar menu and the command palette. A badge shows the status, and status events are live.
+- Start and stop from the connection's sidebar menu (Tunnels ▸), the pane's "…" and empty-space menus (Tunnels ▸), the info panel of an SFTP pane (address, traffic, Start / Stop) and the command palette ("Start tunnel…" / "Stop tunnel…"). There is no tunnels page in Settings. A badge shows the status in the sidebar, and status events are live.
 - The form tidies and validates tunnels (ports, empty fields, duplicates) before saving.
 - The SSH config import turns `LocalForward` lines into tunnels.
 - Not shown on phones.
 
 #### 4.10 Terminal
 
-- **Terminal panes** sit beside file panes. They open from a folder's menu ("Open in terminal") and from the toolbar.
-- **Local terminal:** a shell on this computer, running your login shell in the pane's folder (macOS and Linux only; Windows says "Terminals on this computer aren't available on this system yet. SFTP connections can open one.").
-- **Server terminal:** on an SFTP connection, an SSH session with a pseudo-terminal, signed in with the connection's credentials, starting in the pane's folder. Folder changes work with Unix shells. A login shell that is cmd.exe or PowerShell (Windows OpenSSH) gets no automatic `cd`. A server shell refuses file drops.
-- **Pane header menu:** Clear, Restart shell, "Follow the folder above" (the shell `cd`s wherever the file pane goes; a note says why it did not follow last time, for example "busy"), Copy, Paste, Bigger text, Smaller text, Actual size, and Close terminal. Keyboard shortcuts are ⌘ on Mac and Ctrl+Shift elsewhere, and ⌃` goes back to the file pane. App-wide shortcuts that a shell needs (⌘K) are kept out of it.
+- **Terminal panes** sit beside file panes. They open with ⌘J (or ⌃`) from any pane, the Terminal button in every pane's toolbar, the sidebar's terminal button, a folder's menu ("Open in terminal" / "Open terminal here"), the palette (Open Terminal Here, Toggle Terminal, New Terminal on this computer), or by clicking an SSH connection. ⌘J goes back and forth between a terminal and its file pane. On a pane where no shell can run (FTP, a cloud, nothing open) the shell is on this computer instead of a refusal.
+- **Local terminal:** a shell on this computer in the pane's folder (home folder when no pane of this computer is open). macOS and Linux run your login shell. **Windows** runs a ConPTY pseudo console: PowerShell 7 or Windows PowerShell by default, or Command Prompt, WSL or Git Bash, chosen under Settings › General › Terminal shell (the row shows when more than one shell is installed). Paths typed for the shell (when following a folder or dropping files) use that shell's quoting (PowerShell quotes, `cd /d`, WSL `/mnt` paths). Phones have no terminals.
+- **Server terminal:** on an SFTP or SSH connection, an SSH session with a pseudo-terminal, signed in with the connection's credentials, starting in the pane's folder. Folder changes work with Unix shells. A login shell that is cmd.exe or PowerShell (Windows OpenSSH) gets no automatic `cd`. A server shell refuses file drops.
+- **SSH connections** (a connection type in the picker, or SFTP with "A click opens: Terminal"): a click turns the active file pane into the server's shell (or goes to the one already open). Its menu has Open terminal, New terminal and Browse files; a terminal's **Folders** button opens or focuses the server's files above it. A terminal's header shows the connection badge and name (click to switch the pane to another connection's shell, asking first when a program runs) and the start folder. Deleting a connection closes its terminals.
+- **Pane header menu** ("Terminal actions"): Clear, Restart shell, "Follow the folder above" (the shell `cd`s wherever the file pane goes; a note says why it did not follow last time, for example "busy"), Copy, Paste, Bigger text, Smaller text, Actual size, the panes menu (split, move, size, close the others) and Close terminal. A split button in the header places a new pane. Keyboard shortcuts are ⌘ on Mac and Ctrl+Shift elsewhere. App-wide shortcuts that a shell needs (⌘K) are kept out of it. Links in a terminal open in the system browser.
+- Closing a pane, closing the window, quitting or restarting for an update asks first when a terminal has a program running (a server's shell always counts as busy, since the server can't say; WSL counts as busy away from its prompt).
 - **Dropping files from Finder** onto a local terminal types their quoted paths ("Drop to paste the paths").
 - **Paste dialog (safety):**
   - Pasted text has control characters removed, apart from tab and line breaks.
@@ -1333,7 +1362,7 @@ Not connection-specific, but jobs depend on it: on computers "Keep running in th
 
 ### Settings (desktop)
 
-The Settings page is a full window page (Esc or "Back to app" closes). Left navigation, three groups: **Settings** (General, Appearance, Browsing, Transfers and sharing, Actions), **Storage** (Folder sync, Drives, Connections, Cache and data), **Help** (Keyboard shortcuts). The tray and the Check for Updates menu item open it directly on a page (General for updates, Folder sync for sync).
+The Settings page is a full window page (Esc or "Back to app" closes). Left navigation, three groups: **Settings** (General, Appearance, Browsing, Transfers and sharing, Actions), **Storage** (Folder sync, Drives, Connections, Cache and data), **Help** (Keyboard shortcuts, plus three links that open in the browser: User manual, What's new, Report a problem). Each page's header has a **Help** button that opens that page's section of the manual. The tray and the Check for Updates menu item open Settings directly on a page (General for updates, Folder sync for sync).
 
 #### 3.1 General
 | Setting | Options | Default | Notes |
@@ -1342,6 +1371,7 @@ The Settings page is a full window page (Esc or "Back to app" closes). Left navi
 | Keep running in the menu bar or system tray | on or off | on | Closing the window keeps the app and folder sync running; quit from the tray icon or Cmd+Q. (Backend pref, not in localStorage.) |
 | Open at login | on or off | off | Starts quietly in the tray so synced folders stay current. |
 | Confirm before deleting (Safety) | on or off | on | Hint explains most connections cannot undo a delete; drives and the Trash or Recycle Bin keep deletions. |
+| Terminal shell (Safety; Windows, when more than one shell is installed) | the first shell (PowerShell 7 or Windows PowerShell), Command Prompt, WSL, Git Bash | the first | For new terminals on this computer; open terminals keep theirs until restarted. |
 | Ask before pasting several lines in a terminal | button "Ask in all terminals" | asks always | The question itself has "Don't ask again" per running terminal; this turns it back on everywhere. |
 | Secret keys | info only | "Encrypted" | Saved encrypted, key in the Keychain, Credential Manager or system keyring. |
 | About | version chip ("dev build" when unknown) | | With app lockup and tagline. |
@@ -1352,8 +1382,9 @@ The Settings page is a full window page (Esc or "Back to app" closes). Left navi
 | Setting | Options | Default |
 |---|---|---|
 | Mode | System, Light, Dark | System (follows the OS live) |
-| Colour scheme | 8 schemes, each with its own light and dark palette, shown as mini previews: Kybl, Classic, Graphite, Midnight, Nord, Solarized, Ember, Grape | Kybl |
+| Colour scheme | 9 schemes, each with its own light and dark palette, shown as mini previews: Kybl, Classic, Windows 11, Graphite, Midnight, Nord, Solarized, Ember, Grape | Kybl |
 | Accent colour | Scheme (uses the scheme's own), Blue, Purple, Pink, Orange, Green, Graphite | Scheme |
+| Corners | Square, Subtle, Default, Round (every rounded corner is on one scale; each scheme sets its own, Windows 11 is squarer) | Default |
 | Font | System, Rounded, Serif, Mono (tiles preview each) | System |
 | Size (whole interface zoom) | Small 0.9, Default 1, Large 1.1, Larger 1.25 | Default |
 | Compact layout | on or off (applies to every pane; each pane can still change its own) | off |
@@ -1361,10 +1392,10 @@ The Settings page is a full window page (Esc or "Back to app" closes). Left navi
 #### 3.3 Browsing
 | Setting | Options | Default |
 |---|---|---|
-| Photos | Off (icons only), Placeholders (blurry ThumbHash preview only, no thumbnail downloads), Thumbnails (preview then thumbnail, cached on disk) | Thumbnails |
+| Photos | Off (icons only), Placeholders (blurry ThumbHash preview only, no thumbnail downloads), Thumbnails (preview then thumbnail, cached on disk) | Off on new installs (a saved choice stays) |
 | Folders first | on or off | on |
-| Dates | Friendly ("Today, 14:32") or Full | Friendly |
-| List columns | Size, Modified, Kind, Storage class, ETag (toggle chips; Name always first; headers are also right-clickable) | Size, Modified, Kind |
+| Dates | Kybl's own menu of formats, each shown as a sample date: Friendly ("Today, 14:32"), System, and groups Day first, Month first, Year first (ISO) and Month by name, 12- or 24-hour, with or without seconds | Friendly |
+| List columns | Size, Modified, Kind, Storage class, ETag (toggle chips; Name always first). The header's right-click menu adds Created, Type, Permissions and Owner where the connection has them | Size, Modified, Kind |
 | File sizes | MB (1000) or MiB (1024) | MB |
 
 Per connection, right-click lets you give a connection its own Photos mode and turn on **sharing placeholders** (writes a small hidden `.kybl/thumbhash.json` into each photo folder you open so other devices show previews at once).
@@ -1382,18 +1413,19 @@ Per connection, right-click lets you give a connection its own Photos mode and t
 | Show activity automatically | on or off | on |
 | Share link lifetime | 1 hour, 24 hours, 7 days | 24 hours |
 
-Limits are shared across all running transfers and apply live; they stay in sync with the Activity panel's speed menu. Checksum compares where both sides have one (S3, Google Drive, Dropbox, OneDrive, SFTP), else size; encrypted connections compare size only. `wifiOnly` exists in the transfer prefs but is only exposed on phones.
+Limits are shared across all running transfers and apply live; they stay in sync with the Activity panel's speed menu. Checksum compares where both sides have one (S3, Google Drive, Dropbox, OneDrive, SFTP), else size; encrypted connections compare size only. Cancel all asks first ("Keep transfers"). `wifiOnly` exists in the transfer prefs but is only exposed on phones.
 
 #### 3.5 Actions, Folder sync, Drives, Connections, Cache and data, Shortcuts
 - **Actions:** custom actions list (switch on or off, edit, shortcut, export and import JSON; each has "Runs", "Applies to", "Output", placeholders and a preview).
 - **Folder sync:** synced folders, all folders, deletions waiting, conflicts, pause syncing (details belong to the sync slice).
 - **Drives:** mounted drives and "How drives work".
-- **Connections:** list of saved connections with Edit, "New connection", and "Import connections..." (from FileZilla and other apps).
+- **Connections:** saved connections filed under their group (No group first, each group's header folds it), a picker for one group (with the groups inside it, with counts) or those still to file, a filter (name, address, group), a group button on each row, picking several to move to a group in one go, Edit, "New connection", and "Import connections..." (FileZilla, ssh config).
 - **Cache and data:** Clear cache (thumbnails, placeholders and recently opened files; shows current sizes; files opened in other apps in the last hour are kept). **Reset all settings** (two-step confirm) returns settings, transfer settings, compact layout, tray setting and auto-update to defaults. It keeps connections, favorites, sync, actions, layout, sort, tile size, sidebar state and Open at login.
 - **Keyboard shortcuts:** the full read-only list (about 55 entries) in OS-correct glyphs.
+- **Tunnels** have no page here: they live in a connection's form and menus (4.9).
 
 #### 3.6 Settings that exist but are not in the page
-- `sidebarHidden`, `sort`, `tileSize`, `favorites`, `quickInfo` (Quick Look's info column; shown by default in a wide window), `showHiddenFiles`. These are changed in the UI directly.
+- `sidebarHidden`, `sort`, `groupBy`, `tileSize`, `favorites`, `quickInfo` (Quick Look's info column; shown by default in a wide window), `showHiddenFiles`. These are changed in the UI directly.
 - Legacy `layout` and `syncBrowsing` are read only once to migrate into the split-layout tree.
 - Settings are stored in `localStorage` (`s3b.settings`), applied as `data-*` attributes and inline CSS variables. Accent, scheme, font and theme apply immediately; size uses native webview zoom.
 - One-time migrations: old thumbnails switch to the Photos mode; old users who never picked a look move to the Kybl scheme.
@@ -1433,7 +1465,7 @@ Limits are shared across all running transfers and apply live; they stay in sync
 ### Onboarding, empty states, toasts and notifications
 
 #### 7.1 Empty and onboarding states (desktop)
-- **No connections (Welcome card):** Kybl mark, "Welcome to Kybl", a line saying it browses S3, SFTP, FTP, WebDAV and cloud drives and saves secrets encrypted in the OS keystore, **Connect Kybl Storage** (primary), "Add another S3 connection with keys", and the row of provider badges.
+- **First run (Welcome card):** only the very first run's lone pane, before anything was opened, shows it. With no connections saved, a later empty pane shows the launcher instead (this computer, its favorites, a terminal, Connect Kybl Storage, New connection, and a search over them). The card has the Kybl mark, "Welcome to Kybl", a line saying it browses S3, SFTP, FTP, WebDAV and cloud drives and saves secrets encrypted in the OS keystore, **Connect Kybl Storage** (primary), "Add another S3 connection with keys", and the row of provider badges.
 - **Connection chosen, nothing open:** "Choose a bucket" or "Choose a place", "Pick one from the sidebar", with New bucket (Kybl) or Open bucket by name (S3). While a server is connecting: spinner and "Connecting to X...". On failure: "Couldn't connect to X" or "Couldn't list X" with the reason, and the fix buttons (trust a server certificate, connect without encryption for FTP, trust an SFTP host key), Try again, Connect again (revoked), or "Open bucket by name". A key that cannot list buckets is explained as not a failed connection.
 - **A recipe pane whose connection is missing:** "'Name' isn't on this device. This pane of the workspace recipe opened empty." with Add connection.
 - **Empty folder, search, filter results,** and error banners in the pane header area (see 2.3). Failed folder listings show "Try again" and a hint.
@@ -1442,7 +1474,7 @@ Limits are shared across all running transfers and apply live; they stay in sync
 - **Settings:** "No connections yet - add one to start browsing."
 
 #### 7.2 Toasts
-- Stacked toasts in an `aria-live` region. Kinds info, success (3.2 s), error (12 s), and any toast with an action stays at least 8 s. Hovering or reading the details pauses the timer. Click the text to dismiss. Toasts sit above the Activity panel when it is open (and at the top of the screen on phones when a sheet is up).
+- Stacked toasts in an `aria-live` region. Kinds info and success (2.5 s), error (12 s), and any toast with an action stays at least 8 s. A toast pops up only as the answer to what you just did (a click or key press); background notices (a copy that finished or failed, a tunnel, an upload) wait under the **notification bell** at the right end of the workspace bar. The bell keeps every toast of the session (newest first, up to 100) with a count of the unread; opening it marks them read, a row's action (Show, Undo…) runs and closes the list, and Esc or a click elsewhere closes it. Hovering or reading the details pauses the timer. Click the text to dismiss. Toasts sit above the Activity panel when it is open (and at the top of the screen on phones when a sheet is up).
 - **Toasts with an Undo button:**
   - After move, rename and copy (file operations, **Undo** reverses it; Cmd+Z undoes the latest, up to 20 entries; not offered when something was replaced).
   - After closing a workspace or several workspaces.
@@ -1452,7 +1484,7 @@ Limits are shared across all running transfers and apply live; they stay in sync
 - Examples: "Uploaded 3 files", "2 uploads failed" with Show or Open Transfers, "Added 'name' to Favorites", "Kybl is up to date", "Cache cleared (X freed...)", "Settings are back to the defaults", "Moved 'x' to 'Workspace'".
 
 #### 7.3 Notifications (system)
-- **Desktop:** there are **no OS notification popups**. Status is the tray icon, its tooltip and menu text (sync progress and problems), the in-window Activity panel, and toasts.
+- **Desktop:** there are **no OS notification popups**. Status is the tray icon, its tooltip and menu text (sync progress and problems), the in-window Activity panel, toasts, and the notification bell's list.
 - **Android:** a foreground-service notification with combined transfer progress and a Cancel action, and a short "done" notification when the app is not on screen. Tapping opens the Transfers screen.
 - **iOS:** no notifications; a background task keeps transfers alive for about 30 seconds after leaving the app.
 
@@ -1463,10 +1495,13 @@ Limits are shared across all running transfers and apply live; they stay in sync
 
 ### The `website/` folder
 
-- It is the **marketing site for kybl.app**, plain static files (no build step): `index.html` (single homepage, about 660 lines), `style.css`, `privacy-policy/` and `terms-of-service/` pages (using `assets/legal.css`), `robots.txt`, `sitemap.xml`, `site.webmanifest`, favicons and touch icons, `og.jpg` share image, `assets/shots/` (app screenshots in light and dark: browse, connect, sync, as WebP), and `llms.txt` plus `llms-full.txt` (plain-text descriptions for AI tools).
-- Homepage sections (from the headings): works with the storage you already pay for; your bucket list, sorted; keep a folder in sync even with the window closed; "Kyblik tells you how your folders are doing"; no bucket yet? borrow one of ours (Kybl Storage); good to know before you grab Kybl (FAQ); get Kybl for your computer and phone (downloads).
-- Claims on the site: free, 10 GB free Kybl Storage in the EU, encrypted at rest (AES-256, SSE-C, key per bucket; explicitly not end-to-end), secret keys in the OS keychain, folder sync with ignore rules from the tray, platforms as in section 1. The account site is `https://app.kybl.app/`.
-- Verified against code: platform list, updater source, tray and sync behaviour and Kybl Storage connect flow match. The `llms.txt` provider list is S3-focused and does not list SFTP, FTP, WebDAV or cloud drives, which the app supports (so the site text is narrower than the app).
+- It is the **marketing site and documentation for kybl.app**, plain static files (no build step): `index.html` (the homepage), `features/index.html` (a screenshot gallery), `manual/index.html` (the user manual), `style.css`, `privacy-policy/` and `terms-of-service/` pages (using `assets/legal.css`), `assets/gallery.css` and `assets/manual.css`, `robots.txt`, `sitemap.xml` (the five pages), `site.webmanifest`, favicons and touch icons, `og.jpg` share image, `assets/shots/` (app screenshots as WebP in light and dark), and `llms.txt` plus `llms-full.txt` (plain-text descriptions for AI tools; they now list SFTP, SSH, FTP/FTPS, WebDAV and the cloud drives too). The screenshots are made by the scripts under `scripts/shots` (headless Chrome against the dev mock).
+- **Homepage** sections (from the headings): one app instead of five; a file manager that does the whole job; "Not every connection can do everything" (a what-works-where table); your servers, files and shell together; keep folders in step even with the window closed; "Kyblik tells you how your folders are doing"; no bucket yet? borrow one of ours (Kybl Storage); good to know before you grab Kybl (FAQ); get Kybl for your computer and phone (downloads). It links the gallery and the manual and shows a peek of the gallery.
+- **Feature gallery** (`/features/`): 41 screenshots, each in light and dark with a full-size view, grouped under headings (overview, connect, browse, files, copy / mirror / sync, workspaces, settings, phone). Covers panes, Claude Code in a terminal pane, mixed and grouped views, connections, sidebar menus, tunnels, Quick Look, menus, batch rename, compare, archives, Copy / Move, Mirror with its check, transfers, jobs, sync, workspaces and recipes, every settings page and the phone app. Each shot has an anchor (`#shot-…`) the README links to.
+- **User manual** (`/manual/`): every feature by task, with a contents list and search, in sections whose ids the app links to (`src/core/manual.ts` lists them: getting-started, connections, kybl-storage, browsing, selecting, preview, editing, file-operations, drag-and-drop, copy-move, panes, workspaces, terminal, archives, compare, transfers, sharing, sync, keep-and-sync, mirror, actions, command-palette, settings, drives, what-works-where, phone, updates, shortcuts, troubleshooting, privacy, and sub-sections such as rename, conflicts, recipes, ssh-tunnels, import and one per Settings page). Shortcut tables and troubleshooting are included.
+- **Help from the app:** the macOS Help menu (Kybl Manual ⇧⌘/, Keyboard Shortcuts, What's New in Kybl, Report a Problem…), F1 on every OS, the same four commands in the command palette, a Help button in each Settings page's header and Help links in the Settings sidebar, and a "?" (the `help` prop of `Modal` in `src/ui/components/Dialogs.tsx`) in the title row of the big dialogs (connections, import, Kybl Storage, batch rename, name clashes, move, permissions, actions, compare folders, mount, folder sync, Copy / Move, Mirror). Each opens the manual at its topic in the browser. "What's New" opens the GitHub releases, "Report a Problem" a new GitHub issue.
+- Claims on the site: free, 10 GB free Kybl Storage in the EU, encrypted at rest (AES-256, SSE-C, key per bucket; explicitly not end-to-end), secrets in an encrypted vault keyed from the OS keychain, folder sync with ignore rules from the tray, platforms as in section 1. The account site is `https://app.kybl.app/`.
+- The website says "Kybl pronounced kibble, from Czech and Slovak for bucket".
 
 ## Phone and tablet app
 
@@ -1478,7 +1513,7 @@ Same Rust backend, separate touch UI. A **tablet or a large window** (at least 9
 - **Home:**
   - Top bar with the Kybl lockup, a Transfers button (shows a count of running transfers) and Settings.
   - **First run** welcome: mascot, "Your files, in your pocket", a line about supported storage, **Connect Kybl Storage**, "Add another connection", provider badges.
-  - After setup: a **Photo backup card** (hideable; opens backup), **Favorites**, **Recent** (up to 6 places not already favorites), and **Connections** list with buckets or drives under each. A connection's "..." (options) opens a sheet.
+  - After setup: a **Photo backup card** (hideable; opens backup), **Favorites**, **Recent** (up to 6 places not already favorites), and a **Connections** list (Pinned first, then groups that fold open) with buckets or drives under each. A connection's "..." (options) opens a sheet.
 - **Browse screen** (connections, then buckets, then folders as a stack with large titles that collapse into a solid bar on scroll):
   - Back, Search, More. Title is the folder. Sort pill (Name, Newest first, Largest first) and a **list or grid** toggle. A filter field for the current folder, plus "Search all subfolders for ..." deep search with a live "Looking for ..." mascot state and the count of files checked.
   - Pull to refresh. Infinite loading of big folders (next page loads when the end scrolls into view) plus a "Load more" button.
@@ -1556,8 +1591,8 @@ Not on phones: folders first toggle, list columns, concurrency or speed limits, 
 - **Layer stack:** everything that opens (screens, viewer, document, sheets, dialogs) forms one stack; back always closes the topmost one, and sheets and dialogs move toasts to the top of the screen.
 - **There are no row swipe-actions** (no swipe-to-delete or swipe-to-share). Row actions are the "..." sheet and long-press selection.
 - **Selection mode:** "N selected" with Done, and a bottom action bar: Share, Download, Move, Delete, More (Copy to..., Copy to another connection, Save to Photos). A single selected item offers its full action sheet.
-- **Item action sheet:** Share..., Open in..., Save to Photos (photos), Info, Download as ... (Google Docs exports), Rename, Move or copy..., Copy to another connection..., Select, Delete (danger). Folders: Info, Add or Remove Favorite. Folder "More" sheet: Select, New folder, Refresh, Add or Remove from Favorites, Folder info, Copy to another connection.
-- **Connection "..." sheet:** Sign in again, Edit connection, Open (single-root) or Choose buckets to show, New bucket or Open bucket by name, Refresh buckets, Photos mode (As in Settings or its own), Share placeholders, Copy everything to...
+- **Item action sheet:** Share..., Open in..., Save to Photos (photos), Info, Download as ... (Google Docs exports), Rename, Move or copy..., Copy to another connection..., Select, Delete (danger). A bucket's menu has Hide / Show, Choose buckets to show and Copy / Move to…. Folders: Info, Add or Remove Favorite. Folder "More" sheet: Select, New folder, Refresh, Add or Remove from Favorites, Folder info, Copy / Move to….
+- **Connection "..." sheet:** Sign in again, Edit connection, Open (single-root) or Choose buckets to show, New bucket or Open bucket by name, Refresh buckets, Photos mode (As in Settings or its own), Share placeholders, Pin to the top, Move to group…, Copy / Move to…
 - **Place menu** (Favorites or Recent): Add or Remove from Favorites, Remove from Recent.
 - Haptics for selection and success. The keyboard fits (the layout moves for it). Safe-area insets are respected (8 places). Text size follows the phone's setting too.
 
@@ -1571,17 +1606,14 @@ Not on phones: folders first toggle, list columns, concurrency or speed limits, 
 
 ## Appendix: where the README is out of date
 
-### From the connections side
+The README was rewritten on 2026-11-25 (picture gallery, feature list, links to the website's gallery and manual) and now covers the connection kinds, panes, terminals, mirror, Copy / Move to…, sync, mounts, custom actions, transfers, updates and the phone. What is still missing or only partly right, checked against the code:
 
-- The README's feature list only describes S3 and Kybl Storage plus folder sync. The app now has FTP/FTPS, SFTP, WebDAV, Azure Blob, Google Cloud Storage, Google Drive, OneDrive, Dropbox, This device, imports, copy jobs, mirror, mount as drive, terminals, SSH tunnels and phone backup. None of these are in the README.
-- The README says "folder sync … upload or download direction". The code also has **two-way** sync with conflict copies, a deletion guard and a remote trash.
-- The README says "Secret keys are stored in the OS keychain". The code now keeps them in an encrypted file with only its key in the keychain (and, on Android, a Keystore-sealed file). The README's Android note ("a file in the app's private storage, excluded from backups") is only partly current.
-- README: "Upload files or folders with multipart for big files" and "Folder sizes". Both are correct. The README does not mention verify-after-copy, speed limits, Wi-Fi only, resume after restart, or streaming folder downloads.
-- `src-tauri/src/storage/BACKENDS.md` is the most accurate description of the server and blob backends. `src-tauri/src/mount/NATIVE.md` describes planned Windows and macOS native drives. The mention of Windows mount in that file is a plan, not working code.
-- Box appears in code as a kind name and badge but is not implemented.
+- **Android secret keys.** The README says "a file in the app's private storage, excluded from backups". The code seals that file (`secrets.bin`) with a key held in the Android Keystore (hardware-backed where available), and reports it when the Keystore key is gone (see 2.3).
+- **Not in the README:** the Activity panel's five tabs (In progress, Failed, Done, Log, Jobs) and its plain-language log; the notification bell; streaming folder downloads; resume after a restart and the 7-day clean-up; "Wi-Fi only" on phones; the app lock on phones; the name-clash dialog's remembered answers for downloads; that Windows has no mounted drives yet ("Drives aren't available on Windows yet").
+- **macOS signing.** The README says the app is signed with a self-signed certificate. `tauri.conf.json` signs ad hoc (`signingIdentity: "-"`); the release workflow uses the self-signed certificate only when the two repository secrets are set (as the README's Releasing section says).
+- **In-app shortcut list.** `SettingsPage.tsx` still says "Two panes: copy instead of moving while dragging across: drop copies, ⌘ moves"; the drag code moves on a drop and copies with ⌥ (see the Keyboard shortcuts section).
+- `src-tauri/src/storage/BACKENDS.md` is the most accurate description of the server and blob backends. `src-tauri/src/mount/NATIVE.md` describes planned Windows and macOS native drives: a plan, not working code.
+- Box appears in code as a kind name and badge but is not implemented and is not in the picker.
 - No master password, app lock on computers, or in-app encryption key exists in the client. App lock is phones only. Kybl Storage's encryption at rest is a server property.
-- The Activity panel has five tabs (In progress, Failed, Done, Log, Jobs). The README only mentions "Transfer queue with speed, ETA, cancel and retry".
-### From the app shell side
-- README statements about updates (one-click on macOS, Windows, AppImage; others open the download) and phone behaviour (Android foreground service, iOS background task, download locations, deep-link sign-in, Custom Tab and ASWebAuthenticationSession) match the code.
-- Not backed by code: any release channel or beta feature (none exists); window size persistence (none); desktop app lock (none).
-- `tauri.conf.json` still has a generic "bundle.targets: all" (so Linux packages are all produced by the CI build), and the CI builds macOS arm64 and x86_64, Linux, Windows, Android APK and an unsigned iOS IPA.
+- Not backed by code: any release channel or beta feature (none exists); window size persistence (none).
+- `tauri.conf.json` has a generic `bundle.targets: "all"`; CI builds macOS arm64 and x86_64, Linux, Windows, Android APK and an unsigned iOS IPA.

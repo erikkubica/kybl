@@ -439,7 +439,7 @@
         <li>The sidebar has four parts: <b>Favorites</b>, <b>This computer</b> (its folders: Home, Documents and so on), <b>Groups</b> and <b>Connections</b> (the ones in no group). Click a heading to fold it shut; each has a sort menu.</li>
         <li><b>Favorites</b> are folders and roots you added with <b>Add to favorites</b>. Click one to open it; hover and click × to remove it. A favorite whose connection is gone turns grey.</li>
         <li><b>Connections</b> lists everything you added. S3 buckets and cloud-drive roots show under their connection. A server with one root (FTP, SFTP, WebDAV) is a single row. You can file connections into your own <a href="#groups">groups</a>.</li>
-        <li>Your recent places are in the <a href="#command-palette">command palette</a> and on an empty pane.</li>
+        <li>Your recent places are in the <a href="#command-palette">command palette</a>. A new, empty pane lists your recent connections.</li>
         <li><b>Find connection</b> appears at the top when you have more than eight connections; press <kbd>⌥⌘F</kbd> to show it any time. It searches names, servers, user names, kinds and groups. Arrow keys and <kbd>↵</kbd> open a result.</li>
         <li>Right-click a bucket to <b>Hide from the sidebar</b> (a row such as "2 hidden" under the connection lets you bring it back with the eye icon), to <b>Add to favorites</b>, or to use <b>Copy / Move to…</b>.</li>
       </ul>
@@ -449,7 +449,7 @@
       <h3 id="closing">Closing and quitting</h3>
       <ul>
         <li>Closing the window keeps Kybl running in the menu bar (macOS) or the system tray (Windows, Linux), so folder sync, jobs and drives keep working. Turn this off in <a href="#settings-general">Settings → General</a> with <b>Keep running in the menu bar</b>.</li>
-        <li>To quit, choose <b>Quit Kybl</b> from the tray icon, or press <kbd>⌘Q</kbd>. If transfers are running or the editor has unsaved changes, Kybl asks first. Quitting stops transfers, cleans up unfinished uploads and removes partial downloads.</li>
+        <li>To quit, choose <b>Quit Kybl</b> from the tray icon, or, on a Mac, press <kbd>⌘Q</kbd>. If transfers are running or the editor has unsaved changes, Kybl asks first. Quitting stops transfers, cleans up unfinished uploads and removes partial downloads.</li>
         <li><b>Open at login</b> starts Kybl quietly in the tray, so synced folders stay current.</li>
       </ul>
       <div class="note"><p>Windows and Linux have no menu bar at the top of the window. Every menu command is still there, from the keyboard, the right-click menus and the <a href="#command-palette">command palette</a> (<kbd>⌘K</kbd>).</p></div>
@@ -688,7 +688,7 @@
       <p><b>Search inside files.</b> On This computer and SFTP servers, switch the search to <b>Contents</b> to find text inside files. Options: case sensitive, regular expression. Each result shows its first matching line, and <a href="#quick-look">Quick Look</a> opens at that line. The command palette has <b>Search Inside Files</b> too.</p>
 
       <h3 id="favorites-recents">Favorites and recent places</h3>
-      <p>Open the pane's <b>…</b> menu and choose <b>Add to favorites</b> to put the folder it shows under <b>Favorites</b> in the sidebar; the same menu then offers <b>Remove from favorites</b>. You can also right-click a folder, a bucket, a drive root or a single-root server and choose <b>Add to favorites</b>. Recent places appear in the sidebar once you have many connections, and in the <a href="#command-palette">command palette</a> always.</p>
+      <p>Open the pane's <b>…</b> menu and choose <b>Add to favorites</b> to put the folder it shows under <b>Favorites</b> in the sidebar; the same menu then offers <b>Remove from favorites</b>. You can also right-click a folder, a bucket, a drive root or a single-root server and choose <b>Add to favorites</b>. Recent places are in the <a href="#command-palette">command palette</a>, and a new, empty pane lists your recent connections.</p>
       <figure class="shot"><picture><source srcset="/assets/shots/menu-bucket-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/menu-bucket.webp" alt="A bucket's right-click menu with Add to favorites and Copy / Move to." loading="lazy"></picture><figcaption>Right-click a bucket to add it to favorites.</figcaption></figure>
 
       <h3 id="folder-info">Folder info panel and git</h3>
@@ -836,7 +836,7 @@
         <li><b>Edit</b>: Cut, Copy, Paste into "folder", Duplicate, Rename.</li>
         <li><b>Send</b>: Copy to ▸ and Move to ▸, then Move to "parent folder" and Download.</li>
         <li><b>Make</b>: Compress or Extract, Compare, and your custom Actions ▸.</li>
-        <li><b>About</b>: Get Info, Calculate size, Copy path (or Copy S3 URI), Copy share link, Show in Finder or Explorer, Open in terminal, and on servers Permissions…, Show original and Make link….</li>
+        <li><b>About</b>: Get Info, Calculate size, Copy path (or Copy S3 URI), Copy share link, Show in Finder (Show in Explorer on Windows, Show in Files on Linux), Open in terminal, and on servers Permissions…, Show original and Make link….</li>
         <li><b>Keep</b> (folders): Add to favorites, and the <b>Keep &amp; sync ▸</b> submenu (see <a href="#keep-and-sync">Keep &amp; sync</a>).</li>
         <li><b>Delete</b> or <b>Move to Trash</b>, last.</li>
       </ol>
@@ -869,7 +869,7 @@
       <p>The preview shows every new name and flags problems (empty, too long, duplicate, already taken). Nothing runs until all are fixed, and batch rename never overwrites anything. One <kbd>⌘Z</kbd> undoes the whole batch.</p>
 
       <h3 id="delete">Delete and the Trash</h3>
-      <p>Select items and press <kbd>Delete</kbd> or <kbd>⌘⌫</kbd> (or <kbd>F8</kbd> with several panes), or choose <b>Delete…</b>.</p>
+      <p>Select items and press <kbd>Delete</kbd> (<kbd>⌦</kbd> on a Mac) or <kbd>⌘⌫</kbd> (or <kbd>F8</kbd> with several panes), or choose <b>Delete…</b>.</p>
       <ul>
         <li>On <b>This computer, Google Drive, OneDrive and Dropbox</b> the item reads <b>Move to Trash</b> (Recycle Bin on Windows). You can restore from the system Trash or the drive's own trash.</li>
         <li>Everywhere else (S3, Azure, GCS, SFTP, FTP, WebDAV), deleting is <b>permanent</b>, and the confirmation says so.</li>
@@ -1023,7 +1023,7 @@
       <p>Linked panes follow each other: open a subfolder in one and the other opens the same subfolder, and going up goes up in both. Handy for comparing a local site with its server copy. Turn it on with <b>Synced browsing with</b>, the command palette, or the small round link button on the divider between two panes. A lit button shows which panes are linked; links can chain across three or more. Click it again, or use the toast, to turn it off.</p>
 
       <h3 id="close-panes">Closing panes</h3>
-      <p><kbd>⌘W</kbd> closes the active pane while several are open (with one pane left, it closes the window). The Panes menu also has <b>Close pane</b> and <b>Close other panes</b>. If a terminal in the pane is busy, Kybl asks first.</p>
+      <p><kbd>⌘W</kbd> closes the active pane while several are open (with one pane left, a Mac closes the window; Windows and Linux do nothing). The Panes menu also has <b>Close pane</b> and <b>Close other panes</b>. If a terminal in the pane is busy, Kybl asks first.</p>
     </section>
 
     <!-- ======================================================= -->
@@ -1099,7 +1099,7 @@
       <h2 id="h-archives">Archives (zip and tar)</h2>
 
       <h3 id="compress">Compress</h3>
-      <p>Select items in one folder, right-click and choose <b>Compress</b>. Kybl makes a <code>.zip</code> named after the item (or "Archive.zip"). Photos, video, music and other already-compressed files are stored as they are, so it's quick.</p>
+      <p>Select items in one folder, right-click and choose <b>Compress “name”</b> (or <b>Compress N items</b> for several). Kybl makes a <code>.zip</code> named after the item (or "Archive.zip"). Photos, video, music and other already-compressed files are stored as they are, so it's quick.</p>
 
       <h3 id="extract">Extract</h3>
       <ul>
@@ -1126,7 +1126,7 @@
       <h3 id="compare-folders">Compare two folders</h3>
       <p>Open the two folders in two panes, then choose <b>Compare with</b> in the pane's <b>…</b> menu (or <b>Compare Folders</b> in the command palette).</p>
       <figure class="shot"><picture><source srcset="/assets/shots/compare-folders-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/compare-folders.webp" alt="The folder comparison summary listing files only on the left, only on the right, newer on one side, and different, with a count of matching files and Compare buttons beside changed text files." loading="lazy"></picture><figcaption>What differs between two folders.</figcaption></figure>
-      <p>Kybl lists what's only on one side, what's newer on one side, what differs, and how many match. Changed text files have a <b>Compare</b> button. It also <b>selects what the other side is missing</b>, so pressing <kbd>F5</kbd> copies it across. Files are compared by size, date and, between S3 buckets, checksum. Subfolders are matched by name only; their contents aren't compared. To bring a whole tree in line, use <a href="#mirror">Mirror</a>.</p>
+      <p>Kybl lists what's only on one side, what's newer on one side, what differs, and how many match. Changed text files have a <b>Compare</b> button. It also <b>selects what the other side is missing</b>, so pressing <kbd>F5</kbd> copies it across. Files are compared by size, date and, between two S3 buckets (not Kybl Storage), checksum. Subfolders are matched by name only; their contents aren't compared. To bring a whole tree in line, use <a href="#mirror">Mirror</a>.</p>
     </section>
 
     <!-- ======================================================= -->
@@ -1140,15 +1140,15 @@
       <ul>
         <li><b>In progress</b>: running, queued and paused transfers, plus running sync and jobs. Each row shows speed, time left and bytes.</li>
         <li><b>Failed</b>: what went wrong, in plain words, with Retry.</li>
-        <li><b>Done</b>: finished items and what was checked. <b>Clear</b> empties it.</li>
+        <li><b>Done</b>: finished items and what was checked. <b>Clear finished</b> empties it.</li>
         <li><b>Log</b>: a readable history of what happened (see below).</li>
         <li><b>Jobs</b>: copies and moves between connections, and mirrors.</li>
       </ul>
 
       <h3 id="pause-retry">Pause, resume, cancel and retry</h3>
       <ul>
-        <li>On each row: pause, resume, cancel, retry, move to the top of the queue, open, or show in Finder or Explorer.</li>
-        <li>In the panel header: <b>Pause all</b>, <b>Resume all</b>, <b>Cancel all</b>, <b>Retry failed</b>, <b>Clear</b> and <b>Clear failed</b>.</li>
+        <li>On each row: pause, resume, cancel, retry, move to the top of the queue, open, or show in Finder, Explorer or Files.</li>
+        <li>In the panel header: <b>Pause all</b>, <b>Resume all</b>, <b>Cancel transfers</b>, <b>Retry failed</b>, <b>Clear finished</b> and <b>Clear failed</b>. Which of them show depends on the tab.</li>
         <li>Each connection has its own queue, so a long upload to one never holds up a download from another.</li>
       </ul>
 
@@ -1159,7 +1159,7 @@
       <h3 id="speed-limits">Speed limits and how many at once</h3>
       <ul>
         <li>Click the gauge in the Activity panel to set a limit: No limit, 1, 5 or 10 MB/s, or Custom. It applies to running transfers immediately.</li>
-        <li><a href="#settings-transfers">Settings → Transfers and sharing</a> has separate <b>Download limit</b> and <b>Upload limit</b>, <b>Files at the same time</b> per connection (1 to 8, default 3) and <b>Parts per file</b> for big files (1 to 8, default 4).</li>
+        <li><a href="#settings-transfers">Settings → Transfers and sharing</a> has separate <b>Download limit</b> and <b>Upload limit</b> (Unlimited, 1, 5, 10, 25 or 50 MB/s, or Custom), <b>Files at the same time</b> per connection (1 to 8, default 3) and <b>Parts per file</b> for big files (1 to 8, default 4).</li>
         <li>Limits are shared by all transfers in that direction and also apply to copy jobs.</li>
       </ul>
 
@@ -1193,7 +1193,7 @@
         <thead><tr><th>Connection</th><th>Share links</th></tr></thead>
         <tbody>
           <tr><td>S3-compatible and Kybl Storage</td><td>Yes. A private link that only works for people who have it, and stops at the time you chose.</td></tr>
-          <tr><td>OneDrive</td><td>Yes. Under an hour it's a temporary download link; longer links are view-only links that expire, public until then.</td></tr>
+          <tr><td>OneDrive</td><td>Yes. Up to an hour it's a temporary download link; longer links are view-only links that expire, public until then.</td></tr>
           <tr><td>Dropbox</td><td>Yes. Up to 4 hours it's a temporary link; longer links are public links that expire (needs a paid Dropbox plan).</td></tr>
           <tr><td>Google Drive</td><td>No. Drive links are permanent public permissions, so Kybl doesn't make them.</td></tr>
           <tr><td>Azure, Google Cloud Storage, SFTP, FTP, WebDAV, This computer</td><td>No.</td></tr>
@@ -1236,7 +1236,7 @@
         <li><b>Mirror deletions</b> (one-way only, off by default): deleting a file on one side deletes it on the other. With it off, an upload sync keeps everything you ever uploaded, which makes it a simple backup. In download mode, local files go to the Trash, and files you edited locally are never removed. Two-way sync always passes deletions on, behind the guard below.</li>
         <li><b>Keep deleted files in a trash folder</b>: for connections without their own trash, deleted files go to a dated <code>.kybl-trash</code> folder in the remote folder. On by default for two-way.</li>
         <li><b>Ask before big deletions</b> (on by default): if a sync would delete more than 50 files and more than a fifth of the folder, it stops and asks. A side that suddenly looks empty is always checked with you.</li>
-        <li><b>Full check every</b> 1 minute, 5 minutes (default), 15 minutes or 1 hour. Local changes go over right away; this is how often the other side is looked at, since most storage can't announce changes.</li>
+        <li><b>Full check every</b> 1 minute, 5 minutes (default), 15 minutes or 1 hour (in download mode it's called <b>Check for changes every</b>). Local changes go over right away; this is how often the other side is looked at, since most storage can't announce changes.</li>
         <li><b>Ignore</b>: patterns to skip, one per line, like a <code>.gitignore</code>. The defaults skip <code>.DS_Store</code>, <code>Thumbs.db</code>, <code>desktop.ini</code>, temporary files, <code>.git/</code> and <code>node_modules/</code>. <b>Reset to defaults</b> brings them back.</li>
       </ul>
 
@@ -1560,10 +1560,10 @@
 
       <h3 id="phone-backup">Photo backup</h3>
       <ol class="steps">
-        <li>Tap the <b>Photo backup</b> card on Home (or Settings → Photo backup).</li>
-        <li>Choose what to back up: the <b>camera roll</b> or folders you pick.</li>
+        <li>Tap the <b>Back up your photos</b> card on Home (or Settings → Photo backup).</li>
+        <li>Choose what to back up: the <b>camera roll</b> or a folder you pick (one folder per backup; add more backups for more folders).</li>
         <li>Choose where it should go: any connection and folder.</li>
-        <li>Choose a folder layout: by year and month (default), by day, by phone name, all in one folder, or the same folders as on the phone.</li>
+        <li>Choose a folder layout: year and month (default), year, month and day, phone name then year and month (camera roll only), all in one folder, or the same folders as on the phone (folders only).</li>
         <li>Choose the options and when it runs.</li>
       </ol>
       <ul>
@@ -1607,7 +1607,7 @@
       <h3 id="update-install">Installing an update</h3>
       <p>When a version is available, a card appears in the corner: "Kybl x.y.z is available". Choose:</p>
       <ul>
-        <li><b>Update and restart</b> to install it now. If transfers are running, the button says so and becomes <b>Restart and stop transfers</b>.</li>
+        <li><b>Update and restart</b> to install it now. Kybl downloads and installs the update, then restarts. If transfers are running or a terminal is busy, it waits instead, and the button becomes <b>Restart and stop transfers</b> (or <b>Restart and close terminals</b>).</li>
         <li><b>Later</b> to be reminded next launch, or <b>Skip</b> to ignore this version.</li>
         <li><b>What's new</b> to read the release notes.</li>
       </ul>
@@ -1681,7 +1681,7 @@
           <tr><td class="k"><kbd>⌥⌘N</kbd></td><td>New file</td></tr>
           <tr><td class="k"><kbd>⌘U</kbd> / <kbd>⇧⌘U</kbd></td><td>Upload files / a folder</td></tr>
           <tr><td class="k"><kbd>⇧⌘D</kbd></td><td>Download</td></tr>
-          <tr><td class="k"><kbd>Delete</kbd> or <kbd>⌘⌫</kbd></td><td>Delete or move to Trash</td></tr>
+          <tr><td class="k"><kbd>Delete</kbd> (<kbd>⌦</kbd> on a Mac) or <kbd>⌘⌫</kbd></td><td>Delete or move to Trash</td></tr>
           <tr><td class="k"><kbd>⌥</kbd> while dragging</td><td>Copy instead of move</td></tr>
         </tbody>
       </table></div>
@@ -1691,7 +1691,7 @@
         <thead><tr><th>Keys</th><th>Action</th></tr></thead>
         <tbody>
           <tr><td class="k"><kbd>⌘\</kbd> / <kbd>⇧⌘\</kbd></td><td>Split right / down</td></tr>
-          <tr><td class="k"><kbd>⌘W</kbd></td><td>Close the pane (with one pane, the window)</td></tr>
+          <tr><td class="k"><kbd>⌘W</kbd></td><td>Close the pane (with one pane, a Mac closes the window)</td></tr>
           <tr><td class="k"><kbd>⌥⌘</kbd> + arrow</td><td>Go to the pane on that side</td></tr>
           <tr><td class="k"><kbd>Tab</kbd></td><td>Switch pane</td></tr>
           <tr><td class="k"><kbd>⇧⌘S</kbd></td><td>Swap panes</td></tr>

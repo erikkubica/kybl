@@ -15,7 +15,7 @@ side by side.
 <a href="../../releases/latest"><b>Download</b></a>
 </p>
 
-<a href="https://kybl.app/features/#shot-app-browse"><picture><source media="(prefers-color-scheme: dark)" srcset="website/assets/shots/app-browse-dark.webp"><img src="website/assets/shots/app-browse.webp" alt="Kybl with three panes: photos in a Hetzner bucket, the files of an SFTP server, and an SSH terminal on the server below"></picture></a>
+<a href="https://kybl.app/features/#shot-app-browse"><picture><source media="(prefers-color-scheme: dark)" srcset="website/assets/shots/app-browse-dark.webp"><img src="website/assets/shots/app-browse.webp" alt="Kybl with three panes: photos in a Hetzner bucket, the files of an SFTP server, and an SSH terminal below"></picture></a>
 
 <table>
 <tr>
@@ -67,15 +67,15 @@ from **Help** (F1, or ⇧⌘/ on a Mac) and from the **?** in its dialogs.
   images, video, audio, PDF, text and documents, with the file's details, share link and actions.
 - **Edit**: text and code open in Kybl's own editor and Save uploads them; Edit opens a file in
   any app and uploads every save, or only when the server's copy hasn't changed.
-- **Files**: upload, download, rename, batch rename, duplicate, new file and folder, delete with
-  undo, drag and drop (also from Finder or Explorer), name clashes asked once, archives opened like
+- **Files**: upload, download, rename, batch rename, duplicate, new file and folder, delete (to the
+  Trash or Recycle Bin where there is one), undo for moves, renames and copies, drag and drop (also from Finder or Explorer), name clashes asked once, archives opened like
   folders, compressed and extracted, folder sizes on demand, share links.
 - **Copy / Move to…**: a folder, a bucket or a whole connection to any other, as jobs that
   continue after a restart.
 - **Mirror**: check what would be copied, deleted or left alone, then mirror; saved mirrors run
   again with one click.
 - **Folder sync**: upload, download or two-way, from the menu bar with the window closed;
-  conflicts kept as copies, deletions opt-in and confirmed when many go at once.
+  conflicts kept as copies, deletions opt-in in one-way sync and held for your OK when many go at once.
 - **Mount as a drive** (macOS and Linux), **custom actions** (your own shell commands in the menu,
   with shortcuts) and **transfers** with speed, time left, pause, speed limits, retry and
   verify-after-copy.
@@ -167,7 +167,7 @@ Download the latest build from [Releases](../../releases).
 ## Releasing
 1. Bump the version in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`.
 2. `git tag v0.6.0 && git push --tags`. The `Release` workflow builds macOS (Apple Silicon and
-   Intel), Windows, Linux and an unsigned iOS `.ipa` (plus `altstore-source.json`, made by
+   Intel), Windows, Linux, an Android `.apk` and an unsigned iOS `.ipa` (plus `altstore-source.json`, made by
    `scripts/altstore-source.mjs`) and attaches everything to a **draft** release. Publish it when it looks right.
 
 macOS signing needs two repository secrets (Settings → Secrets and variables → Actions):
@@ -180,6 +180,9 @@ macOS signing needs two repository secrets (Settings → Secrets and variables �
 Without them the macOS build is ad-hoc signed, which works but makes the keychain ask again after every update.
 To make a certificate: create a key and a self-signed certificate with the `codeSigning` extended key usage
 and export both as a `.p12`. Keep a backup: a new certificate means every user gets one more keychain prompt.
+
+The Android build needs three more: `ANDROID_KEYSTORE` (the release `.jks`, base64-encoded), `ANDROID_KEYSTORE_PASSWORD` and
+`ANDROID_KEY_ALIAS`, and without `ANDROID_KEYSTORE` that job fails. Every release must use the same key, or Android refuses to install the update.
 
 ## Notes
 - S3 has no server-side image resizing, so thumbnails are made in the app. Video thumbnails are not generated yet.
