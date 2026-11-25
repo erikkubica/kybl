@@ -126,11 +126,16 @@ export function shellQuote(s: string): string | null {
 /** How a shell on this computer wants a path typed (the backend says, `terminal_open`). */
 export type Quoting = "posix" | "powershell" | "cmd" | "wsl";
 
-/** A Windows path as WSL sees it: `C:\a\b` is `/mnt/c/a/b`; null for one it can't reach that way (a network share). */
+/**
+ * A Windows path as WSL sees it: `C:\a\b` is `/mnt/c/a/b`, `\\wsl$\Ubuntu\home` is `/home`; null
+ * for one it can't reach that way (a network share, a drive-relative `C:foo`).
+ */
 export function wslPath(p: string): string | null {
-  const m = /^([A-Za-z]):[\\/]*(.*)$/.exec(p);
+  const own = /^[\\/]{2}(?:wsl\$|wsl\.localhost)[\\/][^\\/]+(.*)$/i.exec(p);
+  if (own) return own[1].replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  const m = /^([A-Za-z]):(?:[\\/]+(.*))?$/.exec(p);
   if (!m) return null;
-  return `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, "/")}`.replace(/\/+$/, "") || "/";
+  return `/mnt/${m[1].toLowerCase()}/${(m[2] ?? "").replace(/\\/g, "/")}`.replace(/\/+$/, "");
 }
 
 /**

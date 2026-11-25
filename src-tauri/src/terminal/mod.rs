@@ -336,6 +336,9 @@ async fn open_local<R: Runtime>(
             let Some(sh) = pty::pick_shell(shell) else { return Err("No shell was found on this computer (PowerShell or Command Prompt).".into()) };
             (sh.program, sh.args.into_iter().map(std::ffi::OsStr::new).collect::<Vec<_>>(), sh.quoting, [("TERM", "xterm-256color".to_string()), ("COLORTERM", "truecolor".to_string()), ("TERM_PROGRAM", "Kybl".to_string())])
         };
+        // Command Prompt can't start in a network folder (it falls back to C:\Windows): home instead
+        #[cfg(windows)]
+        let cwd = if quoting == "cmd" && cwd.as_os_str().to_string_lossy().starts_with(r"\\") { std::env::var_os(home).map(Into::into).unwrap_or(cwd) } else { cwd };
         let (pty, ev) = pty::Pty::spawn(&program, &args, &cwd, &env, cols, rows, batch::QUEUE).map_err(|e| format!("Couldn't start {}. {e}", program.display()))?;
         Ok((tokio::spawn(run_pty(pty, ev, cmds, out, exit)).abort_handle(), quoting))
     }

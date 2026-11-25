@@ -50,6 +50,11 @@ impl Console {
         let Some(hpc) = self.0.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
         let _ = std::thread::Builder::new().name("kybl-pty-close".into()).spawn(move || unsafe { ClosePseudoConsole(hpc) });
     }
+    /// Closes it here, returning once it has handed over its last output (a thread that may block).
+    fn close_now(&self) {
+        let Some(hpc) = self.0.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+        unsafe { ClosePseudoConsole(hpc) };
+    }
 }
 
 /// A program running on a pseudo console.
@@ -129,7 +134,8 @@ impl Pty {
         let mut hpc: HPCON = 0;
         let hr = unsafe { CreatePseudoConsole(coord(cols, rows), in_r.as_raw_handle() as HANDLE, out_w.as_raw_handle() as HANDLE, 0, &mut hpc) };
         if hr < 0 {
-            return Err(io::Error::from_raw_os_error(hr));
+            // an HRESULT, not a Win32 error code
+            return Err(io::Error::other(format!("The pseudo console didn't start (0x{:08x}).", hr as u32)));
         }
         let console = Arc::new(Console(Mutex::new(Some(hpc))));
         // the console has its own copies of these now
@@ -172,8 +178,9 @@ impl Pty {
                 }
             }
             done.store(true, Ordering::SeqCst);
-            // the shell is gone: the console hands over what it still shows and its pipe breaks
-            con2.close();
+            // the shell is gone: the console hands over what it still shows and its pipe breaks,
+            // and only then is the exit told, so the last lines aren't cut off
+            con2.close_now();
             let _ = exit_tx.send(code);
         })?;
 
@@ -316,8 +323,9 @@ fn has_child(pid: u32) -> bool {
     const HELPERS: [&str; 3] = ["conhost.exe", "openconsole.exe", "wslhost.exe"];
     unsafe {
         let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        // when in doubt, busy: closing then asks first
         if snap == INVALID_HANDLE_VALUE || snap.is_null() {
-            return false;
+            return true;
         }
         let _snap = OwnedHandle::from_raw_handle(snap as _);
         let mut e: PROCESSENTRY32W = std::mem::zeroed();
@@ -358,7 +366,8 @@ fn env_dir(var: &str) -> Option<PathBuf> {
 
 /// `exe` in a folder on PATH.
 fn on_path(exe: &str) -> Option<PathBuf> {
-    std::env::split_paths(&std::env::var_os("PATH")?).map(|d| d.join(exe)).find(|p| p.is_file())
+    // only absolute folders: a relative one would find a program in the app's working folder
+    std::env::split_paths(&std::env::var_os("PATH")?).filter(|d| d.is_absolute()).map(|d| d.join(exe)).find(|p| p.is_file())
 }
 
 /// The shells installed here, the default first: PowerShell 7, else Windows PowerShell.
@@ -382,7 +391,7 @@ pub fn shells() -> Vec<ShellOption> {
     if wsl.is_file() {
         out.push(ShellOption { id: "wsl", name: "WSL", program: wsl, args: vec![], quoting: "wsl" });
     }
-    let git_bash = [program_files.join(r"Git\bin\bash.exe"), env_dir("LOCALAPPDATA").unwrap_or_default().join(r"Programs\Git\bin\bash.exe")].into_iter().find(|p| p.is_file());
+    let git_bash = [Some(program_files.join(r"Git\bin\bash.exe")), env_dir("LOCALAPPDATA").map(|d| d.join(r"Programs\Git\bin\bash.exe"))].into_iter().flatten().find(|p| p.is_file());
     if let Some(p) = git_bash {
         out.push(ShellOption { id: "gitbash", name: "Git Bash", program: p, args: vec!["--login", "-i"], quoting: "posix" });
     }

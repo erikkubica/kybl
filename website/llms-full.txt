@@ -19,7 +19,7 @@ Presets fill in endpoints, regions and each provider's quirks, and every connect
 - Previews in place: images, video, audio, PDF and text open in Quick Look (Space), with Get Info (Cmd+I).
 - Edit anywhere (desktop): open a remote file in any app; each save uploads back, and with the recommended setting a change on the server meanwhile stops the upload so you can overwrite, keep both or reload. Files up to 100 MB. Kybl also has its own editor.
 - Archives and diffs: zip and unzip (on the server over SSH when it can), open archives like folders, compare two files or two folders.
-- Search that digs: paged loading for folders with 100,000+ items, search through every subfolder, and search inside files on your computer and SSH or SFTP servers.
+- Search that digs: paged loading for folders with hundreds of thousands of items, search through every subfolder, and search inside files on your computer and SSH or SFTP servers.
 - Transfer queue: speed and time left, pause, speed limits, retry, resume after a restart on most connections, and optional size or checksum checks.
 - Share links: expiring links on S3, OneDrive and Dropbox.
 - Command palette (Cmd+K) and keyboard shortcuts for everything.
@@ -31,7 +31,7 @@ Presets fill in endpoints, regions and each provider's quirks, and every connect
 
 - Works with every connection: browse, upload, download, delete, copy and move between connections, thumbnails and Quick Look, zip and unzip, search subfolders by name. In the computer app also: folder sync and mirror, editing in your own app, and mounting as a drive (macOS and Linux).
 - Rename: S3, Azure and Google Cloud Storage rename by copying, so it is slower. The others rename directly.
-- Copy inside a connection without downloading: S3, Azure and Google Cloud Storage (same container), Google Drive, OneDrive, Dropbox, WebDAV and your computer. Not SFTP or FTP.
+- Copy inside a connection without downloading: S3, Azure and Google Cloud Storage (same container), Google Drive, OneDrive (same drive), Dropbox, WebDAV and your computer. Not SFTP or FTP.
 - Uploads continue after a restart: S3, Google Drive, OneDrive, Dropbox, SFTP and FTP. On Azure, Google Cloud Storage and WebDAV the upload starts again.
 - Share links that expire: S3 (only people with the link can open it), OneDrive and Dropbox (public until the link ends, if it lasts over 1 hour on OneDrive or 4 hours on Dropbox; Dropbox needs a paid plan for this). Not Google Drive, Azure, Google Cloud Storage, SFTP, FTP or WebDAV.
 - Deleted files can be restored: Google Drive, OneDrive, Dropbox and your computer. On the others, delete is permanent.

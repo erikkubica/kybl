@@ -15,7 +15,7 @@ import { menuFromKey } from "../desktop/menuKeyWatch";
 import { onTrustSaved, trustOnProfile } from "../connections/ConnFix";
 import { splitDavUrl } from "../connections/serverHost";
 import { flushSync } from "react-dom";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { REMOTE_TERM_DROP, useTerminalPanes } from "../terminal/useTerminalPanes";
 import { canTerminal, terminalBusy } from "../terminal/api";
 import { LOCAL_PROFILE } from "../browser/types";
@@ -38,7 +38,7 @@ import { UpdateBanner } from "../components/UpdateBanner";
 import { KYBL } from "../kybl";
 import { useSyncOverall } from "../sync";
 import { useUpdates } from "../updates";
-import { applySettings, isDark, loadSettings, saveSettings, type Favorite, type Settings } from "../settings";
+import { applySettings, loadSettings, saveSettings, systemIsDark, watchSystemDark, type Favorite, type Settings } from "../settings";
 import { undoStack } from "../desktop/undo";
 import { usePane, type Pane, type PaneEnv } from "../browser/usePane";
 import { BrowserPane } from "../browser/BrowserPane";
@@ -180,6 +180,8 @@ export function AppShell() {
   // the Activity panel's tab: transfers and moves, or copies between connections (Jobs)
   const [activityTab, setActivityTab] = useState<ActivityTab>("activity");
   const [settings, setSettings] = useState<Settings>(loadSettings);
+  const sysDark = useSyncExternalStore(watchSystemDark, systemIsDark);
+  const dark = settings.theme === "dark" || (settings.theme === "system" && sysDark);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // a counter with the page, so asking again for the same page (tray "Sync settings…") goes back to it
   const [settingsPage, setSettingsPage] = useState<{ page?: SettingsPageId; n: number }>({ n: 0 });
@@ -783,17 +785,22 @@ export function AppShell() {
   };
   /**
    * Where a new pane can go when the way asked for (`dir` of pane `id`) has no room: that pane the
-   * other way, else the roomiest other pane either way, so a 2 + 1 layout becomes 2 + 2 rather
+   * other way, else the nearest other pane either way, so a 2 + 1 layout becomes 2 + 2 rather
    * than refusing. One that fits as it is beats one that needs the sidebar folded; null: nowhere.
    */
   const roomyPlace = (dir: Dir, id: PaneId): { dir: Dir; id: PaneId; room: "ok" | "fold" } | null => {
     const t = treeRef.current;
     const other: Dir = dir === "row" ? "col" : "row";
-    const area = (x: PaneId) => {
-      const el = document.querySelector<HTMLElement>(`[data-pane="${x}"]`);
-      return el ? el.clientWidth * el.clientHeight : 0;
+    const centre = (x: PaneId) => {
+      const r = document.querySelector<HTMLElement>(`[data-pane="${x}"]`)?.getBoundingClientRect();
+      return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
     };
-    const rest = leaves(t).filter((x) => x !== id).sort((a, b) => area(b) - area(a));
+    const from = centre(id);
+    const far = (x: PaneId) => {
+      const c = centre(x);
+      return c && from ? Math.hypot(c.x - from.x, c.y - from.y) : Infinity;
+    };
+    const rest = leaves(t).filter((x) => x !== id).sort((a, b) => far(a) - far(b));
     const tries = [{ dir, id }, { dir: other, id }, ...rest.flatMap((x) => [{ dir, id: x }, { dir: other, id: x }])].map((c) => ({ ...c, r: splitRoom(c.dir, c.id) }));
     const pick = tries.find((c) => c.r.ok === "ok") ?? tries.find((c) => c.r.ok === "fold");
     return pick && pick.r.ok !== "no" ? { dir: pick.dir, id: pick.id, room: pick.r.ok } : null;
@@ -829,7 +836,7 @@ export function AppShell() {
     } else p.showConnection(src.profile?.id ?? null);
     if (p.view !== src.view) p.setView(src.view);
     keepScrolls();
-    setTree(splitPane(t, at.id, at.dir, fresh, place ? place.id === id && place.dir === dir && before : before));
+    setTree(splitPane(t, at.id, at.dir, fresh, place ? place.id === id && before : before));
     setActiveId(fresh);
     focusSoon(fresh);
   };
@@ -2467,8 +2474,12 @@ export function AppShell() {
           onReorder={moveWorkspace}
           switcher={paneSwitcher}
           onFind={palette.toggle}
-          dark={isDark(settings)}
-          onTheme={() => updateSettings({ theme: isDark(settings) ? "light" : "dark" })}
+          dark={dark}
+          onTheme={() => {
+            // back to the OS's own look means following the OS again
+            const want = dark ? "light" : "dark";
+            updateSettings({ theme: want === (sysDark ? "dark" : "light") ? "system" : want });
+          }}
           drop={paneDrag.tabDrop ?? fileDrag.tabDrop ?? finderTab}
         />
         {paneDrag.view}

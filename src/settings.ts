@@ -207,6 +207,13 @@ function applyTheme() {
 // follow the OS while the theme is set to "System"
 systemDark.addEventListener("change", applyTheme);
 
+/** Subscribes to the OS switching light / dark (for useSyncExternalStore). */
+export function watchSystemDark(cb: () => void): () => void {
+  systemDark.addEventListener("change", cb);
+  return () => systemDark.removeEventListener("change", cb);
+}
+export const systemIsDark = () => systemDark.matches;
+
 /** Pushes the settings into the document (and the native window where that applies). */
 export function applySettings(s: Settings) {
   current = s;

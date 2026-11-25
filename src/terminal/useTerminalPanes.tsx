@@ -49,6 +49,10 @@ import {
   type TermSpec,
 } from "./api";
 
+// a name with control characters (or one this shell can't take, like `%` in Command Prompt)
+const CANT_TYPE = "That name can't be typed into this shell, so it isn't pasted.";
+const CANT_TYPE_SOME = "Names this shell can't take were left out.";
+
 export type Terms = Partial<Record<PaneId, TermSpec>>;
 
 /** Files from Finder / Explorer dropped on a terminal of a server: their paths mean nothing there. */
@@ -147,32 +151,36 @@ export function useTerminalPanes(initial: Layout) {
     gen.current.set(t.sid, n);
     const stale = () => gen.current.get(t.sid) !== n || termsRef.current[id]?.sid !== t.sid || !termsRef.current[id]?.follow;
     if (to.profileId !== t.profileId || (t.profileId !== LOCAL_PROFILE && to.bucket !== t.bucket)) return note(t.sid, "not following: another place");
+    const local = t.profileId === LOCAL_PROFILE;
+    // on this computer: the raw path, quoted only once the shell is up and has said its kind
+    let raw: string | null = null;
     let path: string | null = null;
-    // a name with control characters would act as keys when typed: not followed
-    let untypeable = false;
-    const q: Quoting = t.profileId === LOCAL_PROFILE ? terminalQuoting(t.sid) : "posix";
-    if (t.profileId === LOCAL_PROFILE) {
-      const p = await api.localPath(to.profileId, to.bucket, to.prefix.replace(/\/+$/, "")).catch(() => null);
-      if (p) path = quoteAs(q, p);
-      untypeable = !!p && path == null;
+    if (local) {
+      raw = await api.localPath(to.profileId, to.bucket, to.prefix.replace(/\/+$/, "")).catch(() => null);
+      if (!raw || stale()) return;
     } else {
       const base = terminalRemoteBase(t.sid);
-      if (base != null) {
-        path = remotePath(base, to.prefix);
-        untypeable = path == null;
-      }
+      if (base == null || stale()) return;
+      path = remotePath(base, to.prefix);
+      if (path == null) return note(t.sid, "not following: the folder name has control characters");
     }
-    if (untypeable && !stale()) return note(t.sid, "not following: the folder name has control characters");
-    if (!path || stale()) return;
-    // csh and tcsh expand `!` even inside single quotes, and the shell's kind isn't known here
-    // (the backend's remote_cd decides that for a fresh shell): such a name would run as history
-    if ((q === "posix" || q === "wsl") && path.includes("!")) return note(t.sid, "not following: `!` in the folder name");
     for (let i = 0; ; i++) {
       if (await terminalIdle(t.sid)) break;
       if (stale()) return;
       if (i >= 6) return note(t.sid, "not following: busy");
       await new Promise((r) => setTimeout(r, 120));
     }
+    if (stale()) return;
+    const q: Quoting | null = local ? terminalQuoting(t.sid) : "posix";
+    if (!q) return;
+    if (local) {
+      path = quoteAs(q, raw!);
+      if (path == null) return note(t.sid, "not following: this shell can't take that folder name");
+    }
+    if (!path) return;
+    // csh and tcsh expand `!` even inside single quotes, and the shell's kind isn't known here
+    // (the backend's remote_cd decides that for a fresh shell): such a name would run as history
+    if ((q === "posix" || q === "wsl") && path.includes("!")) return note(t.sid, "not following: `!` in the folder name");
     if (stale() || !typeIntoTerminal(t.sid, cdLine(q, path))) return;
     note(t.sid, null);
     setTerms((cur) => (cur[id]?.sid === t.sid ? { ...cur, [id]: { ...cur[id]!, bucket: to.bucket, prefix: to.prefix } } : cur));
@@ -420,6 +428,7 @@ export function useTerminalPanes(initial: Layout) {
     if (t.profileId === LOCAL_PROFILE) {
       const got = await Promise.all(items.map((e) => api.localPath(from.profileId, from.bucket, e.key.replace(/\/+$/, "")).catch(() => null)));
       const q = terminalQuoting(t.sid);
+      if (!q) return host.current?.toast("info", "The terminal is still starting. Drop it again in a moment.");
       quoted = got.filter((p): p is string => !!p).map((p) => quoteAs(q, p));
     } else {
       const base = terminalRemoteBase(t.sid);
@@ -429,7 +438,7 @@ export function useTerminalPanes(initial: Layout) {
     // names with control characters would act as keys (or end the bracketed paste): left out
     const paths = quoted.filter((p): p is string => p != null);
     if (paths.length < quoted.length) {
-      host.current?.toast("info", paths.length ? "Names with control characters were left out." : "That name has control characters, so it isn't pasted into the terminal.");
+      host.current?.toast("info", paths.length ? CANT_TYPE_SOME : CANT_TYPE);
     }
     if (!paths.length) return;
     const why = termWriteWhy(writeToTerminal(pane, `${paths.join(" ")} `));
@@ -447,9 +456,10 @@ export function useTerminalPanes(initial: Layout) {
     if (!t) return undefined;
     if (t.profileId !== LOCAL_PROFILE) return REMOTE_TERM_DROP;
     const q = terminalQuoting(t.sid);
+    if (!q) return "The terminal is still starting. Drop it again in a moment.";
     const quoted = paths.map((p) => quoteAs(q, p)).filter((p): p is string => p != null);
-    if (!quoted.length) return "That name has control characters, so it isn't pasted into the terminal.";
-    if (quoted.length < paths.length) host.current?.toast("info", "Names with control characters were left out.");
+    if (!quoted.length) return CANT_TYPE;
+    if (quoted.length < paths.length) host.current?.toast("info", CANT_TYPE_SOME);
     const why = termWriteWhy(writeToTerminal(pane, `${quoted.join(" ")} `));
     if (why) return why;
     host.current?.setActive(pane);

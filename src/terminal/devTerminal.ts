@@ -106,7 +106,7 @@ export async function handleTerminal(cmd: string, a: any, profiles: Profile[]): 
         else if (!SHOTS) send(f, `Kybl mock shell on ${p?.name ?? ON_OS.device} (${a.cols}x${a.rows})\r\n`);
         prompt(f);
       }, 10);
-      return { id, remoteBase: base };
+      return { id, remoteBase: base, quoting: a.profileId === "local" ? "posix" : null };
     }
     case "terminal_write": {
       const f = live.get(a.id);

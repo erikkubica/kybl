@@ -35,8 +35,19 @@ fn setup(conn: &mut Connection, migrations: &[&str]) -> Result<(), String> {
     let e = |e: rusqlite::Error| format!("Database setup failed: {e}");
     // another connection (or a crashed process's leftover lock) may hold the file briefly
     conn.busy_timeout(Duration::from_secs(5)).map_err(e)?;
-    // answers the new mode ("memory" for in-memory databases), so read it as a row
-    conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(())).map_err(e)?;
+    // answers the new mode ("memory" for in-memory databases), so read it as a row. Switching a
+    // fresh file to WAL while another process does the same can answer "locked" at once, without
+    // waiting on the busy timeout: tried again for a while
+    let mut tries = 0;
+    loop {
+        match conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(())) {
+            Err(rusqlite::Error::SqliteFailure(f, _)) if f.code == rusqlite::ErrorCode::DatabaseBusy && tries < 100 => {
+                tries += 1;
+                std::thread::sleep(Duration::from_millis(20 + tries % 7 * 5));
+            }
+            r => break r.map_err(e)?,
+        }
+    }
     conn.execute_batch("PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;").map_err(e)?;
     migrate(conn, migrations)
 }

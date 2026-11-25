@@ -223,6 +223,8 @@ class Session {
     this.state = "starting";
     this.unacked = 0;
     this.clearPending();
+    // the shell that starts now may be another kind (Settings › Terminal shell)
+    this.quoting = null;
     // "don't ask again" was for the shell that ran before
     setPasteTrust(this.spec.sid, false);
     const ch = new Channel<Msg>();
@@ -300,11 +302,12 @@ class Session {
   }
 
   /**
-   * Whether closing it would end a program: This Mac asks the terminal; a server can't say, so
+   * Whether closing it would end a program: This Mac asks the terminal; a server (or WSL) can't say, so
    * a shell that isn't waiting at its prompt counts as busy (an `apt upgrade`, a `vim`).
    */
   async ending(): Promise<boolean | null> {
-    if (this.remoteBase == null) return this.busy();
+    // WSL's programs are Linux processes Windows can't see: judged by the prompt, like a server
+    if (this.remoteBase == null && this.quoting !== "wsl") return this.busy();
     return this.state === "running" && !(await this.idle());
   }
 

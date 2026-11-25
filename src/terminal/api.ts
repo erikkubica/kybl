@@ -54,7 +54,11 @@ export type ShellChoice = { id: string; name: string };
 let shellList: Promise<ShellChoice[]> | null = null;
 /** The shells installed here, the default first (empty on macOS and Linux: the login shell runs). */
 export function terminalShells(): Promise<ShellChoice[]> {
-  shellList ??= invoke<ShellChoice[]>("terminal_shells").catch(() => []);
+  // a failed lookup isn't kept: the next ask tries again
+  shellList ??= invoke<ShellChoice[]>("terminal_shells").catch(() => {
+    shellList = null;
+    return [];
+  });
   return shellList;
 }
 
@@ -212,9 +216,9 @@ export function terminalRemoteBase(sid: string) {
   return impl?.remoteBase(sid);
 }
 
-/** How terminal `sid` on this computer wants paths typed ("posix" until it says). */
-export function terminalQuoting(sid: string): Quoting {
-  return impl?.quoting(sid) ?? "posix";
+/** How terminal `sid` on this computer wants paths typed; null until its shell is up and has said. */
+export function terminalQuoting(sid: string): Quoting | null {
+  return impl?.quoting(sid) ?? null;
 }
 
 /** Sends `text` to session `sid` as typed keys, without taking the keyboard; false when it isn't running. */

