@@ -81,7 +81,7 @@ export function PaneBanners({ pane }: { pane: Pane }) {
             </span>
           )}
           <button className="btn btn-sm" onClick={() => actions.doSearch(ent.query.trim())}>
-            Include subfolders
+            Include folders
           </button>
         </div>
       )}
