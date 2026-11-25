@@ -414,6 +414,9 @@ kbd { font: 600 13px/1 var(--mono); min-width: 28px; height: 28px; padding: 0 8p
 .tour-copy h3 { font: 600 28px/1.15 var(--display); }
 .tour-copy p { color: var(--dim); max-width: 46ch; }
 .tour-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+/* on the grey band the hairline outline all but disappears */
+.tour-links .btn-line, .g-end .btn-line { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--fg) 28%, transparent); }
+.tour-links .btn-line:hover, .g-end .btn-line:hover { box-shadow: inset 0 0 0 2px var(--fg); }
 @media (max-width: 860px) {
   .tour { grid-template-columns: 1fr; }
   .tour-shot:nth-child(2), .tour-shot:nth-child(3) { display: none; }
