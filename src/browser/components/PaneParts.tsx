@@ -70,7 +70,7 @@ export function PaneBanners({ pane }: { pane: Pane }) {
         <div className="banner">
           <Icon name={regexProblem(filter, ent.sr.regex) ? "alert" : "search"} size={14} />
           {regexProblem(filter, ent.sr.regex) ? (
-            <span>Not a working regular expression: {regexProblem(filter, ent.sr.regex)}</span>
+            <span>Invalid expression: {regexProblem(filter, ent.sr.regex)}</span>
           ) : (
             <span>
               <strong>
