@@ -394,6 +394,9 @@ kbd { font: 600 13px/1 var(--mono); min-width: 28px; height: 28px; padding: 0 8p
 .matrix th:first-child { position: sticky; left: 0; background: var(--card); z-index: 1; padding-left: 20px; }
 .matrix tbody tr:last-child > * { border-bottom: 0; }
 .matrix .grp th { font: 700 12px/1 var(--body); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); padding-top: 22px; text-align: left; }
+/* the heading spans every column, so the cell itself can't stick: its words do, beside the names */
+.matrix .grp th { position: static; }
+.matrix .grp th span { position: sticky; left: 20px; display: inline-block; }
 .matrix .y::before { content: ""; display: inline-block; width: 12px; height: 7px; border-left: 2.5px solid var(--leaf); border-bottom: 2.5px solid var(--leaf); transform: translateY(-3px) rotate(-45deg); }
 .matrix .n { color: var(--line); }
 .matrix .n::before { content: "–"; color: var(--dim); opacity: 0.55; }

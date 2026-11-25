@@ -18,6 +18,7 @@ Presets fill in endpoints, regions and each provider's quirks, and every connect
 - Thumbnails in a blink: Cloud drives hand over their own thumbnails; elsewhere a JPEG's embedded EXIF thumbnail is read from only the first 256 KB when it has one, otherwise the image is fetched and resized. Thumbnails are cached on disk.
 - Previews in place: images, video, audio, PDF and text open in Quick Look (Space), with Get Info (Cmd+I).
 - Edit anywhere (desktop): open a remote file in any app; each save uploads back, and with the recommended setting a change on the server meanwhile stops the upload so you can overwrite, keep both or reload. Files up to 100 MB. Kybl also has its own editor.
+- Batch rename: rename many files at once with a pattern (name, number, date, extension) or find and replace (regex too), with a preview that flags clashes.
 - Archives and diffs: zip and unzip (on the server over SSH when it can), open archives like folders, compare two files or two folders.
 - Search that digs: paged loading for folders with hundreds of thousands of items, search through every subfolder, and search inside files on your computer and SSH or SFTP servers.
 - Transfer queue: speed and time left, pause, speed limits, retry, resume after a restart on most connections, and optional size or checksum checks.
