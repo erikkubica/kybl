@@ -94,7 +94,7 @@ export const DEFAULTS: Settings = {
   autoOpenTransfers: true,
   // thumbnails: placeholders alone show nothing for photos nobody has thumbnailed yet (most
   // existing libraries), which reads as broken; slow connections can pick Placeholders
-  imageMode: "full",
+  imageMode: "off",
   downloadAsk: true,
   favorites: [],
   columns: ["size", "modified", "kind"],

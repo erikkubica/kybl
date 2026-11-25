@@ -290,8 +290,7 @@ function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info"
 }
 
 const PHOTOS_HINT =
-  "Off: file icons only, nothing is downloaded. Placeholders: a blurry preview of each photo where one is known, no thumbnail downloads (good on a slow line). Thumbnails: the blurry preview at once, then the thumbnail, downloaded once and kept on disk. " +
-  "Right-click a connection to give it its own setting, or to share placeholders: that writes a small hidden file into each photo folder you open, so your other devices show placeholders straight away.";
+  "Previews for photos in lists. Off shows plain file icons. Placeholders are light, blurry previews. Thumbnails download each photo's preview once. A connection can have its own setting: right-click it.";
 
 function Row({ label, hint, stack, children }: { label: ReactNode; hint?: string; stack?: boolean; children?: ReactNode }) {
   return (
