@@ -290,7 +290,7 @@ function UpdatesRows({ onToast }: { onToast: (kind: "success" | "error" | "info"
 }
 
 const PHOTOS_HINT =
-  "Previews for photos in lists. Off shows plain file icons. Placeholders are light, blurry previews. Thumbnails download each photo's preview once. A connection can have its own setting: right-click it.";
+  "Previews for photos in lists. Off shows plain file icons. Placeholders are light, blurry previews. Thumbnails download each photo's preview once.";
 
 function Row({ label, hint, stack, children }: { label: ReactNode; hint?: string; stack?: boolean; children?: ReactNode }) {
   return (
