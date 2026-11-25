@@ -378,6 +378,28 @@ impl LocalBackend {
 #[cfg(desktop)]
 const TRASH_BATCH: usize = 1000;
 
+/// A folder the OS keeps and won't let go to the Trash: the home folder, the folders macOS makes
+/// in it (Desktop, Documents, Public…), and the system's own top folders.
+#[cfg(desktop)]
+fn os_keeps(p: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        const IN_HOME: &[&str] = &["Desktop", "Documents", "Downloads", "Library", "Movies", "Music", "Pictures", "Public"];
+        const TOP: &[&str] = &["/Applications", "/Library", "/System", "/Users", "/Volumes", "/private", "/bin", "/sbin", "/usr", "/etc", "/var", "/tmp", "/opt"];
+        if let Some(home) = std::env::var_os("HOME").map(PathBuf::from)
+            && (p == home || IN_HOME.iter().any(|d| p == home.join(d)))
+        {
+            return true;
+        }
+        return p == Path::new("/") || TOP.iter().any(|t| p == Path::new(t));
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = p;
+        false
+    }
+}
+
 /// The paths that aren't inside another of them, each once.
 #[cfg(desktop)]
 fn outermost(mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -398,6 +420,12 @@ fn outermost(mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
 #[cfg(desktop)]
 async fn trash_together(paths: Vec<PathBuf>, total: u64, cancel: &AtomicBool, on_progress: &(dyn Fn(u64, u64) + Send + Sync)) -> SResult<(u64, u64)> {
     let top = outermost(paths);
+    // Finder won't take the folders macOS keeps (it puts up its own refusal and the request
+    // waits on it): say so at once instead
+    if let Some(p) = top.iter().find(|p| os_keeps(p)) {
+        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string());
+        return Err(StorageError::other(format!("“{name}” is a folder macOS needs, so it can't be deleted.")));
+    }
     let mut done = 0u64;
     for chunk in top.chunks(TRASH_BATCH) {
         if cancel.load(Ordering::Relaxed) {
@@ -405,14 +433,29 @@ async fn trash_together(paths: Vec<PathBuf>, total: u64, cancel: &AtomicBool, on
         }
         let chunk: Vec<PathBuf> = chunk.to_vec();
         let n = chunk.len() as u64;
-        blocking(move || {
+        let call = tokio::task::spawn_blocking(move || {
             let there: Vec<&PathBuf> = chunk.iter().filter(|p| std::fs::symlink_metadata(p).is_ok()).collect();
             if there.is_empty() {
                 return Ok(());
             }
             trash::delete_all(there).map_err(|e| StorageError::other("Couldn't move this to the Trash.").with_detail(e.to_string()))
-        })
-        .await?;
+        });
+        // the OS call can wait on something of its own (a Finder prompt): Cancel stops waiting
+        // for it, so the transfer ends; what Finder still does is up to its own prompt
+        tokio::pin!(call);
+        loop {
+            tokio::select! {
+                r = &mut call => {
+                    r.map_err(|e| StorageError::other(e.to_string()))??;
+                    break;
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Err(StorageError::cancelled());
+                    }
+                }
+            }
+        }
         done += n;
         on_progress(done.min(total), total);
     }
@@ -835,6 +878,18 @@ impl Storage for LocalBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_folders_macos_keeps_never_go_to_the_trash() {
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+        for p in [home.clone(), home.join("Public"), home.join("Desktop"), PathBuf::from("/Applications"), PathBuf::from("/")] {
+            assert!(os_keeps(&p), "{}", p.display());
+        }
+        for p in [home.join("Public/notes.txt"), home.join("Projects"), home.join("Desktop/old"), PathBuf::from("/Applications/Some.app")] {
+            assert!(!os_keeps(&p), "{}", p.display());
+        }
+    }
 
     #[cfg(desktop)]
     #[test]
