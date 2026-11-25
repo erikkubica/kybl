@@ -110,8 +110,10 @@ let impl: TermImpl | null = null;
 let opener: ((a: OpenTerminalArgs) => PaneId | null) | null = null;
 /** pane slot → its terminal's session, as on screen now */
 let panes: Partial<Record<PaneId, TermSpec>> = {};
+/** A line typed once the shell is up: as is, or worked out for the shell's kind (null: not typed). */
+export type StartupLine = string | ((q: Quoting) => string | null);
 /** startup lines waiting for a session to start */
-const startups = new Map<string, string[]>();
+const startups = new Map<string, StartupLine[]>();
 
 export function setTermImpl(i: TermImpl) {
   impl = i;
@@ -169,7 +171,7 @@ export function setTermNotice(fn: typeof notice) {
   notice = fn;
 }
 export const termNotice = (text: string) => notice?.(text);
-export function setStartup(sid: string, lines: string[] | undefined) {
+export function setStartup(sid: string, lines: StartupLine[] | undefined) {
   if (lines?.length) startups.set(sid, lines);
 }
 /** sessions just opened by the user: their terminal takes the keyboard once it's on screen */
@@ -177,7 +179,7 @@ const focusOnShow = new Set<string>();
 export const focusWhenShown = (sid: string) => void focusOnShow.add(sid);
 export const takeFocusWhenShown = (sid: string) => focusOnShow.delete(sid);
 /** The startup lines for a session that just started (once). */
-export function takeStartup(sid: string): string[] {
+export function takeStartup(sid: string): StartupLine[] {
   const l = startups.get(sid) ?? [];
   startups.delete(sid);
   return l;

@@ -513,7 +513,7 @@ const localTree: Record<string, Record<string, { folders: string[]; objects: Obj
   },
   [`${HOME}/Desktop`]: { "": { folders: ["Screenshots/"], objects: [localObj("todo.md", 640, 1), localObj("invoice-0042.pdf", 184_000, 26)] }, "Screenshots/": { folders: [], objects: [localObj("Screenshots/shot-1.png", 900_000, 2)] } },
   [`${HOME}/Documents`]: { "": { folders: ["Contracts/"], objects: [localObj("budget-2026.xlsx", 48_000, 70)] }, "Contracts/": { folders: [], objects: [localObj("Contracts/lease.pdf", 320_000, 900)] } },
-  [`${HOME}/Downloads`]: { "": { folders: [], objects: [localObj("Kybl_0.3.2_aarch64.dmg", 9_800_000, 5), localObj("photo (1).jpg", 2_100_000, 8)] } },
+  [`${HOME}/Downloads`]: { "": { folders: [], objects: [localObj("Kybl_0.3.2_aarch64.dmg", 9_800_000, 5), localObj("photo (1).jpg", 2_100_000, 8), localObj("install-tools.sh", 4_200, 30), localObj("Setup Tool.exe", 48_000_000, 50)] } },
   "/": { "": { folders: ["Applications/", "Users/"], objects: [] } },
 };
 const localCaps: Capabilities = {

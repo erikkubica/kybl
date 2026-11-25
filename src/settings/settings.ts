@@ -70,6 +70,11 @@ export type Settings = {
   syncBrowsing: boolean;
   /** files and folders whose name starts with "." show in panes of this computer's disk */
   showHiddenFiles: boolean;
+  /**
+   * desktop: every pane's rows and tiles compact, unless the pane was switched itself (its footer
+   * button); a pane's own choice lasts until the pane closes
+   */
+  compact: boolean;
   /** desktop: the connections sidebar folded away (⌥⌘S, or its button by the window controls) */
   sidebarHidden: boolean;
   /** desktop: Quick Look's info column shown; null = not chosen yet (shown in a wide enough window) */
@@ -109,6 +114,7 @@ export const DEFAULTS: Settings = {
   layout: "single",
   syncBrowsing: false,
   showHiddenFiles: false,
+  compact: false,
   sidebarHidden: false,
   quickInfo: null,
 };
@@ -179,6 +185,12 @@ export function loadSettings(): Settings {
     if (!["off", "placeholders", "full"].includes(s.imageMode)) s.imageMode = DEFAULTS.imageMode;
     if (!CORNERS.some((c) => c.value === s.corners)) s.corners = DEFAULTS.corners;
     if (typeof s.quickInfo !== "boolean") s.quickInfo = null;
+    // one-time: compact was each pane's own until it had a default; the panes Settings switched
+    // say what it was (workspaces.ts then lets them follow it)
+    if (typeof saved?.compact !== "boolean") {
+      s.compact = localStorage.getItem("s3b.compact") === "1" || Object.keys(localStorage).some((k) => k.startsWith("s3b.compact.") && localStorage.getItem(k) === "true");
+      localStorage.setItem(KEY, JSON.stringify(s));
+    }
     // one-time: the first version turned the old thumbnails switch into Placeholders more often
     // than meant, and Placeholders was the default then; both now mean Thumbnails
     if (!localStorage.getItem(IMAGE_MODE_V2)) {

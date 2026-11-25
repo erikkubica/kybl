@@ -160,6 +160,7 @@ const PATHS: Record<string, ReactNode> = {
   pause: <path d="M9 5.5v13M15 5.5v13" />,
   gauge: <path d="M4.2 17.5a8.5 8.5 0 1 1 15.6 0M12 14l3.8-4.6M12 15.4a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8z" />,
   "to-top": <path d="M5 4.5h14M12 20V9m0 0-5 5m5-5 5 5" />,
+  shield: <path d="M12 3.2 5 6v5.4c0 4.3 3 7.9 7 9.4 4-1.5 7-5.1 7-9.4V6z" />,
   play: <path d="M7.5 5.2v13.6a.6.6 0 0 0 .9.5l10.6-6.8a.6.6 0 0 0 0-1L8.4 4.7a.6.6 0 0 0-.9.5z" />,
   move: (
     <>

@@ -152,12 +152,13 @@ export function Toolbar({
       ...(onNewFile ? [{ type: "item", label: "New file…", icon: "file-plus", hint: "⌥⌘N", onClick: onNewFile } as const] : []),
     ]);
 
-  const moreMenu = (e: React.MouseEvent) => {
+  const moreMenu = (e: React.MouseEvent) => moreMenuAt(...anchorOf(e));
+  const moreMenuAt = (x: number, y: number) => {
     const extra: MenuItem[] = [];
     if (onToggleFavorite)
       extra.push({ type: "item", label: favorite ? "Remove from favorites" : "Add to favorites", icon: "star", onClick: onToggleFavorite });
     if (panesItems && folded(panes)) extra.push({ type: "submenu", label: "Panes", icon: "dual-pane", items: panesItems });
-    onMoreMenu(...anchorOf(e), extra);
+    onMoreMenu(x, y, extra);
   };
 
   /** How the list looks: list or grid, compact rows, the order, and hidden files where there are any. */
@@ -204,6 +205,13 @@ export function Toolbar({
   return (
     <header
       className={`chrome ${onGrip ? "can-move" : ""}`}
+      // a right-click on the header is its "…" menu, where the pointer is (the path's steps and the
+      // search field keep their own)
+      onContextMenu={(e) => {
+        if ((e.target as Element).closest("input, textarea")) return;
+        e.preventDefault();
+        moreMenuAt(e.clientX, e.clientY);
+      }}
       onPointerDown={
         onGrip &&
         ((e) => {

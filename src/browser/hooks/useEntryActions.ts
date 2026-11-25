@@ -15,7 +15,9 @@ import { destLabel, entryParent } from "../../transfers/lib/moving";
 import { expiryLabel, type Favorite } from "../../settings/settings";
 import { tidyMenu } from "../../desktop/lib/menus";
 import { openInItems } from "../../desktop/lib/openWith";
-import { trashName } from "../../core/osNames";
+import { OS, trashName } from "../../core/osNames";
+import { runChoices } from "../../desktop/lib/runAs";
+import { canTerminal, terminalShell } from "../../terminal/api";
 import { parseLocation } from "../../desktop/lib/paths";
 import { addressKind, goToText, isAbsolutePath, itemAddress, openNote, resolveLocalPath } from "../../connections/lib/itemText";
 import { GoToDialog } from "../../desktop/components/GoToDialog";
@@ -457,6 +459,29 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     return null;
   };
 
+  /**
+   * Run ▸ items for a program, script or installer (desktop/lib/runAs.ts): run it as its system
+   * does, as administrator, or in a terminal in its folder; none for a file of another system.
+   */
+  const runItems = (e: Entry): MenuItem[] => {
+    if (!profile || bucket == null || e.kind !== "file" || pane.archive.inArchive) return [];
+    const choices = runChoices(e.name, { local: onDisk, os: OS, terminal: !!env.runInTerminal && canTerminal(profile), winShell: terminalShell() });
+    const pathOf = () => api.localPath(profile.id, bucket, e.key);
+    return choices.map((c): MenuItem => {
+      if (c.how === "terminal") return { type: "item", label: c.label, icon: /administrator/.test(c.label) ? "shield" : "terminal", onClick: () => env.runInTerminal?.(entryParent(e), c.line) };
+      const run = c.how === "open" ? (p: string) => api.openLocal(p) : (p: string) => api.runElevated(p);
+      return {
+        type: "item",
+        label: c.label,
+        icon: c.how === "elevate" ? "shield" : "play",
+        onClick: () =>
+          void pathOf()
+            .then((p) => (p ? run(p) : Promise.reject(`${e.name} isn’t on this computer’s disk.`)))
+            .catch((err) => toast("error", errMessage(err))),
+      };
+    });
+  };
+
   const onContext = (ev: React.MouseEvent, e: Entry) => {
     if (!profile || bucket == null) return;
     const list = selected.has(e.key) ? selectedEntries : [e];
@@ -468,14 +493,19 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
     const clip = clipFor();
     const compare = compareFor(list);
     const openIn = one ? openInItems({ profileId: profile.id, bucket, onDisk, ops, toast }, e) : [];
+    const runs = one ? runItems(e) : [];
+    // a program the system runs on Open: Run says it, so Open and Open in default app step aside
+    const runsOnOpen = runs.some((r) => r.type === "item" && (r.label === "Run" || r.label === "Install"));
     const sep = { type: "sep" as const };
     // Grouped like Finder or Explorer; tidyMenu drops a line that would end up first, last or doubled.
     const items = tidyMenu(ro([
       // 1. open
       folder
         ? { type: "item", label: "Open", icon: "folder", hint: "↵", onClick: () => pane.navigate(e.key) }
-        : { type: "item", label: files.length > 1 ? `Open ${files.length} files` : "Open", icon: "reveal", hint: "⌘O", disabled: !files.length, onClick: () => openSelection(list) },
-      one && e.kind === "file" && env.canOpenDocument?.(e) && { type: "item", label: "Open in default app", icon: "external", onClick: () => void ops.openInApp(e) },
+        : !runsOnOpen && { type: "item", label: files.length > 1 ? `Open ${files.length} files` : "Open", icon: "reveal", hint: "⌘O", disabled: !files.length, onClick: () => openSelection(list) },
+      !runsOnOpen && one && e.kind === "file" && env.canOpenDocument?.(e) && { type: "item", label: "Open in default app", icon: "external", onClick: () => void ops.openInApp(e) },
+      // Run, Run as administrator, Run in terminal (a program, script or installer)
+      ...runs,
       // Open with ▸ (desktop/openWith.ts)
       ...openIn.filter((i) => i.type === "submenu"),
       // Edit, Edit with ▸, Edit in Kybl: saves upload back (src/edit)

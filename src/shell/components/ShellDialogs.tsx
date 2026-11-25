@@ -73,12 +73,11 @@ export function ShellDialogs({ active, closeWorkspace, connDialog, connectIn, co
       {settingsOpen && (
         <SettingsPage
           settings={settings}
-          compact={active.compact}
           profiles={saved}
           onChange={updateSettings}
-          // Settings sets it for every pane (each can still change its own from its toolbar)
-          onCompact={(c) => {
-            for (const p of slots) p.setCompact(c);
+          // Reset all: the panes on screen let go of their own compact choice too
+          onResetPanes={() => {
+            for (const p of slots) p.setCompact(null);
           }}
           onEditProfile={(p) => setConnDialog({ profile: p })}
           onNewProfile={() => setConnDialog({ profile: null })}

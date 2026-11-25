@@ -636,10 +636,9 @@ function SchemeMini({ p }: { p: Palette }) {
 
 export function SettingsPage({
   settings,
-  compact,
   profiles,
   onChange,
-  onCompact,
+  onResetPanes,
   onEditProfile,
   onNewProfile,
   onImportProfiles,
@@ -651,10 +650,10 @@ export function SettingsPage({
   onGroupMenu,
 }: {
   settings: Settings;
-  compact: boolean;
   profiles: Profile[];
   onChange: (patch: Partial<Settings>) => void;
-  onCompact: (c: boolean) => void;
+  /** Reset all: the panes' own choices go too */
+  onResetPanes: () => void;
   onEditProfile: (p: Profile) => void;
   onNewProfile: () => void;
   /** "Import connections…" from FileZilla and other apps (computers only) */
@@ -679,7 +678,7 @@ export function SettingsPage({
   const resetAll = () => {
     setConfirmReset(false);
     onChange(resetSettings(settings));
-    onCompact(false);
+    onResetPanes();
     saveTransferPrefs(TRANSFER_DEFAULTS).catch((e) => onToast("error", errMessage(e)));
     if (prefs && !prefs.closeToTray) changePrefs({ closeToTray: true });
     updatesApi.settings({ auto: true }).catch(() => {});
@@ -872,8 +871,8 @@ export function SettingsPage({
 
                 <h3 className="set-title">Density</h3>
                 <div className="set-card">
-                  <Row label="Compact layout" hint="Tighter rows in the list, smaller tiles in the grid.">
-                    <Switch label="Compact layout" on={compact} onChange={onCompact} />
+                  <Row label="Compact layout" hint="Tighter rows in the list, smaller tiles in the grid, in every pane. A pane switched with its own button keeps that until it closes.">
+                    <Switch label="Compact layout" on={settings.compact} onChange={(compact) => onChange({ compact })} />
                   </Row>
                 </div>
               </>

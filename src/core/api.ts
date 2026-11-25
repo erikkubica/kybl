@@ -203,6 +203,8 @@ export const api = {
 
   /** Opens a local file in its default app (desktop) or an "Open with" chooser (phones). */
   openLocal: (path: string) => invoke<void>("open_local", { path }),
+  /** Windows: runs the program at `path` as administrator (its own prompt); an installer through msiexec, a .ps1 through PowerShell */
+  runElevated: (path: string) => invoke<void>("run_elevated", { path }),
   /** puts a local file on the clipboard as a file (pastes into chats, mail, Finder); macOS */
   copyFileToClipboard: (path: string) => invoke<void>("copy_file_to_clipboard", { path }),
   /**

@@ -427,7 +427,7 @@
         <dt>Panes</dt>
         <dd>Each pane shows one folder on one connection, or a terminal. You can have up to six. See <a href="#panes">Panes</a>.</dd>
         <dt>Pane toolbar</dt>
-        <dd>At the top of each pane: the connection button, the path (breadcrumbs), the <b>…</b> menu (refresh, Go to folder, Add to favorites, the other pane and more), <b>Upload or create</b>, <b>Sort and group</b>, <b>Filter or search</b>, <b>Terminal</b> and the <b>Panes</b> button. You can drag a pane by the empty part of its toolbar.</dd>
+        <dd>At the top of each pane: the connection button, the path (breadcrumbs), the <b>…</b> menu (refresh, Go to folder, Add to favorites, the other pane and more), <b>Upload or create</b>, <b>Sort and group</b>, <b>Filter or search</b>, <b>Terminal</b> and the <b>Panes</b> button. Right-click the toolbar for the same menu as <b>…</b>. You can drag a pane by the empty part of its toolbar.</dd>
         <dt>Status bar</dt>
         <dd>Under each pane: how many items and how big, what you've selected, and the size of the whole folder once Kybl has added it up. At its right end are the list, grid and compact buttons, and an icon that opens the <a href="#folder-info">folder info panel</a>.</dd>
         <dt>Activity panel</dt>
@@ -657,9 +657,9 @@
       <ul>
         <li><b>As list</b> shows columns. Right-click the column header to pick them: Size, Modified, Created, Kind, Type, Storage class (S3), ETag, and Permissions and Owner where the server has them. Drag a column edge to resize; double-click to reset.</li>
         <li><b>As grid</b> shows tiles with thumbnails. <b>Bigger Icons</b> (<kbd>⌘+</kbd>) and <b>Smaller Icons</b> (<kbd>⌘−</kbd>) in the View menu or the command palette resize them.</li>
-        <li><b>Compact layout</b> (the third button) makes rows and tiles tighter.</li>
+        <li><b>Compact layout</b> (the third button) makes rows and tiles tighter. Every pane follows the <b>Compact layout</b> setting until you switch it with this button; that pane then keeps its own choice until you close it.</li>
       </ul>
-      <p>View, sort, compact and hidden files are remembered for each pane separately.</p>
+      <p>View, sort and hidden files are remembered for each pane separately.</p>
 
       <h3 id="thumbnails">Thumbnails and photos</h3>
       <p>The grid shows thumbnails for JPEG, PNG, GIF, WebP, BMP, TIFF and (on Apple systems) HEIC images. The <b>Photos</b> setting in <a href="#settings-browsing">Settings → Browsing</a> decides how much Kybl fetches:</p>
@@ -773,6 +773,14 @@
         <li>Files on This computer always open in their own app.</li>
         <li>Programs, scripts and installers from a connection ask <b>Run …?</b> before they open.</li>
       </ul>
+      <h3 id="running-programs">Running programs and scripts</h3>
+      <p>Right-click a program, script or installer and Kybl offers what fits the file and where it is:</p>
+      <ul>
+        <li><b>Windows programs on this PC</b> (<code>.exe</code>, <code>.bat</code>, <code>.cmd</code>): <b>Run</b>, <b>Run as administrator</b> (Windows asks for permission) and <b>Run in terminal</b>. Installers (<code>.msi</code>): <b>Install</b> and <b>Install as administrator</b>. PowerShell scripts (<code>.ps1</code>): <b>Run in terminal</b> and <b>Run as administrator</b>.</li>
+        <li><b>Scripts on a Mac, on Linux or on an SFTP server</b> (<code>.sh</code>, <code>.py</code>, <code>.pl</code>, <code>.rb</code>, <code>.php</code> and others): <b>Run in terminal</b> opens a terminal in the file's folder and runs it with its interpreter, and <b>Run as administrator</b> does the same with <code>sudo</code>. <code>.run</code>, <code>.bin</code> and AppImages are made executable first.</li>
+        <li><b>Linux packages</b> (<code>.deb</code>, <code>.rpm</code>) on Linux or a server: <b>Install in terminal</b> runs the system's installer with <code>sudo</code>.</li>
+      </ul>
+      <p>A file made for another system, such as an <code>.exe</code> on a Mac, gets none of these.</p>
       <div class="warn"><p>Text and code files that <b>Open</b> shows in Kybl’s own editor save straight back: <b>Save</b> uploads the file (see <a href="#built-in-editor">the editor</a>). A file that <b>Open</b> or <b>Open with</b> hands to <b>another app</b> is a copy, and saving it there does <b>not</b> upload it. Use <a href="#edit-elsewhere">Edit</a> when you want another app’s saves to go back to the server.</p></div>
 
       <h3 id="viewer-limits">What the built-in viewers open</h3>
@@ -832,7 +840,7 @@
       <figure class="shot narrow"><picture><source srcset="/assets/shots/menu-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/menu.webp" alt="The right-click menu for a file, grouped by lines: Open and Quick Look; Cut, Copy, Duplicate and Rename; Copy to, Move to and Download; Compress and Actions; Get Info, Copy path and Copy share link; and Delete at the bottom." loading="lazy"></picture><figcaption>The file menu, grouped from opening to deleting.</figcaption></figure>
       <p>From top to bottom:</p>
       <ol>
-        <li><b>Open</b>: Open, Open in default app (servers and clouds), Open with ▸, Edit and Edit with ▸ (servers and clouds), Edit in Kybl (files that Open doesn't show in Kybl, such as on This computer), Quick Look (and Show in folder in search results).</li>
+        <li><b>Open</b>: Open, Open in default app (servers and clouds), Open with ▸, Edit and Edit with ▸ (servers and clouds), Edit in Kybl (files that Open doesn't show in Kybl, such as on This computer), Quick Look (and Show in folder in search results). Programs and scripts get <a href="#running-programs">Run items</a> here too.</li>
         <li><b>Edit</b>: Cut, Copy, Paste into "folder", Duplicate, Rename.</li>
         <li><b>Send</b>: Copy to ▸ and Move to ▸, then Move to "parent folder" and Download.</li>
         <li><b>Make</b>: Compress or Extract, Compare, and your custom Actions ▸.</li>
@@ -1422,7 +1430,7 @@
         <li><b>Corners</b>: Square, Subtle, Default or Round.</li>
         <li><b>Font</b>: System, Rounded, Serif or Mono.</li>
         <li><b>Size</b>: Small, Default, Large or Larger. Zooms the whole interface.</li>
-        <li><b>Compact layout</b> for every pane (each pane can still change its own).</li>
+        <li><b>Compact layout</b> for every pane. A pane switched with its own button keeps that until it closes.</li>
       </ul>
 
       <h3 id="settings-browsing">Browsing</h3>

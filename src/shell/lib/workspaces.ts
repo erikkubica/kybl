@@ -242,6 +242,7 @@ export function loadWorkspaces(old: () => Omit<Layout, "panes">): WorkspaceStore
     const raw = LS.get(KEY);
     if (raw) {
       const v = JSON.parse(raw) as { list?: unknown; active?: unknown };
+      dropOldCompact(v);
       const list = (Array.isArray(v.list) ? v.list : []).map(parseWorkspace).filter((w): w is Workspace => !!w);
       // the same id twice (a hand-edited file): the later one gets its own
       const seen = new Set<string>();
@@ -260,6 +261,21 @@ export function loadWorkspaces(old: () => Omit<Layout, "panes">): WorkspaceStore
   const w: Workspace = { ...l, panes, id: newId(), name: DEFAULT_NAME, color: null, start: "restore", recipe: null };
   return { list: [w], active: w.id };
 }
+
+/**
+ * One-time: Compact layout in Settings used to switch each pane on screen for itself, so panes
+ * kept a choice of their own nobody made; they follow the default now (settings.ts `compact`).
+ */
+function dropOldCompact(v: { list?: unknown }) {
+  if (LS.get(COMPACT_V2)) return;
+  for (const w of Array.isArray(v.list) ? v.list : [])
+    for (const snap of Object.values((w as { panes?: Record<string, { view?: { compact?: unknown } } | null> })?.panes ?? {})) if (snap?.view) delete snap.view.compact;
+  // saved at once: the next read (React runs the first one twice in development) sees it done
+  LS.set(KEY, JSON.stringify(v));
+  for (const id of PANE_IDS) LS.set(paneKeys(id).compact, "");
+  LS.set(COMPACT_V2, "1");
+}
+const COMPACT_V2 = "kybl.compactDefault";
 
 export function saveWorkspaces(s: WorkspaceStore) {
   LS.set(KEY, JSON.stringify({ active: s.active, list: s.list.map((w) => ({ ...w, panes: stripScroll(w.panes) })) }));

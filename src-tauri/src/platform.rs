@@ -293,6 +293,62 @@ pub async fn open_local(app: AppHandle, path: String) -> Result<(), String> {
     }
 }
 
+/// Runs a program of this computer as administrator: on Windows through its own administrator
+/// prompt (an installer through msiexec, a PowerShell script through PowerShell, which have no
+/// "Run as administrator" of their own), in the program's folder. Elsewhere this runs in a
+/// terminal with sudo instead (the file menu does that), so it only says so.
+#[tauri::command]
+pub async fn run_elevated(path: String) -> Result<(), String> {
+    must_exist(&path)?;
+    #[cfg(windows)]
+    {
+        tauri::async_runtime::spawn_blocking(move || win_elevated(&path)).await.map_err(|e| e.to_string())?
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err("Running as administrator this way is for Windows. Here it runs in a terminal with sudo.".into())
+    }
+}
+
+#[cfg(windows)]
+fn win_elevated(path: &str) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let wide = |s: &OsStr| s.encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+    let p = std::path::Path::new(path);
+    let ext = p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).unwrap_or_default();
+    // a Windows path can't hold `"`, so quoting it is enough for the program's command line
+    let (file, params) = match ext.as_str() {
+        "msi" => ("msiexec.exe".to_string(), Some(format!("/i \"{path}\""))),
+        "ps1" => ("powershell.exe".to_string(), Some(format!("-NoExit -File \"{path}\""))),
+        _ => (path.to_string(), None),
+    };
+    let verb = wide(OsStr::new("runas"));
+    let file = wide(OsStr::new(&file));
+    let params = params.map(|x| wide(OsStr::new(&x)));
+    let dir = p.parent().map(|d| wide(d.as_os_str()));
+    // SAFETY: every pointer is a NUL-terminated UTF-16 buffer that outlives the call (or null)
+    let r = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            file.as_ptr(),
+            params.as_ref().map_or(std::ptr::null(), |x| x.as_ptr()),
+            dir.as_ref().map_or(std::ptr::null(), |x| x.as_ptr()),
+            SW_SHOWNORMAL,
+        )
+    } as isize;
+    match r {
+        r if r > 32 => Ok(()),
+        // SE_ERR_ACCESSDENIED: the prompt was answered No (or closed)
+        5 => Err(format!("{} didn't run: the administrator prompt was cancelled.", name(path))),
+        r => Err(format!("Windows couldn't run {} as administrator (error {r}).", name(path))),
+    }
+}
+
 /// Puts a local file on the clipboard as a file (not its path as text), so it pastes into a chat,
 /// a mail or a Finder window like a file copied in Finder. macOS for now; elsewhere it says so.
 #[tauri::command]

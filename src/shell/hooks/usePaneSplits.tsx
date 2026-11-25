@@ -134,6 +134,8 @@ export function usePaneSplits(deps: UsePaneSplitsDeps) {
     p.ent.setQuery("");
     p.sel.setSelected(new Set());
     p.showConnection(null);
+    // its own compact choice goes with it: the next pane here follows the default
+    p.setCompact(null);
     deps.opened.current.delete(id);
     deps.rec.clearNote(id);
     // its list's place goes with it: the next pane in this slot starts at the top

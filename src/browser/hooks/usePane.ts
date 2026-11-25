@@ -29,6 +29,7 @@ import { useEntryActions } from "./useEntryActions";
 import { useGitStatus } from "./useGitStatus";
 import { LS, paneKeys, THIS_MAC, type Loc, type PaneId, type PaneView } from "../types";
 import { isContextPress } from "../../ui/lib/pointer";
+import type { StartupLine } from "../../terminal/api";
 import { archiveProfile, isArchiveName } from "../../archive/archive";
 import { makeArchiveOps } from "../../archive/archiveOps";
 
@@ -65,6 +66,8 @@ export type PaneEnv = {
   splitItems?: () => MenuItem[];
   /** "Open terminal here" for folder `key` of this pane's root (the shell's; none where a terminal can't open) */
   terminalItems?: (key: string, label?: string) => MenuItem[];
+  /** a terminal in folder `key` that types `line` once its shell is up (Run in terminal) */
+  runInTerminal?: (key: string, line: StartupLine) => void;
   /** the "…" menu's Tunnels ▸ (an SFTP connection's tunnels, and adding one) */
   tunnelItems?: () => MenuItem[];
   /** "Add or edit tunnels": the connection form on its Tunnels tab */
@@ -120,7 +123,7 @@ function usePaneCore(env: PaneEnv) {
   const [infoWOwn, setInfoW] = usePanePref<number>(keys.infoW);
   const sortSetting = sortOwn ?? settings.sort;
   const showHidden = hiddenOwn ?? settings.showHiddenFiles;
-  const compact = compactOwn ?? LS.get("s3b.compact") === "1";
+  const compact = compactOwn ?? settings.compact;
   const tile = tileOwn ?? settings.tileSize;
   const groupBy: GroupBy = groupOwn ?? settings.groupBy ?? "none";
   const sort: Sort = useMemo(() => ({ key: sortSetting.by, dir: sortSetting.desc ? "desc" : "asc" }), [sortSetting]);

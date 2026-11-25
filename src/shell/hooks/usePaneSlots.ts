@@ -141,6 +141,7 @@ export function usePaneSlots(s: UsePaneSlotsDeps) {
     splitItems: () => [{ type: "submenu", label: "Split", icon: "dual-pane", items: () => s.late.splitItems(id) }],
     beginItemDrag: (...a) => s.beginItemDrag.current?.(...a),
     terminalItems: (key, label) => s.term.items(id, key, label),
+    runInTerminal: (key, line) => s.term.runIn(id, key, line),
     tunnelItems: () => {
       const p = paneById(id).profile;
       return p ? tunnelMenuItems(p, s.toast, () => s.setConnDialog({ profile: p, startTab: "tunnels" })) : [];

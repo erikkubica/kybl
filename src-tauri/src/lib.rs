@@ -207,6 +207,7 @@ pub fn run() {
             app::mobile::native_theme,
             app::mobile::picked_files,
             platform::open_local,
+            platform::run_elevated,
             platform::copy_file_to_clipboard,
             platform::reveal_local,
             platform::apps::apps_for,

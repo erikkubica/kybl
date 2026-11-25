@@ -47,6 +47,7 @@ import {
   writeToTerminal,
   type TermPlace,
   type TermSpec,
+  type StartupLine,
 } from "../api";
 
 // a name with control characters (or one this shell can't take, like `%` in Command Prompt)
@@ -222,7 +223,7 @@ export function useTerminalPanes(initial: Layout) {
   };
 
   /** A terminal below pane `src` at `at` (default: the folder `src` shows); its slot, or null when it couldn't. */
-  const open = (src: PaneId, at?: Loc | null, startup?: string[]): PaneId | null => {
+  const open = (src: PaneId, at?: Loc | null, startup?: StartupLine[]): PaneId | null => {
     const h = host.current;
     if (!h) return null;
     const t = termsRef.current[src];
@@ -414,6 +415,13 @@ export function useTerminalPanes(initial: Layout) {
     return [{ type: "item", label, icon: "terminal", hint: label === "Open terminal here" ? "⌘J" : undefined, onClick: () => void open(id, at) }];
   };
 
+  /** A terminal below file pane `id` in folder `key` of its root, typing `line` once its shell is up (a program run from the file menu). */
+  const runIn = (id: PaneId, key: string, line: StartupLine) => {
+    const p = host.current?.slot(id);
+    if (!p?.here) return;
+    open(id, { ...p.here, prefix: key }, [line]);
+  };
+
   /** Files dropped on terminal pane `pane`: what it does (undefined: not a terminal; null: these can't go there). */
   const dropTarget = (pane: PaneId, from: Place, items: Entry[]): string | null | undefined => {
     const t = termsRef.current[pane];
@@ -587,7 +595,7 @@ export function useTerminalPanes(initial: Layout) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { terms, setTerms, assign, host, open, openLocal, openFor, openRemote, shellIn, forget, toggle, items, dropTarget, drop, dropPaths, nameOf, gc, render };
+  return { terms, setTerms, assign, host, open, openLocal, openFor, openRemote, shellIn, forget, toggle, items, runIn, dropTarget, drop, dropPaths, nameOf, gc, render };
 }
 
 /**

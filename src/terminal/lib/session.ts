@@ -251,7 +251,12 @@ class Session {
       // PTY at the old size: send what the terminal is now if it moved meanwhile
       if (this.term.cols !== cols || this.term.rows !== rows)
         void invoke("terminal_resize", { id: info.id, cols: this.term.cols, rows: this.term.rows }).catch(() => {});
-      for (const line of takeStartup(this.spec.sid)) this.send(`${line}\r`);
+      // a line worked out for this shell (a program run from the file menu) gets its quoting; a
+      // server's shell is a Unix one
+      for (const l of takeStartup(this.spec.sid)) {
+        const line = typeof l === "string" ? l : l(this.quoting ?? "posix");
+        if (line != null) this.send(`${line}\r`);
+      }
       const queued = this.pending;
       this.clearPending();
       for (const q of queued) this.deliver(q.text, q.paste);

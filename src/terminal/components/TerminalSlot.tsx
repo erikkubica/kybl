@@ -55,7 +55,10 @@ export function TerminalSlot(p: TerminalSlotProps) {
   const act = (a: Parameters<typeof terminalAction>[1]) => () => terminalAction(spec.sid, a);
   const more = (e: React.MouseEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    p.menu(r.left, r.bottom + 4, [
+    moreAt(r.left, r.bottom + 4);
+  };
+  const moreAt = (x: number, y: number) =>
+    p.menu(x, y, [
       { type: "item", label: "Clear", icon: "x", hint: K("K"), onClick: act("clear") },
       { type: "item", label: "Restart shell", icon: "refresh", onClick: act("restart") },
       { type: "sep" },
@@ -72,7 +75,6 @@ export function TerminalSlot(p: TerminalSlotProps) {
       { type: "sep" },
       { type: "item", label: "Close terminal", icon: "x", hint: MAC ? "⌘W" : undefined, onClick: p.onClose },
     ]);
-  };
   return (
     <section
       className={`browser-pane term-pane ${p.dual ? (p.active ? "is-active" : "is-inactive") : ""} ${p.lifted ? "lifted" : ""}`}
@@ -87,6 +89,11 @@ export function TerminalSlot(p: TerminalSlotProps) {
     >
       <header
         className={`chrome ${p.onGrip ? "can-move" : ""}`}
+        // a right-click on the header is its "…" menu, where the pointer is
+        onContextMenu={(e) => {
+          e.preventDefault();
+          moreAt(e.clientX, e.clientY);
+        }}
         onPointerDown={
           p.onGrip &&
           ((e) => {
