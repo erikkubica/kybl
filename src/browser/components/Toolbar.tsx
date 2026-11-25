@@ -40,6 +40,7 @@ export function Toolbar({
   onToggleHidden,
   onNavigate,
   onUp,
+  upLabel,
   onUpload,
   onMoveHere,
   readOnly,
@@ -98,6 +99,8 @@ export function Toolbar({
   onNavigate: (prefix: string) => void;
   /** up a level (the "…" crumb, ⌘↑) */
   onUp: () => void;
+  /** the enclosing folder's name when the "…" crumb shows (a parent the connection's name doesn't reach) */
+  upLabel?: string;
   onUpload: (folder: boolean) => void;
   /** this computer's pane: picked files or folders move into the folder (the + menu says Copy / Move here) */
   onMoveHere?: (folder: boolean) => void;
@@ -253,16 +256,18 @@ export function Toolbar({
             </button>
             {/* the connection's name reads as the first step of the path, and acts like one: it goes to
                 the top. At the top the root's own name already says it when they match. */}
-            {connName && !(parts.length === 0 && connName === (bucketLabel ?? bucket)) && (
+            {connName && bucket != null && !(parts.length === 0 && !upLabel && connName === (bucketLabel ?? bucket)) && (
               <>
                 <button
                   type="button"
                   className="conn-name"
-                  disabled={disabled || (parts.length === 0 && !onConnTop)}
-                  onClick={() => (parts.length === 0 ? onConnTop?.() : onNavigate(""))}
-                  title={parts.length ? `Go to the top of ${bucketLabel ?? bucket ?? connName}` : onConnTop ? `All of ${connName}` : connName}
-                  // dropping items here moves them to the top, as on a breadcrumb
-                  data-drop={!disabled && parts.length ? "" : undefined}
+                  disabled={!onConnTop && (disabled || parts.length === 0)}
+                  // with roots (buckets, places) it goes to them, as the first step of a path would;
+                  // with a single root, to that root's top
+                  onClick={() => (onConnTop ? onConnTop() : onNavigate(""))}
+                  title={onConnTop ? `All of ${connName}` : parts.length ? `Go to the top of ${bucketLabel ?? bucket ?? connName}` : connName}
+                  // dropping items here moves them to the top, as on a breadcrumb (a single root's only)
+                  data-drop={!disabled && !onConnTop && !readOnly && parts.length ? "" : undefined}
                 >
                   {connName}
                 </button>
@@ -273,9 +278,10 @@ export function Toolbar({
             )}
           </>
         )}
-        {/* the folders between the top and this one fold into "…": a click goes up one, and
-            only shows when the parent is a folder of its own (not the top, which the name covers) */}
-        {parts.length >= 2 && (
+        {/* the folders between the top and this one fold into "…": a click goes up one. It shows
+            whenever the parent is somewhere the connection's name doesn't go (in an archive, at its
+            top too: the folder it's in) */}
+        {upLabel != null && bucket != null && (
           <>
             <button
               type="button"
@@ -283,9 +289,9 @@ export function Toolbar({
               disabled={disabled}
               onClick={onUp}
               // dropping items on it moves them up a level
-              data-drop={!disabled ? parentPrefix(prefix) : undefined}
-              title={`${parts[parts.length - 2]} (${keys("⌘↑")})`}
-              aria-label={`Enclosing folder, ${parts[parts.length - 2]}`}
+              data-drop={!disabled && !readOnly && parts.length ? parentPrefix(prefix) : undefined}
+              title={`${upLabel} (${keys("⌘↑")})`}
+              aria-label={`Enclosing folder, ${upLabel}`}
             >
               …
             </button>

@@ -332,6 +332,7 @@ function usePaneCore(env: PaneEnv) {
     autoShowActivity: env.autoShowActivity,
     showActivity: env.showActivity,
     go,
+    showConnection,
     openMigration: env.openMigration,
   });
   const archiveRef = useRef(archive);
