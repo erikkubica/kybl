@@ -123,42 +123,16 @@
   font-weight: 500;
 }
 .mirror-opts {
-  display: grid;
-  gap: 10px;
-  padding: 10px 0 2px 19px;
+  padding: 2px 0 0 19px;
 }
-.mirror-check {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
+.mirror-opts .set-row {
+  border-bottom-color: var(--border-strong);
 }
-.mirror-check input {
+.mirror-opts select {
+  width: 200px;
   flex: none;
-  margin: 2px 0 0;
 }
-.mirror-check.indent {
-  padding-left: 140px;
-}
-.mirror-check small,
-.mirror-field small {
-  display: block;
-  color: var(--faint);
-  font-size: 11.5px;
-}
-.mirror-check small.inline {
-  display: inline;
-}
-.mirror-field {
-  display: grid;
-  grid-template-columns: 130px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  color: var(--dim);
-}
-.mirror-field.top {
-  align-items: start;
-}
-.mirror-field textarea {
+.mirror-opts textarea {
   min-height: 70px;
   resize: vertical;
   font-family: var(--mono);
@@ -407,16 +381,6 @@
   height: 1px;
   margin: 4px 2px;
   background: var(--border-strong);
-}
-
-@media (max-width: 620px) {
-  .mirror-field {
-    grid-template-columns: 1fr;
-    gap: 4px;
-  }
-  .mirror-check.indent {
-    padding-left: 0;
-  }
 }
 
 .mirror-result {

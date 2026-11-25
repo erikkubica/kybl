@@ -346,47 +346,52 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
           </button>
           {optsOpen && (
             <div className="mirror-opts">
-              <label className="mirror-check">
-                <input
-                  type="checkbox"
-                  checked={deleteExtra}
-                  onChange={(e) => {
-                    setDeleteExtra(e.target.checked);
-                    setTab(e.target.checked ? "remove" : "upload");
-                  }}
-                />
-                <span>
+              <div className="set-row">
+                <div className="set-label">
                   Delete what isn't in the source
                   <small>The destination ends up exactly like the source{trash && localDst ? `; deleted files go to the ${ON_OS.trash}` : ""}. Left-out files stay.</small>
-                </span>
-              </label>
-              <label className="mirror-field">
-                <span>Copy a file when</span>
-                <select value={compare} onChange={(e) => setCompare(e.target.value as CompareMode)}>
-                  <option value="time">its size or date differs</option>
-                  <option value="size">its size differs</option>
+                </div>
+                <button
+                  className={`switch ${deleteExtra ? "on" : ""}`}
+                  role="switch"
+                  aria-checked={deleteExtra}
+                  aria-label="Delete what isn't in the source"
+                  onClick={() => {
+                    setDeleteExtra(!deleteExtra);
+                    setTab(!deleteExtra ? "remove" : "upload");
+                  }}
+                />
+              </div>
+              <div className="set-row">
+                <div className="set-label">
+                  Copy a file when
+                  <small>{checksumOk ? "Checksums are exact, but slower." : config ? "These connections can't compare checksums." : "Size and date is quick and works everywhere."}</small>
+                </div>
+                <select value={compare} aria-label="Copy a file when" onChange={(e) => setCompare(e.target.value as CompareMode)}>
+                  <option value="time">Size or date differs</option>
+                  <option value="size">Size differs</option>
                   <option value="checksum" disabled={!checksumOk}>
-                    its checksum differs{checksumOk ? "" : " (not on these connections)"}
+                    Checksum differs
                   </option>
                 </select>
-              </label>
-              <label className="mirror-field top">
-                <span>
+              </div>
+              <div className="set-row stack">
+                <div className="set-label">
                   Leave out
-                  <small>One per line, like .gitignore</small>
-                </span>
-                <textarea value={excludes} rows={3} spellCheck={false} autoCorrect="off" autoCapitalize="off" onChange={(e) => setExcludes(e.target.value)} />
-              </label>
+                  <small>One per line, like a .gitignore. Never copied or deleted.</small>
+                </div>
+                <textarea value={excludes} rows={3} aria-label="Leave out" spellCheck={false} autoCorrect="off" autoCapitalize="off" onChange={(e) => setExcludes(e.target.value)} />
+              </div>
               {gitignore != null && (
-                <label className="mirror-check indent">
-                  <input type="checkbox" checked={useGitignore} onChange={(e) => setUseGitignore(e.target.checked)} />
-                  <span>
-                    Also what the folder's .gitignore lists{" "}
-                    <small className="inline">
-                      ({n(gitRules)} {gitRules === 1 ? "rule" : "rules"})
+                <div className="set-row">
+                  <div className="set-label">
+                    Also leave out what .gitignore lists
+                    <small>
+                      The folder's own .gitignore, {n(gitRules)} {gitRules === 1 ? "rule" : "rules"}.
                     </small>
-                  </span>
-                </label>
+                  </div>
+                  <button className={`switch ${useGitignore ? "on" : ""}`} role="switch" aria-checked={useGitignore} aria-label="Also leave out what .gitignore lists" onClick={() => setUseGitignore(!useGitignore)} />
+                </div>
               )}
             </div>
           )}
