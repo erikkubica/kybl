@@ -221,7 +221,7 @@ export function makeDualActions(get: () => DualContext) {
       out.push({
         type: "item",
         label: name,
-        icon: t.pane ? "split" : t.group === "Favorites" ? "star" : "folder",
+        icon: t.pane ? "dual-pane" : t.group === "Favorites" ? "star" : "clock",
         detail: [conn, inside !== name ? inside : ""].filter(Boolean).join(" · "),
         onClick: () => sendTo(id, list, mode, t),
       });
