@@ -25,7 +25,7 @@ Presets fill in endpoints, regions and each provider's quirks, and every connect
 - Command palette (Cmd+K) and keyboard shortcuts for everything.
 - Custom actions: your own shell commands on selected files, with placeholders and a shortcut, run on your computer or on an SSH or SFTP server.
 - Make it yours: light, dark or system theme, colour schemes and accents, fonts, text size and density.
-- On your phone too: the same connections on Android and iPhone with a touch interface, photo backup to any connection, background transfers on Android on Android and an app lock.
+- On your phone too: the same connections on Android and iPhone with a touch interface, photo backup to any connection, background transfers on Android and an app lock.
 
 ## What works with which connection
 
@@ -78,7 +78,7 @@ Q: Is Kybl free?
 A: Yes. Kybl is a free download for macOS, Windows, Linux, Android and iPhone. Use your own storage and servers as usual, or start with 10 GB free on Kybl Storage.
 
 Q: Can I use Kybl as an SSH client?
-A: Yes. Add an SSH connection and a click opens a terminal on the server, with a Folders button for its files. Any SFTP connection can also open a terminal, start SSH tunnels (local port forwards) and run your own commands on the server. Terminals are on the desktop apps; on Windows they work for servers, not yet for the computer itself.
+A: Yes. Add an SSH connection and a click opens a terminal on the server, with a Folders button for its files. Any SFTP connection can also open a terminal, start SSH tunnels (local port forwards) and run your own commands on the server. Terminals are in the computer app, on macOS, Windows and Linux, for servers and for your own computer.
 
 Q: Can I bring my FileZilla sites or SSH hosts?
 A: Yes. Import connections reads FileZilla's Site Manager and your ~/.ssh/config (including LocalForward lines, which become tunnels). Folders become sidebar groups, and FileZilla's saved passwords and key files go straight into Kybl's encrypted vault (an SSH config holds no passwords; its keys are used where they are).
