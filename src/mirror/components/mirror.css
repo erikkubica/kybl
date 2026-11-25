@@ -123,7 +123,7 @@
   font-weight: 500;
 }
 .mirror-opts {
-  padding: 2px 0 0 19px;
+  padding: 2px 0 0;
 }
 .mirror-opts .set-row {
   border-bottom-color: var(--border-strong);
