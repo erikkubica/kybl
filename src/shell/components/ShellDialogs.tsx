@@ -123,6 +123,12 @@ export function ShellDialogs({ active, closeWorkspace, connDialog, connectIn, co
             // rendered at once: an SSH connection opens as its terminal, which looks the new
             // profile up in the list
             flushSync(() => conns.upsertProfile(p));
+            // an edit only saves: panes already on it show it as changed, nothing else opens
+            // (a new connection, or one signed in again, opens where you are)
+            if (connDialog.profile && !connDialog.reconnect) {
+              for (const s of slots) if (s.profile?.id === p.id && s.bucket != null) reloadIfShowing(p.id, s.bucket);
+              return;
+            }
             if (isShellConn(p)) openShell(p);
             else openHere((pane) => void connectIn(pane.id, p));
           }}
