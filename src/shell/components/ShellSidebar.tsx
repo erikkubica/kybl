@@ -104,7 +104,18 @@ export function ShellSidebar({ active, activeRef, askBucketName, askNewBucket, a
             // on this computer, the sidebar folder holding the place (Home › Documents lights up Documents)
             bucket={active.profile && active.bucket != null ? closestLocalRoot(active.profile.id, active.bucket, active.prefix) : active.bucket}
             onToggleProfile={toggleConnection}
-            onEditProfile={(p) => setConnDialog({ profile: p })}
+            onFoldProfile={(p) => {
+              const open = !conns.expanded.has(p.id);
+              conns.setExpandedSaved((cur) => {
+                const next = new Set(cur);
+                if (open) next.add(p.id);
+                else next.delete(p.id);
+                return next;
+              });
+              if (open) void conns.loadBuckets(p);
+            }}
+            onLoadRoots={(p) => void conns.loadBuckets(p)}
+            onMenu={dialogs.menu}
             onNewProfile={() => setConnDialog({ profile: null })}
             onOpenSettings={() => openSettings()}
             syncState={syncState}

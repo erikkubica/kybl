@@ -16,14 +16,15 @@ import { driveBadgeTitle } from "../mount/driveMenu";
 import { TunnelBadge } from "../tunnels/TunnelBadge";
 import { keys } from "../ui/lib/osText";
 import { useConnectionDrag } from "./useConnectionDrag";
-import { TYPE_FALLBACK_MIN, TYPE_ORDER, isDevice, typeOf } from "../connections/lib/organize";
+import { isDevice } from "../connections/lib/organize";
+import type { MenuItem } from "../ui/components/Dialogs";
+import { SORT_CHOICES, sortConnections, sortFavorites, sortTree, useSideSort, type SideSection } from "./sideSort";
 import {
   FILTER_MIN,
   RECENT_MIN,
   RECENT_SHOWN,
   findConnections,
   groupLabel,
-  groupName,
   groupOf,
   openKey,
   scopeOf,
@@ -327,7 +328,9 @@ export function Sidebar({
   bucketsBy,
   bucket,
   onToggleProfile,
-  onEditProfile,
+  onFoldProfile,
+  onLoadRoots,
+  onMenu,
   onNewProfile,
   onOpenSettings,
   syncState,
@@ -377,7 +380,12 @@ export function Sidebar({
   bucketsBy: Record<string, BucketList>;
   bucket: string | null;
   onToggleProfile: (p: Profile) => void;
-  onEditProfile: (p: Profile) => void;
+  /** folds a connection open or shut on its buckets, and nothing else (else `onToggleProfile`) */
+  onFoldProfile?: (p: Profile) => void;
+  /** fetches a connection's roots: this computer's folders, listed as a section of their own */
+  onLoadRoots?: (p: Profile) => void;
+  /** a menu at x, y (a section header's order) */
+  onMenu?: (x: number, y: number, items: MenuItem[]) => void;
   onNewProfile: () => void;
   onOpenSettings: () => void;
   syncState: SyncState | null;
@@ -450,7 +458,7 @@ export function Sidebar({
 
   // ---- finding a connection by typing
   const [query, setQuery] = useState("");
-  // the row clicked once (a server, or a Recent one: "r:" + id): marked, with its Open button
+  // the connection clicked once: marked, with its Open button
   const [chosenId, setChosenId] = useState<string | null>(null);
   const [cursor, setCursor] = useState(0);
   // ⌥⌘F shows the field even for a short list, until it's left empty
@@ -523,16 +531,6 @@ export function Sidebar({
     const p = profiles.find((x) => x.id === activeId);
     return p ? { scope: scopeOf(profiles, p), group: groupOf(p) } : null;
   }, [profiles, activeId]);
-  const recentProfiles = useMemo(
-    () =>
-      recent
-        .filter((id) => id !== activeId)
-        .map((id) => profiles.find((p) => p.id === id))
-        .filter((p): p is Profile => !!p)
-        .slice(0, RECENT_SHOWN),
-    [recent, profiles, activeId],
-  );
-  const showRecent = profiles.length > RECENT_MIN && recentProfiles.length > 0;
   // dragging connections onto groups; a connection in the picked set takes the others along
   const pickedSet = picked ?? NO_PICKS;
   const drag = useConnectionDrag((ids, group) => onMoveToGroup?.(ids, group));
@@ -540,19 +538,28 @@ export function Sidebar({
     const ids = pickedSet.has(p.id) ? [...pickedSet] : [p.id];
     return onMoveToGroup && !isDevice(p) ? drag.rowProps(ids, p.name) : {};
   };
-  // a long list of connections in no group is sorted by type (Servers sections are already
-  // by kind: what is left of them, drives and storage, folds the same way)
-  const typed = useMemo(() => {
-    const loose = layout.top.items.filter((p) => !isDevice(p));
-    if (loose.length <= TYPE_FALLBACK_MIN) return null;
-    const by = new Map<string, Profile[]>();
-    for (const p of loose) by.set(typeOf(p).id, [...(by.get(typeOf(p).id) ?? []), p]);
-    const nodes: GroupNode[] = TYPE_ORDER.filter((id) => by.has(id)).map((id) => {
-      const items = by.get(id)!;
-      return { path: `type:${id}`, name: typeOf(items[0]).label, groups: [], items, count: items.length, virtual: true };
-    });
-    return { nodes, device: layout.top.items.filter(isDevice) };
-  }, [layout]);
+  // the sections, in their orders: favorites, this computer's folders, the groups, then the
+  // connections in no group (pinned ones first in their list)
+  const side = useSideSort();
+  const device = profiles.find(isDevice) ?? null;
+  const deviceList = device ? bucketsBy[device.id] : undefined;
+  useEffect(() => {
+    if (device && !deviceList) onLoadRoots?.(device);
+  }, [device, deviceList, onLoadRoots]);
+  const sortedFavorites = useMemo(() => sortFavorites(favorites ?? [], side.sort.favorites), [favorites, side.sort.favorites]);
+  const tree = useMemo(() => sortTree(layout.top, side.sort.groups, side.sort.connections, recent), [layout, side.sort.groups, side.sort.connections, recent]);
+  const loose = useMemo(() => sortConnections(layout.top.items.filter((p) => !isDevice(p)), side.sort.connections, recent), [layout, side.sort.connections, recent]);
+  const deviceRoots = useMemo(() => {
+    const names = deviceList?.names ?? [];
+    return device && side.sort.device === "name" ? [...names].sort((a, b) => rootLabel(device.id, a).localeCompare(rootLabel(device.id, b))) : names;
+  }, [device, deviceList, side.sort.device, rootLabel]);
+  /** a section header's order menu, under its button */
+  const sortMenu = (k: SideSection, x: number, y: number, extra: MenuItem[] = []) =>
+    onMenu?.(x, y, [
+      { type: "label", label: "Sort by" },
+      ...SORT_CHOICES[k].map((c): MenuItem => ({ type: "item", label: c.label, checked: side.sort[k] === c.value || undefined, onClick: () => side.set(k, c.value as never) })),
+      ...extra,
+    ]);
   const ctxFor = (scope: string): GroupCtx => ({
     open: openGroups ?? new Set(),
     scope,
@@ -562,9 +569,6 @@ export function Sidebar({
     dropOver: drag.over,
   });
   const topCtx = ctxFor("");
-  // the by-type folders hold the connection on screen like any folder: keyed by its type
-  const typeCtx: GroupCtx = { ...topCtx, activeGroup: activeId && here?.scope === "" ? (typed?.nodes.find((n) => n.items.some((p) => p.id === activeId))?.path ?? null) : null };
-  const pinnedProfiles = useMemo(() => profiles.filter((p) => p.pinned && !isDevice(p)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })), [profiles]);
   const pickedProfiles = profiles.filter((p) => pickedSet.has(p.id));
 
   // ---- where am I: the connection on screen scrolls into view when it changes (and once its
@@ -601,8 +605,8 @@ export function Sidebar({
       own={builtIn(p)}
       authNeeded={!!authNeeded?.has(p.id)}
       rootLabel={rootLabel}
-      onToggleProfile={onToggleProfile}
-      onEditProfile={onEditProfile}
+      onFold={onFoldProfile ?? onToggleProfile}
+      onOpen={(x) => (onOpenConnection ? onOpenConnection(x) : onToggleProfile(x))}
       onSelectBucket={onSelectBucket}
       onOpenBucketByName={onOpenBucketByName}
       onNewBucket={onNewBucket}
@@ -718,117 +722,113 @@ export function Sidebar({
           />
         ) : (
           <>
-        {favorites && favorites.length > 0 && (
+        {sortedFavorites.length > 0 && (
           <div className="fav-list">
-            <div className="side-head">
-              <span>Favorites</span>
-            </div>
-            {favorites.map((f) => {
-              const p = profiles.find((x) => x.id === f.profileId);
-              // a server's one root ("") is the connection itself: no second name for it
-              const where = [p?.name ?? "Removed connection", ...(f.bucket === "" ? [] : [rootLabel(f.profileId, f.bucket)]), ...f.prefix.split("/").filter(Boolean)].join(" › ");
-              const open = () => p && onOpenFavorite?.(f);
-              return (
-                <div
-                  key={`${f.profileId}|${f.bucket}|${f.prefix}`}
-                  className={`side-item fav-row ${p ? "" : "is-hidden"}`}
-                  onClick={open}
-                  onKeyDown={onActivate(open)}
-                  role="button"
-                  tabIndex={0}
-                  aria-disabled={!p || undefined}
-                  title={p ? where : `${where}. The connection for this favorite was removed.`}
-                >
-                  <Icon name={f.prefix ? "folder" : rootIcon(f.profileId, f.bucket)} size={14} />
-                  <span className="side-label">{f.name}</span>
-                  {onRemoveFavorite && (
-                    <button
-                      className="icon-btn side-hide"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRemoveFavorite(f);
-                      }}
-                      onKeyDown={(e) => e.stopPropagation()}
-                      title="Remove from favorites"
-                      aria-label={`Remove ${f.name} from favorites`}
-                    >
-                      <Icon name="x" size={12} />
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+            <SideHead title="Favorites" section="favorites" side={side} onSort={sortMenu} />
+            {!side.folded.has("favorites") &&
+              sortedFavorites.map((f) => {
+                const p = profiles.find((x) => x.id === f.profileId);
+                // a server's one root ("") is the connection itself: no second name for it
+                const where = [p?.name ?? "Removed connection", ...(f.bucket === "" ? [] : [rootLabel(f.profileId, f.bucket)]), ...f.prefix.split("/").filter(Boolean)].join(" › ");
+                const open = () => p && onOpenFavorite?.(f);
+                return (
+                  <div
+                    key={`${f.profileId}|${f.bucket}|${f.prefix}`}
+                    className={`side-item fav-row ${p ? "" : "is-hidden"}`}
+                    onClick={open}
+                    onKeyDown={onActivate(open)}
+                    role="button"
+                    tabIndex={0}
+                    aria-disabled={!p || undefined}
+                    title={p ? where : `${where}. The connection for this favorite was removed.`}
+                  >
+                    <Icon name={f.prefix ? "folder" : rootIcon(f.profileId, f.bucket)} size={14} />
+                    <span className="side-label">{f.name}</span>
+                    {onRemoveFavorite && (
+                      <button
+                        className="icon-btn side-hide"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRemoveFavorite(f);
+                        }}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        title="Remove from favorites"
+                        aria-label={`Remove ${f.name} from favorites`}
+                      >
+                        <Icon name="x" size={12} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
           </div>
         )}
-        {pinnedProfiles.length > 0 && (
-          <div className="pinned-list">
-            <div className="side-head">
-              <span>Pinned</span>
-            </div>
-            {pinnedProfiles.map(renderConnection)}
-          </div>
-        )}
-        {showRecent && (
-          <div className="recent-list">
-            <div className="side-head">
-              <span>Recent</span>
-            </div>
-            {recentProfiles.map((p) => (
-              <div
-                key={p.id}
-                className={`side-item recent-row ${chosenId === `r:${p.id}` && !paneEmpty ? "chosen" : ""}`}
-                // as a server's row: a click marks it, a double click or ↵ opens it (at once into an empty pane)
-                onClick={(e) => (paneEmpty || p.id === activeId || e.detail > 1 ? onOpenConnection?.(p) : setChosenId(`r:${p.id}`))}
-                onKeyDown={onActivate(() => onOpenConnection?.(p))}
-                role="button"
-                tabIndex={0}
-                title={builtIn(p) ? p.name : `${p.name} · ${addressOf(p)}`}
-                onContextMenu={
-                  onConnectionMenu &&
-                  ((e) => {
-                    e.preventDefault();
-                    onConnectionMenu(p, e.clientX, e.clientY);
+        {device && (
+          <div className="device-list">
+            <SideHead
+              title={device.name}
+              section="device"
+              side={side}
+              onSort={sortMenu}
+              onContextMenu={onConnectionMenu && ((x, y) => onConnectionMenu(device, x, y))}
+            />
+            {!side.folded.has("device") && (
+              <DeviceRoots
+                p={device}
+                roots={deviceRoots}
+                list={deviceList}
+                active={device.id === activeId}
+                bucket={bucket}
+                hidden={hiddenBuckets[device.id]}
+                revealing={showHidden.has(device.id)}
+                onReveal={() =>
+                  setShowHidden((cur) => {
+                    const next = new Set(cur);
+                    if (!next.delete(device.id)) next.add(device.id);
+                    return next;
                   })
                 }
-              >
-                <ConnBadge p={p} own={builtIn(p)} />
-                <span className="side-label">{p.name}</span>
-                {chosenId === `r:${p.id}` && !paneEmpty && p.id !== activeId ? (
-                  <button
-                    className="side-open"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onOpenConnection?.(p);
-                    }}
-                    onKeyDown={(e) => e.stopPropagation()}
-                  >
-                    Open
-                  </button>
-                ) : (
-                  groupOf(p) && <span className="side-aside">{groupName(groupOf(p))}</span>
-                )}
-              </div>
-            ))}
+                rootLabel={rootLabel}
+                onSelectBucket={onSelectBucket}
+                onHideBucket={onHideBucket}
+                onBucketMenu={onBucketMenu}
+                mounts={mounts}
+                onDriveMenu={onDriveMenu}
+              />
+            )}
           </div>
         )}
-        {profiles.length > 0 && (
-          // dropping connections on this heading takes them out of their group
-          <div className={`side-head ${drag.over === "" ? "drop-over" : ""}`} {...(onMoveToGroup ? { "data-conn-drop": "" } : {})}>
-            <span>Connections</span>
-            {many && <span className="side-count">{profiles.length}</span>}
+        {(tree.groups.length > 0 || layout.sections.length > 0) && (
+          <div className="groups-list">
+            <SideHead title="Groups" count={tree.groups.length} section="groups" side={side} onSort={sortMenu} />
+            {!side.folded.has("groups") && (
+              <>
+                {layout.sections.map((s) => (
+                  <KindSectionRow key={s.key} section={s} ctx={ctxFor(s.key)} onMenu={onSectionMenu} renderConnection={renderConnection} />
+                ))}
+                {tree.groups.map((g) => (
+                  <GroupRow key={g.path} node={g} depth={0} ctx={topCtx} renderConnection={renderConnection} />
+                ))}
+              </>
+            )}
           </div>
         )}
-        {/* the connections with buckets and This Mac, then a section per server kind, then the groups */}
-        {(typed ? typed.device : layout.top.items).map(renderConnection)}
-        {layout.sections.map((s) => (
-          <KindSectionRow key={s.key} section={s} ctx={ctxFor(s.key)} onMenu={onSectionMenu} renderConnection={renderConnection} />
-        ))}
-        {layout.top.groups.map((g) => (
-          <GroupRow key={g.path} node={g} depth={0} ctx={topCtx} renderConnection={renderConnection} />
-        ))}
-        {typed?.nodes.map((g) => (
-          <GroupRow key={g.path} node={g} depth={0} ctx={typeCtx} renderConnection={renderConnection} />
-        ))}
+        {(loose.length > 0 || tree.groups.length > 0) && (
+          <div className="loose-list">
+            <SideHead
+              title="Connections"
+              count={many ? loose.length : undefined}
+              section="connections"
+              side={side}
+              onSort={sortMenu}
+              // dropping connections on this heading takes them out of their group
+              dropOver={drag.over === ""}
+              drop={!!onMoveToGroup}
+            />
+            {!side.folded.has("connections") && loose.map(renderConnection)}
+            {!side.folded.has("connections") && !loose.length && <p className="side-note">Every connection is in a group.</p>}
+          </div>
+        )}
           </>
         )}
       </div>
@@ -859,9 +859,159 @@ export function Sidebar({
 }
 
 /**
- * One connection in the sidebar. Most fold open on their buckets (or drives, or this computer's
- * folders); a connection with a single root (a server, one container) has no level to fold: a
- * click opens it, and it is highlighted while it's on screen.
+ * A section's heading: its name folds it shut, its button orders it (Favorites, This Mac, Groups,
+ * Connections). The Connections heading also takes dropped connections out of their group.
+ */
+function SideHead({
+  title,
+  count,
+  section,
+  side,
+  onSort,
+  onContextMenu,
+  dropOver,
+  drop,
+}: {
+  title: string;
+  count?: number;
+  section: SideSection;
+  side: ReturnType<typeof useSideSort>;
+  onSort: (k: SideSection, x: number, y: number) => void;
+  onContextMenu?: (x: number, y: number) => void;
+  dropOver?: boolean;
+  drop?: boolean;
+}) {
+  const shut = side.folded.has(section);
+  return (
+    <div
+      className={`side-head sect ${dropOver ? "drop-over" : ""} ${shut ? "shut" : ""}`}
+      {...(drop ? { "data-conn-drop": "" } : {})}
+      onContextMenu={
+        onContextMenu &&
+        ((e) => {
+          e.preventDefault();
+          onContextMenu(e.clientX, e.clientY);
+        })
+      }
+    >
+      <button type="button" className="side-head-fold" aria-expanded={!shut} onClick={() => side.fold(section)} title={shut ? `Show ${title}` : `Fold ${title} shut`}>
+        <span>{title}</span>
+        {count != null && <span className="side-count">{count}</span>}
+        <Icon name="chevron" size={10} className="side-head-chev" />
+      </button>
+      <button
+        type="button"
+        className="icon-btn side-head-sort"
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          onSort(section, Math.round(r.left), Math.round(r.bottom + 2));
+        }}
+        title={`Sort ${title}`}
+        aria-label={`Sort ${title}`}
+      >
+        <Icon name="sort" size={12} />
+      </button>
+    </div>
+  );
+}
+
+/** This computer's folders (Home, Desktop…) as a section's rows: a click opens one. */
+function DeviceRoots({
+  p,
+  roots,
+  list,
+  active,
+  bucket,
+  hidden: hiddenList,
+  revealing: revealAsked,
+  onReveal,
+  rootLabel,
+  onSelectBucket,
+  onHideBucket,
+  onBucketMenu,
+  mounts = [],
+  onDriveMenu,
+}: {
+  p: Profile;
+  roots: string[];
+  list: BucketList | undefined;
+  active: boolean;
+  bucket: string | null;
+  hidden: string[] | undefined;
+  revealing: boolean;
+  onReveal: () => void;
+  rootLabel: (profileId: string, root: string) => string;
+  onSelectBucket: (p: Profile, b: string) => void;
+  onHideBucket: (p: Profile, bucket: string, hide: boolean) => void;
+  onBucketMenu?(p: Profile, bucket: string, x: number, y: number): void;
+  mounts?: MountInfo[];
+  onDriveMenu?(m: MountInfo, x: number, y: number): void;
+}) {
+  const hidden = new Set(hiddenList ?? []);
+  const hiddenHere = roots.filter((b) => hidden.has(b));
+  const revealing = revealAsked && hiddenHere.length > 0;
+  const ico = rootIcon(p.id);
+  return (
+    <>
+      {roots.map((b) => {
+        const here = active && b === bucket;
+        const isHidden = hidden.has(b);
+        if (isHidden && !revealing && !here) return null;
+        return (
+          <div
+            key={b}
+            className={`side-item sub bucket-row device-row ${here ? "selected" : ""} ${isHidden ? "is-hidden" : ""}`}
+            onClick={() => onSelectBucket(p, b)}
+            onKeyDown={onActivate(() => onSelectBucket(p, b))}
+            role="button"
+            tabIndex={0}
+            aria-current={here}
+            data-drop-bucket={b}
+            data-drop-profile={p.id}
+            title={b}
+            onContextMenu={
+              onBucketMenu &&
+              ((e) => {
+                e.preventDefault();
+                onBucketMenu(p, b, e.clientX, e.clientY);
+              })
+            }
+          >
+            <Icon name={ico} size={14} />
+            <span className="side-label">{rootLabel(p.id, b)}</span>
+            <DriveBadge m={findMount(mounts, p.id, b, "")} onMenu={onDriveMenu} />
+            <button
+              className="icon-btn side-hide"
+              onClick={(e) => {
+                e.stopPropagation();
+                onHideBucket(p, b, !isHidden);
+              }}
+              onKeyDown={(e) => e.stopPropagation()}
+              title={isHidden ? "Show in the sidebar" : "Hide from the sidebar"}
+              aria-label={isHidden ? `Show ${rootLabel(p.id, b)} in the sidebar` : `Hide ${rootLabel(p.id, b)} from the sidebar`}
+            >
+              <Icon name={isHidden ? "eye" : "eye-off"} size={13} />
+            </button>
+          </div>
+        );
+      })}
+      {hiddenHere.length > 0 && (
+        <button className="side-item sub link" onClick={onReveal}>
+          <Icon name={revealing ? "eye-off" : "eye"} size={14} />
+          <span className="side-label">{revealing ? "Done choosing" : `${hiddenHere.length} hidden`}</span>
+        </button>
+      )}
+      {list?.loading && !roots.length && <p className="side-note">Loading…</p>}
+      {list?.note && <p className="side-note">{list.note}</p>}
+    </>
+  );
+}
+
+/**
+ * One connection in the sidebar, every kind alike: a click marks it with an Open button (a click
+ * alone never replaces what the pane shows), a double click, ↵ or Open opens it, and into an empty
+ * pane a click opens at once. One with buckets (or drives) also folds open on them, by a click or
+ * its caret; a bucket row opens that bucket.
  */
 function SidebarConnection({
   p,
@@ -875,8 +1025,8 @@ function SidebarConnection({
   own,
   authNeeded,
   rootLabel,
-  onToggleProfile,
-  onEditProfile,
+  onFold,
+  onOpen,
   onSelectBucket,
   onOpenBucketByName,
   onNewBucket,
@@ -906,8 +1056,10 @@ function SidebarConnection({
   own: boolean;
   authNeeded: boolean;
   rootLabel: (profileId: string, root: string) => string;
-  onToggleProfile: (p: Profile) => void;
-  onEditProfile: (p: Profile) => void;
+  /** folds it open or shut on its buckets */
+  onFold: (p: Profile) => void;
+  /** opens it in the pane in use */
+  onOpen: (p: Profile) => void;
   onSelectBucket: (p: Profile, b: string) => void;
   onOpenBucketByName: (p: Profile) => void;
   onNewBucket: (p: Profile) => void;
@@ -941,16 +1093,17 @@ function SidebarConnection({
   const canCreate = caps ? caps.createRoot : p.provider === KYBL;
   const canOpenByName = !own && mode === "buckets" && !canCreate;
   const here = active && single && bucket === "";
-  const activate = () => (single ? onSelectBucket(p, "") : onToggleProfile(p));
-  // a server (one root) opens in the pane only when asked: a click marks it, a double click, ↵ or
-  // its Open button opens it (at once into an empty pane, or when it is already the one on screen).
-  // A connection with buckets just folds open; opening a bucket is the explicit step there.
-  const asks = single && !!onChoose && !paneEmpty && !here;
+  // already what the pane shows: opening it again would only reload it
+  const showing = single ? here : active;
+  const open_ = () => (single ? onSelectBucket(p, "") : onOpen(p));
+  const asks = !!onChoose && !paneEmpty && !showing;
   // ⌘/Ctrl-click (or any click while some are picked) picks the connection instead of opening it
   const click = (e: React.MouseEvent) => {
     if (onPick && !own && (e.metaKey || e.ctrlKey || e.shiftKey || pickMode)) return onPick(p);
-    if (asks && e.detail < 2) return onChoose!(p);
-    activate();
+    if (e.detail > 1) return asks || !showing ? open_() : undefined;
+    if (!single && !(paneEmpty && open)) onFold(p);
+    if (asks) return onChoose!(p);
+    if (!showing) open_();
   };
   // the error a server gave, as a dot with the message on hover (the pane says it in full)
   const trouble = single && active && list?.note && !list.names.length ? list.note : null;
@@ -967,7 +1120,11 @@ function SidebarConnection({
             e.preventDefault();
             return onPick(p);
           }
-          onActivate(activate)(e);
+          if (!single && e.target === e.currentTarget && (e.key === "ArrowRight" ? !open : e.key === "ArrowLeft" && open)) {
+            e.preventDefault();
+            return onFold(p);
+          }
+          onActivate(() => !showing && open_())(e);
         }}
         role="button"
         tabIndex={0}
@@ -1014,7 +1171,7 @@ function SidebarConnection({
             className="side-open"
             onClick={(e) => {
               e.stopPropagation();
-              activate();
+              open_();
             }}
             onKeyDown={(e) => e.stopPropagation()}
             title="Open in the pane in use (or double-click the row)"
@@ -1022,21 +1179,22 @@ function SidebarConnection({
             Open
           </button>
         )}
-        {!own && (
+        {!single && (
           <button
-            className="icon-btn side-edit"
+            type="button"
+            className="side-caret-btn"
+            tabIndex={-1}
             onClick={(e) => {
               e.stopPropagation();
-              onEditProfile(p);
+              onFold(p);
             }}
-            onKeyDown={(e) => e.stopPropagation()}
-            title="Edit connection"
-            aria-label={`Edit connection ${p.name}`}
+            onDoubleClick={(e) => e.stopPropagation()}
+            title={open ? "Fold shut" : "Show its buckets"}
+            aria-hidden="true"
           >
-            <Icon name="edit" size={14} />
+            <Icon name="chevron" size={13} className="side-caret" />
           </button>
         )}
-        {!single && <Icon name="chevron" size={13} className="side-caret" />}
       </div>
       {open && !single && (
         <div className="bucket-list">

@@ -266,18 +266,23 @@ code {
 .side-item.conn.open .side-caret {
   transform: rotate(90deg);
 }
-.side-item .side-edit {
-  display: none;
-  width: 22px;
+/* the caret of a connection with buckets: its own button, always there (a click on the row folds too) */
+.side-caret-btn {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
   height: 22px;
   margin-right: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--faint);
 }
-.side-item:hover .side-edit,
-.side-item .side-edit:focus-visible {
-  display: inline-grid;
-}
-.side-item:hover .side-caret {
-  display: none;
+.side-caret-btn:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 .side-item .side-hide {
   display: none;
@@ -5116,7 +5121,6 @@ input[aria-invalid="true"]:focus {
 /* ---------------------------------------------------------------- sidebar: keyboard-reachable row buttons, favorites, drops */
 /* The edit / hide buttons stay in the tab order: folded to zero width until the row is hovered
    or anything in it has focus (display:none would make them unreachable by keyboard). */
-.side-item .side-edit,
 .side-item .side-hide {
   display: inline-grid;
   width: 0;
@@ -5126,15 +5130,10 @@ input[aria-invalid="true"]:focus {
   opacity: 0;
   transition: opacity 0.12s;
 }
-.side-item:hover .side-edit,
-.side-item:focus-within .side-edit,
 .side-item:hover .side-hide,
 .side-item:focus-within .side-hide {
   width: 22px;
   opacity: 1;
-}
-.side-item:focus-within .side-caret {
-  display: none;
 }
 .side-item:focus-visible {
   outline-offset: -2px;
@@ -5290,6 +5289,55 @@ input[aria-invalid="true"]:focus {
   margin: 8px 10px;
 }
 
+/* the sections (Favorites, This Mac, Groups, Connections): the name folds one shut, the button orders it */
+.side-head.sect {
+  padding: 0 2px 0 4px;
+  margin-top: 4px;
+}
+.side-head-fold {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+}
+.side-head-fold .side-count {
+  min-width: 0;
+  margin: 0;
+}
+.side-head-chev {
+  opacity: 0;
+  transform: rotate(90deg);
+  transition: transform 0.18s var(--ease), opacity 0.12s;
+}
+.side-head.shut .side-head-chev {
+  transform: none;
+  opacity: 1;
+}
+.side-head-sort {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.side-head:hover .side-head-chev,
+.side-head:hover .side-head-sort,
+.side-head-sort:focus-visible {
+  opacity: 1;
+}
+.device-list,
+.groups-list,
+.loose-list {
+  margin-bottom: 6px;
+}
+
 /* recent: the last few connections, one click from anywhere in a long list */
 .recent-list {
   margin-bottom: 6px;
@@ -5383,9 +5431,6 @@ input[aria-invalid="true"]:focus {
 }
 .side-open:hover {
   background: var(--accent-solid-hover);
-}
-.side-item.chosen .side-caret {
-  display: none;
 }
 /* a server that couldn't connect: a dot, the message on hover (the pane has it in full) */
 .side-trouble {
