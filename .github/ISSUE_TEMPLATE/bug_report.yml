@@ -1,0 +1,93 @@
+name: Bug report
+description: Something in Kybl doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Please **never paste access keys, passwords, tokens or private host names**: Kybl's log already leaves secrets out, but check what you paste.
+  - type: input
+    id: version
+    attributes:
+      label: Kybl version
+      description: Settings → General → About.
+      placeholder: "0.7.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: System
+      multiple: true
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows
+        - Linux
+        - iPhone / iPad
+        - Android
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: System version
+      placeholder: "macOS 26.1, Windows 11 24H2, Ubuntu 24.04 …"
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection type
+      description: Where it happened, if it's about a connection.
+      multiple: true
+      options:
+        - Not about a connection
+        - This computer
+        - S3 / S3-compatible (AWS, Hetzner, R2, B2, Wasabi, MinIO …)
+        - Kybl Storage
+        - Azure Blob Storage
+        - Google Cloud Storage
+        - Google Drive
+        - OneDrive
+        - Dropbox
+        - Box
+        - WebDAV
+        - SFTP
+        - FTP / FTPS
+        - SSH (terminal)
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, including any error message word for word.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Right-click …
+        3. Choose …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log or screenshots
+      description: Activity panel → Log shows what failed and why. Screenshots or a short recording help a lot.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send
+      options:
+        - label: I searched the existing issues and this isn't one of them.
+          required: true
+        - label: What I pasted has no keys, passwords, tokens or private host names.
+          required: true

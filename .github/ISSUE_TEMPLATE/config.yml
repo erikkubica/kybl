@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: User manual
+    url: https://kybl.app/manual/
+    about: How every feature works, keyboard shortcuts and troubleshooting.
+  - name: Feature gallery
+    url: https://kybl.app/features/
+    about: Every screen of Kybl, light and dark.
+  - name: Report a security problem
+    url: https://github.com/erikkubica/kybl/security/advisories/new
+    about: Please report vulnerabilities privately, not as a public issue.

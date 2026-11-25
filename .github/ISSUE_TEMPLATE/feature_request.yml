@@ -1,0 +1,46 @@
+name: Feature request
+description: An idea for something Kybl could do, or do better.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Kybl aims to stay small and fast while doing a lot. Ideas that make an everyday task quicker are the most welcome. Check the [manual](https://kybl.app/manual/) first: it may already be there.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task, and what gets in the way today.
+      placeholder: "When I … I have to … which is slow because …"
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: How you picture it working. Screenshots or mock-ups are welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you use instead today
+      description: Other apps, scripts or workarounds.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where you'd use it
+      multiple: true
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - iPhone / iPad
+        - Android
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send
+      options:
+        - label: I searched the existing issues and the manual.
+          required: true
