@@ -111,7 +111,7 @@
 }
 .dif-code mark {
   color: inherit;
-  border-radius: 2px;
+  border-radius: var(--r-xs);
 }
 .dif-code.add mark,
 .dif-row.add mark {

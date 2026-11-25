@@ -34,7 +34,7 @@
   place-items: center;
   width: 40px;
   height: 40px;
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -75,7 +75,7 @@
   width: min(1100px, calc(100vw - 48px));
   height: min(820px, calc(100vh - 76px));
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--r-xl);
   background: var(--raised);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
@@ -236,7 +236,7 @@
   place-items: center;
   width: 44px;
   height: 44px;
-  border-radius: 11px;
+  border-radius: var(--r-lg);
   background: var(--hover);
 }
 .ei-name {
@@ -335,7 +335,7 @@ body:has(.ql-backdrop) .modal-backdrop {
   min-width: 0;
   padding: 10px 8px 8px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: var(--r-xl);
   background: transparent;
   color: var(--text);
   cursor: default;
@@ -359,7 +359,7 @@ body:has(.ql-backdrop) .modal-backdrop {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   box-shadow: 0 1px 3px rgba(14, 16, 30, 0.18);
 }
 .ql-tile-name,
@@ -437,7 +437,7 @@ body:has(.ql-backdrop) .modal-backdrop {
   height: 24px;
   padding: 0 8px;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: var(--field);
   color: var(--dim);
   font: 11.5px var(--mono);
@@ -558,7 +558,7 @@ body:has(.ql-backdrop) .modal-backdrop {
 .br-why {
   flex: none;
   padding: 1px 7px;
-  border-radius: 9px;
+  border-radius: var(--r);
   background: var(--danger-soft);
   color: var(--danger);
   font-size: 11px;

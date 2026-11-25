@@ -28,14 +28,14 @@
   height: 40px;
   display: grid;
   place-items: center;
-  border-radius: 12px;
+  border-radius: var(--r-xl);
   background: var(--accent-soft);
   color: var(--accent);
 }
 .bk-ico.big {
   width: 44px;
   height: 44px;
-  border-radius: 13px;
+  border-radius: calc(13px * var(--r-k));
 }
 .bk-ico.folder {
   background: color-mix(in srgb, var(--warn) 16%, transparent);
@@ -68,7 +68,7 @@
 .bk-bar {
   height: 4px;
   margin: 10px 0 0;
-  border-radius: 2px;
+  border-radius: var(--r-xs);
   background: var(--pressed);
   overflow: hidden;
 }
@@ -111,7 +111,7 @@
 
 .bk-card {
   padding: 14px 14px 6px;
-  border-radius: 16px;
+  border-radius: var(--r-xl);
   background: var(--m-card);
   box-shadow: 0 0 0 1px var(--border), var(--shadow-sm);
 }
@@ -181,7 +181,7 @@
   gap: 6px;
   min-height: 44px;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   background: transparent;
   color: var(--accent) !important;
   font-size: calc(14 * var(--m-u));
@@ -214,7 +214,7 @@
   gap: 12px;
   margin: 12px 16px 0;
   padding: 14px;
-  border-radius: 16px;
+  border-radius: var(--r-xl);
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -239,7 +239,7 @@
 .bk-note-btn {
   min-height: 44px;
   padding: 0 16px;
-  border-radius: 12px;
+  border-radius: var(--r-xl);
   font-size: calc(15 * var(--m-u));
   font-weight: 600;
 }
@@ -254,7 +254,7 @@
 .bk-hero .bk-ico {
   width: 52px;
   height: 52px;
-  border-radius: 15px;
+  border-radius: calc(15px * var(--r-k));
 }
 .bk-hero-text strong {
   font-size: calc(18 * var(--m-u));
@@ -273,7 +273,7 @@
 .bk-act {
   flex: 1;
   min-height: 46px;
-  border-radius: 14px !important;
+  border-radius: var(--r-xl) !important;
   font-size: calc(15 * var(--m-u)) !important;
   font-weight: 600;
   gap: 6px;
@@ -380,7 +380,7 @@
   gap: 8px;
   margin: 14px 16px 0;
   padding: 14px 16px;
-  border-radius: 16px;
+  border-radius: var(--r-xl);
   background: var(--m-card);
   box-shadow: 0 0 0 1px var(--border), var(--shadow-sm);
 }
@@ -441,7 +441,7 @@
   flex: 1;
   height: auto;
   min-height: 220px;
-  border-radius: 14px;
+  border-radius: var(--r-xl);
   background: var(--m-card);
   font-size: calc(15 * var(--m-u));
 }
@@ -460,7 +460,7 @@
 .bk-home {
   position: relative;
   margin: 14px 16px 0;
-  border-radius: 18px;
+  border-radius: calc(18px * var(--r-k));
   background: var(--m-card);
   box-shadow: 0 0 0 1px var(--border), var(--shadow-sm);
 }
@@ -495,7 +495,7 @@
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: 0 18px 0 12px;
+  border-radius: 0 calc(18px * var(--r-k)) 0 var(--r-xl);
   background: transparent;
   color: var(--faint) !important;
 }

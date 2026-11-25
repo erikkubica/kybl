@@ -14,7 +14,7 @@
   height: 20px;
   margin-left: 2px;
   padding: 0 6px;
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   background: var(--hover);
   color: var(--dim);
   font-size: 11.5px;
@@ -56,7 +56,7 @@
   height: 14px;
   margin-left: auto;
   padding: 0 2px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   font: 700 10px/1 var(--mono);
   letter-spacing: 0;
   color: var(--git-c);
@@ -118,7 +118,7 @@
   gap: 6px;
   min-width: 0;
   padding: 1px 6px;
-  border-radius: 5px;
+  border-radius: var(--r-sm);
   color: var(--dim);
   font: 12px/1.35 var(--mono);
   cursor: pointer;
@@ -142,7 +142,7 @@
   white-space: pre;
 }
 .hit-text mark {
-  border-radius: 3px;
+  border-radius: var(--r-xs);
   background: color-mix(in srgb, var(--warn) 30%, transparent);
   color: var(--text);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--warn) 30%, transparent);
@@ -150,7 +150,7 @@
 .hit-count {
   flex: none;
   padding: 0 5px;
-  border-radius: 8px;
+  border-radius: var(--r);
   background: var(--hover);
   color: var(--faint);
   font: 600 10.5px/16px var(--font);
@@ -206,7 +206,7 @@
 .search-seg {
   display: inline-flex;
   padding: 1px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: var(--hover);
 }
 .search-seg button,
@@ -214,7 +214,7 @@
   height: 18px;
   padding: 0 5px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--r-sm);
   background: none;
   color: var(--faint);
   font: 600 10.5px/18px var(--font);
