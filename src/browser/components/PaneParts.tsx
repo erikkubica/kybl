@@ -81,19 +81,8 @@ export function PaneBanners({ pane }: { pane: Pane }) {
             </span>
           )}
           <button className="btn btn-sm" onClick={() => actions.doSearch(ent.query.trim())}>
-            Search subfolders too
+            Include subfolders
           </button>
-          {!pane.contentsOff && (
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={() => {
-                ent.sr.configure({ mode: "contents" });
-                actions.doSearch(ent.query.trim());
-              }}
-            >
-              Inside files
-            </button>
-          )}
         </div>
       )}
       {listError && entries.length > 0 && (
