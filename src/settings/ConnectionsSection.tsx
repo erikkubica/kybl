@@ -1,7 +1,8 @@
 /**
  * Settings › Connections: every saved connection, filed under its group, so it shows at a glance
- * which are in a group and which aren't. A filter narrows it (name, address or group), "No group"
- * shows only those still to file, and several picked at once move to a group in one go.
+ * which are in a group and which aren't. A picker shows one group (with the groups inside it) or
+ * only those still to file, a filter narrows it (name, address or group), a group's header folds
+ * it shut, and several picked at once move to a group in one go.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Profile } from "../core/types";
@@ -9,6 +10,18 @@ import { ProviderBadge } from "../sidebar/Sidebar";
 import { addressOf } from "../connections/lib/kinds";
 import { allGroups, byName, groupLabel, groupOf } from "../connections/lib/groups";
 import { Icon } from "../ui/components/Icons";
+import { LS } from "../browser/types";
+
+/** the groups folded shut here, kept per device ("" is No group) */
+const FOLDED_KEY = "kybl.settings.connections.folded";
+function loadFolded(): Set<string> {
+  try {
+    const v = JSON.parse(LS.get(FOLDED_KEY) ?? "[]");
+    return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
 
 /** what a row says under its name: a server's own address, or a bucket store's endpoint */
 function whereOf(p: Profile): string {
@@ -31,24 +44,47 @@ export function ConnectionsSection({
   onGroupMenu?: (ps: Profile[], x: number, y: number) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [only, setOnly] = useState<"all" | "loose">("all");
+  // what the picker shows: everything, only what has no group, or one group with those inside it
+  const [scope, setScope] = useState<{ kind: "all" } | { kind: "loose" } | { kind: "group"; path: string }>({ kind: "all" });
+  const [folded, setFolded] = useState<Set<string>>(loadFolded);
+  const fold = (g: string) =>
+    setFolded((cur) => {
+      const next = new Set(cur);
+      if (!next.delete(g)) next.add(g);
+      LS.set(FOLDED_KEY, JSON.stringify([...next]));
+      return next;
+    });
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const lastPick = useRef<string | null>(null);
 
   const loose = profiles.filter((p) => !groupOf(p)).length;
+  const groups = useMemo(() => allGroups(profiles), [profiles]);
+  /** how many are in group `g`, the groups inside it included */
+  const countIn = (g: string) => profiles.filter((p) => groupOf(p) === g || groupOf(p).startsWith(`${g}/`)).length;
+  // a picked group that no longer exists (renamed, emptied) goes back to everything
+  useEffect(() => {
+    if (scope.kind === "group" && !groups.includes(scope.path)) setScope({ kind: "all" });
+  }, [groups, scope]);
+  const inScope = (p: Profile) => {
+    const g = groupOf(p);
+    if (scope.kind === "loose") return !g;
+    if (scope.kind === "group") return g === scope.path || g.startsWith(`${scope.path}/`);
+    return true;
+  };
   const q = query.trim().toLowerCase();
-  const shown = profiles.filter((p) => (only === "loose" ? !groupOf(p) : true) && (!q || `${p.name}\n${whereOf(p)}\n${groupOf(p)}`.toLowerCase().includes(q)));
+  const shown = profiles.filter((p) => inScope(p) && (!q || `${p.name}\n${whereOf(p)}\n${groupOf(p)}`.toLowerCase().includes(q)));
   // the groups in sidebar order, "No group" first: that's what is still to file
   const sections = useMemo(() => {
-    const order = ["", ...allGroups(profiles)];
+    const order = ["", ...groups];
     const by = new Map<string, Profile[]>();
     for (const p of shown) {
       const g = groupOf(p);
       by.set(g, [...(by.get(g) ?? []), p]);
     }
     return order.filter((g) => by.has(g)).map((g) => ({ group: g, items: by.get(g)!.sort((a, b) => byName(a.name, b.name)) }));
-  }, [profiles, shown]);
-  const flat = sections.flatMap((s) => s.items);
+  }, [groups, shown]);
+  // a range (Shift) runs over the rows on screen: not through a folded group
+  const flat = sections.filter((s) => !folded.has(s.group)).flatMap((s) => s.items);
 
   // moved (or deleted) ones leave the pick: what is ticked is always what a move would take
   const groupsBefore = useRef(new Map(profiles.map((p) => [p.id, groupOf(p)])));
@@ -103,14 +139,27 @@ export function ConnectionsSection({
               </button>
             )}
           </label>
-          <div className="seg" role="group" aria-label="Show">
-            <button type="button" className={only === "all" ? "on" : ""} aria-pressed={only === "all"} onClick={() => setOnly("all")}>
-              All · {profiles.length}
-            </button>
-            <button type="button" className={only === "loose" ? "on" : ""} aria-pressed={only === "loose"} onClick={() => setOnly("loose")}>
-              No group · {loose}
-            </button>
-          </div>
+          <select
+            className="conn-scope"
+            aria-label="Show"
+            value={scope.kind === "group" ? `g:${scope.path}` : scope.kind}
+            onChange={(e) => {
+              const v = e.target.value;
+              setScope(v.startsWith("g:") ? { kind: "group", path: v.slice(2) } : { kind: v as "all" | "loose" });
+            }}
+          >
+            <option value="all">All connections · {profiles.length}</option>
+            <option value="loose">No group · {loose}</option>
+            {groups.length > 0 && (
+              <optgroup label="Groups">
+                {groups.map((g) => (
+                  <option key={g} value={`g:${g}`}>
+                    {groupLabel(g)} · {countIn(g)}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
         </div>
       )}
       {pickedList.length > 0 && onGroupMenu && (
@@ -133,14 +182,16 @@ export function ConnectionsSection({
         )}
         {profiles.length > 0 && !sections.length && (
           <div className="conn-empty">
-            <b>{only === "loose" && !q ? "Every connection is in a group" : "Nothing matches"}</b>
+            <b>{scope.kind === "loose" && !q ? "Every connection is in a group" : "Nothing matches"}</b>
           </div>
         )}
         {sections.map(({ group, items }) => {
           const all = items.every((p) => picked.has(p.id));
           const some = !all && items.some((p) => picked.has(p.id));
+          // a filter or a picked group shows what it found, folded or not
+          const shut = folded.has(group) && !q;
           return (
-            <section key={group || "\u0000"} className="conn-section">
+            <section key={group || "\u0000"} className={`conn-section${shut ? " shut" : ""}`}>
               <div className={`conn-group-head${group ? "" : " loose"}`}>
                 {onGroupMenu && (
                   <input
@@ -153,11 +204,15 @@ export function ConnectionsSection({
                     aria-label={`Pick every connection ${group ? `in ${groupLabel(group)}` : "without a group"}`}
                   />
                 )}
-                <Icon name="folder" size={14} />
-                <span className="conn-group-name">{group ? groupLabel(group) : "No group"}</span>
-                <span className="conn-group-count">{items.length}</span>
+                <button type="button" className="conn-group-fold" aria-expanded={!shut} onClick={() => fold(group)} title={shut ? "Show this group" : "Fold this group shut"}>
+                  <Icon name="chevron-down" size={12} className="conn-fold-chev" />
+                  <Icon name="folder" size={14} />
+                  <span className="conn-group-name">{group ? groupLabel(group) : "No group"}</span>
+                  <span className="conn-group-count">{items.length}</span>
+                  {shut && some && <span className="conn-group-count">· {items.filter((p) => picked.has(p.id)).length} picked</span>}
+                </button>
               </div>
-              {items.map((p) => (
+              {!shut && items.map((p) => (
                 <div key={p.id} className={`conn-row${picked.has(p.id) ? " picked" : ""}`}>
                   {onGroupMenu && (
                     <input

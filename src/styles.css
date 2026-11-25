@@ -2978,10 +2978,10 @@ input[type="checkbox"] {
   box-shadow: none;
   color: var(--text);
 }
-.conn-tools .seg button {
-  width: auto;
-  padding: 0 10px;
-  font-size: 12px;
+.conn-tools .conn-scope {
+  flex: none;
+  max-width: 240px;
+  height: 30px;
   font-variant-numeric: tabular-nums;
 }
 .conn-pickbar {
@@ -3015,6 +3015,32 @@ input[type="checkbox"] {
 }
 .conn-group-head.loose {
   color: var(--warn);
+}
+.conn-group-fold {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.conn-group-fold:hover .conn-group-name {
+  color: var(--text);
+}
+.conn-fold-chev {
+  flex: none;
+  transition: transform 0.15s var(--ease);
+}
+.conn-section.shut .conn-fold-chev {
+  transform: rotate(-90deg);
+}
+.conn-section.shut .conn-group-head {
+  padding-bottom: 12px;
 }
 .conn-group-count {
   color: var(--faint);
