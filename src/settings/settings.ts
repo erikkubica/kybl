@@ -12,6 +12,8 @@ import { SCHEME_VAR_NAMES, paletteVars, schemeById, type SchemeId } from "./sche
 export type Theme = "system" | "light" | "dark";
 export type Accent = "scheme" | "blue" | "purple" | "pink" | "orange" | "green" | "graphite";
 export type FontChoice = "system" | "rounded" | "serif" | "mono";
+/** how round corners are, on top of the scheme's own sizes */
+export type Corners = "square" | "subtle" | "default" | "round";
 
 export type Settings = {
   theme: Theme;
@@ -22,6 +24,7 @@ export type Settings = {
   font: FontChoice;
   /** interface zoom factor, 1 = default */
   scale: number;
+  corners: Corners;
   /** folders listed before files, whatever the sort */
   foldersFirst: boolean;
   /** 1 KiB = 1024 B instead of 1 KB = 1000 B */
@@ -85,6 +88,7 @@ export const DEFAULTS: Settings = {
   accent: "scheme",
   font: "system",
   scale: 1,
+  corners: "default",
   foldersFirst: true,
   binaryUnits: false,
   linkExpiry: 86400,
@@ -127,6 +131,13 @@ export const ACCENTS:{ id: Exclude<Accent, "scheme">; label: string; color: stri
   { id: "graphite", label: "Graphite", color: "#5c616d" },
 ];
 
+export const CORNERS: { value: Corners; label: string }[] = [
+  { value: "square", label: "Square" },
+  { value: "subtle", label: "Subtle" },
+  { value: "default", label: "Default" },
+  { value: "round", label: "Round" },
+];
+
 export const SCALES = [
   { value: 0.9, label: "Small" },
   { value: 1, label: "Default" },
@@ -166,6 +177,7 @@ export function loadSettings(): Settings {
     }
     if (!DATE_FORMATS.includes(s.dateFormat as (typeof DATE_FORMATS)[number])) s.dateFormat = DEFAULTS.dateFormat;
     if (!["off", "placeholders", "full"].includes(s.imageMode)) s.imageMode = DEFAULTS.imageMode;
+    if (!CORNERS.some((c) => c.value === s.corners)) s.corners = DEFAULTS.corners;
     if (typeof s.quickInfo !== "boolean") s.quickInfo = null;
     // one-time: the first version turned the old thumbnails switch into Placeholders more often
     // than meant, and Placeholders was the default then; both now mean Thumbnails
@@ -236,6 +248,7 @@ export function applySettings(s: Settings) {
   root.dataset.accent = s.accent;
   applyTheme();
   root.dataset.font = s.font;
+  root.dataset.corners = s.corners;
   setByteUnits(s.binaryUnits);
   setDateFormat(s.dateFormat);
   setAppImageMode(s.imageMode);

@@ -4,7 +4,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { Icon, type IconName } from "../ui/components/Icons";
 import { ContextMenu, type MenuItem } from "../ui/components/Dialogs";
 import { SCHEMES, type Palette } from "./schemes";
-import { ACCENTS, EXPIRIES, SCALES, isDark, resetSettings, type ColumnId, type FontChoice, type Settings, type Theme } from "./settings";
+import { ACCENTS, CORNERS, EXPIRIES, SCALES, isDark, resetSettings, type ColumnId, type FontChoice, type Settings, type Theme } from "./settings";
 import { api, errMessage, type TransferPrefs } from "../core/api";
 import { MBPS, TRANSFER_DEFAULTS, loadTransferPrefs, saveTransferPrefs, useTransferPrefsStore } from "../transfers/lib/transferPrefs";
 import { IMAGE_MODES } from "../thumbs/imageMode";
@@ -832,6 +832,9 @@ export function SettingsPage({
                   </Row>
                   <Row label="Size" hint="Scales the whole interface.">
                     <Seg label="Size" value={settings.scale} options={SCALES} onChange={(scale) => onChange({ scale })} />
+                  </Row>
+                  <Row label="Corners" hint="How round buttons, fields, menus and cards are.">
+                    <Seg label="Corners" value={settings.corners} options={CORNERS} onChange={(corners) => onChange({ corners })} />
                   </Row>
                 </div>
 
