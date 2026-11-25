@@ -61,6 +61,10 @@ const PAGE_ITEMS: &[&str] = &[
     "close-workspace",
     "command-palette",
     "toggle-terminal",
+    "help",
+    "keyboard-shortcuts",
+    "whats-new",
+    "report-problem",
 ];
 
 /// Handled here, not by the page (named apart from the tray menu's ids, which share the handler).
@@ -207,9 +211,23 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &sep()?,
         ],
     )?;
-    let menu = Menu::with_items(app, &[&app_menu, &file, &edit, &view, &go, &window])?;
-    // macOS lists open windows in this menu
+    // the manual and the project's pages, opened in the browser by the page (core/manual.ts)
+    let help = Submenu::with_items(
+        app,
+        "Help",
+        true,
+        &[
+            &item("help", "Kybl Manual", Some("CmdOrCtrl+Shift+/"))?,
+            &item("keyboard-shortcuts", "Keyboard Shortcuts", None)?,
+            &sep()?,
+            &item("whats-new", "What’s New in Kybl", None)?,
+            &item("report-problem", "Report a Problem…", None)?,
+        ],
+    )?;
+    let menu = Menu::with_items(app, &[&app_menu, &file, &edit, &view, &go, &window, &help])?;
+    // macOS lists open windows in this menu, and puts its search field in the Help menu
     let _ = window.set_as_windows_menu_for_nsapp();
+    let _ = help.set_as_help_menu_for_nsapp();
     Ok(menu)
 }
 

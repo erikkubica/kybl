@@ -134,7 +134,7 @@ export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl,
 
   if (!pick) {
     return (
-      <Modal title="New connection" onClose={onClose} width={560}>
+      <Modal title="New connection" onClose={onClose} width={560} help="connections">
         <KindPicker onPick={choose} kybl={!!onKybl} kyblFirst={!!kyblFirst} onImport={onImport} />
       </Modal>
     );
@@ -147,7 +147,7 @@ export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl,
 
   if (isCloudKind(pick)) {
     return (
-      <Modal title={title} onClose={onClose} width={480}>
+      <Modal title={title} onClose={onClose} width={480} help="connections">
         <CloudPanel kind={pick as CloudKind} initial={initial} reconnect={reconnect} onSaved={onSaved} onDeleted={onDeleted} onClose={onClose} onBack={back} />
       </Modal>
     );
@@ -155,7 +155,7 @@ export function ConnectionDialog({ initial, onSaved, onDeleted, onClose, onKybl,
 
   return (
     <>
-      <Modal title={title} onClose={requestClose} width={pick === "s3" ? 560 : 520}>
+      <Modal title={title} onClose={requestClose} width={pick === "s3" ? 560 : 520} help="connections">
         {/* a Kybl Storage connection opened here (its own dialog is the usual way) edits as S3 */}
         <KeyedForm
           key={pick}
@@ -555,7 +555,7 @@ function Unsupported({ profile, onDeleted, onClose }: { profile: Profile; onDele
   const [busy, setBusy] = useState<"delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
   return (
-    <Modal title="Edit connection" onClose={onClose}>
+    <Modal title="Edit connection" onClose={onClose} help="connections">
       <div className="modal-body">
         <p>
           <strong>{profile.name}</strong> was made with a newer version of Kybl. Update Kybl to change it.

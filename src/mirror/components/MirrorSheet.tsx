@@ -381,7 +381,7 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
   const empty = !!plan && planIsEmpty(plan);
 
   return (
-    <Modal title={savedId ? name || "Mirror" : "Mirror"} onClose={onClose} width={620}>
+    <Modal title={savedId ? name || "Mirror" : "Mirror"} onClose={onClose} width={620} help="mirror">
       <div className="modal-body mirror-sheet">
         <div className="mirror-route">
           <End end={src} label="From" onPick={() => pick("src")} picking={picking === "src"} rowRef={setSrcRow} />

@@ -348,7 +348,7 @@ export function MigrationDialog({
     );
 
   return (
-    <Modal title={title} onClose={onClose} width={560}>
+    <Modal title={title} onClose={onClose} width={560} help="copy-move">
       <div className="modal-body jobs-dialog">{body}</div>
       <div className="modal-foot split">
         <button className="btn" onClick={() => setCreating(true)} disabled={creating || !dest || !!why}>

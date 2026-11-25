@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { ISSUES_URL, RELEASES_URL, openHelpLink, openManual, type ManualTopic } from "../core/manual";
 import { askBeforeEveryPaste, onPasteTrustChange, pasteTrustCount, setTerminalShell, terminalShell, terminalShells, type ShellChoice } from "../terminal/api";
 import { getVersion } from "@tauri-apps/api/app";
 import { Icon, type IconName } from "../ui/components/Icons";
@@ -108,7 +109,7 @@ const MAC = /Mac/i.test(navigator.userAgent);
 export type SettingsPageId = "general" | "appearance" | "browsing" | "transfers" | "actions" | "sync" | "drives" | "connections" | "storage" | "shortcuts";
 type Page = SettingsPageId;
 
-const NAV: { title: string; items: { id: Page; label: string; icon: IconName }[] }[] = [
+const NAV: { title: string; items: { id: Page; label: string; icon: IconName }[]; links?: { label: string; icon: IconName; open: () => void }[] }[] = [
   {
     title: "Settings",
     items: [
@@ -131,8 +132,28 @@ const NAV: { title: string; items: { id: Page; label: string; icon: IconName }[]
   {
     title: "Help",
     items: [{ id: "shortcuts", label: "Keyboard shortcuts", icon: "info" }],
+    // pages on the website and GitHub, opened in the browser
+    links: [
+      { label: "User manual", icon: "book", open: () => openManual() },
+      { label: "What’s new", icon: "bell", open: () => openHelpLink(RELEASES_URL) },
+      { label: "Report a problem", icon: "external", open: () => openHelpLink(ISSUES_URL) },
+    ],
   },
 ];
+
+/** each page's part of the manual (website/manual) */
+const PAGE_HELP: Record<Page, ManualTopic> = {
+  general: "settings-general",
+  appearance: "settings-appearance",
+  browsing: "settings-browsing",
+  transfers: "settings-transfers",
+  actions: "actions",
+  sync: "sync",
+  drives: "drives",
+  connections: "settings-connections",
+  storage: "settings-cache",
+  shortcuts: "shortcuts",
+};
 
 const THEMES: { id: Theme; label: string }[] = [
   { id: "system", label: "System" },
@@ -709,6 +730,13 @@ export function SettingsPage({
                   <span className="side-label">{it.label}</span>
                 </button>
               ))}
+              {group.links?.map((l) => (
+                <button key={l.label} className="side-item" onClick={l.open} title={`${l.label} (opens in your browser)`}>
+                  <Icon name={l.icon} size={15} />
+                  <span className="side-label">{l.label}</span>
+                  <Icon name="external" size={12} className="side-ext" />
+                </button>
+              ))}
             </div>
           ))}
         </nav>
@@ -717,6 +745,9 @@ export function SettingsPage({
       <main className="settings-main">
         <header className="settings-head" data-tauri-drag-region>
           {title}
+          <button type="button" className="btn btn-sm btn-ghost settings-help" onClick={() => openManual(PAGE_HELP[page])} title="This page in the Kybl manual (opens in your browser)">
+            <Icon name="help" size={14} /> Help
+          </button>
         </header>
         <div className="settings-scroll">
           <div className="settings-page" key={page}>

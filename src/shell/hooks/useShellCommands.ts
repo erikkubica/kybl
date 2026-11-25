@@ -58,6 +58,8 @@ export function useShellCommands({
       openSettings();
       return true;
     }
+    // the manual and the other help links open in the browser, from anywhere
+    if (id === "help" || id === "whats-new" || id === "report-problem" || id === "keyboard-shortcuts") return free[id]?.() !== false;
     if (settingsOpen) {
       if (id === "new-connection") free[id]?.();
       return id === "new-connection";

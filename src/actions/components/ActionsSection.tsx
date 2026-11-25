@@ -282,7 +282,7 @@ function ActionEditor({
 
   return (
     <>
-      <Modal title={isNew ? "New action" : "Edit action"} onClose={requestClose} width={560}>
+      <Modal title={isNew ? "New action" : "Edit action"} onClose={requestClose} width={560} help="actions">
         <form
           className="modal-body ca-form"
           onSubmit={(e) => {

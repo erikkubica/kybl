@@ -128,7 +128,7 @@ export function MoveDialog({
   };
 
   return (
-    <Modal title={`${verb} ${what}`} onClose={onClose} width={520}>
+    <Modal title={`${verb} ${what}`} onClose={onClose} width={520} help="file-operations">
       <div className="modal-body move-body">
         <div className="seg move-mode" role="tablist">
           <button className={mode === "move" ? "on" : ""} onClick={() => setMode("move")} role="tab" aria-selected={mode === "move"}>

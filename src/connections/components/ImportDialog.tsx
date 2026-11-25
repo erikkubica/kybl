@@ -150,7 +150,7 @@ export function ImportDialog({ onClose, onImported, toast }: Props) {
 
   if (!source) {
     return (
-      <Modal title="Import connections" onClose={onClose} width={500}>
+      <Modal title="Import connections" onClose={onClose} width={500} help="import">
         <div className="modal-body imp-sources">
           <p>Bring the sites you saved in another app into Kybl. Passwords go straight into Kybl's encrypted vault.</p>
           {!sources && !error && <p className="hint">Looking for apps…</p>}
@@ -184,7 +184,7 @@ export function ImportDialog({ onClose, onImported, toast }: Props) {
 
   return (
     // an import under way finishes here: closing now would lose what still needs a password
-    <Modal title={`Import from ${source.name}`} onClose={onClose} locked={busy} width={640}>
+    <Modal title={`Import from ${source.name}`} onClose={onClose} locked={busy} width={640} help="import">
       {loading ? (
         <div className="modal-body">
           <p className="hint">Reading {source.name}'s sites…</p>

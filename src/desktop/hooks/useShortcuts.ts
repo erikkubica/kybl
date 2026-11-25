@@ -65,6 +65,8 @@ export function useShortcuts(opts: ShortcutOptions) {
         id = ev.altKey ? (ev.code === "BracketLeft" ? "move-workspace-left" : "move-workspace-right") : ev.code === "BracketLeft" ? "prev-workspace" : "next-workspace";
       else if (mod && ev.altKey && !ev.shiftKey && /^Digit[1-9]$/.test(ev.code)) id = `workspace-${ev.code.slice(5)}`;
       else if (mod && !ev.shiftKey && !ev.altKey && k === "t") id = "new-workspace";
+      // F1: the manual (Windows' and Linux's help key; the Mac's ⇧⌘/ is the Help menu's)
+      else if (ev.key === "F1" && !mod && !ev.altKey) id = "help";
       else if (mod && k === ",") id = own("settings");
       else if (mod && ev.altKey && !ev.shiftKey && ev.code === "KeyN") id = own("new-file");
       else if (mod && ev.shiftKey && k === "n") id = own("new-folder");

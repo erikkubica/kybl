@@ -54,6 +54,11 @@ export function shellCommands(h: PaletteHost): PaletteCommand[] {
     r("delete", "Delete…", { group: "File", icon: "trash", shortcut: "⌘⌫", keywords: "remove trash", disabled: noSel }),
     r("select-all", "Select All", { group: "File", shortcut: "⌘A", disabled: noFolder }),
     { id: "app:undo", title: "Undo", group: "File", shortcut: "⌘Z", keywords: "revert", run: h.undo },
+    // ---- help (opens the website or GitHub in the browser)
+    r("help", "Kybl Manual", { group: "Help", icon: "book", shortcut: "F1", keywords: "help docs documentation guide how" }),
+    r("keyboard-shortcuts", "Keyboard Shortcuts", { group: "Help", icon: "info", keywords: "keys hotkeys help" }),
+    r("whats-new", "What’s New in Kybl", { group: "Help", icon: "bell", keywords: "release notes changelog version" }),
+    r("report-problem", "Report a Problem…", { group: "Help", icon: "external", keywords: "bug issue feedback github" }),
     r("new-connection", "New Connection…", { group: "Connections", icon: "plus", keywords: "add server sftp ftp s3 webdav" }),
     { id: "app:import-connections", title: "Import Connections…", group: "Connections", icon: "download", keywords: "filezilla transmit cyberduck", run: h.importConnections },
     r("filter-connections", "Find Connection in Sidebar", { group: "Connections", icon: "search", shortcut: "⌥⌘F" }),

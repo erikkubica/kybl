@@ -171,7 +171,7 @@ export function KyblConnectDialog({
   const left = step.kind === "device" ? Math.max(0, Math.round((step.until - now) / 1000)) : 0;
 
   return (
-    <Modal title={existing ? "Kybl Storage" : "Connect Kybl Storage"} onClose={close} width={460}>
+    <Modal title={existing ? "Kybl Storage" : "Connect Kybl Storage"} onClose={close} width={460} help="kybl-storage">
       <div className="modal-body kybl-connect">
         {existing && (
           <div className="kybl-account">

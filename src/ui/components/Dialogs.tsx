@@ -1,3 +1,4 @@
+import { openManual, type ManualTopic } from "../../core/manual";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { errDetail, errSummary } from "../../core/api";
 import { Icon, type IconName } from "./Icons";
@@ -68,6 +69,7 @@ export function Modal({
   icon,
   dismissOnBackdrop = false,
   locked = false,
+  help,
 }: {
   title: string;
   onClose: () => void;
@@ -85,6 +87,8 @@ export function Modal({
    * outside do nothing, so the dialog stays up until the answer (and any error) arrives.
    */
   locked?: boolean;
+  /** the manual's section about this dialog: a "?" in the title row opens it in the browser */
+  help?: ManualTopic;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
@@ -168,6 +172,7 @@ export function Modal({
         <div className="modal-head">
           {icon}
           <h2>{title}</h2>
+          {help && <HelpButton topic={help} />}
           <button className="icon-btn" onClick={onClose} disabled={locked} aria-label="Close" title="Close (Esc)" data-new-folder="cancel">
             <Icon name="x" />
           </button>
@@ -1012,5 +1017,14 @@ function ToastItem({ toast: t, dismiss }: { toast: Toast; dismiss: (id: number) 
         </button>
       )}
     </div>
+  );
+}
+
+/** A "?" that opens the manual at `topic` in the browser. */
+export function HelpButton({ topic, label = "Help" }: { topic: ManualTopic; label?: string }) {
+  return (
+    <button type="button" className="icon-btn help-btn" onClick={() => openManual(topic)} title={`${label}: opens the Kybl manual`} aria-label={`${label} (opens the manual in your browser)`}>
+      <Icon name="help" />
+    </button>
   );
 }

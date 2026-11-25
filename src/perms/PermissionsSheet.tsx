@@ -104,7 +104,7 @@ export function PermissionsSheet({
   const title = one ? `Permissions of “${one.name}”` : `Permissions of ${items.length} items`;
   return (
     // a running change can't be stopped: the sheet stays (with its progress) until it ends
-    <Modal title={title} onClose={onClose} locked={!!busy} width={400}>
+    <Modal title={title} onClose={onClose} locked={!!busy} width={400} help="file-operations">
       <div className="modal-body perm-body">
         {(owner || group) && (
           <p className="perm-who">

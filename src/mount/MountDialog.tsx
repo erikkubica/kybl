@@ -80,7 +80,7 @@ export function MountDialog({
   };
 
   return (
-    <Modal title="Mount as drive" onClose={onClose} width={440} locked={busy}>
+    <Modal title="Mount as drive" onClose={onClose} width={440} locked={busy} help="drives">
       <form
         onSubmit={(e) => {
           e.preventDefault();

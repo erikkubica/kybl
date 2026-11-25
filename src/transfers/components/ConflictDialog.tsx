@@ -119,7 +119,7 @@ function ConflictDialog({ ask }: { ask: Ask }) {
   const noun = ({ Uploading: "upload", Downloading: "download", Moving: "move", Copying: "copy", Extracting: "extraction" } as Record<string, string>)[verb] ?? "action";
   const replace = folder ? "Merge" : "Replace";
   return (
-    <Modal title={folder ? `A folder named “${clash.name}” already exists` : `“${clash.name}” already exists`} onClose={() => ask.done(null)} width={more ? 600 : 480}>
+    <Modal title={folder ? `A folder named “${clash.name}” already exists` : `“${clash.name}” already exists`} onClose={() => ask.done(null)} width={more ? 600 : 480} help="conflicts">
       <div className="modal-body conflict-body">
         <div className="conflict-icon" aria-hidden="true">
           <Icon name={folder ? "folder" : "file"} size={22} />

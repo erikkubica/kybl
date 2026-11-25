@@ -45,7 +45,7 @@ export function CompareSummary({
     void openDiff(side(leftAt, leftName), side(rightAt, rightName));
   };
   return (
-    <Modal title="Compare folders" onClose={onClose} width={460} dismissOnBackdrop>
+    <Modal title="Compare folders" onClose={onClose} width={460} dismissOnBackdrop help="compare">
       <div className="modal-body compare-body">
         {nothing ? (
           <p>

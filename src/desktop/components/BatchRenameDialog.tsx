@@ -133,7 +133,7 @@ export function BatchRenameDialog({
   ].filter(Boolean);
 
   return (
-    <Modal title={`Rename ${items.length.toLocaleString()} items`} onClose={onClose} width={680}>
+    <Modal title={`Rename ${items.length.toLocaleString()} items`} onClose={onClose} width={680} help="rename">
       <form
         className="br"
         onSubmit={(e) => {

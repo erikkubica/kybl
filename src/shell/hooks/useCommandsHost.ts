@@ -1,4 +1,5 @@
 import type { usePanesHost } from "./usePanesHost";
+import { ISSUES_URL, RELEASES_URL, openHelpLink, openManual } from "../../core/manual";
 import type { ConnDialogAsk } from "../lib/types";
 import type { WorkspaceStore } from "../lib/workspaces";
 import type { ToastAction } from "../../desktop/components/fileOps";
@@ -81,6 +82,11 @@ export function useCommandsHost(s: UseCommandsHostDeps) {
     },
     free: {
       "new-connection": () => s.setConnDialog({ profile: null }),
+      // Help (the menu bar's Help menu, F1 and the palette): pages on the website and GitHub
+      help: () => openManual(),
+      "keyboard-shortcuts": () => s.openSettings("shortcuts"),
+      "whats-new": () => openHelpLink(RELEASES_URL),
+      "report-problem": () => openHelpLink(ISSUES_URL),
       "toggle-sidebar": s.toggleSidebar,
       "filter-connections": s.findConnection,
       // grid view: ⌘+ / ⌘− (and a pinch) size the tiles, as Finder's icon view

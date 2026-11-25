@@ -2084,6 +2084,14 @@ body.resizing-col * {
   justify-content: space-between;
   padding: 16px 14px 8px 20px;
 }
+/* the manual's "?" sits beside the close button */
+.modal-head .help-btn {
+  margin-left: auto;
+  color: var(--dim);
+}
+.help-btn:hover {
+  color: var(--accent);
+}
 .modal-head h2 {
   margin: 0;
   font-size: 15px;
@@ -2961,6 +2969,19 @@ input[type="checkbox"] {
   flex: none;
   font-size: 14px;
   font-weight: 650;
+}
+.settings-help {
+  margin-left: auto;
+  gap: 5px;
+  color: var(--dim);
+  font-weight: 500;
+}
+.settings-help:hover {
+  color: var(--accent);
+}
+.settings-nav .side-ext {
+  margin-left: auto;
+  color: var(--faint);
 }
 .settings-scroll {
   flex: 1;

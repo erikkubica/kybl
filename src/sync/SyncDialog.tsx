@@ -144,7 +144,7 @@ export function SyncDialog({
   const deletes = twoway || m.mirrorDeletes;
 
   return (
-    <Modal title={existing ? "Edit synced folder" : "Sync a folder"} onClose={onClose} width={600} locked={saving}>
+    <Modal title={existing ? "Edit synced folder" : "Sync a folder"} onClose={onClose} width={600} locked={saving} help="sync">
       <div className="modal-body sync-form">
         <div className="field">
           <span>Folder on {ON_OS.here}</span>
