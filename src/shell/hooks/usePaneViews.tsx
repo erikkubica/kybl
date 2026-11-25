@@ -116,7 +116,7 @@ export function usePaneViews(s: UsePaneViewsDeps) {
   const paneSwitcher: PaneSwitcher | null =
     s.dual && s.cramped
       ? {
-          items: s.ids.map((id) => ({ id, name: nameOf(id) })),
+          items: s.ids.map((id) => ({ id, name: nameOf(id), terminal: !!s.term.terms[id], provider: s.term.terms[id] ? undefined : s.slot(id).profile?.provider })),
           activeId: s.activeId,
           onPick: (id) => {
             s.keepScrolls();

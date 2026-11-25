@@ -21,11 +21,13 @@ import type { PaneId } from "../../browser/types";
 import { colorValue } from "../lib/workspaces";
 import { keys } from "../../ui/lib/osText";
 import { NotificationBell } from "./NotificationBell";
+import { ProviderBadge } from "../../sidebar/Sidebar";
 
 export type WorkspaceTab = { id: string; name: string; color: string | null; panes: number };
 
 export type PaneSwitcher = {
-  items: { id: PaneId; name: string }[];
+  /** `provider`: the connection's badge; a terminal gets its own icon, an empty pane none */
+  items: { id: PaneId; name: string; provider?: string; terminal?: boolean }[];
   activeId: PaneId;
   onPick: (id: PaneId) => void;
 };
@@ -439,9 +441,9 @@ function RenameField({ name, onDone }: { name: string; onDone: (name: string | n
 }
 
 /**
- * A window too small for every pane of the workspace shows one at a time: the panes as a small
- * segmented control, numbered (two panes often show folders of the same name), the one on screen
- * with its folder's name.
+ * A window too small for every pane of the workspace shows one at a time: the panes as tabs on a
+ * row of their own, each with its connection's badge (a terminal's icon) and its folder's name.
+ * Short of room the others' names give way first (to an ellipsis), the one on screen's last.
  */
 export function PaneSwitcherView({ items, activeId, onPick }: PaneSwitcher) {
   return (
@@ -465,8 +467,8 @@ export function PaneSwitcherView({ items, activeId, onPick }: PaneSwitcher) {
             aria-label={`Pane ${i + 1}: ${it.name}`}
             onClick={() => onPick(it.id)}
           >
-            <span className="ws-pane-n">{i + 1}</span>
-            {on && <span className="ws-pane-name">{it.name}</span>}
+            {it.terminal ? <Icon name="terminal" size={13} /> : it.provider ? <ProviderBadge provider={it.provider} /> : <Icon name="dual-pane" size={13} />}
+            <span className="ws-pane-name">{it.name}</span>
           </button>
         );
       })}
