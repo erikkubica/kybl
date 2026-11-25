@@ -5781,8 +5781,9 @@ input[type="range"]:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding-right: 6px;
-  margin-right: 2px;
+  /* 4px either side of the line before the info button (the footer's gap is 8) */
+  padding-right: 4px;
+  margin-right: -4px;
   border-right: 1px solid var(--border);
 }
 .sb-view .statusbar-btn {
