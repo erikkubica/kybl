@@ -105,7 +105,9 @@ fn temp_files(dir: &Path) -> Vec<String> {
 
 /// Everything a connection does, through the trait and through the generic commands, checked
 /// against the folder the server serves.
-async fn exercise(s: &dyn Storage, disk: &Path) {
+/// `counts_inside`: a delete counts what a folder holds as it empties it (FTP, SFTP: item by item),
+/// not only the folder (WebDAV: one request for all of it)
+async fn exercise(s: &dyn Storage, disk: &Path, counts_inside: bool) {
     let roots = s.roots().await.unwrap();
     assert_eq!(roots.len(), 1);
     assert_eq!(roots[0].id, "");
@@ -240,7 +242,10 @@ async fn exercise(s: &dyn Storage, disk: &Path) {
     // deletes: files, and folders with everything inside
     let app = mock_builder().build(mock_context(noop_assets())).unwrap();
     let r = generic_cmds::delete_with(app.handle(), s, "", &["a/b/new.txt".into()], &["moved/".into(), "copied/".into(), "deep/".into(), "up/".into()], None, &AtomicBool::new(false)).await;
-    assert_eq!((r.done, r.total, r.error), (5, 5, None));
+    // the five, and where folders empty item by item the five things in them (moved/ copied/ up/
+    // one file each, deep/ a folder and its file)
+    let n = if counts_inside { 10 } else { 5 };
+    assert_eq!((r.done, r.total, r.error), (n, n, None));
     assert!(!disk.join("moved").exists() && !disk.join("deep").exists() && !disk.join("a/b/new.txt").exists());
     let stop = AtomicBool::new(true);
     assert!(s.delete("", &[], &["big/".into()], &stop, &|_, _| {}).await.err().is_some_and(|e| e.is_cancelled()));
@@ -277,7 +282,7 @@ fn webdav_against_rclone() {
     let Some(srv) = serve("webdav", &[]) else { return };
     rt().block_on(async {
         let b = WebdavBackend::new(&net(srv.port), Some(PASS.into())).unwrap();
-        exercise(&b, &srv.root).await;
+        exercise(&b, &srv.root, false).await;
         let main = b;
 
         // a file never replaces a folder of the same name (MOVE/COPY with Overwrite: T would
@@ -320,7 +325,7 @@ fn ftp_against_rclone() {
     let Some(srv) = serve_with("ftp", &[], passive) else { return };
     rt().block_on(async {
         let b = FtpBackend::new(&net(srv.port), Some(PASS.into())).unwrap();
-        exercise(&b, &srv.root).await;
+        exercise(&b, &srv.root, true).await;
         let bad = FtpBackend::new(&net(srv.port), Some("nope".into())).unwrap();
         assert_eq!(bad.roots().await.err().map(|e| e.kind), Some(ErrKind::NeedsAuth));
         let cfg = NetConfig { base_path: "/not/there".into(), ..net(srv.port) };
@@ -360,7 +365,7 @@ fn sftp_against_rclone() {
 
         let trusted = NetConfig { host_key: Some(fp.clone()), ..net(srv.port) };
         let b = SftpBackend::new(&trusted, pw()).unwrap();
-        exercise(&b, &srv.root).await;
+        exercise(&b, &srv.root, true).await;
         assert!(b.quota().await.is_ok());
 
         let bad = SftpBackend::new(&trusted, Secrets { password: Some("nope".into()), ssh: None }).unwrap();

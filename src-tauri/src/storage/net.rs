@@ -6,7 +6,7 @@ use std::{
     collections::HashMap,
     io,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
     },
     time::{Duration, Instant},
@@ -676,6 +676,39 @@ pub fn check_cancel(cancel: &AtomicBool) -> SResult<()> {
     if cancel.load(Ordering::Relaxed) { Err(StorageError::cancelled()) } else { Ok(()) }
 }
 
+/// A delete's (done, total) in objects, for a server that empties a folder item by item: each
+/// folder's contents join the total as it is read, so the count moves (and grows) while a big
+/// folder goes, instead of sitting at "0 of 1" until all of it is gone.
+pub struct Tally<'a> {
+    done: AtomicU64,
+    total: AtomicU64,
+    report: &'a (dyn Fn(u64, u64) + Send + Sync),
+}
+
+impl<'a> Tally<'a> {
+    pub fn new(total: u64, report: &'a (dyn Fn(u64, u64) + Send + Sync)) -> Self {
+        report(0, total);
+        Self { done: AtomicU64::new(0), total: AtomicU64::new(total), report }
+    }
+    /// `n` more objects found inside a folder being deleted
+    pub fn found(&self, n: u64) {
+        if n > 0 {
+            let t = self.total.fetch_add(n, Ordering::Relaxed) + n;
+            (self.report)(self.done.load(Ordering::Relaxed), t);
+        }
+    }
+    /// `n` more objects gone
+    pub fn removed(&self, n: u64) {
+        if n > 0 {
+            let d = self.done.fetch_add(n, Ordering::Relaxed) + n;
+            (self.report)(d, self.total.load(Ordering::Relaxed));
+        }
+    }
+    pub fn get(&self) -> (u64, u64) {
+        (self.done.load(Ordering::Relaxed), self.total.load(Ordering::Relaxed))
+    }
+}
+
 pub fn top_refused() -> StorageError {
     StorageError::other("The top of this connection can't be deleted or moved.")
 }
@@ -683,6 +716,19 @@ pub fn top_refused() -> StorageError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tally_grows_with_what_a_folder_holds() {
+        let seen = Mutex::new(Vec::new());
+        let report = |d: u64, t: u64| seen.lock().unwrap().push((d, t));
+        let t = Tally::new(1, &report);
+        t.found(3);
+        t.removed(2);
+        t.found(0);
+        t.removed(2);
+        assert_eq!(t.get(), (4, 4));
+        assert_eq!(*seen.lock().unwrap(), vec![(0, 1), (0, 4), (2, 4), (4, 4)]);
+    }
 
     #[test]
     fn uploads_carry_on_only_into_their_own_temp_file_at_a_sensible_offset() {

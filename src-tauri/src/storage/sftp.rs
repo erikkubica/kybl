@@ -562,19 +562,22 @@ impl SftpBackend {
         .map_err(not)
     }
 
-    /// Deletes a folder and everything in it, depth first.
-    fn remove_tree<'a>(&'a self, path: String, cancel: &'a AtomicBool) -> BoxFuture<'a, SResult<()>> {
+    /// Deletes a folder and everything in it, depth first; `tally` counts what is in it (the folder
+    /// itself is the caller's to count).
+    fn remove_tree<'a>(&'a self, path: String, cancel: &'a AtomicBool, tally: &'a Tally<'a>) -> BoxFuture<'a, SResult<()>> {
         Box::pin(async move {
             let entries = match self.read_dir(path.clone()).await {
                 Ok(e) => e,
                 Err(e) if e.kind == ErrKind::NotFound => return Ok(()),
                 Err(e) => return Err(e),
             };
+            tally.found(entries.len() as u64);
             // a link (to a folder too) goes by itself: what it points at is never touched
             let (dirs, files): (Vec<_>, Vec<_>) = entries.into_iter().partition(|e| e.meta.is_dir() && e.link.is_none());
             for Listed { name, .. } in dirs {
                 check_cancel(cancel)?;
-                self.remove_tree(format!("{}/{name}", path.trim_end_matches('/')), cancel).await?;
+                self.remove_tree(format!("{}/{name}", path.trim_end_matches('/')), cancel, tally).await?;
+                tally.removed(1);
             }
             check_cancel(cancel)?;
             let removals = futures_util::stream::iter(files.into_iter().map(|Listed { name, .. }| {
@@ -590,12 +593,13 @@ impl SftpBackend {
             .buffer_unordered(DELETE_PARALLEL)
             .collect::<Vec<_>>()
             .await;
-            for r in removals {
+            for r in &removals {
                 match r {
-                    Err(e) if e.kind != ErrKind::NotFound => return Err(e),
+                    Err(e) if e.kind != ErrKind::NotFound => return Err(e.clone()),
                     _ => {}
                 }
             }
+            tally.removed(removals.len() as u64);
             check_cancel(cancel)?;
             self.with(move |c| {
                 let p = path.clone();
@@ -926,9 +930,7 @@ impl Storage for SftpBackend {
         cancel: &AtomicBool,
         on_progress: &(dyn Fn(u64, u64) + Send + Sync),
     ) -> SResult<(u64, u64)> {
-        let total = (files.len() + dirs.len()) as u64;
-        let mut done = 0u64;
-        on_progress(0, total);
+        let tally = Tally::new((files.len() + dirs.len()) as u64, on_progress);
         for (key, is_dir) in delete_items(files, dirs) {
             check_cancel(cancel)?;
             if key_parts(key)?.is_empty() {
@@ -938,7 +940,7 @@ impl Storage for SftpBackend {
             // a folder that is a link: only the link goes, never what is in the folder it points at
             let is_tree = is_dir && !self.link_metadata(p.clone()).await?.is_some_and(|m| m.is_symlink());
             let r = if is_tree {
-                self.remove_tree(p, cancel).await
+                self.remove_tree(p, cancel, &tally).await
             } else {
                 self.with(move |c| {
                     let p = p.clone();
@@ -953,10 +955,9 @@ impl Storage for SftpBackend {
             let k = if is_dir { dir_prefix(key) } else { key.clone() };
             self.pages.forget(&k);
             self.known_dirs.lock().unwrap().retain(|d| !d.starts_with(&k));
-            done += 1;
-            on_progress(done, total);
+            tally.removed(1);
         }
-        Ok((done, total))
+        Ok(tally.get())
     }
 
     async fn rename(&self, from: &Loc, to: &Loc, is_dir: bool) -> SResult<()> {

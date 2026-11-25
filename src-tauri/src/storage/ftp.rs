@@ -741,10 +741,12 @@ impl FtpBackend {
         Ok(!links.is_empty())
     }
 
-    /// Deletes a folder and everything in it, depth first.
-    fn remove_tree<'a>(&'a self, path: String, cancel: &'a AtomicBool) -> BoxFuture<'a, SResult<()>> {
+    /// Deletes a folder and everything in it, depth first; `tally` counts what is in it (the folder
+    /// itself is the caller's to count).
+    fn remove_tree<'a>(&'a self, path: String, cancel: &'a AtomicBool, tally: &'a Tally<'a>) -> BoxFuture<'a, SResult<()>> {
         Box::pin(async move {
             let items = self.list_raw(&path).await?;
+            tally.found(items.len() as u64);
             // some servers' MLSD calls a link to a folder a folder: LIST tells, so a link is
             // removed as a link and the folder it points at is never emptied
             let mlsd = self.feats.get().is_some_and(|f| f.mlsd);
@@ -762,7 +764,7 @@ impl FtpBackend {
                 check_cancel(cancel)?;
                 let child = format!("{}/{}", path.trim_end_matches('/'), f.name());
                 if f.is_directory() && !links.contains(f.name()) {
-                    self.remove_tree(child, cancel).await?;
+                    self.remove_tree(child, cancel, tally).await?;
                 } else {
                     self.run(child.clone(), move |ftp, _| {
                         let child = child.clone();
@@ -770,6 +772,7 @@ impl FtpBackend {
                     })
                     .await?;
                 }
+                tally.removed(1);
             }
             self.run(path.clone(), move |ftp, _| {
                 let path = path.clone();
@@ -1371,9 +1374,7 @@ impl Storage for FtpBackend {
         cancel: &AtomicBool,
         on_progress: &(dyn Fn(u64, u64) + Send + Sync),
     ) -> SResult<(u64, u64)> {
-        let total = (files.len() + dirs.len()) as u64;
-        let mut done = 0u64;
-        on_progress(0, total);
+        let tally = Tally::new((files.len() + dirs.len()) as u64, on_progress);
         for (key, is_dir) in delete_items(files, dirs) {
             check_cancel(cancel)?;
             if key_parts(key)?.is_empty() {
@@ -1392,7 +1393,7 @@ impl Storage for FtpBackend {
                         })
                         .await
                     }
-                    Ok(false) => self.remove_tree(p, cancel).await,
+                    Ok(false) => self.remove_tree(p, cancel, &tally).await,
                     Err(e) => Err(e),
                 }
             } else {
@@ -1418,10 +1419,9 @@ impl Storage for FtpBackend {
             }
             self.pages.forget(&k);
             self.known_dirs.lock().unwrap().retain(|d| !d.starts_with(&k));
-            done += 1;
-            on_progress(done, total);
+            tally.removed(1);
         }
-        Ok((done, total))
+        Ok(tally.get())
     }
 
     /// With `SITE CHMOD`, which isn't in the FTP standard but most Unix servers take.

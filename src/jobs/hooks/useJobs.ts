@@ -86,7 +86,18 @@ function listenOnce() {
     jobsStore.set((list) =>
       list.map((j) =>
         j.id === p.opId && j.state === "running"
-          ? { ...j, phase: p.phase, done: p.done, total: p.total, bytes: p.bytes, totalBytes: p.totalBytes, frac: p.phase === "listing" ? null : frac, eta }
+          ? {
+              ...j,
+              phase: p.phase,
+              done: p.done,
+              total: p.total,
+              bytes: p.bytes,
+              totalBytes: p.totalBytes,
+              // nothing finished yet (a folder one request deletes, the first file of a big one):
+              // a moving bar, not an empty one that reads as stuck
+              frac: p.phase === "listing" || (p.done === 0 && p.bytes === 0) ? null : frac,
+              eta,
+            }
           : j,
       ),
     );
