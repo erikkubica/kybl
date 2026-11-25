@@ -312,7 +312,7 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
         <div className="mirror-route">
           <End end={src} label="From" onPick={() => pick("src")} picking={picking === "src"} />
           <button className="mirror-swap" onClick={swap} disabled={!src || !dst} title="Swap: copy the other way" aria-label="Swap direction">
-            <Icon name="arrow-down" size={14} />
+            <Icon name="sort" size={14} />
           </button>
           <End end={dst} label="To" onPick={() => pick("dst")} picking={picking === "dst"} />
         </div>
@@ -335,7 +335,7 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
 
         <div className="mirror-opts-wrap">
           <button className="mirror-opts-head" aria-expanded={optsOpen} onClick={() => setOptsOpen((o) => !o)}>
-            <Icon name={optsOpen ? "chevron-down" : "chevron-right"} size={13} />
+            <Icon name={optsOpen ? "chevron-down" : "chevron"} size={13} />
             <span className="mirror-opts-k">Options</span>
             {!optsOpen && (
               <span className="mirror-opts-sum">
