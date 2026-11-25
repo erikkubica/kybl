@@ -214,6 +214,8 @@ export function AppShell() {
       </main>
 
       <ShellDialogs
+        dialogs={dialogs}
+        groupItems={groupItems}
         active={active}
         closeWorkspace={closeWorkspace}
         connDialog={connDialog}

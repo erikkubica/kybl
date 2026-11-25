@@ -2942,6 +2942,128 @@ input[type="checkbox"] {
 .conn-row .set-label {
   flex: 1;
 }
+/* Settings › Connections: filter, the "No group" switch, picked ones, rows filed under their group */
+.conn-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.conn-filter {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--field);
+  color: var(--faint);
+}
+.conn-filter:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.conn-filter input,
+.conn-filter input:focus,
+.conn-filter input:focus-visible {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+}
+.conn-tools .seg button {
+  width: auto;
+  padding: 0 10px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.conn-pickbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 7px 8px 7px 14px;
+  border: 1px solid var(--accent-ring);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+}
+.conn-pickbar span {
+  flex: 1;
+  font-weight: 500;
+}
+.conn-section + .conn-section {
+  border-top: 1px solid var(--border);
+}
+.conn-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0 4px;
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+.conn-group-head.loose {
+  color: var(--warn);
+}
+.conn-group-count {
+  color: var(--faint);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.conn-section .conn-row:last-child {
+  border-bottom: 0;
+}
+.conn-row.picked {
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)) no-repeat;
+  margin: 0 -16px;
+  padding: 0 16px;
+}
+.conn-group-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 220px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 12px;
+}
+.conn-group-btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conn-group-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.conn-group-btn.loose {
+  border-style: dashed;
+  color: var(--faint);
+}
+.conn-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 18px 0;
+}
+.conn-empty small {
+  color: var(--faint);
+}
 .swatch.auto {
   background: conic-gradient(from 210deg, var(--sw), color-mix(in srgb, var(--sw) 40%, white), var(--sw));
 }

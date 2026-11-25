@@ -8,8 +8,7 @@ import { api, errMessage, type TransferPrefs } from "../core/api";
 import { MBPS, TRANSFER_DEFAULTS, loadTransferPrefs, saveTransferPrefs, useTransferPrefsStore } from "../transfers/lib/transferPrefs";
 import { IMAGE_MODES } from "../thumbs/imageMode";
 import type { Profile } from "../core/types";
-import { ProviderBadge } from "../sidebar/Sidebar";
-import { addressOf } from "../connections/lib/kinds";
+import { ConnectionsSection } from "./ConnectionsSection";
 import { KyblLockup } from "../ui/components/KyblMark";
 import { SyncSection } from "../sync/SyncSection";
 // WP-E4: drives
@@ -549,6 +548,7 @@ export function SettingsPage({
   pageRequest,
   activeProfileId,
   onToast,
+  onGroupMenu,
 }: {
   settings: Settings;
   compact: boolean;
@@ -565,6 +565,8 @@ export function SettingsPage({
   pageRequest?: number;
   activeProfileId: string | null;
   onToast: (kind: "success" | "error" | "info", text: string) => void;
+  /** Connections: "Move to group" for these, as a menu at x, y */
+  onGroupMenu?: (ps: Profile[], x: number, y: number) => void;
 }) {
   const [page, setPage] = useState<Page>(initialPage ?? "general");
   const [confirmReset, setConfirmReset] = useState(false);
@@ -851,44 +853,7 @@ export function SettingsPage({
             {page === "actions" && <ActionsSection onToast={onToast} />}
 
             {page === "connections" && (
-              <>
-                <h3 className="set-title">Connections</h3>
-                <div className="set-card">
-                  {profiles.length === 0 && <Row label="No connections yet" hint="Add one to start browsing." />}
-                  {profiles.map((p) => (
-                    <div key={p.id} className="conn-row">
-                      <ProviderBadge provider={p.provider} large />
-                      <div className="set-label">
-                        {p.name}
-                        <small className="selectable">
-                          {/* servers and drives have no endpoint or region: their own address */}
-                          {p.kind && p.kind !== "s3" ? (
-                            addressOf(p)
-                          ) : (
-                            <>
-                              {p.endpoint || "Amazon S3"} · {p.region}
-                              {p.bucket ? ` · ${p.bucket}` : ""}
-                            </>
-                          )}
-                        </small>
-                      </div>
-                      <button className="btn btn-sm" onClick={() => onEditProfile(p)}>
-                        Edit
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                <div className="btn-row" style={{ marginTop: 12 }}>
-                  <button className="btn btn-primary btn-sm" onClick={onNewProfile}>
-                    <Icon name="plus" size={14} /> New connection
-                  </button>
-                  {onImportProfiles && (
-                    <button className="btn btn-sm" onClick={onImportProfiles}>
-                      <Icon name="download" size={14} /> Import connections…
-                    </button>
-                  )}
-                </div>
-              </>
+              <ConnectionsSection profiles={profiles} onEditProfile={onEditProfile} onNewProfile={onNewProfile} onImportProfiles={onImportProfiles} onGroupMenu={onGroupMenu} />
             )}
 
             {page === "storage" && (

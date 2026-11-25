@@ -1,6 +1,7 @@
+import { useDialogs } from "../hooks/useDialogs";
 import type { Workspace } from "../lib/workspaces";
 import type { ToastAction } from "../../desktop/components/fileOps";
-import type { Toast } from "../../ui/components/Dialogs";
+import type { Toast, MenuItem } from "../../ui/components/Dialogs";
 import type { Profile } from "../../core/types";
 import { SettingsPage } from "../../settings/SettingsPage";
 import { KyblConnectDialog } from "../../connections/components/KyblConnectDialog";
@@ -27,6 +28,9 @@ import { usePanesHost } from "../hooks/usePanesHost";
 import { useShellSettings } from "../hooks/useShellSettings";
 
 export interface ShellDialogsProps {
+  dialogs: ReturnType<typeof useDialogs>;
+  /** "Move to group" items for these connections (the sidebar's) */
+  groupItems: (ps: Profile[]) => MenuItem[];
   active: ReturnType<typeof usePaneSlots>["active"];
   closeWorkspace: ReturnType<typeof useWorkspacesHost>["closeWorkspace"];
   connDialog: ReturnType<typeof useConnDialogs>["connDialog"];
@@ -64,7 +68,7 @@ export interface ShellDialogsProps {
 }
 
 /** What comes up over the window: Settings, the connection dialogs, Import, the full-window editor and a workspace's settings. */
-export function ShellDialogs({ active, closeWorkspace, connDialog, connectIn, conns, doc, duplicateWorkspace, editor, forgetProfile, importOpen, kyblDialog, openHere, openShell, paneById, patchWorkspace, rec, reloadIfShowing, renameWorkspace, saved, setConnDialog, setDoc, setImportOpen, setKyblDialog, setSettingsOpen, setWsSettings, settings, settingsOpen, settingsPage, slots, toast, updateSettings, ws, wsOpen, wsSettings }: ShellDialogsProps) {
+export function ShellDialogs({ active, closeWorkspace, connDialog, connectIn, conns, dialogs, doc, duplicateWorkspace, editor, forgetProfile, groupItems, importOpen, kyblDialog, openHere, openShell, paneById, patchWorkspace, rec, reloadIfShowing, renameWorkspace, saved, setConnDialog, setDoc, setImportOpen, setKyblDialog, setSettingsOpen, setWsSettings, settings, settingsOpen, settingsPage, slots, toast, updateSettings, ws, wsOpen, wsSettings }: ShellDialogsProps) {
   return (
     <>
       {settingsOpen && (
@@ -85,6 +89,7 @@ export function ShellDialogs({ active, closeWorkspace, connDialog, connectIn, co
           pageRequest={settingsPage.n}
           activeProfileId={active.profile?.id ?? null}
           onToast={toast}
+          onGroupMenu={(ps, x, y) => dialogs.menu(x, y, groupItems(ps))}
         />
       )}
       {kyblDialog && (
