@@ -994,7 +994,7 @@ export default function MobileApp() {
       { icon: "info", label: loc.prefix ? "Folder info" : `${rootNoun[0].toUpperCase()}${rootNoun.slice(1)} info`, run: () => setFolderInfo({ prefix: loc.prefix, name: title }) },
       {
         icon: "copy",
-        label: loc.prefix ? "Copy to another connection…" : "Copy everything to another connection…",
+        label: "Copy / Move to…",
         run: () => mig.open({ profileId: loc.profileId, root: loc.bucket, items: [{ path: loc.prefix, isDir: true }] }),
       },
     ];
@@ -1422,7 +1422,7 @@ export default function MobileApp() {
             shown.length === 1
               ? { profileId: p.id, root: shown[0], items: [{ path: "", isDir: true }] }
               : { profileId: p.id, root: shown[0], items: [], roots: shown.map((b) => ({ id: b, name: buckets[p.id]?.labels?.[b] ?? rootName(p.id, b) })) };
-          items.push({ icon: "copy", label: "Copy everything to…", run: () => mig.open(source) });
+          items.push({ icon: "copy", label: "Copy / Move to…", run: () => mig.open(source) });
         }
         setSheet({ title: connName(p), items });
       }}
@@ -1437,7 +1437,7 @@ export default function MobileApp() {
           items: [
             hidden ? { icon: "eye", label: "Show in the list", run: () => setBucketHidden(p, b, false) } : { icon: "eye-off", label: "Hide from the list", run: () => setBucketHidden(p, b, true) },
             { icon: "eye", label: `Choose ${rootWord(p, peekCaps(p.id), true)} to show`, run: () => setChoosing(p.id) },
-            { icon: "copy", label: "Copy everything to…", run: () => mig.open({ profileId: p.id, root: b, items: [{ path: "", isDir: true }] }) },
+            { icon: "copy", label: "Copy / Move to…", run: () => mig.open({ profileId: p.id, root: b, items: [{ path: "", isDir: true }] }) },
           ],
         })
       }

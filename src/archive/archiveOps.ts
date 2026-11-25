@@ -270,7 +270,7 @@ export function makeArchiveOps(c: ArchiveCtx) {
 export type ArchiveOps = ReturnType<typeof makeArchiveOps>;
 
 /** Menu items that change things: left out inside an archive, which opens read-only. */
-const WRITES = /^(Cut|Duplicate|Rename|Delete|Move to|Paste|New folder|Upload|Sync this folder|Keep on this device|Kept on this device|Mount as drive|Copy or move to|Copy share link|Copy this folder to another|Copy everything to another)/;
+const WRITES = /^(Cut|Duplicate|Rename|Delete|Move to|Paste|New folder|Upload|Sync this folder|Keep on this device|Kept on this device|Mount as drive|Copy or move to|Copy share link|Copy \/ Move to)/;
 
 export function readOnlyMenu<T>(items: T[]): T[] {
   return items.filter((i) => {

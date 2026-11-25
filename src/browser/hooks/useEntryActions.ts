@@ -391,7 +391,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
             !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(prefix) },
             !onDisk && keepItem(prefix),
             ...(onDisk ? [] : driveFor(prefix)),
-            !!env.openMigration && { type: "item", label: prefix ? "Copy this folder to another connection…" : "Copy everything to another connection…", icon: "copy", onClick: migrateHere },
+            !!env.openMigration && { type: "item", label: "Copy / Move to…", icon: "copy", onClick: migrateHere },
             ...mirrorFor(prefix),
           ]),
           ...(env.extraPlaceItems?.() ?? []),

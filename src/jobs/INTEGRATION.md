@@ -62,7 +62,7 @@ const [migrate, setMigrate] = useState<{ source: MigrationSource; mode: "copy" |
 Folder keys end with `/`. Sizes are optional: the dialog counts folders itself (`folderSize`,
 cancelled when it closes) for its summary sentence.
 
-### Connection menu: "Copy everything to…"
+### Connection menu: "Copy / Move to…"
 
 A whole bucket/root is one folder item with path `""` (its contents land directly in the picked
 folder):

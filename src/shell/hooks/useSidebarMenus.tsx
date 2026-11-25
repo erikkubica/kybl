@@ -404,7 +404,7 @@ export function useSidebarMenus(h: UseSidebarMenusDeps) {
         ? { type: "item" as const, label: "Open", icon: "folder" as const, onClick: () => h.openHere((pane) => pane.openBucket(p, "")) }
         : { type: "item" as const, label: h.conns.expanded.has(p.id) ? "Collapse" : "Expand", icon: "chevron" as const, onClick: () => h.toggleConnection(p) },
       // all of this computer is too much to copy in one go: its folders have their own menus
-      ...(own ? [] : [{ type: "item" as const, label: "Copy everything to…", icon: "copy" as const, onClick: () => void copyAll() }]),
+      ...(own ? [] : [{ type: "item" as const, label: "Copy / Move to…", icon: "copy" as const, onClick: () => void copyAll() }]),
       ...(own ? [] : driveFor(p, "")),
       ...photoMenuItems(p, h.dialogs),
       ...tunnelMenuItems(p, h.toast),
@@ -496,7 +496,7 @@ export function useSidebarMenus(h: UseSidebarMenusDeps) {
     const hidden = (h.conns.hiddenBuckets[p.id] ?? []).includes(b);
     h.dialogs.menu(x, y, tidyMenu([
       { type: "item", label: "Open", icon: p.id === THIS_MAC.id ? "folder" : "bucket", onClick: () => h.openHere((pane) => pane.openBucket(p, b)) },
-      { type: "item", label: "Copy everything to…", icon: "copy", onClick: () => h.migrations.open({ profileId: p.id, root: b, items: [{ path: "", isDir: true }] }, "copy") },
+      { type: "item", label: "Copy / Move to…", icon: "copy", onClick: () => h.migrations.open({ profileId: p.id, root: b, items: [{ path: "", isDir: true }] }, "copy") },
       ...(p.id === THIS_MAC.id ? [] : driveFor(p, b)),
       { type: "sep" },
       { type: "item", label: hidden ? "Show in the sidebar" : "Hide from the sidebar", icon: hidden ? "eye" : "eye-off", onClick: () => h.conns.setBucketHidden(p, b, !hidden) },

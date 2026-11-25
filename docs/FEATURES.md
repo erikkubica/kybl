@@ -64,8 +64,8 @@ Top to bottom (in the full sidebar):
 6. **Footer:** "New connection", a folder-sync indicator (idle, scanning, syncing, error or paused; clicking opens Settings, Folder sync), and Settings (Cmd+,).
 
 **Context menus in the sidebar**
-- Connection: Sign in again (if needed), Open or Expand or Collapse, Copy everything to…, Move to group (list of groups, New group…, No group), Edit connection…. Also drive items and share-placeholders items.
-- Bucket: Open, Copy everything to…, hide or show in the sidebar, New bucket and similar.
+- Connection: Sign in again (if needed), Open or Expand or Collapse, Copy / Move to…, Move to group (list of groups, New group…, No group), Edit connection…. Also drive items and share-placeholders items.
+- Bucket: Open, Copy / Move to…, hide or show in the sidebar, New bucket and similar.
 - Group: Rename group…, Ungroup, Collapse all, New connection in the group.
 - Kind section: Expand or Collapse, Collapse all, "New FTP connection…" and so on.
 
@@ -347,7 +347,7 @@ Opened on the blank area of a list or grid.
 | **Calculate folder size** | Always. |
 | **Show hidden files** (⇧⌘.), ticked when on | This computer only. |
 | **Open terminal here** (⌃`) | This computer (not Windows) and SFTP. |
-| **Keep & sync ▸** | Holds **Sync this folder…**, **Keep on this device** / **Kept on this device**, **Mount as drive…** and the drive group (those three not on This computer), **Copy this folder to another connection…** (at the top of a bucket: "Copy everything to another connection…"; when the copy-to-connection feature is available) and **Mirror to…** with saved mirrors. |
+| **Keep & sync ▸** | Holds **Sync this folder…**, **Keep on this device** / **Kept on this device**, **Mount as drive…** and the drive group (those three not on This computer), **Copy / Move to…** (the folder, or a whole bucket at its top, to another connection; when that feature is available) and **Mirror to…** with saved mirrors. |
 | **Split ▸ Right / Down / Left / Up** | Always. Items grey out when there is no room or no free slot. Right = ⌘\, Down = ⇧⌘\. |
 
 #### The toolbar "…" menu ("More actions")
@@ -368,8 +368,8 @@ Column picker: Name (always on), Size, Modified, Kind, Storage class (S3-compati
 #### Right-click in the sidebar
 | Where | Items |
 |---|---|
-| A connection | "Sign in again…" (when its sign-in expired), Open (a server's single root) or Expand / Collapse, "Copy everything to…" (not for This computer), the drive group ("Mount as drive…", see below), "Photos in lists" submenu-style group (As in Settings, Off, Placeholders, Thumbnails, and for remote connections "Share placeholders with other devices"), "Tunnels ▸" (SFTP connections that have saved tunnels, tick marks running ones), then for saved connections: "Move to group ▸" (New group…, No group, every group, current one ticked) and "Edit connection…". This computer is built in, so it has no group or Edit items. |
-| A bucket (or one of This computer's folders) | Open, Copy everything to…, the drive group (not on This computer), Hide from the sidebar / Show in the sidebar. |
+| A connection | "Sign in again…" (when its sign-in expired), Open (a server's single root) or Expand / Collapse, "Copy / Move to…" (not for This computer), the drive group ("Mount as drive…", see below), "Photos in lists" submenu-style group (As in Settings, Off, Placeholders, Thumbnails, and for remote connections "Share placeholders with other devices"), "Tunnels ▸" (SFTP connections that have saved tunnels, tick marks running ones), then for saved connections: "Move to group ▸" (New group…, No group, every group, current one ticked) and "Edit connection…". This computer is built in, so it has no group or Edit items. |
+| A bucket (or one of This computer's folders) | Open, Copy / Move to…, the drive group (not on This computer), Hide from the sidebar / Show in the sidebar. |
 | A group folder | Rename group…, Ungroup, Collapse all. |
 | A kind section (S3, SFTP, FTP…) | Expand / Collapse, Collapse all, "New <kind> connection…". |
 | A mounted-drive badge | The drive group below. |
@@ -458,7 +458,7 @@ Opens Quick Look with its info column shown. Shows name, action buttons (copy th
 - **Sync this folder…** opens the folder-sync dialog prefilled with this place. Directions: Upload only, Download only, Two-way (edited on both sides: you keep both).
 - **Keep on this device**: a two-way synced copy in a Kybl folder in your home folder (~/Kybl/…), shown in Finder when ready; the first time it explains that deleting there deletes online too. The ticked item stops it (the copy stays on disk).
 - **Mirror to…**: source and destination (swappable), "Upload new and changed files", "Also delete what's gone from the source", "Changed means" (another size or newer / another size / different MD5 checksum where both sides have one), "Leave out" rules (one per line, like .gitignore), and a dry-run preview grouped by folder before it runs as one job. Mirrors can be saved by name and re-run from the folder menu or the palette ("Run mirror “name”").
-- **Copy to another connection…**, **Copy everything to…** and the destination picker's "other connection" button start a background job. Options: "If a file is already there" (Skip if it's the same, Always skip, Replace if older, Always replace, Keep both), "Check contents after copying", "Keep modification dates", and "Leave out" patterns. Progress and Stop are in Activity.
+- **Copy / Move to…** (a folder, a bucket or a whole connection) and the destination picker's "other connection" button start a background job. Options: "If a file is already there" (Skip if it's the same, Always skip, Replace if older, Always replace, Keep both), "Check contents after copying", "Keep modification dates", and "Leave out" patterns. Progress and Stop are in Activity.
 
 #### Undo
 ⌘Z or the toast's Undo undoes the latest move, copy, duplicate or rename (up to 20 steps; batch renames undo as one). Undoing a copy deletes exactly the objects it made (and asks first when that is many). Nothing is offered when a move or copy replaced or merged something. Delete cannot be undone.
