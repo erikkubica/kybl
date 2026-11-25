@@ -27,8 +27,10 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 
 // ---------------------------------------------------------------- TLS and HTTP
 
-/// The system's root certificates on a computer, Mozilla's on a phone (which keeps its own where
-/// rustls can't read them; see `state::mobile_tls`).
+/// Mozilla's root certificates (bundled), and on a computer the system's too. The system's alone
+/// fall short on a fresh Windows, whose store gets a root only once Windows' own programs need it
+/// (GitHub's, a provider's: UnknownIssuer); the system's keep a company's own root working.
+/// Phones keep theirs where rustls can't read them (see `state::bundled_tls`).
 pub fn roots() -> Arc<rustls::RootCertStore> {
     static ROOTS: OnceLock<Arc<rustls::RootCertStore>> = OnceLock::new();
     ROOTS
@@ -38,7 +40,6 @@ pub fn roots() -> Arc<rustls::RootCertStore> {
             for cert in rustls_native_certs::load_native_certs().certs {
                 let _ = roots.add(cert);
             }
-            #[cfg(mobile)]
             for cert in webpki_root_certs::TLS_SERVER_ROOT_CERTS {
                 let _ = roots.add(cert.clone());
             }

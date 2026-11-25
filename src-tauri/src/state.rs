@@ -957,20 +957,20 @@ fn http_client() -> SharedHttpClient {
     static HTTP: OnceLock<SharedHttpClient> = OnceLock::new();
     HTTP.get_or_init(|| {
         let b = HttpBuilder::new().tls_provider(Provider::Rustls(CryptoMode::Ring));
-        #[cfg(mobile)]
-        let b = b.tls_context(mobile_tls());
+        let b = b.tls_context(bundled_tls());
         b.build_https()
     })
     .clone()
 }
 
-/// iOS and Android keep their trusted roots where rustls can't read them (the native-roots lookup
-/// finds nothing, and debug builds panic on it), so phones trust Mozilla's root set, bundled in.
-#[cfg(mobile)]
-fn mobile_tls() -> aws_smithy_http_client::tls::TlsContext {
+/// Mozilla's root set, bundled in, and on a computer the system's too: a fresh Windows' store gets
+/// a root only once Windows' own programs need it, so a provider's can be missing (UnknownIssuer).
+/// iOS and Android keep their roots where rustls can't read them (the native-roots lookup finds
+/// nothing, and debug builds panic on it): Mozilla's alone there.
+fn bundled_tls() -> aws_smithy_http_client::tls::TlsContext {
     use aws_smithy_http_client::tls::{TlsContext, TrustStore};
     use base64::Engine;
-    let mut store = TrustStore::empty().with_native_roots(false);
+    let mut store = TrustStore::empty().with_native_roots(cfg!(desktop));
     for der in webpki_root_certs::TLS_SERVER_ROOT_CERTS {
         let b64 = base64::engine::general_purpose::STANDARD.encode(der.as_ref());
         let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");

@@ -205,22 +205,9 @@ pub(crate) fn http() -> Result<&'static HttpsClient, String> {
     if let Some(c) = C.get() {
         return Ok(c);
     }
-    #[cfg(desktop)]
-    let connector = hyper_rustls::HttpsConnectorBuilder::new()
-        .with_native_roots()
-        .map_err(|e| format!("Couldn't load the system's trusted certificates: {e}"))?;
-    // phones keep their roots where rustls can't read them: trust Mozilla's set, like the S3 client
-    #[cfg(mobile)]
-    let connector = {
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add_parsable_certificates(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned());
-        let tls = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(rustls::crypto::ring::default_provider()))
-            .with_safe_default_protocol_versions()
-            .map_err(|e| format!("Couldn't set up TLS: {e}"))?
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        hyper_rustls::HttpsConnectorBuilder::new().with_tls_config(tls)
-    };
+    // the shared roots (Mozilla's, and the system's on a computer): a fresh Windows' store alone
+    // lacks GitHub's root until Windows' own programs fetch it
+    let connector = hyper_rustls::HttpsConnectorBuilder::new().with_tls_config((*crate::storage::net::tls_config()).clone());
     let connector = connector
         .https_or_http()
         .enable_http1()

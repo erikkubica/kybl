@@ -66,6 +66,9 @@ opendal = { version = "=0.59.5", default-features = false, features = ["services
 opendal-http-transport-reqwest = { version = "=0.59.5", default-features = false, features = ["rustls-no-provider"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# Mozilla's root set, trusted beside the system's: a fresh Windows fills its root store only as
+# Windows' own programs need a root, so GitHub's or a provider's can be missing (UnknownIssuer)
+webpki-root-certs = "1"
 quick-xml = "0.42"
 suppaftp = { version = "13", default-features = false, features = ["tokio-rustls-ring", "deprecated"] }
 russh = { version = "0.65", default-features = false, features = ["ring", "rsa"] }
@@ -101,7 +104,7 @@ notify-debouncer-full = "0.7"
 ignore = "0.4"
 tauri-plugin-autostart = "2"
 trash = "5"
-# WP-A1/WP-A2: the system's trusted roots for WebDAV, FTPS and the cloud drive APIs (phones bundle webpki-root-certs below)
+# WP-A1/WP-A2: the system's trusted roots for WebDAV, FTPS and the cloud drive APIs (with webpki-root-certs above)
 rustls-native-certs = "0.8"
 
 # WP-E4 "Mount as drive" (desktop only): a WebDAV server on 127.0.0.1 that Finder, GVFS or
@@ -119,10 +122,9 @@ unicode-normalization = "0.1"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-# Phones have no root certificate files for rustls to load: trust Mozilla's root set instead
-# (see `state::http_client`).
+# Phones have no root certificate files for rustls to load: Mozilla's root set alone there
+# (see `state::bundled_tls`).
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
-webpki-root-certs = "1"
 base64 = "0.22"
 # the same rustls the S3 client uses, to hand the account API client those roots too
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

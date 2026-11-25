@@ -22,20 +22,12 @@ use crate::storage::{extras, ConnKind, ErrKind, SResult, StorageError};
 
 // ---------------------------------------------------------------- the client
 
-/// rustls on ring, trusting the system's roots on a computer and Mozilla's on a phone (which keep
-/// theirs where rustls can't read them; see `state::mobile_tls`).
+/// rustls on ring, trusting the shared roots (`storage::net::roots`: Mozilla's, and the system's on
+/// a computer).
 fn tls_config() -> Arc<rustls::ClientConfig> {
     static CFG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
     CFG.get_or_init(|| {
-        let mut roots = rustls::RootCertStore::empty();
-        #[cfg(desktop)]
-        for cert in rustls_native_certs::load_native_certs().certs {
-            let _ = roots.add(cert);
-        }
-        #[cfg(mobile)]
-        for cert in webpki_root_certs::TLS_SERVER_ROOT_CERTS {
-            let _ = roots.add(cert.clone());
-        }
+        let roots = crate::storage::net::roots();
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let cfg = rustls::ClientConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()
