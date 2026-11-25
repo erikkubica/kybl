@@ -1,14 +1,14 @@
 import { keys } from "../../ui/lib/osText";
 import { bringInItems } from "../lib/bringIn";
 import { useRef, type ReactNode, type RefObject } from "react";
-import { Icon, type IconName } from "../../ui/components/Icons";
-import { PathTitle } from "./PathTitle";
+import { Icon } from "../../ui/components/Icons";
+import { PathBar } from "./PathBar";
+import type { Crumb } from "../lib/crumbs";
 import { ProviderBadge } from "../../sidebar/Sidebar";
 import type { MenuItem } from "../../ui/components/Dialogs";
 import type { Sort, SortKey } from "./list/FileTable";
 import type { GroupBy } from "../../settings/settings";
 import { useDialogs } from "../../shell/hooks/useDialogs";
-import { parentPrefix } from "../../core/format";
 
 export const TILE_MIN = 96;
 export const TILE_MAX = 320;
@@ -22,10 +22,7 @@ export const TILE_MAX = 320;
  * (……) is the pane's grip: dragging it moves the pane in the layout or to another workspace.
  */
 export function Toolbar({
-  bucket,
-  bucketLabel,
-  bucketIcon,
-  prefix,
+  crumbs,
   searchActive,
   searchRunning,
   query,
@@ -38,9 +35,6 @@ export function Toolbar({
   onGroupBy,
   hidden,
   onToggleHidden,
-  onNavigate,
-  onUp,
-  upLabel,
   onUpload,
   onMoveHere,
   readOnly,
@@ -58,7 +52,6 @@ export function Toolbar({
   panesItems,
   provider,
   connName,
-  onConnTop,
   switchLabel = "Switch connection or bucket",
   onSwitchConnection,
   onGoTo,
@@ -66,17 +59,12 @@ export function Toolbar({
   favorite,
   onToggleFavorite,
   afterPath,
-  emptyLabel,
   searchExtras,
   searchPlaceholder,
   onGrip,
 }: {
-  bucket: string | null;
-  /** what the root is called on screen (defaults to `bucket`) */
-  bucketLabel?: string | null;
-  /** the root's icon (a bucket, a drive, a folder, a server), in the enclosing folders menu */
-  bucketIcon?: IconName;
-  prefix: string;
+  /** the path on screen, as steps (lib/crumbs.ts); empty: no connection */
+  crumbs: Crumb[];
   /** showing deep search results */
   searchActive: boolean;
   /** a deep search is still scanning */
@@ -96,11 +84,6 @@ export function Toolbar({
   /** this computer's disk only: hidden files are showing (undefined: nothing to toggle) */
   hidden?: boolean;
   onToggleHidden?: () => void;
-  onNavigate: (prefix: string) => void;
-  /** up a level (the "…" crumb, ⌘↑) */
-  onUp: () => void;
-  /** the enclosing folder's name when the "…" crumb shows (a parent the connection's name doesn't reach) */
-  upLabel?: string;
   onUpload: (folder: boolean) => void;
   /** this computer's pane: picked files or folders move into the folder (the + menu says Copy / Move here) */
   onMoveHere?: (folder: boolean) => void;
@@ -129,8 +112,6 @@ export function Toolbar({
   provider?: string;
   /** the pane's connection, named after the badge so it's clear which server this is */
   connName?: string;
-  /** the connection's name at a root's top: back to its roots (buckets, this computer's places) */
-  onConnTop?: () => void;
   /** what the badge does, in this connection's words ("Switch connection or bucket" on S3) */
   switchLabel?: string;
   /** the badge before the folder's name: pick another connection or bucket for this pane */
@@ -142,8 +123,6 @@ export function Toolbar({
   /** the folder on screen is a favorite; the star toggles it */
   favorite?: boolean;
   onToggleFavorite?: () => void;
-  /** what the path says while no bucket is open ("No bucket selected", "Not connected") */
-  emptyLabel?: string;
   /** right after the path, on the same row (the git branch chip) */
   afterPath?: ReactNode;
   /** inside the search field, before its clear button (Names / Contents) */
@@ -156,7 +135,6 @@ export function Toolbar({
    */
   onGrip?: (e: React.PointerEvent<HTMLElement>) => void;
 }) {
-  const parts = prefix.split("/").filter(Boolean);
   const dialogs = useDialogs();
   const panes = useRef<HTMLButtonElement>(null);
   const anchorOf = (e: React.MouseEvent) => {
@@ -231,7 +209,7 @@ export function Toolbar({
         ((e) => {
           // only the empty part: the header's own padding, the row between its items, the spacer
           const t = e.target as Element;
-          if (t === e.currentTarget || t.matches(".toolbar, .toolbar > .spacer") || t.closest(".conn-sep")) onGrip(e);
+          if (t === e.currentTarget || t.matches(".toolbar, .toolbar > .spacer, .toolbar > .path-bar") || t.closest(".conn-sep")) onGrip(e);
         })
       }
     >
@@ -254,60 +232,9 @@ export function Toolbar({
                 <ProviderBadge provider={provider} />
               )}
             </button>
-            {/* the connection's name reads as the first step of the path, and acts like one: it goes to
-                the top. At the top the root's own name already says it when they match. */}
-            {connName && bucket != null && !(parts.length === 0 && !upLabel && connName === (bucketLabel ?? bucket)) && (
-              <>
-                <button
-                  type="button"
-                  className="conn-name"
-                  disabled={!onConnTop && (disabled || parts.length === 0)}
-                  // with roots (buckets, places) it goes to them, as the first step of a path would;
-                  // with a single root, to that root's top
-                  onClick={() => (onConnTop ? onConnTop() : onNavigate(""))}
-                  title={onConnTop ? `All of ${connName}` : parts.length ? `Go to the top of ${bucketLabel ?? bucket ?? connName}` : connName}
-                  // dropping items here moves them to the top, as on a breadcrumb (a single root's only)
-                  data-drop={!disabled && !onConnTop && !readOnly && parts.length ? "" : undefined}
-                >
-                  {connName}
-                </button>
-                <span className="conn-sep" aria-hidden>
-                  <Icon name="chevron" size={12} />
-                </span>
-              </>
-            )}
           </>
         )}
-        {/* the folders between the top and this one fold into "…": a click goes up one. It shows
-            whenever the parent is somewhere the connection's name doesn't go (in an archive, at its
-            top too: the folder it's in) */}
-        {upLabel != null && bucket != null && (
-          <>
-            <button
-              type="button"
-              className="crumb-up"
-              disabled={disabled}
-              onClick={onUp}
-              // dropping items on it moves them up a level
-              data-drop={!disabled && !readOnly && parts.length ? parentPrefix(prefix) : undefined}
-              title={`${upLabel} (${keys("⌘↑")})`}
-              aria-label={`Enclosing folder, ${upLabel}`}
-            >
-              …
-            </button>
-            <span className="conn-sep" aria-hidden>
-              <Icon name="chevron" size={12} />
-            </span>
-          </>
-        )}
-        {bucket != null ? (
-          <PathTitle label={bucketLabel ?? bucket} icon={bucketIcon} parts={parts} onNavigate={onNavigate} onGoTo={onGoTo} goTo={goTo} />
-        ) : (
-          <nav className="crumbs path-title" aria-label="Path">
-            <span className="crumb muted">{emptyLabel ?? "No bucket selected"}</span>
-          </nav>
-        )}
-        {afterPath}
+        <PathBar crumbs={crumbs.length ? crumbs : [{ label: "No connection", muted: true }]} onGoTo={onGoTo} goTo={goTo} after={afterPath} />
 
         <div className="spacer" />
 

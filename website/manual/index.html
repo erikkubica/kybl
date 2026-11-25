@@ -635,14 +635,14 @@
       <h3 id="navigating">Moving around</h3>
       <ul>
         <li><b>Open a folder</b>: double-click it, or select it and press <kbd>↵</kbd> or <kbd>⌘O</kbd>. In list view, the <b>..</b> row at the top goes up.</li>
-        <li><b>Go up one level</b>: <kbd>⌘↑</kbd>, <kbd>Backspace</kbd>, or the <b>…</b> before the folder's name in the toolbar. Inside an archive, at its top, it goes back to the folder the archive is in.</li>
+        <li><b>Go up one level</b>: <kbd>⌘↑</kbd>, <kbd>Backspace</kbd>, or click the enclosing folder in the path. At the top of an archive, <kbd>⌘↑</kbd> goes back to the folder the archive is in, with the archive selected.</li>
         <li><b>Back and forward</b>: <kbd>⌘[</kbd> and <kbd>⌘]</kbd>, or your mouse's side buttons. Each pane remembers its last 100 places. (There are no back and forward buttons in the toolbar.)</li>
         <li><b>Go to the connection's top</b>: click the connection name in the toolbar. On a connection with buckets or places (S3, This computer, Google Drive, OneDrive) it lists them; on a server with one root it opens that root's top. Inside an archive it takes you out to the connection the archive is on.</li>
         <li><b>Switch connection or bucket in this pane</b>: click the connection badge before the path. It lists every connection with its buckets.</li>
       </ul>
 
       <h3 id="breadcrumbs">Breadcrumbs and Go to folder</h3>
-      <p>The path shows the connection's name, a <b>…</b> for the enclosing folder, and the current folder's name. Right-click or <kbd>⌘</kbd>-click the name to list every enclosing folder and jump to one. You can drop files on the connection name (on a one-root server) and on <b>…</b>.</p>
+      <p>The path reads the same everywhere: the connection, then its bucket, drive or place (a server with one root skips this step), then the folders down to the one you're in. An archive continues the path it's in, like <i>This Mac › Downloads › site-backup.zip › site-backup</i>. Every step is clickable. When the pane is too narrow, the folders nearest the top fold into <b>…</b> one at a time; click <b>…</b> to pick one of them. Right-click or <kbd>⌘</kbd>-click the path for every step. You can drop files on any step of the place you're in.</p>
       <p>To type a path, click the current folder's name, or press <kbd>⇧⌘G</kbd> or <kbd>⌘L</kbd>. The path turns into a text field. Type and press <kbd>↵</kbd> (<kbd>Esc</kbd> cancels). It accepts:</p>
       <ul>
         <li>a path inside the current bucket or root;</li>

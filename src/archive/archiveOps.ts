@@ -14,8 +14,6 @@ import type { MenuItem, Toast } from "../ui/components/Dialogs";
 import type { TransferActions } from "../transfers/hooks/useTransfers";
 import type { OpenMigration } from "../shell/hooks/useMigrationHost";
 import type { Entry, Profile } from "../core/types";
-import { peekCaps } from "../core/useCaps";
-import { rootsMode } from "../connections/lib/roots";
 import { archiveApi, archiveOrigin, archiveProfile, archiveStem, isArchiveId, isArchiveName, skippedNote, type ExtractJob } from "./archive";
 
 export type ArchiveCtx = {
@@ -38,8 +36,6 @@ export type ArchiveCtx = {
   autoShowActivity: () => void;
   showActivity: () => void;
   go: (p: Profile, bucket: string, prefix: string, opts?: { selectKey?: string }) => void;
-  /** a connection's top: its roots (buckets, this computer's places) */
-  showConnection: (id: string) => void;
   openMigration?: OpenMigration;
 };
 
@@ -249,17 +245,6 @@ export function makeArchiveOps(c: ArchiveCtx) {
     return true;
   };
 
-  /** The connection's name in an archive's path: out to that connection's top (its roots, or its only root's top). */
-  const leave = () => {
-    if (!origin) return;
-    const p = profileOf(origin.profileId);
-    if (!p) return;
-    if (rootsMode(p, peekCaps(p.id)) === "single") c.go(p, origin.root, "");
-    else c.showConnection(p.id);
-  };
-  /** The folder the archive is in, by name (the "…" before an archive's top goes there). */
-  const originFolder = origin ? baseName(origin.key.slice(0, origin.key.lastIndexOf("/") + 1).replace(/\/$/, "")) || baseName(origin.root.replace(/[\\/]+$/, "")) || origin.root : null;
-
   /** The item menu's archive part. */
   const items = (list: Entry[]): (MenuItem | false)[] => {
     if (!c.profile || c.bucket == null || !list.length) return [];
@@ -279,7 +264,7 @@ export function makeArchiveOps(c: ArchiveCtx) {
     ];
   };
 
-  return { inArchive, origin, originFolder, open, extractFiles, extractEntries, extractTo, compress, upFromTop, leave, items };
+  return { inArchive, origin, open, extractFiles, extractEntries, extractTo, compress, upFromTop, items };
 }
 
 export type ArchiveOps = ReturnType<typeof makeArchiveOps>;

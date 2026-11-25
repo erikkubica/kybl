@@ -47,6 +47,11 @@ export type Dialogs = {
 
 const Ctx = createContext<Dialogs | null>(null);
 
+/** The dialogs where there are any (the phone app has none): null elsewhere. */
+export function useOptionalDialogs(): Dialogs | null {
+  return useContext(Ctx);
+}
+
 export function useDialogs(): Dialogs {
   const d = useContext(Ctx);
   if (!d) throw new Error("useDialogs needs a DialogsProvider");

@@ -28,7 +28,8 @@ import { PreviewPane } from "../viewers/components/PreviewPane";
 import { FileIcon } from "../browser/components/list/FileIcon";
 import { useUpdates } from "../updates/updates";
 import { UpdateBanner } from "../updates/UpdateBanner";
-import { Breadcrumbs } from "../browser/components/Breadcrumbs";
+import { PathBar } from "../browser/components/PathBar";
+import { folderCrumbs } from "../browser/lib/crumbs";
 import { canThumb, retryFailedThumbs, thumbsPaused } from "../thumbs/thumbs";
 import { isPlaceholderIndex, useFolderPlaceholders } from "../thumbs/thumbhash";
 import { IMAGE_MODES, SHARE_PLACEHOLDERS_TEXT, connImageMode, imageModeFor, imageModeLabel, setConnImageMode, setSharedPlaceholders, sharedPlaceholdersOn, useImageModes } from "../thumbs/imageMode";
@@ -1072,7 +1073,13 @@ export default function MobileApp() {
             </button>
           )}
           <div className="m-bar-path">
-            <Breadcrumbs compact={!wide} bucket={loc.bucket} label={rootLabel(loc.profileId, loc.bucket)} icon={rootIcon(loc.profileId, loc.bucket)} parts={loc.prefix.split("/").filter(Boolean)} onNavigate={(prefix) => go({ ...loc, prefix }, "out")} />
+            <PathBar
+              compact={!wide}
+              crumbs={[
+                { label: rootLabel(loc.profileId, loc.bucket), icon: rootIcon(loc.profileId, loc.bucket), go: () => go({ ...loc, prefix: "" }, "out"), drop: "" },
+                ...folderCrumbs(loc.prefix, (prefix) => go({ ...loc, prefix }, "out"), true),
+              ]}
+            />
           </div>
           <button className="m-icon" onClick={() => setSearchOpen(true)} aria-label="Search">
             <Icon name="search" size={20} />

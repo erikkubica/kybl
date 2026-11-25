@@ -6,7 +6,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, type CSSProperties } from "react";
 import { Icon } from "../ui/components/Icons";
 import { Toolbar } from "./components/Toolbar";
-import { rootIcon, rootsMode } from "../connections/lib/roots";
+import { rootsMode } from "../connections/lib/roots";
 import { peekCaps } from "../core/useCaps";
 import { FileTable, type SortKey } from "./components/list/FileTable";
 import type { ColumnId } from "../settings/settings";
@@ -147,26 +147,11 @@ export function BrowserPane(p: BrowserPaneProps) {
       ...(p.dualItems?.() ?? []),
     ]);
 
-  // the path while nothing is open: a server has no buckets, it's connecting or it couldn't
+  // the path: the same steps for every place (lib/crumbs.ts); a server with a single root, while
+  // it connects (or couldn't), ends in a note
   const rootsKind = profile ? rootsMode(profile, peekCaps(profile.id)) : null;
-  const emptyLabel = !profile
-    ? "No connection"
-    : rootsKind === "single"
-      ? p.bucketNote || p.bucketError
-        ? "Not connected"
-        : "Connecting…"
-      : // its roots are listed below (ChooseBucket): this is the connection itself
-        profile.name;
-  // the "…" crumb: the enclosing folder, where the connection's name doesn't already go there
-  const crumbParts = prefix.split("/").filter(Boolean);
-  const upLabel =
-    crumbParts.length >= 2
-      ? crumbParts[crumbParts.length - 2]
-      : crumbParts.length === 1 && (pane.archive.inArchive || (rootsKind && rootsKind !== "single"))
-        ? (pane.bucketLabel ?? bucket ?? undefined)
-        : pane.archive.inArchive && bucket != null
-          ? (pane.archive.originFolder ?? undefined)
-          : undefined;
+  const crumbs = pane.crumbs();
+  if (profile && bucket == null && rootsKind === "single") crumbs.push({ label: p.bucketNote || p.bucketError ? "Not connected" : "Connecting…", muted: true });
   return (
     <section
       className={`browser-pane ${p.dual ? (active ? "is-active" : "is-inactive") : ""} ${p.lifted ? "lifted" : ""}`}
@@ -182,11 +167,7 @@ export function BrowserPane(p: BrowserPaneProps) {
       <Toolbar
         // the first match, not one step from the cursor a cleared selection left behind
         onLeaveDown={() => sel.selected.size === 0 && entries.length > 0 && sel.selectOnly(entries[0].key)}
-        bucket={bucket}
-        bucketLabel={pane.bucketLabel}
-        bucketIcon={pane.profile ? rootIcon(pane.profile.id, bucket ?? "") : undefined}
-        emptyLabel={emptyLabel}
-        prefix={prefix}
+        crumbs={crumbs}
         searchActive={!!search}
         searchRunning={!!search?.running && !search.stopped}
         query={ent.query}
@@ -199,8 +180,6 @@ export function BrowserPane(p: BrowserPaneProps) {
         onGroupBy={(g) => pane.setGroupBy(g)}
         hidden={pane.caps?.localPaths ? pane.showHidden : undefined}
         onToggleHidden={actions.commands["toggle-hidden"]}
-        onNavigate={pane.navigate}
-        onUp={() => void pane.goUp()}
         onUpload={(folder) => actions.commands[folder ? "upload-folder" : "upload-files"]()}
         onMoveHere={pane.caps?.localPaths && !pane.archive.inArchive ? (folder) => void ops.pickAndMove(folder) : undefined}
         readOnly={readOnly}
@@ -221,10 +200,6 @@ export function BrowserPane(p: BrowserPaneProps) {
         panesItems={p.panesItems}
         provider={pane.profile?.provider}
         connName={pane.profile?.name}
-        // the name goes to the connection's roots (one with a single root has none: its top instead);
-        // in an archive, out to the connection it came from
-        onConnTop={pane.archive.inArchive ? pane.archive.leave : profile && rootsKind && rootsKind !== "single" ? () => pane.showConnection(profile.id) : undefined}
-        upLabel={upLabel}
         switchLabel={rootsKind === "single" ? "Switch connection" : rootsKind === "drives" ? "Switch connection or folder" : "Switch connection or bucket"}
         onSwitchConnection={p.onSwitchConnection}
         onGoTo={here ? (t) => void actions.goToPath(t) : undefined}

@@ -434,83 +434,55 @@ code {
   padding: 0;
   margin: 0 0 0 2px;
 }
-/* which server or account the pane is on, before the folder's name: muted, a step of the path
-   (a click goes to the top), and it gives way before the folder's name does */
-.toolbar > .conn-name {
-  /* it gives way almost entirely before the folder's name starts to */
-  flex: 0 1000 auto;
-  min-width: 36px;
-  max-width: 220px;
-  height: 26px;
-  padding: 0 6px;
-  overflow: hidden;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: none;
-  color: var(--dim);
-  font: inherit;
-  font-size: 13px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  cursor: default;
-}
-.toolbar > .conn-name:not(:disabled):hover {
-  background: var(--hover);
-  color: var(--text);
-}
-.toolbar > .conn-name:disabled {
-  opacity: 1;
-}
+/* a terminal pane's header: its connection › its folder */
 .toolbar > .conn-sep {
   display: inline-flex;
   flex: none;
   margin: 0 -2px;
   color: var(--faint);
 }
-/* the folders between the top and here, folded into "…" (a click goes up one) */
-.toolbar > .crumb-up {
-  flex: none;
-  height: 24px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: none;
-  color: var(--dim);
-  font: inherit;
-  font-size: 13px;
-  letter-spacing: 1px;
-  cursor: default;
-}
-.toolbar > .crumb-up:not(:disabled):hover {
-  background: var(--hover);
-  color: var(--text);
-}
 /* "…" holds much of what had its own button: its dots as heavy as the other icons' lines */
 .tb-more svg {
   stroke-width: 3;
 }
-/* just the folder's name: it gives way first (the large shrink factor), down to a sliver */
-.crumbs.path-title {
-  flex: 0 10 auto;
-  min-width: 24px;
-  gap: 0;
+/* the path (PathBar.tsx): it takes the row's room and fits its steps into it, folding the ones
+   nearest the top into "…"; its own empty part is the pane's grip, like the spacer after it */
+.toolbar > .crumbs.path-bar {
+  flex: 1 1 0;
+  min-width: 60px;
 }
-.path-title .path-name {
+.toolbar > .crumbs.path-bar ~ .spacer {
+  flex: 0 0 4px;
+}
+.path-bar .crumb {
+  height: 26px;
+  padding: 0 6px;
+  font-size: 13px;
+  cursor: default;
+}
+.path-bar .crumb:disabled {
+  opacity: 1;
+}
+/* the connection's name gives way first, then the folder's: both down to a sliver */
+.crumbs.path-bar > .crumb-root:not(.crumb-here) {
+  flex: 0 1000 auto;
+  min-width: 36px;
+}
+.crumbs.path-bar > .crumb-here {
   flex: 0 1 auto;
-  max-width: none;
-  min-width: 0;
-  padding: 0 4px 0 6px;
+  min-width: 40px;
 }
-.crumbs.path-title.editing {
-  flex: 1 1 auto;
+.path-bar .crumb-more {
+  letter-spacing: 1px;
+}
+.path-after {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  margin-left: 4px;
+}
+.crumbs.path-bar.editing {
   min-width: 140px;
-}
-@container (max-width: 420px) {
-  /* the right side's buttons always stay; the left side makes room: while typing a path the
-     connection's name and "…" step aside */
-  .toolbar:has(.path-title.editing) > :is(.conn-name, .conn-sep, .crumb-up) {
-    display: none;
-  }
 }
 .crumbs {
   display: flex;

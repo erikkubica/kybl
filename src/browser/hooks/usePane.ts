@@ -6,7 +6,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { baseName, parentPrefix } from "../../core/format";
-import { localParent } from "../../connections/lib/roots";
+import { localParent, rootIcon, rootsMode } from "../../connections/lib/roots";
+import { folderCrumbs, placeCrumbs, type Crumb } from "../lib/crumbs";
 import { useFolderSizes } from "./useFolderSizes";
 import { peekCaps, useCaps } from "../../core/useCaps";
 import { ANON, busyOwner, makeFileOps, type FileOps } from "../../desktop/components/fileOps";
@@ -332,11 +333,44 @@ function usePaneCore(env: PaneEnv) {
     autoShowActivity: env.autoShowActivity,
     showActivity: env.showActivity,
     go,
-    showConnection,
     openMigration: env.openMigration,
   });
   const archiveRef = useRef(archive);
   archiveRef.current = archive;
+
+  /** The path on screen as steps (lib/crumbs.ts): the same for every kind of place, an archive continuing the path it's in. */
+  const crumbs = (): Crumb[] => {
+    if (!profile) return [];
+    const origin = archive.origin;
+    if (origin) {
+      const op = profiles.find((x) => x.id === origin.profileId) ?? (origin.profileId === THIS_MAC.id ? THIS_MAC : null);
+      const outside = op
+        ? placeCrumbs({
+            connection: op.name,
+            single: rootsMode(op, peekCaps(op.id)) === "single",
+            root: origin.root,
+            rootLabel: env.rootLabel?.(op.id, origin.root) ?? origin.root,
+            rootIcon: rootIcon(op.id, origin.root),
+            prefix: origin.key.slice(0, origin.key.lastIndexOf("/") + 1),
+            toConnection: () => showConnection(op.id),
+            toPrefix: (pre) => go(op, origin.root, pre),
+          })
+        : [];
+      // read-only inside: nothing drops on its steps
+      return [...outside, { label: baseName(origin.key), icon: "archive", go: () => navigate("") }, ...folderCrumbs(prefix, (pre) => navigate(pre))];
+    }
+    return placeCrumbs({
+      connection: profile.name,
+      single: rootsMode(profile, caps) === "single",
+      root: bucket,
+      rootLabel: bucket != null ? (env.rootLabel?.(profile.id, bucket) ?? bucket) : undefined,
+      rootIcon: rootIcon(profile.id, bucket ?? ""),
+      prefix,
+      toConnection: () => showConnection(profile.id),
+      toPrefix: (pre) => navigate(pre),
+      drops: true,
+    });
+  };
 
   const openEntry = useCallback(
     (e: Entry) => {
@@ -478,6 +512,7 @@ function usePaneCore(env: PaneEnv) {
     bucketLabel: profile && bucket != null ? (env.rootLabel?.(profile.id, bucket) ?? bucket) : bucket,
     prefix,
     here,
+    crumbs,
     history: loc.history,
     savedLocation: loc.saved,
     sort,
