@@ -358,6 +358,7 @@ export function Sidebar({
   onGroupMenu,
   onSectionMenu,
   onOpenConnection,
+  paneEmpty = false,
   findSignal = 0,
   findOnMount,
   onFindDone,
@@ -425,6 +426,8 @@ export function Sidebar({
   onSectionMenu?(s: KindSection, x: number, y: number): void;
   /** opens a connection in the pane in use (a found or recent connection) */
   onOpenConnection?(p: Profile): void;
+  /** the pane in use shows nothing: a click on a server opens it at once (else it marks it first) */
+  paneEmpty?: boolean;
   /** goes up by one each time ⌥⌘F asks for the filter field */
   findSignal?: number;
   /** the filter field takes the keyboard as soon as this sidebar shows */
@@ -447,6 +450,8 @@ export function Sidebar({
 
   // ---- finding a connection by typing
   const [query, setQuery] = useState("");
+  // the row clicked once (a server, or a Recent one: "r:" + id): marked, with its Open button
+  const [chosenId, setChosenId] = useState<string | null>(null);
   const [cursor, setCursor] = useState(0);
   // ⌥⌘F shows the field even for a short list, until it's left empty
   const [findAsked, setFindAsked] = useState(false);
@@ -612,6 +617,9 @@ export function Sidebar({
       pickMode={pickedSet.size > 0}
       onPick={onTogglePick}
       dragProps={dragProps(p)}
+      chosen={chosenId === p.id}
+      onChoose={(x) => setChosenId(x.id)}
+      paneEmpty={paneEmpty}
     />
   );
 
@@ -768,8 +776,9 @@ export function Sidebar({
             {recentProfiles.map((p) => (
               <div
                 key={p.id}
-                className="side-item recent-row"
-                onClick={() => onOpenConnection?.(p)}
+                className={`side-item recent-row ${chosenId === `r:${p.id}` && !paneEmpty ? "chosen" : ""}`}
+                // as a server's row: a click marks it, a double click or ↵ opens it (at once into an empty pane)
+                onClick={(e) => (paneEmpty || p.id === activeId || e.detail > 1 ? onOpenConnection?.(p) : setChosenId(`r:${p.id}`))}
                 onKeyDown={onActivate(() => onOpenConnection?.(p))}
                 role="button"
                 tabIndex={0}
@@ -784,7 +793,20 @@ export function Sidebar({
               >
                 <ConnBadge p={p} own={builtIn(p)} />
                 <span className="side-label">{p.name}</span>
-                {groupOf(p) && <span className="side-aside">{groupName(groupOf(p))}</span>}
+                {chosenId === `r:${p.id}` && !paneEmpty && p.id !== activeId ? (
+                  <button
+                    className="side-open"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenConnection?.(p);
+                    }}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    Open
+                  </button>
+                ) : (
+                  groupOf(p) && <span className="side-aside">{groupName(groupOf(p))}</span>
+                )}
               </div>
             ))}
           </div>
@@ -869,6 +891,9 @@ function SidebarConnection({
   pickMode = false,
   onPick,
   dragProps,
+  chosen = false,
+  onChoose,
+  paneEmpty = false,
 }: {
   p: Profile;
   active: boolean;
@@ -900,6 +925,11 @@ function SidebarConnection({
   onPick?(p: Profile): void;
   /** the row's drag handlers (useConnectionDrag) */
   dragProps?: React.HTMLAttributes<HTMLDivElement>;
+  /** clicked once: marked, with an Open button (a click alone doesn't replace what the pane shows) */
+  chosen?: boolean;
+  onChoose?(p: Profile): void;
+  /** the pane in use shows nothing: a click opens at once, there's nothing to lose */
+  paneEmpty?: boolean;
 }) {
   const caps = useCaps(p.id);
   const mode = rootsMode(p, caps);
@@ -912,16 +942,23 @@ function SidebarConnection({
   const canOpenByName = !own && mode === "buckets" && !canCreate;
   const here = active && single && bucket === "";
   const activate = () => (single ? onSelectBucket(p, "") : onToggleProfile(p));
+  // a server (one root) opens in the pane only when asked: a click marks it, a double click, ↵ or
+  // its Open button opens it (at once into an empty pane, or when it is already the one on screen).
+  // A connection with buckets just folds open; opening a bucket is the explicit step there.
+  const asks = single && !!onChoose && !paneEmpty && !here;
   // ⌘/Ctrl-click (or any click while some are picked) picks the connection instead of opening it
   const click = (e: React.MouseEvent) => {
     if (onPick && !own && (e.metaKey || e.ctrlKey || e.shiftKey || pickMode)) return onPick(p);
+    if (asks && e.detail < 2) return onChoose!(p);
     activate();
   };
+  // the error a server gave, as a dot with the message on hover (the pane says it in full)
+  const trouble = single && active && list?.note && !list.names.length ? list.note : null;
   const rootIco = rootIcon(p.id);
   return (
     <div>
       <div
-        className={`side-item conn ${open && !single ? "open" : ""} ${active ? "active" : ""} ${here ? "selected" : ""} ${single ? "single" : ""} ${picked ? "picked" : ""}`}
+        className={`side-item conn ${open && !single ? "open" : ""} ${active ? "active" : ""} ${here ? "selected" : ""} ${single ? "single" : ""} ${picked ? "picked" : ""} ${chosen && asks ? "chosen" : ""}`}
         {...dragProps}
         onClick={click}
         // Space picks (or lets go of) this connection while any are picked; Enter still opens it
@@ -937,7 +974,7 @@ function SidebarConnection({
         aria-expanded={single ? undefined : open}
         aria-current={here || undefined}
         aria-label={p.name}
-        title={own ? undefined : addressOf(p)}
+        title={trouble ?? (own ? undefined : addressOf(p) + (asks ? " · double-click to open" : ""))}
         data-conn-row={p.id}
         onContextMenu={
           onConnectionMenu &&
@@ -971,6 +1008,20 @@ function SidebarConnection({
             <Icon name="alert" size={12} />
           </button>
         )}
+        {trouble && <span className="side-trouble" role="img" aria-label={`Couldn't connect: ${trouble}`} />}
+        {chosen && asks && (
+          <button
+            className="side-open"
+            onClick={(e) => {
+              e.stopPropagation();
+              activate();
+            }}
+            onKeyDown={(e) => e.stopPropagation()}
+            title="Open in the pane in use (or double-click the row)"
+          >
+            Open
+          </button>
+        )}
         {!own && (
           <button
             className="icon-btn side-edit"
@@ -987,12 +1038,6 @@ function SidebarConnection({
         )}
         {!single && <Icon name="chevron" size={13} className="side-caret" />}
       </div>
-      {/* the pane shows the whole message; here two lines are enough to say something's wrong */}
-      {single && active && list?.note && !list.names.length && (
-        <p className="side-note clamp" title={list.note}>
-          {list.note}
-        </p>
-      )}
       {open && !single && (
         <div className="bucket-list">
           {list?.names.map((b) => {

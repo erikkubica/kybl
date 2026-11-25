@@ -5365,6 +5365,36 @@ input[aria-invalid="true"]:focus {
 .side-item.conn.active .side-label {
   color: var(--accent);
 }
+/* a server clicked once: marked, its Open button where the edit button goes */
+.side-item.chosen {
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.side-open {
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent-solid);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.side-open:hover {
+  background: var(--accent-solid-hover);
+}
+.side-item.chosen .side-caret {
+  display: none;
+}
+/* a server that couldn't connect: a dot, the message on hover (the pane has it in full) */
+.side-trouble {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger, #e5484d);
+}
 .side-item.conn.selected {
   background: var(--accent-soft);
 }

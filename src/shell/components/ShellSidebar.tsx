@@ -135,6 +135,7 @@ export function ShellSidebar({ active, activeRef, askBucketName, askNewBucket, a
             onGroupMenu={groupMenu}
             onSectionMenu={sectionMenu}
             onOpenConnection={openConnection}
+            paneEmpty={!active.profile}
             picked={picks.picked}
             onTogglePick={(p) => picks.toggle(p.id)}
             onClearPicks={picks.clear}

@@ -39,8 +39,12 @@ export const SECTION_KINDS: { kind: "ftp" | "sftp" | "webdav"; label: string }[]
   { kind: "sftp", label: "SSH / SFTP" },
   { kind: "webdav", label: "WebDAV" },
 ];
-/** With fewer of a kind they stay plain rows. */
-export const SECTION_MIN = 3;
+/**
+ * With fewer of a kind they stay plain rows. Off for now: the user's own groups are the top level
+ * and the kind is each row's badge (a kind section holding the groups inside it was hard to find
+ * things in); connections in no group still fold by type when there are many (Sidebar).
+ */
+export const SECTION_MIN = Number.POSITIVE_INFINITY;
 
 export type KindSection = {
   kind: "ftp" | "sftp" | "webdav";
