@@ -308,7 +308,6 @@ export function BrowserPane(p: BrowserPaneProps) {
                   onHitOpen={previewHit}
                 />
               )}
-              <PaneStatusBar pane={pane} />
             </>
           )}
           {p.dropUpload && !readOnly && (
@@ -329,6 +328,8 @@ export function BrowserPane(p: BrowserPaneProps) {
           </Suspense>
         )}
       </div>
+      {/* under the list and the info panel alike */}
+      {profile && bucket != null && <PaneStatusBar pane={pane} />}
 
       {pane.quick && pane.quickIndex >= 0 && profile && bucket != null && (
         <QuickLook
