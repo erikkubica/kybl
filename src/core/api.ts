@@ -62,8 +62,9 @@ export const api = {
   listObjects: (profileId: string, bucket: string, prefix: string, token?: string | null) =>
     read<ListResult>("list_objects", { profileId, bucket, prefix, token: token ?? null }),
   /** With an `opId`, matches stream in as `search-progress` events and `cancelTransfer(opId)` stops it. */
-  searchObjects: (profileId: string, bucket: string, prefix: string, query: string, opId?: string) =>
-    read<SearchResult>("search_objects", { profileId, bucket, prefix, query, opId: opId ?? null }),
+  /** by name: part of the path, ignoring case unless `caseSensitive`; `regex` tests each name */
+  searchObjects: (profileId: string, bucket: string, prefix: string, query: string, opId?: string, opts: { caseSensitive?: boolean; regex?: boolean } = {}) =>
+    read<SearchResult>("search_objects", { profileId, bucket, prefix, query, opId: opId ?? null, caseSensitive: !!opts.caseSensitive, regex: !!opts.regex }),
   headObject: (profileId: string, bucket: string, key: string) =>
     read<ObjectDetails>("head_object", { profileId, bucket, key }),
   /**

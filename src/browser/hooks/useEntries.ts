@@ -3,6 +3,7 @@
  * text in the search field and sorted. Rows only ever show for the place they were listed for,
  * except the previous place's, dimmed and inert, while the next one loads (`stale`).
  */
+import { nameMatcher } from "../lib/nameMatch";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { baseName, entryKind, extOf } from "../../core/format";
 import { groupEntries, type Group } from "../lib/grouping";
@@ -79,12 +80,13 @@ export function useEntries(
   const stale = !search && !fresh && lst.loading && !!listing.loc && !!here;
 
   // typing filters the folder by name; with "Contents" chosen it waits for Enter instead
-  const filter = !search && sr.mode === "names" ? query.trim().toLowerCase() : "";
+  const filter = !search && sr.mode === "names" ? (sr.regex ? query : query.trim()) : "";
+  const filterHit = useMemo(() => nameMatcher(filter, sr.caseSensitive, sr.regex), [filter, sr.caseSensitive, sr.regex]);
   const allEntries: Entry[] = useMemo(() => {
     if (search) {
       // folders whose own name matches: every object below such a folder matched too (the search
       // looks at the whole path), so they can be read off the results
-      const needle = search.query.toLowerCase();
+      const hit = nameMatcher(search.query, !!search.caseSensitive, !!search.regex);
       const base = search.loc.prefix;
       const folders = new Set<string>();
       const results = search.results.filter((o) => !isPlaceholderIndex(o.key));
@@ -94,7 +96,7 @@ export function useEntries(
         let acc = base;
         for (let i = 0; i < parts.length - 1; i++) {
           acc += `${parts[i]}/`;
-          if (parts[i].toLowerCase().includes(needle)) folders.add(acc);
+          if (hit(parts[i])) folders.add(acc);
         }
       }
       const found = [
@@ -119,7 +121,7 @@ export function useEntries(
 
   /** What the list shows, in its groups when grouping. */
   const grouped = useMemo(() => {
-    const list = filter ? allEntries.filter((e) => e.name.toLowerCase().includes(filter)) : allEntries.slice();
+    const list = filter ? allEntries.filter((e) => filterHit(e.name)) : allEntries.slice();
     const dir = sort.dir === "asc" ? 1 : -1;
     // by what the Kind column says ("File" for README and dotfiles, "JavaScript" for .js and .mjs), worked out once each
     const kinds = sort.key === "kind" ? new Map(list.map((e) => [e, e.kind === "folder" ? "" : entryKind(e)])) : null;
@@ -144,7 +146,7 @@ export function useEntries(
       return cmp(a, b);
     });
     return groupEntries(list, groupBy, sort);
-  }, [allEntries, filter, sort, foldersFirst, groupBy]);
+  }, [allEntries, filter, filterHit, sort, foldersFirst, groupBy]);
   const listEntries = grouped.entries;
   /** the headed groups the rows fall in, or null when not grouping */
   const groups: Group[] | null = grouped.groups;

@@ -76,7 +76,7 @@ const PATHS: Record<string, ReactNode> = {
   ),
   moon: <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" />,
   chevron: <path d="m9 6 6 6-6 6" />,
-  density: <path d="M4 5.5h16M4 9.8h16M4 14.2h16M4 18.5h16" />,
+  density: <path d="M5 6h14M5 10h14M5 14h14M5 18h14" />,
   "chevron-down": <path d="m6 9 6 6 6-6" />,
   bell: (
     <>
@@ -205,13 +205,14 @@ const PATHS: Record<string, ReactNode> = {
   sort: <path d="M8 5v14m0 0-3-3m3 3 3-3M16 19V5m0 0-3 3m3-3 3 3" />,
   grid: (
     <>
-      <rect x="4" y="4" width="6.5" height="6.5" rx="1.2" />
-      <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.2" />
-      <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.2" />
-      <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.2" />
+      <rect x="5" y="5" width="5.5" height="5.5" rx="1.1" />
+      <rect x="13.5" y="5" width="5.5" height="5.5" rx="1.1" />
+      <rect x="5" y="13.5" width="5.5" height="5.5" rx="1.1" />
+      <rect x="13.5" y="13.5" width="5.5" height="5.5" rx="1.1" />
     </>
   ),
-  list: <path d="M4 7h16M4 12h16M4 17h16" />,
+  // bullets and lines, the same height as grid and density (all three side by side in a pane's footer)
+  list: <path d="M9.5 6h9.5M9.5 12h9.5M9.5 18h9.5M5 6h.01M5 12h.01M5 18h.01" />,
   retry: <path d="M4 12a8 8 0 1 0 3-6.2M4 4v4h4" />,
   external: <path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" />,
   branch: <path d="M7 4v10a3 3 0 0 0 3 3h4M7 4a1.8 1.8 0 1 0 0 .01M17 17a1.8 1.8 0 1 0 0 .01M7 20a1.8 1.8 0 1 0 0 .01M7 14v6" />,

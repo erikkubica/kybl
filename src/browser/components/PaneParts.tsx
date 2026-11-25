@@ -9,7 +9,7 @@ import { errorHint, freshConnection } from "../../log/connLog";
 import { classifyError } from "../../log/logText.ts";
 import type { DragState } from "../hooks/useItemDrag";
 import { MAX_SORT_ITEMS } from "../hooks/useEntries";
-import { TILE_MAX, TILE_MIN } from "./Toolbar";
+import { regexProblem } from "../lib/nameMatch";
 import type { Pane } from "../hooks/usePane";
 
 /** Deep-search results, the filter's match count, and a failed reload above rows still shown. */
@@ -68,13 +68,18 @@ export function PaneBanners({ pane }: { pane: Pane }) {
       )}
       {!search && filter && fresh && (
         <div className="banner">
-          <Icon name="search" size={14} />
-          <span>
-            <strong>
-              {entries.length.toLocaleString()} of {ent.allEntries.length.toLocaleString()}
-            </strong>{" "}
-            {moreOnServer ? "loaded items" : "items"} in this folder match “{ent.query.trim()}”
-          </span>
+          <Icon name={regexProblem(filter, ent.sr.regex) ? "alert" : "search"} size={14} />
+          {regexProblem(filter, ent.sr.regex) ? (
+            <span>Not a working regular expression: {regexProblem(filter, ent.sr.regex)}</span>
+          ) : (
+            <span>
+              <strong>
+                {entries.length.toLocaleString()} of {ent.allEntries.length.toLocaleString()}
+              </strong>{" "}
+              {moreOnServer ? "loaded items" : "items"} in this folder match {ent.sr.regex ? <code>/{filter}/</code> : `“${ent.query.trim()}”`}
+              {ent.sr.caseSensitive ? " (match case)" : ""}
+            </span>
+          )}
           <button className="btn btn-sm" onClick={() => actions.doSearch(ent.query.trim())}>
             Search subfolders too
           </button>
@@ -178,21 +183,8 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
           )}
         </span>
       )}
-      {/* how the list looks: list or grid, compact, and the grid's icon size (⌘+ / ⌘−) */}
+      {/* how the list looks: list or grid, and compact (the grid's icon size: ⌘+ / ⌘−, or a pinch) */}
       <span className="sb-view">
-        {pane.view === "grid" && (
-          <input
-            type="range"
-            className="sb-tile"
-            min={TILE_MIN}
-            max={TILE_MAX}
-            step={8}
-            value={pane.tile}
-            onChange={(e) => pane.setTile(Number(e.target.value))}
-            title="Icon size (⌘+ / ⌘−)"
-            aria-label="Icon size"
-          />
-        )}
         <button type="button" className={`statusbar-btn ${pane.view === "list" ? "on" : ""}`} onClick={() => pane.setView("list")} aria-pressed={pane.view === "list"} title="As list" aria-label="As list">
           <Icon name="list" size={14} />
         </button>

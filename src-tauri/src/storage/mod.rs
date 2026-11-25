@@ -20,6 +20,7 @@ pub mod local;
 pub(crate) mod net;
 // WP-A4: video and audio through media:// or a loopback server
 pub mod media;
+pub mod name_match;
 // permissions and symbolic links on servers
 pub mod perms;
 pub mod registry;

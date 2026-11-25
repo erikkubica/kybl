@@ -105,9 +105,9 @@ export function useSearch(onError: (msg: string) => void, showsHidden: (profileI
       }
       return;
     }
-    setSearch(base);
+    setSearch({ ...base, caseSensitive: cs, regex: rx });
     try {
-      const r = await api.searchObjects(loc.profileId, loc.bucket, loc.prefix, query, id);
+      const r = await api.searchObjects(loc.profileId, loc.bucket, loc.prefix, query, id, { caseSensitive: cs, regex: rx });
       if (op.current !== id) return;
       setSearch((s) => (s ? { ...s, results: r.objects, scanned: r.scanned, truncated: r.truncated, running: false } : s));
     } catch (e) {
@@ -125,8 +125,8 @@ export function useSearch(onError: (msg: string) => void, showsHidden: (profileI
       if (patch.caseSensitive !== undefined) setCaseState(patch.caseSensitive);
       if (patch.regex !== undefined) setRegexState(patch.regex);
       const s = searchRef.current;
-      // the case and regex options only matter to a search inside files
-      if (s && (patch.mode !== undefined ? patch.mode !== s.mode : opts.current.mode === "contents")) void run(s.loc, s.query);
+      // a search on screen runs again with the new options (names and contents alike)
+      if (s && (patch.mode !== undefined ? patch.mode !== s.mode : true)) void run(s.loc, s.query);
     },
     [run],
   );

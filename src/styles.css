@@ -5785,16 +5785,6 @@ input[type="range"]:focus-visible {
 .sb-view .statusbar-btn {
   margin-right: 0;
 }
-.sb-tile {
-  width: 72px;
-  height: 14px;
-  margin: 0 6px 0 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  box-shadow: none;
-  accent-color: var(--accent);
-}
 .info-panel {
   flex: none;
   width: 248px;

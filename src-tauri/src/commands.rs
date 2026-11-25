@@ -738,7 +738,8 @@ pub(crate) struct SearchProgress {
     pub(crate) found: Vec<ObjInfo>,
 }
 
-/// Recursive, case-insensitive "contains" search over the keys below `prefix`.
+/// Recursive search by name over the keys below `prefix`: part of the path, ignoring case unless
+/// `case_sensitive`; with `regex`, a pattern tested on each name (storage/name_match.rs).
 /// With an `op_id`, each page reports a `search-progress` event (keys checked so far and the new
 /// matches), and `cancel_transfer(op_id)` stops the scan.
 #[tauri::command]
@@ -750,18 +751,21 @@ pub async fn search_objects(
     prefix: String,
     query: String,
     op_id: Option<String>,
+    case_sensitive: Option<bool>,
+    regex: Option<bool>,
 ) -> Result<SearchResult, String> {
     const MAX_SCAN: u64 = 300_000;
+    let m = storage::name_match::NameMatch::new(&query, case_sensitive.unwrap_or(false), regex.unwrap_or(false))?;
     const MAX_RESULTS: usize = 500;
     let client = match storage::connect(&app, &state, &profile_id).await? {
         Conn::S3(c) => c,
-        Conn::Other(s) => return generic::search_objects(&app, &state, &*s, &bucket, &prefix, &query, op_id).await,
+        Conn::Other(s) => return generic::search_objects(&app, &state, &*s, &bucket, &prefix, &m, op_id).await,
     };
     let flag = Arc::new(AtomicBool::new(false));
     if let Some(id) = &op_id {
         state.cancels.lock().await.insert(id.clone(), flag.clone());
     }
-    let result = search_scan(&client, &bucket, &prefix, &query, MAX_SCAN, MAX_RESULTS, &flag, |scanned, found| {
+    let result = search_scan(&client, &bucket, &prefix, &m, MAX_SCAN, MAX_RESULTS, &flag, |scanned, found| {
         if let Some(id) = &op_id {
             let _ = app.emit("search-progress", SearchProgress { op_id: id.clone(), scanned, found: found.to_vec() });
         }
@@ -778,14 +782,13 @@ async fn search_scan(
     client: &Client,
     bucket: &str,
     prefix: &str,
-    query: &str,
+    m: &storage::name_match::NameMatch,
     max_scan: u64,
     max_results: usize,
     cancel: &AtomicBool,
     mut progress: impl FnMut(u64, &[ObjInfo]),
 ) -> Result<SearchResult, String> {
     let (bucket, prefix) = (bucket.to_string(), prefix.to_string());
-    let needle = query.to_lowercase();
     let mut found: Vec<ObjInfo> = Vec::new();
     let mut scanned = 0u64;
     let mut token: Option<String> = None;
@@ -808,7 +811,7 @@ async fn search_scan(
             if key.ends_with('/') {
                 continue;
             }
-            if key[prefix.len().min(key.len())..].to_lowercase().contains(&needle) {
+            if m.hit(&key[prefix.len().min(key.len())..]) {
                 found.push(obj_info(o));
                 if found.len() >= max_results {
                     full = true;
@@ -1791,7 +1794,7 @@ mod tests {
             }
             let streamed = Mutex::new(Vec::<String>::new());
             let go = AtomicBool::new(false);
-            let r = search_scan(&client, "testbucket", &base, "REPORT", 1000, 100, &go, |_, found| {
+            let r = search_scan(&client, "testbucket", &base, &storage::name_match::NameMatch::new("REPORT", false, false).unwrap(), 1000, 100, &go, |_, found| {
                 streamed.lock().unwrap().extend(found.iter().map(|o| o.key.clone()));
             })
             .await
@@ -1800,7 +1803,7 @@ mod tests {
             assert!(!r.truncated);
             assert_eq!(streamed.into_inner().unwrap().len(), 2, "every match also arrives as progress");
             let stop = AtomicBool::new(true);
-            let r = search_scan(&client, "testbucket", &base, "report", 1000, 100, &stop, |_, _| {}).await.unwrap();
+            let r = search_scan(&client, "testbucket", &base, &storage::name_match::NameMatch::new("report", false, false).unwrap(), 1000, 100, &stop, |_, _| {}).await.unwrap();
             assert!(r.truncated, "a stopped search says its results may be incomplete");
         });
     }

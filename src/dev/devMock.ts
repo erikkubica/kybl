@@ -951,10 +951,24 @@ async function handle(cmd: string, a: any): Promise<unknown> {
       };
     }
     case "search_objects": {
-      const q = String(a.query).toLowerCase();
+      // as storage/name_match.rs: part of the path, or with regex a pattern on the name
+      const cs = !!a.caseSensitive;
+      let hit: (rest: string) => boolean;
+      if (a.regex) {
+        let re: RegExp;
+        try {
+          re = new RegExp(String(a.query), cs ? "u" : "iu");
+        } catch (e) {
+          throw `Regular expression: ${e instanceof Error ? e.message : e}`;
+        }
+        hit = (rest) => re.test(rest.split("/").pop() ?? rest);
+      } else {
+        const q = cs ? String(a.query) : String(a.query).toLowerCase();
+        hit = (rest) => (cs ? rest : rest.toLowerCase()).includes(q);
+      }
       const objects = Object.values(tree)
         .flatMap((d) => d.objects)
-        .filter((o) => o.key.startsWith(a.prefix) && o.key.toLowerCase().includes(q));
+        .filter((o) => o.key.startsWith(a.prefix) && hit(o.key.slice(a.prefix.length)));
       // pretend to page through 18k keys, matches turning up along the way
       const pages = 8;
       for (let i = 1; i <= pages; i++) {

@@ -98,14 +98,14 @@ pub async fn search_objects<R: Runtime>(
     s: &dyn Storage,
     bucket: &str,
     prefix: &str,
-    query: &str,
+    m: &super::name_match::NameMatch,
     op_id: Option<String>,
 ) -> Result<SearchResult, String> {
     let flag = Arc::new(AtomicBool::new(false));
     if let Some(id) = &op_id {
         state.cancels.lock().await.insert(id.clone(), flag.clone());
     }
-    let r = search_scan(s, bucket, prefix, query, 300_000, 500, &flag, |scanned, found| {
+    let r = search_scan(s, bucket, prefix, m, 300_000, 500, &flag, |scanned, found| {
         if let Some(id) = &op_id {
             let _ = app.emit("search-progress", SearchProgress { op_id: id.clone(), scanned, found: found.to_vec() });
         }
@@ -122,13 +122,12 @@ pub(crate) async fn search_scan(
     s: &dyn Storage,
     bucket: &str,
     prefix: &str,
-    query: &str,
+    m: &super::name_match::NameMatch,
     max_scan: u64,
     max_results: usize,
     cancel: &AtomicBool,
     mut progress: impl FnMut(u64, &[Entry]),
 ) -> Result<SearchResult, String> {
-    let needle = query.to_lowercase();
     let mut found: Vec<Entry> = Vec::new();
     let (mut scanned, mut truncated) = (0u64, false);
     let mut walk = s.walk(bucket, prefix);
@@ -144,7 +143,7 @@ pub(crate) async fn search_scan(
                 continue;
             }
             let rest = e.key.get(prefix.len()..).unwrap_or(&e.key);
-            if rest.to_lowercase().contains(&needle) {
+            if m.hit(rest) {
                 found.push(e);
                 if found.len() >= max_results {
                     progress(scanned, &found[before..]);
@@ -982,13 +981,13 @@ mod tests {
             assert!(presign_get(&b, &root, "readme.md", 60).await.is_err(), "no links for local files");
 
             let never = AtomicBool::new(false);
-            let r = search_scan(&b, &root, "", "REPORT", 1000, 100, &never, |_, _| {}).await.unwrap();
+            let r = search_scan(&b, &root, "", &crate::storage::name_match::NameMatch::new("REPORT", false, false).unwrap(), 1000, 100, &never, |_, _| {}).await.unwrap();
             let mut keys: Vec<_> = r.objects.iter().map(|o| o.key.as_str()).collect();
             keys.sort();
             assert_eq!(keys, vec!["photos/2026/report-2.pdf", "photos/Report.pdf"]);
             assert!(!r.truncated);
             let stop = AtomicBool::new(true);
-            assert!(search_scan(&b, &root, "", "report", 1000, 100, &stop, |_, _| {}).await.unwrap().truncated);
+            assert!(search_scan(&b, &root, "", &crate::storage::name_match::NameMatch::new("report", false, false).unwrap(), 1000, 100, &stop, |_, _| {}).await.unwrap().truncated);
 
             let f = size_scan(&b, &root, "photos/", &never, |_, _| {}).await.unwrap();
             assert_eq!((f.bytes, f.objects), (1350, 3));

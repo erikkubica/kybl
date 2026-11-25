@@ -695,7 +695,7 @@ fn sftp_permissions_and_links_against_openssh() {
         assert_eq!(all, ["tree/deep/g.txt", "tree/f.txt"]);
         let size = soon!(generic_cmds::size_scan(&b, "", "tree/", &never, |_, _| {})).await.expect("the size count ends").unwrap();
         assert_eq!((size.bytes, size.objects), (3, 2));
-        let found = soon!(generic_cmds::search_scan(&b, "", "tree/", "g.txt", 10_000, 100, &never, |_, _| {})).await.expect("the search ends").unwrap();
+        let found = soon!(generic_cmds::search_scan(&b, "", "tree/", &super::name_match::NameMatch::new("g.txt", false, false).unwrap(), 10_000, 100, &never, |_, _| {})).await.expect("the search ends").unwrap();
         assert_eq!(found.objects.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(), ["tree/deep/g.txt"]);
         // a copy inside the connection keeps the link a link
         soon!(generic_cmds::copy_through(&b, &Loc::new("", "tree/"), &Loc::new("", "copy/"), true, &never)).await.expect("the copy ends").unwrap();
