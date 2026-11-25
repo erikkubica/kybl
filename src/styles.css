@@ -5180,8 +5180,8 @@ input[aria-invalid="true"]:focus {
   align-items: center;
   gap: 6px;
   height: 28px;
-  margin: -6px 10px 8px;
-  padding: 0 5px 0 8px;
+  margin: -6px 8px 8px;
+  padding: 0 5px;
   border: 1px solid transparent;
   border-radius: 7px;
   background: var(--hover);
@@ -6125,4 +6125,24 @@ input[type="range"]:focus-visible {
 .info-tunnels .info-add {
   margin: 4px 0 0 -8px;
   gap: 5px;
+}
+
+/* ---------------------------------------------------------------- sidebar: one left edge */
+/* Every row's leading mark starts where a connection's badge does (and the headings and the find
+   field's glass with it); the names all start one column further, wherever the mark is narrower. */
+.side-item.sub > svg:first-child,
+.side-item.fav-row > svg:first-child {
+  width: 16px;
+  height: 16px;
+  margin: 0 6px 0 0;
+}
+.group-ico {
+  place-items: center start;
+}
+.group-ico svg {
+  width: 16px;
+  height: 16px;
+}
+.side-head.sect .side-head-fold {
+  padding-left: 2px;
 }
