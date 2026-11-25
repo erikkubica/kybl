@@ -210,8 +210,7 @@ function KeyedForm({
   const [tried, setTried] = useState(false);
   const [busy, setBusy] = useState<"test" | "save" | "delete" | null>(null);
   // a failed test or save keeps what was tried, so trusting a certificate can try it again
-  // `unchecked`: Save's first connection (to learn the SFTP key) failed, so "Save without connecting" is offered
-  const [result, setResult] = useState<{ ok: boolean; text: string; then?: "test" | "save"; draft?: Draft; unchecked?: boolean } | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; text: string; then?: "test" | "save"; draft?: Draft } | null>(null);
   const [hostAsk, setHostAsk] = useState<(HostKeyAsk & { then: "test" | "save"; draft: Draft }) | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
   // how photos show for this connection (kept on this device, applied on Save)
@@ -251,20 +250,16 @@ function KeyedForm({
 
   const hostOf = trustHost;
 
-  const run = async (what: "test" | "save", d: Draft, skipCheck = false, verify = false) => {
+  // Save only saves: it never connects (VPNs, many clients). Test connects; an SFTP server's key
+  // nobody trusted yet is met there, or on first use (ConnFix offers to trust it)
+  const run = async (what: "test" | "save", d: Draft) => {
     setBusy(what);
     setResult(null);
-    let checking = false;
     try {
-      // an SFTP server nobody trusted yet would fail on first use: meet its key here instead
-      if (what === "test" || (!skipCheck && d.profile.kind === "sftp" && (verify || !d.profile.net?.hostKey))) {
-        checking = true;
+      if (what === "test") {
         const text = await api.testConnection(d.profile, d.secret, d.clearSecret);
-        checking = false;
-        if (what === "test") {
-          if (live.current) setResult({ ok: true, text });
-          return;
-        }
+        if (live.current) setResult({ ok: true, text });
+        return;
       }
       // the dialog was closed (Esc, Discard) while connecting: what was typed is not saved
       if (!live.current) return;
@@ -280,7 +275,7 @@ function KeyedForm({
       const changed = hostKeyChanged(msg);
       if (fp) setHostAsk({ kind: "unknown", host: hostOf(d.profile), fp, then: what, draft: d });
       else if (changed) setHostAsk({ kind: "changed", host: hostOf(d.profile), now: changed.now, saved: changed.saved, then: what, draft: d });
-      else setResult({ ok: false, text: msg, then: what, draft: d, unchecked: what === "save" && checking });
+      else setResult({ ok: false, text: msg, then: what, draft: d });
     } finally {
       if (live.current) setBusy((b) => (b === what ? null : b));
     }
@@ -343,7 +338,7 @@ function KeyedForm({
     setHostAsk(null);
     form.current?.setHostKey?.(fp);
     const net = d.profile.net ? { ...d.profile.net, hostKey: fp } : d.profile.net;
-    void run(then, { ...d, profile: { ...d.profile, net } }, false, true);
+    void run(then, { ...d, profile: { ...d.profile, net } });
   };
 
   /** "Trust this certificate…": remember it in the form and try again. */
@@ -520,13 +515,6 @@ function KeyedForm({
               {plain && result.then && (
                 <div className="cert-actions">
                   <AllowPlainFtpButton onAllow={allowPlain} />
-                </div>
-              )}
-              {!cert && result.unchecked && result.draft && (
-                <div className="cert-actions">
-                  <button type="button" className="link-btn" disabled={busy !== null} onClick={() => result.draft && void run("save", result.draft, true)}>
-                    Save without connecting
-                  </button>
                 </div>
               )}
             </div>
