@@ -288,11 +288,10 @@ export function makeDualActions(get: () => DualContext) {
     }
   };
 
-  /** The active pane and its other pane trade places (with two panes: the two of them). */
-  const swap = () => {
-    const c = get();
-    const p = pane(c.activeId);
-    const o = otherPane(c.activeId);
+  /** Pane `from` (the active one) and `to` (its other pane) trade places. */
+  const swap = (from: PaneId = get().activeId, to?: PaneId) => {
+    const p = pane(from);
+    const o = to ? pane(to) : otherPane(from);
     if (!o) return;
     const [a, b] = [p.here, o.here];
     quietly(() => {
@@ -301,20 +300,21 @@ export function makeDualActions(get: () => DualContext) {
     });
   };
 
-  /** Opens the folder of pane `id` (the active one by default) in the other pane too. */
-  const sameFolderInOther = (id: PaneId = get().activeId) => {
+  /** Opens the folder of pane `id` (the active one by default) in pane `to` (its other pane) too. */
+  const sameFolderInOther = (id: PaneId = get().activeId, to?: PaneId) => {
     const src = pane(id);
-    const dst = otherPane(id);
+    const dst = to ? pane(to) : otherPane(id);
     if (src.here && dst) quietly(() => goTo(dst, src.here!));
   };
 
-  const compare = () => {
+  /** Compares pane `from` (the active one) with `to` (its other pane). */
+  const compare = (from: PaneId = get().activeId, to?: PaneId) => {
     const c = get();
-    const o = c.otherOf(c.activeId);
+    const o = to ?? c.otherOf(from);
     if (!o) return;
     // the two in reading order: with two panes side by side, left and right as always
     const order = c.panes.map((p) => p.id);
-    const [left, right] = order.indexOf(c.activeId) < order.indexOf(o) ? [pane(c.activeId), pane(o)] : [pane(o), pane(c.activeId)];
+    const [left, right] = order.indexOf(from) < order.indexOf(o) ? [pane(from), pane(o)] : [pane(o), pane(from)];
     const across = c.relation(left.id, right.id) === "down";
     if (!left.here || !right.here) {
       c.dialogs.toast("info", "Open a folder in both panes to compare them");

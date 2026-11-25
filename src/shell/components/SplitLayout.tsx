@@ -15,7 +15,7 @@
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { PaneId } from "../../browser/types";
-import { Icon } from "../../ui/components/Icons";
+import { Icon, type IconName } from "../../ui/components/Icons";
 import type { MenuItem } from "../../ui/components/Dialogs";
 import { DIVIDER, dividerPairs, facingPairs, fit, minSize, sameLink, type PaneNode } from "../lib/paneLayout";
 
@@ -243,99 +243,58 @@ function Node({ node, path, style, w, h, known, ...p }: NodeProps) {
 
 type Toward = "left" | "right" | "up" | "down";
 const towardName = (d: Toward) => ({ left: "the left pane", right: "the right pane", up: "the pane above", down: "the pane below" })[d];
-const DIR_ORDER: (Toward | null)[] = ["left", "up", "right", "down", null];
+
+/** Another file pane, as a pane's "…" names it. */
+export type OtherPane = {
+  id: PaneId;
+  /** which way it is, when it shares a divider with this one */
+  dir: Toward | null;
+  /** its folder's name */
+  name: string;
+  /** its connection, and which way it is */
+  where: string;
+  /** synced browsing with it is on */
+  linked: boolean;
+};
 
 /**
- * What to call each pane facing this one: "the right pane", or with several the same way (a pane
- * beside a stack of two), where along the divider each is: "the top right pane", "the bottom right
- * pane"; "the pane below on the left". Without a direction, its folder's name.
+ * A pane's items for working with the other panes, at the top of its toolbar's "…": this folder
+ * there, swap, compare and synced browsing. With one other pane they name it ("the right pane");
+ * with several, each opens a list of them, by folder and connection, as Copy to ▸ does.
  */
-export function syncLabels(syncWith: { id: PaneId; dir: Toward | null; name: string; at: number }[]): Map<PaneId, string> {
-  const out = new Map<PaneId, string>();
-  for (const s of syncWith) {
-    if (!s.dir) {
-      out.set(s.id, `“${s.name}”`);
-      continue;
-    }
-    const same = syncWith.filter((x) => x.dir === s.dir).sort((x, y) => x.at - y.at);
-    if (same.length === 1) {
-      out.set(s.id, towardName(s.dir));
-      continue;
-    }
-    const k = same.indexOf(s);
-    const side = s.dir === "left" || s.dir === "right";
-    if (same.length > 3) {
-      out.set(s.id, `${towardName(s.dir)} ${k + 1} of ${same.length}`);
-      continue;
-    }
-    const spot = same.length === 2 ? (["first", "last"] as const)[k] : (["first", "middle", "last"] as const)[k];
-    if (side) out.set(s.id, `the ${{ first: "top", middle: "middle", last: "bottom" }[spot]} ${s.dir} pane`);
-    else out.set(s.id, `${towardName(s.dir)} ${{ first: "on the left", middle: "in the middle", last: "on the right" }[spot]}`);
-  }
-  return out;
-}
+/** Which way a pane is from this one, as its row's icon. */
+const arrow = (o: OtherPane): IconName => (o.dir ? `arrow-${o.dir}` : "dual-pane");
 
-/**
- * A pane's items for working with another pane, at the top of its toolbar's "…": this folder
- * there, swap, compare, and synchronized browsing with each pane it shares a divider with (the
- * same switch as the link on that divider).
- */
 export function dualMenuItems({
-  toOther,
+  others,
   onToOther,
   onSwap,
   onCompare,
-  syncWith,
   onToggleSync,
 }: {
-  /** which way "the other pane" is, and what it shows (with more than two panes, to tell them apart) */
-  toOther: { dir: Toward; name: string };
-  onToOther: () => void;
-  onSwap: () => void;
-  onCompare: () => void;
-  /**
-   * the panes facing this one across a divider (the pairs with a link button), whether each is
-   * linked, and `at`: where along that divider they meet (0 to 1), to tell apart several panes the
-   * same way
-   */
-  syncWith: { id: PaneId; dir: Toward | null; name: string; on: boolean; at: number }[];
+  others: OtherPane[];
+  onToOther: (id: PaneId) => void;
+  onSwap: (id: PaneId) => void;
+  onCompare: (id: PaneId) => void;
   onToggleSync: (id: PaneId) => void;
 }): MenuItem[] {
-  const named = (name: string) => (name ? ` (“${name}”)` : "");
-  const where = towardName(toOther.dir) + named(toOther.name);
-  const labels = syncLabels(syncWith);
-  const sync: MenuItem[] =
-    syncWith.length === 1
-      ? [
-          {
-            type: "item",
-            label: `Synced browsing with ${labels.get(syncWith[0].id)}`,
-            icon: "link",
-            checked: syncWith[0].on,
-            onClick: () => onToggleSync(syncWith[0].id),
-          },
-        ]
-      : syncWith.length > 1
-        ? [
-            {
-              type: "submenu",
-              label: "Synced browsing with",
-              icon: "link",
-              items: () =>
-                [...syncWith]
-                  .sort((x, y) => DIR_ORDER.indexOf(x.dir) - DIR_ORDER.indexOf(y.dir) || x.at - y.at)
-                  .map((s) => {
-                    const label = labels.get(s.id) ?? s.name;
-                    return { type: "item" as const, label: label[0].toUpperCase() + label.slice(1), checked: s.on, onClick: () => onToggleSync(s.id) };
-                  }),
-            },
-          ]
-        : [];
+  if (!others.length) return [];
+  if (others.length === 1) {
+    const o = others[0];
+    const w = o.dir ? towardName(o.dir) : `“${o.name}”`;
+    return [
+      { type: "item", label: `Same folder in ${w}`, icon: arrow(o), onClick: () => onToOther(o.id) },
+      { type: "item", label: `Swap with ${w}`, icon: "swap", hint: "⇧⌘S", onClick: () => onSwap(o.id) },
+      { type: "item", label: `Compare with ${w}`, icon: "compare", onClick: () => onCompare(o.id) },
+      { type: "item", label: `Synced browsing with ${w}`, icon: "link", checked: o.linked, onClick: () => onToggleSync(o.id) },
+    ];
+  }
+  const list = (run: (id: PaneId) => void, ticks = false) => (): MenuItem[] =>
+    others.map((o) => ({ type: "item", label: o.name, icon: arrow(o), detail: o.where, checked: ticks && o.linked ? true : undefined, onClick: () => run(o.id) }));
   return [
-    { type: "item", label: `Open this folder in ${where} too`, icon: `arrow-${toOther.dir}`, onClick: onToOther },
-    { type: "item", label: `Swap with ${where}`, icon: "swap", hint: "⇧⌘S", onClick: onSwap },
-    { type: "item", label: `Compare with ${where}`, icon: "compare", onClick: onCompare },
-    ...sync,
+    { type: "submenu", label: "Same folder in", icon: "folder", items: list(onToOther) },
+    { type: "submenu", label: "Swap with", icon: "swap", items: list(onSwap) },
+    { type: "submenu", label: "Compare with", icon: "compare", items: list(onCompare) },
+    { type: "submenu", label: "Synced browsing with", icon: "link", items: list(onToggleSync, true) },
   ];
 }
-

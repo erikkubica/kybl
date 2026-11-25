@@ -8,7 +8,6 @@ import { focusPaneList } from "../lib/focus";
 import { type PaneNode, minSize, type Dir, freeSlot, leaves, MAX_PANES, splitPane, closePane, leaf, equalize } from "../lib/paneLayout";
 import { type MenuItem, type Toast } from "../../ui/components/Dialogs";
 import { terminalBusy } from "../../terminal/api";
-import { mirrorToPane } from "../../mirror";
 import { useDialogs } from "./useDialogs";
 import { useWorkspaceRecipes } from "./useWorkspaceRecipes";
 import { useTerminalPanes } from "../../terminal/hooks/useTerminalPanes";
@@ -243,7 +242,6 @@ export function usePaneSplits(deps: UsePaneSplitsDeps) {
           { type: "sep" },
           { type: "item", label: "Make panes the same size", onClick: () => deps.setTree((t) => equalize(t)) },
           { type: "submenu", label: "Move pane", icon: "move", items: () => deps.late.moveItems(id) },
-          mirrorToPane(deps.slot(id), deps.otherOf(id) ? deps.slot(deps.otherOf(id)!) : null, deps.dialogs, deps.showJobs),
           { type: "sep" },
           { type: "item", label: "Close pane", icon: "x", hint: "⌘W", onClick: () => void close(id) },
           { type: "item", label: "Close other panes", onClick: () => closeOthers(id) },

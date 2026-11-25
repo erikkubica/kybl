@@ -5,10 +5,12 @@ import type { Settings } from "../../settings/settings";
 import type { MenuItem } from "../../ui/components/Dialogs";
 import type { EmptyActions } from "../../browser/components/PaneEmpty";
 import { type Pane } from "../../browser/hooks/usePane";
-import { dualMenuItems } from "../components/SplitLayout";
+import { dualMenuItems, type OtherPane } from "../components/SplitLayout";
+import { ON_OS } from "../../core/osNames";
+
+/** which way another pane is, after its connection in the pane menus */
 import { relation, type Facing, type PaneNode } from "../lib/paneLayout";
 import { paneName } from "../components/dualActions";
-import { mirrorToPane } from "../../mirror";
 import { canTerminal } from "../../terminal/api";
 import { LOCAL_PROFILE, type PaneId } from "../../browser/types";
 import { BrowserPane } from "../../browser/BrowserPane";
@@ -49,26 +51,26 @@ export interface UsePaneViewsDeps {
 
 /** What draws a pane slot: a file pane with its props, or a terminal; and the cramped window's pane switcher. */
 export function usePaneViews(s: UsePaneViewsDeps) {
-  /** A pane's items for its other pane, first in its toolbar's "…" (several panes only). */
+  /** A pane's items for the other file panes, first in its toolbar's "…" (several panes only). */
   const dualItemsFor = (p: Pane) => {
-    const o = s.dual ? s.otherOf(p.id) : null;
-    if (!o) return undefined;
-    // "the right pane", "the pane below": the way to it says which (the menu has no room for folder names too)
-    return () =>
-      dualMenuItems({
-        toOther: { dir: relation(s.tree, p.id, o) ?? "right", name: "" },
-        onToOther: () => s.dualPane.sameFolderInOther(p.id),
-        onSwap: s.dualPane.swap,
-        onCompare: s.dualPane.compare,
-        syncWith: s.facing
-          .filter(({ pair: [a, b] }) => a === p.id || b === p.id)
-          .map(({ pair: [a, b], at }) => {
-            const id = a === p.id ? b : a;
-            const dir = relation(s.tree, p.id, id);
-            return { id, dir, name: dir ? "" : paneName(s.slot(id)), on: s.isLinked(p.id, id), at };
-          }),
+    if (!s.dual) return undefined;
+    return () => {
+      const others: OtherPane[] = s.ids
+        .filter((id) => id !== p.id && !s.term.terms[id] && !!s.slot(id).here)
+        .map((id) => {
+          const o = s.slot(id);
+          const dir = relation(s.tree, p.id, id);
+          const conn = o.profile?.kind === "local" ? ON_OS.device : (o.profile?.name ?? "");
+          return { id, dir, name: paneName(o) || conn, where: conn, linked: s.isLinked(p.id, id) };
+        });
+      return dualMenuItems({
+        others,
+        onToOther: (id) => s.dualPane.sameFolderInOther(p.id, id),
+        onSwap: (id) => s.dualPane.swap(p.id, id),
+        onCompare: (id) => s.dualPane.compare(p.id, id),
         onToggleSync: (id) => s.toggleSync(p.id, id),
-      }).concat(mirrorToPane(p, s.slot(o), s.dialogs, s.showJobs));
+      });
+    };
   };
   const paneProps = (p: Pane) => ({
     pane: p,

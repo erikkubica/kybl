@@ -45,14 +45,14 @@ export function useShellLayout(h: UseShellLayoutDeps) {
     return () => window.clearTimeout(t);
   }, [tree]);
   // synchronized browsing: pairs of panes that follow each other, switched by the link on the
-  // divider between them. Only pairs facing each other across a divider count, so what is lit on
-  // screen is exactly what moves together; a link kept from another layout comes back with it.
+  // divider between two neighbours or by the pane's "…" (any two file panes on screen); a link
+  // kept from another layout comes back with it.
   const [links, setLinks] = useState<SyncLink[]>(() => wsNow.links);
   useEffect(() => saveLinks(links), [links]);
   // (file panes only: a terminal doesn't follow a folder this way, it has "Follow the folder above")
   const canLink = (a: PaneId, b: PaneId) => !term.terms[a] && !term.terms[b];
   const facing = useMemo(() => allFacing(tree).filter(({ pair: [a, b] }) => !term.terms[a] && !term.terms[b]), [tree, term.terms]);
-  const liveLinks = useMemo(() => links.filter((l) => facing.some(({ pair: [a, b] }) => sameLink(l, a, b))), [links, facing]);
+  const liveLinks = useMemo(() => links.filter(([a, b]) => fileIds.includes(a) && fileIds.includes(b)), [links, fileIds]);
   const isLinked = (a: PaneId, b: PaneId) => liveLinks.some((l) => sameLink(l, a, b));
   const toggleSync = (a: PaneId, b: PaneId) => setLinks((cur) => toggleLink(cur, a, b));
   /** a closed pane's slot opens empty next time: it lets go of its links too */

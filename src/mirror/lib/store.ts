@@ -27,11 +27,14 @@ const KEY = "kybl.mirrors";
 const listeners = new Set<() => void>();
 let cache: SavedMirror[] | null = null;
 
+/** An end saved by an older version (bucket / prefix) in today's shape (root / dir). */
+const end = (e: MirrorEnd & { bucket?: string; prefix?: string }): MirrorEnd => ({ ...e, root: e.root ?? e.bucket ?? "", dir: e.dir ?? e.prefix ?? "" });
+
 function read(): SavedMirror[] {
   if (cache) return cache;
   try {
     const v = JSON.parse(localStorage.getItem(KEY) ?? "[]");
-    cache = Array.isArray(v) ? v.filter((m) => m && typeof m.id === "string" && m.src && m.dst) : [];
+    cache = Array.isArray(v) ? v.filter((m) => m && typeof m.id === "string" && m.src && m.dst).map((m) => ({ ...m, src: end(m.src), dst: end(m.dst) })) : [];
   } catch {
     cache = [];
   }
