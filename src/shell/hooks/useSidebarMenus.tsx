@@ -331,7 +331,7 @@ export function useSidebarMenus(h: UseSidebarMenusDeps) {
         type: "item",
         // only the folder goes: its connections stay, one level up
         label: parentGroup(path) ? `Delete group (connections move into ${groupLabel(parentGroup(path))})` : "Delete group (connections stay)",
-        icon: "arrow-up",
+        icon: "trash",
         onClick: () => {
           void applyGroups(ungroup(listed, path));
           h.openGroups.update((cur) => renamedOpen(cur, path, parentGroup(path), scope));

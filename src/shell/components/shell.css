@@ -277,6 +277,25 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* the pane switcher's own row, under the workspace bar */
+.pane-row {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--sidebar);
+}
+/* too little room for every workspace's name: the others show their number */
+.ws-bar.squashed .ws-tab:not(.on) {
+  padding: 0 9px;
+  gap: 5px;
+}
+.ws-n {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
 
 /* ---------------------------------------------------------------- workspace settings (WorkspaceSettings.tsx) */
 .ws-pop {

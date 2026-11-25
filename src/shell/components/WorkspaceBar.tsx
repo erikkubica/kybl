@@ -1,14 +1,15 @@
 /**
  * The workspace bar along the top of the window, right of the sidebar: a tab per workspace, "+"
- * for a new one, and in a window too small for every pane, the panes of the workspace on screen
- * (the pane switcher). It is the window's title bar too: any empty stretch of it drags the window
+ * for a new one. It is the window's title bar too: any empty stretch of it drags the window
  * (`data-tauri-drag-region` works only on the element under the pointer, so each empty element
  * carries it).
  *
  * A tab: click (press) shows that workspace, double-click renames it in place (Return keeps,
  * Escape doesn't), the cog that shows on hover opens its settings, right-click its menu. Tabs drag
  * sideways to reorder; with the keyboard, ⌥⇧← / → moves the focused one. Too many to fit: the
- * strip scrolls (a mouse wheel scrolls it sideways too) and fades at the edges it hides.
+ * tabs squash to their numbers, the one on screen keeping its name (as the pane switcher does);
+ * still too many, the strip scrolls (a mouse wheel scrolls it sideways too) and fades at the edges
+ * it hides. The pane switcher (a window too small for every pane) is a row of its own, under it.
  *
  * A tab is also a drop target for things dragged from the panes: see "dropping onto a tab" below
  * (files dragged there can rest on "+" too: `NEW_WS`).
@@ -46,8 +47,6 @@ export type WorkspaceBarProps = {
   /** the cog: the workspace's settings, under its tab */
   onSettings: (id: string, anchor: DOMRect) => void;
   onReorder: (from: number, to: number) => void;
-  /** the window can't show every pane: pick the one to show */
-  switcher: PaneSwitcher | null;
   /** the command palette (⌘K), as a button by the bell */
   onFind: () => void;
   /** the window is dark now; `onTheme` flips light and dark */
@@ -128,8 +127,45 @@ type Drag = {
   step: number;
 };
 
+/** how wide a tab is, from its parts (shell.css .ws-tab): padding and border, its dot, its name */
+const TAB_PAD = 24;
+const TAB_GAP = 2;
+let measure: CanvasRenderingContext2D | null = null;
+function textWidth(text: string, font: string): number {
+  measure ??= document.createElement("canvas").getContext("2d");
+  if (!measure) return text.length * 7;
+  measure.font = font;
+  return measure.measureText(text).width;
+}
+
 export function WorkspaceBar(p: WorkspaceBarProps) {
+  const bar = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  // too little room for every name: the tabs show their numbers (the one on screen its name)
+  const [squash, setSquash] = useState(false);
+  const fit = () => {
+    const b = bar.current;
+    const sc = scroller.current;
+    if (!b || !sc) return;
+    const cs = getComputedStyle(b);
+    // the room the strip has: the bar less its padding, gaps and everything else on it
+    const kids = [...b.children] as HTMLElement[];
+    const others = kids.filter((k) => k !== sc && !k.classList.contains("ws-fill")).reduce((n, k) => n + k.getBoundingClientRect().width, 0);
+    const room = b.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - others - parseFloat(cs.columnGap || "0") * (kids.length - 1);
+    const font = (w: number) => `${w} 12.5px ${getComputedStyle(sc).fontFamily}`;
+    // the strip with every name, worked out rather than laid out (no flicker between the two)
+    const full = p.tabs.reduce((n, t) => n + TAB_PAD + (t.color ? 15 : 0) + Math.min(textWidth(t.name, font(t.id === p.activeId ? 600 : 500)), 186) + TAB_GAP, 0);
+    const want = full > room;
+    setSquash((cur) => (cur === want ? cur : want));
+  };
+  useLayoutEffect(fit);
+  useEffect(() => {
+    const b = bar.current;
+    if (!b) return;
+    const ro = new ResizeObserver(() => fit());
+    ro.observe(b);
+    return () => ro.disconnect();
+  });
   const track = useRef<HTMLDivElement>(null);
   const [fade, setFade] = useState({ l: false, r: false });
   const drag = useRef<Drag | null>(null);
@@ -287,7 +323,7 @@ export function WorkspaceBar(p: WorkspaceBarProps) {
   };
 
   return (
-    <div className="ws-bar" data-tauri-drag-region>
+    <div className={`ws-bar ${squash ? "squashed" : ""}`} ref={bar} data-tauri-drag-region>
       <div className={`ws-tabs ${fade.l ? "fade-l" : ""} ${fade.r ? "fade-r" : ""}`} ref={scroller} onScroll={look} data-tauri-drag-region>
         <div className={`ws-track ${dragging ? "dragging" : ""}`} ref={track} role="tablist" aria-label="Workspaces" data-tauri-drag-region>
           {p.tabs.map((t, i) => {
@@ -324,10 +360,12 @@ export function WorkspaceBar(p: WorkspaceBarProps) {
                 {color && <span className="ws-dot" aria-hidden />}
                 {p.editingId === t.id ? (
                   <RenameField name={t.name} onDone={(name) => p.onEditEnd(t.id, name)} />
+                ) : squash && !on ? (
+                  <span className="ws-n">{i + 1}</span>
                 ) : (
                   <span className="ws-name">{t.name}</span>
                 )}
-                {p.editingId !== t.id && (
+                {p.editingId !== t.id && (!squash || on) && (
                   <button
                     type="button"
                     className="ws-cog"
@@ -353,7 +391,6 @@ export function WorkspaceBar(p: WorkspaceBarProps) {
         <Icon name="plus" size={15} />
       </button>
       <div className="ws-fill" data-tauri-drag-region />
-      {p.switcher && <PaneSwitcherView {...p.switcher} />}
       <button type="button" className="icon-btn ws-tool" onClick={p.onFind} title={keys("Find anything (⌘K)")} aria-label="Find anything">
         <Icon name="search" size={15} />
       </button>
@@ -406,7 +443,7 @@ function RenameField({ name, onDone }: { name: string; onDone: (name: string | n
  * segmented control, numbered (two panes often show folders of the same name), the one on screen
  * with its folder's name.
  */
-function PaneSwitcherView({ items, activeId, onPick }: PaneSwitcher) {
+export function PaneSwitcherView({ items, activeId, onPick }: PaneSwitcher) {
   return (
     <div
       className="ws-panes"

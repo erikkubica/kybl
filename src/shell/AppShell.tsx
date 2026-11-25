@@ -43,7 +43,7 @@ import { useTunnelCommands } from "../tunnels/tunnelMenu";
 import { useConnections } from "./hooks/useConnections";
 import { SplitLayout } from "./components/SplitLayout";
 import { equalize, setSizes } from "./lib/paneLayout";
-import { WorkspaceBar } from "./components/WorkspaceBar";
+import { PaneSwitcherView, WorkspaceBar } from "./components/WorkspaceBar";
 import { paneCount } from "./lib/workspaces";
 import type { Late } from "./lib/late";
 import { PaneContext } from "./components/PaneContext";
@@ -158,7 +158,6 @@ export function AppShell() {
           onMenu={workspaceMenu}
           onSettings={(id, anchor) => setWsSettings((cur) => (cur?.id === id ? null : { id, anchor }))}
           onReorder={moveWorkspace}
-          switcher={paneSwitcher}
           onFind={palette.toggle}
           dark={dark}
           onTheme={() => {
@@ -168,6 +167,12 @@ export function AppShell() {
           }}
           drop={paneDrag.tabDrop ?? fileDrag.tabDrop ?? finderTab}
         />
+        {/* the window can't show every pane: a row to pick the one on screen */}
+        {paneSwitcher && (
+          <div className="pane-row">
+            <PaneSwitcherView {...paneSwitcher} />
+          </div>
+        )}
         {paneDrag.view}
         {fileDrag.view}
         <PaneContext.Provider value={{ panes: panesRef.current, active, other, dual, setActive: setActiveId }}>
