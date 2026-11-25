@@ -1654,8 +1654,14 @@ mod tests {
         while child.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        // the group, whether or not the shell itself has ended (a no-op when nothing is left)
-        let _ = std::process::Command::new("kill").arg("-KILL").arg(format!("-{}", child.id())).output();
+        // the group, whether or not the shell itself has ended (a no-op when nothing is left). Not
+        // through the `kill` program: procps's `kill -KILL -PID` signals group 0, its own, which
+        // took the test run (and the CI runner) down with it
+        let pgid = child.id() as libc::pid_t;
+        if pgid > 1 {
+            // SAFETY: plain syscall on the group this test started
+            unsafe { libc::killpg(pgid, libc::SIGKILL) };
+        }
         let _ = child.kill();
         let _ = child.wait();
     }
