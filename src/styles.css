@@ -342,6 +342,9 @@ code {
   font-weight: 750;
   letter-spacing: -0.02em;
 }
+.pbadge.none {
+  --pc: var(--dim);
+}
 [data-theme="dark"] .pbadge {
   background: color-mix(in srgb, var(--pc) 24%, transparent);
   color: color-mix(in srgb, var(--pc) 70%, white);
@@ -4252,6 +4255,11 @@ body.dragging-items * {
   /* its middle 25px from the top: level with the window controls (tauri.conf.json trafficLightPosition) */
   top: 11px;
   left: 78px;
+}
+/* Windows and Linux draw their own title bar with the controls in it: the button starts the
+   sidebar's top row, on the column its icons start at */
+:root:not(.os-mac) .side-toggle {
+  left: 10px;
   width: 28px;
   height: 28px;
   color: var(--dim);
@@ -4269,6 +4277,9 @@ body.dragging-items * {
 }
 .app.side-hidden .ws-bar {
   padding-left: 116px;
+}
+:root:not(.os-mac) .app.side-hidden .ws-bar {
+  padding-left: 46px;
 }
 .side-folded {
   display: contents;

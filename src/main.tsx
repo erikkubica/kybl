@@ -5,9 +5,14 @@ import "./styles.css";
 import { applySettings, loadSettings } from "./settings/settings";
 import { api } from "./core/api";
 import { setTrustTag } from "./connections/lib/kinds";
+import { OS } from "./core/osNames";
 
 // before first paint, so the window never flashes the wrong theme
 applySettings(loadSettings());
+
+// the window controls sit inside the window only on macOS (titleBarStyle Overlay); the stylesheet
+// leaves room for them there and nowhere else
+document.documentElement.classList.add(`os-${OS}`);
 
 // Android's WebView reports 0 for env(safe-area-inset-*); MainActivity.kt hands us the real
 // system-bar insets instead, as CSS variables the mobile stylesheet prefers.

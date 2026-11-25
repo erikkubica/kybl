@@ -228,7 +228,14 @@ export function Toolbar({
               aria-label={switchLabel}
               aria-haspopup="menu"
             >
-              <ProviderBadge provider={provider} />
+              {/* no connection yet: a plain mark, not the S3 badge an unknown kind would fall back to */}
+              {connName === undefined ? (
+                <span className="pbadge none" aria-hidden="true">
+                  <Icon name="link" size={12} />
+                </span>
+              ) : (
+                <ProviderBadge provider={provider} />
+              )}
             </button>
             {/* the connection's name reads as the first step of the path, and acts like one: it goes to
                 the top. At the top the root's own name already says it when they match. */}
