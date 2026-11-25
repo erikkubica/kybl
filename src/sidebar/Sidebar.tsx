@@ -47,7 +47,8 @@ const SYNC_LABEL: Record<SyncState, string> = {
 export function ProviderBadge({ provider, large }: { provider: string | undefined; large?: boolean }) {
   const meta = providerMeta(provider);
   return (
-    <span className={`pbadge ${large ? "lg" : ""} ${meta.id === "kybl" ? "kybl" : ""}`} style={{ "--pc": meta.color } as React.CSSProperties} aria-hidden="true">
+    // three or four letters (DAV, SFTP) get a smaller size, so they keep the badge's padding
+    <span className={`pbadge ${large ? "lg" : ""} ${meta.id === "kybl" ? "kybl" : ""} ${meta.mono.length > 2 ? `m${Math.min(meta.mono.length, 4)}` : ""}`} style={{ "--pc": meta.color } as React.CSSProperties} aria-hidden="true">
       {meta.id === "kybl" ? <KyblMark size={large ? 22 : 17} sun /> : meta.id === "local" ? <Icon name={deviceIcon} size={large ? 15 : 12} /> : meta.mono}
     </span>
   );
