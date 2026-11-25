@@ -1272,7 +1272,8 @@ kbd {
   gap: 8px;
   align-items: center;
   height: 32px;
-  padding: 0 16px;
+  /* less on the right: the info button sits near the edge, as the view buttons sit near the line */
+  padding: 0 9px 0 16px;
   border-top: 1px solid var(--border);
   color: var(--faint);
   font-size: 12.5px;
