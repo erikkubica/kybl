@@ -30,6 +30,8 @@ export type PaneSwitcher = {
   items: { id: PaneId; name: string; provider?: string; terminal?: boolean }[];
   activeId: PaneId;
   onPick: (id: PaneId) => void;
+  /** "+": another pane, as a tab */
+  onNew?: () => void;
 };
 
 export type WorkspaceBarProps = {
@@ -445,7 +447,7 @@ function RenameField({ name, onDone }: { name: string; onDone: (name: string | n
  * row of their own, each with its connection's badge (a terminal's icon) and its folder's name.
  * Short of room the others' names give way first (to an ellipsis), the one on screen's last.
  */
-export function PaneSwitcherView({ items, activeId, onPick }: PaneSwitcher) {
+export function PaneSwitcherView({ items, activeId, onPick, onNew }: PaneSwitcher) {
   return (
     <div
       className="ws-panes"
@@ -472,6 +474,11 @@ export function PaneSwitcherView({ items, activeId, onPick }: PaneSwitcher) {
           </button>
         );
       })}
+      {onNew && (
+        <button type="button" className="icon-btn ws-new pane-new" onClick={onNew} title="New pane" aria-label="New pane">
+          <Icon name="plus" size={15} />
+        </button>
+      )}
     </div>
   );
 }

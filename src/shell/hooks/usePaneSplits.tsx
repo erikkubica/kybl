@@ -96,8 +96,10 @@ export function usePaneSplits(deps: UsePaneSplitsDeps) {
    * goes right of or below the pane, or with `before` left of or above it. With `anywhere` (a new
    * terminal, ⌘↵ in the palette) it goes wherever there's room when that way has none.
    */
-  const split = (dir: Dir, id: PaneId = deps.activeId, before = false, fill?: (fresh: PaneId) => void, anywhere = false) => {
-    const asked = splitRoom(dir, id);
+  /** `roomless`: added as a tab (one pane at a time already): no room needed, only a free slot */
+  const split = (dir: Dir, id: PaneId = deps.activeId, before = false, fill?: (fresh: PaneId) => void, anywhere = false, roomless = false) => {
+    const t0 = treeRef.current;
+    const asked = roomless && freeSlot(t0) && leaves(t0).length < MAX_PANES ? { ok: "ok" as const } : splitRoom(dir, id);
     const place = asked.ok !== "no" || !anywhere ? null : roomyPlace(dir, id);
     if (asked.ok === "no" && !place) return deps.toast("info", asked.why);
     const at = place ?? { dir, id };

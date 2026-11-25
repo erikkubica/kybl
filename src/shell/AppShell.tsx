@@ -170,7 +170,7 @@ export function AppShell() {
         {/* the window can't show every pane: a row to pick the one on screen */}
         {paneSwitcher && (
           <div className="pane-row">
-            <PaneSwitcherView {...paneSwitcher} />
+            <PaneSwitcherView {...paneSwitcher} onNew={() => split("row", activeId, false, undefined, false, true)} />
           </div>
         )}
         {paneDrag.view}

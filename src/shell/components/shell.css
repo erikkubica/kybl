@@ -882,17 +882,15 @@ body.resizing-row * {
   margin-left: 0;
 }
 
-/* the pane switcher on its own row: real tabs on the bar's colour; the one on screen wears the
-   pane's background and its accent line and opens into it, the others sit flat on the bar.
-   Short of room the others' names give way first (down to their badge), the one on screen's last. */
+/* the pane switcher on its own row: tabs like the workspaces' above (the one on screen raised),
+   each with its badge and name, then "+". Short of room the others' names give way first (down to
+   their badge), the one on screen's last. */
 .pane-row {
-  align-items: flex-end;
   height: 40px;
   padding: 0 8px;
 }
 .pane-row .ws-panes {
   flex: 0 1 auto;
-  align-items: flex-end;
   gap: 2px;
   min-width: 0;
   max-width: 100%;
@@ -906,17 +904,16 @@ body.resizing-row * {
   display: none;
 }
 .pane-row .ws-pane {
-  position: relative;
   flex: 0 1 auto;
   min-width: 38px;
-  max-width: 220px;
-  height: 33px;
-  gap: 8px;
-  padding: 0 14px 1px;
+  max-width: 210px;
+  height: 28px;
+  gap: 7px;
+  padding: 0 11px;
   border: 1px solid transparent;
-  border-bottom: 0;
-  border-radius: 9px 9px 0 0;
+  border-radius: 8px;
   overflow: hidden;
+  font-size: 12.5px;
   font-weight: 500;
 }
 .pane-row .ws-pane:hover {
@@ -924,13 +921,9 @@ body.resizing-row * {
 }
 .pane-row .ws-pane.on {
   flex-shrink: 0.2;
-  max-width: 260px;
-  /* over the row's bottom line: the tab opens into the pane */
-  height: 34px;
-  margin-bottom: -1px;
   border-color: var(--border);
-  background: var(--bg);
-  box-shadow: inset 0 2px 0 var(--accent-solid);
+  background: var(--raised);
+  box-shadow: var(--shadow-sm);
   font-weight: 600;
 }
 .pane-row .ws-pane .pbadge {
@@ -947,8 +940,6 @@ body.resizing-row * {
 .pane-row .ws-pane > svg {
   flex: none;
 }
-/* one pane at a time: its tab carries the accent line, the pane doesn't draw it again */
-.split-cramped > .browser-pane::before,
-.split-cramped > * > .browser-pane::before {
-  display: none;
+.pane-row .pane-new {
+  flex: none;
 }
