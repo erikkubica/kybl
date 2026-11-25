@@ -39,8 +39,22 @@ const NAME_MIN = 190;
 const GAP = 14;
 /** a row's own side padding (10px each side) */
 const ROW_PAD = 20;
-/** the rows' side padding, and the 10px the body keeps for its scrollbar */
-const SIDES = 46;
+/** the Name column's own width, once dragged (none: it takes the room the others leave) */
+const NAME_W_KEY = "s3b.nameWidth";
+const NAME_MAX = 1600;
+
+function loadNameW(): number | null {
+  const v = Number(localStorage.getItem(NAME_W_KEY) ?? "");
+  return Number.isFinite(v) && v >= NAME_MIN ? Math.min(NAME_MAX, v) : null;
+}
+function saveNameW(w: number | null) {
+  try {
+    if (w == null) localStorage.removeItem(NAME_W_KEY);
+    else localStorage.setItem(NAME_W_KEY, String(w));
+  } catch {
+    /* ignore */
+  }
+}
 const WIDTHS_KEY = "s3b.columns";
 /** columns chosen in this window when the app doesn't keep them in settings */
 const LOCAL_COLS_KEY = "s3b.columnsShown";
@@ -241,7 +255,8 @@ export function FileTable({
   // the body's top padding sits above the first row
   const win = useWindowed({ scroller: body, count: items ? items.length : entries.length, rowHeight: rowH, offset: 4 + upH });
   const [widths, setWidths] = useState(loadWidths);
-  const [resizing, setResizing] = useState<ColumnId | null>(null);
+  const [resizing, setResizing] = useState<ColumnId | "name" | null>(null);
+  const [nameW, setNameW] = useState(loadNameW);
   const [localCols, setLocalCols] = useState(loadLocalCols);
   const [headMenu, setHeadMenu] = useState<{ x: number; y: number } | null>(null);
   const chosen = columns ?? localCols;
@@ -249,8 +264,11 @@ export function FileTable({
   // The name keeps at least NAME_MIN; when the columns don't fit beside it, the list scrolls
   // sideways (the header follows the rows) instead of leaving columns out.
   const shown = chosen.map((id) => COLS.find((c) => c.id === id)).filter((c): c is Col => !!c && !unavailable?.includes(c.id));
-  const rowMin = NAME_MIN + ROW_PAD + shown.reduce((n, c) => n + widths[c.id] + GAP, 0);
-  const template = `minmax(${NAME_MIN}px, 1fr)${shown.map((c) => ` ${widths[c.id]}px`).join("")}`;
+  const rowMin = (nameW ?? NAME_MIN) + ROW_PAD + shown.reduce((n, c) => n + widths[c.id] + GAP, 0);
+  // a dragged Name keeps its width, and an empty track after the last column takes what's left
+  const template = nameW
+    ? `${nameW}px${shown.map((c) => ` ${widths[c.id]}px`).join("")} minmax(0, 1fr)`
+    : `minmax(${NAME_MIN}px, 1fr)${shown.map((c) => ` ${widths[c.id]}px`).join("")}`;
   const thead = useRef<HTMLDivElement>(null);
   const followScroll = () => {
     const h = thead.current;
@@ -274,45 +292,66 @@ export function FileTable({
     else setChosen(COLS.map((c) => c.id).filter((c) => c === id || chosen.includes(c)));
   };
 
-  /** Drag the edge in front of a column: moving left makes it wider. Double-click resets it. */
-  const startResize = (ev: React.PointerEvent, col: Col) => {
+  /**
+   * Each column's handle is its right edge, as in Finder and Explorer: dragging it right makes
+   * that column wider and moves the ones after it along (the list scrolls sideways once they
+   * don't fit); left makes it narrower. Name too: once dragged it keeps its own width.
+   * Double-click resets (Name back to taking the room the others leave).
+   */
+  const startResize = (ev: React.PointerEvent, col: Col | "name") => {
     ev.preventDefault();
     ev.stopPropagation();
     const startX = ev.clientX;
-    const startW = widths[col.id];
-    // the edge follows the pointer: the column grows into the name's room, down to the name's
-    // least width, and no further (else it would spill to the right); one already wider than
-    // that (a list scrolled sideways) keeps its width
-    const others = shown.filter((c) => c.id !== col.id).reduce((n, c) => n + widths[c.id] + GAP, 0);
-    const room = (table.current?.clientWidth ?? 0) - SIDES - NAME_MIN - others - GAP;
-    const ceiling = Math.max(startW, Math.min(col.max, room));
+    const isName = col === "name";
+    // Name starts from the width it's drawn at
+    const startW = isName ? Math.round(thead.current?.querySelector<HTMLElement>(".th.c-name")?.getBoundingClientRect().width ?? NAME_MIN) : widths[col.id];
+    const [lo, hi] = isName ? [NAME_MIN, NAME_MAX] : [col.min, col.max];
     let latest = widths;
-    setResizing(col.id);
+    let latestName = nameW;
+    setResizing(isName ? "name" : col.id);
     const move = (e: PointerEvent) => {
-      const w = Math.min(ceiling, Math.max(col.min, Math.round(startW + startX - e.clientX)));
-      latest = { ...latest, [col.id]: w };
-      setWidths(latest);
+      const w = Math.min(hi, Math.max(lo, Math.round(startW + e.clientX - startX)));
+      if (isName) {
+        latestName = w;
+        setNameW(w);
+      } else {
+        latest = { ...latest, [col.id]: w };
+        setWidths(latest);
+      }
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       setResizing(null);
-      saveWidths(latest);
+      if (isName) saveNameW(latestName);
+      else saveWidths(latest);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };
-  const resetCol = (col: Col) => {
+  const resetCol = (col: Col | "name") => {
+    if (col === "name") {
+      setNameW(null);
+      saveNameW(null);
+      return;
+    }
     const w = { ...widths, [col.id]: col.def };
     setWidths(w);
     saveWidths(w);
   };
-  /** Arrow keys on a focused column edge resize it too. */
-  const keyResize = (ev: React.KeyboardEvent, col: Col) => {
-    const d = ev.key === "ArrowLeft" ? 10 : ev.key === "ArrowRight" ? -10 : 0;
+  /** Arrow keys on a focused column edge resize it too (right: wider). */
+  const keyResize = (ev: React.KeyboardEvent, col: Col | "name") => {
+    const d = ev.key === "ArrowRight" ? 10 : ev.key === "ArrowLeft" ? -10 : 0;
     if (!d) return;
     ev.preventDefault();
     ev.stopPropagation();
+    if (col === "name") {
+      const cur = nameW ?? Math.round(thead.current?.querySelector<HTMLElement>(".th.c-name")?.getBoundingClientRect().width ?? NAME_MIN);
+      const w = Math.min(NAME_MAX, Math.max(NAME_MIN, cur + d));
+      setNameW(w);
+      saveNameW(w);
+      return;
+    }
     const w = { ...widths, [col.id]: Math.min(col.max, Math.max(col.min, widths[col.id] + d)) };
     setWidths(w);
     saveWidths(w);
@@ -427,7 +466,7 @@ export function FileTable({
     onPress(e, ev);
   };
 
-  const head = (label: string, cls: string, key?: SortKey, col?: Col) => (
+  const head = (label: string, cls: string, key?: SortKey, col?: Col | "name") => (
     <div
       key={cls}
       className={`th ${cls} ${key && sort.key === key ? "sorted" : ""}`}
@@ -436,13 +475,13 @@ export function FileTable({
     >
       {col && (
         <span
-          className={`col-grip ${resizing === col.id ? "on" : ""}`}
+          className={`col-grip ${resizing === (col === "name" ? "name" : col.id) ? "on" : ""}`}
           role="separator"
           aria-orientation="vertical"
           aria-label={`Resize the ${label} column`}
-          aria-valuenow={widths[col.id]}
-          aria-valuemin={col.min}
-          aria-valuemax={col.max}
+          aria-valuenow={col === "name" ? (nameW ?? undefined) : widths[col.id]}
+          aria-valuemin={col === "name" ? NAME_MIN : col.min}
+          aria-valuemax={col === "name" ? NAME_MAX : col.max}
           tabIndex={0}
           title="Drag to resize · double-click to reset"
           onPointerDown={(ev) => startResize(ev, col)}
@@ -484,6 +523,8 @@ export function FileTable({
       label: "Reset columns",
       onClick: () => {
         setChosen(DEFAULTS.columns);
+        setNameW(null);
+        saveNameW(null);
         const w = loadWidths();
         for (const c of COLS) w[c.id] = c.def;
         setWidths(w);
@@ -535,7 +576,7 @@ export function FileTable({
         }}
         title="Right-click to choose columns"
       >
-        {head("Name", "c-name", "name")}
+        {head("Name", "c-name", "name", "name")}
         {shown.map((c) => head(c.label, c.cls, c.sort, c))}
       </div>
       <div className="table-body" ref={body} role="rowgroup" onScroll={followScroll}>
