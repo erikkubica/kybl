@@ -649,6 +649,9 @@ mod tests {
             assert!(open_part(&part).await.is_none(), "a link is no partial file to carry on");
             let mut f = create_part(&part).await.unwrap();
             f.write_all(b"downloaded").await.unwrap();
+            // a tokio file finishes its last write in the background unless flushed (as the
+            // transfers do): without this the read below can come too early (seen on Linux)
+            f.flush().await.unwrap();
             drop(f);
             assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
             assert!(std::fs::symlink_metadata(&part).unwrap().file_type().is_file());
