@@ -14,6 +14,27 @@
   background: var(--field);
   outline: none;
 }
+/* a tree with its find field (LocationPicker's search) */
+.jobs-pick-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--dim);
+}
+.jobs-pick-search input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
 .jobs-tree:focus-visible {
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
@@ -111,6 +132,10 @@
   font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* in a row (a group's count) it's just a number at the end; full width is for state lines */
+.jobs-tree-row .jobs-tree-detail {
+  flex: none;
 }
 .jobs-tree-detail.error {
   flex-basis: auto;

@@ -85,9 +85,55 @@
 .mirror-swap:disabled {
   opacity: 0.45;
 }
-.mirror-picker.jobs-tree {
-  border-color: var(--border-strong);
-  height: clamp(180px, calc(100vh - 520px), 300px);
+/* the folder dropdown: fixed under the end being changed */
+.mirror-pop-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+.mirror-pop {
+  position: fixed;
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--raised);
+  box-shadow: var(--shadow-lg, 0 12px 32px rgb(0 0 0 / 0.35));
+}
+.mirror-pop .jobs-pick {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.mirror-pop .jobs-tree {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+.mirror-pop-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 12px;
+  border-top: 1px solid var(--border-strong);
+}
+.mirror-pop-pick {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.mirror-pop-pick strong {
+  flex: none;
+  font-weight: 600;
 }
 
 /* ---------------------------------------------------------------- options: one line until opened */

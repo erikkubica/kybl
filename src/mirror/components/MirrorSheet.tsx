@@ -4,7 +4,7 @@
  * deleted, grouped by folder. "Mirror" then runs that as one job. Mirrors can be saved by name
  * and loaded again from the Saved menu at the bottom; the options fold to one line.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { errMessage, type Capabilities } from "../../core/api";
 import { Icon } from "../../ui/components/Icons";
 import { Modal } from "../../ui/components/Dialogs";
@@ -51,9 +51,9 @@ function endPath(e: MirrorEnd) {
   return root ? (dir ? `${root}/${dir}` : root) : "/" + dir;
 }
 
-function End({ end, label, onPick, picking }: { end: MirrorEnd | null; label: string; onPick: () => void; picking: boolean }) {
+function End({ end, label, onPick, picking, rowRef }: { end: MirrorEnd | null; label: string; onPick: () => void; picking: boolean; rowRef: React.Ref<HTMLDivElement> }) {
   return (
-    <div className={`mirror-end ${picking ? "picking" : ""}`}>
+    <div className={`mirror-end ${picking ? "picking" : ""}`} ref={rowRef}>
       <span className="mirror-end-k">{label}</span>
       {end ? (
         <span className="mirror-end-v" title={`${end.connectionName || deviceName()} · ${endPath(end)}`}>
@@ -64,9 +64,68 @@ function End({ end, label, onPick, picking }: { end: MirrorEnd | null; label: st
         <span className="mirror-end-v dim">Not picked yet</span>
       )}
       <button className="btn btn-ghost btn-sm" onClick={onPick} aria-expanded={picking}>
-        {picking ? "Done" : end ? "Change" : "Choose"}
+        {end ? "Change" : "Choose"}
       </button>
     </div>
+  );
+}
+
+/**
+ * The folder tree as a dropdown hanging from the end being changed (fixed, so the sheet's
+ * scrolling body doesn't clip it), with the pick and Done at its foot. Escape or a click outside
+ * closes it.
+ */
+function PickPop({ anchor, end, onClose, children }: { anchor: HTMLElement | null; end: MirrorEnd | null; onClose: () => void; children: React.ReactNode }) {
+  const [box, setBox] = useState<React.CSSProperties | null>(null);
+  useLayoutEffect(() => {
+    if (!anchor) return;
+    const place = () => {
+      const r = anchor.getBoundingClientRect();
+      const top = r.bottom + 4;
+      setBox({ top, left: r.left, width: r.width, height: Math.max(220, Math.min(420, window.innerHeight - top - 16)) });
+    };
+    place();
+    // the sheet may still be animating in: measured again once it has settled
+    const t = setTimeout(place, 260);
+    window.addEventListener("resize", place);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("resize", place);
+    };
+  }, [anchor]);
+  useEffect(() => {
+    // Escape closes the dropdown, not the sheet under it
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      e.preventDefault();
+      onClose();
+    };
+    window.addEventListener("keydown", key, true);
+    return () => window.removeEventListener("keydown", key, true);
+  }, [onClose]);
+  if (!box) return null;
+  return (
+    <>
+      <div className="mirror-pop-veil" onMouseDown={onClose} />
+      <div className="mirror-pop" style={box} role="dialog" aria-label="Choose a folder">
+        {children}
+        <div className="mirror-pop-foot">
+          <span className="mirror-pop-pick" title={end ? `${end.connectionName || deviceName()} ${endPath(end)}` : undefined}>
+            {end ? (
+              <>
+                <strong>{end.connectionName || deviceName()}</strong> <span className="mirror-end-path">{"\u200e" + endPath(end)}</span>
+              </>
+            ) : (
+              "Pick a folder"
+            )}
+          </span>
+          <button className="btn btn-primary btn-sm" disabled={!end} onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -273,6 +332,9 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
   };
 
   const pick = (which: "src" | "dst") => setPicking((p) => (p === which ? null : which));
+  const closePick = useCallback(() => setPicking(null), []);
+  const [srcRow, setSrcRow] = useState<HTMLDivElement | null>(null);
+  const [dstRow, setDstRow] = useState<HTMLDivElement | null>(null);
   /** the dry run to act on: only one made for these exact settings */
   const plan = fresh ? preview!.plan : null;
   /** what the list shows: also a run for other options of these same folders, faded until previewed again */
@@ -322,22 +384,25 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
     <Modal title={savedId ? name || "Mirror" : "Mirror"} onClose={onClose} width={620}>
       <div className="modal-body mirror-sheet">
         <div className="mirror-route">
-          <End end={src} label="From" onPick={() => pick("src")} picking={picking === "src"} />
+          <End end={src} label="From" onPick={() => pick("src")} picking={picking === "src"} rowRef={setSrcRow} />
           <button className="mirror-swap" onClick={swap} disabled={!src || !dst} title="Swap: copy the other way" aria-label="Swap direction">
             <Icon name="sort" size={14} />
           </button>
-          <End end={dst} label="To" onPick={() => pick("dst")} picking={picking === "dst"} />
+          <End end={dst} label="To" onPick={() => pick("dst")} picking={picking === "dst"} rowRef={setDstRow} />
         </div>
         {picking && (
-          <LocationPicker
-            className="mirror-picker"
-            value={picking === "src" ? src : dst}
-            blocked={(loc) => {
-              const other = picking === "src" ? dst : src;
-              return other ? mirrorBlocked(loc, other) : null;
-            }}
-            onChange={(p) => (picking === "src" ? setSrc(p) : setDst(p))}
-          />
+          <PickPop anchor={picking === "src" ? srcRow : dstRow} end={picking === "src" ? src : dst} onClose={closePick}>
+            <LocationPicker
+              search
+              className="mirror-picker"
+              value={picking === "src" ? src : dst}
+              blocked={(loc) => {
+                const other = picking === "src" ? dst : src;
+                return other ? mirrorBlocked(loc, other) : null;
+              }}
+              onChange={(p) => (picking === "src" ? setSrc(p) : setDst(p))}
+            />
+          </PickPop>
         )}
         {blocked && (
           <div className="jobs-summary bad">

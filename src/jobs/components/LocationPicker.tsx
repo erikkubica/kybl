@@ -78,6 +78,7 @@ export function LocationPicker({
   creating = false,
   onCreatingDone,
   commitRef,
+  search = false,
   className = "",
 }: {
   value: Loc | null;
@@ -89,8 +90,11 @@ export function LocationPicker({
   onCreatingDone?: () => void;
   /** lets the dialog's main button create a typed folder name first (see `NewFolderCommit`) */
   commitRef?: React.Ref<NewFolderCommit>;
+  /** a field above the tree that finds connections by name (and is focused) */
+  search?: boolean;
   className?: string;
 }) {
+  const [query, setQuery] = useState("");
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
   const [profilesError, setProfilesError] = useState<string | null>(null);
   const conns = useRef(new Map<string, ConnData>());
@@ -243,10 +247,17 @@ export function LocationPicker({
     for (const sub of g.groups) addGroup(sub, d + 1);
     for (const p of g.items) addConn(asConn(p), d + 1);
   };
-  for (const p of layout.pinned) addConn(asConn(p), 0);
-  for (const g of layout.groups) addGroup(g, 0);
-  for (const p of layout.items) addConn(asConn(p), 0);
-  addConn({ pid: LOCAL_ID, name: deviceName(), provider: undefined }, 0);
+  const q = query.trim().toLowerCase();
+  if (q) {
+    // searching: the matching connections in one flat list, groups left out
+    for (const c of connections) if (c.name.toLowerCase().includes(q)) addConn(c, 0);
+    if (!rows.length) rows.push({ type: "state", key: "none", depth: 0, text: `No connection named “${query.trim()}”.` });
+  } else {
+    for (const p of layout.pinned) addConn(asConn(p), 0);
+    for (const g of layout.groups) addGroup(g, 0);
+    for (const p of layout.items) addConn(asConn(p), 0);
+    addConn({ pid: LOCAL_ID, name: deviceName(), provider: undefined }, 0);
+  }
 
   useEffect(() => {
     for (const run of toLoad) run();
@@ -451,8 +462,8 @@ export function LocationPicker({
     }
   };
 
-  return (
-    <div className={`jobs-tree ${className}`} ref={listRef} role="tree" aria-label="Destination" tabIndex={0} onKeyDown={onKey}>
+  const tree = (
+    <div className={`jobs-tree ${search ? "" : className}`} ref={listRef} role="tree" aria-label="Destination" tabIndex={0} onKeyDown={onKey}>
       {profiles === null && (
         <div className="jobs-tree-state">
           <span className="spinner" /> Loading connections…
@@ -552,6 +563,31 @@ export function LocationPicker({
             </button>
           );
         })}
+    </div>
+  );
+  if (!search) return tree;
+  return (
+    <div className={`jobs-pick ${className}`}>
+      <div className="jobs-pick-search">
+        <Icon name="search" size={14} />
+        <input
+          autoFocus
+          value={query}
+          placeholder="Find a connection"
+          aria-label="Find a connection"
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              listRef.current?.focus();
+            }
+          }}
+        />
+      </div>
+      {tree}
     </div>
   );
 }
