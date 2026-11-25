@@ -104,7 +104,7 @@ export function EmptyState({
       {(searchMode || standard || action) && (
         <p>
           {searchMode
-            ? "Nothing in this folder matches your search. Try a shorter or different term."
+            ? "Try a shorter or different term."
             : standard
               ? "Drop files here to upload them, or start with one of these."
               : "Drop files here to upload them, or use the button below."}
