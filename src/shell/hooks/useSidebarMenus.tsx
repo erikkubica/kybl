@@ -168,6 +168,17 @@ export function useSidebarMenus(h: UseSidebarMenusDeps) {
       await h.connectIn(id, p);
     },
     missing: h.rec.notes[id],
+    roots: (p) => {
+      const list = h.conns.bucketsBy[p.id];
+      if (!list) {
+        // asked for after this render (it sets state); the list shows once it's in
+        queueMicrotask(() => void h.conns.loadBuckets(p));
+        return [];
+      }
+      const hidden = new Set(h.conns.hiddenBuckets[p.id] ?? []);
+      return list.names.filter((b) => !hidden.has(b)).map((b) => ({ id: b, label: h.conns.rootLabel(p.id, b) }));
+    },
+    onOpenRoot: (p, b) => h.paneById(id).openBucket(p, b),
     // first run (nothing saved, nothing opened yet, a pane of its own): the welcome, with its ways
     // to add one; any other empty pane asks what to show, this computer and a terminal too
     launcher: h.saved.length || h.recents.recent.length || h.lastBefore(id) != null ? () => launchItems(id) : undefined,

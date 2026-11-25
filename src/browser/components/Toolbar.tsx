@@ -57,6 +57,7 @@ export function Toolbar({
   panesItems,
   provider,
   connName,
+  onConnTop,
   switchLabel = "Switch connection or bucket",
   onSwitchConnection,
   onGoTo,
@@ -127,6 +128,8 @@ export function Toolbar({
   provider?: string;
   /** the pane's connection, named after the badge so it's clear which server this is */
   connName?: string;
+  /** the connection's name at a root's top: back to its roots (buckets, this computer's places) */
+  onConnTop?: () => void;
   /** what the badge does, in this connection's words ("Switch connection or bucket" on S3) */
   switchLabel?: string;
   /** the badge before the folder's name: pick another connection or bucket for this pane */
@@ -244,9 +247,9 @@ export function Toolbar({
                 <button
                   type="button"
                   className="conn-name"
-                  disabled={disabled || parts.length === 0}
-                  onClick={() => onNavigate("")}
-                  title={parts.length ? `Go to the top of ${bucketLabel ?? bucket ?? connName}` : connName}
+                  disabled={disabled || (parts.length === 0 && !onConnTop)}
+                  onClick={() => (parts.length === 0 ? onConnTop?.() : onNavigate(""))}
+                  title={parts.length ? `Go to the top of ${bucketLabel ?? bucket ?? connName}` : onConnTop ? `All of ${connName}` : connName}
                   // dropping items here moves them to the top, as on a breadcrumb
                   data-drop={!disabled && parts.length ? "" : undefined}
                 >
@@ -317,10 +320,51 @@ export function Toolbar({
           <Icon name="eye" />
         </button>
 
-        {/* folded to its icon until clicked (or ⌘F), and while a filter or search is on it stays open */}
+        {/* the filter lives in its own row under this one (open while focused, or while a filter or
+            search is on); here, only the way to it */}
+        <button
+          className={`icon-btn tb-search ${searchOpen ? "on" : ""}`}
+          disabled={disabled}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            const f = searchInput.current;
+            if (!f) return;
+            // open and empty: a second click puts it away
+            if (document.activeElement === f && !query) f.blur();
+            else f.focus();
+          }}
+          title={keys("Filter, or search subfolders (⌘F)")}
+          aria-label="Filter or search"
+          aria-pressed={searchOpen}
+        >
+          <Icon name="search" />
+        </button>
+
+        {onTerminal && (
+          <button className="icon-btn tb-terminal" onClick={onTerminal} title={keys("Terminal (⌘J)")} aria-label="Terminal">
+            <Icon name="terminal" />
+          </button>
+        )}
+
+        {onPanes && (
+          <button
+            ref={panes}
+            // a menu, not a toggle: no "on" look whatever the number of panes
+            className="icon-btn tb-panes"
+            onClick={(e) => onPanes(...anchorOf(e))}
+            title={dual ? "Panes: split, size or close" : "Split: add a pane right, below, left or above"}
+            aria-label="Panes"
+            aria-haspopup="menu"
+          >
+            <Icon name="dual-pane" />
+          </button>
+        )}
+      </div>
+      {/* the filter row: folded to nothing until ⌘F or the magnifier focuses it, open while a
+          filter or search is on, so it never squeezes the path and buttons above */}
+      <div className={`search-row ${searchOpen ? "open" : ""}`}>
         <div
-          className={`search ${!searchOpen ? "folded" : ""}`}
-          title={!searchOpen ? keys("Filter, or search subfolders (⌘F)") : undefined}
+          className="search"
           onMouseDown={(e) => {
             if (disabled || (e.target as HTMLElement).closest("input, button")) return;
             e.preventDefault();
@@ -361,30 +405,8 @@ export function Toolbar({
             <button className="icon-btn" onClick={onClearSearch} aria-label="Clear search">
               <Icon name="x" size={12} />
             </button>
-          ) : (
-            <kbd>{keys("⌘F")}</kbd>
-          )}
+          ) : null}
         </div>
-
-        {onTerminal && (
-          <button className="icon-btn tb-terminal" onClick={onTerminal} title={keys("Terminal (⌘J)")} aria-label="Terminal">
-            <Icon name="terminal" />
-          </button>
-        )}
-
-        {onPanes && (
-          <button
-            ref={panes}
-            // a menu, not a toggle: no "on" look whatever the number of panes
-            className="icon-btn tb-panes"
-            onClick={(e) => onPanes(...anchorOf(e))}
-            title={dual ? "Panes: split, size or close" : "Split: add a pane right, below, left or above"}
-            aria-label="Panes"
-            aria-haspopup="menu"
-          >
-            <Icon name="dual-pane" />
-          </button>
-        )}
       </div>
       {working && <div className="progress-line" />}
     </header>

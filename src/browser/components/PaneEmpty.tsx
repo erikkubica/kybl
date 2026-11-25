@@ -39,6 +39,9 @@ export type EmptyActions = {
   missing?: string;
   /** what this empty pane can open (PaneLauncher), built when it shows */
   launcher?: () => LaunchItem[];
+  /** a connection's roots (buckets, this computer's places) as the sidebar lists them, hidden ones left out; asks for them when not listed yet */
+  roots?: (p: Profile) => { id: string; label: string }[];
+  onOpenRoot?: (p: Profile, root: string) => void;
 };
 
 export function Welcome({ actions }: { actions: EmptyActions }) {
@@ -108,6 +111,29 @@ export function ChooseBucket({
   // Forbidden may pass, so those keep Try again
   const denied = byName && !single && !reconnect && /access denied|not allowed/i.test(error ?? note ?? "");
   const failed = !!(note || error) && !denied;
+  // its roots to pick from, right here (This PC's places, a connection's buckets)
+  const roots = !single && !failed && actions.roots ? actions.roots(profile) : [];
+  if (roots.length && actions.onOpenRoot) {
+    const open = actions.onOpenRoot;
+    return (
+      <div className="roots-view">
+        <h2>{profile.name}</h2>
+        <div className="roots-grid" role="list">
+          {roots.map((r) => (
+            <button key={r.id} type="button" role="listitem" className="root-tile" onClick={() => open(profile, r.id)} title={r.label}>
+              <Icon name={mode === "drives" ? "folder" : "bucket"} size={22} />
+              <span>{r.label}</span>
+            </button>
+          ))}
+        </div>
+        {(kybl || byName) && (
+          <button className="btn btn-sm roots-more" onClick={() => (kybl ? actions.onNewBucket(profile) : actions.onOpenBucketByName(profile))}>
+            <Icon name="plus" size={13} /> {kybl ? "New bucket" : "Open bucket by name"}
+          </button>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="welcome">
       <div className="welcome-card">

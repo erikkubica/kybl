@@ -146,9 +146,10 @@ export function BrowserPane(p: BrowserPaneProps) {
       ? p.bucketNote || p.bucketError
         ? "Not connected"
         : "Connecting…"
-      : rootsKind === "drives"
-        ? "No place selected"
-        : "No bucket selected";
+      : // its roots are listed below (ChooseBucket), so the path names what they are
+        rootsKind === "drives"
+        ? "Places"
+        : "Buckets";
   return (
     <section
       className={`browser-pane ${p.dual ? (active ? "is-active" : "is-inactive") : ""} ${p.lifted ? "lifted" : ""}`}
@@ -205,6 +206,8 @@ export function BrowserPane(p: BrowserPaneProps) {
         panesItems={p.panesItems}
         provider={pane.profile?.provider}
         connName={pane.profile?.name}
+        // at a root's top, the name goes on up to the connection's roots (one with a single root has none)
+        onConnTop={profile && rootsKind && rootsKind !== "single" ? () => pane.showConnection(profile.id) : undefined}
         switchLabel={rootsKind === "single" ? "Switch connection" : rootsKind === "drives" ? "Switch connection or folder" : "Switch connection or bucket"}
         onSwitchConnection={p.onSwitchConnection}
         onGoTo={here ? (t) => void actions.goToPath(t) : undefined}
