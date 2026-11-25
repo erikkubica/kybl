@@ -4249,7 +4249,8 @@ body.dragging-items * {
    sidebar folds away (then floating over the first pane's toolbar, which makes room for it) */
 .side-toggle {
   position: absolute;
-  top: 13px;
+  /* its middle 25px from the top: level with the window controls (tauri.conf.json trafficLightPosition) */
+  top: 11px;
   left: 78px;
   width: 28px;
   height: 28px;
@@ -4261,18 +4262,26 @@ body.dragging-items * {
 .sidebar {
   position: relative;
 }
-/* folded: an icon rail as wide as the window controls need, like a code editor's activity bar */
+/* folded: no sidebar at all, the panes take the window; its button stays by the window controls
+   (over the workspace bar, which starts after it) */
 .app.side-hidden {
-  grid-template-columns: 82px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
 }
-.sidebar.rail {
-  align-items: center;
+.app.side-hidden .ws-bar {
+  padding-left: 116px;
+}
+.side-folded {
+  display: contents;
+}
+.side-folded .side-toggle {
+  position: fixed;
+  z-index: 41;
 }
 /* the open sidebar keeps its grid column; the wrapper is only there for the overlay's sake */
 .side-full {
   display: contents;
 }
-/* resting on a rail icon: the whole sidebar over the panes, nothing pushed aside */
+/* resting on the folded sidebar's button: the whole sidebar over the panes, nothing pushed aside */
 .side-peek {
   position: fixed;
   z-index: 40;
@@ -4293,100 +4302,6 @@ body.dragging-items * {
     transform: translateX(-24px);
     opacity: 0;
   }
-}
-.sidebar.rail .sidebar-drag {
-  height: 44px;
-  align-self: stretch;
-}
-.side-toggle.in-rail {
-  position: static;
-  flex: none;
-  width: 36px;
-  height: 32px;
-  margin-bottom: 6px;
-}
-.rail-scroll {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  overflow-y: auto;
-  scrollbar-width: none;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 0 10px;
-}
-.rail-btn {
-  position: relative;
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 40px;
-  border: 0;
-  border-radius: var(--r);
-  background: transparent;
-  color: var(--dim);
-  transition: background 0.12s;
-}
-.rail-btn:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-/* the connection on screen: a bar on the rail's edge, like the editor's active view */
-.rail-btn.active::before {
-  content: "";
-  position: absolute;
-  left: -14px;
-  top: 9px;
-  bottom: 9px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: var(--accent);
-}
-.rail-btn.active {
-  background: var(--hover);
-}
-.rail-star {
-  position: absolute;
-  right: 7px;
-  bottom: 6px;
-  display: grid;
-  color: var(--accent);
-}
-.rail-star svg {
-  fill: currentColor;
-}
-.rail-dot {
-  position: absolute;
-  right: 6px;
-  top: 6px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--danger, #e5484d);
-  border: 1.5px solid var(--sidebar);
-}
-.rail-sep {
-  flex: none;
-  width: 28px;
-  height: 1px;
-  margin: 4px 0;
-  background: var(--border);
-}
-.rail-foot {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  width: 100%;
-  padding: 8px 0 10px;
-  border-top: 1px solid var(--border);
-}
-.rail-foot .icon-btn {
-  width: 36px;
-  height: 32px;
 }
 .welcome-mark {
   display: block;
@@ -5469,49 +5384,6 @@ input[aria-invalid="true"]:focus {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
-/* the folded rail: a long list keeps the one on screen and the recent ones; this opens the rest */
-.rail-btn.rail-more {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  height: 46px;
-  margin-top: 2px;
-  border: 1px dashed var(--border);
-  color: var(--dim);
-}
-.rail-btn.rail-more:hover {
-  border-color: transparent;
-}
-.rail-more-count {
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-  color: var(--faint);
-}
-.rail-more:hover .rail-more-count {
-  color: var(--dim);
-}
-/* a server kind's icon: its count on the badge's corner */
-.rail-kind-count {
-  position: absolute;
-  right: 2px;
-  bottom: 3px;
-  min-width: 16px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: 7px;
-  background: var(--sidebar);
-  box-shadow: inset 0 0 0 1px var(--border);
-  font-size: 9px;
-  font-weight: 650;
-  line-height: 14px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-  color: var(--dim);
-}
 body.dragging-items .bucket-row.drop-target {
   background: var(--accent-soft);
   color: var(--accent);

@@ -1,12 +1,12 @@
 import { useState, useRef, useCallback, useEffect, type MouseEvent } from "react";
 
 /**
- * The folded sidebar's overlay: resting on a rail icon brings the whole sidebar in over the
- * panes (nothing moves); it goes once the pointer has left it and no menu from it is up.
+ * The folded sidebar's overlay: ⌥⌘F brings the whole sidebar in over the panes (nothing moves)
+ * to find a connection; it goes once the pointer has left it and no menu from it is up.
  */
 export function useSidePeek(folded: boolean, menuUp: () => boolean) {
   const [open, setOpenState] = useState(false);
-  // brought up by ⌥⌘F or the rail's "All connections": the filter field takes the keyboard
+  // brought up by ⌥⌘F: the filter field takes the keyboard
   const [byFind, setByFind] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const timer = useRef<number>(undefined);
@@ -18,14 +18,6 @@ export function useSidePeek(folded: boolean, menuUp: () => boolean) {
     if (!folded) setOpen(false);
     return () => window.clearTimeout(timer.current);
   }, [folded, setOpen]);
-  // put away while the pointer rests on the rail (its "All connections", say): it doesn't come
-  // straight back until the pointer has moved off that icon
-  const resting = useRef(false);
-  const hover = useCallback((on: boolean) => {
-    window.clearTimeout(timer.current);
-    if (!on) resting.current = false;
-    else if (!resting.current) timer.current = window.setTimeout(() => setOpenState(true), 280);
-  }, []);
   // it stays while the pointer is on it, a menu from it is up, or something in it has the
   // keyboard (typing in its filter field with the pointer elsewhere)
   const check = useCallback(() => {
@@ -44,7 +36,6 @@ export function useSidePeek(folded: boolean, menuUp: () => boolean) {
   }, [check, setOpen]);
   const close = useCallback(() => {
     window.clearTimeout(timer.current);
-    resting.current = !!ref.current?.matches(":hover");
     setOpen(false);
   }, [setOpen]);
   const clicked = useCallback(
@@ -54,5 +45,5 @@ export function useSidePeek(folded: boolean, menuUp: () => boolean) {
     },
     [close],
   );
-  return { open, byFind, ref, hover, leave, clicked, show, close };
+  return { open, byFind, ref, leave, clicked, show, close };
 }

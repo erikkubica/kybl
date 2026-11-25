@@ -21,8 +21,6 @@ import type { MenuItem } from "../ui/components/Dialogs";
 import { SORT_CHOICES, sortConnections, sortFavorites, sortTree, useSideSort, type SideSection } from "./sideSort";
 import {
   FILTER_MIN,
-  RECENT_MIN,
-  RECENT_SHOWN,
   findConnections,
   groupLabel,
   groupOf,
@@ -1311,12 +1309,12 @@ function SidebarConnection({
   );
 }
 
-/** the sidebar's show/hide button: by the window controls when it's open, atop the icon rail when not */
+/** the sidebar's show/hide button, just right of the window controls, folded or not */
 export function SidebarToggle({ open, overlay, onToggle }: { open: boolean; overlay?: boolean; onToggle: () => void }) {
   return (
     <button
       type="button"
-      className={`icon-btn side-toggle ${open || overlay ? "" : "in-rail"}`}
+      className={`icon-btn side-toggle ${open || overlay ? "" : "folded"}`}
       onClick={onToggle}
       title={keys(`${open ? "Collapse" : "Expand"} sidebar (⌥⌘S)`)}
       aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
@@ -1324,170 +1322,5 @@ export function SidebarToggle({ open, overlay, onToggle }: { open: boolean; over
     >
       <Icon name="sidebar" size={17} />
     </button>
-  );
-}
-
-/**
- * The sidebar folded to an icon rail (like a code editor's activity bar): favorites and
- * connections as icons, a connection's buckets in a menu on click, and the footer's buttons.
- */
-export function SidebarRail({
-  profiles,
-  activeId,
-  favorites,
-  syncState,
-  authNeeded,
-  builtIn = () => false,
-  onExpand,
-  onPick,
-  onOpenFavorite,
-  onNewProfile,
-  onOpenSync,
-  onTerminal,
-  onOpenSettings,
-  onConnectionMenu,
-  onHover,
-  recent = [],
-  onMore,
-  onSection,
-}: {
-  profiles: Profile[];
-  activeId: string | null;
-  /** a server kind's icon was clicked: its connections in a menu next to it */
-  onSection?: (s: KindSection, x: number, y: number) => void;
-  /** connections opened last, newest first (ids): what a long list keeps on the rail */
-  recent?: string[];
-  /** a long list's "All connections": the whole sidebar over the panes, its filter field ready */
-  onMore?: () => void;
-  favorites?: Favorite[];
-  syncState: SyncState | null;
-  authNeeded?: Set<string>;
-  builtIn?: (p: Profile) => boolean;
-  onExpand: () => void;
-  /** a connection's icon was clicked: its buckets (or the connection itself) next to it */
-  onPick: (p: Profile, x: number, y: number) => void;
-  onOpenFavorite?(f: Favorite): void;
-  onNewProfile: () => void;
-  onOpenSync: () => void;
-  /** a terminal on this computer, from wherever you are (none where terminals can't run) */
-  onTerminal?: () => void;
-  onOpenSettings: () => void;
-  onConnectionMenu?(p: Profile, x: number, y: number): void;
-  /** the pointer rests on (or leaves) an icon: the whole sidebar comes in over the panes */
-  onHover?: (on: boolean) => void;
-}) {
-  const favs = (favorites ?? []).filter((f) => profiles.some((p) => p.id === f.profileId));
-  // a long list doesn't fit as icons: the one on screen and the recent ones stay, the rest is a
-  // click (or ⌥⌘F) away in the full sidebar
-  const long = profiles.length > RECENT_MIN && !!onMore;
-  // a server kind with a section in the sidebar is one icon here too, its connections in a menu
-  const layout = useMemo(() => sidebarLayout(profiles), [profiles]);
-  const sections = onSection ? layout.sections : [];
-  const inSection = new Set(profiles.filter((p) => sections.some((s) => s.kind === p.kind)).map((p) => p.id));
-  const shown = long
-    ? [activeId, ...recent.filter((id) => id !== activeId).slice(0, RECENT_SHOWN)].map((id) => profiles.find((p) => p.id === id)).filter((p): p is Profile => !!p)
-    : profiles.filter((p) => !inSection.has(p.id));
-  const shownIds = new Set(shown.map((p) => p.id));
-  return (
-    <aside className="sidebar rail" onContextMenu={(e) => e.preventDefault()}>
-      <div className="sidebar-drag" data-tauri-drag-region />
-      <SidebarToggle open={false} onToggle={onExpand} />
-      <div className="rail-scroll" onMouseOver={(e) => onHover?.(!!(e.target as Element).closest(".rail-btn"))} onMouseLeave={() => onHover?.(false)}>
-        {favs.map((f) => (
-          <button
-            key={`${f.profileId}|${f.bucket}|${f.prefix}`}
-            type="button"
-            className="rail-btn"
-            onClick={() => onOpenFavorite?.(f)}
-            title={f.name}
-            aria-label={`Favorite: ${f.name}`}
-          >
-            <Icon name={f.prefix ? "folder" : rootIcon(f.profileId, f.bucket)} size={17} />
-            <span className="rail-star" aria-hidden="true">
-              <Icon name="star" size={8} />
-            </span>
-          </button>
-        ))}
-        {favs.length > 0 && <div className="rail-sep" />}
-        {shown.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            className={`rail-btn ${p.id === activeId ? "active" : ""}`}
-            onClick={(e) => {
-              const r = e.currentTarget.getBoundingClientRect();
-              onPick(p, r.right + 6, r.top);
-            }}
-            onContextMenu={
-              onConnectionMenu &&
-              ((e) => {
-                e.preventDefault();
-                onConnectionMenu(p, e.clientX, e.clientY);
-              })
-            }
-            title={groupOf(p) ? `${p.name} · ${groupOf(p).split("/").join(" › ")}` : p.name}
-            aria-label={p.name}
-            aria-haspopup="menu"
-          >
-            <ConnBadge p={p} own={builtIn(p)} large />
-            {authNeeded?.has(p.id) && <span className="rail-dot" title="Sign in again" />}
-          </button>
-        ))}
-        {sections.length > 0 && shown.length > 0 && <div className="rail-sep" />}
-        {sections.map((s) => {
-          // the connection on screen is in here, and has no icon of its own above
-          const holds = !!activeId && !shownIds.has(activeId) && profiles.some((p) => p.id === activeId && p.kind === s.kind);
-          return (
-            <button
-              key={s.key}
-              type="button"
-              className={`rail-btn rail-kind ${holds ? "active" : ""}`}
-              onClick={(e) => {
-                const r = e.currentTarget.getBoundingClientRect();
-                onSection?.(s, r.right + 6, r.top);
-              }}
-              title={`${s.tree.count} ${s.label} ${s.tree.count === 1 ? "connection" : "connections"}`}
-              aria-label={`${s.label}: ${plural(s.tree.count, "connection")}`}
-              aria-haspopup="menu"
-            >
-              <ProviderBadge provider={s.kind} large />
-              <span className="rail-kind-count" aria-hidden="true">
-                {s.tree.count > 99 ? "99+" : s.tree.count}
-              </span>
-            </button>
-          );
-        })}
-        {long && (
-          <button type="button" className="rail-btn rail-more" onClick={onMore} title={keys(`All ${profiles.length} connections (⌥⌘F)`)} aria-label={`All ${profiles.length} connections`}>
-            <Icon name="search" size={16} />
-            <span className="rail-more-count" aria-hidden="true">
-              {profiles.length > 999 ? "999+" : profiles.length}
-            </span>
-          </button>
-        )}
-      </div>
-      <div className="rail-foot">
-        <button type="button" className="icon-btn" onClick={onNewProfile} title="New connection" aria-label="New connection">
-          <Icon name="plus" size={16} />
-        </button>
-        {onTerminal && (
-          <button type="button" className="icon-btn" onClick={onTerminal} title="Terminal on this computer" aria-label="Terminal on this computer">
-            <Icon name="terminal" size={15} />
-          </button>
-        )}
-        <button
-          type="button"
-          className={`icon-btn sync-ind ${syncState ?? "none"}`}
-          onClick={onOpenSync}
-          title={syncState ? SYNC_LABEL[syncState] : "Folder sync"}
-          aria-label={syncState ? SYNC_LABEL[syncState] : "Folder sync"}
-        >
-          <Icon name="sync" size={15} />
-        </button>
-        <button type="button" className="icon-btn" onClick={onOpenSettings} title={keys("Settings (⌘,)")} aria-label="Settings">
-          <Icon name="settings" size={16} />
-        </button>
-      </div>
-    </aside>
   );
 }

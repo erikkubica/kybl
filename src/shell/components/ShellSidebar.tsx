@@ -1,5 +1,5 @@
 import type { Profile } from "../../core/types";
-import { SidebarRail, Sidebar } from "../../sidebar/Sidebar";
+import { Sidebar, SidebarToggle } from "../../sidebar/Sidebar";
 import { THIS_MAC, LOCAL_PROFILE } from "../../browser/types";
 import { canTerminal } from "../../terminal/api";
 import { closestLocalRoot } from "../../connections/lib/roots";
@@ -30,7 +30,6 @@ export interface ShellSidebarProps {
   conns: ReturnType<typeof useConnections>;
   dialogs: ReturnType<typeof useDialogs>;
   driveMenu: ReturnType<typeof useSidebarMenus>["driveMenu"];
-  findConnection: ReturnType<typeof useSidebarMenus>["findConnection"];
   findSignal: number;
   focusSoon: ReturnType<typeof usePaneSplits>["focusSoon"];
   groupItems: ReturnType<typeof useSidebarMenus>["groupItems"];
@@ -45,8 +44,6 @@ export interface ShellSidebarProps {
   openShell: ReturnType<typeof usePaneSlots>["openShell"];
   picks: ReturnType<typeof useConnPicks>;
   profiles: Profile[];
-  railPick: ReturnType<typeof useSidebarMenus>["railPick"];
-  railSection: ReturnType<typeof useSidebarMenus>["railSection"];
   recents: ReturnType<typeof useRecentConnections>;
   saved: Profile[];
   sectionMenu: ReturnType<typeof useSidebarMenus>["sectionMenu"];
@@ -61,31 +58,15 @@ export interface ShellSidebarProps {
   toggleSidebar: ReturnType<typeof useShellSettings>["toggleSidebar"];
 }
 
-/** The sidebar: the full one, or folded to the rail with the full one coming in over the panes on hover. */
-export function ShellSidebar({ active, activeRef, askBucketName, askNewBucket, authNeeded, bucketMenu, connectionMenu, conns, dialogs, driveMenu, findConnection, findSignal, focusSoon, groupItems, groupMenu, mounts, moveToGroup, openConnection, openFavorite, openGroups, openHere, openSettings, openShell, picks, profiles, railPick, railSection, recents, saved, sectionMenu, setConnDialog, settings, sideHidden, sidePeek, syncState, term, toggleConnection, togglePin, toggleSidebar }: ShellSidebarProps) {
+/** The sidebar: the full one, or folded away to its button (⌥⌘F brings the full one in over the panes). */
+export function ShellSidebar({ active, activeRef, askBucketName, askNewBucket, authNeeded, bucketMenu, connectionMenu, conns, dialogs, driveMenu, findSignal, focusSoon, groupItems, groupMenu, mounts, moveToGroup, openConnection, openFavorite, openGroups, openHere, openSettings, openShell, picks, profiles, recents, saved, sectionMenu, setConnDialog, settings, sideHidden, sidePeek, syncState, term, toggleConnection, togglePin, toggleSidebar }: ShellSidebarProps) {
   return (
     <>
+      {/* folded away: only its button, by the window controls (⌥⌘F still brings it in over the panes to find a connection) */}
       {sideHidden && (
-        <SidebarRail
-          profiles={profiles}
-          activeId={active.profile?.id ?? null}
-          favorites={settings.favorites}
-          syncState={syncState}
-          authNeeded={authNeeded}
-          builtIn={(p) => p.id === THIS_MAC.id}
-          onExpand={toggleSidebar}
-          onPick={(p, x, y) => void railPick(p, x, y)}
-          onOpenFavorite={openFavorite}
-          onNewProfile={() => setConnDialog({ profile: null })}
-          onTerminal={canTerminal({ id: LOCAL_PROFILE, kind: "local" }) ? () => void term.openLocal(undefined, { reuse: true }) : undefined}
-          onOpenSync={() => openSettings("sync")}
-          onOpenSettings={() => openSettings()}
-          onConnectionMenu={connectionMenu}
-          onHover={sidePeek.hover}
-          recent={recents.recent}
-          onMore={findConnection}
-          onSection={railSection}
-        />
+        <div className="side-folded">
+          <SidebarToggle open={false} onToggle={toggleSidebar} />
+        </div>
       )}
       {(!sideHidden || sidePeek.open) && (
         <div

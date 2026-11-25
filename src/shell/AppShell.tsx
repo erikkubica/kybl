@@ -89,7 +89,7 @@ export function AppShell() {
   const { keepScrolls, onCramped, moveItems, dragAway, takeFromLive, wsShow, paneDrag } = usePaneMoves({ applyLayout, closeNow, cramped, crampedRef, dualPane, fillSlot, focusSoon, histories, ids, lastTop, listScroller, paneRoom, pendingScroll, setActiveId, setCramped, setTree, setWs, slot, snapOf, switchWorkspace, toast, treeRef, vacate, ws, late });
   const { wsDest, fileDrag } = useFileDragHost({ DEFAULT_VIEW, addWorkspace, autoShowActivity, beginItemDrag, conns, dualCtx, profiles, slot, switchWorkspace, term, toast, transfers, ws });
   useTerminalHost({ duplicateWorkspace, activeId, addWorkspace, clearAllSizes, closeNow, closeOthers, closeOthersNow, connectIn, conns, dialogs, fileId, focusSoon, ids, layoutOf, moveItems, newWorkspace, okToEndShells, paneLater, patchWorkspace, profiles, rec, recents, reloadIfShowing, replaceWorkspace, setActiveId, setConnDialog, setTree, showFailed, sidsOf, slot, split, splitItems, takeFromLive, term, toast, transfers, treeRef, ws });
-  const { askBucketName, askNewBucket, openFavorite, emptyFor, openConnection, findConnection, moveToGroup, togglePin, groupItems, groupMenu, sectionMenu, railSection, driveMenu, connectionMenu, railPick, switchMenu, bucketMenu } = useSidebarMenus({ lastBefore, settings, active, authNeeded, connectIn, conns, dialogs, fileId, focusSoon, migrations, mounts, openGroups, openHere, openSettings, openShell, paneById, picks, profiles, rec, recents, saved, setActiveId, setConnDialog, setFindSignal, setKyblDialog, showFilePane, sideHidden, sidePeek, term, toast, toggleConnection });
+  const { askBucketName, askNewBucket, openFavorite, emptyFor, openConnection, findConnection, moveToGroup, togglePin, groupItems, groupMenu, sectionMenu, driveMenu, connectionMenu, switchMenu, bucketMenu } = useSidebarMenus({ lastBefore, settings, active, authNeeded, connectIn, conns, dialogs, fileId, focusSoon, migrations, mounts, openGroups, openHere, openSettings, openShell, paneById, picks, profiles, rec, recents, saved, setActiveId, setConnDialog, setFindSignal, setKyblDialog, showFilePane, sideHidden, sidePeek, term, toast, toggleConnection });
   const { undo, overlayUp, route } = useCommandsHost({ active, allPanes, close, closeEditor, closeOthers, closeWorkspace, connDialog, dialogs, docRef, dual, dualPane, findConnection, focusToward, importOpen, jumpWorkspace, kyblDialog, moveActiveWorkspace, newWorkspace, openSettings, openWsSettings, panesRef, setConnDialog, setSettingsOpen, setWsEditing, settingsOpen, split, stepWorkspace, term, toast, toggleSidebar, ws });
   const { palette } = usePaletteHost({ active, activeId, closeOthers, connectIn, conns, facing, ids, isLinked, openConnection, openFavorite, openHere, openSettings, openShell, overlayUp, panesRef, profiles, recents, route, setImportOpen, setSettingsOpen, setTree, settings, settingsOpen, showActivityPanel, slot, split, splitRefusal, switchWorkspace, toast, toggleSync, tree, undo, updateSettings, ws, late });
   const { dropOver, dropRefused, finderTab } = useFinderDropHost({ activeRef, conns, overlayUp, paneById, profiles, switchWorkspace, term, toast, ws, wsDest, wsShow });
@@ -110,7 +110,6 @@ export function AppShell() {
         conns={conns}
         dialogs={dialogs}
         driveMenu={driveMenu}
-        findConnection={findConnection}
         findSignal={findSignal}
         focusSoon={focusSoon}
         groupItems={groupItems}
@@ -125,8 +124,6 @@ export function AppShell() {
         openShell={openShell}
         picks={picks}
         profiles={profiles}
-        railPick={railPick}
-        railSection={railSection}
         recents={recents}
         saved={saved}
         sectionMenu={sectionMenu}

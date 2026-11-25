@@ -14,7 +14,7 @@ import type { LaunchItem } from "../../browser/components/PaneLauncher";
 import { trustOnProfile } from "../../connections/components/ConnFix";
 import { forgetCaps, peekCaps } from "../../core/useCaps";
 import { freshConnection } from "../../log/connLog";
-import { scopeOf, revealKeys, type GroupChanges, normalizeGroup, groupOf, allGroups, groupLabel, inScope, renameGroup, renamedOpen, parentGroup, ungroup, type KindSection, type GroupNode, useOpenGroups, useRecentConnections } from "../../connections/lib/groups";
+import { scopeOf, revealKeys, type GroupChanges, normalizeGroup, groupOf, allGroups, groupLabel, inScope, renameGroup, renamedOpen, parentGroup, ungroup, type KindSection, useOpenGroups, useRecentConnections } from "../../connections/lib/groups";
 import { useEffect, type Dispatch, type SetStateAction } from "react";
 import { isShellConn, addressOf } from "../../connections/lib/kinds";
 import { moveInto, togglePins } from "../../connections/lib/organize";
@@ -349,36 +349,6 @@ export function useSidebarMenus(h: UseSidebarMenusDeps) {
       { type: "sep" },
       { type: "item", label: `New ${s.label} connection…`, icon: "plus", onClick: () => h.setConnDialog({ profile: null, startKind: s.kind }) },
     ]);
-  /**
-   * The folded rail's icon for a kind section: its connections in a menu (a submenu per group
-   * first, compact however long the list below them, then the connections at its top), the one on
-   * screen ticked.
-   */
-  const railSection = (s: KindSection, x: number, y: number) => {
-    const item = (p: Profile): MenuItem => ({ type: "item", label: p.name, checked: p.id === h.active.profile?.id || undefined, onClick: () => openConnection(p) });
-    // menus go one submenu deep: every group holding connections is one, by its whole path
-    const holding: GroupNode[] = [];
-    const walk = (n: GroupNode) => {
-      for (const g of n.groups) {
-        if (g.items.length) holding.push(g);
-        walk(g);
-      }
-    };
-    walk(s.tree);
-    const level = (n: GroupNode): MenuItem[] =>
-      tidyMenu([
-        ...holding.map((g): MenuItem => ({ type: "submenu", label: `${groupLabel(g.path)} (${g.items.length})`, icon: "folder", items: () => g.items.map(item) })),
-        holding.length > 0 && n.items.length > 0 && { type: "sep" },
-        ...n.items.map(item),
-      ]);
-    h.dialogs.menu(x, y, [
-      { type: "label", label: `${s.label} · ${s.tree.count}` },
-      ...level(s.tree),
-      { type: "sep" },
-      { type: "item", label: `New ${s.label} connection…`, icon: "plus", onClick: () => h.setConnDialog({ profile: null, startKind: s.kind }) },
-    ]);
-  };
-
   /** "Mount as drive…" for a bucket ("" = the whole connection) */
   const askMount = (p: Profile, b: string) =>
     h.dialogs.show((close) => (
@@ -460,19 +430,6 @@ export function useSidebarMenus(h: UseSidebarMenusDeps) {
       ...extra,
     ];
   };
-  /** The folded sidebar: a connection's icon lists its buckets (a server's one root just opens). */
-  const railPick = async (p: Profile, x: number, y: number) => {
-    if (isShellConn(p)) return h.openShell(p);
-    if (h.fileId == null || !h.active.profile) return h.openHere((pane) => void h.connectIn(pane.id, p));
-    if (rootsMode(p, peekCaps(p.id)) === "single") {
-      return h.openHere((pane) => pane.openBucket(p, ""));
-    }
-    const names = await h.conns.loadBuckets(p);
-    const hidden = new Set(h.conns.hiddenBuckets[p.id] ?? []);
-    const shown = names.filter((b) => !hidden.has(b));
-    const here = h.active.profile?.id === p.id ? h.active.bucket : null;
-    h.dialogs.menu(x, y, [{ type: "label", label: p.name }, ...rootMenuItems(p, shown, here, (b) => h.openHere((pane) => pane.openBucket(p, b)), h.active.id)]);
-  };
   /** The badge before a pane's path: every connection, each with its buckets, opened in that pane. */
   const switchMenu = (id: PaneId, x: number, y: number) => {
     const pane = h.paneById(id);
@@ -532,5 +489,5 @@ export function useSidebarMenus(h: UseSidebarMenusDeps) {
       { type: "item", label: hidden ? "Show in the sidebar" : "Hide from the sidebar", icon: hidden ? "eye" : "eye-off", onClick: () => h.conns.setBucketHidden(p, b, !hidden) },
     ]));
   };
-  return { askBucketName, askNewBucket, openFavorite, emptyFor, openConnection, findConnection, moveToGroup, togglePin, groupItems, groupMenu, sectionMenu, railSection, driveMenu, connectionMenu, railPick, switchMenu, bucketMenu };
+  return { askBucketName, askNewBucket, openFavorite, emptyFor, openConnection, findConnection, moveToGroup, togglePin, groupItems, groupMenu, sectionMenu, driveMenu, connectionMenu, switchMenu, bucketMenu };
 }
