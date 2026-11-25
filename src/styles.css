@@ -6033,3 +6033,14 @@ input[type="range"]:focus-visible {
 .bucket-list > .side-item.sub > svg:first-child {
   margin: 0 3px;
 }
+
+/* Windows 11 scheme (schemes.ts): Windows' own corners (4px on controls, 8px on flyouts and
+   cards) and, while the font is left at System, Segoe UI Variable */
+:root[data-scheme="windows"] {
+  --r-sm: 4px;
+  --r: 4px;
+  --r-lg: 8px;
+}
+:root[data-scheme="windows"][data-font="system"] {
+  --font: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+}

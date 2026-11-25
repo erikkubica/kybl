@@ -12,6 +12,10 @@
     "opener:allow-reveal-item-in-dir",
     "dialog:default",
     "core:webview:allow-set-webview-zoom",
-    "core:window:allow-set-theme"
+    "core:window:allow-set-theme",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-close"
   ]
 }

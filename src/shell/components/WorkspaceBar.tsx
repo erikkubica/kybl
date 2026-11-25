@@ -21,6 +21,7 @@ import type { PaneId } from "../../browser/types";
 import { colorValue } from "../lib/workspaces";
 import { keys } from "../../ui/lib/osText";
 import { NotificationBell } from "./NotificationBell";
+import { WindowControls } from "./WindowControls";
 import { ProviderBadge } from "../../sidebar/Sidebar";
 
 export type WorkspaceTab = { id: string; name: string; color: string | null; panes: number };
@@ -402,6 +403,7 @@ export function WorkspaceBar(p: WorkspaceBarProps) {
         <Icon name={p.dark ? "sun" : "moon"} size={15} />
       </button>
       <NotificationBell />
+      <WindowControls />
     </div>
   );
 }

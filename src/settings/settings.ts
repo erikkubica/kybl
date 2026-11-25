@@ -194,6 +194,8 @@ function applyTheme() {
   const root = document.documentElement;
   const dark = isDark();
   root.dataset.theme = dark ? "dark" : "light";
+  // a scheme may bring more than colours (Windows 11: its corners and font), keyed in styles.css
+  root.dataset.scheme = current.scheme;
   // colour scheme: inline custom properties win over the stylesheet defaults
   for (const name of SCHEME_VAR_NAMES) root.style.removeProperty(name);
   const ownAccent = current.accent === "scheme";

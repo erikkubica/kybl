@@ -5,7 +5,7 @@
  * Applied by settings.ts as CSS custom properties on <html>, so the picker previews and the
  * real UI always use the same numbers.
  */
-export type SchemeId = "kybl" | "default" | "graphite" | "midnight" | "nord" | "solarized" | "ember" | "grape";
+export type SchemeId = "kybl" | "default" | "windows" | "graphite" | "midnight" | "nord" | "solarized" | "ember" | "grape";
 
 export type Palette = {
   bg: string;
@@ -41,6 +41,14 @@ export const SCHEMES: Scheme[] = [
     label: "Classic",
     light: { bg: "#ffffff", raised: "#ffffff", panel: "#f7f7f9", sidebar: "#f2f2f5", field: "#ffffff", border: "#e6e6eb", borderStrong: "#d2d3db", text: "#17181c", dim: "#60636e", faint: "#9497a3", accent: "#2c6bf2", accentSolid: "#2c6bf2" },
     dark: { bg: "#17181b", raised: "#222328", panel: "#1c1d21", sidebar: "#111214", field: "#1d1e23", border: "#2a2b31", borderStrong: "#3a3c44", text: "#ececf1", dim: "#a0a3ae", faint: "#868a94", accent: "#7aa2ff", accentSolid: "#3a70f2" },
+  },
+  {
+    // Windows 11's own look (Fluent): Mica greys, the system blue, its yellow folders. With it,
+    // corners are Windows' 4px and the text is Segoe UI Variable (styles.css, data-scheme)
+    id: "windows",
+    label: "Windows 11",
+    light: { bg: "#fbfbfb", raised: "#ffffff", panel: "#f5f5f5", sidebar: "#f3f3f3", field: "#ffffff", border: "#e5e5e5", borderStrong: "#d1d1d1", text: "#1b1b1b", dim: "#5d5d5d", faint: "#8e8e8e", accent: "#005fb8", accentSolid: "#005fb8", folder: ["#c98c00", "#e8a91f", "#ffd25a"] },
+    dark: { bg: "#272727", raised: "#2d2d2d", panel: "#2b2b2b", sidebar: "#202020", field: "#2d2d2d", border: "#333333", borderStrong: "#454545", text: "#ffffff", dim: "#cfcfcf", faint: "#9d9d9d", accent: "#60cdff", accentSolid: "#0078d4", folder: ["#ffc83d", "#d9a521", "#ffd65c"] },
   },
   {
     id: "graphite",

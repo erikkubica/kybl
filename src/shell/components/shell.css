@@ -943,3 +943,40 @@ body.resizing-row * {
 .pane-row .pane-new {
   flex: none;
 }
+
+/* ---------------------------------------------------------------- Windows: the bar is the title bar
+   (no system title bar there, see WindowControls.tsx): minimize, maximize and close at its right
+   end, the bar's full height, flush with the window's corner, like the system's own */
+:root.os-win .ws-bar {
+  padding-top: 0;
+  padding-right: 0;
+}
+.win-controls {
+  align-self: stretch;
+  display: flex;
+  margin-left: 6px;
+}
+.win-btn {
+  width: 46px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+}
+.win-btn:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.win-btn:active {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  color: var(--dim);
+}
+.win-btn.win-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+.win-btn.win-close:active {
+  background: #c83c30;
+  color: rgba(255, 255, 255, 0.8);
+}

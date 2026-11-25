@@ -30,8 +30,10 @@ export function osNames(os: Os): OsNames {
 }
 
 const UA = typeof navigator === "undefined" ? "" : navigator.userAgent;
+/** dev server only: `?os=win` (or mac, linux) shows another system's layout in the browser */
+const FORCED = import.meta.env?.DEV && typeof location !== "undefined" ? (/[?&]os=(mac|win|linux)\b/.exec(location.search)?.[1] as Os | undefined) : undefined;
 /** This system. */
-export const OS: Os = osOf(UA);
+export const OS: Os = FORCED ?? osOf(UA);
 /** This system's names (see `osNames`). */
 export const ON_OS: OsNames = osNames(OS);
 

@@ -272,6 +272,13 @@ pub fn show_main_at(app: &AppHandle, settings_page: Option<&str>) {
                 Ok(b) => b,
                 Err(_) => return,
             };
+            // Windows: no system title bar; the workspace bar is the title bar, with its own
+            // minimize, maximize and close (WindowControls.tsx). The frame's shadow and resize
+            // edges stay (Tauri keeps them on an undecorated window)
+            #[cfg(target_os = "windows")]
+            {
+                b = b.decorations(false);
+            }
             if let Some(page) = settings_page {
                 // the page is not listening for events yet: leave the request where it looks on start
                 b = b.initialization_script(format!("window.__KYBL_OPEN_SETTINGS__ = {page:?};"));
