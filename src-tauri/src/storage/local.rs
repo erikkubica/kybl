@@ -83,6 +83,7 @@ fn file_entry(key: String, meta: &std::fs::Metadata) -> Entry {
         etag: Some(weak_etag(meta.len(), modified)),
         size: meta.len() as i64,
         modified,
+        created: millis_of(meta.created()),
         key,
         ..Default::default()
     }

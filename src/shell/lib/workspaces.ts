@@ -143,6 +143,7 @@ function parseView(v: unknown): PaneView {
     hidden: typeof x.hidden === "boolean" ? x.hidden : null,
     compact: typeof x.compact === "boolean" ? x.compact : null,
     tile: typeof x.tile === "number" && x.tile > 0 ? x.tile : null,
+    group: typeof x.group === "string" ? (x.group as PaneView["group"]) : null,
     info: x.info === true ? true : null,
   };
 }
@@ -213,7 +214,7 @@ export function readSlot(id: PaneId): PaneSnap {
     }
   };
   const loc = json(k.last);
-  return { loc: isLoc(loc) ? loc : null, view: parseView({ view: LS.get(k.view), sort: json(k.sort), hidden: json(k.hidden), compact: json(k.compact), tile: json(k.tile), info: json(k.info) }) };
+  return { loc: isLoc(loc) ? loc : null, view: parseView({ view: LS.get(k.view), sort: json(k.sort), hidden: json(k.hidden), compact: json(k.compact), tile: json(k.tile), group: json(k.group), info: json(k.info) }) };
 }
 
 /** Puts a workspace's pane into its slot's keys, so the slot opens there (a launch). */
@@ -226,6 +227,7 @@ export function writeSlot(id: PaneId, s: PaneSnap | undefined) {
   LS.set(k.hidden, v?.hidden != null ? JSON.stringify(v.hidden) : "");
   LS.set(k.compact, v?.compact != null ? JSON.stringify(v.compact) : "");
   LS.set(k.tile, v?.tile != null ? JSON.stringify(v.tile) : "");
+  LS.set(k.group, v?.group ? JSON.stringify(v.group) : "");
   LS.set(k.info, v?.info ? "true" : "");
 }
 

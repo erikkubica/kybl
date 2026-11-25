@@ -3,7 +3,7 @@
  * or grid with its empty and error states, the status bar, Quick Look and the drag ghost. All
  * state lives in the pane object from usePane; this only draws it.
  */
-import { lazy, Suspense, useEffect, useRef, type CSSProperties } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, type CSSProperties } from "react";
 import { Icon } from "../ui/components/Icons";
 import { Toolbar } from "./components/Toolbar";
 import { rootIcon, rootsMode } from "../connections/lib/roots";
@@ -66,7 +66,7 @@ export type BrowserPaneProps = {
   style?: CSSProperties;
 };
 
-const NO_CLASS: ColumnId[] = ["storageClass"];
+
 
 export function BrowserPane(p: BrowserPaneProps) {
   const { pane, settings, active } = p;
@@ -83,7 +83,15 @@ export function BrowserPane(p: BrowserPaneProps) {
   // tiles read the image mode when they mount: the grid starts over when a mode changes
   const imageModes = useImageModes();
   /** what this connection can't show: storage classes */
-  const noClass = !!pane.caps && !pane.caps.storageClass;
+  const caps = pane.caps;
+  const unavailableCols = useMemo((): ColumnId[] => {
+    if (!caps) return [];
+    const out: ColumnId[] = [];
+    if (!caps.storageClass) out.push("storageClass");
+    if (!caps.permissions) out.push("perms", "owner");
+    if (!caps.localPaths && profile?.kind !== "gdrive") out.push("created");
+    return out;
+  }, [caps, profile?.kind]);
   // a click on the empty background: nothing selected and no keyboard cursor left on a tile
   const clearSel = () => {
     sel.setSelected(new Set());
@@ -182,6 +190,8 @@ export function BrowserPane(p: BrowserPaneProps) {
         onView={pane.setView}
         onCompact={pane.setCompact}
         onSortChange={setSort}
+        groupBy={pane.groupBy}
+        onGroupBy={(g) => pane.setGroupBy(g)}
         tile={pane.tile}
         onTile={pane.setTile}
         hidden={pane.caps?.localPaths ? pane.showHidden : undefined}
@@ -236,6 +246,7 @@ export function BrowserPane(p: BrowserPaneProps) {
                 <GridView
                   key={`${settings.binaryUnits}${settings.absoluteDates}${imageModes}`}
                   entries={listEntries}
+                  groups={ent.groups}
                   selected={selected}
                   loading={listLoading}
                   stale={stale}
@@ -265,6 +276,7 @@ export function BrowserPane(p: BrowserPaneProps) {
                 <FileTable
                   key={`${settings.binaryUnits}${settings.absoluteDates}`}
                   entries={listEntries}
+                  groups={ent.groups}
                   selected={selected}
                   sort={sort}
                   loading={listLoading}
@@ -272,13 +284,12 @@ export function BrowserPane(p: BrowserPaneProps) {
                   hasMore={ent.hasMore}
                   searchMode={!!search || !!filter}
                   prefix={search ? search.loc.prefix : prefix}
-                  // connections without storage classes (servers, drives, this computer) leave that column out;
-                  // the setting keeps it for the connections that have them
-                  columns={noClass ? settings.columns.filter((c) => c !== "storageClass") : settings.columns}
-                  unavailable={noClass ? NO_CLASS : undefined}
-                  onColumnsChange={(columns) =>
-                    p.updateSettings({ columns: noClass && settings.columns.includes("storageClass") && !columns.includes("storageClass") ? [...columns, "storageClass"] : columns })
-                  }
+                  // columns this connection can't fill (storage classes off S3, permissions off the
+                  // servers, created dates off this computer and Drive) are left out here; the
+                  // setting keeps them for the connections that have them
+                  columns={settings.columns}
+                  unavailable={unavailableCols}
+                  onColumnsChange={(columns) => p.updateSettings({ columns })}
                   autoFocus={active}
                   onUpload={readOnly ? undefined : uploadFiles}
                   onNewFolder={readOnly ? undefined : newFolder}

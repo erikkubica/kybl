@@ -1,19 +1,21 @@
 import { keys } from "../../../ui/lib/osText";
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { GitBadge, HitLine } from "../DevMarks";
 import type { GitMark } from "../../hooks/useGitStatus";
 import type { ContentHit } from "../../lib/devtoolsApi";
 import { useMeasured, useWindowed } from "../../../ui/hooks/useWindowed";
 import { Icon } from "../../../ui/components/Icons";
-import { formatBytes, formatDate, formatDateFull, entrySize, entryKind, parentPrefix, plural } from "../../../core/format";
+import { formatBytes, formatDate, formatDateFull, entrySize, entryKind, extOf, parentPrefix, plural } from "../../../core/format";
+import { modeText } from "../../../perms/permsApi";
+import type { Group } from "../../lib/grouping";
 import { EmptyState, FileIcon, SkeletonRows } from "./FileIcon";
 import { ContextMenu, isMenuKey, menuPointFor, type MenuItem } from "../../../ui/components/Dialogs";
 import { useListNav, useMarquee, type Box, type FolderSizeInfo, type SelectKeys } from "./listNav";
 import { storageClassLabel } from "../../lib/storageClasses";
-import { DEFAULTS, type ColumnId } from "../../../settings/settings";
+import { DEFAULTS, type ColumnId, type SortBy } from "../../../settings/settings";
 import type { Entry } from "../../../core/types";
 
-export type SortKey = "name" | "size" | "modified" | "kind";
+export type SortKey = SortBy;
 export type Sort = { key: SortKey; dir: "asc" | "desc" };
 
 /**
@@ -25,14 +27,20 @@ type Col = { id: ColumnId; cls: string; sort?: SortKey; label: string; def: numb
 const COLS: Col[] = [
   { id: "size", cls: "c-size", sort: "size", label: "Size", def: 84, min: 56, max: 180 },
   { id: "modified", cls: "c-mod", sort: "modified", label: "Modified", def: 140, min: 90, max: 280 },
+  { id: "created", cls: "c-created", sort: "created", label: "Created", def: 140, min: 90, max: 280 },
   { id: "kind", cls: "c-kind", sort: "kind", label: "Kind", def: 108, min: 64, max: 280 },
+  { id: "type", cls: "c-type", sort: "type", label: "Type", def: 64, min: 44, max: 160 },
+  { id: "perms", cls: "c-perms", label: "Permissions", def: 96, min: 70, max: 160 },
+  { id: "owner", cls: "c-owner", label: "Owner", def: 110, min: 56, max: 240 },
   { id: "storageClass", cls: "c-sc", label: "Storage class", def: 118, min: 70, max: 240 },
   { id: "etag", cls: "c-etag", label: "ETag", def: 150, min: 80, max: 320 },
 ];
 const NAME_MIN = 190;
 const GAP = 14;
+/** a row's own side padding (10px each side) */
+const ROW_PAD = 20;
 /** the rows' side padding, and the 10px the body keeps for its scrollbar */
-const PAD = 46;
+const SIDES = 46;
 const WIDTHS_KEY = "s3b.columns";
 /** columns chosen in this window when the app doesn't keep them in settings */
 const LOCAL_COLS_KEY = "s3b.columnsShown";
@@ -68,6 +76,26 @@ function loadLocalCols(): ColumnId[] {
     /* defaults */
   }
   return DEFAULTS.columns;
+}
+
+/** A row the list draws: a group's heading, or entry `i`. */
+type Item = { head: Group } | { i: number };
+
+/** Grouped rows: the headings and entries in drawing order, and where each entry is drawn. */
+function useMemoGroups(count: number, groups: Group[] | null | undefined): { items: Item[] | null; posOf: (i: number) => number } {
+  return useMemo(() => {
+    if (!groups?.length) return { items: null, posOf: (i: number) => i };
+    const items: Item[] = [];
+    const pos = new Array<number>(count);
+    for (const g of groups) {
+      items.push({ head: g });
+      for (let i = g.start; i < g.start + g.count && i < count; i++) {
+        pos[i] = items.length;
+        items.push({ i });
+      }
+    }
+    return { items, posOf: (i: number) => pos[i] ?? i };
+  }, [count, groups]);
 }
 
 /** Size cell of a folder: its size once worked out, progress while it runs, else a Calculate link. */
@@ -127,6 +155,7 @@ export function FileTable({
   searchMode,
   prefix,
   emptyAction,
+  groups,
   columns,
   unavailable,
   activeKey,
@@ -162,6 +191,8 @@ export function FileTable({
   searchMode: boolean;
   prefix: string;
   emptyAction?: ReactNode;
+  /** the rows in headed groups (lib/grouping.ts; `entries` already in that order), or none */
+  groups?: Group[] | null;
   /** optional columns in order (settings.columns); without it the choice is kept per window */
   columns?: ColumnId[];
   /** columns this connection can't fill (storage class off S3): left out of the header's menu */
@@ -201,32 +232,30 @@ export function FileTable({
   const table = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const listId = useId();
-  const rowH = useMeasured(body, ".row", 32);
+  const rowH = useMeasured(body, ".row:not(.row-group)", 32);
   // the ".." row sits above the first entry
   const upH = onGoUp ? rowH : 0;
+  // grouped: each group's heading is a row of its own before its entries. `items` is what the
+  // list draws in order; `posOf[i]` is where entry i sits among them
+  const { items, posOf } = useMemoGroups(entries.length, groups);
   // the body's top padding sits above the first row
-  const win = useWindowed({ scroller: body, count: entries.length, rowHeight: rowH, offset: 4 + upH });
+  const win = useWindowed({ scroller: body, count: items ? items.length : entries.length, rowHeight: rowH, offset: 4 + upH });
   const [widths, setWidths] = useState(loadWidths);
-  const [avail, setAvail] = useState(10_000);
   const [resizing, setResizing] = useState<ColumnId | null>(null);
   const [localCols, setLocalCols] = useState(loadLocalCols);
   const [headMenu, setHeadMenu] = useState<{ x: number; y: number } | null>(null);
   const chosen = columns ?? localCols;
 
-  useEffect(() => {
-    const el = table.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setAvail(el.clientWidth));
-    ro.observe(el);
-    setAvail(el.clientWidth);
-    return () => ro.disconnect();
-  }, []);
-
-  // The name keeps at least NAME_MIN; when the pane gets too narrow, columns drop from the right.
-  const shown = chosen.map((id) => COLS.find((c) => c.id === id)).filter((c): c is Col => !!c);
-  const need = () => NAME_MIN + PAD + shown.reduce((n, c) => n + widths[c.id] + GAP, 0);
-  while (shown.length > 0 && need() > avail) shown.pop();
-  const template = `minmax(0, 1fr)${shown.map((c) => ` ${widths[c.id]}px`).join("")}`;
+  // The name keeps at least NAME_MIN; when the columns don't fit beside it, the list scrolls
+  // sideways (the header follows the rows) instead of leaving columns out.
+  const shown = chosen.map((id) => COLS.find((c) => c.id === id)).filter((c): c is Col => !!c && !unavailable?.includes(c.id));
+  const rowMin = NAME_MIN + ROW_PAD + shown.reduce((n, c) => n + widths[c.id] + GAP, 0);
+  const template = `minmax(${NAME_MIN}px, 1fr)${shown.map((c) => ` ${widths[c.id]}px`).join("")}`;
+  const thead = useRef<HTMLDivElement>(null);
+  const followScroll = () => {
+    const h = thead.current;
+    if (h && body.current) h.style.transform = `translateX(${-body.current.scrollLeft}px)`;
+  };
 
   const setChosen = (next: ColumnId[]) => {
     if (onColumnsChange) onColumnsChange(next);
@@ -251,9 +280,12 @@ export function FileTable({
     ev.stopPropagation();
     const startX = ev.clientX;
     const startW = widths[col.id];
+    // the edge follows the pointer: the column grows into the name's room, down to the name's
+    // least width, and no further (else it would spill to the right); one already wider than
+    // that (a list scrolled sideways) keeps its width
     const others = shown.filter((c) => c.id !== col.id).reduce((n, c) => n + widths[c.id] + GAP, 0);
-    const room = avail - PAD - NAME_MIN - others - GAP; // widest this column can get right now
-    const ceiling = Math.max(col.min, Math.min(col.max, room));
+    const room = (table.current?.clientWidth ?? 0) - SIDES - NAME_MIN - others - GAP;
+    const ceiling = Math.max(startW, Math.min(col.max, room));
     let latest = widths;
     setResizing(col.id);
     const move = (e: PointerEvent) => {
@@ -359,13 +391,17 @@ export function FileTable({
 
   const hitTest = useCallback(
     (b: Box) => {
+      const n = items ? items.length : entries.length;
       const first = Math.max(0, Math.floor((b.y0 - 4 - upH) / rowH));
-      const last = Math.min(entries.length - 1, Math.floor((b.y1 - 4 - upH) / rowH));
+      const last = Math.min(n - 1, Math.floor((b.y1 - 4 - upH) / rowH));
       const out: number[] = [];
-      for (let i = first; i <= last; i++) out.push(i);
+      for (let k = first; k <= last; k++) {
+        const it = items ? items[k] : { i: k };
+        if ("i" in it) out.push(it.i);
+      }
       return out;
     },
-    [rowH, upH, entries.length],
+    [rowH, upH, entries.length, items],
   );
   const marquee = useMarquee({ scroller: body, entries, selected, hitTest, onSelectKeys, onMove, onClearSelection });
 
@@ -373,7 +409,7 @@ export function FileTable({
   const { reveal } = win;
   useEffect(() => {
     if (marquee.selecting.current || nav.activeIndex < 0) return;
-    reveal(nav.activeIndex);
+    reveal(posOf(nav.activeIndex));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nav.active, selected, reveal]);
 
@@ -463,7 +499,7 @@ export function FileTable({
     <div
       className={`table ${resizing ? "resizing" : ""} ${stale ? "stale" : ""} ${nav.kbd ? "kbd" : ""}`}
       ref={table}
-      style={{ "--cols": template } as React.CSSProperties}
+      style={{ "--cols": template, "--row-min": `${rowMin}px` } as React.CSSProperties}
       tabIndex={0}
       data-list-focus=""
       role="grid"
@@ -485,6 +521,7 @@ export function FileTable({
     >
       <div
         className="thead"
+        ref={thead}
         role="row"
         aria-rowindex={1}
         onContextMenu={(ev) => {
@@ -501,7 +538,7 @@ export function FileTable({
         {head("Name", "c-name", "name")}
         {shown.map((c) => head(c.label, c.cls, c.sort, c))}
       </div>
-      <div className="table-body" ref={body} role="rowgroup">
+      <div className="table-body" ref={body} role="rowgroup" onScroll={followScroll}>
         {onGoUp && (
           // not an entry: no selection or menu; files dropped on it move to the enclosing folder
           <div
@@ -526,8 +563,39 @@ export function FileTable({
           </div>
         )}
         {win.padTop > 0 && <div style={{ height: win.padTop }} aria-hidden="true" />}
-        {entries.slice(win.start, win.end).map((e, n) => {
-          const i = win.start + n;
+        {Array.from({ length: Math.max(0, win.end - win.start) }, (_, n) => {
+          const k = win.start + n;
+          const it: Item = items ? items[k] : { i: k };
+          if ("head" in it) {
+            const g = it.head;
+            const keysIn = () => entries.slice(g.start, g.start + g.count).map((x) => x.key);
+            return (
+              // a group's heading: a click selects everything in it (as Explorer's does)
+              <div
+                key={`g:${g.key}`}
+                className="row row-group"
+                role="row"
+                onMouseDown={(ev) => {
+                  if (ev.button !== 0 || !onSelectKeys) return;
+                  ev.preventDefault();
+                  const ks = keysIn();
+                  onSelectKeys(ks, ks[0]);
+                }}
+                onContextMenu={(ev) => ev.preventDefault()}
+              >
+                <div className="group-label" role="gridcell">
+                  {/* stays in view when the list is scrolled sideways */}
+                  <span className="group-text">
+                    <span>{g.label}</span>
+                    <span className="group-count">{g.count.toLocaleString()}</span>
+                  </span>
+                </div>
+              </div>
+            );
+          }
+          const i = it.i;
+          const e = entries[i];
+          if (!e) return null;
           const sel = selected.has(e.key);
           const rel = e.key.slice(prefix.length).replace(/\/$/, "");
           const slash = searchMode ? rel.lastIndexOf("/") : -1;
@@ -576,10 +644,36 @@ export function FileTable({
                         {formatDate(e.modified)}
                       </div>
                     );
+                  case "created":
+                    return (
+                      <div key={c.id} className={`c-mod ${e.created ? "" : "faint"}`} role="gridcell" title={e.created ? formatDateFull(e.created) : undefined}>
+                        {e.created ? formatDate(e.created) : "—"}
+                      </div>
+                    );
                   case "kind":
                     return (
                       <div key={c.id} className="c-kind" role="gridcell">
                         {entryKind(e)}
+                      </div>
+                    );
+                  case "type": {
+                    const x = folder ? "" : extOf(e.name).toUpperCase();
+                    return (
+                      <div key={c.id} className={`c-kind ${x ? "" : "faint"}`} role="gridcell">
+                        {folder ? "" : x || "—"}
+                      </div>
+                    );
+                  }
+                  case "perms":
+                    return (
+                      <div key={c.id} className={`c-kind mono ${e.mode != null ? "" : "faint"}`} role="gridcell" title={e.mode != null ? `${(e.mode & 0o7777).toString(8).padStart(3, "0")}` : undefined}>
+                        {e.mode != null ? modeText(e.mode) : "—"}
+                      </div>
+                    );
+                  case "owner":
+                    return (
+                      <div key={c.id} className={`c-kind ${e.owner ? "" : "faint"}`} role="gridcell" title={e.owner ? `${e.owner}${e.group ? `:${e.group}` : ""}` : undefined}>
+                        {e.owner ? `${e.owner}${e.group ? ` · ${e.group}` : ""}` : "—"}
                       </div>
                     );
                   case "storageClass":

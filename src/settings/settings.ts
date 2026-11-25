@@ -48,7 +48,9 @@ export type Settings = {
   /** list columns shown on desktop, in order (Name is always first) */
   columns: ColumnId[];
   /** last sort, restored on launch */
-  sort: { by: "name" | "size" | "modified" | "kind"; desc: boolean };
+  sort: { by: SortBy; desc: boolean };
+  /** list and grid: rows in headed groups (each pane can choose its own) */
+  groupBy: GroupBy;
   /** desktop grid tile size in px (96..320) */
   tileSize: number;
   /** phones: ask for Face ID / fingerprint when Kybl opens or comes back after a minute away */
@@ -72,7 +74,10 @@ export type Settings = {
 };
 
 export type Favorite = { profileId: string; bucket: string; prefix: string; name: string };
-export type ColumnId = "size" | "modified" | "kind" | "storageClass" | "etag";
+export type ColumnId = "size" | "modified" | "created" | "kind" | "type" | "perms" | "owner" | "storageClass" | "etag";
+/** what a list sorts by: Type is the extension, Kind what it is ("PDF document") */
+export type SortBy = "name" | "size" | "modified" | "created" | "kind" | "type";
+export type GroupBy = "none" | "name" | "kind" | "type" | "size" | "modified" | "created";
 
 export const DEFAULTS: Settings = {
   theme: "system",
@@ -94,6 +99,7 @@ export const DEFAULTS: Settings = {
   favorites: [],
   columns: ["size", "modified", "kind"],
   sort: { by: "name", desc: false },
+  groupBy: "none",
   tileSize: 160,
   appLock: false,
   layout: "single",

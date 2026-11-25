@@ -890,6 +890,8 @@ kbd {
   min-width: 0;
   min-height: 0;
   container-type: inline-size;
+  /* the header is as wide as the rows and slides with them (FileTable followScroll) */
+  overflow: hidden;
 }
 .thead,
 .row {
@@ -904,6 +906,9 @@ kbd {
   padding: 0 28px 0 18px;
   border-bottom: 1px solid var(--border);
   flex: none;
+  /* the rows' least width (--row-min), plus the header's side padding over theirs */
+  min-width: calc(var(--row-min, 0px) + 26px);
+  will-change: transform;
 }
 .th {
   position: relative;
@@ -981,7 +986,8 @@ kbd {
 }
 .table-body {
   flex: 1;
-  overflow-y: auto;
+  /* sideways too, when the columns don't fit beside the name */
+  overflow: auto;
   scrollbar-gutter: stable;
   /* room under the last row of a long list: a place to right-click the folder itself */
   padding: 4px 8px 72px;
@@ -6087,4 +6093,78 @@ input[type="range"]:focus-visible {
 }
 .roots-more {
   margin-top: 14px;
+}
+
+/* rows never narrower than their columns: past that the list scrolls sideways (FileTable) */
+.table-body > .row {
+  min-width: var(--row-min, 0px);
+}
+/* a group's heading in a grouped list (View › Group by): a click selects its items */
+.row.row-group {
+  cursor: default;
+}
+.row.row-group:hover {
+  background: transparent;
+}
+.group-label {
+  grid-column: 1 / -1;
+  align-self: end;
+  display: flex;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border);
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+.group-count {
+  color: var(--faint);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* a grouped grid (View › Group by, GridView): headings and rows of tiles laid out by the view
+   itself, so each sits at its own place; the empty measure grid gives the columns they share */
+.grid.grid-measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.grid-groups {
+  position: relative;
+}
+.grid.grid-row,
+.grid-group-head {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+.grid.grid-row {
+  padding-block: 0;
+}
+.grid-group-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding-bottom: 8px;
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+.grid-group-head::after {
+  content: "";
+  flex: 1;
+  align-self: center;
+  margin-top: 8px;
+  height: 1px;
+  background: var(--border);
+}
+.group-text {
+  position: sticky;
+  left: 10px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
 }

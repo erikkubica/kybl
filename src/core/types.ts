@@ -107,6 +107,8 @@ export type ObjInfo = {
   id?: string;
   mime?: string;
   hashes?: { md5?: string; sha1?: string; sha256?: string; quickxor?: string; dropbox?: string };
+  /** when it was made: only where the store keeps it (this computer's disk, Google Drive) */
+  created?: number;
   /** Google Docs / Sheets / Slides: no bytes of their own, only exports. */
   native?: { exports: { mime: string; ext: string; label: string }[]; webUrl?: string };
 } & ServerMeta;
@@ -160,6 +162,8 @@ export type Entry = {
   name: string;
   size: number;
   modified: number | null;
+  /** when it was made, where the store keeps it (this computer's disk, Google Drive) */
+  created?: number | null;
   etag?: string | null;
   storageClass?: string | null;
   /** Google Docs / Sheets / Slides: downloads are exports (connections/native.ts) */

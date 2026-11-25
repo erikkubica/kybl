@@ -6,7 +6,7 @@
  */
 import { LOCAL_ID } from "../core/api";
 import type { Profile } from "../core/types";
-import type { Settings } from "../settings/settings";
+import type { GroupBy, Settings } from "../settings/settings";
 import { ON_OS } from "../core/osNames";
 
 export type { Loc } from "./hooks/useListing";
@@ -31,6 +31,8 @@ export type PaneView = {
   hidden: boolean | null;
   compact: boolean | null;
   tile: number | null;
+  /** the pane's own grouping (null or absent: the app's) */
+  group?: GroupBy | null;
   /** the info panel beside the list is open (absent or null: closed) */
   info?: boolean | null;
 };
@@ -43,6 +45,7 @@ export function paneKeys(id: PaneId) {
     hidden: `s3b.hidden.${id}`,
     compact: `s3b.compact.${id}`,
     tile: `s3b.tile.${id}`,
+    group: `s3b.group.${id}`,
     info: `s3b.info.${id}`,
   };
 }

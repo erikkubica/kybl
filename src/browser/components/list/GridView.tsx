@@ -1,4 +1,5 @@
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { Group } from "../../lib/grouping";
 import { useMeasured, useWindowed } from "../../../ui/hooks/useWindowed";
 import { formatBytes, entrySize } from "../../../core/format";
 import { EmptyState, FileIcon, LinkBadge } from "./FileIcon";
@@ -13,6 +14,13 @@ import type { GitMark } from "../../hooks/useGitStatus";
 
 /** Tile width when the app passes none (settings.tileSize defaults to the same). */
 const DEFAULT_TILE = 160;
+/** a group's heading in a grouped grid, px */
+const HEAD_H = 36;
+/** grouped, rows this far outside the view are drawn too, px */
+const OVERSCAN = 600;
+
+/** A grouped grid's rows: a group's heading, or a row of tiles (entries start..start+n). */
+type GRow = { head: Group; top: number } | { start: number; n: number; top: number };
 
 const Card = memo(function Card({
   entry,
@@ -220,8 +228,11 @@ export function GridView({
   onUpload,
   onNewFolder,
   gitMark,
+  groups,
 }: {
   entries: Entry[];
+  /** the tiles in headed groups (lib/grouping.ts; `entries` already in that order), or none */
+  groups?: Group[] | null;
   selected: Set<string>;
   loading?: boolean;
   /** the tiles belong to the previous place while the new one loads: dimmed and inert */
@@ -293,10 +304,52 @@ export function GridView({
     const ro = new ResizeObserver(read);
     ro.observe(g);
     return () => ro.disconnect();
-  }, [size, entries.length === 0]);
-  const cardH = useMeasured(grid, ".card", size + 40);
+    // (grouping swaps the measured element: the tile grid, or the grouped grid's measure)
+  }, [size, entries.length === 0, !!groups?.length]);
+  const cardH = useMeasured(scroller, ".card", size + 40);
   const rowH = cardH + layout.gap;
   const win = useWindowed({ scroller, count: entries.length, columns: layout.cols, rowHeight: rowH, offset: layout.top });
+
+  // grouped: each group a heading, then its tiles in rows of their own; laid out here (heights
+  // known: the heading's and a tile row's), and only the rows near the view are drawn
+  const grouped = useMemo(() => {
+    if (!groups?.length) return null;
+    const cols = Math.max(1, layout.cols);
+    const rows: GRow[] = [];
+    let y = layout.top;
+    for (const g of groups) {
+      rows.push({ head: g, top: y });
+      y += HEAD_H;
+      for (let s = g.start; s < g.start + g.count; s += cols) {
+        rows.push({ start: s, n: Math.min(cols, g.start + g.count - s), top: y });
+        y += rowH;
+      }
+    }
+    return { rows, height: y };
+  }, [groups, layout.cols, layout.top, rowH]);
+  const [vp, setVp] = useState({ top: 0, height: 800 });
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || !grouped) return;
+    let frame = 0;
+    const read = () => {
+      frame = 0;
+      setVp((v) => (v.top === el.scrollTop && v.height === el.clientHeight ? v : { top: el.scrollTop, height: el.clientHeight }));
+    };
+    const on = () => {
+      if (!frame) frame = requestAnimationFrame(read);
+    };
+    read();
+    el.addEventListener("scroll", on, { passive: true });
+    const ro = new ResizeObserver(on);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", on);
+      ro.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [!!grouped]);
+  const rowHeight = (r: GRow) => ("head" in r ? HEAD_H : rowH);
 
   const itemEl = useCallback((i: number) => scroller.current?.querySelector(`[data-index="${i}"]`) ?? null, []);
   const nav = useListNav({
@@ -316,12 +369,38 @@ export function GridView({
   });
 
   // the columns share out the row's width: the rectangle maps to rows and the drawn columns
-  const hitTest = useCallback((b: Box) => gridHits(b, { ...layout, rowH, cardH }, entries.length), [layout, rowH, cardH, entries.length]);
+  const hitTest = useCallback(
+    (b: Box) => {
+      if (!grouped) return gridHits(b, { ...layout, rowH, cardH }, entries.length);
+      const out: number[] = [];
+      const pitchX = layout.colW + layout.colGap;
+      for (const r of grouped.rows) {
+        if ("head" in r || b.y1 < r.top || b.y0 > r.top + cardH) continue;
+        for (let c = 0; c < r.n; c++) {
+          const left = layout.left + c * pitchX;
+          if (b.x1 >= left && b.x0 <= left + layout.colW) out.push(r.start + c);
+        }
+      }
+      return out;
+    },
+    [grouped, layout, rowH, cardH, entries.length],
+  );
   const marquee = useMarquee({ scroller, entries, selected, hitTest, onSelectKeys, onMove, onClearSelection });
 
   const { reveal } = win;
   useEffect(() => {
     if (marquee.selecting.current || nav.activeIndex < 0) return;
+    if (grouped) {
+      const el = scroller.current;
+      const i = nav.activeIndex;
+      const r = grouped.rows.find((x) => !("head" in x) && i >= x.start && i < x.start + x.n);
+      if (!el || !r) return;
+      // the group's heading comes along when it's the group's first row
+      const top = r.top - ("start" in r && grouped.rows.some((x) => "head" in x && x.top + HEAD_H === r.top) ? HEAD_H : 0);
+      if (top < el.scrollTop) el.scrollTop = top;
+      else if (r.top + rowH > el.scrollTop + el.clientHeight) el.scrollTop = r.top + rowH - el.clientHeight;
+      return;
+    }
     reveal(nav.activeIndex);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nav.active, selected, reveal]);
@@ -333,6 +412,35 @@ export function GridView({
     pressRef.current.notePress(e);
     pressRef.current.onPress(e, ev);
   }, []);
+
+  /** One tile: entry `e`, item `i` of the list. */
+  const card = (e: Entry, i: number) => {
+    const rel = e.key.slice(prefix.length).replace(/\/$/, "");
+    const fs = e.kind === "folder" ? folderSize?.(e.key) : undefined;
+    const mark = gitMark?.(e);
+    return (
+      <Card
+        // keyed by content too: a changed file gets a fresh tile, which asks for its new thumbnail
+        key={`${e.key}\n${e.etag ?? ""}\n${e.size}`}
+        entry={e}
+        id={`${listId}-o${i}`}
+        index={i}
+        count={entries.length}
+        selected={selected.has(e.key)}
+        active={i === nav.activeIndex}
+        profileId={profileId}
+        bucket={bucket}
+        label={searchMode ? rel : e.name}
+        size={fs}
+        markKind={mark?.kind}
+        markTitle={mark?.title}
+        markLetter={mark?.letter}
+        onPress={press}
+        onOpen={onOpen}
+        onContext={onContext}
+      />
+    );
+  };
 
   // columns may narrow to 80% of the tile size to fit one more, then share the row evenly
   const columnsCss = `repeat(auto-fill, minmax(min(${Math.round(size * 0.8)}px, 100%), 1fr))`;
@@ -359,38 +467,47 @@ export function GridView({
         marquee.begin(ev);
       }}
     >
-      {win.padTop > 0 && <div style={{ height: win.padTop }} aria-hidden="true" />}
-      <div className="grid" ref={grid} role="presentation" style={{ gridTemplateColumns: columnsCss }}>
-        {entries.slice(win.start, win.end).map((e, n) => {
-          const i = win.start + n;
-          const rel = e.key.slice(prefix.length).replace(/\/$/, "");
-          const fs = e.kind === "folder" ? folderSize?.(e.key) : undefined;
-          const mark = gitMark?.(e);
-          return (
-            <Card
-              // keyed by content too: a changed file gets a fresh tile, which asks for its new thumbnail
-              key={`${e.key}\n${e.etag ?? ""}\n${e.size}`}
-              entry={e}
-              id={`${listId}-o${i}`}
-              index={i}
-              count={entries.length}
-              selected={selected.has(e.key)}
-              active={i === nav.activeIndex}
-              profileId={profileId}
-              bucket={bucket}
-              label={searchMode ? rel : e.name}
-              size={fs}
-              markKind={mark?.kind}
-              markTitle={mark?.title}
-              markLetter={mark?.letter}
-              onPress={press}
-              onOpen={onOpen}
-              onContext={onContext}
-            />
-          );
-        })}
-      </div>
-      {win.padBottom > 0 && <div style={{ height: win.padBottom }} aria-hidden="true" />}
+      {grouped ? (
+        <>
+          {/* only measured: the columns and gaps the tile rows share */}
+          <div className="grid grid-measure" ref={grid} aria-hidden="true" style={{ gridTemplateColumns: columnsCss }} />
+          <div className="grid-groups" role="presentation" style={{ height: grouped.height }}>
+            {grouped.rows
+              .filter((r) => r.top + rowHeight(r) >= vp.top - OVERSCAN && r.top <= vp.top + vp.height + OVERSCAN)
+              .map((r) =>
+                "head" in r ? (
+                  <div
+                    key={`g:${r.head.key}`}
+                    className="grid-group-head"
+                    style={{ top: r.top, height: HEAD_H, paddingInline: layout.left }}
+                    // a click selects everything in it (as Explorer's does)
+                    onMouseDown={(ev) => {
+                      if (ev.button !== 0 || !onSelectKeys) return;
+                      ev.preventDefault();
+                      const ks = entries.slice(r.head.start, r.head.start + r.head.count).map((x) => x.key);
+                      onSelectKeys(ks, ks[0]);
+                    }}
+                  >
+                    <span>{r.head.label}</span>
+                    <span className="group-count">{r.head.count.toLocaleString()}</span>
+                  </div>
+                ) : (
+                  <div key={`r:${r.start}`} className="grid grid-row" role="presentation" style={{ top: r.top, gridTemplateColumns: columnsCss, paddingInline: layout.left }}>
+                    {entries.slice(r.start, r.start + r.n).map((e, n) => card(e, r.start + n))}
+                  </div>
+                ),
+              )}
+          </div>
+        </>
+      ) : (
+        <>
+          {win.padTop > 0 && <div style={{ height: win.padTop }} aria-hidden="true" />}
+          <div className="grid" ref={grid} role="presentation" style={{ gridTemplateColumns: columnsCss }}>
+            {entries.slice(win.start, win.end).map((e, n) => card(e, win.start + n))}
+          </div>
+          {win.padBottom > 0 && <div style={{ height: win.padBottom }} aria-hidden="true" />}
+        </>
+      )}
       {empty && !loading && <EmptyState searchMode={searchMode} action={emptyAction} onUpload={onUpload} onNewFolder={onNewFolder} />}
       {loading && empty && (
         <div className="grid skel-grid" style={{ gridTemplateColumns: columnsCss }} aria-hidden="true">

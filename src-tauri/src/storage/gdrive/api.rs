@@ -86,6 +86,7 @@ impl DFile {
             key,
             size: self.size.as_deref().and_then(|s| s.parse().ok()).unwrap_or(0),
             modified: self.modified_time.as_deref().and_then(extras::parse_rfc3339),
+            created: self.created_time.as_deref().and_then(extras::parse_rfc3339),
             etag: self.etag(),
             storage_class: None,
             id: Some(self.id.clone()),

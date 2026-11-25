@@ -13,7 +13,7 @@ import { ANON, busyOwner, makeFileOps, type FileOps } from "../../desktop/compon
 import type { Place } from "../../shell/lib/crossPane";
 import type { Sort } from "../components/list/FileTable";
 import type { MenuItem } from "../../ui/components/Dialogs";
-import type { Settings } from "../../settings/settings";
+import type { GroupBy, Settings } from "../../settings/settings";
 import type { TransferActions } from "../../transfers/hooks/useTransfers";
 import type { useJobs } from "../../jobs/hooks/useJobs";
 import type { Entry, Profile } from "../../core/types";
@@ -113,12 +113,14 @@ function usePaneCore(env: PaneEnv) {
   const [hiddenOwn, setShowHidden] = usePanePref<boolean>(keys.hidden);
   const [compactOwn, setCompact] = usePanePref<boolean>(keys.compact);
   const [tileOwn, setTile] = usePanePref<number>(keys.tile);
+  const [groupOwn, setGroupBy] = usePanePref<GroupBy>(keys.group);
   // the info panel beside the list (remembered per pane, and kept by the workspace)
   const [infoOwn, setInfoOpen] = usePanePref<boolean>(keys.info);
   const sortSetting = sortOwn ?? settings.sort;
   const showHidden = hiddenOwn ?? settings.showHiddenFiles;
   const compact = compactOwn ?? LS.get("s3b.compact") === "1";
   const tile = tileOwn ?? settings.tileSize;
+  const groupBy: GroupBy = groupOwn ?? settings.groupBy ?? "none";
   const sort: Sort = useMemo(() => ({ key: sortSetting.by, dir: sortSetting.desc ? "desc" : "asc" }), [sortSetting]);
   const setSort = (s: Sort) => setSortOwn({ by: s.key, desc: s.dir === "desc" });
   const caps = useCaps(profile?.id);
@@ -129,7 +131,7 @@ function usePaneCore(env: PaneEnv) {
     (id: string) => !showHidden && !!(id === profile?.id ? caps : peekCaps(id))?.localPaths,
     [showHidden, profile?.id, caps],
   );
-  const ent = useEntries(here, sort, settings.foldersFirst, onError, hideDotfilesOf);
+  const ent = useEntries(here, sort, settings.foldersFirst, onError, hideDotfilesOf, groupBy);
   const { lst, sr, search, entries } = ent;
   // this computer's folders in a git work tree: the branch and the items' status marks
   const git = useGitStatus(here, !!caps?.localPaths, ent.listing);
@@ -172,7 +174,7 @@ function usePaneCore(env: PaneEnv) {
     LS.set(viewKey, v);
   };
   /** The pane's own view choices as they are (null: following the app's setting), for a workspace to keep. */
-  const viewState = (): PaneView => ({ view, sort: sortOwn, hidden: hiddenOwn, compact: compactOwn, tile: tileOwn, info: infoOwn });
+  const viewState = (): PaneView => ({ view, sort: sortOwn, hidden: hiddenOwn, compact: compactOwn, tile: tileOwn, group: groupOwn, info: infoOwn });
   /** Takes a workspace's view choices back. */
   const applyView = (v: PaneView) => {
     if (v.view !== view) setView(v.view);
@@ -180,6 +182,7 @@ function usePaneCore(env: PaneEnv) {
     setShowHidden(v.hidden);
     setCompact(v.compact);
     setTile(v.tile);
+    setGroupBy(v.group ?? null);
     setInfoOpen(v.info ? true : null);
   };
 
@@ -505,6 +508,8 @@ function usePaneCore(env: PaneEnv) {
     viewState,
     applyView,
     setSort,
+    groupBy,
+    setGroupBy,
     showHidden,
     setShowHidden,
     compact,

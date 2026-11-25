@@ -178,6 +178,10 @@ pub struct Entry {
     pub size: i64,
     /// milliseconds since the epoch
     pub modified: Option<i64>,
+    /// when it was made, milliseconds since the epoch: only where the store keeps it (this
+    /// computer's disk, Google Drive), never S3 or the servers
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created: Option<i64>,
     pub etag: Option<String>,
     pub storage_class: Option<String>,
     /// providers that address files by id (Drive, Box); the UI keys rows by it when present

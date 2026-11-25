@@ -5,6 +5,7 @@ import { PathTitle } from "./PathTitle";
 import { ProviderBadge } from "../../sidebar/Sidebar";
 import type { MenuItem } from "../../ui/components/Dialogs";
 import type { Sort, SortKey } from "./list/FileTable";
+import type { GroupBy } from "../../settings/settings";
 import { useDialogs } from "../../shell/hooks/useDialogs";
 import { parentPrefix } from "../../core/format";
 
@@ -36,6 +37,8 @@ export function Toolbar({
   onView,
   onCompact,
   onSortChange,
+  groupBy = "none",
+  onGroupBy,
   tile,
   onTile,
   hidden,
@@ -94,6 +97,9 @@ export function Toolbar({
   onView: (v: "list" | "grid") => void;
   onCompact: (c: boolean) => void;
   onSortChange: (s: Sort) => void;
+  /** rows in headed groups ("none": not grouped) */
+  groupBy?: GroupBy;
+  onGroupBy?: (g: GroupBy) => void;
   /** grid view's tile size, for the view menu's Bigger / Smaller icons */
   tile: number;
   onTile: (px: number) => void;
@@ -186,8 +192,19 @@ export function Toolbar({
     const keys: [SortKey, string][] = [
       ["name", "Name"],
       ["modified", "Date modified"],
+      ["created", "Date created"],
       ["size", "Size"],
       ["kind", "Kind"],
+      ["type", "Type"],
+    ];
+    const groupings: [GroupBy, string][] = [
+      ["none", "None"],
+      ["name", "Name"],
+      ["kind", "Kind"],
+      ["type", "Type"],
+      ["size", "Size"],
+      ["modified", "Date modified"],
+      ["created", "Date created"],
     ];
     const items: (MenuItem | false)[] = [
       { type: "item", label: "As list", icon: "list", checked: view === "list", onClick: () => onView("list") },
@@ -201,12 +218,19 @@ export function Toolbar({
       { type: "sep" },
       { type: "item", label: "Ascending", checked: sort.dir === "asc", onClick: () => onSortChange({ ...sort, dir: "asc" }) },
       { type: "item", label: "Descending", checked: sort.dir === "desc", onClick: () => onSortChange({ ...sort, dir: "desc" }) },
+      !!onGroupBy && { type: "sep" },
+      !!onGroupBy && {
+        type: "submenu",
+        label: groupBy === "none" ? "Group by" : `Group by: ${groupings.find(([g]) => g === groupBy)?.[1] ?? ""}`,
+        icon: "list",
+        items: () => groupings.map(([g, label]): MenuItem => ({ type: "item", label, checked: groupBy === g, onClick: () => onGroupBy(g) })),
+      },
       hidden !== undefined && !!onToggleHidden && { type: "sep" },
       hidden !== undefined && !!onToggleHidden && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: hidden, onClick: onToggleHidden },
     ];
     dialogs.menu(...anchorOf(e), items.filter((x): x is MenuItem => !!x));
   };
-  const sortName = { name: "name", modified: "date modified", size: "size", kind: "kind" }[sort.key];
+  const sortName = { name: "name", modified: "date modified", created: "date created", size: "size", kind: "kind", type: "type" }[sort.key];
   const searchOpen = !!query || searchActive;
 
   return (

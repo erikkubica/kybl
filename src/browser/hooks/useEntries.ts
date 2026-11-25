@@ -4,7 +4,9 @@
  * except the previous place's, dimmed and inert, while the next one loads (`stale`).
  */
 import { useCallback, useMemo, useRef, useState } from "react";
-import { baseName, entryKind } from "../../core/format";
+import { baseName, entryKind, extOf } from "../../core/format";
+import { groupEntries, type Group } from "../lib/grouping";
+import type { GroupBy } from "../../settings/settings";
 import type { Sort } from "../components/list/FileTable";
 import type { Entry, ObjInfo } from "../../core/types";
 import { sameLoc, useListing, type Loc } from "./useListing";
@@ -38,6 +40,7 @@ const fileEntry = (o: ObjInfo): Entry => ({
   name: baseName(o.key),
   size: o.size,
   modified: o.modified,
+  created: o.created ?? null,
   etag: o.etag,
   storageClass: o.storageClass,
   native: o.native,
@@ -61,12 +64,15 @@ export function useEntries(
    * greyed, and keeps its own rule
    */
   hideDotfilesOf: (profileId: string) => boolean = () => false,
+  /** rows in headed groups (lib/grouping.ts): the order selection and the keys follow too */
+  groupBy: GroupBy = "none",
 ) {
   const [query, setQuery] = useState("");
   const sr = useSearch(onError, (id) => !hideDotfilesOf(id));
   const search = sr.search && sameLoc(sr.search.loc, here) ? sr.search : null;
 
-  const needsAll = !search && (sort.key !== "name" || sort.dir !== "asc");
+  // groups (like any sort but A to Z by name) only hold still once the whole folder is in
+  const needsAll = !search && (sort.key !== "name" || sort.dir !== "asc" || groupBy !== "none");
   const lst = useListing(needsAll ? MAX_SORT_ITEMS : AUTO_ALL);
   const { listing } = lst;
   const fresh = sameLoc(listing.loc, here);
@@ -111,8 +117,8 @@ export function useEntries(
   const imageModes = useImageModes();
   useFolderPlaceholders(!search && fresh ? here : null, allEntries, !listing.next, imageModes);
 
-  /** What the list shows. */
-  const listEntries: Entry[] = useMemo(() => {
+  /** What the list shows, in its groups when grouping. */
+  const grouped = useMemo(() => {
     const list = filter ? allEntries.filter((e) => e.name.toLowerCase().includes(filter)) : allEntries.slice();
     const dir = sort.dir === "asc" ? 1 : -1;
     // by what the Kind column says ("File" for README and dotfiles, "JavaScript" for .js and .mjs), worked out once each
@@ -123,17 +129,25 @@ export function useEntries(
           return (a.size - b.size) * dir;
         case "modified":
           return ((a.modified ?? 0) - (b.modified ?? 0)) * dir;
+        case "created":
+          return ((a.created ?? 0) - (b.created ?? 0)) * dir || byName.compare(a.name, b.name);
+        case "type":
+          return byName.compare(a.kind === "folder" ? "" : extOf(a.name), b.kind === "folder" ? "" : extOf(b.name)) * dir || byName.compare(a.name, b.name);
         case "kind":
           return byName.compare(kinds!.get(a)!, kinds!.get(b)!) * dir || byName.compare(a.name, b.name);
         default:
           return byName.compare(a.name, b.name) * dir;
       }
     };
-    return list.sort((a, b) => {
+    list.sort((a, b) => {
       if (foldersFirst && a.kind !== b.kind) return a.kind === "folder" ? -1 : 1;
       return cmp(a, b);
     });
-  }, [allEntries, filter, sort, foldersFirst]);
+    return groupEntries(list, groupBy, sort);
+  }, [allEntries, filter, sort, foldersFirst, groupBy]);
+  const listEntries = grouped.entries;
+  /** the headed groups the rows fall in, or null when not grouping */
+  const groups: Group[] | null = grouped.groups;
   /** What can be selected and acted on: never the rows of the place you just left. */
   const entries = stale ? NO_ENTRIES : listEntries;
 
@@ -192,6 +206,7 @@ export function useEntries(
     needsAll,
     allEntries,
     listEntries,
+    groups,
     entries,
     loadedCount,
     sortCapped,
