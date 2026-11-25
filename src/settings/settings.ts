@@ -5,7 +5,7 @@
  */
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { setAbsoluteDates, setByteUnits } from "../core/format";
+import { DATE_FORMATS, setDateFormat, setByteUnits } from "../core/format";
 import { setAppImageMode, type ImageMode } from "../thumbs/imageMode";
 import { SCHEME_VAR_NAMES, paletteVars, schemeById, type SchemeId } from "./schemes";
 
@@ -28,8 +28,8 @@ export type Settings = {
   binaryUnits: boolean;
   /** lifetime of links made with the quick "Copy link" actions, in seconds */
   linkExpiry: number;
-  /** always show full dates instead of "Today, 14:32" */
-  absoluteDates: boolean;
+  /** how dates read: "friendly" ("Today, 14:32"), "system", or a pattern of DATE_FORMATS */
+  dateFormat: string;
   /** reopen the last connection, bucket and folder on launch */
   restoreLast: boolean;
   /** ask before deleting objects */
@@ -88,7 +88,7 @@ export const DEFAULTS: Settings = {
   foldersFirst: true,
   binaryUnits: false,
   linkExpiry: 86400,
-  absoluteDates: false,
+  dateFormat: "friendly",
   restoreLast: true,
   confirmDelete: true,
   autoOpenTransfers: true,
@@ -158,6 +158,13 @@ export function loadSettings(): Settings {
       if (!saved.imageMode) s.imageMode = old ? "full" : "placeholders";
       delete (s as Settings & { listThumbs?: boolean }).listThumbs;
     }
+    // the old Friendly / Full switch: Full is this computer's own full dates
+    const abs = (s as Settings & { absoluteDates?: boolean }).absoluteDates;
+    if (typeof abs === "boolean") {
+      if (!saved.dateFormat) s.dateFormat = abs ? "system" : "friendly";
+      delete (s as Settings & { absoluteDates?: boolean }).absoluteDates;
+    }
+    if (!DATE_FORMATS.includes(s.dateFormat as (typeof DATE_FORMATS)[number])) s.dateFormat = DEFAULTS.dateFormat;
     if (!["off", "placeholders", "full"].includes(s.imageMode)) s.imageMode = DEFAULTS.imageMode;
     if (typeof s.quickInfo !== "boolean") s.quickInfo = null;
     // one-time: the first version turned the old thumbnails switch into Placeholders more often
@@ -230,7 +237,7 @@ export function applySettings(s: Settings) {
   applyTheme();
   root.dataset.font = s.font;
   setByteUnits(s.binaryUnits);
-  setAbsoluteDates(s.absoluteDates);
+  setDateFormat(s.dateFormat);
   setAppImageMode(s.imageMode);
 
   if ("__TAURI_INTERNALS__" in window) {

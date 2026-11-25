@@ -17,7 +17,10 @@ import { ActionsSection } from "../actions/components/ActionsSection";
 import { syncApi, type AppPrefs } from "../sync/sync";
 import { openLink } from "../core/openLink";
 import { actionLabel, ago, installAndRestart, UpdateStepError, updatesApi, useUpdates } from "../updates/updates";
-import { customLimitProblem, formatBytes, mbpsInput, mbpsToKbps, parseMbps } from "../core/format";
+import { customLimitProblem, DATE_FORMATS, formatBytes, formatPattern, mbpsInput, mbpsToKbps, parseMbps } from "../core/format";
+
+/** The date the Dates picker shows each format with (a single-digit day and month, an afternoon). */
+const DATE_SAMPLE = new Date(2026, 2, 7, 14, 5, 9).getTime();
 import { useTransfersActive } from "../transfers/hooks/useTransfers";
 import { spellKeys } from "../ui/lib/shortcutKeys";
 import { keys, TRAY } from "../ui/lib/osText";
@@ -776,16 +779,14 @@ export function SettingsPage({
                   <Row label="Folders first" hint="Keep folders above files, whatever the sort order.">
                     <Switch label="Folders first" on={settings.foldersFirst} onChange={(foldersFirst) => onChange({ foldersFirst })} />
                   </Row>
-                  <Row label="Dates" hint="Friendly: “Today, 14:32”. Full: always the complete date and time.">
-                    <Seg
-                      label="Dates"
-                      value={settings.absoluteDates ? "full" : "friendly"}
-                      options={[
-                        { value: "friendly", label: "Friendly" },
-                        { value: "full", label: "Full" },
-                      ]}
-                      onChange={(v) => onChange({ absoluteDates: v === "full" })}
-                    />
+                  <Row label="Dates" hint="How dates read in lists, tooltips and Info. Friendly: “Today, 14:32”.">
+                    <select value={settings.dateFormat} aria-label="Dates" onChange={(e) => onChange({ dateFormat: e.target.value })}>
+                      {DATE_FORMATS.map((f) => (
+                        <option key={f} value={f}>
+                          {f === "friendly" ? "Friendly (Today, 14:32)" : f === "system" ? `System (${new Date(DATE_SAMPLE).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })})` : `${formatPattern(DATE_SAMPLE, f)}   ·   ${f.toLowerCase()}`}
+                        </option>
+                      ))}
+                    </select>
                   </Row>
                   <Row label="List columns" hint="Shown after the name in the list. You can also right-click the column headers." stack>
                     <div className="set-checks" role="group" aria-label="List columns">

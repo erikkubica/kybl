@@ -36,6 +36,8 @@ const COLS: Col[] = [
   { id: "etag", cls: "c-etag", label: "ETag", def: 150, min: 80, max: 320 },
 ];
 const NAME_MIN = 190;
+/** a width given to the name (dragged, or fitted to short names) may go this narrow */
+const NAME_SET_MIN = 80;
 const GAP = 14;
 /** a row's own side padding (10px each side) */
 const ROW_PAD = 20;
@@ -45,7 +47,7 @@ const NAME_MAX = 1600;
 
 function loadNameW(): number | null {
   const v = Number(localStorage.getItem(NAME_W_KEY) ?? "");
-  return Number.isFinite(v) && v >= NAME_MIN ? Math.min(NAME_MAX, v) : null;
+  return Number.isFinite(v) && v >= NAME_SET_MIN ? Math.min(NAME_MAX, v) : null;
 }
 function saveNameW(w: number | null) {
   try {
@@ -90,6 +92,36 @@ function loadLocalCols(): ColumnId[] {
     /* defaults */
   }
   return DEFAULTS.columns;
+}
+
+/** What a column's cell says for an entry, as drawn (for fitting the column to it). */
+function cellText(id: ColumnId | "name", e: Entry, folderSize: ((key: string) => FolderSizeInfo | undefined) | undefined, searchBase: string | null): string {
+  const folder = e.kind === "folder";
+  switch (id) {
+    case "name":
+      return searchBase != null ? e.key.slice(searchBase.length).replace(/\/$/, "") : e.name;
+    case "size": {
+      if (!folder) return entrySize(e);
+      const info = folderSize?.(e.key);
+      return info ? formatBytes(info.bytes) : "Calculate";
+    }
+    case "modified":
+      return formatDate(e.modified);
+    case "created":
+      return e.created ? formatDate(e.created) : "—";
+    case "kind":
+      return entryKind(e);
+    case "type":
+      return folder ? "" : extOf(e.name).toUpperCase() || "—";
+    case "perms":
+      return e.mode != null ? modeText(e.mode) : "—";
+    case "owner":
+      return e.owner ? `${e.owner}${e.group ? ` · ${e.group}` : ""}` : "—";
+    case "storageClass":
+      return folder ? "" : storageClassLabel(e.storageClass) || "—";
+    case "etag":
+      return folder ? "" : e.etag?.replace(/"/g, "") || "—";
+  }
 }
 
 /** A row the list draws: a group's heading, or entry `i`. */
@@ -305,7 +337,7 @@ export function FileTable({
     const isName = col === "name";
     // Name starts from the width it's drawn at
     const startW = isName ? Math.round(thead.current?.querySelector<HTMLElement>(".th.c-name")?.getBoundingClientRect().width ?? NAME_MIN) : widths[col.id];
-    const [lo, hi] = isName ? [NAME_MIN, NAME_MAX] : [col.min, col.max];
+    const [lo, hi] = isName ? [NAME_SET_MIN, NAME_MAX] : [col.min, col.max];
     let latest = widths;
     let latestName = nameW;
     setResizing(isName ? "name" : col.id);
@@ -329,6 +361,66 @@ export function FileTable({
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };
+  /**
+   * Double-click on a column's edge: as wide as its longest text, in the whole folder (or its
+   * first few thousand items), as Explorer does; the header's label counts too.
+   */
+  const fitCol = (col: Col | "name") => {
+    const id = col === "name" ? "name" : col.id;
+    const cls = col === "name" ? "c-name" : col.cls;
+    const cell = body.current?.querySelector<HTMLElement>(`.row:not(.row-group):not(.row-up) .${cls}${col === "name" ? " .name-text" : ""}`);
+    const headLabel = thead.current?.querySelector<HTMLElement>(`.th.${cls} .th-btn`);
+    const ctx = document.createElement("canvas").getContext("2d");
+    if (!ctx) return;
+    const measure = (font: string, texts: Iterable<string>) => {
+      ctx.font = font;
+      let w = 0;
+      for (const t of texts) if (t) w = Math.max(w, ctx.measureText(t).width);
+      return w;
+    };
+    // from its parts: the shorthand reads "" when a part (tabular numbers) has no shorthand form
+    const fontOf = (el: Element | null | undefined, fallback: string) => {
+      if (!el) return fallback;
+      const c = getComputedStyle(el);
+      return `${c.fontStyle} ${c.fontWeight} ${c.fontSize} ${c.fontFamily}`;
+    };
+    const base = fontOf(body.current, "13px sans-serif");
+    // a cell's own font (mono for ETag and permissions, the list's for the rest)
+    const sample = id === "etag" || id === "perms" ? body.current?.querySelector(`.row .${cls}.mono`) : cell;
+    const list = entries.length > 5000 ? entries.slice(0, 5000) : entries;
+    const texts = list.map((e) => cellText(id, e, folderSize, searchMode ? prefix : null));
+    let w = Math.ceil(measure(fontOf(sample, base), texts));
+    // the canvas knows no tabular digits or letter spacing: the longest few, measured as drawn
+    const from = sample ?? body.current;
+    if (from) {
+      ctx.font = fontOf(sample, base);
+      const top = [...new Set(texts)].map((t) => [t, ctx.measureText(t).width] as const).sort((a, b) => b[1] - a[1]).slice(0, 12);
+      const span = document.createElement("span");
+      const c = getComputedStyle(from);
+      Object.assign(span.style, { position: "absolute", visibility: "hidden", whiteSpace: "pre", font: "inherit", fontStyle: c.fontStyle, fontWeight: c.fontWeight, fontSize: c.fontSize, fontFamily: c.fontFamily, fontVariantNumeric: c.fontVariantNumeric, letterSpacing: c.letterSpacing, fontFeatureSettings: c.fontFeatureSettings });
+      document.body.appendChild(span);
+      for (const [t] of top) {
+        span.textContent = t;
+        w = Math.max(w, Math.ceil(span.getBoundingClientRect().width));
+      }
+      span.remove();
+    }
+    // the label's text (and the sort arrow beside it); the button itself fills the column
+    if (headLabel) w = Math.max(w, Math.ceil(measure(fontOf(headLabel, base), [headLabel.textContent?.trim() ?? ""])) + 18);
+    if (col === "name") {
+      // the icon and the gap before the name
+      const ico = body.current?.querySelector<HTMLElement>(".row .c-name .ico");
+      w += (ico?.offsetWidth ?? 17) + 10 + 4;
+      w = Math.min(NAME_MAX, Math.max(NAME_SET_MIN, w));
+      setNameW(w);
+      saveNameW(w);
+      return;
+    }
+    w = Math.min(col.max, Math.max(col.min, w + 4));
+    const next = { ...widths, [col.id]: w };
+    setWidths(next);
+    saveWidths(next);
+  };
   const resetCol = (col: Col | "name") => {
     if (col === "name") {
       setNameW(null);
@@ -347,7 +439,7 @@ export function FileTable({
     ev.stopPropagation();
     if (col === "name") {
       const cur = nameW ?? Math.round(thead.current?.querySelector<HTMLElement>(".th.c-name")?.getBoundingClientRect().width ?? NAME_MIN);
-      const w = Math.min(NAME_MAX, Math.max(NAME_MIN, cur + d));
+      const w = Math.min(NAME_MAX, Math.max(NAME_SET_MIN, cur + d));
       setNameW(w);
       saveNameW(w);
       return;
@@ -480,16 +572,17 @@ export function FileTable({
           aria-orientation="vertical"
           aria-label={`Resize the ${label} column`}
           aria-valuenow={col === "name" ? (nameW ?? undefined) : widths[col.id]}
-          aria-valuemin={col === "name" ? NAME_MIN : col.min}
+          aria-valuemin={col === "name" ? NAME_SET_MIN : col.min}
           aria-valuemax={col === "name" ? NAME_MAX : col.max}
           tabIndex={0}
-          title="Drag to resize · double-click to reset"
+          title="Drag to resize · double-click to fit the longest · ⌥ double-click to reset"
           onPointerDown={(ev) => startResize(ev, col)}
           onKeyDown={(ev) => keyResize(ev, col)}
           onClick={(ev) => ev.stopPropagation()}
           onDoubleClick={(ev) => {
             ev.stopPropagation();
-            resetCol(col);
+            if (ev.altKey) resetCol(col);
+            else fitCol(col);
           }}
         />
       )}

@@ -95,7 +95,7 @@ export function SettingsScreen({
           <Toggle label="Reopen the last folder" on={settings.restoreLast} set={(v) => set("restoreLast", v)} />
           <Toggle label="Ask before deleting" on={settings.confirmDelete} set={(v) => set("confirmDelete", v)} />
           <Toggle label="Binary sizes (1 KiB = 1024 B)" on={settings.binaryUnits} set={(v) => set("binaryUnits", v)} />
-          <Toggle label="Full dates" on={settings.absoluteDates} set={(v) => set("absoluteDates", v)} />
+          <Toggle label="Full dates" on={settings.dateFormat !== "friendly"} set={(v) => set("dateFormat", v ? "system" : "friendly")} />
         </ul>
 
         {onBackup && (

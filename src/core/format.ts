@@ -67,8 +67,68 @@ export function formatBytes(n: number, digits = 1): string {
 }
 
 /** Full, unambiguous timestamp (tooltips, file info). */
+/**
+ * How dates read: "friendly" ("Today, 14:32"), "system" (this computer's language, in full), or a
+ * pattern: yyyy, yy, MMMM, MMM, MM, M, dd, d, HH, H (24 h), hh, h (12 h), mm, ss, a (AM/PM).
+ */
+export const DATE_FORMATS = [
+  "friendly",
+  "system",
+  "dd.MM.yyyy HH:mm:ss",
+  "dd.MM.yyyy HH:mm",
+  "d. M. yyyy H:mm",
+  "dd/MM/yyyy HH:mm:ss",
+  "dd/MM/yyyy HH:mm",
+  "MM/dd/yyyy hh:mm:ss a",
+  "M/d/yyyy h:mm a",
+  "yyyy-MM-dd HH:mm:ss",
+  "yyyy-MM-dd HH:mm",
+  "yyyy/MM/dd HH:mm",
+  "dd-MM-yyyy HH:mm",
+  "d MMM yyyy, HH:mm",
+  "MMM d, yyyy, h:mm a",
+  "d MMMM yyyy HH:mm",
+] as const;
+
+let datePattern = "friendly";
+
+/** Lists (and the full dates of tooltips and Info) follow this. */
+export function setDateFormat(f: string) {
+  datePattern = f;
+}
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** A date in a pattern of DATE_FORMATS (month names in this computer's language). */
+export function formatPattern(ms: number, pattern: string): string {
+  const d = new Date(ms);
+  const h12 = d.getHours() % 12 || 12;
+  return pattern.replace(/yyyy|yy|MMMM|MMM|MM|M|dd|d|HH|H|hh|h|mm|ss|a/g, (t) => {
+    switch (t) {
+      case "yyyy": return String(d.getFullYear());
+      case "yy": return pad(d.getFullYear() % 100);
+      case "MMMM": return d.toLocaleDateString(undefined, { month: "long" });
+      case "MMM": return d.toLocaleDateString(undefined, { month: "short" });
+      case "MM": return pad(d.getMonth() + 1);
+      case "M": return String(d.getMonth() + 1);
+      case "dd": return pad(d.getDate());
+      case "d": return String(d.getDate());
+      case "HH": return pad(d.getHours());
+      case "H": return String(d.getHours());
+      case "hh": return pad(h12);
+      case "h": return String(h12);
+      case "mm": return pad(d.getMinutes());
+      case "ss": return pad(d.getSeconds());
+      default: return d.getHours() < 12 ? "AM" : "PM";
+    }
+  });
+}
+
+const custom = () => datePattern !== "friendly" && datePattern !== "system";
+
 export function formatDateFull(ms: number | null | undefined): string {
   if (!ms) return "—";
+  if (custom()) return formatPattern(ms, datePattern);
   return new Date(ms).toLocaleString(undefined, {
     year: "numeric",
     month: "short",
@@ -78,17 +138,10 @@ export function formatDateFull(ms: number | null | undefined): string {
   });
 }
 
-/** Compact timestamp for lists: "Today, 14:32", "Yesterday, 09:10", "Nov 4, 14:32", "Nov 2, 2025". */
-let absoluteDates = false;
-
-/** Lists show full timestamps instead of "Today, 14:32". */
-export function setAbsoluteDates(on: boolean) {
-  absoluteDates = on;
-}
-
+/** Timestamp for lists: "Today, 14:32", "Yesterday, 09:10", "Nov 4, 14:32", "Nov 2, 2025", or the chosen format. */
 export function formatDate(ms: number | null | undefined): string {
   if (!ms) return "—";
-  if (absoluteDates) return formatDateFull(ms);
+  if (datePattern !== "friendly") return formatDateFull(ms);
   const d = new Date(ms);
   const now = new Date();
   const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });

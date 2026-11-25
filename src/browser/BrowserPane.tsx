@@ -244,7 +244,7 @@ export function BrowserPane(p: BrowserPaneProps) {
                 <ListError profile={profile} error={listError} onRetry={ent.refresh} onReconnect={p.empty.onReconnect} onTrustCert={p.empty.onTrustCert} onAllowPlainFtp={p.empty.onAllowPlainFtp} onTrustHostKey={p.empty.onTrustHostKey} />
               ) : pane.view === "grid" ? (
                 <GridView
-                  key={`${settings.binaryUnits}${settings.absoluteDates}${imageModes}`}
+                  key={`${settings.binaryUnits}${settings.dateFormat}${imageModes}`}
                   entries={listEntries}
                   groups={ent.groups}
                   selected={selected}
@@ -274,7 +274,7 @@ export function BrowserPane(p: BrowserPaneProps) {
                 />
               ) : (
                 <FileTable
-                  key={`${settings.binaryUnits}${settings.absoluteDates}`}
+                  key={`${settings.binaryUnits}${settings.dateFormat}`}
                   entries={listEntries}
                   groups={ent.groups}
                   selected={selected}
