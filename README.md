@@ -110,7 +110,7 @@ Download the latest build from [Releases](../../releases).
 
 ## Releasing
 1. Bump the version in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`.
-2. `git tag v0.5.0 && git push --tags`. The `Release` workflow builds macOS (Apple Silicon and
+2. `git tag v0.5.1 && git push --tags`. The `Release` workflow builds macOS (Apple Silicon and
    Intel), Windows, Linux and an unsigned iOS `.ipa` (plus `altstore-source.json`, made by
    `scripts/altstore-source.mjs`) and attaches everything to a **draft** release. Publish it when it looks right.
 
