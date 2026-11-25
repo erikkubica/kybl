@@ -132,7 +132,7 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
           · {selected.size} selected
           {selectedEntries.some(hasSize) ? ` (${formatBytes(sumSizes(selectedEntries))})` : ""}
           <button className="sel-clear" onClick={() => sel.clear()} title="Clear selection (Esc)" aria-label="Clear selection">
-            <Icon name="x" size={10} />
+            <Icon name="x" size={12} />
           </button>
         </span>
       )}
@@ -175,13 +175,13 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
       {/* how the list looks: list or grid, and compact (the grid's icon size: ⌘+ / ⌘−, or a pinch) */}
       <span className="sb-view">
         <button type="button" className={`statusbar-btn ${pane.view === "list" ? "on" : ""}`} onClick={() => pane.setView("list")} aria-pressed={pane.view === "list"} title="As list" aria-label="As list">
-          <Icon name="list" size={14} />
+          <Icon name="list" size={17} />
         </button>
         <button type="button" className={`statusbar-btn ${pane.view === "grid" ? "on" : ""}`} onClick={() => pane.setView("grid")} aria-pressed={pane.view === "grid"} title="As grid" aria-label="As grid">
-          <Icon name="grid" size={14} />
+          <Icon name="grid" size={17} />
         </button>
         <button type="button" className={`statusbar-btn ${pane.compact ? "on" : ""}`} onClick={() => pane.setCompact(!pane.compact)} aria-pressed={pane.compact} title="Compact layout" aria-label="Compact layout">
-          <Icon name="density" size={14} />
+          <Icon name="density" size={17} />
         </button>
       </span>
       {/* the folder's info panel (connection, path, git), remembered for this pane */}
@@ -195,7 +195,7 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
         title={!folderOpen ? "Open a folder to see its info" : pane.infoOpen ? "Hide info" : "Show info: the selection and the folder"}
         aria-label="Info panel"
       >
-        <Icon name="panel-right" size={14} />
+        <Icon name="panel-right" size={17} />
       </button>
     </footer>
   );
