@@ -1,3 +1,4 @@
+import { IS_MAC } from "../../ui/lib/pointer";
 import type { ToastAction } from "../../desktop/components/fileOps";
 import type { Pane } from "../../browser/hooks/usePane";
 import type { ConnDialogAsk } from "../lib/types";
@@ -60,6 +61,8 @@ export interface UseTerminalHostDeps {
 
 /** Terminal panes: what they get from the shell (open a pane, close, follow the folder above, menus). */
 export function useTerminalHost(s: UseTerminalHostDeps) {
+  // the terminal's own Close: asks first when a program runs in it
+  const closeTerminal = (id: PaneId) => void s.okToEndShells(s.sidsOf([id]), "Close terminal").then((ok) => ok && s.paneLater.current.takeFromLive(id));
   s.term.host.current = {
     profiles: s.profiles,
     slot: s.slot,
@@ -76,9 +79,12 @@ export function useTerminalHost(s: UseTerminalHostDeps) {
             { type: "sep" },
             { type: "item", label: "Make panes the same size", onClick: () => s.setTree((t) => equalize(t)) },
             { type: "submenu", label: "Move pane", icon: "move", items: () => s.moveItems(id) },
-            { type: "item", label: "Close other panes", onClick: () => s.closeOthers(id) },
           ] satisfies MenuItem[])
         : []),
+      // closing, as a file pane's panes menu ends (the same as the "…" menu's Close terminal)
+      { type: "sep" },
+      { type: "item", label: "Close terminal", icon: "x", hint: IS_MAC ? "⌘W" : undefined, onClick: () => closeTerminal(id) },
+      ...(leaves(s.treeRef.current).length > 1 ? ([{ type: "item", label: "Close other panes", onClick: () => s.closeOthers(id) }] satisfies MenuItem[]) : []),
     ],
     paneItems: (id) => [
       { type: "submenu", label: "Split", icon: "dual-pane", items: () => s.splitItems(id) },
@@ -92,8 +98,7 @@ export function useTerminalHost(s: UseTerminalHostDeps) {
     ],
     setActive: s.setActiveId,
     focus: s.focusSoon,
-    // the terminal's own Close: asks first when a program runs in it
-    close: (id) => void s.okToEndShells(s.sidsOf([id]), "Close terminal").then((ok) => ok && s.paneLater.current.takeFromLive(id)),
+    close: closeTerminal,
     menu: s.dialogs.menu,
     confirm: s.dialogs.confirm,
     toast: s.toast,
