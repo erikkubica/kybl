@@ -68,6 +68,33 @@ const PATHS: Record<string, ReactNode> = {
     </>
   ),
   plus: <path d="M12 5v14M5 12h14" />,
+  scissors: (
+    <>
+      <circle cx="6" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12" />
+    </>
+  ),
+  // a copy with a plus: Duplicate
+  duplicate: (
+    <>
+      <rect x="8" y="8" width="13" height="13" rx="2" />
+      <path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2M14.5 11.5v6M11.5 14.5h6" />
+    </>
+  ),
+  // a box with an arrow going out: Copy to
+  "copy-to": (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M8 12h8m-3.5-3.5L16 12l-3.5 3.5" />
+    </>
+  ),
+  clipboard: (
+    <>
+      <rect x="8" y="2" width="8" height="4" rx="1" />
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+    </>
+  ),
   sun: (
     <>
       <circle cx="12" cy="12" r="4" />

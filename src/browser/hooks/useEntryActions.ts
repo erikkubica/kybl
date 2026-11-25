@@ -379,10 +379,10 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       ? []
       : [
           isS3
-            ? { type: "item", label: "Copy S3 URI", icon: "copy", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") }
-            : { type: "item", label: "Copy path", icon: "copy", onClick: () => copyPathOf([prefix]) },
+            ? { type: "item", label: "Copy S3 URI", icon: "text", onClick: () => copyText(`s3://${bucket}/${prefix}`, "S3 URI") }
+            : { type: "item", label: "Copy path", icon: "text", onClick: () => copyPathOf([prefix]) },
           { type: "sep" },
-          { type: "item", label: "Calculate folder size", icon: "info", onClick: () => calcSizes([prefix]) },
+          { type: "item", label: "Calculate folder size", icon: "gauge", onClick: () => calcSizes([prefix]) },
           onDisk && { type: "item", label: "Show hidden files", icon: "eye", hint: "⇧⌘.", checked: pane.showHidden, onClick: toggleHidden },
           ...(env.terminalItems?.(prefix) ?? []),
           ...(env.tunnelItems?.() ?? []),
@@ -391,7 +391,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
             !onDisk && { type: "item", label: "Sync this folder…", icon: "sync", onClick: () => askSync(prefix) },
             !onDisk && keepItem(prefix),
             ...(onDisk ? [] : driveFor(prefix)),
-            !!env.openMigration && { type: "item", label: "Copy / Move to…", icon: "copy", onClick: migrateHere },
+            !!env.openMigration && { type: "item", label: "Copy / Move to…", icon: "copy-to", onClick: migrateHere },
             ...mirrorFor(prefix),
           ]),
           ...(env.extraPlaceItems?.() ?? []),
@@ -415,7 +415,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
         {
           type: "item",
           label: clip ? `Paste ${clip.items.length === 1 ? `“${clip.items[0].name}”` : `${clip.items.length} items`}` : "Paste",
-          icon: "copy",
+          icon: "clipboard",
           hint: "⌘V",
           disabled: !clip,
           onClick: () => ops.paste(),
@@ -483,50 +483,51 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       one && e.kind === "file" && { type: "item", label: "Quick Look", icon: "eye", hint: "Space", onClick: () => pane.setQuick(e.key) },
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => pane.navigate(entryParent(e), e.key) },
       sep,
-      // 2. the clipboard
-      { type: "item", label: "Cut", icon: "move", hint: "⌘X", onClick: () => ops.clip(list, "cut") },
+      // 2. edit it: the clipboard, Duplicate and Rename
+      { type: "item", label: "Cut", icon: "scissors", hint: "⌘X", onClick: () => ops.clip(list, "cut") },
       { type: "item", label: "Copy", icon: "copy", hint: "⌘C", onClick: () => ops.clip(list, "copy") },
-      folder && clip && { type: "item", label: `Paste into “${e.name}”`, icon: "copy", onClick: () => ops.paste(e.key) },
-      { type: "item", label: "Duplicate", icon: "copy", hint: "⌘D", onClick: () => void ops.duplicate(list) },
+      folder && clip && { type: "item", label: `Paste into “${e.name}”`, icon: "clipboard", onClick: () => ops.paste(e.key) },
+      { type: "item", label: "Duplicate", icon: "duplicate", hint: "⌘D", onClick: () => void ops.duplicate(list) },
+      { type: "item", label: one ? "Rename…" : `Rename ${list.length} items…`, icon: "edit", hint: "F2", onClick: () => rename(list) },
       sep,
-      // 3. elsewhere: the other pane (F5 / F6), any folder, one level up
+      // 3. send it elsewhere: Copy to ▸ / Move to ▸ (the other panes, any folder), one level up
       ...(env.extraItemItems?.(list) ?? []),
       // one picker for any folder: this connection's (any bucket or drive), or another connection
-      !env.extraItemItems && { type: "item", label: "Copy or move to…", icon: "move", onClick: () => askMove(list, "copy") },
+      !env.extraItemItems && { type: "item", label: "Copy or move to…", icon: "copy-to", onClick: () => askMove(list, "copy") },
       !!prefix && !search && {
         type: "item",
         label: `Move to “${destLabel(parentPrefix(prefix), bucket, profile.id)}”`,
         icon: "arrow-up",
         onClick: () => ops.relocate(list, parentPrefix(prefix), "move"),
       },
+      !onDisk && { type: "item", label: one && e.native?.exports.length ? `Download as ${e.native.exports[0].label}` : "Download", icon: "download", hint: "⇧⌘D", onClick: () => ops.downloadEntries(list, relBase) },
+      // a Google Doc / Sheet / Slides: its other formats (PDF…)
+      ...(one ? (e.native?.exports.slice(1) ?? []) : []).map((x) => ({ type: "item" as const, label: `Download as ${x.label}`, icon: "download" as const, onClick: () => ops.downloadEntries([asExport(e, x.ext) ?? e], relBase) })),
       sep,
-      // 4. archives and tools: Compress, Extract here, Extract to… (src/archive), Compare, custom Actions ▸
+      // 4. make something of it: Compress, Extract (src/archive), Compare, custom Actions ▸
       ...pane.archive.items(list),
       !!compare && { type: "item", label: compare.title, icon: "compare", onClick: compare.run },
       ...actionsMenu(actionCtx, list),
       sep,
-      // 5. getting it out: this computer's own files aren't downloaded (Copy, Move and F5/F6 put them elsewhere)
-      !onDisk && { type: "item", label: one && e.native?.exports.length ? `Download as ${e.native.exports[0].label}` : "Download", icon: "download", hint: "⇧⌘D", onClick: () => ops.downloadEntries(list, relBase) },
-      // a Google Doc / Sheet / Slides: its other formats (PDF…)
-      ...(one ? (e.native?.exports.slice(1) ?? []) : []).map((x) => ({ type: "item" as const, label: `Download as ${x.label}`, icon: "download" as const, onClick: () => ops.downloadEntries([asExport(e, x.ext) ?? e], relBase) })),
-      canShare && { type: "item", label: `Copy share link (${expiryLabel(settings.linkExpiry)})`, icon: "link", disabled: !(one && e.kind === "file"), onClick: () => copyLink(e, settings.linkExpiry) },
-      isS3
-        ? { type: "item", label: "Copy S3 URI", icon: "copy", disabled: !one, onClick: () => copyText(`s3://${bucket}/${e.key}`, "S3 URI") }
-        : { type: "item", label: list.length > 1 ? "Copy paths" : "Copy path", icon: "copy", onClick: () => copyPathOf(list.map((x) => x.key)) },
-      sep,
-      // 6. about it, and the rarely used
+      // 5. about it: info, size, where it is
       { type: "item", label: "Get Info", icon: "info", hint: "⌘I", onClick: () => pane.getInfo(e) },
+      folders.length > 0 && {
+        type: "item",
+        label: folders.length > 1 ? `Calculate sizes of ${folders.length} folders` : "Calculate size",
+        icon: "gauge",
+        onClick: () => calcSizes(folders.map((f) => f.key)),
+      },
+      isS3
+        ? { type: "item", label: "Copy S3 URI", icon: "text", disabled: !one, onClick: () => copyText(`s3://${bucket}/${e.key}`, "S3 URI") }
+        : { type: "item", label: list.length > 1 ? "Copy paths" : "Copy path", icon: "text", onClick: () => copyPathOf(list.map((x) => x.key)) },
+      canShare && { type: "item", label: `Copy share link (${expiryLabel(settings.linkExpiry)})`, icon: "link", disabled: !(one && e.kind === "file"), onClick: () => copyLink(e, settings.linkExpiry) },
       // Show in Finder (desktop/openWith.ts)
       ...openIn.filter((i) => i.type !== "submenu"),
       ...(folder ? (env.terminalItems?.(e.key, "Open in terminal") ?? []) : []),
       // Show original, Permissions…, Make link… (src/perms)
       ...server.itemsFor(list, e),
-      folders.length > 0 && {
-        type: "item",
-        label: folders.length > 1 ? `Calculate sizes of ${folders.length} folders` : "Calculate size",
-        icon: "info",
-        onClick: () => calcSizes(folders.map((f) => f.key)),
-      },
+      sep,
+      // 6. keep it: favorites, Keep & sync ▸
       folder && favoriteItem(bucket, e.key),
       folder &&
         keepSyncMenu([
@@ -536,11 +537,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
           ...mirrorFor(e.key),
         ]),
       sep,
-      // 7. rename, and refresh (the folder is full of rows, so there is no empty space to right-click)
-      { type: "item", label: one ? "Rename…" : `Rename ${list.length} items…`, icon: "edit", hint: "F2", onClick: () => rename(list) },
-      { type: "item", label: search ? "Search again" : "Refresh", icon: "refresh", hint: "⌘R", onClick: ent.refresh },
-      sep,
-      // 8. last, and red where it can't be undone
+      // 7. last, and red where it can't be undone (Refresh is ⌘R and in the pane's "…")
       caps?.trash
         ? { type: "item", label: `Move to ${trashName(onDisk)}${settings.confirmDelete ? "…" : ""}`, icon: "trash", hint: "⌘⌫", onClick: () => ops.askDelete(list) }
         : { type: "item", label: list.length > 1 ? `Delete ${list.length} items…` : "Delete…", icon: "trash", hint: "⌘⌫", danger: true, onClick: () => ops.askDelete(list) },

@@ -371,7 +371,7 @@ export function makeDualActions(get: () => DualContext) {
     extraPlaceItems: (): MenuItem[] => [],
     // Copy to ▸ / Move to ▸: open panes, recent places, favorites, and the folder picker
     extraItemItems: (list: Entry[]): (MenuItem | false)[] => [
-      { type: "submenu", label: "Copy to", icon: "copy", items: () => targetItems(id, list, "copy") },
+      { type: "submenu", label: "Copy to", icon: "copy-to", items: () => targetItems(id, list, "copy") },
       { type: "submenu", label: "Move to", icon: "move", items: () => targetItems(id, list, "move") },
     ],
   });
