@@ -4,8 +4,8 @@
  * offer these.
  */
 import { invoke } from "@tauri-apps/api/core";
-import type { OpResult } from "../api";
-import type { Entry, ObjInfo } from "../types";
+import type { OpResult } from "../core/api";
+import type { Entry, ObjInfo } from "../core/types";
 
 /** "Apply to enclosed items": everything inside, or only the files or the folders. */
 export type Recurse = "all" | "files" | "folders";

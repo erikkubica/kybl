@@ -1,9 +1,9 @@
 /** Pieces the backup screens share: names, status lines, the permission note, the home card. */
 import type { ReactNode } from "react";
-import type { BackupOverview, BackupPermission, BackupSet, BackupSetStatus } from "../../api";
-import { Icon } from "../../Icons";
-import { ago } from "../../updates";
-import { MIcon } from "../icons";
+import type { BackupOverview, BackupPermission, BackupSet, BackupSetStatus } from "../../core/api";
+import { Icon } from "../../ui/components/Icons";
+import { ago } from "../../updates/updates";
+import { MIcon } from "../components/icons";
 
 /** Said wherever backup is offered: what really happens, nothing more. */
 export const HONEST = "Backs up while Kybl is open, and overnight while charging.";

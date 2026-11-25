@@ -5,9 +5,9 @@
  * (it may be free again by the time the tunnel starts); everything else must be right to save.
  */
 import { useEffect, useId, useState } from "react";
-import { Icon } from "../Icons";
-import { RAW } from "../connections/fields";
-import type { TunnelDef } from "../types";
+import { Icon } from "../ui/components/Icons";
+import { RAW } from "../connections/components/fields";
+import type { TunnelDef } from "../core/types";
 import { tunnelApi, useConnectionTunnels } from "./tunnels";
 import "./tunnels.css";
 

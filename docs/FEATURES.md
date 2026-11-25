@@ -957,7 +957,7 @@ Kybl Storage has its own flow and badge (1.1). Changing the region follows the p
 
 #### 2.1a Organizing many connections
 
-One model (`src/connections/organize.ts`) lays connections out the same way everywhere they are listed: the pane's connection menu, the sidebar, the destination picker, the command palette and the phone's list.
+One model (`src/connections/lib/organize.ts`) lays connections out the same way everywhere they are listed: the pane's connection menu, the sidebar, the destination picker, the command palette and the phone's list.
 
 - **Pinned** connections come first, by name. A pinned connection also stays in its group.
 - **Recent** lists the last 5 opened, once there are more than 10 connections. Pinned ones are not repeated there.

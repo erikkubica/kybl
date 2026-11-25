@@ -1,7 +1,7 @@
-// Mirror's plan (src/mirror/plan.ts): new, changed, gone, excluded, FTP times. Run: pnpm test
+// Mirror's plan (src/mirror/lib/plan.ts): new, changed, gone, excluded, FTP times. Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { caseInsensitiveKind, compareFiles, defaultTolerance, detectOffset, foldersOverlap, groupByFolder, planIsEmpty, planMirror, type Listing, type MFile, type PlanOptions } from "../../src/mirror/plan.ts";
+import { caseInsensitiveKind, compareFiles, defaultTolerance, detectOffset, foldersOverlap, groupByFolder, planIsEmpty, planMirror, type Listing, type MFile, type PlanOptions } from "../../src/mirror/lib/plan.ts";
 
 const T = Date.UTC(2026, 10, 20, 12, 0, 0);
 const MIN = 60_000;

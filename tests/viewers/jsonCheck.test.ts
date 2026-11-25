@@ -1,7 +1,7 @@
-// Where invalid JSON goes wrong (src/viewers/jsonCheck.ts). Run: pnpm test
+// Where invalid JSON goes wrong (src/viewers/lib/jsonCheck.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { describeJsonError, jsonErrorOffset } from "../../src/viewers/jsonCheck.ts";
+import { describeJsonError, jsonErrorOffset } from "../../src/viewers/lib/jsonCheck.ts";
 
 test("valid JSON has no error", () => {
   for (const s of ['{"a":[1,2,{"b":null}],"c":"x\\u00e9\\n"}', "  [ ]  ", "{}", "-0.5e+10", '"\\""', "true", "[[[[[]]]]]", '{"a":{"b":{}}}']) {

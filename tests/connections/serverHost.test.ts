@@ -1,7 +1,7 @@
-// The FTP / SFTP "Server" field splitting pasted URLs (src/connections/serverHost.ts). Run: pnpm test
+// The FTP / SFTP "Server" field splitting pasted URLs (src/connections/lib/serverHost.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { splitDavUrl, splitServer } from "../../src/connections/serverHost.ts";
+import { splitDavUrl, splitServer } from "../../src/connections/lib/serverHost.ts";
 
 test("a plain name stays as it is", () => {
   assert.deepEqual(splitServer(" nas.lan "), { host: "nas.lan" });

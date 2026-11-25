@@ -1,7 +1,7 @@
 # Jobs UI: how the desktop and phone apps mount it
 
 Copies and moves between connections run as backend jobs (`job_*` commands, `job-progress`
-event, see the WP-B1 section at the end of `src/api.ts`). Everything the hosts need is exported
+event, see the WP-B1 section at the end of `src/core/api.ts`). Everything the hosts need is exported
 from `src/jobs/index.ts`. Each component imports `jobs.css` itself.
 
 ```ts
@@ -159,6 +159,6 @@ requests fail and it shows "waiting for the network" until the app comes back, w
 
 ## 4. Looking at it in a browser
 
-`pnpm exec vite --port 1455` and open `http://localhost:1455/src/jobs/dev.html` (`?mobile` for
-the phone look). It uses `devMock.ts` → `src/jobs/devJobs.ts`, which simulates a running, a
+`pnpm exec vite --port 1455` and open `http://localhost:1455/src/jobs/dev/dev.html` (`?mobile` for
+the phone look). It uses `devMock.ts` → `src/jobs/dev/devJobs.ts`, which simulates a running, a
 paused and a finished-with-problems job, and runs new jobs from the dialog.

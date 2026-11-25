@@ -1,7 +1,7 @@
-// Custom actions: which files an action's "Extensions" take (src/actions/extMatch.ts). Run: pnpm test
+// Custom actions: which files an action's "Extensions" take (src/actions/lib/extMatch.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extList, hasExt } from "../../src/actions/extMatch.ts";
+import { extList, hasExt } from "../../src/actions/lib/extMatch.ts";
 
 test("the box is split, dots dropped, lower-cased", () => {
   assert.deepEqual(extList("jpg, .PNG; tar.gz"), ["jpg", "png", "tar.gz"]);

@@ -4,64 +4,64 @@
  * several in a layout of splits) and routes the sidebar, the keyboard and the menu bar to the
  * active one.
  */
-import { inBackground } from "./notifications";
-import { freshConnection } from "../connLog";
+import { inBackground } from "./lib/notifications";
+import { freshConnection } from "../log/connLog";
 import { MountDialog } from "../mount/MountDialog";
 import { driveItems } from "../mount/driveMenu";
 import { findMount, useMounts } from "../mount/useMounts";
-import type { MountInfo } from "../api";
-import { tidyMenu } from "../desktop/menus";
-import { menuFromKey } from "../desktop/menuKeyWatch";
-import { onTrustSaved, trustOnProfile } from "../connections/ConnFix";
-import { splitDavUrl } from "../connections/serverHost";
+import type { MountInfo } from "../core/api";
+import { tidyMenu } from "../desktop/lib/menus";
+import { menuFromKey } from "../desktop/lib/menuKeyWatch";
+import { onTrustSaved, trustOnProfile } from "../connections/components/ConnFix";
+import { splitDavUrl } from "../connections/lib/serverHost";
 import { flushSync } from "react-dom";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { REMOTE_TERM_DROP, useTerminalPanes } from "../terminal/useTerminalPanes";
+import { REMOTE_TERM_DROP, useTerminalPanes } from "../terminal/hooks/useTerminalPanes";
 import { canTerminal, terminalBusy } from "../terminal/api";
 import { LOCAL_PROFILE } from "../browser/types";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
-import { api, errMessage, errSummary } from "../api";
-import { openFromConnection } from "../desktop/openGuard";
-import { baseName } from "../format";
-import { useTransfers } from "../useTransfers";
-import { useJobs } from "../useJobs";
+import { api, errMessage, errSummary } from "../core/api";
+import { openFromConnection } from "../desktop/components/openGuard";
+import { baseName } from "../core/format";
+import { useTransfers } from "../transfers/hooks/useTransfers";
+import { useJobs } from "../jobs/hooks/useJobs";
 import { getJobs, migrations as migrationStore } from "../jobs";
-import { Sidebar, SidebarRail } from "../components/Sidebar";
-import { TILE_MAX, TILE_MIN } from "../components/Toolbar";
-import { TransferPanel, type ActivityTab } from "../components/TransferPanel";
-import { ConnectionDialog } from "../components/ConnectionDialog";
-import { KyblConnectDialog } from "../components/KyblConnectDialog";
-import { ImportDialog } from "../connections/ImportDialog";
-import { SettingsPage, type SettingsPageId } from "../components/SettingsPage";
-import { UpdateBanner } from "../components/UpdateBanner";
-import { KYBL } from "../kybl";
-import { useSyncOverall } from "../sync";
-import { useUpdates } from "../updates";
-import { applySettings, loadSettings, saveSettings, systemIsDark, watchSystemDark, type Favorite, type Settings } from "../settings";
-import { undoStack } from "../desktop/undo";
-import { usePane, type Pane, type PaneEnv } from "../browser/usePane";
+import { Sidebar, SidebarRail } from "../sidebar/Sidebar";
+import { TILE_MAX, TILE_MIN } from "../browser/components/Toolbar";
+import { TransferPanel, type ActivityTab } from "../transfers/components/TransferPanel";
+import { ConnectionDialog } from "../connections/components/ConnectionDialog";
+import { KyblConnectDialog } from "../connections/components/KyblConnectDialog";
+import { ImportDialog } from "../connections/components/ImportDialog";
+import { SettingsPage, type SettingsPageId } from "../settings/SettingsPage";
+import { UpdateBanner } from "../updates/UpdateBanner";
+import { KYBL } from "../connections/lib/kybl";
+import { useSyncOverall } from "../sync/sync";
+import { useUpdates } from "../updates/updates";
+import { applySettings, loadSettings, saveSettings, systemIsDark, watchSystemDark, type Favorite, type Settings } from "../settings/settings";
+import { undoStack } from "../desktop/lib/undo";
+import { usePane, type Pane, type PaneEnv } from "../browser/hooks/usePane";
 import { BrowserPane } from "../browser/BrowserPane";
-import type { EmptyActions } from "../browser/PaneEmpty";
+import type { EmptyActions } from "../browser/components/PaneEmpty";
 import { PANE_IDS, paneKeys, THIS_MAC, type Loc, type PaneId, type PaneView } from "../browser/types";
-import { forgetCaps, peekCaps } from "../useCaps";
-import { sendItems } from "./crossPane";
-import { clearAuthNeeded, useAuthNeeded } from "../connections/authNeeded";
-import { closestLocalRoot, rootIcon, rootsMode } from "../connections/roots";
-import { canView, LazyDocumentView, viewerFor } from "../viewers/registry";
-import { asExport } from "../connections/native";
-import type { DocumentHandle } from "../viewers/DocumentView";
-import type { Entry } from "../types";
-import type { Profile } from "../types";
-import { isShellConn, type PickId } from "../connections/kinds";
-import { useDialogs } from "./useDialogs";
-import type { MenuItem } from "../components/Dialogs";
-import { photoMenuItems } from "./photoMenu";
+import { forgetCaps, peekCaps } from "../core/useCaps";
+import { sendItems } from "./lib/crossPane";
+import { clearAuthNeeded, useAuthNeeded } from "../connections/lib/authNeeded";
+import { closestLocalRoot, rootIcon, rootsMode } from "../connections/lib/roots";
+import { canView, LazyDocumentView, viewerFor } from "../viewers/lib/registry";
+import { asExport } from "../connections/lib/native";
+import type { DocumentHandle } from "../viewers/components/DocumentView";
+import type { Entry } from "../core/types";
+import type { Profile } from "../core/types";
+import { isShellConn, type PickId } from "../connections/lib/kinds";
+import { useDialogs } from "./hooks/useDialogs";
+import type { MenuItem } from "../ui/components/Dialogs";
+import { photoMenuItems } from "./components/photoMenu";
 import { tunnelMenuItems, useTunnelCommands } from "../tunnels/tunnelMenu";
-import { loadExpanded, useConnections } from "./useConnections";
-import { useFinderDrop } from "./useFinderDrop";
-import { useShellCommands } from "./useShellCommands";
-import { dualMenuItems, SplitLayout } from "./SplitLayout";
+import { loadExpanded, useConnections } from "./hooks/useConnections";
+import { useFinderDrop } from "./hooks/useFinderDrop";
+import { useShellCommands } from "./hooks/useShellCommands";
+import { dualMenuItems, SplitLayout } from "./components/SplitLayout";
 import {
   allFacing,
   closePane,
@@ -90,14 +90,14 @@ import {
   type DropZone,
   type PaneNode,
   type SyncLink,
-} from "./paneLayout";
-import { makeDualActions, paneName, type DualContext } from "./dualActions";
-import { stopOrCancel } from "../actions/customActions";
-import { WorkspaceBar, wsTabAt, type PaneSwitcher } from "./WorkspaceBar";
-import { usePaneDrag, type DropCheck, type DropTarget } from "./usePaneDrag";
-import { useFileDrag } from "./useFileDrag";
-import { WorkspaceSettings } from "./WorkspaceSettings";
-import { useWorkspaceRecipes } from "./useWorkspaceRecipes";
+} from "./lib/paneLayout";
+import { makeDualActions, paneName, type DualContext } from "./components/dualActions";
+import { stopOrCancel } from "../actions/lib/customActions";
+import { WorkspaceBar, wsTabAt, type PaneSwitcher } from "./components/WorkspaceBar";
+import { usePaneDrag, type DropCheck, type DropTarget } from "./hooks/usePaneDrag";
+import { useFileDrag } from "./hooks/useFileDrag";
+import { WorkspaceSettings } from "./components/WorkspaceSettings";
+import { useWorkspaceRecipes } from "./hooks/useWorkspaceRecipes";
 import {
   copyLayout,
   copyName,
@@ -113,23 +113,23 @@ import {
   type PaneSnap,
   type Workspace,
   type WorkspaceStore,
-} from "./workspaces";
-import { dropPlace } from "./recipes";
-import type { HistorySnap } from "../browser/useHistory";
-import { sameLoc, type Listing } from "../browser/useListing";
-import { PaneContext } from "./PaneContext";
-import { useMigrationHost } from "./useMigrationHost";
-import { usePalette } from "../palette/usePalette";
-import { forgetPlacesOf } from "../palette/recent";
-import { useEdit, type EditPlace } from "../edit/useEdit";
-import { EditorSheet } from "../edit/EditorSheet";
-import { LazyEditConflictHost, LazyEditingChip } from "../edit/lazy";
-import { useEditCount, type SaveRule } from "../edit/editStore";
+} from "./lib/workspaces";
+import { dropPlace } from "./lib/recipes";
+import type { HistorySnap } from "../browser/hooks/useHistory";
+import { sameLoc, type Listing } from "../browser/hooks/useListing";
+import { PaneContext } from "./components/PaneContext";
+import { useMigrationHost } from "./hooks/useMigrationHost";
+import { usePalette } from "../palette/hooks/usePalette";
+import { forgetPlacesOf } from "../palette/lib/recent";
+import { useEdit, type EditPlace } from "../edit/hooks/useEdit";
+import { EditorSheet } from "../edit/components/EditorSheet";
+import { LazyEditConflictHost, LazyEditingChip } from "../edit/lib/lazy";
+import { useEditCount, type SaveRule } from "../edit/lib/editStore";
 import { listMirrors, mirrorToPane, quickRun } from "../mirror";
-import { registerCommands } from "../palette/commands";
-import { connectionMenuItems } from "../connections/organizeMenu";
-import { moveInto, togglePins } from "../connections/organize";
-import { useConnPicks } from "../connections/useConnPicks";
+import { registerCommands } from "../palette/lib/commands";
+import { connectionMenuItems } from "../connections/lib/organizeMenu";
+import { moveInto, togglePins } from "../connections/lib/organize";
+import { useConnPicks } from "../connections/hooks/useConnPicks";
 import {
   allGroups,
   groupLabel,
@@ -147,7 +147,7 @@ import {
   type GroupChanges,
   type GroupNode,
   type KindSection,
-} from "../connections/groups";
+} from "../connections/lib/groups";
 
 /** The connection dialog: editing `profile`, or a new one (on `startKind`'s form, when given). */
 type ConnDialogAsk = { profile: Profile | null; reconnect?: boolean; startKind?: PickId; startTab?: "tunnels" };

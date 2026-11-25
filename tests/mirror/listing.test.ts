@@ -1,11 +1,11 @@
-// Mirror's listing (src/mirror/listing.ts): links are never gone into, and a destination is only
+// Mirror's listing (src/mirror/lib/listing.ts): links are never gone into, and a destination is only
 // "not there yet" when its parent lists to the end without it. Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { folderMissing, walkWith, type Lister } from "../../src/mirror/listing.ts";
-import { makeMatcher } from "../../src/mirror/ignore.ts";
-import { planMirror, type Listing } from "../../src/mirror/plan.ts";
-import type { ListResult, ObjInfo } from "../../src/types.ts";
+import { folderMissing, walkWith, type Lister } from "../../src/mirror/lib/listing.ts";
+import { makeMatcher } from "../../src/mirror/lib/ignore.ts";
+import { planMirror, type Listing } from "../../src/mirror/lib/plan.ts";
+import type { ListResult, ObjInfo } from "../../src/core/types.ts";
 
 const obj = (key: string, size = 1, extra: Partial<ObjInfo> = {}): ObjInfo => ({ key, size, modified: 1000, etag: null, storageClass: null, ...extra });
 const page = (folders: string[], objects: ObjInfo[], extra: Partial<ListResult> = {}): ListResult => ({ folders, objects, nextToken: null, ...extra });

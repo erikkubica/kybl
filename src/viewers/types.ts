@@ -1,4 +1,4 @@
-import type { ViewerKind } from "./registry";
+import type { ViewerKind } from "./lib/registry";
 
 /** What DocumentView hands every viewer. */
 export type ViewerProps = {

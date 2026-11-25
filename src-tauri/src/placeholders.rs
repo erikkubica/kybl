@@ -1,7 +1,7 @@
 //! ThumbHash placeholders: a ~25-byte blurry stand-in for a photo, shown in the grid at once while
 //! (or instead of) its thumbnail loads, so a folder of 2000 photos is usable on a slow line.
 //!
-//! The web view decodes them (src/thumbhash.ts). They come from three places, cheapest first:
+//! The web view decodes them (src/thumbs/thumbhash.ts). They come from three places, cheapest first:
 //!  - **this device's index** (`placeholders.db`): every thumbnail made here leaves its hash, and so
 //!    does every photo uploaded from here. Kept apart from the thumbnail cache, so trimming that
 //!    cache doesn't lose them; Settings → Clear cache empties both.
@@ -33,7 +33,7 @@ use crate::thumbs;
 
 /// The thumbhash format works on images up to 100 x 100.
 const HASH_PX: u32 = 100;
-/// The shared index of a folder, next to its photos. Hidden from listings by the app (src/thumbhash.ts).
+/// The shared index of a folder, next to its photos. Hidden from listings by the app (src/thumbs/thumbhash.ts).
 pub const INDEX_NAME: &str = ".kybl/thumbhash.json";
 const INDEX_VERSION: u32 = 1;
 /// A folder index bigger than this is not read (it would cost more than it saves).

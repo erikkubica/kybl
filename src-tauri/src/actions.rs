@@ -143,7 +143,7 @@ const PLACEHOLDERS: [&str; 6] = ["path", "name", "ext", "stem", "paths", "dir"];
 /// (see [`operand_problem`]), or after something shells read differently (a `#` inside a word,
 /// `case`, a comment or a `)` in `${ … }` inside `$( … )`, a line continuation inside a word, `\'`
 /// in `$'…'`), a placeholder is refused. A template with any placeholder that evaluates anything
-/// (arithmetic, an array index, `eval`) is refused whole, see [`evaluation_problem`]. Mirrored in src/actions/templateCheck.ts; both run
+/// (arithmetic, an array index, `eval`) is refused whole, see [`evaluation_problem`]. Mirrored in src/actions/lib/templateCheck.ts; both run
 /// tests/actions/template-vectors.json. The error names the placeholder.
 pub fn check_template(template: &str) -> Result<(), String> {
     // the shell deletes every backslash + line break before it reads a word, so scan what it will
@@ -1436,7 +1436,7 @@ mod tests {
         assert!(!std::path::Path::new("/tmp/kybl-fish-pwned").exists());
     }
 
-    /// The cases shared with the editor's check (src/actions/templateCheck.ts).
+    /// The cases shared with the editor's check (src/actions/lib/templateCheck.ts).
     #[test]
     fn template_vectors() {
         let v: serde_json::Value = serde_json::from_str(include_str!("../../tests/actions/template-vectors.json")).unwrap();

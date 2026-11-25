@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { BACKUP_STATUS_EVENT, backupApi, errMessage, type BackupOverview, type BackupSetStatus } from "../../api";
+import { BACKUP_STATUS_EVENT, backupApi, errMessage, type BackupOverview, type BackupSetStatus } from "../../core/api";
 
 export type BackupState = {
   overview: BackupOverview | null;

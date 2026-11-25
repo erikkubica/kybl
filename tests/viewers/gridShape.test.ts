@@ -1,7 +1,7 @@
-// Spreadsheet grid shape (src/viewers/gridShape.ts). Run: pnpm test
+// Spreadsheet grid shape (src/viewers/lib/gridShape.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { columnCount, usedExtent } from "../../src/viewers/gridShape.ts";
+import { columnCount, usedExtent } from "../../src/viewers/lib/gridShape.ts";
 
 test("columns count every row, not just the first 2000", () => {
   const rows = Array.from({ length: 5000 }, (_, i) => new Array(i === 4999 ? 12 : 10).fill("x"));
@@ -23,7 +23,7 @@ test("used extent ignores empty and stub cells past the data", () => {
 });
 
 test("a sheet is cut to the cell cap, not just per axis", async () => {
-  const { sheetCut, XLSX_MAX_CELLS, XLSX_MAX_ROWS, XLSX_MAX_COLS } = await import("../../src/viewers/gridShape.ts");
+  const { sheetCut, XLSX_MAX_CELLS, XLSX_MAX_ROWS, XLSX_MAX_COLS } = await import("../../src/viewers/lib/gridShape.ts");
   // small sheets stay whole
   assert.deepEqual(sheetCut({ r: 99, c: 9 }), { r: 99, c: 9 });
   // 150k rows x 60 columns (9M cells): rows cut so rows x cols stays under the cap
@@ -40,7 +40,7 @@ test("a sheet is cut to the cell cap, not just per axis", async () => {
 });
 
 test("the cut note names only the axes that were cut", async () => {
-  const { cutNote } = await import("../../src/viewers/gridShape.ts");
+  const { cutNote } = await import("../../src/viewers/lib/gridShape.ts");
   assert.equal(cutNote({ rows: 5, cols: 1000 }, null), undefined);
   assert.equal(cutNote({ rows: 5, cols: 1000 }, { rows: 5, cols: 1200 }), `only the first ${(1000).toLocaleString()} of ${(1200).toLocaleString()} columns`);
   assert.equal(cutNote({ rows: 2000, cols: 3 }, { rows: 9000, cols: 3 }), `only the first ${(2000).toLocaleString()} of ${(9000).toLocaleString()} rows`);

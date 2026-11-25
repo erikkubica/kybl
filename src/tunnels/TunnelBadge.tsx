@@ -6,9 +6,9 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Icon } from "../Icons";
-import { formatBytes } from "../format";
-import type { Profile, TunnelDef } from "../types";
+import { Icon } from "../ui/components/Icons";
+import { formatBytes } from "../core/format";
+import type { Profile, TunnelDef } from "../core/types";
 import {
   copyAddress,
   hostPort,

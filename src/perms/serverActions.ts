@@ -4,13 +4,13 @@
  * (`caps.permissions`, `caps.links`); S3 and the cloud drives never show these.
  */
 import { createElement } from "react";
-import { errMessage, errSummary } from "../api";
-import { nameProblem } from "../itemText";
-import { parentPrefix } from "../format";
-import { entryParent } from "../moving";
-import type { MenuItem } from "../components/Dialogs";
-import type { Entry } from "../types";
-import type { PaneCore, PaneEnv } from "../browser/usePane";
+import { errMessage, errSummary } from "../core/api";
+import { nameProblem } from "../connections/lib/itemText";
+import { parentPrefix } from "../core/format";
+import { entryParent } from "../transfers/lib/moving";
+import type { MenuItem } from "../ui/components/Dialogs";
+import type { Entry } from "../core/types";
+import type { PaneCore, PaneEnv } from "../browser/hooks/usePane";
 import { PermissionsSheet } from "./PermissionsSheet";
 import { permsApi } from "./permsApi";
 

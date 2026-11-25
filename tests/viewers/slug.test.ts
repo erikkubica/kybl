@@ -1,7 +1,7 @@
-// Heading ids for Markdown anchors (src/viewers/slug.ts). Run: pnpm test
+// Heading ids for Markdown anchors (src/viewers/lib/slug.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { headingSlugger, htmlText } from "../../src/viewers/slug.ts";
+import { headingSlugger, htmlText } from "../../src/viewers/lib/slug.ts";
 
 test("GitHub-style slugs", () => {
   const s = headingSlugger();

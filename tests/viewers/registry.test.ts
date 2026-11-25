@@ -1,7 +1,7 @@
-// Which viewer opens a file (src/viewers/registry.ts). Run: pnpm test
+// Which viewer opens a file (src/viewers/lib/registry.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { viewerFor } from "../../src/viewers/registry.ts";
+import { viewerFor } from "../../src/viewers/lib/registry.ts";
 
 const kind = (name: string, ct?: string) => viewerFor(name, ct)?.kind ?? null;
 

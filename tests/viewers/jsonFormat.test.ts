@@ -1,7 +1,7 @@
-// JSON Format without changing data (src/viewers/jsonFormat.ts). Run: pnpm test
+// JSON Format without changing data (src/viewers/lib/jsonFormat.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compactJson, formatJson } from "../../src/viewers/jsonFormat.ts";
+import { compactJson, formatJson } from "../../src/viewers/lib/jsonFormat.ts";
 
 test("keeps number literals, key order and duplicate keys", () => {
   const src = `{"id": 12345678901234567890, "price": 1.50, "e": 1e5, "z": 1, "10": "a", "2": "b", "z": 2}`;

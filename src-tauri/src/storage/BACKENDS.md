@@ -101,7 +101,7 @@ The trust errors here (`ErrKind::UnknownHost`, `HostKeyChanged`, `UntrustedCert`
 `Unencrypted`) reach the UI as "message\n\n<tag> <first detail line>…", where `<tag>` is
 `kybl:` and 32 hex digits, made fresh each run (`storage::trust_tag`, read once with the
 `trust_tag` command). Servers can put text into errors (FTP replies, status messages, names), but
-they can't know the tag, so the UI (`src/connections/kinds.ts`) reads a question only from a
+they can't know the tag, so the UI (`src/connections/lib/kinds.ts`) reads a question only from a
 detail that starts with it: its first line, then the certificate's `key: value` lines up to `tls:`.
 The host shown is the connection's, never the error's. FTP reply text in a detail is made one line
 (`storage::one_line`). The examples here leave the tag out.

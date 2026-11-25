@@ -1,7 +1,7 @@
-// Keys as paths under a local folder, and local names for remote files (src/desktop/paths.ts). Run: pnpm test
+// Keys as paths under a local folder, and local names for remote files (src/desktop/lib/paths.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { plainRelPath, safeName, safeRelPath } from "../../src/desktop/paths.ts";
+import { plainRelPath, safeName, safeRelPath } from "../../src/desktop/lib/paths.ts";
 
 test("a synced copy's path never climbs out of the synced folder", () => {
   for (const r of ["a.txt", "docs/report.pdf", "..name/x..y", "photo: 1.jpg", ".hidden/.env"]) assert.ok(plainRelPath(r), r);

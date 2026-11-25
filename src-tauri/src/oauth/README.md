@@ -4,7 +4,7 @@ For the connections UI (WP-A3) and for whoever registers the OAuth apps. Code: `
 providers, commands), `token.rs` (refresh), `http.rs` (signed requests, retries, errors). The
 backends are `storage/gdrive/`, `storage/onedrive.rs` and `storage/dropbox.rs`.
 
-## The calls (src/api.ts, "WP-A2")
+## The calls (src/core/api.ts, "WP-A2")
 
 | Call | What it does |
 |---|---|

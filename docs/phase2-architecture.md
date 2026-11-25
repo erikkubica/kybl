@@ -1,6 +1,6 @@
 # Kybl phase 2: architecture and implementation plan
 
-I only read the code. Nothing was changed. File references are to the worktree as it is now: HEAD `785aa5a`, with the phase-1 API contract already in `src/api.ts`.
+I only read the code. Nothing was changed. File references are to the worktree as it is now: HEAD `785aa5a`, with the phase-1 API contract already in `src/core/api.ts`.
 
 ---
 
@@ -174,7 +174,7 @@ let Some(client) = conn.as_s3().map(|s| s.client().clone()) else {
 ### 1.6 Capabilities (returned per connection)
 
 ```ts
-// src/api.ts
+// src/core/api.ts
 export type Capabilities = {
   roots: "buckets" | "single" | "drives"; createRoot: boolean;
   folders: "prefix" | "real";                 // prefix: markers needed, empty folders vanish
@@ -219,7 +219,7 @@ pub struct CloudConfig { account_email: String, account_id: String,
 ```
 
 - **No on-disk migration is needed.** Serde defaults handle old files.
-- `provider` stays the visual id: `gdrive`, `onedrive`, `sftp` and so on join `PROVIDERS` in `src/providers.ts`.
+- `provider` stays the visual id: `gdrive`, `onedrive`, `sftp` and so on join `PROVIDERS` in `src/connections/lib/providers.ts`.
 - **Downgrade caveat:** an older Kybl would show a non-S3 profile as a broken S3 entry. That is acceptable, and the release notes should say so.
 
 ### 1.8 Vault v2 (credentials on every platform)
@@ -239,7 +239,7 @@ pub struct CloudConfig { account_email: String, account_id: String,
 
 - URL: `media://localhost/<pct(profileId\nroot\nsize\netag\npath)>`, the same packing as `thumb://`.
 - The handler parses `Range`, calls `Storage::read(range)`, and **caps every reply at 4 MiB** with `206` + `Content-Range`, even when the request was `bytes=0-`. Media elements accept a shorter 206 and ask for the next piece.
-- The frontend's `src/media.ts::playableUrl(profile, root, entry)` returns a presigned URL when `caps.streaming === "presign"`, otherwise a `media://` URL.
+- The frontend's `src/viewers/lib/media.ts::playableUrl(profile, root, entry)` returns a presigned URL when `caps.streaming === "presign"`, otherwise a `media://` URL.
 - **Spike first:** WKWebView and AVFoundation behaviour with custom schemes on macOS and iOS. If it fails, use a loopback HTTP server bound to `127.0.0.1` with a random path token. The WebDAV mount (E4) shares that server.
 
 ### 1.10 Which backend for which provider: OpenDAL or hand-written
@@ -380,7 +380,7 @@ api.jobCancel(id); api.jobDelete(id); api.jobFailures(id, offset, limit) -> {pat
 // event "job-progress": JobProgress
 ```
 
-- New files: `src/jobs/useMigrations.ts` (a store like `useTransfers`), `src/jobs/MigrationDialog.tsx`, `src/jobs/LocationPicker.tsx` (a cross-connection tree, built on MoveDialog's tree), and a "Jobs" tab in `TransferPanel`.
+- New files: `src/jobs/hooks/useMigrations.ts` (a store like `useTransfers`), `src/jobs/components/MigrationDialog.tsx`, `src/jobs/components/LocationPicker.tsx` (a cross-connection tree, built on MoveDialog's tree), and a "Jobs" tab in `TransferPanel`.
 - Entry points:
   - context menu "Copy to another connection…"
   - connection menu "Migrate everything to…"
@@ -506,13 +506,13 @@ backup_items(set_id TEXT, source_id TEXT /* PHAsset localIdentifier#res | MediaS
 ### 4.1 Frontend
 
 ```
-src/viewers/registry.ts     ext/mime -> { load: () => import("./X"), canEdit, maxBytes }
-src/viewers/useDocument.ts  open (bytes + meta), decode (TextDecoder fatal utf-8, BOM utf-16, otherwise read-only), dirty, save(precondition), conflicts
+src/viewers/lib/registry.ts     ext/mime -> { load: () => import("./X"), canEdit, maxBytes }
+src/viewers/hooks/useDocument.ts  open (bytes + meta), decode (TextDecoder fatal utf-8, BOM utf-16, otherwise read-only), dirty, save(precondition), conflicts
 src/viewers/TextEditor.tsx  CodeMirror 6 (+ @codemirror/language-data lazy languages), find/replace, keeps line endings and BOM
-src/viewers/MarkdownView.tsx  split view; output in a sandboxed iframe
+src/viewers/components/MarkdownView.tsx  split view; output in a sandboxed iframe
 src/viewers/CsvTable.tsx, DocxView.tsx, XlsxView.tsx, PptxView.tsx, ImageView.tsx
-src/viewers/ConflictDialog.tsx  "Theirs changed: Reload / Overwrite / Save as copy"
-src/viewers/SandboxFrame.tsx    <iframe sandbox="" srcdoc=...> (no allow-scripts) for every untrusted HTML
+src/viewers/components/ConflictDialog.tsx  "Theirs changed: Reload / Overwrite / Save as copy"
+src/viewers/components/SandboxFrame.tsx    <iframe sandbox="" srcdoc=...> (no allow-scripts) for every untrusted HTML
 ```
 
 - **Security:** `csp` is `null` and every page can `invoke`. DOCX and Markdown HTML therefore render **only inside `sandbox` iframes**, and are also passed through DOMPurify.
@@ -654,14 +654,14 @@ cursors(mapping_id, remote_cursor TEXT, last_full_scan INT);
 ### 6.1 Frontend layout
 
 ```
-src/browser/useLocation.ts     {profileId, root, prefix} + back/forward history, navigate, openRoot
-src/browser/useListing.ts      load/loadRest/refresh/search with request ids (fixes audit #2, #3, #8 by construction)
-src/browser/useSelection.ts    selected/anchor/cursor/moveSelection/selectAll
-src/browser/useEntryActions.ts delete/rename/newFolder/download/upload/relocate/copyLink/open, gated by useCaps
+src/browser/hooks/useLocation.ts     {profileId, root, prefix} + back/forward history, navigate, openRoot
+src/browser/hooks/useListing.ts      load/loadRest/refresh/search with request ids (fixes audit #2, #3, #8 by construction)
+src/browser/hooks/useSelection.ts    selected/anchor/cursor/moveSelection/selectAll
+src/browser/hooks/useEntryActions.ts delete/rename/newFolder/download/upload/relocate/copyLink/open, gated by useCaps
 src/browser/BrowserPane.tsx    pane toolbar (breadcrumbs, view, search), FileTable/GridView, empty/error states
 src/browser/PaneContext.tsx    active-pane API for the menu bar, keyboard and Sidebar
 src/shell/AppShell.tsx         (today's App.tsx) Sidebar, TransferPanel, Settings, Toasts, dialogs via useDialogs()
-src/shell/useDialogs.tsx       ConfirmDialog/PromptDialog/MoveDialog as a context, so panes can open them
+src/shell/hooks/useDialogs.tsx       ConfirmDialog/PromptDialog/MoveDialog as a context, so panes can open them
 src/shell/DualPane.tsx         two BrowserPanes + splitter; key handling
 src/compare/compareFolders.ts  diff of two listings (missing / size / mtime / etag); recursive via a "compare" job
 ```
@@ -784,7 +784,7 @@ Each subsystem has its own database file, so migrations are independent, nobody 
 
 - **WP0 Storage core**
   - Owns: `core/*`, `storage/{mod,registry,s3,local,generic_cmds}.rs`, `storage/s3_stream.rs` (a **stub** returning `Unsupported`).
-  - Edits: the vault and `Profile` in `state.rs`; two-line preludes in `commands.rs`; `lib.rs` registration (`list_roots`, `connection_capabilities`); `Cargo.toml` (async-trait, rusqlite, base64); `src/api.ts` + `src/types.ts` (ConnKind, RootInfo, Capabilities, the new optional Profile fields); `devMock.ts`.
+  - Edits: the vault and `Profile` in `state.rs`; two-line preludes in `commands.rs`; `lib.rs` registration (`list_roots`, `connection_capabilities`); `Cargo.toml` (async-trait, rusqlite, base64); `src/core/api.ts` + `src/core/types.ts` (ConnKind, RootInfo, Capabilities, the new optional Profile fields); `devMock.ts`.
   - Done when: existing tests pass unchanged, LocalBackend has unit tests, and the generic commands pass against Local.
 
 **Wave 1 (in parallel; each owns the files listed):**
@@ -793,8 +793,8 @@ Each subsystem has its own database file, so migrations are independent, nobody 
 |---|---|---|---|
 | **A1 Network backends** | `storage/{dal,sftp}.rs` | `Cargo.toml` [deps: opendal, reqwest, russh*], `registry.rs` (one match arm per kind) | `Storage` impls for webdav, ftp, sftp, azblob, gcs |
 | **A2 OAuth + clouds** | `oauth/*`, `storage/gdrive/*`, `storage/extras/*` | `kybl_connect.rs` (helpers made `pub(crate)`), `KyblConnectPlugin.swift/.kt` (scheme argument), `AndroidManifest.xml` (oauth intent filter), `release.yml` (env), `registry.rs` arms | `oauth_start`, `oauth_cancel`, `oauth_builtin_clients`, the `connection-auth` event, Drive/OneDrive/Dropbox backends |
-| **A3 Connections UI** | `src/connections/*` (split from `ConnectionDialog.tsx`), `src/providers.ts`, `src/components/Sidebar.tsx`, `src/useCaps.ts` | `src/mobile/MobileApp.tsx` (gating, root names), `src/mobile/SettingsScreen.tsx` | kind picker, forms, Reconnect, single-root collapse |
-| **A4 Media + thumbs** | `storage/media.rs`, `src/media.ts` | `thumbs.rs` (generic read, remote thumbnails), `lib.rs` (one line), `src/thumbs.ts` | `playableUrl()`, the `media://` scheme |
+| **A3 Connections UI** | `src/connections/*` (split from `ConnectionDialog.tsx`), `src/connections/lib/providers.ts`, `src/sidebar/Sidebar.tsx`, `src/core/useCaps.ts` | `src/mobile/MobileApp.tsx` (gating, root names), `src/mobile/components/SettingsScreen.tsx` | kind picker, forms, Reconnect, single-root collapse |
+| **A4 Media + thumbs** | `storage/media.rs`, `src/viewers/lib/media.ts` | `thumbs.rs` (generic read, remote thumbnails), `lib.rs` (one line), `src/thumbs/thumbs.ts` | `playableUrl()`, the `media://` scheme |
 | **D Viewers/editor** | `src/viewers/*`, `storage/doc.rs` | `PreviewPane.tsx`, `mobile/Viewer.tsx` (wires the registry **and** A4's `playableUrl`), `package.json`, `vite.config.ts` | `doc_open`, `doc_save` |
 | **B1 Migration engine** | `jobs/*`, `storage/s3_stream.rs` (real implementation) | `lib.rs`, `transfer_notice` call sites only | `job_*` commands, the `job-progress` event |
 | **E1 Sync v2** | `sync/*` (split of `sync.rs`) | `tray.rs` (conflict and confirm items) | `plan_upload` (exported for C1), `direction: "twoway"`, `sync.db` |
@@ -805,8 +805,8 @@ Each subsystem has its own database file, so migrations are independent, nobody 
 
 **Wave 2:**
 
-- **B2** Migration UI: `src/jobs/*`, plus entry points in `src/browser/useEntryActions.ts` once F has landed.
-- **C4** Mobile backup screens in `src/mobile/BackupScreen.tsx`.
+- **B2** Migration UI: `src/jobs/*`, plus entry points in `src/browser/hooks/useEntryActions.ts` once F has landed.
+- **C4** Mobile backup screens in `src/mobile/components/BackupScreen.tsx`.
 - **E2** Windows cfapi (`mount/windows.rs`).
 - **E3** Linux FUSE (`mount/fuse.rs`).
 - **E4** macOS WebDAV mount beta (`mount/webdav.rs`), with a shared `mount/mod.rs` from whoever lands first.
@@ -843,7 +843,7 @@ Each subsystem has its own database file, so migrations are independent, nobody 
 - src-tauri/src/sync.rs
 - src-tauri/src/kybl_connect.rs
 - src/App.tsx
-- src/api.ts
+- src/core/api.ts
 
 Sources:
 - [crates.io: opendal](https://crates.io/api/v1/crates/opendal)

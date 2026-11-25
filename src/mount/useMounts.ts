@@ -1,9 +1,9 @@
 /** Drives ("Mount as drive"): one shared list, kept live by `mount-status` events. */
 import { listen } from "@tauri-apps/api/event";
-import { MOUNT_STATUS_EVENT, mountApi, type MountInfo } from "../api";
-import { createStore, useStore } from "../store";
-import { ON_OS } from "../osNames";
-import { rootLabel } from "../connections/roots";
+import { MOUNT_STATUS_EVENT, mountApi, type MountInfo } from "../core/api";
+import { createStore, useStore } from "../core/store";
+import { ON_OS } from "../core/osNames";
+import { rootLabel } from "../connections/lib/roots";
 
 type MountData = { loaded: boolean; mounts: MountInfo[] };
 

@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn page_items_match_the_contract() {
         // the ids api.ts documents for the `menu` event, minus "select-all" (see the note above)
-        let src = include_str!("../../src/api.ts");
+        let src = include_str!("../../src/core/api.ts");
         for id in PAGE_ITEMS {
             assert!(src.contains(&format!("\"{id}\"")), "{id} is not documented in api.ts");
         }

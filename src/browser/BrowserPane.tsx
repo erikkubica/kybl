@@ -4,26 +4,26 @@
  * state lives in the pane object from usePane; this only draws it.
  */
 import { lazy, Suspense, useEffect, useRef, type CSSProperties } from "react";
-import { Icon } from "../Icons";
-import { Toolbar } from "../components/Toolbar";
-import { rootIcon, rootsMode } from "../connections/roots";
-import { peekCaps } from "../useCaps";
-import { FileTable, type SortKey } from "../components/FileTable";
-import type { ColumnId } from "../settings";
-import { GridView } from "../components/GridView";
-import { QuickLook } from "../desktop/QuickLook";
-import type { Settings } from "../settings";
-import { ChooseBucket, ListError, Welcome, type EmptyActions } from "./PaneEmpty";
-import { PaneBanners, PaneStatusBar } from "./PaneParts";
-import type { Pane } from "./usePane";
-import { useImageModes } from "../imageMode";
-import type { MenuItem } from "../components/Dialogs";
-import { BranchChip, SearchModes } from "../components/DevMarks";
-import type { Entry } from "../types";
-import { registerCommands } from "../palette/commands";
+import { Icon } from "../ui/components/Icons";
+import { Toolbar } from "./components/Toolbar";
+import { rootIcon, rootsMode } from "../connections/lib/roots";
+import { peekCaps } from "../core/useCaps";
+import { FileTable, type SortKey } from "./components/list/FileTable";
+import type { ColumnId } from "../settings/settings";
+import { GridView } from "./components/list/GridView";
+import { QuickLook } from "../desktop/components/QuickLook";
+import type { Settings } from "../settings/settings";
+import { ChooseBucket, ListError, Welcome, type EmptyActions } from "./components/PaneEmpty";
+import { PaneBanners, PaneStatusBar } from "./components/PaneParts";
+import type { Pane } from "./hooks/usePane";
+import { useImageModes } from "../thumbs/imageMode";
+import type { MenuItem } from "../ui/components/Dialogs";
+import { BranchChip, SearchModes } from "./components/DevMarks";
+import type { Entry } from "../core/types";
+import { registerCommands } from "../palette/lib/commands";
 
 // the info panel is code most panes never need: it loads when one is first opened
-const InfoPanel = lazy(() => import("./InfoPanel"));
+const InfoPanel = lazy(() => import("./components/InfoPanel"));
 
 /** the clipboard takes files on macOS only for now (see platform.rs) */
 const IS_MAC = /Mac/.test(navigator.platform || navigator.userAgent);

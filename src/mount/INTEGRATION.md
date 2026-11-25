@@ -13,7 +13,7 @@ Stage E4 of `docs/phase2-architecture.md` §5. Desktop only: the Rust side is `s
 | `driveMenu.ts` | `driveItems(mount, …)`: the drive part of a place's context menu: "Mount as drive…", or once mounted a "Mounted as drive" heading with Show drive in Finder and Eject (Unmount off macOS), Try again after an error; used by the sidebar menus, the folder menus and the sidebar's drive badge (`DriveBadge` in `Sidebar.tsx`) |
 | `mount.css` | the few styles on top of the sync card styles |
 
-API (end of `src/api.ts`, `// WP-E4`): `mountApi.mountList / mountAdd(profileId, bucket, prefix, name?) / mountRemove / mountReveal / mountRetry / mountEject / mountDismiss`, type `MountInfo`, event `MOUNT_STATUS_EVENT` (`"mount-status"`, payload `MountInfo`, state `"removed"` when deleted). `src/devMock.ts` answers all of them (`?nodrives` for the empty state).
+API (end of `src/core/api.ts`, `// WP-E4`): `mountApi.mountList / mountAdd(profileId, bucket, prefix, name?) / mountRemove / mountReveal / mountRetry / mountEject / mountDismiss`, type `MountInfo`, event `MOUNT_STATUS_EVENT` (`"mount-status"`, payload `MountInfo`, state `"removed"` when deleted). `src/dev/devMock.ts` answers all of them (`?nodrives` for the empty state).
 
 ## Already wired
 

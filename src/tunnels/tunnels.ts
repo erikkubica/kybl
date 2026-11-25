@@ -8,9 +8,9 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { createStore, useStore } from "../store";
-import { errMessage } from "../api";
-import type { Profile, TunnelDef } from "../types";
+import { createStore, useStore } from "../core/store";
+import { errMessage } from "../core/api";
+import type { Profile, TunnelDef } from "../core/types";
 
 export type TunnelInfo = {
   profileId: string;

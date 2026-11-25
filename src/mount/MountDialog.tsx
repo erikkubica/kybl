@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { errMessage, mountApi, type MountInfo } from "../api";
-import { Modal } from "../components/Dialogs";
-import { ErrorText } from "../components/ErrorText";
-import { Icon } from "../Icons";
+import { errMessage, mountApi, type MountInfo } from "../core/api";
+import { Modal } from "../ui/components/Dialogs";
+import { ErrorText } from "../ui/components/ErrorText";
+import { Icon } from "../ui/components/Icons";
 import { fileManagerName, findMount, mountWhere, reloadMounts, useMounts } from "./useMounts";
-import { rootName, useRootName } from "../connections/roots";
+import { rootName, useRootName } from "../connections/lib/roots";
 import "./mount.css";
 
 type Toast = (kind: "success" | "error" | "info", text: string) => void;

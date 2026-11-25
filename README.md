@@ -52,7 +52,7 @@ also makes access keys for any other S3 tool, and shows usage, devices and bucke
 pnpm install
 pnpm tauri dev          # run
 pnpm tauri build        # release bundle (.app / .dmg)
-pnpm dev                # UI only, in a browser, with demo data (src/devMock.ts); handy for design work
+pnpm dev                # UI only, in a browser, with demo data (src/dev/devMock.ts); handy for design work
 ```
 Requires Rust, Node and pnpm. Local macOS builds are ad-hoc signed; set `APPLE_SIGNING_IDENTITY`
 to sign with your own identity.

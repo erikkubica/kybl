@@ -5,11 +5,11 @@
  */
 import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import type { MenuItem } from "../components/Dialogs";
-import { PHONE } from "../connections/fields";
-import { registerCommands } from "../palette/commands";
-import type { Profile, TunnelDef } from "../types";
-import { mayBeBackground } from "../shell/notifications";
+import type { MenuItem } from "../ui/components/Dialogs";
+import { PHONE } from "../connections/components/fields";
+import { registerCommands } from "../palette/lib/commands";
+import type { Profile, TunnelDef } from "../core/types";
+import { mayBeBackground } from "../shell/lib/notifications";
 import { hostPort, isStarting, localAddress, runningTunnel, startTunnel, stopTunnel, TUNNEL_ERROR_EVENT, tunnelLabel, tunnelsOf, watchTunnels } from "./tunnels";
 
 type Toast = (kind: "success" | "error" | "info", text: string) => void;

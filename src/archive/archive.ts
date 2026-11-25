@@ -4,8 +4,8 @@
  * and safe to import anywhere: names, ids and the backend calls.
  */
 import { invoke } from "@tauri-apps/api/core";
-import type { Profile } from "../types";
-import { LOCAL_ID } from "../api";
+import type { Profile } from "../core/types";
+import { LOCAL_ID } from "../core/api";
 
 export const ARCHIVE_PREFIX = "archive:";
 

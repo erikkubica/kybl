@@ -1,7 +1,7 @@
 // S3 form: the endpoint follows the region only while it is the preset's own. Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { endpointAfterRegion, fieldsAfterProvider } from "../../src/connections/s3Endpoint.ts";
+import { endpointAfterRegion, fieldsAfterProvider } from "../../src/connections/lib/s3Endpoint.ts";
 
 const aws = (r: string) => `https://s3.${r}.amazonaws.com`;
 const custom = () => "";

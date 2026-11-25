@@ -1,10 +1,10 @@
-// What a connection error offers to fix, desktop and phone (src/connections/connTrouble.ts). Run: pnpm test
+// What a connection error offers to fix, desktop and phone (src/connections/lib/connTrouble.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { connTrouble } from "../../src/connections/connTrouble.ts";
-import { keepsSavedSecret, setTrustTag } from "../../src/connections/kinds.ts";
-import { errDetail } from "../../src/api.ts";
-import type { Profile } from "../../src/types.ts";
+import { connTrouble } from "../../src/connections/lib/connTrouble.ts";
+import { keepsSavedSecret, setTrustTag } from "../../src/connections/lib/kinds.ts";
+import { errDetail } from "../../src/core/api.ts";
+import type { Profile } from "../../src/core/types.ts";
 
 const TAG = "kybl:0123456789abcdef0123456789abcdef";
 setTrustTag(TAG);

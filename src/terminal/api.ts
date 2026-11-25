@@ -16,8 +16,8 @@
  */
 import { LOCAL_PROFILE, LS, type PaneId } from "../browser/types";
 import { invoke } from "@tauri-apps/api/core";
-import type { Profile } from "../types";
-import type { Quoting } from "./quote";
+import type { Profile } from "../core/types";
+import type { Quoting } from "./lib/quote";
 
 /**
  * Where a terminal pane opened: a folder of a connection, and the session it shows; `from` is the
@@ -76,7 +76,7 @@ export function parseTermPlace(v: unknown): TermPlace | undefined {
   };
 }
 
-export { cdLine, quoteAs, remotePath, shellQuote, typeable, type Quoting } from "./quote";
+export { cdLine, quoteAs, remotePath, shellQuote, typeable, type Quoting } from "./lib/quote";
 
 // ---------------------------------------------------------------- hooks the shell and the chunk fill in
 

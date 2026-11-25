@@ -4,8 +4,8 @@
  * Eject) under a heading that says it's mounted. Shared by the sidebar and the file list so both
  * say the same thing. "Show drive in", not "Show in": a folder's menu has its own Show in Finder.
  */
-import { errMessage, mountApi, type MountInfo } from "../api";
-import type { MenuItem } from "../components/Dialogs";
+import { errMessage, mountApi, type MountInfo } from "../core/api";
+import type { MenuItem } from "../ui/components/Dialogs";
 import { fileManagerName, reloadMounts } from "./useMounts";
 import "./mount.css";
 

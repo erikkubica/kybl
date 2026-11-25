@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ago, connectionFacts, gitChips, gitCounts } from "../../src/browser/infoFacts.ts";
-import type { Profile } from "../../src/types.ts";
+import { ago, connectionFacts, gitChips, gitCounts } from "../../src/browser/lib/infoFacts.ts";
+import type { Profile } from "../../src/core/types.ts";
 
 const base: Profile = { id: "x", name: "x", kind: "s3", provider: "aws", endpoint: "https://s3.eu.example.com", region: "eu-1", accessKeyId: "", pathStyle: false };
 

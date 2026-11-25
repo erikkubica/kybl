@@ -1,10 +1,10 @@
 /** What the command palette is handed by the shell each time it opens (see usePalette.tsx). */
-import type { Pane } from "../browser/usePane";
+import type { Pane } from "../browser/hooks/usePane";
 import type { Loc, PaneId } from "../browser/types";
-import type { SettingsPageId } from "../components/SettingsPage";
-import type { Favorite, Settings } from "../settings";
-import type { Profile } from "../types";
-import type { Dir } from "../shell/paneLayout";
+import type { SettingsPageId } from "../settings/SettingsPage";
+import type { Favorite, Settings } from "../settings/settings";
+import type { Profile } from "../core/types";
+import type { Dir } from "../shell/lib/paneLayout";
 
 export type PaletteHost = {
   /** the saved connections, then This Mac */

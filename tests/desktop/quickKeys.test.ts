@@ -1,7 +1,7 @@
-// Quick Look holds back the list's own keys while it is up (src/desktop/quickKeys.ts). Run: pnpm test
+// Quick Look holds back the list's own keys while it is up (src/desktop/lib/quickKeys.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { listKeyHeldByPreview } from "../../src/desktop/quickKeys.ts";
+import { listKeyHeldByPreview } from "../../src/desktop/lib/quickKeys.ts";
 
 const k = (key: string, mods: Partial<{ metaKey: boolean; ctrlKey: boolean; altKey: boolean }> = {}) => ({ key, metaKey: false, ctrlKey: false, altKey: false, ...mods });
 

@@ -7,8 +7,8 @@
  * already there), `metered` (Wi-Fi only sets wait for Wi-Fi).
  */
 import { emit } from "@tauri-apps/api/event";
-import type { BackupFailure, BackupSet, BackupSetDraft, BackupSetStatus, BackupSource, PhotoAccess } from "../../api";
-import { BACKUP_STATUS_EVENT } from "../../api";
+import type { BackupFailure, BackupSet, BackupSetDraft, BackupSetStatus, BackupSource, PhotoAccess } from "../../core/api";
+import { BACKUP_STATUS_EVENT } from "../../core/api";
 
 const q = new URLSearchParams(location.search);
 const platform: "android" | "ios" = q.get("os") === "android" || (!q.get("os") && /Android/i.test(navigator.userAgent)) ? "android" : "ios";

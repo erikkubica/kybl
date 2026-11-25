@@ -3,10 +3,10 @@
  * same folder tree copies use), then how (folder names, which items, when it runs).
  */
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
-import { backupApi, errMessage, errSummary, LOCAL_ID, type BackupPermission, type BackupSetDraft, type BackupSetStatus, type BackupSource } from "../../api";
-import { Icon } from "../../Icons";
-import { LocationPicker, locLabel, type Loc, type NewFolderCommit, type PickedLocation } from "../../jobs/LocationPicker";
-import type { Toast } from "../../components/Dialogs";
+import { backupApi, errMessage, errSummary, LOCAL_ID, type BackupPermission, type BackupSetDraft, type BackupSetStatus, type BackupSource } from "../../core/api";
+import { Icon } from "../../ui/components/Icons";
+import { LocationPicker, locLabel, type Loc, type NewFolderCommit, type PickedLocation } from "../../jobs/components/LocationPicker";
+import type { Toast } from "../../ui/components/Dialogs";
 import { HONEST, PermissionNote, Seg, Toggle, type Platform } from "./parts";
 
 type Step = "source" | "dest" | "options";

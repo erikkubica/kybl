@@ -5,9 +5,9 @@
  * something to compare.
  */
 import { emit } from "@tauri-apps/api/event";
-import type { ObjInfo } from "../types";
-import type { Capabilities } from "../api";
-import { S3_CAPS } from "../useCaps";
+import type { ObjInfo } from "../core/types";
+import type { Capabilities } from "../core/api";
+import { S3_CAPS } from "../core/useCaps";
 import { archiveId, archiveOrigin, archiveStem, isArchiveId } from "./archive";
 
 type Tree = Record<string, Record<string, { folders: string[]; objects: ObjInfo[] }>>;

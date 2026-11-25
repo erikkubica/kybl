@@ -1,7 +1,7 @@
-// Which files are asked about before they open (src/desktop/runnable.ts). Run: pnpm test
+// Which files are asked about before they open (src/desktop/lib/runnable.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { asksFirst, localName, openerOf, runsCode } from "../../src/desktop/runnable.ts";
+import { asksFirst, localName, openerOf, runsCode } from "../../src/desktop/lib/runnable.ts";
 
 test("programs, scripts, installers and shortcuts run code", () => {
   for (const n of ["Invoice.pdf.exe", "setup.MSI", "x.bat", "a.lnk", "run.command", "x.terminal", "Kybl.pkg", "tool.jar", "install.sh", "evil.desktop", "x.AppImage", "macro.docm", "trailing.exe. ", "a.hta"]) {

@@ -4,12 +4,12 @@
  * (`prefix`, ending in "/" or empty). Panes never special-case the kind of storage: a Local
  * connection is just another profile, with the reserved id below.
  */
-import { LOCAL_ID } from "../api";
-import type { Profile } from "../types";
-import type { Settings } from "../settings";
-import { ON_OS } from "../osNames";
+import { LOCAL_ID } from "../core/api";
+import type { Profile } from "../core/types";
+import type { Settings } from "../settings/settings";
+import { ON_OS } from "../core/osNames";
 
-export type { Loc } from "./useListing";
+export type { Loc } from "./hooks/useListing";
 
 /**
  * The pane slots. "left" and "right" are the two panes of the old dual pane (their saved places

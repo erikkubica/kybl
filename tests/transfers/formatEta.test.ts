@@ -1,7 +1,7 @@
-// Time left in the Activity header (src/format.ts). Run: pnpm test
+// Time left in the Activity header (src/core/format.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatEta, parseMbps } from "../../src/format.ts";
+import { formatEta, parseMbps } from "../../src/core/format.ts";
 
 test("never 60 seconds in a minute", () => {
   assert.equal(formatEta(59.2), "1m 0s");

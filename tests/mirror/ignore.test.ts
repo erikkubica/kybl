@@ -1,7 +1,7 @@
-// Mirror's exclude rules (src/mirror/ignore.ts). Run: pnpm test
+// Mirror's exclude rules (src/mirror/lib/ignore.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_EXCLUDES, makeMatcher } from "../../src/mirror/ignore.ts";
+import { DEFAULT_EXCLUDES, makeMatcher } from "../../src/mirror/lib/ignore.ts";
 
 test("names match at any depth, folders only with a trailing slash", () => {
   const m = makeMatcher(DEFAULT_EXCLUDES);

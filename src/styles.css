@@ -1418,7 +1418,7 @@ kbd {
 }
 
 /* ---------------------------------------------------------------- previews and file info
-   (components/PreviewPane on phones, components/EntryInfo there and in Quick Look) */
+   (viewers/PreviewPane on phones, browser/EntryInfo there and in Quick Look) */
 body.resizing-col,
 body.resizing-col * {
   cursor: col-resize !important;

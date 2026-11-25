@@ -1,8 +1,8 @@
-// Workspace recipes (src/shell/recipes.ts): saving a layout, opening it again. Run: pnpm test
+// Workspace recipes (src/shell/lib/recipes.ts): saving a layout, opening it again. Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { captureRecipe, dropPlace, freeName, layoutOnly, matchesRecipe, openRecipe, startupLines, terminalPanes } from "../../src/shell/recipes.ts";
-import type { Layout } from "../../src/shell/workspaces.ts";
+import { captureRecipe, dropPlace, freeName, layoutOnly, matchesRecipe, openRecipe, startupLines, terminalPanes } from "../../src/shell/lib/recipes.ts";
+import type { Layout } from "../../src/shell/lib/workspaces.ts";
 
 const view = { view: "list" as const, sort: null, hidden: null, compact: null, tile: null };
 const site = { profileId: "local", bucket: "/home/me", prefix: "Sites/acme/" };

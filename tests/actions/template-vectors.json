@@ -1,5 +1,5 @@
 {
-  "_": "Shared by check_template (src-tauri/src/actions.rs) and templateProblem (src/actions/templateCheck.ts). bad: [template, text the error has].",
+  "_": "Shared by check_template (src-tauri/src/actions.rs) and templateProblem (src/actions/lib/templateCheck.ts). bad: [template, text the error has].",
   "bad": [
     ["convert \"{path}\" out.png", "inside quotes"],
     ["echo '{name}'", "inside quotes"],

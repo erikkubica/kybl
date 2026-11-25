@@ -2,9 +2,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import "@fontsource/fredoka/latin-700.css";
 import "./styles.css";
-import { applySettings, loadSettings } from "./settings";
-import { api } from "./api";
-import { setTrustTag } from "./connections/kinds";
+import { applySettings, loadSettings } from "./settings/settings";
+import { api } from "./core/api";
+import { setTrustTag } from "./connections/lib/kinds";
 
 // before first paint, so the window never flashes the wrong theme
 applySettings(loadSettings());
@@ -48,7 +48,7 @@ if (androidInsets || /iPhone|iPad|iPod/i.test(navigator.userAgent)) {
 async function boot() {
   // Plain `pnpm dev` in a browser has no Rust backend: fall back to demo data.
   if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) {
-    await import("./devMock");
+    await import("./dev/devMock");
   }
   // the tag that marks Kybl's own trust questions (a host key, a certificate, plain FTP), before
   // any error can ask one

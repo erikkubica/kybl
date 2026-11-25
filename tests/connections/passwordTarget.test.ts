@@ -1,9 +1,9 @@
 // A saved server password only follows edits that keep its server and user name
-// (src/connections/kinds.ts passwordTarget, the form side of `password_target`). Run: pnpm test
+// (src/connections/lib/kinds.ts passwordTarget, the form side of `password_target`). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { blobTarget, emptyNet, passwordTarget } from "../../src/connections/kinds.ts";
-import type { NetConfig } from "../../src/types.ts";
+import { blobTarget, emptyNet, passwordTarget } from "../../src/connections/lib/kinds.ts";
+import type { NetConfig } from "../../src/core/types.ts";
 
 const net = (kind: "ftp" | "sftp" | "webdav", over: Partial<NetConfig>): NetConfig => ({ ...emptyNet(kind), ...over });
 

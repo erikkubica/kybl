@@ -1,0 +1,316 @@
+import { Fragment, memo, useMemo } from "react";
+import { api, errSummary } from "../../core/api";
+import { Icon } from "../../ui/components/Icons";
+import { baseName, formatBytes, formatEta, formatSpeed } from "../../core/format";
+import { useJobList, useJobs } from "../../jobs/hooks/useJobs";
+import { runCounts, usePrunedDone, useTransferList, type TransferActions } from "../../transfers/hooks/useTransfers";
+import type { Transfer } from "../../core/types";
+import type { Confirm } from "../hooks/useFileOps";
+import { JobsPanel, useActiveJobCount, useMigrations } from "../../jobs";
+
+/** Transfers still queued or running, bucket jobs and copies between connections in progress (for the badge). */
+export function useActiveCount(): number {
+  const list = useTransferList();
+  const jobs = useJobList();
+  const copies = useActiveJobCount();
+  return useMemo(
+    () => list.filter((t) => t.state === "queued" || t.state === "running").length + jobs.filter((j) => j.state === "running").length + copies,
+    [list, jobs, copies],
+  );
+}
+
+/**
+ * The Transfers button with its running count. The count subscribes to transfer progress here,
+ * in this one small button, so a progress tick doesn't re-render the whole file list.
+ */
+export function TransfersButton({ onClick }: { onClick: () => void }) {
+  const count = useActiveCount();
+  return (
+    <button className="m-icon" onClick={onClick} aria-label={count ? `Transfers, ${count} running` : "Transfers"}>
+      <Icon name="transfers" size={20} />
+      {count > 0 && <span className="m-badge">{count > 99 ? "99+" : count}</span>}
+    </button>
+  );
+}
+
+/** Waiting rows listed at most (a 2,000-file folder would otherwise be 2,000 rows); the rest are counted. */
+const QUEUED_SHOWN = 60;
+const GROUP_LABEL = { running: "Running", queued: "Queued", paused: "Paused", error: "Failed", cancelled: "Cancelled", done: "Finished" } as const;
+
+const ORDER = { running: 0, queued: 1, paused: 2, error: 3, cancelled: 4, done: 5 } as const;
+
+/** Retries every failed transfer (not the ones stopped on purpose: those retry with a tap each). */
+export function retryAllFailed(transfers: TransferActions) {
+  transfers.retryAll(true);
+}
+
+export function TransfersScreen({
+  onBack,
+  transfers,
+  savedWhere,
+  onOpenFile,
+  onOpenPlace,
+  confirm,
+}: {
+  onBack: () => void;
+  transfers: TransferActions;
+  savedWhere: string;
+  /** a finished download was tapped */
+  onOpenFile: (path: string) => void;
+  /** a finished copy between connections: show where it went */
+  onOpenPlace?: (dst: { profileId: string; root: string; dir: string }) => void;
+  /** asks before something is thrown away (the app's one confirm sheet) */
+  confirm: (q: Confirm) => void;
+}) {
+  const list = useTransferList();
+  const jobs = useJobList();
+  const jobActions = useJobs();
+  const sorted = useMemo(() => [...list].sort((a, b) => ORDER[a.state] - ORDER[b.state]), [list]);
+  const prunedDone = usePrunedDone();
+  // what each group holds; Finished also counts the rows pruned off the list, so the number is true
+  const groupSize = useMemo(() => {
+    const n = { running: 0, queued: 0, paused: 0, error: 0, cancelled: 0, done: prunedDone };
+    for (const t of list) n[t.state]++;
+    return n;
+  }, [list, prunedDone]);
+  const run = runCounts(list);
+  const firstQueued = sorted.findIndex((t) => t.state === "queued");
+  const active = list.some((t) => t.state === "queued" || t.state === "running");
+  // paused: kept across a restart; they resume, or are cancelled (what they kept is dropped)
+  const paused = list.filter((t) => t.state === "paused");
+  const runningJobs = jobs.filter((j) => j.state === "running");
+  const failed = list.filter((t) => t.state === "error").length;
+  const failedJobs = jobs.some((j) => j.state === "error");
+  // "Clear finished" takes done and cancelled items; failed ones stay until retried
+  const finished = list.some((t) => t.state === "done" || t.state === "cancelled") || jobs.some((j) => j.state === "done" || j.state === "cancelled");
+  const copies = useMigrations().length;
+  const copiesSection = copies > 0 && (
+    <section className="m-jobs-section">
+      <h3 className="m-section">Copies between connections</h3>
+      <JobsPanel variant="mobile" hideWhenEmpty onOpenDest={onOpenPlace && ((j) => onOpenPlace(j.spec.dst))} />
+    </section>
+  );
+
+  return (
+    <section className="m-screen m-overlay">
+      <header className="m-bar solid">
+        <button className="m-icon" onClick={onBack} aria-label="Back">
+          <Icon name="arrow-left" size={22} />
+        </button>
+        <div className="m-title">
+          <h1>Transfers</h1>
+        </div>
+        {(active || paused.length > 0 || runningJobs.length > 0) && (
+          <button
+            className="m-text-btn danger"
+            onClick={() => {
+              const n = transfers.activeCount() + paused.length + runningJobs.length;
+              confirm({
+                title: n === 1 ? "Cancel this transfer?" : `Cancel ${n.toLocaleString()} transfers?`,
+                message: <p>Partly downloaded files are deleted, paused ones too. Finished ones stay.</p>,
+                label: n === 1 ? "Cancel transfer" : "Cancel transfers",
+                cancelLabel: n === 1 ? "Keep transfer" : "Keep transfers",
+                danger: true,
+                run: () => {
+                  transfers.cancelAll();
+                  for (const t of paused) transfers.cancel(t.id);
+                  // bucket jobs are in the same list as the downloads (copies between connections
+                  // have their own Stop in their section)
+                  for (const j of runningJobs) api.cancelTransfer(j.id).catch(() => {});
+                },
+              });
+            }}
+          >
+            Cancel transfers
+          </button>
+        )}
+      </header>
+      <div className="m-scroll">
+        {list.length === 0 && jobs.length === 0 ? (
+          copiesSection || (
+            <div className="m-empty">
+              <Icon name="transfers" size={30} />
+              <h3>No transfers</h3>
+              <p>Uploads and downloads show up here. Downloads are saved to {savedWhere}.</p>
+            </div>
+          )
+        ) : (
+          <>
+            {(failed > 0 || failedJobs || finished || paused.length > 0) && (
+              <div className="m-xfer-tools">
+                {paused.length > 0 && (
+                  <button className="m-pill" onClick={() => transfers.resumeAll()}>
+                    <Icon name="play" size={14} /> {paused.length > 1 ? `Resume all ${paused.length}` : "Resume"}
+                  </button>
+                )}
+                {failed > 0 && (
+                  <button className="m-pill" onClick={() => retryAllFailed(transfers)}>
+                    <Icon name="retry" size={14} /> Retry {failed} failed
+                  </button>
+                )}
+                {(failed > 0 || failedJobs) && (
+                  <button
+                    className="m-pill"
+                    onClick={() => {
+                      transfers.clearFailed();
+                      jobActions.clearFailed();
+                    }}
+                  >
+                    <Icon name="x" size={14} /> Clear failed
+                  </button>
+                )}
+                {finished && (
+                  <button
+                    className="m-pill"
+                    onClick={() => {
+                      transfers.clearFinished();
+                      jobActions.clearFinished();
+                    }}
+                  >
+                    <Icon name="check" size={14} /> Clear finished
+                  </button>
+                )}
+              </div>
+            )}
+            <ul className="m-list">
+              {jobs.map((j) => (
+                <li key={j.id} className="m-row m-xfer">
+                  <span className="m-xfer-main">
+                    <span className={`m-xfer-ico ${j.state}`}>
+                      <Icon name={j.state === "done" ? "check-circle" : j.state === "error" ? "alert" : j.kind === "delete" ? "trash" : j.kind === "rename" ? "edit" : "move"} size={18} />
+                    </span>
+                    <span className="m-row-text">
+                      <span className="m-row-name">{j.title}</span>
+                      <span className="m-row-sub">
+                        {j.state === "running" ? (j.total ? `${j.done.toLocaleString()} of ${j.total.toLocaleString()}${j.eta ? ` · ${j.eta}` : ""}` : "Finding objects…") : j.state === "error" ? errSummary(j.error ?? "Failed") : j.state === "cancelled" ? "Cancelled" : "Done"}
+                      </span>
+                      {j.state === "running" && <Progress frac={j.frac} />}
+                    </span>
+                  </span>
+                  {j.state === "running" ? (
+                    <button className="m-icon" onClick={() => api.cancelTransfer(j.id).catch(() => {})} aria-label="Cancel">
+                      <Icon name="x" size={18} />
+                    </button>
+                  ) : (
+                    <>
+                      {j.state === "error" && j.retry && (
+                        <button className="m-icon" onClick={() => jobActions.retry(j.id)} aria-label={`Retry ${j.title}`}>
+                          <Icon name="retry" size={17} />
+                        </button>
+                      )}
+                      <button className="m-icon" onClick={() => jobActions.dismiss(j.id)} aria-label="Dismiss">
+                        <Icon name="x" size={16} />
+                      </button>
+                    </>
+                  )}
+                </li>
+              ))}
+              {run.total > 0 && active && (
+                <li className="m-xfer-summary" aria-live="off">
+                  {run.running.toLocaleString()} running · {run.queued.toLocaleString()} queued · {run.done.toLocaleString()} done of {run.total.toLocaleString()}
+                  {run.failed > 0 && ` · ${run.failed.toLocaleString()} failed`}
+                </li>
+              )}
+              {sorted.map((t, i) => {
+                const first = i === 0 || sorted[i - 1].state !== t.state;
+                // the rest of a long queue is counted in a line of its own, not drawn
+                if (t.state === "queued" && i - firstQueued >= QUEUED_SHOWN) {
+                  return i === firstQueued + QUEUED_SHOWN ? (
+                    <li key="more-queued" className="m-xfer-group">
+                      + {(groupSize.queued - QUEUED_SHOWN).toLocaleString()} more queued
+                    </li>
+                  ) : null;
+                }
+                return (
+                  <Fragment key={t.id}>
+                    {first && (
+                      <li className="m-xfer-group">
+                        {GROUP_LABEL[t.state]} ({groupSize[t.state].toLocaleString()})
+                      </li>
+                    )}
+                    <TransferRow t={t} transfers={transfers} onOpenFile={onOpenFile} />
+                  </Fragment>
+                );
+              })}
+
+            </ul>
+            {copiesSection}
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function Progress({ frac }: { frac: number | null }) {
+  return (
+    <span className={`m-progress ${frac == null ? "indeterminate" : ""}`}>
+      <span style={{ width: frac == null ? undefined : `${Math.round(Math.min(1, frac) * 100)}%` }} />
+    </span>
+  );
+}
+
+const TransferRow = memo(function TransferRow({ t, transfers, onOpenFile }: { t: Transfer; transfers: TransferActions; onOpenFile: (path: string) => void }) {
+  const frac = t.total ? t.bytes / t.total : t.state === "running" ? null : 0;
+  // downloads get a free name when the file is already there ("photo (1).jpg"): say so
+  const savedAs = t.kind === "download" && t.local ? baseName(t.local.replace(/\\/g, "/")) : "";
+  const renamed = !!savedAs && savedAs !== baseName(t.name);
+  let sub: string;
+  if (t.state === "running") {
+    const left = t.speed > 0 && t.total ? (t.total - t.bytes) / t.speed : 0;
+    // total 0: a Google Docs export, whose size isn't known until it's done
+    sub = `${t.total ? `${formatBytes(t.bytes)} of ${formatBytes(t.total)}` : formatBytes(t.bytes)}${t.speed ? ` · ${formatSpeed(t.speed)}` : ""}${left ? ` · ${formatEta(left)}` : ""}`;
+  } else if (t.state === "queued") sub = t.total ? `Waiting · ${formatBytes(t.total)}` : "Waiting";
+  else if (t.state === "done") sub = t.kind === "upload" ? `Uploaded${t.checkStopped ? " · not checked" : ""} · ${formatBytes(t.total)}` : `${renamed ? `Saved as “${savedAs}”` : "Saved"}${t.checkStopped ? " · not checked" : ""} · ${formatBytes(t.total || t.bytes)} · Tap to open`;
+  else if (t.state === "cancelled") sub = "Cancelled · Tap to retry";
+  else if (t.state === "paused" && t.checkPending) sub = `Downloaded, check paused · ${formatBytes(t.total)} · Tap to check`;
+  else if (t.state === "paused") sub = `Paused${t.total ? ` · ${formatBytes(t.bytes)} of ${formatBytes(t.total)}` : ""} · Tap to resume`;
+  else sub = `${errSummary(t.error ?? "Failed")} · Tap to retry`;
+  const tap =
+    t.state === "done" && t.kind === "download"
+      ? () => onOpenFile(t.local)
+      : t.state === "error" || t.state === "cancelled" || t.state === "paused"
+        ? () => transfers.retry(t.id)
+        : null;
+  const body = (
+    <>
+      <span className={`m-xfer-ico ${t.state}`}>
+        <Icon name={t.state === "done" ? "check-circle" : t.state === "error" ? "alert" : t.kind === "upload" ? "upload" : "download"} size={18} />
+      </span>
+      <span className="m-row-text">
+        <span className="m-row-name">{t.name}</span>
+        <span className={`m-row-sub ${t.state === "error" ? "danger" : ""}`}>{sub}</span>
+        {(t.state === "running" || t.state === "queued" || t.state === "paused") && <Progress frac={t.state === "queued" ? 0 : frac} />}
+      </span>
+    </>
+  );
+  return (
+    <li className="m-row m-xfer">
+      {tap ? (
+        <button className="m-xfer-main" onClick={tap}>
+          {body}
+        </button>
+      ) : (
+        <span className="m-xfer-main">{body}</span>
+      )}
+      {t.state === "running" || t.state === "queued" ? (
+        <button className="m-icon" onClick={() => transfers.cancel(t.id)} aria-label={`Cancel ${t.name}`}>
+          <Icon name="x" size={18} />
+        </button>
+      ) : t.state === "paused" ? (
+        <>
+          <button className="m-icon" onClick={() => transfers.resume(t.id)} aria-label={`Resume ${t.name}`}>
+            <Icon name="play" size={17} />
+          </button>
+          <button className="m-icon" onClick={() => transfers.cancel(t.id)} aria-label={`Cancel ${t.name}`}>
+            <Icon name="x" size={18} />
+          </button>
+        </>
+      ) : t.state === "error" || t.state === "cancelled" ? (
+        <button className="m-icon" onClick={() => transfers.retry(t.id)} aria-label={`Retry ${t.name}`}>
+          <Icon name="retry" size={17} />
+        </button>
+      ) : null}
+    </li>
+  );
+});

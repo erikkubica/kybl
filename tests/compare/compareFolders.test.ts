@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { compareFolders, etagsComparable } from "../../src/compare/compareFolders.ts";
-import type { Entry } from "../../src/types.ts";
+import type { Entry } from "../../src/core/types.ts";
 
 const T = Date.UTC(2026, 10, 20, 12, 0, 0);
 const file = (name: string, etag: string | null, modified = T, size = 10) => ({ key: name, name, kind: "file", size, modified, etag }) as unknown as Entry;

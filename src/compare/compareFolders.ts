@@ -4,7 +4,7 @@
  * otherwise the newer one is the one to copy. Folders are matched by name only: their contents are not compared (that needs
  * a recursive "compare" job, see docs/phase2-architecture.md §6.1).
  */
-import type { Entry, Profile } from "../types";
+import type { Entry, Profile } from "../core/types";
 
 /** S3 ETags of multipart uploads ("…-12") are not content hashes, so they can't be compared. */
 const plainEtag = (e: Entry) => {

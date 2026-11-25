@@ -7,10 +7,10 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { errMessage } from "../api";
-import { Modal } from "../components/Dialogs";
-import { ErrorText } from "../components/ErrorText";
-import type { Entry } from "../types";
+import { errMessage } from "../core/api";
+import { Modal } from "../ui/components/Dialogs";
+import { ErrorText } from "../ui/components/ErrorText";
+import type { Entry } from "../core/types";
 import { permsApi, modeText, type Recurse } from "./permsApi";
 import { bitOf, bitsFromText, digits, octalDigits, startBits, type Bit } from "./permBits";
 import "./perms.css";

@@ -1,4 +1,4 @@
-//! What the frontend sends and receives (see the WP-B1 section of `src/api.ts`).
+//! What the frontend sends and receives (see the WP-B1 section of `src/core/api.ts`).
 
 use serde::{Deserialize, Serialize};
 

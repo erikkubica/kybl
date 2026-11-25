@@ -1,7 +1,7 @@
-// Menu-bar accelerators handed back as keydowns (src/desktop/menus.ts). Run: pnpm test
+// Menu-bar accelerators handed back as keydowns (src/desktop/lib/menus.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MENU_ACCELERATORS, menuByKey, menuKeydown } from "../../src/desktop/menus.ts";
+import { MENU_ACCELERATORS, menuByKey, menuKeydown } from "../../src/desktop/lib/menus.ts";
 
 test("letters, with and without Shift", () => {
   assert.deepEqual(pick(menuKeydown("duplicate")), { key: "d", code: "KeyD", metaKey: true, shiftKey: false, altKey: false });

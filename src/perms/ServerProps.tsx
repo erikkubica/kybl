@@ -2,7 +2,7 @@
  * The info column's lines for what a server says about an item (EntryInfo, inside its `props`
  * list): the permissions ("rw-r--r-- 644"), owner and group, and where a link points.
  */
-import type { Entry } from "../types";
+import type { Entry } from "../core/types";
 import { modeOctal, modeText } from "./permsApi";
 import "./perms.css";
 

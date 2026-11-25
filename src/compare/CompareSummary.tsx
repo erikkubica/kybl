@@ -1,10 +1,10 @@
 /** The result of Compare folders: what differs between the two panes, and what got selected. */
-import { Modal } from "../components/Dialogs";
-import { Icon } from "../Icons";
-import { canDiff, openDiff } from "../viewers/diff";
-import type { Entry } from "../types";
+import { Modal } from "../ui/components/Dialogs";
+import { Icon } from "../ui/components/Icons";
+import { canDiff, openDiff } from "../viewers/lib/diff";
+import type { Entry } from "../core/types";
 import type { FolderDiff } from "./compareFolders";
-import { plural } from "../format";
+import { plural } from "../core/format";
 
 type At = { profileId: string; bucket: string; prefix: string };
 /** Files shown with a Compare button (the rest are only counted). */

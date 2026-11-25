@@ -51,10 +51,10 @@ ref?: Ref<DocumentHandle>;
 
 ## 1. Previews: Quick Look (desktop) and PreviewPane (phones)
 
-Desktop has no details panel: Space opens Quick Look (`src/desktop/QuickLook.tsx`), which shows the
-preview with an info column beside it (`src/components/EntryInfo.tsx`; ⌘I or "Get Info" opens it that
+Desktop has no details panel: Space opens Quick Look (`src/desktop/components/QuickLook.tsx`), which shows the
+preview with an info column beside it (`src/browser/components/EntryInfo.tsx`; ⌘I or "Get Info" opens it that
 way). Its `Content` uses the same `viewerFor` + `<LazyDocumentView mode="preview">` pattern as below,
-filling the Quick Look body. Phones keep `src/components/PreviewPane.tsx`: the preview over the same
+filling the Quick Look body. Phones keep `src/viewers/components/PreviewPane.tsx`: the preview over the same
 `EntryInfo`. The snippet below is how PreviewPane wires it.
 
 Keep the existing image (thumbnail / presigned URL), video, audio and PDF paths. Replace the plain
@@ -178,7 +178,7 @@ Render it as an overlay screen, inline so it sits in the app's own stacking orde
 
 ## 5. Trying it without the app
 
-`pnpm exec vite --port 1448`, then <http://localhost:1448/src/viewers/dev.html> (`?dark`, or
+`pnpm exec vite --port 1448`, then <http://localhost:1448/src/viewers/dev/dev.html> (`?dark`, or
 `?open=docs/notes.md` for just the full view at phone size). `devMock.ts` answers `doc_open` /
 `doc_save` with generated samples (Markdown with a script injection attempt, JSON, CSV incl. 200 000 rows,
 TypeScript with BOM + CRLF, YAML, Latin-1 log, Word, Excel with 3 sheets, slides, SVG); "Change it

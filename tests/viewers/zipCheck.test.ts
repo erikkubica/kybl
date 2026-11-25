@@ -1,10 +1,10 @@
-// Zip bomb check before the Office previews parse a file (src/viewers/zipCheck.ts). Run: pnpm test
+// Zip bomb check before the Office previews parse a file (src/viewers/lib/zipCheck.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
 import { deflateRawSync } from "node:zlib";
-import { openCapped, plainForSheetJS, readCapped, zipTooBig } from "../../src/viewers/zipCheck.ts";
+import { openCapped, plainForSheetJS, readCapped, zipTooBig } from "../../src/viewers/lib/zipCheck.ts";
 
 const caps = { part: 1 << 20, total: 2 << 20 };
 

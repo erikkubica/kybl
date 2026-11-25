@@ -3,19 +3,19 @@
  * hosts need: the sheet, menu items for a folder, and the small API a command palette can use
  * (`listMirrors`, `runMirror(id, { dryRun })`).
  */
-import { errMessage, LOCAL_ID } from "../api";
-import { deviceName } from "../jobs/LocationPicker";
-import type { MenuItem } from "../components/Dialogs";
-import type { Dialogs } from "../shell/useDialogs";
-import type { Profile } from "../types";
-import { MirrorSheet, type MirrorSheetProps } from "./MirrorSheet";
-import { planIsEmpty } from "./plan";
-import { previewMirror, startMirror } from "./run";
-import { markRun, mirrorsAt, type MirrorEnd, type SavedMirror } from "./store";
+import { errMessage, LOCAL_ID } from "../core/api";
+import { deviceName } from "../jobs/components/LocationPicker";
+import type { MenuItem } from "../ui/components/Dialogs";
+import type { Dialogs } from "../shell/hooks/useDialogs";
+import type { Profile } from "../core/types";
+import { MirrorSheet, type MirrorSheetProps } from "./components/MirrorSheet";
+import { planIsEmpty } from "./lib/plan";
+import { previewMirror, startMirror } from "./lib/run";
+import { markRun, mirrorsAt, type MirrorEnd, type SavedMirror } from "./lib/store";
 
-export { listMirrors, getMirror, saveMirror, deleteMirror, useMirrors, type SavedMirror, type MirrorEnd, type MirrorConfig } from "./store";
-export { runMirror, previewMirror, startMirror, type MirrorPreview } from "./run";
-export { MirrorSheet } from "./MirrorSheet";
+export { listMirrors, getMirror, saveMirror, deleteMirror, useMirrors, type SavedMirror, type MirrorEnd, type MirrorConfig } from "./lib/store";
+export { runMirror, previewMirror, startMirror, type MirrorPreview } from "./lib/run";
+export { MirrorSheet } from "./components/MirrorSheet";
 
 /** One end of a mirror from what a pane shows: its connection, root and folder. */
 export function placeEnd(profile: Pick<Profile, "id" | "name"> | null | undefined, root: string | null | undefined, dir: string, rootName?: string | null): MirrorEnd | null {

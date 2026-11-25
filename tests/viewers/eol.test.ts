@@ -1,7 +1,7 @@
-// Compare's "no differences" note (src/viewers/eol.ts). Run: pnpm test
+// Compare's "no differences" note (src/viewers/lib/eol.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { eolDifference, noDifferenceNote } from "../../src/viewers/eol.ts";
+import { eolDifference, noDifferenceNote } from "../../src/viewers/lib/eol.ts";
 
 test("with whitespace ignored, line endings are still named when they are the reason", () => {
   assert.equal(noDifferenceNote("a\r\nb\r\n", "a\nb\n", ["a", "b"], ["a", "b"]), "They differ only in line endings (CRLF and LF).");

@@ -1,0 +1,227 @@
+/** S3-compatible storage: a provider preset, an endpoint, and an access key pair. */
+import { useImperativeHandle, useState } from "react";
+import { providerMeta } from "../lib/providers";
+import type { Profile } from "../../core/types";
+import { Field, RAW, SecretInput, type FormApi } from "./fields";
+import { endpointAfterRegion, fieldsAfterProvider } from "../lib/s3Endpoint";
+import { keepsSavedSecret } from "../lib/kinds";
+
+type Preset = {
+  id: string;
+  label: string;
+  regions?: { value: string; label: string }[];
+  endpoint: (region: string) => string;
+  defaultRegion: string;
+  pathStyle: boolean;
+  hint?: string;
+};
+
+export const PRESETS: Preset[] = [
+  {
+    id: "hetzner",
+    label: "Hetzner Object Storage",
+    regions: [
+      { value: "nbg1", label: "Nuremberg (nbg1)" },
+      { value: "fsn1", label: "Falkenstein (fsn1)" },
+      { value: "hel1", label: "Helsinki (hel1)" },
+    ],
+    endpoint: (r) => `https://${r}.your-objectstorage.com`,
+    defaultRegion: "nbg1",
+    pathStyle: false,
+    hint: "Hetzner keys can't list buckets: enter yours.",
+  },
+  {
+    id: "aws",
+    label: "Amazon S3",
+    endpoint: (r) => `https://s3.${r}.amazonaws.com`,
+    defaultRegion: "eu-central-1",
+    pathStyle: false,
+  },
+  {
+    id: "r2",
+    label: "Cloudflare R2",
+    endpoint: () => "https://<account-id>.r2.cloudflarestorage.com",
+    defaultRegion: "auto",
+    pathStyle: false,
+  },
+  {
+    id: "b2",
+    label: "Backblaze B2",
+    endpoint: (r) => `https://s3.${r}.backblazeb2.com`,
+    defaultRegion: "eu-central-003",
+    pathStyle: false,
+  },
+  {
+    id: "wasabi",
+    label: "Wasabi",
+    endpoint: (r) => `https://s3.${r}.wasabisys.com`,
+    defaultRegion: "eu-central-1",
+    pathStyle: false,
+  },
+  {
+    id: "do",
+    label: "DigitalOcean Spaces",
+    endpoint: (r) => `https://${r}.digitaloceanspaces.com`,
+    defaultRegion: "fra1",
+    pathStyle: false,
+  },
+  {
+    id: "custom",
+    label: "Other S3-compatible (MinIO, Ceph, …)",
+    endpoint: () => "",
+    defaultRegion: "us-east-1",
+    pathStyle: true,
+  },
+];
+
+export function S3Form({ initial, tried, formApi, onEdit }: { initial: Profile | null; tried: boolean; formApi: React.Ref<FormApi>; onEdit: () => void }) {
+  const startPreset = PRESETS.find((p) => p.id === initial?.provider) ?? PRESETS[0];
+  const [provider, setProvider] = useState(startPreset.id);
+  const [name, setName] = useState(initial?.name ?? "");
+  const [region, setRegion] = useState(initial?.region ?? startPreset.defaultRegion);
+  const [endpoint, setEndpoint] = useState(initial?.endpoint ?? startPreset.endpoint(startPreset.defaultRegion));
+  const [accessKeyId, setAccessKeyId] = useState(initial?.accessKeyId ?? "");
+  const [secret, setSecret] = useState("");
+  const [bucket, setBucket] = useState(initial?.bucket ?? "");
+  const [pathStyle, setPathStyle] = useState(initial?.pathStyle ?? startPreset.pathStyle);
+  const preset = PRESETS.find((p) => p.id === provider) ?? PRESETS[0];
+  // a provider's usual endpoint (and path style) follow from the region: shown as a line, with
+  // Change for the rare custom one. Other S3, R2 (an account id to fill in) and anything already
+  // changed show the fields
+  const usual = provider !== "custom" && provider !== "r2";
+  const [showEndpoint, setShowEndpoint] = useState(false);
+  // (Amazon may be saved with none: the SDK picks it from the region)
+  const isUsual = endpoint.trim() === preset.endpoint(region) || (provider === "aws" && !endpoint.trim());
+  const endpointField = !usual || showEndpoint || !isUsual;
+  const pathField = provider === "custom" || pathStyle !== preset.pathStyle;
+
+  const edit =
+    <T,>(set: (v: T) => void) =>
+    (v: T) => {
+      set(v);
+      onEdit();
+    };
+
+  const pickProvider = (id: string) => {
+    // the selected tile again is a no-op; otherwise only values the old preset filled in follow the new one
+    if (id === provider) return;
+    const p = PRESETS.find((x) => x.id === id) ?? PRESETS[0];
+    const next = fieldsAfterProvider(preset, p, { region, endpoint, pathStyle });
+    setProvider(id);
+    setRegion(next.region);
+    setEndpoint(next.endpoint);
+    setPathStyle(next.pathStyle);
+    onEdit();
+  };
+  const pickRegion = (r: string) => {
+    setRegion(r);
+    setEndpoint(endpointAfterRegion(preset.endpoint, region, r, endpoint));
+    onEdit();
+  };
+
+  const ep = endpoint.trim();
+  // the saved secret belongs to the saved key ID
+  const keepSecret = !!initial && keepsSavedSecret(initial.accessKeyId, accessKeyId);
+  const problems = {
+    endpoint:
+      !ep && provider !== "aws"
+        ? "Enter the endpoint address from your provider."
+        : ep.includes("<account-id>")
+          ? "Replace <account-id> with your Cloudflare account id."
+          : ep && !/^https?:\/\/[^\s/]+/i.test(ep)
+            ? "Start with https:// (or http:// for a local server)."
+            : null,
+    accessKeyId: accessKeyId.trim() ? null : "Enter the access key ID.",
+    secret: secret.trim() || keepSecret ? null : initial ? "Enter the secret for the new key." : "Enter the secret access key.",
+  };
+  const show = (k: keyof typeof problems) => (tried ? problems[k] : null);
+
+  useImperativeHandle(formApi, () => ({
+    draft: () => {
+      if (Object.values(problems).some(Boolean)) return null;
+      const profile: Profile = {
+        id: initial?.id ?? "",
+        name: name.trim() || `${preset.label}${bucket ? ` · ${bucket}` : ""}`,
+        kind: "s3",
+        provider,
+        endpoint: ep,
+        region: region.trim(),
+        accessKeyId: accessKeyId.trim(),
+        bucket: bucket.trim() || null,
+        pathStyle,
+      };
+      // S3 secrets never hold whitespace: a pasted trailing space or newline would only break the signature
+      return { profile, secret: secret.trim() || undefined };
+    },
+  }));
+
+  return (
+    <>
+      {/* a plain list: the provider only fills in the region list, the endpoint and path style */}
+      <Field label="Provider" wide>
+        {(c) => (
+          <select {...c} value={provider} onChange={(e) => pickProvider(e.target.value)}>
+            {PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {providerMeta(p.id).short}
+              </option>
+            ))}
+          </select>
+        )}
+      </Field>
+
+      <Field label="Name" wide>
+        {(c) => <input {...c} value={name} onChange={(e) => edit(setName)(e.target.value)} placeholder={preset.label} />}
+      </Field>
+
+      <Field label="Region">
+        {(c) =>
+          preset.regions ? (
+            <select {...c} value={region} onChange={(e) => pickRegion(e.target.value)}>
+              {preset.regions.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input {...c} value={region} onChange={(e) => pickRegion(e.target.value)} {...RAW} />
+          )
+        }
+      </Field>
+
+      <Field label="Bucket" hint={preset.hint}>
+        {(c) => <input {...c} value={bucket} onChange={(e) => edit(setBucket)(e.target.value)} placeholder={provider === "hetzner" ? "my-bucket" : "All buckets"} {...RAW} />}
+      </Field>
+
+      {endpointField ? (
+        <Field label="Endpoint" wide error={show("endpoint")}>
+          {(c) => <input {...c} className="mono" value={endpoint} onChange={(e) => edit(setEndpoint)(e.target.value)} placeholder="https://…" inputMode="url" {...RAW} />}
+        </Field>
+      ) : (
+        <p className="hint span2 conn-endpoint">
+          <span className="mono" title="Endpoint">
+            {endpoint || "Amazon's endpoint for the region"}
+          </span>
+          <button type="button" className="link-btn" onClick={() => setShowEndpoint(true)}>
+            Change
+          </button>
+        </p>
+      )}
+
+      <Field label="Access key ID" error={show("accessKeyId")}>
+        {(c) => <input {...c} className="mono" value={accessKeyId} onChange={(e) => edit(setAccessKeyId)(e.target.value)} {...RAW} />}
+      </Field>
+      <Field label="Secret access key" error={show("secret")}>
+        {(c) => <SecretInput control={c} value={secret} onChange={edit(setSecret)} editing={keepSecret} />}
+      </Field>
+
+      {pathField && (
+        <label className="check span2" title="Needed by MinIO and many self-hosted servers">
+          <input type="checkbox" checked={pathStyle} onChange={(e) => edit(setPathStyle)(e.target.checked)} />
+          <span>Path-style addressing</span>
+        </label>
+      )}
+    </>
+  );
+}

@@ -3,17 +3,17 @@
  * the copy dialog), compress a selection to a .zip. Extracting and compressing run as one row of
  * the transfers panel each; the backend does the work (src-tauri/src/archive).
  */
-import { inBackground } from "../shell/notifications";
+import { inBackground } from "../shell/lib/notifications";
 import { listen } from "@tauri-apps/api/event";
-import { api, errMessage } from "../api";
-import { baseName, formatBytes } from "../format";
-import { destLabel, entryParent, placeLabel } from "../moving";
-import { applyChoices, findExisting, freeKeys, type Choice, type Clash } from "../desktop/conflicts";
-import type { FileOps } from "../desktop/fileOps";
-import type { MenuItem, Toast } from "../components/Dialogs";
-import type { TransferActions } from "../useTransfers";
-import type { OpenMigration } from "../shell/useMigrationHost";
-import type { Entry, Profile } from "../types";
+import { api, errMessage } from "../core/api";
+import { baseName, formatBytes } from "../core/format";
+import { destLabel, entryParent, placeLabel } from "../transfers/lib/moving";
+import { applyChoices, findExisting, freeKeys, type Choice, type Clash } from "../desktop/lib/conflicts";
+import type { FileOps } from "../desktop/components/fileOps";
+import type { MenuItem, Toast } from "../ui/components/Dialogs";
+import type { TransferActions } from "../transfers/hooks/useTransfers";
+import type { OpenMigration } from "../shell/hooks/useMigrationHost";
+import type { Entry, Profile } from "../core/types";
 import { archiveApi, archiveOrigin, archiveProfile, archiveStem, isArchiveId, isArchiveName, skippedNote, type ExtractJob } from "./archive";
 
 export type ArchiveCtx = {
@@ -39,7 +39,7 @@ export type ArchiveCtx = {
   openMigration?: OpenMigration;
 };
 
-import { plural } from "../format";
+import { plural } from "../core/format";
 
 export function makeArchiveOps(c: ArchiveCtx) {
   const inArchive = isArchiveId(c.profile?.id);

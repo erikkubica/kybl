@@ -1,9 +1,9 @@
-// Name clashes of downloads (src/desktop/downloadClash.ts): asked once per batch, "all" holds for
+// Name clashes of downloads (src/desktop/lib/downloadClash.ts): asked once per batch, "all" holds for
 // files found later, and a remembered answer is used without asking. Run: pnpm test
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { downloadClashGate, resolveDownloadClashes as resolve } from "../../src/desktop/downloadClash.ts";
+import { downloadClashGate, resolveDownloadClashes as resolve } from "../../src/desktop/lib/downloadClash.ts";
 
 // the disk check: these paths "exist"
 const onDisk = new Set<string>();

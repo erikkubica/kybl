@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { holdingGroups, moveInto, organize, togglePins, typeOf } from "../../src/connections/organize.ts";
-import type { Profile } from "../../src/types.ts";
+import { holdingGroups, moveInto, organize, togglePins, typeOf } from "../../src/connections/lib/organize.ts";
+import type { Profile } from "../../src/core/types.ts";
 
 const p = (id: string, extra: Partial<Profile> = {}): Profile => ({
   id,

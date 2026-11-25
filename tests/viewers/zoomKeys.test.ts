@@ -1,7 +1,7 @@
-// Image viewer zoom keys (src/viewers/zoomKeys.ts). Run: pnpm test
+// Image viewer zoom keys (src/viewers/lib/zoomKeys.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { zoomKey } from "../../src/viewers/zoomKeys.ts";
+import { zoomKey } from "../../src/viewers/lib/zoomKeys.ts";
 
 const k = (key: string, code: string, mods: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean } = { metaKey: true }) =>
   zoomKey({ key, code, metaKey: false, ctrlKey: false, altKey: false, ...mods });

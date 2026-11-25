@@ -1,8 +1,8 @@
 /** One backup: how it is doing, back up now or pause, what failed, its options, removing it. */
 import { useEffect, useState } from "react";
-import { backupApi, errMessage, errSummary, type BackupFailure, type BackupPermission, type BackupSet, type BackupSetStatus } from "../../api";
-import { Icon } from "../../Icons";
-import type { Toast } from "../../components/Dialogs";
+import { backupApi, errMessage, errSummary, type BackupFailure, type BackupPermission, type BackupSet, type BackupSetStatus } from "../../core/api";
+import { Icon } from "../../ui/components/Icons";
+import type { Toast } from "../../ui/components/Dialogs";
 import { countsLine, HONEST, isRoll, PermissionNote, Progress, Seg, SetIcon, SignInNote, stateLine, Toggle, type Platform } from "./parts";
 import { example, templatesFor } from "./SetupFlow";
 

@@ -1,7 +1,7 @@
-// Root ids shown as names (src/connections/fixedRoots.ts, used by roots.ts). Run: pnpm test
+// Root ids shown as names (src/connections/lib/fixedRoots.ts, used by roots.ts). Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fixedRootName, rootIdLeaf } from "../../src/connections/fixedRoots.ts";
+import { fixedRootName, rootIdLeaf } from "../../src/connections/lib/fixedRoots.ts";
 
 test("Drive and OneDrive roots have names before their roots are listed", () => {
   assert.equal(fixedRootName("gdrive", "root"), "My Drive");

@@ -6,7 +6,7 @@
  * list_roots of their connection. `window.__kyblTunnels` holds the running ones.
  */
 import { emit } from "@tauri-apps/api/event";
-import type { Profile } from "../types";
+import type { Profile } from "../core/types";
 import type { TunnelInfo } from "./tunnels";
 
 const TAKEN = new Set([5432, 3306]);
