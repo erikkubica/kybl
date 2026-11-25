@@ -84,11 +84,11 @@ function placeProps(c: Choice, key: string, open: () => void, showing: boolean, 
     onKeyDown: onActivate(() => !showing && open()),
   };
 }
-/** the Open button on a marked row */
-function OpenButton({ onOpen }: { onOpen: () => void }) {
+/** the Open button of a row that waits for it: on hover, and stays while the row is marked */
+function OpenButton({ onOpen, shown }: { onOpen: () => void; shown: boolean }) {
   return (
     <button
-      className="side-open"
+      className={`side-open ${shown ? "" : "on-hover"}`}
       onClick={(e) => {
         e.stopPropagation();
         onOpen();
@@ -784,7 +784,7 @@ export function Sidebar({
                   >
                     <Icon name={f.prefix ? "folder" : rootIcon(f.profileId, f.bucket)} size={14} />
                     <span className="side-label">{f.name}</span>
-                    {marked && p && <OpenButton onOpen={open} />}
+                    {p && !local && !paneEmpty && <OpenButton onOpen={open} shown={marked} />}
                     {onRemoveFavorite && !marked && (
                       <button
                         className="icon-btn side-hide"
@@ -1207,7 +1207,7 @@ function SidebarConnection({
           </button>
         )}
         {trouble && <span className="side-trouble" role="img" aria-label={`Couldn't connect: ${trouble}`} />}
-        {chosen && asks && <OpenButton onOpen={open_} />}
+        {asks && <OpenButton onOpen={open_} shown={chosen} />}
         {!single && (
           <button
             type="button"
@@ -1259,7 +1259,7 @@ function SidebarConnection({
                   {rootLabel(p.id, b)}
                 </span>
                 <DriveBadge m={findMount(mounts, p.id, b, "")} onMenu={onDriveMenu} />
-                {marked && <OpenButton onOpen={openIt} />}
+                {!!choice && !paneEmpty && !here && <OpenButton onOpen={openIt} shown={marked} />}
                 <button
                   className="icon-btn side-hide"
                   onClick={(e) => {

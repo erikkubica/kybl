@@ -5446,6 +5446,14 @@ input[aria-invalid="true"]:focus {
 .side-open:hover {
   background: var(--accent-solid-hover);
 }
+/* on a row that waits for Open: there on hover (or keyboard focus), kept while the row is marked */
+.side-open.on-hover {
+  display: none;
+}
+.side-item:hover > .side-open.on-hover,
+.side-item:focus-within > .side-open.on-hover {
+  display: inline-block;
+}
 /* a server that couldn't connect: a dot, the message on hover (the pane has it in full) */
 .side-trouble {
   flex: none;
