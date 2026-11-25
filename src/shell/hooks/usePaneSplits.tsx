@@ -2,7 +2,7 @@ import type { WorkspaceStore } from "../lib/workspaces";
 import type { ToastAction } from "../../desktop/components/fileOps";
 import type { Pane } from "../../browser/hooks/usePane";
 import type { Profile } from "../../core/types";
-import { useRef, useEffect, type RefObject, type Dispatch, type SetStateAction } from "react";
+import { useRef, type RefObject, type Dispatch, type SetStateAction } from "react";
 import { type PaneId } from "../../browser/types";
 import { focusPaneList } from "../lib/focus";
 import { type PaneNode, minSize, type Dir, freeSlot, leaves, MAX_PANES, splitPane, closePane, leaf, equalize } from "../lib/paneLayout";
@@ -39,7 +39,7 @@ export interface UsePaneSplitsDeps {
   late: Late;
 }
 
-/** Splitting and closing panes: where a new pane goes, folding the sidebar for room, and asking before ending running shells. */
+/** Splitting and closing panes: where a new pane goes, and asking before ending running shells. The sidebar is never folded for room: that's the user's call. */
 export function usePaneSplits(deps: UsePaneSplitsDeps) {
   const treeRef = useRef(deps.tree);
   treeRef.current = deps.tree;
@@ -52,40 +52,19 @@ export function usePaneSplits(deps: UsePaneSplitsDeps) {
     if (!one) return null;
     return { w: one.clientWidth, h: one.clientHeight };
   };
-  /** The width the sidebar gave up when a split folded it (0: it wasn't folded for a split). */
-  const autoFold = useRef(0);
-  useEffect(() => {
-    if (!deps.sideHidden) autoFold.current = 0;
-  }, [deps.sideHidden]);
-  /** After panes close: a sidebar a split folded comes back once the panes left fit beside it. */
-  const unfoldIfRoom = (next: PaneNode) => {
-    const room = paneRoom();
-    if (!autoFold.current || !deps.sideHidden || !room) return;
-    if (minSize(next).w <= room.w - autoFold.current) deps.toggleSidebar();
-  };
-  /** The folded sidebar's rail (styles.css, `.app.side-hidden`). */
-  const SIDE_RAIL_W = 82;
-  /** The width folding the sidebar to its rail would give the panes (0 when it's folded already). */
-  const sideSpare = () => {
-    if (deps.sideHidden) return 0;
-    const side = document.querySelector<HTMLElement>(".app .side-full > aside.sidebar");
-    return side ? Math.max(0, side.offsetWidth - SIDE_RAIL_W) : 0;
-  };
   /**
-   * Whether pane `id` can be split that way: "no" with the reason (no free slot, or no room even
-   * with the sidebar folded), "fold" when it fits once the sidebar folds to its rail, or "ok".
+   * Whether pane `id` can be split that way: "no" with the reason (no free slot, or no room), or "ok".
    */
-  const splitRoom = (dir: Dir, id: PaneId): { ok: "ok" | "fold" } | { ok: "no"; why: string } => {
+  const splitRoom = (dir: Dir, id: PaneId): { ok: "ok" } | { ok: "no"; why: string } => {
     const t = treeRef.current;
     const fresh = freeSlot(t);
     if (!fresh || leaves(t).length >= MAX_PANES) return { ok: "no", why: `Kybl shows up to ${MAX_PANES} panes. Close one to make room.` };
     const room = paneRoom();
     const need = minSize(splitPane(t, id, dir, fresh));
     if (!room || (need.w <= room.w && need.h <= room.h)) return { ok: "ok" };
-    if (need.h <= room.h && need.w <= room.w + sideSpare()) return { ok: "fold" };
-    return { ok: "no", why: "There isn’t room for another pane. Make the window bigger, or close a pane." };
+    return { ok: "no", why: deps.sideHidden ? "There isn’t room for another pane. Make the window bigger, or close a pane." : "There isn’t room for another pane. Fold the sidebar (⌥⌘S), make the window bigger, or close a pane." };
   };
-  /** Why pane `id` can't be split that way, or null when it can (folding the sidebar if need be). */
+  /** Why pane `id` can't be split that way, or null when it can. */
   const splitRefusal = (dir: Dir, id: PaneId): string | null => {
     const r = splitRoom(dir, id);
     return r.ok === "no" ? r.why : null;
@@ -93,9 +72,9 @@ export function usePaneSplits(deps: UsePaneSplitsDeps) {
   /**
    * Where a new pane can go when the way asked for (`dir` of pane `id`) has no room: that pane the
    * other way, else the nearest other pane either way, so a 2 + 1 layout becomes 2 + 2 rather
-   * than refusing. One that fits as it is beats one that needs the sidebar folded; null: nowhere.
+   * than refusing; null: nowhere.
    */
-  const roomyPlace = (dir: Dir, id: PaneId): { dir: Dir; id: PaneId; room: "ok" | "fold" } | null => {
+  const roomyPlace = (dir: Dir, id: PaneId): { dir: Dir; id: PaneId } | null => {
     const t = treeRef.current;
     const other: Dir = dir === "row" ? "col" : "row";
     const centre = (x: PaneId) => {
@@ -109,8 +88,8 @@ export function usePaneSplits(deps: UsePaneSplitsDeps) {
     };
     const rest = leaves(t).filter((x) => x !== id).sort((a, b) => far(a) - far(b));
     const tries = [{ dir, id }, { dir: other, id }, ...rest.flatMap((x) => [{ dir, id: x }, { dir: other, id: x }])].map((c) => ({ ...c, r: splitRoom(c.dir, c.id) }));
-    const pick = tries.find((c) => c.r.ok === "ok") ?? tries.find((c) => c.r.ok === "fold");
-    return pick && pick.r.ok !== "no" ? { dir: pick.dir, id: pick.id, room: pick.r.ok } : null;
+    const pick = tries.find((c) => c.r.ok === "ok");
+    return pick ? { dir: pick.dir, id: pick.id } : null;
   };
   /**
    * Splits a pane: the new one opens the same place (and view) and becomes the active pane. It
@@ -121,13 +100,7 @@ export function usePaneSplits(deps: UsePaneSplitsDeps) {
     const asked = splitRoom(dir, id);
     const place = asked.ok !== "no" || !anywhere ? null : roomyPlace(dir, id);
     if (asked.ok === "no" && !place) return deps.toast("info", asked.why);
-    const at = place ?? { dir, id, room: asked.ok as "ok" | "fold" };
-    const room = { ok: at.room };
-    // the panes need the sidebar's width: it folds to its rail, as a narrow Finder window hides its sidebar
-    if (room.ok === "fold") {
-      autoFold.current = sideSpare();
-      deps.toggleSidebar();
-    }
+    const at = place ?? { dir, id };
     const t = treeRef.current;
     const fresh = freeSlot(t)!;
     const src = deps.slot(id);
@@ -220,7 +193,6 @@ export function usePaneSplits(deps: UsePaneSplitsDeps) {
     deps.late.keepScrolls();
     vacate(id);
     deps.setTree(next);
-    unfoldIfRoom(next);
     deps.unlink((x) => x === id);
     deps.setRecent((cur) => cur.filter((x) => x !== id));
     if (id === deps.activeId) focusSoon(deps.recent.find((x) => x !== id && leaves(next).includes(x)) ?? leaves(next)[0]);
@@ -230,7 +202,6 @@ export function usePaneSplits(deps: UsePaneSplitsDeps) {
     deps.late.keepScrolls();
     for (const x of deps.ids) if (x !== id) vacate(x);
     deps.setTree(leaf(id));
-    unfoldIfRoom(leaf(id));
     deps.unlink((x) => x !== id);
     deps.setActiveId(id);
     focusSoon(id);
@@ -278,5 +249,5 @@ export function usePaneSplits(deps: UsePaneSplitsDeps) {
       : []),
   ];
   const panesMenu = (id: PaneId, x: number, y: number) => deps.dialogs.menu(x, y, panesItems(id));
-  return { treeRef, focusSoon, paneRoom, autoFold, unfoldIfRoom, sideSpare, splitRefusal, split, splitItems, vacate, okToEndShells, busyShells, confirmEndShells, sidsOf, wsSids, paneLater, close, closeOthers, closeNow, closeOthersNow, focusToward, panesItems, panesMenu };
+  return { treeRef, focusSoon, paneRoom, splitRefusal, split, splitItems, vacate, okToEndShells, busyShells, confirmEndShells, sidsOf, wsSids, paneLater, close, closeOthers, closeNow, closeOthersNow, focusToward, panesItems, panesMenu };
 }

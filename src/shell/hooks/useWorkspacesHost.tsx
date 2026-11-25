@@ -9,7 +9,7 @@ import { type PaneId, type Loc, type PaneView, LOCAL_PROFILE, THIS_MAC, PANE_IDS
 import { type HistorySnap } from "../../browser/hooks/useHistory";
 import { type Listing, sameLoc } from "../../browser/hooks/useListing";
 import { type PaneSnap, type Layout, type WorkspaceStore, saveWorkspaces, type Workspace, oneLayout, newId, nextName, copyLayout, copyName, reorder, paneCount } from "../lib/workspaces";
-import { leaves, minSize, type SyncLink, type PaneNode } from "../lib/paneLayout";
+import { leaves, type SyncLink, type PaneNode } from "../lib/paneLayout";
 import { useConnections } from "./useConnections";
 import { useDialogs } from "./useDialogs";
 import { useWorkspaceRecipes } from "./useWorkspaceRecipes";
@@ -18,7 +18,6 @@ import { useTerminalPanes } from "../../terminal/hooks/useTerminalPanes";
 export interface UseWorkspacesHostDeps {
   active: Pane;
   activeId: PaneId;
-  autoFold: RefObject<number>;
   busyShells: (sids: (string | undefined)[]) => Promise<number>;
   closeNow: (id: PaneId) => boolean;
   confirmEndShells: (busy: number, label: string) => Promise<boolean>;
@@ -41,14 +40,12 @@ export interface UseWorkspacesHostDeps {
   setTree: Dispatch<SetStateAction<PaneNode>>;
   setWs: Dispatch<SetStateAction<WorkspaceStore>>;
   sideHidden: boolean;
-  sideSpare: () => number;
   slot: (id: PaneId) => Pane;
   term: ReturnType<typeof useTerminalPanes>;
   toast: (kind: Toast["kind"], text: string, action?: ToastAction) => void;
   toggleSidebar: () => void;
   tree: PaneNode;
   treeRef: RefObject<PaneNode>;
-  unfoldIfRoom: (next: PaneNode) => void;
   vacate: (id: PaneId) => void;
   ws: WorkspaceStore;
   wsNow: Workspace;
@@ -250,15 +247,6 @@ export function useWorkspacesHost(h: UseWorkspacesHostDeps) {
     h.setTree(l.tree);
     h.setLinks(l.links);
     h.setRecent([...l.recent.filter((x) => nextIds.includes(x)), ...nextIds.filter((x) => !l.recent.includes(x))]);
-    // the sidebar folds to its rail when that is what it takes to show every pane, as a split
-    // does, and comes back when a split had folded it and the panes fit beside it
-    const room = h.paneRoom();
-    const need = minSize(l.tree);
-    if (room && h.sideHidden) h.unfoldIfRoom(l.tree);
-    else if (room && need.w > room.w && need.w <= room.w + h.sideSpare()) {
-      h.autoFold.current = h.sideSpare();
-      h.toggleSidebar();
-    }
     if (focus) h.focusSoon(l.recent.find((x) => nextIds.includes(x)) ?? nextIds[0]);
   };
   /** Keeps the Back / Forward of the panes on screen for when this workspace comes back. */
