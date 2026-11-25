@@ -99,8 +99,8 @@ export function shellCommands(h: PaletteHost): PaletteCommand[] {
     r("swap-panes", "Swap Panes", { group: "Panes", icon: "swap", shortcut: "⇧⌘S", disabled: oneFilePane }),
     r("same-folder", "Same Folder in Other Pane", { group: "Panes", disabled: oneFilePane ?? noFolder }),
     r("compare-folders", "Compare Folders", { group: "Panes", icon: "compare", keywords: "diff", disabled: oneFilePane ?? noFolder }),
-    r("pane-copy", "Copy to Other Pane", { group: "Panes", icon: "copy", shortcut: "F5", disabled: oneFilePane ?? noSel }),
-    r("pane-move", "Move to Other Pane", { group: "Panes", icon: "move", shortcut: "F6", disabled: oneFilePane ?? noSel }),
+    r("pane-copy", "Copy To…", { group: "File", icon: "copy", shortcut: "F5", disabled: noSel }),
+    r("pane-move", "Move To…", { group: "File", icon: "move", shortcut: "F6", disabled: noSel }),
     ...h.syncPartners.map(
       (s): PaletteCommand => ({
         id: `app:sync-${s.id}`,

@@ -492,7 +492,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       // 3. elsewhere: the other pane (F5 / F6), any folder, one level up
       ...(env.extraItemItems?.(list) ?? []),
       // one picker for any folder: this connection's (any bucket or drive), or another connection
-      { type: "item", label: "Copy or move to…", icon: "move", onClick: () => askMove(list, "copy") },
+      !env.extraItemItems && { type: "item", label: "Copy or move to…", icon: "move", onClick: () => askMove(list, "copy") },
       !!prefix && !search && {
         type: "item",
         label: `Move to “${destLabel(parentPrefix(prefix), bucket, profile.id)}”`,

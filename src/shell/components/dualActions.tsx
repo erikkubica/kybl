@@ -20,7 +20,11 @@ import type { Pane, PaneEnv } from "../../browser/hooks/usePane";
 import type { Loc, PaneId } from "../../browser/types";
 import { compareFolders, diffSelection, etagsComparable } from "../../compare/compareFolders";
 import { CompareSummary } from "../../compare/CompareSummary";
-import { crossesDisk, sendToPane, viaJob, type CrossCtx } from "../lib/crossPane";
+import { crossesDisk, crossesDiskAt, sendItems, sendToPane, viaJob, type CrossCtx, type DestPlace } from "../lib/crossPane";
+import { menuPointFor } from "../../ui/components/Dialogs";
+import { peekCaps } from "../../core/useCaps";
+import { LOCAL_ID } from "../../core/api";
+import { rootName } from "../../connections/lib/roots";
 import type { Dialogs } from "../hooks/useDialogs";
 import type { ConfirmMigration } from "../hooks/useMigrationHost";
 import { ON_OS } from "../../core/osNames";
@@ -56,6 +60,33 @@ export type DualContext = {
 const placeName = (p: Pane) => (p.prefix && p.profile ? destLabel(p.prefix, p.bucket ?? "", p.profile.id) : (p.bucketLabel ?? ""));
 
 export const paneName = placeName;
+
+// ---------------------------------------------------------------- Copy to / Move to
+/** Where Copy to / Move to sent things last, newest first (kept on this device). */
+const RECENT_KEY = "s3b.sendRecent";
+const RECENT_MAX = 6;
+const locKey = (l: Loc) => `${l.profileId}\n${l.bucket}\n${l.prefix}`;
+
+function loadRecent(): Loc[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((x) => x && typeof x.profileId === "string" && typeof x.bucket === "string" && typeof x.prefix === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberSent(l: Loc) {
+  const next = [l, ...loadRecent().filter((x) => locKey(x) !== locKey(l))].slice(0, RECENT_MAX);
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** A place Copy to / Move to offers: an open pane's folder, a recent one or a favorite. */
+type Target = { loc: Loc; group: "Open panes" | "Recent" | "Favorites"; pane?: Pane };
 
 export function makeDualActions(get: () => DualContext) {
   const pane = (id: PaneId) => get().pane(id);
@@ -135,17 +166,90 @@ export function makeDualActions(get: () => DualContext) {
     }
   };
 
+  /** Every place `list` from pane `id` can go, grouped: open panes, recent ones, favorites. */
+  const targets = (id: PaneId, list: Entry[], mode: "copy" | "move"): Target[] => {
+    const c = get();
+    const src = pane(id);
+    const from = src.here;
+    const seen = new Set<string>();
+    const out: Target[] = [];
+    const add = (loc: Loc, group: Target["group"], p?: Pane) => {
+      const k = locKey(loc);
+      if (seen.has(k) || !c.profiles.some((x) => x.id === loc.profileId)) return;
+      seen.add(k);
+      // where it already is (or a folder into itself): nothing to do there
+      if (from && loc.profileId === from.profileId && loc.bucket === from.bucket && !isValidDest(list, loc.prefix)) return;
+      // this computer and the cloud only copy to each other
+      if (mode === "move" && from && crossesDiskAt(from, loc)) return;
+      out.push({ loc, group, pane: p });
+    };
+    for (const p of c.panes) if (p.id !== id && p.here) add(p.here, "Open panes", p);
+    for (const l of loadRecent()) add(l, "Recent");
+    for (const f of c.settings.favorites) add({ profileId: f.profileId, bucket: f.bucket, prefix: f.prefix }, "Favorites");
+    return out;
+  };
+
+  const destPlace = (loc: Loc): DestPlace => ({
+    profileId: loc.profileId,
+    bucket: loc.bucket,
+    connectionName: get().profiles.find((x) => x.id === loc.profileId)?.name ?? "",
+    rootName: rootName(loc.profileId, loc.bucket),
+    singleRoot: peekCaps(loc.profileId)?.roots === "single",
+  });
+
+  /** Sends `list` from pane `id` to a target, by whichever route the two places need. */
+  const sendTo = (id: PaneId, list: Entry[], mode: "copy" | "move", t: Target) => {
+    const src = pane(id);
+    if (!src.here) return;
+    void sendItems(src.ops, src.here, list, mode, destPlace(t.loc), t.loc.prefix, get(), () => rememberSent(t.loc));
+  };
+
+  /** The rows of Copy to ▸ / Move to ▸: the targets under small headings, then the folder picker. */
+  const targetItems = (id: PaneId, list: Entry[], mode: "copy" | "move"): MenuItem[] => {
+    const c = get();
+    const out: MenuItem[] = [];
+    let group: string | null = null;
+    for (const t of targets(id, list, mode)) {
+      if (t.group !== group) {
+        if (group) out.push({ type: "sep" });
+        out.push({ type: "label", label: t.group });
+        group = t.group;
+      }
+      const name = t.loc.prefix ? destLabel(t.loc.prefix, t.loc.bucket, t.loc.profileId) : rootName(t.loc.profileId, t.loc.bucket);
+      const conn = t.loc.profileId === LOCAL_ID ? ON_OS.device : (c.profiles.find((x) => x.id === t.loc.profileId)?.name ?? "");
+      const inside = placeLabel(t.loc.profileId, t.loc.bucket, t.loc.prefix);
+      out.push({
+        type: "item",
+        label: name,
+        icon: t.pane ? "split" : t.group === "Favorites" ? "star" : "folder",
+        detail: [conn, inside !== name ? inside : ""].filter(Boolean).join(" · "),
+        onClick: () => sendTo(id, list, mode, t),
+      });
+    }
+    if (out.length) out.push({ type: "sep" });
+    out.push({ type: "item", label: "Choose folder…", icon: "folder", onClick: () => pane(id).actions.askMove(list, mode) });
+    return out;
+  };
+
   /** F5 / F6: the selection (or the item under the cursor) to the other pane's folder, after a confirm. */
   const sendSelection = async (mode: "copy" | "move") => {
     const c = get();
     const src = pane(c.activeId);
-    const dst = otherPane(c.activeId);
     let items = src.sel.selectedEntries;
     if (!items.length && src.sel.cursor.current) items = src.ent.entries.filter((e) => e.key === src.sel.cursor.current);
     if (!items.length) {
       c.dialogs.toast("info", `Select what to ${mode} first`);
       return;
     }
+    // straight to the other pane only when there's exactly one other: otherwise it's picked from
+    // the same list Copy to ▸ / Move to ▸ shows, opened at the selection
+    if (c.panes.length !== 2) {
+      const row = document.querySelector(`[data-pane="${src.id}"] .row.selected, [data-pane="${src.id}"] .tile.selected`);
+      const at = menuPointFor(row);
+      c.dialogs.menu(at.x, at.y, [{ type: "label", label: mode === "copy" ? "Copy to" : "Move to" }, ...targetItems(src.id, items, mode)]);
+      return;
+    }
+    const dst = otherPane(c.activeId);
     if (!dst?.here) {
       c.dialogs.toast("info", "Open a folder in the other pane first");
       return;
@@ -178,7 +282,10 @@ export function makeDualActions(get: () => DualContext) {
         asCopy ? `. Between ${ON_OS.here} and the cloud files are copied: the originals stay where they are.` : ".",
       ),
     });
-    if (ok) await sendToPane(src, dst, items, mode, dst.prefix, c);
+    if (ok) {
+      rememberSent(dst.here);
+      await sendToPane(src, dst, items, mode, dst.prefix, c);
+    }
   };
 
   /** The active pane and its other pane trade places (with two panes: the two of them). */
@@ -262,20 +369,11 @@ export function makeDualActions(get: () => DualContext) {
     // swap, compare, "this folder in the other pane" and synchronized browsing: in the toolbar's
     // "…" (the shell adds them there) and the link on the divider, not in the folder menus
     extraPlaceItems: (): MenuItem[] => [],
-    extraItemItems: (list: Entry[]): (MenuItem | false)[] => {
-      const dst = otherPane(id);
-      if (!multi() || !dst?.here) return [];
-      const src = pane(id);
-      const where = placeName(dst) || "the other pane";
-      const run = (mode: "copy" | "move") => void sendToPane(src, dst, list, mode, dst.prefix, get());
-      // both panes show the same folder (or a folder would go into itself): nothing to do there
-      const noop = !!src.here && src.here.profileId === dst.here.profileId && src.bucket === dst.bucket && !isValidDest(list, dst.prefix);
-      return [
-        { type: "item", label: `Copy to “${where}”`, icon: "copy", hint: "F5", disabled: noop, onClick: () => run("copy") },
-        // this computer and the cloud only copy to each other
-        !crossesDisk(src, dst) && { type: "item", label: `Move to “${where}”`, icon: "move", hint: "F6", disabled: noop, onClick: () => run("move") },
-      ];
-    },
+    // Copy to ▸ / Move to ▸: open panes, recent places, favorites, and the folder picker
+    extraItemItems: (list: Entry[]): (MenuItem | false)[] => [
+      { type: "submenu", label: "Copy to", icon: "copy", items: () => targetItems(id, list, "copy") },
+      { type: "submenu", label: "Move to", icon: "move", items: () => targetItems(id, list, "move") },
+    ],
   });
 
   /** Commands that work with or without a bucket on screen; false = not handled (single pane). */
@@ -284,8 +382,8 @@ export function makeDualActions(get: () => DualContext) {
     "swap-panes": () => (multi() ? swap() : false),
     "same-folder": () => (multi() ? sameFolderInOther() : false),
     "compare-folders": () => (multi() ? compare() : false),
-    "pane-copy": () => (multi() ? void sendSelection("copy") : false),
-    "pane-move": () => (multi() ? void sendSelection("move") : false),
+    "pane-copy": () => void sendSelection("copy"),
+    "pane-move": () => void sendSelection("move"),
   };
 
   return {
