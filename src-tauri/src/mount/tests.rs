@@ -439,8 +439,9 @@ struct SlowStore {
     list_delay: Duration,
     roots_delay: Duration,
     quota_delay: Duration,
-    /// listings of `Videos/`
+    /// listings of `Videos/` started, and finished
     lists: std::sync::atomic::AtomicUsize,
+    listed: std::sync::atomic::AtomicUsize,
     roots_calls: std::sync::atomic::AtomicUsize,
     reads: std::sync::Mutex<Vec<(String, Option<std::ops::Range<u64>>)>>,
 }
@@ -455,6 +456,7 @@ impl SlowStore {
             roots_delay: Duration::ZERO,
             quota_delay: Duration::ZERO,
             lists: Default::default(),
+            listed: Default::default(),
             roots_calls: Default::default(),
             reads: Default::default(),
         }
@@ -464,6 +466,9 @@ impl SlowStore {
     }
     fn lists(&self) -> usize {
         self.lists.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    fn listed(&self) -> usize {
+        self.listed.load(std::sync::atomic::Ordering::SeqCst)
     }
     fn reads(&self) -> Vec<(String, Option<std::ops::Range<u64>>)> {
         self.reads.lock().unwrap().clone()
@@ -489,6 +494,9 @@ impl Storage for SlowStore {
             self.lists.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         tokio::time::sleep(self.list_delay).await;
+        if dir == "Videos/" {
+            self.listed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
         let mut page = crate::storage::Page::default();
         match (root, dir) {
             ("b", "") => page.folders.push("Videos/".into()),
@@ -697,9 +705,22 @@ async fn a_change_made_through_the_drive_is_never_hidden_by_a_listing_under_way(
     d.fs.0.age_caches(super::webdav::TTL + Duration::from_secs(1));
     // stale answer; refresh starts behind it
     d.propfind("b/Videos/", "1").await;
+    // waits for the store, not a fixed time: a busy CI runner can start the refresh late
+    let until = |what: &'static str, done: Box<dyn Fn() -> bool + Send>| async move {
+        let end = std::time::Instant::now() + Duration::from_secs(10);
+        while !done() {
+            assert!(std::time::Instant::now() < end, "{what}");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    };
+    let st = d.store.clone();
+    until("the refresh started", Box::new(move || st.lists() == 2)).await;
     // Kybl changes the folder while that refresh is under way
     d.fs.0.forget_folder("b", "Videos/");
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    let st = d.store.clone();
+    until("the refresh finished", Box::new(move || st.listed() == 2)).await;
+    // and handed its answer back
+    tokio::time::sleep(Duration::from_millis(200)).await;
     let before = d.store.lists();
     d.propfind("b/Videos/", "1").await;
     assert_eq!(d.store.lists(), before + 1, "the refresh from before the change wasn't kept");
