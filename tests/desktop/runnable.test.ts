@@ -51,7 +51,7 @@ test("trailing dots and spaces, case and right-to-left override don't hide the t
 });
 
 test("a long name is judged by its real (last) extension", () => {
-  // edit.rs keeps the extension when it shortens a name (segments_keep_the_extension), so the copy is a .txt too
+  // files/edit.rs keeps the extension when it shortens a name (segments_keep_the_extension), so the copy is a .txt too
   assert.ok(!asksFirst(`${"A".repeat(116)}.exe.txt`, "default"));
   assert.ok(asksFirst(`${"A".repeat(300)}.txt.exe`, "default"));
 });

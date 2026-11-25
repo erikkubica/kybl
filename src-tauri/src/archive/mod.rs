@@ -90,7 +90,7 @@ fn work_base<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, StorageError> {
 /// `<app cache>/archives/<this run>/`: emptied when Kybl quits, and what an ended run left is
 /// removed by the next start (see `instance_dir`).
 fn work_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, StorageError> {
-    crate::instance_dir::claim(&work_base(app)?).map_err(StorageError::from)
+    crate::app::instance_dir::claim(&work_base(app)?).map_err(StorageError::from)
 }
 
 /// Start-up: claims this run's work folder, removing what earlier runs left there.
@@ -101,7 +101,7 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>) {
 /// Quitting: the downloads and unpacked copies go.
 pub fn shutdown<R: Runtime>(app: &AppHandle<R>) {
     if let Ok(base) = work_base(app) {
-        crate::instance_dir::clear(&base);
+        crate::app::instance_dir::clear(&base);
     }
 }
 

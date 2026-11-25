@@ -325,7 +325,7 @@ pub const BUSY: &str = "Already downloading this file. Wait for that download to
 pub fn reserve(dest: &Path, overwrite: bool) -> Result<PathBuf, String> {
     let chosen = pick(dest, overwrite, !overwrite)?;
     if !overwrite && part_path(&chosen).exists() {
-        crate::leftovers::partial_started(&part_path(&chosen));
+        crate::transfer::leftovers::partial_started(&part_path(&chosen));
     }
     Ok(chosen)
 }
@@ -439,7 +439,7 @@ pub fn recheck_retry(chosen: PathBuf, wanted: &Path, overwrite: bool) -> (PathBu
     let next = pick(wanted, false, false).expect("only a download that replaces a file is ever refused");
     let moved = crate::storage::local::fsops::rename_noreplace(&part_path(&chosen), &part_path(&next)).is_ok();
     if moved {
-        crate::leftovers::partial_started(&part_path(&next));
+        crate::transfer::leftovers::partial_started(&part_path(&next));
     } else {
         remove_part(&part_path(&chosen));
     }

@@ -32,7 +32,7 @@ use std::{
 
 use tauri::{plugin::TauriPlugin, AppHandle, Emitter, RunEvent, Wry};
 
-use crate::mobile::PickedFile;
+use crate::app::mobile::PickedFile;
 
 /// The app, for events that start on the native side (a share arriving, a notification tapped).
 static APP: OnceLock<AppHandle> = OnceLock::new();
@@ -280,7 +280,7 @@ async fn native<T: serde::de::DeserializeOwned>(app: &AppHandle, cmd: &str, args
 #[tauri::command]
 pub async fn open_local(app: AppHandle, path: String) -> Result<(), String> {
     must_exist(&path)?;
-    crate::open_copies::handed_out(&path);
+    crate::files::open_copies::handed_out(&path);
     #[cfg(desktop)]
     {
         let _ = app;
@@ -298,7 +298,7 @@ pub async fn open_local(app: AppHandle, path: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn copy_file_to_clipboard(app: AppHandle, path: String) -> Result<(), String> {
     must_exist(&path)?;
-    crate::open_copies::handed_out(&path);
+    crate::files::open_copies::handed_out(&path);
     #[cfg(target_os = "macos")]
     {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -401,7 +401,7 @@ fn temp_file_name(sent: &str, windows: bool) -> String {
     }
     if windows {
         let bad_char = name.chars().any(|c| c.is_control() || matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*'));
-        if bad_char || crate::dest::windows_unfit(name) {
+        if bad_char || crate::transfer::dest::windows_unfit(name) {
             // keep the type, which the upload's content type comes from
             return match name.rsplit_once('.').map(|(_, ext)| ext) {
                 Some(ext) if !ext.is_empty() && ext.len() <= 8 && ext.chars().all(|c| c.is_ascii_alphanumeric()) => format!("photo.{ext}"),
@@ -434,7 +434,7 @@ fn percent_decode(s: &str) -> String {
 /// phones): this run's own (see `open_copies`), so a second Kybl never empties it under this one.
 #[tauri::command]
 pub async fn temp_folder(app: tauri::AppHandle) -> Result<String, String> {
-    Ok(crate::open_copies::folder(&app).await?.to_string_lossy().into_owned())
+    Ok(crate::files::open_copies::folder(&app).await?.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -443,7 +443,7 @@ pub async fn reveal_local(path: String) -> Result<(), String> {
     {
         // folders too: a folder kept on this device by sync is shown the same way
         must_exist_or_dir(&path)?;
-        crate::open_copies::handed_out(&path);
+        crate::files::open_copies::handed_out(&path);
         tauri_plugin_opener::reveal_item_in_dir(&path).map_err(|e| format!("Couldn't show {}: {e}", name(&path)))
     }
     #[cfg(mobile)]
@@ -464,7 +464,7 @@ pub async fn share_files(app: AppHandle, paths: Vec<String>) -> Result<(), Strin
     }
     for p in &paths {
         must_exist(p)?;
-        crate::open_copies::handed_out(p);
+        crate::files::open_copies::handed_out(p);
     }
     #[cfg(desktop)]
     {

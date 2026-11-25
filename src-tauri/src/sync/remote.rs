@@ -110,7 +110,7 @@ pub async fn scan_remote(s: &dyn Storage, root: &str, prefix: &str, gi: &Gitigno
         }
         for e in batch? {
             if let Some(rel) = rel_of(&e.key, prefix, gi) {
-                if crate::local_links::skip_listed_link(s.caps(), &e) {
+                if crate::files::local_links::skip_listed_link(s.caps(), &e) {
                     out.links.push(super::plan::nfc(rel));
                     continue;
                 }

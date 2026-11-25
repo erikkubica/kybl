@@ -368,7 +368,7 @@ fn a_cut_transfer_is_never_a_whole_file() {
         let dest = dir.join("big.bin");
         let mut dl = generic_cmds::Dl::default();
         let r = generic_cmds::download_resumable(&b, "", "big.bin", &dest, None, true, &AtomicBool::new(false), &|_, _| {}, None, &mut dl).await;
-        assert!(matches!(r, Ok(crate::transfers::Outcome::Done)), "{:?}", r.err());
+        assert!(matches!(r, Ok(crate::transfer::queue::Outcome::Done)), "{:?}", r.err());
         assert_eq!(std::fs::read(&dest).unwrap(), data);
         let _ = std::fs::remove_dir_all(dir);
     });

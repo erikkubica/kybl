@@ -43,7 +43,7 @@ pub fn set_unsaved_documents(count: usize) {
 /// destroyed to free memory) and closing or quitting asks first.
 pub fn unsaved() -> usize {
     // files edited in another app whose last save isn't on the server yet count too
-    UNSAVED.load(Ordering::SeqCst) + crate::edit::unsynced()
+    UNSAVED.load(Ordering::SeqCst) + crate::files::edit::unsynced()
 }
 
 /// How long aborting open uploads may hold up quitting.
@@ -62,13 +62,13 @@ pub fn leaving() -> bool {
 
 /// Transfers and bucket operations still running.
 pub fn busy() -> usize {
-    crate::transfers::active_count() + crate::commands::running_jobs() + crate::jobs::running_count()
+    crate::transfer::queue::active_count() + crate::commands::running_jobs() + crate::jobs::running_count()
 }
 
 /// WP-E4: busy() plus saves on drives still to upload (they need the app, not the window).
 fn busy_quitting(app: &AppHandle) -> (usize, usize, usize) {
     (
-        crate::transfers::active_count(),
+        crate::transfer::queue::active_count(),
         crate::commands::running_jobs() + crate::jobs::running_count(),
         crate::mount::pending_uploads(app),
     )
@@ -161,7 +161,7 @@ pub fn request(app: &AppHandle) {
             request_busy(&app);
         } else {
             // the editor sits in the window: bring it forward to save or look at the changes
-            crate::tray::show_main(&app);
+            crate::app::tray::show_main(&app);
         }
     });
 }
@@ -232,17 +232,17 @@ fn exit_cleanly(app: AppHandle) {
 /// Also run before an update restarts the app, so that neither asks again nor leaves parts behind.
 pub async fn clean_up(app: &AppHandle) {
     STAGE.store(CLEANING, Ordering::SeqCst);
-    crate::transfers::shutdown(&app.state::<AppState>(), CLEANUP_LIMIT).await;
+    crate::transfer::queue::shutdown(&app.state::<AppState>(), CLEANUP_LIMIT).await;
     // WP-E4: drives unmount; their waiting uploads carry on next start
     crate::mount::shutdown(app, CLEANUP_LIMIT).await;
     // files edited in another app: stop watching, delete the copies
-    crate::edit::shutdown(app).await;
+    crate::files::edit::shutdown(app).await;
     // downloaded and unpacked archives
     crate::archive::shutdown(app);
     // SSH tunnels close their ports
     crate::tunnels::run::shutdown().await;
     // what couldn't be aborted in time stays written down for the next start
-    crate::leftovers::save();
+    crate::transfer::leftovers::save();
     STAGE.store(LEAVING, Ordering::SeqCst);
 }
 

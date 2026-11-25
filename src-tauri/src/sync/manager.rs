@@ -125,7 +125,7 @@ impl SyncManager {
             s.clone()
         };
         let _ = app.emit("sync-status", snapshot);
-        crate::tray::refresh(app);
+        crate::app::tray::refresh(app);
     }
 
     pub fn statuses(&self) -> Vec<SyncStatus> {
@@ -441,7 +441,7 @@ pub async fn init<R: Runtime>(app: AppHandle<R>) {
     for m in &cfg.mappings {
         apply(&app, &mgr, m, cfg.paused_all).await;
     }
-    crate::tray::refresh(&app);
+    crate::app::tray::refresh(&app);
 }
 
 /// Kicks off a full sync of every running mapping (tray "Sync now").
@@ -474,7 +474,7 @@ pub async fn set_paused_all<R: Runtime>(app: &AppHandle<R>, mgr: &SyncManager, p
     for m in &cfg.mappings {
         apply(app, mgr, m, paused).await;
     }
-    crate::tray::refresh(app);
+    crate::app::tray::refresh(app);
     Ok(())
 }
 
@@ -620,7 +620,7 @@ pub async fn sync_delete(app: AppHandle, mgr: State<'_, SyncManager>, id: String
     stop_worker(&mgr, &id).await;
     forget_db(&app, &id);
     mgr.status.lock().unwrap().remove(&id);
-    crate::tray::refresh(&app);
+    crate::app::tray::refresh(&app);
     Ok(())
 }
 

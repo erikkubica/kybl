@@ -21,7 +21,7 @@ const CommandPalette = lazy(() =>
   }),
 );
 
-/** the menu item's id (menu.rs, api.ts) */
+/** the menu item's id (app/menu.rs, api.ts) */
 export const PALETTE_MENU_ID = "command-palette";
 const MAC = /Mac|iPhone|iPad/i.test(navigator.userAgent);
 

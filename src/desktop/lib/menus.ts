@@ -24,8 +24,8 @@ export function tidyMenu(items: (MenuItem | false | null | undefined)[]): MenuIt
 export const MENU_OWNS_SHORTCUTS = isTauri() && /Mac/i.test(navigator.userAgent);
 
 /**
- * The menu items that have an accelerator in the macOS menu bar (src-tauri/src/menu.rs), by
- * command id. Keep in step with menu.rs. The other menu items (refresh, search, go-up, delete,
+ * The menu items that have an accelerator in the macOS menu bar (src-tauri/src/app/menu.rs), by
+ * command id. Keep in step with app/menu.rs. The other menu items (refresh, search, go-up, delete,
  * rename, new-connection) are click-only there, so their keys are always handled here.
  *
  * View menu pane items: "split-right", "split-down", "swap-panes" and "toggle-hidden" have

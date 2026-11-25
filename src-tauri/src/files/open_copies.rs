@@ -52,7 +52,7 @@ fn base<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
 /// This run's folder (made private, claimed on first use: that also removes what ended runs
 /// left). Blocking.
 fn claim(base: &Path) -> Result<PathBuf, String> {
-    let dir = crate::instance_dir::claim(base).map_err(|e| format!("Couldn't create a temporary folder: {e}"))?;
+    let dir = crate::app::instance_dir::claim(base).map_err(|e| format!("Couldn't create a temporary folder: {e}"))?;
     let _ = RUN.set(dir.clone());
     Ok(dir)
 }
@@ -162,7 +162,7 @@ fn split_usage(entries: &[(PathBuf, SystemTime, u64)], now: SystemTime, spare: &
 pub async fn clear<R: Runtime>(app: &AppHandle<R>) -> u64 {
     let Ok(base) = base(app) else { return 0 };
     let (freed, removed) = tokio::task::spawn_blocking(move || {
-        crate::instance_dir::sweep_ended_runs();
+        crate::app::instance_dir::sweep_ended_runs();
         claim(&base).map(|d| trim(&d, IN_USE, SystemTime::now(), &handed_or_reading)).unwrap_or_default()
     })
     .await
@@ -284,7 +284,7 @@ mod tests {
         // "Clear cache" a day and a bit later: the rest goes
         assert_eq!(trim(&dir, IN_USE, SystemTime::now() + IN_USE + Duration::from_secs(60), &|_| false).0, 12);
         assert!(entries(&dir).iter().all(|e| e.2 == 0));
-        crate::instance_dir::clear(&base);
+        crate::app::instance_dir::clear(&base);
         let _ = std::fs::remove_dir_all(base);
     }
 
@@ -339,7 +339,7 @@ mod tests {
         assert!(!base.join("deadbeef").exists());
         assert_ne!(mine, base.join("live"));
         drop(live);
-        crate::instance_dir::clear(&base);
+        crate::app::instance_dir::clear(&base);
         let _ = std::fs::remove_dir_all(base);
     }
 }

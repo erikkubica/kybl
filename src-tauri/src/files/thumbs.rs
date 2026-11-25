@@ -81,7 +81,7 @@ fn cache_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     }
     let dir = app.path().app_cache_dir().map_err(err)?.join("thumbs");
     // thumbnails of private pictures: this account only
-    crate::filecache::private_dir(&dir).map_err(err)?;
+    crate::files::filecache::private_dir(&dir).map_err(err)?;
     Ok(DIR.get_or_init(|| dir).clone())
 }
 
@@ -247,7 +247,7 @@ fn find_cached(dir: &Path, kind: ConnKind, profile_id: &str, bucket: &str, key: 
     if !old.is_file() {
         return None;
     }
-    let moved = path.parent().is_some_and(|p| crate::filecache::private_dir(p).is_ok()) && std::fs::rename(&old, &path).is_ok();
+    let moved = path.parent().is_some_and(|p| crate::files::filecache::private_dir(p).is_ok()) && std::fs::rename(&old, &path).is_ok();
     Some(if moved { path } else { old })
 }
 
@@ -262,7 +262,7 @@ pub async fn forget_profile<R: Runtime>(app: &AppHandle<R>, profile_id: &str, ki
     let Ok(dir) = cache_dir(app) else { return };
     let old: Vec<PathBuf> = kind
         .map(|k| {
-            crate::placeholders::files_of(profile_id)
+            crate::files::placeholders::files_of(profile_id)
                 .into_iter()
                 .flat_map(|(root, key, etag, size)| {
                     [etag.clone(), format!("\"{etag}\"")].map(|e| dir.join(cache_name(k, profile_id, &root, &key, &e, size)))
@@ -286,14 +286,14 @@ async fn save(path: &Path, jpeg: &[u8]) {
     let tmp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4().simple()));
     let (t, bytes) = (tmp.clone(), jpeg.to_vec());
     let wrote = tokio::task::spawn_blocking(move || {
-        crate::filecache::write_private(&t, &bytes).or_else(|e| {
+        crate::files::filecache::write_private(&t, &bytes).or_else(|e| {
             // its folder isn't there (yet, or any more: a cache cleaner removed the cache while
             // Kybl ran): made again, once (B5-2)
             if e.kind() != std::io::ErrorKind::NotFound {
                 return Err(e);
             }
-            crate::filecache::private_dir(t.parent().ok_or(e)?)?;
-            crate::filecache::write_private(&t, &bytes)
+            crate::files::filecache::private_dir(t.parent().ok_or(e)?)?;
+            crate::files::filecache::write_private(&t, &bytes)
         })
     })
     .await
@@ -321,7 +321,7 @@ pub(crate) fn cached_path<R: Runtime>(app: &AppHandle<R>, profile_id: &str, buck
     find_cached(&cache_dir(app).ok()?, kind_of(app, profile_id), profile_id, bucket, key, etag, size)
 }
 
-/// Puts a thumbnail made elsewhere (from a photo just uploaded, see placeholders.rs) into the
+/// Puts a thumbnail made elsewhere (from a photo just uploaded, see files/placeholders.rs) into the
 /// cache, so the grid shows it without downloading anything. S3 only, like uploads with one.
 /// The thumbnail-sized JPEG of an upright camera thumbnail (for `seed`).
 pub(crate) fn encode_thumb(img: DynamicImage) -> Option<Vec<u8>> {
@@ -336,7 +336,7 @@ pub(crate) async fn seed(profile_id: &str, bucket: &str, key: &str, etag: &str, 
 }
 
 /// The thumbnail JPEG for an object, from the disk cache or freshly made. Every thumbnail also
-/// leaves its ThumbHash placeholder in the local index (placeholders.rs), including ones cached
+/// leaves its ThumbHash placeholder in the local index (files/placeholders.rs), including ones cached
 /// before placeholders existed.
 async fn thumbnail<R: Runtime>(
     app: &AppHandle<R>,
@@ -347,7 +347,7 @@ async fn thumbnail<R: Runtime>(
     etag: &str,
 ) -> Result<Vec<u8>, String> {
     let jpeg = make_thumbnail(app, profile_id, bucket, key, size, etag).await?;
-    crate::placeholders::note_thumbnail(profile_id, bucket, key, etag, size, &jpeg).await;
+    crate::files::placeholders::note_thumbnail(profile_id, bucket, key, etag, size, &jpeg).await;
     Ok(jpeg)
 }
 
@@ -372,10 +372,10 @@ async fn make_thumbnail<R: Runtime>(
     // made from those bytes, with no request
     if !etag.is_empty()
         && (0..=MAX_FULL_DOWNLOAD).contains(&size)
-        && let Some(cache) = crate::filecache::get(app)
+        && let Some(cache) = crate::files::filecache::get(app)
         && cache.has_any(profile_id, bucket, key)
     {
-        let id = crate::filecache::Ident::new(Some(etag), size as u64, None);
+        let id = crate::files::filecache::Ident::new(Some(etag), size as u64, None);
         let (p, b, k) = (profile_id.to_string(), bucket.to_string(), key.to_string());
         // a full decode like any other (a grid of photos opened before asks for all at once):
         // one of the few decode places, taken before the photo is even read into memory
@@ -390,7 +390,7 @@ async fn make_thumbnail<R: Runtime>(
 
     // "Wi-Fi only" also covers thumbnails: cached ones still show, new ones wait for Wi-Fi.
     // This device's own files need no network.
-    if kind != ConnKind::Local && crate::tuning::wifi_only() && crate::platform::on_metered_network() {
+    if kind != ConnKind::Local && crate::transfer::tuning::wifi_only() && crate::platform::on_metered_network() {
         return Err("Previews wait for Wi-Fi".into());
     }
     let state = app.state::<AppState>();

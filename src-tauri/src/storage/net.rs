@@ -17,7 +17,7 @@ use futures_util::StreamExt;
 use tokio::io::AsyncReadExt;
 
 use super::*;
-use crate::{state::NetConfig, tuning::{Lane, UP}};
+use crate::{state::NetConfig, transfer::tuning::{Lane, UP}};
 
 /// Files listed per page.
 pub const PAGE: usize = 1000;

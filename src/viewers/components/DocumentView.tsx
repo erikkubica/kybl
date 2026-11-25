@@ -76,7 +76,7 @@ export function copyKey(key: string, n: number): string {
 }
 
 /**
- * Every open document with unsaved changes, so quitting the app can ask first (quit.rs). Each
+ * Every open document with unsaved changes, so quitting the app can ask first (app/quit.rs). Each
  * view adds a token while dirty; the count goes to the backend whenever it changes.
  */
 const unsavedDocs = new Set<object>();

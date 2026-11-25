@@ -80,7 +80,7 @@ pub async fn plan_pack_into(
                     if e.key == *key {
                         continue;
                     }
-                    if crate::local_links::skip_listed_link(s.caps(), &e) || !zip_name_ok(&rel(&e.key)) {
+                    if crate::files::local_links::skip_listed_link(s.caps(), &e) || !zip_name_ok(&rel(&e.key)) {
                         left_out.push(e.key);
                         continue;
                     }
@@ -473,7 +473,7 @@ fn links_on_the_way(dst: &dyn Storage, root: &str, plan: &ExtractPlan) -> SResul
     let Some(base) = dst.local_path(root, plan.dest_dir.trim_end_matches('/')) else { return Ok(()) };
     for key in plan.dirs.iter().chain(plan.files.iter().map(|(_, k)| k)) {
         if let Some(p) = dst.local_path(root, key.trim_end_matches('/')) {
-            crate::local_links::safe_write_target(&base, &p).map_err(|why| StorageError::new(ErrKind::PermissionDenied, format!("Nothing was unpacked. {why}")))?;
+            crate::files::local_links::safe_write_target(&base, &p).map_err(|why| StorageError::new(ErrKind::PermissionDenied, format!("Nothing was unpacked. {why}")))?;
         }
     }
     Ok(())

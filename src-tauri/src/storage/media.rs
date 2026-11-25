@@ -401,7 +401,7 @@ pub async fn media_base(app: AppHandle) -> Result<MediaBase, String> {
 
 // ---------------------------------------------------------------- tests
 
-/// A store in memory, for tests here and in thumbs.rs: it can pretend it can't read ranges and
+/// A store in memory, for tests here and in files/thumbs.rs: it can pretend it can't read ranges and
 /// can hand out a remote thumbnail, and it records the ranges it was asked for.
 #[cfg(test)]
 pub(crate) mod test_store {

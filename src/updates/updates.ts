@@ -1,5 +1,5 @@
 /**
- * App updates, from GitHub Releases (see src-tauri/src/updater.rs). The native side checks on its
+ * App updates, from GitHub Releases (see src-tauri/src/app/updater.rs). The native side checks on its
  * own and keeps the state; the page shows it and passes clicks back.
  */
 import { invoke } from "@tauri-apps/api/core";

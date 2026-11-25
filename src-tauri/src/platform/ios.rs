@@ -6,7 +6,7 @@ use std::ffi::CString;
 
 use tauri::{AppHandle, Manager, Url};
 
-use crate::mobile::PickedFile;
+use crate::app::mobile::PickedFile;
 
 unsafe extern "C" {
     fn kybl_background_begin();

@@ -81,7 +81,7 @@ async fn simple(api: &Api, base: &str, t: &Target<'_>, bytes: bytes::Bytes, canc
     }
     // a new file: never two of it (see `Drive::create_once`); what a lost answer made is known by
     // its size and MD5
-    let (size, md5) = (bytes.len().to_string(), crate::verify::hex(&<md5::Md5 as md5::Digest>::digest(&bytes)));
+    let (size, md5) = (bytes.len().to_string(), crate::transfer::verify::hex(&<md5::Md5 as md5::Digest>::digest(&bytes)));
     let same = |f: &DFile| f.size.as_deref() == Some(size.as_str()) && f.md5_checksum.as_deref().is_none_or(|m| m.eq_ignore_ascii_case(&md5));
     let send = || api.send_piece_create(&body, cancel, |c, b| c.post(&url).header("content-type", &ctype).header("content-length", body.len()).body(b));
     Drive { api, base }.create_once(t.parent, t.name, same, send).await

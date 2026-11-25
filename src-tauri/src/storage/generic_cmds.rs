@@ -25,10 +25,10 @@ use crate::{
         BucketInfo, ChildSize, FolderSize, Job, ListResult, MoveItem, MoveProgress, ObjectDetails, OpResult, RemoteFile, SearchProgress,
         SearchResult, SizeProgress, TextPreview, MAX_CHILDREN,
     },
-    dest,
-    objects::Existing,
-    transfers::{race, Outcome, Raced},
-    tuning::DOWN,
+    transfer::dest,
+    files::objects::Existing,
+    transfer::queue::{race, Outcome, Raced},
+    transfer::tuning::DOWN,
 };
 
 // ---------------------------------------------------------------- new commands
@@ -614,7 +614,7 @@ async fn walk_files(s: &dyn Storage, bucket: &str, prefix: &str, links: bool) ->
     let mut out = Vec::new();
     let mut walk = s.walk(bucket, prefix);
     while let Some(batch) = walk.next().await {
-        out.extend(batch?.into_iter().filter(|e| !e.is_dir() && (links || !crate::local_links::skip_listed_link(s.caps(), e))).map(|e| RemoteFile { key: e.key, size: e.size }));
+        out.extend(batch?.into_iter().filter(|e| !e.is_dir() && (links || !crate::files::local_links::skip_listed_link(s.caps(), e))).map(|e| RemoteFile { key: e.key, size: e.size }));
     }
     Ok(out)
 }
@@ -656,7 +656,7 @@ pub(crate) async fn download(
     dest: &Path,
     cancel: &AtomicBool,
     progress: Progress<'_>,
-    hold: crate::transfers::Hold<'_>,
+    hold: crate::transfer::queue::Hold<'_>,
     expect: Option<dest::Stamp>,
 ) -> Result<Outcome, String> {
     // held like any download's name: never two writers on one file (sync runs several at once)
@@ -681,7 +681,7 @@ pub(crate) fn continue_at(have: u64, total: Option<u64>, version: Option<&str>, 
 /// partial file it left is continued with a ranged read of the same version, where the backend
 /// reads ranges. A dropped connection mid-file is picked up again the same way. With
 /// `keep_partial`, a failed download keeps its partial file for a later retry; with `dl.pause`
-/// set when it is cancelled, it keeps it too and answers [`crate::multipart::PAUSED`].
+/// set when it is cancelled, it keeps it too and answers [`crate::transfer::multipart::PAUSED`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn download_resumable(
     s: &dyn Storage,
@@ -692,7 +692,7 @@ pub(crate) async fn download_resumable(
     keep_partial: bool,
     cancel: &AtomicBool,
     progress: Progress<'_>,
-    hold: crate::transfers::Hold<'_>,
+    hold: crate::transfer::queue::Hold<'_>,
     dl: &mut Dl<'_>,
 ) -> Result<Outcome, String> {
     if let Some(parent) = dest.parent() {
@@ -726,12 +726,12 @@ pub(crate) async fn download_resumable(
             let r = match race(s.read(bucket, key, None, None), cancel).await {
                 Raced::Got(r) => r?,
                 Raced::Stopped => return Ok(Outcome::Cancelled),
-                Raced::Stalled => return Err(crate::transfers::STALLED.into()),
+                Raced::Stalled => return Err(crate::transfer::queue::STALLED.into()),
             };
             let total = r.total.or(r.len).unwrap_or(0);
             let etag = r.etag.clone();
             let f = dest::create_part(&part).await.map_err(|e| e.to_string())?;
-            crate::leftovers::partial_started(&part);
+            crate::transfer::leftovers::partial_started(&part);
             (r, 0, f, total, etag)
         }
     };
@@ -750,7 +750,7 @@ pub(crate) async fn download_resumable(
             let next = match race(r.body.next(), cancel).await {
                 Raced::Got(n) => n,
                 Raced::Stopped => return Ok(false),
-                Raced::Stalled => Some(Err(std::io::Error::new(std::io::ErrorKind::TimedOut, crate::transfers::STALLED))),
+                Raced::Stalled => Some(Err(std::io::Error::new(std::io::ErrorKind::TimedOut, crate::transfer::queue::STALLED))),
             };
             let chunk = match next {
                 Some(Ok(c)) => c,
@@ -810,27 +810,27 @@ pub(crate) async fn download_resumable(
             // "Wi-Fi only" and the phone moved to mobile data: let go of the connection, keep
             // what arrived, and ask for the rest (of the same version) once back on Wi-Fi
             if let Some(paused) = hold
-                && got - checked_at >= crate::tuning::WIFI_CHECK_BYTES
+                && got - checked_at >= crate::transfer::tuning::WIFI_CHECK_BYTES
                 && got < total
-                && crate::tuning::hold_for_wifi()
+                && crate::transfer::tuning::hold_for_wifi()
             {
                 checked_at = got;
                 r.body = Box::pin(futures_util::stream::empty());
                 file.flush().await?;
                 paused(got, total);
-                if !crate::tuning::wait_for_wifi(cancel).await {
+                if !crate::transfer::tuning::wait_for_wifi(cancel).await {
                     return Ok(false);
                 }
                 r = match race(s.read(bucket, key, Some(got..total), etag.as_deref()), cancel).await {
                     Raced::Got(r) => r?,
                     Raced::Stopped => return Ok(false),
-                    Raced::Stalled => return Err(StorageError::new(ErrKind::Network, crate::transfers::STALLED)),
+                    Raced::Stalled => return Err(StorageError::new(ErrKind::Network, crate::transfer::queue::STALLED)),
                 };
                 if r.range.as_ref().map(|g| g.start) != Some(got) {
                     return Err(StorageError::other("The server can't carry on this download where it paused. Try again."));
                 }
                 progress(got, total);
-            } else if got - checked_at >= crate::tuning::WIFI_CHECK_BYTES {
+            } else if got - checked_at >= crate::transfer::tuning::WIFI_CHECK_BYTES {
                 checked_at = got;
             }
         }
@@ -849,11 +849,11 @@ pub(crate) async fn download_resumable(
             let r = dl.finish(&part, dest);
             drop(held);
             r.map_err(|e| e.to_string())?;
-            crate::leftovers::partial_ended(&part);
+            crate::transfer::leftovers::partial_ended(&part);
             Ok(Outcome::Done)
         }
         // paused: what arrived stays, to carry on from
-        Ok(false) if paused && can_resume => Err(crate::multipart::PAUSED.into()),
+        Ok(false) if paused && can_resume => Err(crate::transfer::multipart::PAUSED.into()),
         Ok(false) => {
             drop(held);
             dest::remove_part(&part);
@@ -1092,7 +1092,7 @@ mod tests {
             std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
             std::fs::write(&dest, b"mine").unwrap();
             let meta = std::fs::metadata(&dest).unwrap();
-            let stamp = dest::Stamp::Matches(meta.len(), crate::dest::mtime_ms(&meta));
+            let stamp = dest::Stamp::Matches(meta.len(), crate::transfer::dest::mtime_ms(&meta));
             // the user saves the file while the download is under way
             let edit = || std::fs::write(&dest, b"mine, edited").unwrap();
             let report = |_: u64, _: u64| edit();
@@ -1103,7 +1103,7 @@ mod tests {
 
             // unchanged: replaced as before
             let meta = std::fs::metadata(&dest).unwrap();
-            let stamp = dest::Stamp::Matches(meta.len(), crate::dest::mtime_ms(&meta));
+            let stamp = dest::Stamp::Matches(meta.len(), crate::transfer::dest::mtime_ms(&meta));
             assert!(matches!(download(&b, &root, "photos/2026/cat.jpg", &dest, &never, &|_, _| {}, None, Some(stamp)).await.unwrap(), Outcome::Done));
             assert_eq!(std::fs::read(&dest).unwrap().len(), 1000);
 
@@ -1166,7 +1166,7 @@ mod tests {
             let (stop, pause) = (AtomicBool::new(true), AtomicBool::new(true));
             let mut dl = Dl { pause: Some(&pause), ..Default::default() };
             let r = download_resumable(&b, &root, "big.bin", &dest3, None, true, &stop, &|_, _| {}, None, &mut dl).await;
-            assert_eq!(r.err().as_deref(), Some(crate::multipart::PAUSED));
+            assert_eq!(r.err().as_deref(), Some(crate::transfer::multipart::PAUSED));
             assert!(dest::part_path(&dest3).exists() && !dest3.exists());
             assert_eq!(dl.etag.as_deref(), Some(etag.as_str()));
         });

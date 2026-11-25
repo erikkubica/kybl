@@ -129,9 +129,9 @@ pub fn init_without_app(config: std::path::PathBuf, data: std::path::PathBuf) ->
             .ok()
             .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
             .and_then(|v| v.get("transfers").cloned())
-            .and_then(|t| serde_json::from_value::<crate::tuning::TransferPrefs>(t).ok())
+            .and_then(|t| serde_json::from_value::<crate::transfer::tuning::TransferPrefs>(t).ok())
     {
-        crate::tuning::apply(prefs);
+        crate::transfer::tuning::apply(prefs);
     }
     super::core_at(super::live::Paths { config, data }).map(|_| ())
 }

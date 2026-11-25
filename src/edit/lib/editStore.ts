@@ -1,5 +1,5 @@
 /**
- * Files being edited in another app (src-tauri/src/edit.rs): the live list, the commands, and
+ * Files being edited in another app (src-tauri/src/files/edit.rs): the live list, the commands, and
  * their uploads shown in the Activity panel like any transfer.
  *
  * The backend owns each session (download, watcher, upload rules); this keeps a mirror of them

@@ -393,14 +393,14 @@ pub async fn doc_open(
 }
 
 /// A file's bytes and the metadata of exactly that version (from the file cache when it holds
-/// the current version). Shared by `doc_open` and editing in another app (edit.rs).
+/// the current version). Shared by `doc_open` and editing in another app (files/edit.rs).
 pub(crate) async fn open_bytes(app: &AppHandle, state: &AppState, profile_id: String, root: String, path: String, max_bytes: u64) -> Result<(DocMeta, Vec<u8>), String> {
     let client = match crate::storage::connect(app, state, &profile_id).await? {
         Conn::S3(c) => c,
         // this computer's files and the other providers: read through the storage core
         Conn::Other(s) => return other_open(&*s, &root, &path, max_bytes).await,
     };
-    let cache = crate::filecache::get(app);
+    let cache = crate::files::filecache::get(app);
     // Seen before (a preview, a download, "Open"): a HEAD tells whether the copy on disk is still
     // the current version. Never cached: straight to the GET, no HEAD spent.
     if let Some(c) = cache
@@ -474,8 +474,8 @@ async fn other_save(s: &dyn Storage, root: &str, key: &str, bytes: Vec<u8>, expe
     }
 }
 
-fn ident(m: &DocMeta) -> crate::filecache::Ident {
-    crate::filecache::Ident::new(m.etag.as_deref(), m.size, m.modified)
+fn ident(m: &DocMeta) -> crate::files::filecache::Ident {
+    crate::files::filecache::Ident::new(m.etag.as_deref(), m.size, m.modified)
 }
 
 /// Raw body = the new contents. Headers: `x-kybl-profile`, `x-kybl-root`, `x-kybl-path` and
@@ -495,7 +495,7 @@ pub async fn doc_save(app: AppHandle, state: State<'_, AppState>, request: tauri
 
 /// Saves `bytes` to `key` under `expect`: the same compare-then-write (and `If-Match` where the
 /// provider honours it) as the editor's ⌘S. Errors starting with `CONFLICT\n\n` carry what is
-/// there now (see [`parse_conflict`]). Shared by `doc_save` and editing in another app (edit.rs).
+/// there now (see [`parse_conflict`]). Shared by `doc_save` and editing in another app (files/edit.rs).
 pub(crate) async fn save_bytes(app: &AppHandle, state: &AppState, profile_id: String, bucket: String, key: String, bytes: Vec<u8>, expect: &Precondition) -> Result<DocMeta, String> {
     let provider = load_profiles(app)?
         .into_iter()
@@ -508,7 +508,7 @@ pub(crate) async fn save_bytes(app: &AppHandle, state: &AppState, profile_id: St
         Conn::S3(c) => c,
         Conn::Other(s) => return other_save(&*s, &bucket, &key, bytes, expect).await,
     };
-    let cache = crate::filecache::get(app);
+    let cache = crate::files::filecache::get(app);
     // editor saves are small (EDIT_MAX), so keeping a copy for the cache costs little
     let kept = cache.map(|_| bytes.clone());
     let result = save(&client, &bucket, &key, bytes, expect, guard, keep_kms).await;

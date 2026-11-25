@@ -48,9 +48,9 @@ use tokio::sync::{Semaphore, SemaphorePermit};
 
 use super::{s3::S3Backend, ByteStream, Entry, ErrKind, PartRecord, Progress, Reopen, SResult, StorageError, WriteOpts, WriteOutcome};
 use crate::{
-    multipart::{part_plan, part_size_for, CHUNK, SINGLE_PUT_LIMIT},
+    transfer::multipart::{part_plan, part_size_for, CHUNK, SINGLE_PUT_LIMIT},
     state::sdk_err,
-    tuning::{self, UP},
+    transfer::tuning::{self, UP},
 };
 
 /// Memory all stream uploads may hold in part buffers at once.
@@ -484,8 +484,8 @@ pub async fn upload_stream(
             // finds the upload gone) after the server put the file together: look before the
             // file is sent all over again.
             let e = StorageError::from(sdk_err(e));
-            let ours = crate::multipart::Ours { total, parts: parts.len(), expected: expected.as_deref(), before: before.as_deref(), asked };
-            if crate::multipart::completed_anyway(&client, bucket, key, &ours).await {
+            let ours = crate::transfer::multipart::Ours { total, parts: parts.len(), expected: expected.as_deref(), before: before.as_deref(), asked };
+            if crate::transfer::multipart::completed_anyway(&client, bucket, key, &ours).await {
                 progress(total, total);
                 return Ok(WriteOutcome::Done(done_entry(s3, bucket, key, total, String::new()).await));
             }
@@ -533,7 +533,7 @@ async fn done_entry(s3: &S3Backend, bucket: &str, key: &str, size: u64, etag: St
 }
 
 fn parts_in_flight(asked: usize) -> usize {
-    if asked > 0 { asked } else { crate::tuning::part_concurrency() }.max(1)
+    if asked > 0 { asked } else { crate::transfer::tuning::part_concurrency() }.max(1)
 }
 
 /// Each missing part read from the source on its own (`reopen(offset)`) and sent, several at once.

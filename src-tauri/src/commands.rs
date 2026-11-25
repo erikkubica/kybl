@@ -162,7 +162,7 @@ pub async fn save_profile(
     #[cfg(desktop)]
     crate::tunnels::run::connection_changed(&app, &profile.id, Some(&profile));
     // the connection may point somewhere else now (another endpoint or account)
-    crate::filecache::forget_profile(&app, &profile.id).await;
+    crate::files::filecache::forget_profile(&app, &profile.id).await;
     Ok(profile)
 }
 
@@ -322,9 +322,9 @@ pub async fn delete_profile(
     #[cfg(desktop)]
     crate::tunnels::run::connection_changed(&app, &id, None);
     // files of a deleted connection don't stay on this computer, thumbnails included
-    crate::filecache::forget_profile(&app, &id).await;
-    crate::thumbs::forget_profile(&app, &id, kind).await;
-    crate::placeholders::forget_profile(&id);
+    crate::files::filecache::forget_profile(&app, &id).await;
+    crate::files::thumbs::forget_profile(&app, &id, kind).await;
+    crate::files::placeholders::forget_profile(&id);
     Ok(crate::state::finish_forgetting(&state, &id, queued.is_ok()).await.err().map(left_secrets_note))
 }
 
@@ -960,11 +960,11 @@ pub async fn get_object_bytes(
     // the version the listing showed: a cached copy of it needs no HEAD
     if cache
         && let (Some(e), Some(n)) = (etag.as_deref(), size)
-        && let Some(bytes) = crate::filecache::read_listed(&app, &conn, &profile_id, &bucket, &key, crate::filecache::Ident::new(Some(e), n, None), max_bytes).await
+        && let Some(bytes) = crate::files::filecache::read_listed(&app, &conn, &profile_id, &bucket, &key, crate::files::filecache::Ident::new(Some(e), n, None), max_bytes).await
     {
         return Ok(tauri::ipc::Response::new(bytes));
     }
-    if cache && let Some(bytes) = crate::filecache::read_current(&app, &conn, &profile_id, &bucket, &key, max_bytes).await {
+    if cache && let Some(bytes) = crate::files::filecache::read_current(&app, &conn, &profile_id, &bucket, &key, max_bytes).await {
         return Ok(tauri::ipc::Response::new(bytes));
     }
     let client = match &conn {
@@ -973,7 +973,7 @@ pub async fn get_object_bytes(
             let r = s.read(&bucket, &key, None, None).await?;
             let etag = r.etag.clone();
             let buf = r.collect(max_bytes).await?;
-            crate::filecache::remember_bytes(&app, &conn, &profile_id, &bucket, &key, etag.as_deref(), None, &buf);
+            crate::files::filecache::remember_bytes(&app, &conn, &profile_id, &bucket, &key, etag.as_deref(), None, &buf);
             return Ok(tauri::ipc::Response::new(buf));
         }
         Conn::Other(s) => return generic::get_object_bytes(&**s, &bucket, &key, max_bytes).await,
@@ -994,7 +994,7 @@ pub async fn get_object_bytes(
         }
     }
     if cache {
-        crate::filecache::remember_bytes(&app, &conn, &profile_id, &bucket, &key, etag.as_deref(), modified, &buf);
+        crate::files::filecache::remember_bytes(&app, &conn, &profile_id, &bucket, &key, etag.as_deref(), modified, &buf);
     }
     Ok(tauri::ipc::Response::new(buf))
 }
@@ -1220,13 +1220,13 @@ async fn copy_object_from(
         .set_metadata(Some(headers.metadata))
         .set_storage_class(headers.storage_class.as_deref().map(StorageClass::from))
         // CopyObject keeps the tags, a multipart upload starts without: set them again
-        .set_tagging(crate::objects::tagging_header(client, src_bucket, src).await)
+        .set_tagging(crate::files::objects::tagging_header(client, src_bucket, src).await)
         .send()
         .await
         .map_err(sdk_err)?;
     let upload_id = upload.upload_id().unwrap_or_default().to_string();
     // aborted if the app quits meanwhile
-    let _open = crate::multipart::OpenGuard::new(client, dst_bucket, dst, &upload_id);
+    let _open = crate::transfer::multipart::OpenGuard::new(client, dst_bucket, dst, &upload_id);
     let result: Result<Vec<CompletedPart>, String> = async {
         let mut parts = Vec::new();
         let mut start = 0i64;
@@ -1611,7 +1611,7 @@ pub async fn stream_files_under(
     let flag = Arc::new(AtomicBool::new(false));
     state.cancels.lock().await.insert(op_id.clone(), flag.clone());
     // a Stop that reached the backend before this id was registered
-    if crate::transfers::take_early_cancel(&op_id) {
+    if crate::transfer::queue::take_early_cancel(&op_id) {
         flag.store(true, Ordering::Relaxed);
     }
     let r = stream_files(&app, &state, &profile_id, &bucket, &prefix, &flag, &|batch| on_batch.send(batch).map_err(|e| e.to_string())).await;
@@ -1664,7 +1664,7 @@ async fn stream_files(
                     return Err(storage::StorageError::cancelled().into());
                 }
                 let files: Vec<RemoteFile> =
-                    batch?.into_iter().filter(|e| !e.is_dir() && !crate::local_links::skip_listed_link(s.caps(), e)).map(|e| RemoteFile { key: e.key, size: e.size }).collect();
+                    batch?.into_iter().filter(|e| !e.is_dir() && !crate::files::local_links::skip_listed_link(s.caps(), e)).map(|e| RemoteFile { key: e.key, size: e.size }).collect();
                 sent += files.len() as u64;
                 if !files.is_empty() {
                     send(files)?;

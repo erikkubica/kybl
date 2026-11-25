@@ -1021,7 +1021,7 @@ pub async fn custom_action_run(app: AppHandle, state: State<'_, AppState>, spec:
     let cancel = Arc::new(AtomicBool::new(false));
     state.cancels.lock().await.insert(spec.run_id.clone(), cancel.clone());
     // the copies it works on stay while it runs (it may get to the last one after hours)
-    let _reading = (!spec.on_server).then(|| crate::open_copies::in_use(spec.items.iter().map(|i| i.path.as_str()).chain([spec.dir.as_str()])));
+    let _reading = (!spec.on_server).then(|| crate::files::open_copies::in_use(spec.items.iter().map(|i| i.path.as_str()).chain([spec.dir.as_str()])));
     let r = run(&app, &state, &spec, &cancel).await;
     state.cancels.lock().await.remove(&spec.run_id);
     r

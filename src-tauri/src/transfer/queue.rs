@@ -17,13 +17,13 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::AsyncWriteExt;
 
-use crate::dest;
-use crate::multipart::{self, PAUSED};
-use crate::resume::{self, Saved};
+use crate::transfer::dest;
+use crate::transfer::multipart::{self, PAUSED};
+use crate::transfer::resume::{self, Saved};
 use crate::state::{err, sdk_err, AppState};
 use crate::storage::{self, generic_cmds::{self, Dl}, Conn, PartRecord, ResumeState, WriteOpts};
-use crate::transfer_notice::{self as notice, Dir};
-use crate::tuning::DOWN;
+use crate::transfer::notice::{self as notice, Dir};
+use crate::transfer::tuning::DOWN;
 
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
@@ -351,7 +351,7 @@ async fn download_to(
             // meanwhile fails cleanly instead of being stitched together from two versions.
             let etag = out.e_tag().map(str::to_string);
             let file = dest::create_part(&part_path).await.map_err(err)?;
-            crate::leftovers::partial_started(&part_path);
+            crate::transfer::leftovers::partial_started(&part_path);
             (file, 0, out, total, etag)
         }
     };
@@ -391,15 +391,15 @@ async fn download_to(
                     // "Wi-Fi only" and the phone moved to mobile data: let go of the connection,
                     // keep what arrived, and ask for the rest once it is back on Wi-Fi
                     if let Some(paused) = hold
-                        && got - checked_at >= crate::tuning::WIFI_CHECK_BYTES
+                        && got - checked_at >= crate::transfer::tuning::WIFI_CHECK_BYTES
                         && got < total
                     {
                         checked_at = got;
-                        if crate::tuning::hold_for_wifi() {
+                        if crate::transfer::tuning::hold_for_wifi() {
                             out.body = Default::default();
                             file.flush().await.map_err(err)?;
                             paused(got, total);
-                            if !crate::tuning::wait_for_wifi(cancel).await {
+                            if !crate::transfer::tuning::wait_for_wifi(cancel).await {
                                 return Ok(false);
                             }
                             let mut req = client.get_object().bucket(bucket).key(key).range(format!("bytes={got}-"));
@@ -469,7 +469,7 @@ async fn download_to(
             drop(held);
             r.map_err(err)?;
             // (a partial file removed anywhere is dropped from the list when it is next saved)
-            crate::leftovers::partial_ended(&part_path);
+            crate::transfer::leftovers::partial_ended(&part_path);
             Ok(Outcome::Done)
         }
         // paused: what arrived stays, to carry on from (the same version, asked by its ETag)
@@ -601,7 +601,7 @@ async fn open_source(app: &AppHandle, local: &str) -> Result<Source, String> {
         }
     }
     // this run's own folder: a start of another Kybl removes only what ended runs left there
-    let cache = crate::instance_dir::claim(&app.path().app_cache_dir().map_err(err)?.join("uploads")).map_err(err)?;
+    let cache = crate::app::instance_dir::claim(&app.path().app_cache_dir().map_err(err)?.join("uploads")).map_err(err)?;
     let app = app.clone();
     let uri = local.to_string();
     tokio::task::spawn_blocking(move || {
@@ -734,7 +734,7 @@ async fn spawn_transfer(
     requested: String,
     overwrite: bool,
     resume_etag: Option<String>,
-    listed: Option<crate::filecache::Ident>,
+    listed: Option<crate::files::filecache::Ident>,
 ) -> Result<(), String> {
     // the id is claimed before anything is awaited: Retry pressed twice (or the page and a
     // notification action) must not start two transfers under one id, of which Pause and Cancel
@@ -812,7 +812,7 @@ async fn spawn_transfer(
         };
         // "Wi-Fi only": hold the turn (still shown as waiting) until the phone is off mobile data
         if permit.is_some() {
-            while crate::tuning::wifi_only() && crate::platform::on_metered_network() && !cancel.load(Ordering::Relaxed) {
+            while crate::transfer::tuning::wifi_only() && crate::platform::on_metered_network() && !cancel.load(Ordering::Relaxed) {
                 tokio::time::sleep(Duration::from_secs(3)).await;
             }
         }
@@ -975,7 +975,7 @@ async fn spawn_transfer(
                     // a file downloaded whole before, whose check couldn't run, is only checked
                     let served = match resume {
                         _ if recheck => Some(Ok(Outcome::Done)),
-                        false => crate::filecache::serve_download(&app, &conn, &profile_id, &bucket, &key, listed.as_ref(), &chosen, &cancel, &report, &mut dl).await,
+                        false => crate::files::filecache::serve_download(&app, &conn, &profile_id, &bucket, &key, listed.as_ref(), &chosen, &cancel, &report, &mut dl).await,
                         true => None,
                     };
                     let fetched = served.is_none();
@@ -1021,7 +1021,7 @@ async fn spawn_transfer(
         if let (Ok(Outcome::Done), Some(path)) = (&result, &local_done) {
             // the check races Cancel (a server that never answers would hold the transfer and its
             // turn). Stopped there, the transfer itself still went through: see `stopped_check`.
-            let check = race_unlimited(crate::verify::check(&app, &conn, &profile_id, &bucket, &key, path, verify_part_size, dl.etag.as_deref().filter(|_| matches!(kind, Kind::Download { .. }))), &cancel).await;
+            let check = race_unlimited(crate::transfer::verify::check(&app, &conn, &profile_id, &bucket, &key, path, verify_part_size, dl.etag.as_deref().filter(|_| matches!(kind, Kind::Download { .. }))), &cancel).await;
             match check {
                 None => match stopped_check(&kind, pause.load(Ordering::Relaxed)) {
                     // a download paused (or the app quit) mid-check: paused with the file kept
@@ -1044,11 +1044,11 @@ async fn spawn_transfer(
                 // a re-check of a file that came in whole earlier: it was checked against the
                 // file on the server as it is now, which may have changed since. That copy is
                 // the user's to keep; Retry downloads the server's file next to it.
-                Some(Err(e @ crate::verify::CheckErr::Mismatch(_))) if matches!(kind, Kind::Download { recheck: true, .. }) => {
+                Some(Err(e @ crate::transfer::verify::CheckErr::Mismatch(_))) if matches!(kind, Kind::Download { recheck: true, .. }) => {
                     unverified = None;
                     result = Err(format!("{e} The file on the server may have changed since it was downloaded, so the downloaded file was kept. Retry to download the server's file again."));
                 }
-                Some(Err(e @ crate::verify::CheckErr::Mismatch(_))) => {
+                Some(Err(e @ crate::transfer::verify::CheckErr::Mismatch(_))) => {
                     if matches!(kind, Kind::Download { .. }) {
                         // a download that came out different is no use to anyone
                         let _ = tokio::fs::remove_file(path).await;
@@ -1058,7 +1058,7 @@ async fn spawn_transfer(
                 }
                 // the check itself couldn't run: nothing says the copy is wrong, so it stays, and
                 // Retry checks that file again (as it is now) instead of downloading it once more
-                Some(Err(e @ crate::verify::CheckErr::Unverified(_))) => {
+                Some(Err(e @ crate::transfer::verify::CheckErr::Unverified(_))) => {
                     result = Err(match kind {
                         Kind::Download { .. } => {
                             unverified = stamp_of(path);
@@ -1076,7 +1076,7 @@ async fn spawn_transfer(
         if to_cache
             && let (Ok(Outcome::Done), Some(path)) = (&result, &local_done)
         {
-            crate::filecache::remember_download(&app, conn.clone(), profile_id.clone(), bucket.clone(), key.clone(), dl.etag.clone(), path.clone());
+            crate::files::filecache::remember_download(&app, conn.clone(), profile_id.clone(), bucket.clone(), key.clone(), dl.etag.clone(), path.clone());
         }
         drop(permit);
         let last = ACTIVE.lock().unwrap().get(&id).map(|t| (t.bytes, t.total)).unwrap_or((0, 0));
@@ -1247,10 +1247,10 @@ pub async fn start_download(
     // number added to a free name, or a partial file, is fitted to the length limit
     let wanted = dest::validate(&dest_path)?;
     if let Some(base) = base.as_deref().filter(|b| !b.is_empty()) {
-        crate::local_links::safe_write_target(Path::new(base), &wanted)?;
+        crate::files::local_links::safe_write_target(Path::new(base), &wanted)?;
     }
     let listed = match (etag, size) {
-        (Some(e), Some(n)) => Some(crate::filecache::Ident::new(Some(&e), n, None)).filter(|l| l.etag.is_some()),
+        (Some(e), Some(n)) => Some(crate::files::filecache::Ident::new(Some(&e), n, None)).filter(|l| l.etag.is_some()),
         _ => None,
     };
     if state.cancels.lock().await.contains_key(&id) {

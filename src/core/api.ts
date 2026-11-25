@@ -175,7 +175,7 @@ export const api = {
   /** Clears both caches; resolves to the bytes freed. */
   clearCaches: () => invoke<number>("clear_caches"),
 
-  // photo placeholders (ThumbHash, see placeholders.rs and thumbhash.ts); null = none known
+  // photo placeholders (ThumbHash, see files/placeholders.rs and thumbhash.ts); null = none known
   placeholdersLookup: (profileId: string, root: string, items: PlaceholderItem[]) =>
     invoke<(string | null)[]>("placeholders_lookup", { profileId, root, items }),
   placeholderHead: (profileId: string, root: string, item: PlaceholderItem) =>

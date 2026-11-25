@@ -7,7 +7,7 @@ import type { Entry } from "../core/types";
 
 /** Formats the thumbnail engine can decode (EXIF thumbnails for jpg/tif, full decode for the rest). */
 const THUMB_EXT = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff"];
-/** Must match `MAX_FULL_DOWNLOAD` in thumbs.rs: bigger files are refused there anyway. */
+/** Must match `MAX_FULL_DOWNLOAD` in files/thumbs.rs: bigger files are refused there anyway. */
 const MAX_BYTES = 40 * 1000 * 1000;
 /**
  * HEIC/HEIF: the thumbnail engine can't decode it, but Apple's WebKit can (see HEIC_IN_WEBVIEW).
@@ -48,7 +48,7 @@ export function canThumb(e: Entry): boolean {
 }
 
 /**
- * Thumbnails are served by the app itself at `thumb://…` URLs (see thumbs.rs), so what is kept
+ * Thumbnails are served by the app itself at `thumb://…` URLs (see files/thumbs.rs), so what is kept
  * here is only the short URL; the image bytes live in the web view's image cache, which manages
  * its own memory. A failure is remembered for a while so it is not retried on every scroll.
  */
@@ -89,7 +89,7 @@ let active = 0;
 const keyOf = (profileId: string, bucket: string, e: Entry) =>
   `${profileId}|${bucket}|${e.key}|${e.etag ?? ""}|${e.size}`;
 
-/** The URL the backend answers with the thumbnail JPEG; the fields are unpacked in thumbs.rs. */
+/** The URL the backend answers with the thumbnail JPEG; the fields are unpacked in files/thumbs.rs. */
 const urlOf = (profileId: string, bucket: string, e: Entry) =>
   convertFileSrc([profileId, bucket, String(e.size), e.etag ?? "", e.key].join("\n"), "thumb");
 

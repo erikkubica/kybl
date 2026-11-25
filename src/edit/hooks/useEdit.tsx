@@ -2,7 +2,7 @@
  * "Edit" for files of any connection: the menu items (Edit, Edit with ▸, Edit in Kybl), ⌘E, and
  * the flow behind them. Files of this computer open directly (nothing to upload). Anything else
  * asks the save rule first (SaveRulePrompt), then either opens in Kybl's own editor (the shell's
- * document sheet, saving under that rule) or goes to edit.rs: a private copy, opened in an app,
+ * document sheet, saving under that rule) or goes to files/edit.rs: a private copy, opened in an app,
  * uploaded back on every save.
  */
 import { createElement, useCallback, useEffect, useRef } from "react";
@@ -83,7 +83,7 @@ export function useEdit({
 
   /**
    * The private copy in its app; `asked`: about running it, already. The copy's own name is
-   * checked too (edit.rs shortens long names).
+   * checked too (files/edit.rs shortens long names).
    */
   const openCopy = async (s: EditSession, app: App, asked = false) => {
     await openFromConnection(s.local, dialogs.confirm, app?.path, s.name, asked);

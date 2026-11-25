@@ -33,7 +33,7 @@ export async function saveTransferPrefs(p: Partial<TransferPrefs>): Promise<void
   }
 }
 
-/** The backend's defaults (src-tauri/src/tuning.rs `TransferPrefs::default`). */
+/** The backend's defaults (src-tauri/src/transfer/tuning.rs `TransferPrefs::default`). */
 export const TRANSFER_DEFAULTS: TransferPrefs = {
   concurrency: 3,
   partConcurrency: 4,

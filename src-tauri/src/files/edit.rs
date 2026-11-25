@@ -40,7 +40,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tokio::sync::Notify;
 
-use crate::doc::{self, DocMeta, Precondition};
+use crate::files::doc::{self, DocMeta, Precondition};
 use crate::state::AppState;
 
 /// Largest file edited this way: it is read whole to upload, like the editor's saves.
@@ -220,7 +220,7 @@ fn safe_segment_for(s: &str, fallback: &str, windows: bool) -> String {
         }
         format!("{stem}{ext}")
     };
-    if windows && crate::dest::windows_unfit(&name) {
+    if windows && crate::transfer::dest::windows_unfit(&name) {
         return format!("_{name}");
     }
     name
@@ -250,7 +250,7 @@ fn edit_base<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
 }
 
 fn edit_root<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
-    crate::instance_dir::claim(&edit_base(app)?).map_err(|e| format!("Couldn't make a private folder for the copy: {e}"))
+    crate::app::instance_dir::claim(&edit_base(app)?).map_err(|e| format!("Couldn't make a private folder for the copy: {e}"))
 }
 
 /// Creates `<root>/<connection>/<session>/` (only this user can look inside) and returns the
@@ -684,7 +684,7 @@ pub async fn shutdown(app: &AppHandle) {
         end(app, &id);
     }
     if let Ok(base) = edit_base(app) {
-        let _ = tokio::task::spawn_blocking(move || crate::instance_dir::clear(&base)).await;
+        let _ = tokio::task::spawn_blocking(move || crate::app::instance_dir::clear(&base)).await;
     }
 }
 

@@ -81,7 +81,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         ],
     )?;
     TrayIconBuilder::with_id("main")
-        .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
+        .icon(Image::from_bytes(include_bytes!("../../icons/tray.png"))?)
         .icon_as_template(true)
         .tooltip("Kybl")
         .menu(&menu)
@@ -108,10 +108,10 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 show_main_at(app, Some("general"));
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    let _ = crate::updater::update_check(app).await;
+                    let _ = crate::app::updater::update_check(app).await;
                 });
             }
-            "quit" => crate::quit::request(app),
+            "quit" => crate::app::quit::request(app),
             // WP-E4
             "drive_settings" => show_main_at(app, Some("drives")),
             id if id.starts_with("drive:") => {
@@ -318,7 +318,7 @@ pub fn hide_main(app: &AppHandle) {
                 continue;
             }
             // unsaved edits in the editor live in the page: never throw them away
-            if crate::quit::unsaved() > 0 {
+            if crate::app::quit::unsaved() > 0 {
                 continue;
             }
             // nor terminals: closing the page ends their shells and what runs in them

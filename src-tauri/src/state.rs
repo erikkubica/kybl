@@ -184,7 +184,7 @@ impl AppState {
             .lock()
             .await
             .entry(profile_id.to_string())
-            .or_insert_with(|| Arc::new(Slots::new(crate::tuning::concurrency)))
+            .or_insert_with(|| Arc::new(Slots::new(crate::transfer::tuning::concurrency)))
             .clone()
     }
 

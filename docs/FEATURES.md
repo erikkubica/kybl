@@ -1409,7 +1409,7 @@ Limits are shared across all running transfers and apply live; they stay in sync
 
 ### Updates
 
-- Source is **GitHub Releases** (no update server). The native side (`updater.rs`) checks 10 seconds after start and every 6 hours, and when you press Check now, the Kybl menu item, or the tray item. Result is kept and pushed to the page as `update-status` events.
+- Source is **GitHub Releases** (no update server). The native side (`app/updater.rs`) checks 10 seconds after start and every 6 hours, and when you press Check now, the Kybl menu item, or the tray item. Result is kept and pushed to the page as `update-status` events.
 - **Install behaviour per platform:**
   - macOS: downloads `Kybl_<arch>.app.tar.gz`, unpacks next to the app, verifies the code signature against the running app, swaps it in place and relaunches.
   - Windows: runs the NSIS setup (or the .msi for MSI installs) passively and starts the app again.

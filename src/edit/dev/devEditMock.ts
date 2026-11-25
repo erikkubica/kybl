@@ -1,5 +1,5 @@
 /**
- * Browser dev mode only (loaded by devMock.ts): a pretend edit.rs. The "server" is the viewers'
+ * Browser dev mode only (loaded by devMock.ts): a pretend files/edit.rs. The "server" is the viewers'
  * pretend `doc_open` / `doc_save` (devSamples.ts), so Kybl's own editor and the other-app flow
  * see the same files. There is no other app in a browser, so the console stands in for it:
  *
@@ -58,7 +58,7 @@ const edited = (key: string, n: number) => {
   return `${key.slice(0, slash)}${stem} (edited${n > 1 ? ` ${n}` : ""})${ext}`;
 };
 
-/** One upload attempt, settling like edit.rs's `settle`. */
+/** One upload attempt, settling like files/edit.rs's `settle`. */
 async function upload(m: Mock, expect: object, to?: string) {
   const text = m.local;
   await set(m, { phase: "uploading", pending: true, error: null, uploadId: crypto.randomUUID(), uploadSize: enc(text).length });
@@ -86,7 +86,7 @@ async function upload(m: Mock, expect: object, to?: string) {
   }
 }
 
-/** A settled save of the local copy (edit.rs `changed` + `decide`). */
+/** A settled save of the local copy (files/edit.rs `changed` + `decide`). */
 async function changed(m: Mock) {
   if (m.local === m.synced) {
     if (m.s.pending) await set(m, { pending: false, ...(m.s.phase === "error" ? { phase: "watching", error: null } : {}) });

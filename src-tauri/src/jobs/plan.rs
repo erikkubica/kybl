@@ -206,7 +206,7 @@ pub async fn plan(
                     }
                     // a link on this computer (to a file or a folder) is listed, never followed
                     // out of the folder (`local_links`)
-                    if crate::local_links::skip_listed_link(src.caps(), e) {
+                    if crate::files::local_links::skip_listed_link(src.caps(), e) {
                         let target = e.link.as_deref().unwrap_or("");
                         items.push(NewItem {
                             not_copied: Some(format!("Not copied: this is a link to “{target}”, and Kybl doesn't follow links inside a folder.")),

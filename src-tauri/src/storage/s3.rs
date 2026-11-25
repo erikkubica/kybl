@@ -24,9 +24,9 @@ use futures_util::StreamExt;
 use super::*;
 use crate::{
     commands::{copy_object, delete_keys, list_all, list_page, millis, obj_info, Headers},
-    multipart::{self, SINGLE_PUT_LIMIT},
+    transfer::multipart::{self, SINGLE_PUT_LIMIT},
     state::{sdk_err, Profile},
-    transfers::Outcome,
+    transfer::queue::Outcome,
 };
 
 /// How a provider's S3 differs from AWS, by `profile.provider`.
@@ -84,7 +84,7 @@ pub fn s3_caps(provider: &str, q: Quirks) -> Capabilities {
 
 pub struct S3Backend {
     client: Client,
-    /// the connection's id, to write down multipart uploads in case the app ends mid-way (leftovers.rs)
+    /// the connection's id, to write down multipart uploads in case the app ends mid-way (transfer/leftovers.rs)
     profile_id: String,
     preset_bucket: Option<String>,
     quirks: Quirks,

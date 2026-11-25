@@ -16,7 +16,7 @@ use super::*;
 use crate::{
     state::{NetAuth, NetConfig, TlsMode},
     storage::{ftp::FtpBackend, generic_cmds, sftp::SftpBackend, webdav::WebdavBackend},
-    transfers::Outcome,
+    transfer::queue::Outcome,
 };
 
 const USER: &str = "kybl";

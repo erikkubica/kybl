@@ -13,9 +13,9 @@ use tauri::State;
 #[cfg(desktop)]
 use tauri_plugin_autostart::ManagerExt;
 
-use crate::{state::err, tuning::TransferPrefs};
+use crate::{state::err, transfer::tuning::TransferPrefs};
 #[cfg(test)]
-use crate::tuning::VerifyMode;
+use crate::transfer::tuning::VerifyMode;
 
 #[derive(Clone, PartialEq)]
 struct Stored {
@@ -134,7 +134,7 @@ fn write_to(p: &std::path::Path, s: &Map) -> Result<(), String> {
 
 /// Reads the saved transfer settings and makes them live. Runs at startup on every platform.
 pub fn load_transfers<R: Runtime>(app: &AppHandle<R>) {
-    crate::tuning::apply(read(app).transfers);
+    crate::transfer::tuning::apply(read(app).transfers);
 }
 
 pub fn save_transfers<R: Runtime>(app: &AppHandle<R>, t: TransferPrefs) -> Result<(), String> {

@@ -164,7 +164,7 @@ Render it as an overlay screen, inline so it sits in the app's own stacking orde
 - Images: `kind === "image"` is handled by `ImageView` (zoom, pinch) if a provider can't presign (WP-A4); until
   then keep using `Viewer.tsx` for media.
 
-## 4. Backend contract (`src-tauri/src/doc.rs`)
+## 4. Backend contract (`src-tauri/src/files/doc.rs`)
 
 - `doc_open { profileId, root, path, maxBytes }` → raw body `[u32 BE json_len][json DocMeta][bytes]`.
   Use `docOpen()` in `api.ts`; it parses the frame.

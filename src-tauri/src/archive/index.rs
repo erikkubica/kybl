@@ -74,7 +74,7 @@ pub(super) fn safe_key_for(raw: &str, is_dir: bool, windows: bool) -> Option<Str
             ".." => return None,
             // a leading drive letter ("C:") is never a plain relative name
             p if p.len() >= 2 && p.as_bytes()[1] == b':' && parts.is_empty() => return None,
-            p if windows && (p.contains(':') || crate::dest::windows_unfit(p)) => return None,
+            p if windows && (p.contains(':') || crate::transfer::dest::windows_unfit(p)) => return None,
             p => parts.push(p),
         }
     }

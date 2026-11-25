@@ -200,7 +200,7 @@ impl WriteBack {
     /// (`.part`) are removed.
     pub fn open(dir: PathBuf) -> Self {
         // the user's saves, not uploaded yet: this account only
-        let _ = crate::filecache::private_dir(&dir);
+        let _ = crate::files::filecache::private_dir(&dir);
         let mut st = State::default();
         let json = dir.join("pending.json");
         match std::fs::read(&json) {
@@ -274,7 +274,7 @@ impl WriteBack {
     /// A fresh file to write a save into (not yet a pending upload).
     pub fn new_temp(&self) -> std::io::Result<PathBuf> {
         let p = self.dir.join(format!("{}.part", uuid::Uuid::new_v4()));
-        crate::filecache::private_file(&p)?;
+        crate::files::filecache::private_file(&p)?;
         Ok(p)
     }
 

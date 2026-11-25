@@ -128,7 +128,7 @@ fn update(app: &AppHandle, f: impl FnOnce(&mut UpdateStatus)) -> UpdateStatus {
     };
     let _ = app.emit("update-status", &snap);
     #[cfg(desktop)]
-    crate::tray::set_update(app, snap.available.as_ref().map(|r| r.version.as_str()));
+    crate::app::tray::set_update(app, snap.available.as_ref().map(|r| r.version.as_str()));
     snap
 }
 
@@ -410,7 +410,7 @@ fn still_matches(path: &Path, want: &str) -> Result<(), String> {
 async fn download(a: &Asset, dir: &Path, progress: impl Fn(u64, u64)) -> Result<PathBuf, String> {
     let want = wanted_sha(a)?.to_ascii_lowercase();
     let _ = tokio::fs::remove_dir_all(dir).await;
-    crate::filecache::private_dir(dir).map_err(err)?;
+    crate::files::filecache::private_dir(dir).map_err(err)?;
     let name = Path::new(&a.name).file_name().ok_or("The update file has no name")?;
     let path = dir.join(name);
 
@@ -686,7 +686,7 @@ pub async fn update_restart(app: AppHandle, force: Option<bool>) -> Result<(), S
     // the clean-up below deletes the edit copies. Quit asks about them; a restart waits for them,
     // even when forced (forcing stops transfers, which can be done again; edits can't)
     #[cfg(desktop)]
-    if crate::quit::unsaved() > 0 {
+    if crate::app::quit::unsaved() > 0 {
         return Err(UNSAVED.into());
     }
     // Stop transfers and abort their uploads first, the way quitting does: the exit the restart
@@ -694,12 +694,12 @@ pub async fn update_restart(app: AppHandle, force: Option<bool>) -> Result<(), S
     #[cfg(desktop)]
     {
         can_restart(&app)?;
-        crate::quit::clean_up(&app).await;
+        crate::app::quit::clean_up(&app).await;
     }
     let r = restart(&app);
     #[cfg(desktop)]
     if r.is_err() {
-        crate::quit::stay(&app);
+        crate::app::quit::stay(&app);
     }
     r
 }
@@ -830,7 +830,7 @@ mod tests {
     #[test]
     fn the_file_is_checked_again_before_it_runs() {
         let dir = std::env::temp_dir().join(format!("kybl-upd-{}", uuid::Uuid::new_v4()));
-        crate::filecache::private_dir(&dir).unwrap();
+        crate::files::filecache::private_dir(&dir).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

@@ -19,12 +19,12 @@ use super::{
     Db,
 };
 use crate::{
-    multipart::SINGLE_PUT_LIMIT,
+    transfer::multipart::SINGLE_PUT_LIMIT,
     storage::{
         fold_path, s3_stream, ByteStream, Entry, ErrKind, FolderMode, Loc, PartRecord, ReadStream, RenameMode, Reopen, ResumeState, SResult, ServerCopy,
         Storage, StorageError, WriteOpts, WriteOutcome, WriteSource,
     },
-    tuning::DOWN,
+    transfer::tuning::DOWN,
 };
 
 /// Times a file is tried before it is reported as failed.
@@ -84,7 +84,7 @@ fn link_refusal(ctx: &Ctx, item: &Item) -> Option<String> {
         let sel = spec.src.items.iter().filter(|s| s.is_dir).map(|s| super::plan::normalize_dir(&s.path)).filter(|d| item.src_path.starts_with(d.as_str()) && own(&item.src_path) != own(d)).max_by_key(String::len);
         if let Some(sel) = sel
             && let (Some(base), Some(path)) = (ctx.src.local_path(&spec.src.root, &own(&sel)), ctx.src.local_path(&spec.src.root, &own(&item.src_path)))
-            && let Err(why) = crate::local_links::safe_source(&base, &path)
+            && let Err(why) = crate::files::local_links::safe_source(&base, &path)
         {
             return Some(why);
         }
@@ -93,7 +93,7 @@ fn link_refusal(ctx: &Ctx, item: &Item) -> Option<String> {
     // server's (B4-3): `dst/Documents -> ~/Documents` must not take a local copy's files either
     if ctx.dst.caps().local_paths
         && let (Some(base), Some(path)) = (ctx.dst.local_path(&spec.dst.root, &own(&spec.dst.dir)), ctx.dst.local_path(&spec.dst.root, &own(&item.dst_path)))
-        && let Err(why) = crate::local_links::safe_write_target(&base, &path)
+        && let Err(why) = crate::files::local_links::safe_write_target(&base, &path)
     {
         return Some(why);
     }

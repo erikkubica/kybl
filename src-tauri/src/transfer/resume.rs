@@ -139,7 +139,7 @@ pub fn take_in(app: &AppHandle, from: &Path) -> bool {
         added
     });
     for s in &added {
-        crate::transfers::adopt(s);
+        crate::transfer::queue::adopt(s);
     }
     if save_now().is_err() {
         return false;
@@ -259,7 +259,7 @@ pub fn keeps_upload(upload_id: &str) -> bool {
 
 /// Whether a partial download file belongs to a kept transfer.
 pub fn keeps_partial(part: &Path) -> bool {
-    with(|r| r.values().any(|s| s.is_download() && crate::dest::part_path(Path::new(&s.local)) == part))
+    with(|r| r.values().any(|s| s.is_download() && crate::transfer::dest::part_path(Path::new(&s.local)) == part))
 }
 
 /// What a file read back holds: running ones are paused now, stale ones are split off.
@@ -285,7 +285,7 @@ fn read_back(list: Vec<Saved>, at: u64) -> (HashMap<String, Saved>, Vec<Saved>) 
 /// At start-up, before `leftovers::start`: reads what an earlier run kept. Kept downloads get
 /// their names back (see `transfers::adopt`); stale ones are handed to `leftovers` to clean up.
 pub fn start(app: &AppHandle) {
-    let Some(dir) = crate::leftovers::run_dir(app) else { return };
+    let Some(dir) = crate::transfer::leftovers::run_dir(app) else { return };
     let legacy = app.path().app_data_dir().ok().map(|d| d.join(FILE));
     let (path, list) = load(&dir, legacy.as_deref());
     let (keep, stale) = read_back(list, now());
@@ -293,7 +293,7 @@ pub fn start(app: &AppHandle) {
     *RECORDS.lock().unwrap() = Some(keep);
     let _ = PATH.set(path);
     for s in &kept {
-        crate::transfers::adopt(s);
+        crate::transfer::queue::adopt(s);
     }
     for s in stale {
         give_up(app, &s);
@@ -305,9 +305,9 @@ pub fn start(app: &AppHandle) {
 /// on the server (through `leftovers`, which aborts it), or its temporary file on a server.
 pub fn give_up(app: &AppHandle, s: &Saved) {
     if s.is_download() {
-        let part = crate::dest::part_path(Path::new(&s.local));
-        if crate::dest::unpark(Path::new(&s.local), &s.id) {
-            crate::dest::remove_part(&part);
+        let part = crate::transfer::dest::part_path(Path::new(&s.local));
+        if crate::transfer::dest::unpark(Path::new(&s.local), &s.id) {
+            crate::transfer::dest::remove_part(&part);
         }
         return;
     }
@@ -326,13 +326,13 @@ pub fn give_up(app: &AppHandle, s: &Saved) {
         }
         // an S3 multipart upload: aborted now, or by the next start if the server can't be reached
         "s3" => {
-            crate::leftovers::upload_started(&s.profile_id, &s.bucket, &s.key, &u.upload_id);
+            crate::transfer::leftovers::upload_started(&s.profile_id, &s.bucket, &s.key, &u.upload_id);
             tauri::async_runtime::spawn(async move {
                 let state = app.state::<crate::state::AppState>();
                 let Ok(client) = crate::state::client_for(&app, &state, &s.profile_id).await else { return };
                 let r = client.abort_multipart_upload().bucket(&s.bucket).key(&s.key).upload_id(&u.upload_id).send().await;
                 if r.is_ok() || r.is_err_and(|e| crate::state::sdk_err(e).contains("NoSuchUpload")) {
-                    crate::leftovers::upload_ended(&u.upload_id);
+                    crate::transfer::leftovers::upload_ended(&u.upload_id);
                 }
             });
         }

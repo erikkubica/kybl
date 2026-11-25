@@ -26,7 +26,7 @@ use super::{
 };
 use crate::{
     storage::{generic_cmds, ConnKind, Loc, Precondition, Storage, WriteOpts, WriteOutcome, WriteSource},
-    transfers::Outcome,
+    transfer::queue::Outcome,
 };
 
 /// Parallel transfers per mapping.
@@ -185,7 +185,7 @@ async fn exec_transfer(job: Job, ctx: &JobCtx, progress: &(dyn Fn(u64, u64) + Se
         Job::Up { path, key, size, mtime, file_id, pre, .. } => {
             // the other side is a folder on this computer: a link there that appeared since its
             // last listing (a quick run lists nothing) is left alone, as a full run does (B4-1)
-            if crate::local_links::store_target(&*ctx.remote, &ctx.root, &ctx.prefix, &key, true).is_err() {
+            if crate::files::local_links::store_target(&*ctx.remote, &ctx.root, &ctx.prefix, &key, true).is_err() {
                 return Ok(Done::Skipped);
             }
             let opts = WriteOpts { modified: Some(mtime), precondition: pre, ..Default::default() };
@@ -227,20 +227,20 @@ async fn exec_transfer(job: Job, ctx: &JobCtx, progress: &(dyn Fn(u64, u64) + Se
             // the file must still be what the plan saw when the download is whole: the check
             // above is long gone by then (nothing is there once the local copy is set aside)
             let mut stamp = match expect {
-                Expect::Absent => crate::dest::Stamp::Absent,
-                Expect::Matches(s, m) => crate::dest::Stamp::Matches(s, m),
+                Expect::Absent => crate::transfer::dest::Stamp::Absent,
+                Expect::Matches(s, m) => crate::transfer::dest::Stamp::Matches(s, m),
             };
             if keep_local && now.is_some() {
                 std::fs::rename(&dest, local::local_copy_path(&dest)).map_err(|e| format!("could not keep the local copy: {e}"))?;
-                stamp = crate::dest::Stamp::Absent;
+                stamp = crate::transfer::dest::Stamp::Absent;
             }
             let got = match ctx.remote.as_s3() {
                 // S3 keeps its own download path: it carries on after a dropped connection
-                Some(s3) => crate::transfers::download_file(s3.client(), &ctx.root, &key, &dest.to_string_lossy(), &ctx.cancel, progress, Some(stamp)).await,
+                Some(s3) => crate::transfer::queue::download_file(s3.client(), &ctx.root, &key, &dest.to_string_lossy(), &ctx.cancel, progress, Some(stamp)).await,
                 None => generic_cmds::download(&*ctx.remote, &ctx.root, &key, &dest, &ctx.cancel, progress, None, Some(stamp)).await,
             };
             let out = match got {
-                Err(e) if e == crate::dest::CHANGED => return Ok(Done::Skipped),
+                Err(e) if e == crate::transfer::dest::CHANGED => return Ok(Done::Skipped),
                 other => other?,
             };
             match out {
@@ -489,7 +489,7 @@ impl Engine<'_> {
         // on a folder on this computer, nothing reached through a link is deleted (B4-1)
         let kept: Vec<(String, String)>;
         let items = if self.remote.caps().local_paths {
-            kept = items.iter().filter(|(_, k)| crate::local_links::store_target(&*self.remote, &self.root, &self.prefix, k, false).is_ok()).cloned().collect();
+            kept = items.iter().filter(|(_, k)| crate::files::local_links::store_target(&*self.remote, &self.root, &self.prefix, k, false).is_ok()).cloned().collect();
             &kept[..]
         } else {
             items
@@ -868,7 +868,7 @@ impl Engine<'_> {
                     let src = remote.key(&self.prefix, from);
                     let dst = format!("{}{}", self.prefix, local.raw.get(to).map(String::as_str).unwrap_or(to));
                     // never through a link in a folder on this computer (B4-1)
-                    let linked = |k: &str, last| crate::local_links::store_target(&*self.remote, &self.root, &self.prefix, k, last).is_err();
+                    let linked = |k: &str, last| crate::files::local_links::store_target(&*self.remote, &self.root, &self.prefix, k, last).is_err();
                     if linked(&src, false) || linked(&dst, true) {
                         continue;
                     }

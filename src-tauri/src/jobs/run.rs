@@ -278,7 +278,7 @@ async fn work(r: &mut Runner<'_>, spec: &Arc<JobSpec>, ctl: &Arc<Ctl>) -> JobSta
             r.set(JobState::Running, Phase::Copying, None);
         }
         if !blocked {
-            while set.len() < crate::tuning::concurrency() {
+            while set.len() < crate::transfer::tuning::concurrency() {
                 if queue.is_empty() && !drained {
                     // bound first: the guard must be gone before `r.set` locks the database again
                     let taken = db::take_pending(&mut inner.db.lock().unwrap(), &id, BATCH);

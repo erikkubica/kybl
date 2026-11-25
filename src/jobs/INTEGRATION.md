@@ -123,7 +123,7 @@ listed, default 30), `hideWhenEmpty?`.
 
 ### Quit prompt
 
-Already handled in the backend (`quit.rs` counts running jobs). Nothing to do in the page.
+Already handled in the backend (`app/quit.rs` counts running jobs). Nothing to do in the page.
 
 ## 3. Phones
 

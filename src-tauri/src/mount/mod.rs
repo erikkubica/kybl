@@ -6,7 +6,7 @@
 //! ([`writeback`]); Finder's clutter stays local ([`junk`]).
 //!
 //! - Drives are kept in `app_config_dir/mounts.json` and mounted again when Kybl starts.
-//! - Quitting unmounts them; uploads still waiting carry on next start (quit.rs asks first).
+//! - Quitting unmounts them; uploads still waiting carry on next start (app/quit.rs asks first).
 //! - Status reaches the page as `mount-status` events ([`MountInfo`]).
 //!
 //! See `NATIVE.md` for the native stages (Windows Cloud Files, macOS File Provider).
@@ -309,7 +309,7 @@ impl MountManager {
         list.iter().map(|c| self.info_of(c)).collect()
     }
 
-    /// Saves waiting to upload, over all drives (quit.rs asks before leaving them for later).
+    /// Saves waiting to upload, over all drives (app/quit.rs asks before leaving them for later).
     pub fn pending_uploads(&self) -> usize {
         self.live.lock().unwrap().values().map(|l| l.fs.0.uploads.stats().0).sum()
     }
@@ -326,7 +326,7 @@ fn emit(app: &AppHandle, id: &str) {
     if let Some(c) = mgr.config(id) {
         let _ = app.emit(STATUS_EVENT, mgr.info_of(&c));
     }
-    crate::tray::refresh_mounts(app);
+    crate::app::tray::refresh_mounts(app);
 }
 
 /// Makes the drive's file system (and starts its uploads) if it isn't running yet.
@@ -371,7 +371,7 @@ async fn mount_one(app: &AppHandle, id: &str) {
     let mgr = app.state::<MountManager>();
     let _one = mgr.busy.lock().await;
     // quitting: `shutdown` has unmounted (or is unmounting) what was mounted; nothing new now
-    if crate::quit::quitting() {
+    if crate::app::quit::quitting() {
         return;
     }
     if os::unsupported_reason().is_none() && !own_drives(app) {
@@ -515,7 +515,7 @@ pub fn setup(app: &AppHandle) {
             tokio::time::sleep(Duration::from_secs(1)).await;
             tick += 1;
             // another copy looks after the drives: take them over as soon as it quits
-            if tick % 5 == 0 && !crate::quit::quitting() && app.state::<MountManager>().elsewhere.load(Ordering::SeqCst) {
+            if tick % 5 == 0 && !crate::app::quit::quitting() && app.state::<MountManager>().elsewhere.load(Ordering::SeqCst) {
                 own_drives(&app);
             }
             let busy: Vec<String> = {
@@ -783,7 +783,7 @@ async fn remove_drive(app: &AppHandle, id: &str, connection_gone: bool) -> Resul
     mgr.configs.lock().unwrap().retain(|x| x.id != id);
     persist(app)?;
     let _ = app.emit(STATUS_EVENT, MountInfo { state: "removed", ..mgr.info_of(&c) });
-    crate::tray::refresh_mounts(app);
+    crate::app::tray::refresh_mounts(app);
     Ok(())
 }
 

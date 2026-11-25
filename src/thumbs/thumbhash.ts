@@ -1,7 +1,7 @@
 /**
  * Photo placeholders: a ThumbHash (~25 bytes) per photo, decoded here into a tiny blurry image
  * that stands in for the thumbnail at once, or instead of it in the "placeholders" image mode
- * (imageMode.ts). Where the hashes come from is explained in placeholders.rs; in short, cheapest
+ * (imageMode.ts). Where the hashes come from is explained in files/placeholders.rs; in short, cheapest
  * first:
  *  1. this device's index (every thumbnail made here, every photo uploaded from here): one local
  *     call for a batch of tiles, no network
@@ -237,7 +237,7 @@ function headDone() {
 /** Only S3 objects carry one (uploads from Kybl), and never on mobile data with "Wi-Fi only". */
 /**
  * Whether to ask the connection for this photo's placeholder (one small request, see
- * `placeholder_head` in placeholders.rs): only in Placeholders mode (Thumbnails fetches the
+ * `placeholder_head` in files/placeholders.rs): only in Placeholders mode (Thumbnails fetches the
  * thumbnail anyway, which leaves its placeholder behind), never for this device's own files.
  * S3 answers for any photo (an upload's stored placeholder, or a JPEG's camera thumbnail);
  * other connections only for JPEGs.
@@ -331,7 +331,7 @@ export function learnPlaceholder(profileId: string, bucket: string, e: Entry) {
 
 // ---------------------------------------------------------------- 2. the folder's shared index
 
-/** `[etag, size, hash]` by name, as placeholders.rs keeps them. */
+/** `[etag, size, hash]` by name, as files/placeholders.rs keeps them. */
 type Stamp = [string, number, string];
 type Folder = {
   profileId: string;

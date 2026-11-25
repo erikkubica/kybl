@@ -93,7 +93,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &PredefinedMenuItem::show_all(app, None)?,
             &sep()?,
             // not the standard Quit: that ends the app on the spot, with no chance to ask about
-            // running transfers (see quit.rs)
+            // running transfers (see app/quit.rs)
             &item(QUIT, "Quit Kybl", Some("CmdOrCtrl+Q"))?,
         ],
     )?;
@@ -214,12 +214,12 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 pub fn on_event(app: &AppHandle, e: MenuEvent) {
     let id = e.id().as_ref();
     match id {
-        QUIT => crate::quit::request(app),
+        QUIT => crate::app::quit::request(app),
         CHECK_UPDATES => {
-            crate::tray::show_main_at(app, Some("general"));
+            crate::app::tray::show_main_at(app, Some("general"));
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
-                let _ = crate::updater::update_check(app).await;
+                let _ = crate::app::updater::update_check(app).await;
             });
         }
         _ if PAGE_ITEMS.contains(&id) => {
@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn page_items_match_the_contract() {
         // the ids api.ts documents for the `menu` event, minus "select-all" (see the note above)
-        let src = include_str!("../../src/core/api.ts");
+        let src = include_str!("../../../src/core/api.ts");
         for id in PAGE_ITEMS {
             assert!(src.contains(&format!("\"{id}\"")), "{id} is not documented in api.ts");
         }

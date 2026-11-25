@@ -1,5 +1,5 @@
 //! Android over JNI, on the application context: works with or without the app's screen (the
-//! process can outlive it while transfers run, see transfer_notice.rs).
+//! process can outlive it while transfers run, see transfer/notice.rs).
 //!
 //! Kotlin → Rust: `KyblNative.kt` declares the `external` functions exported at the bottom.
 //! Rust → Kotlin: static methods of `Platform.kt` and `SecretBox.kt`.
@@ -18,7 +18,7 @@ use jni::{
 use tauri::AppHandle;
 
 use super::vault::Sealer;
-use crate::mobile::PickedFile;
+use crate::app::mobile::PickedFile;
 
 /// One of the app's classes, loaded once through the application context and kept (a global
 /// reference, so it survives the call that loaded it).
@@ -216,7 +216,7 @@ pub extern "system" fn Java_app_kybl_mobile_KyblNative_sharedFiles(mut env: JNIE
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_app_kybl_mobile_KyblNative_cancelAllTransfers(_: JNIEnv, _: JClass) {
     if let Some(app) = super::APP.get() {
-        crate::transfer_notice::cancel_all(app);
+        crate::transfer::notice::cancel_all(app);
     }
 }
 

@@ -99,7 +99,7 @@ pub async fn download_folder<R: Runtime>(app: AppHandle<R>) -> Result<String, St
         let _ = paths;
         let app = crate::platform::app().ok_or("Kybl isn't ready yet. Try again in a moment.")?;
         let dir = crate::platform::android::download_dir(app).await?;
-        crate::transfer_notice::saved_to(&storage_label(&dir.to_string_lossy()));
+        crate::transfer::notice::saved_to(&storage_label(&dir.to_string_lossy()));
         dir
     };
     #[cfg(desktop)]

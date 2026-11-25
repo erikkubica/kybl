@@ -27,7 +27,7 @@ use std::{
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::storage::Conn;
-use crate::transfers::{Outcome, Progress};
+use crate::transfer::queue::{Outcome, Progress};
 
 /// The cache is trimmed back to `KEEP_TOTAL` (least recently used first) once it passes
 /// `MAX_TOTAL`. Phones get less: their disks are smaller and the system may clear it anyway.
@@ -396,7 +396,7 @@ pub async fn read_current<R: Runtime>(app: &AppHandle<R>, conn: &Conn, profile: 
         return None;
     }
     // a dead connection must not hold the preview: past the stall limit it is fetched as usual
-    let id = tokio::time::timeout(crate::transfers::STALL, current(conn, root, key)).await.ok()?.filter(|id| id.size <= max_bytes)?;
+    let id = tokio::time::timeout(crate::transfer::queue::STALL, current(conn, root, key)).await.ok()?.filter(|id| id.size <= max_bytes)?;
     let (p, r, k) = (profile.to_string(), root.to_string(), key.to_string());
     tokio::task::spawn_blocking(move || cache.read(&p, &r, &k, &id)).await.ok()?
 }
@@ -455,16 +455,16 @@ pub async fn serve_download<R: Runtime>(
             // the HEAD / stat races Pause/Cancel and the stall limit as the download's own first
             // request does: a dead pooled connection (after sleep, a Wi-Fi change) neither keeps
             // the transfer "running" at 0 nor ignores Pause/Cancel. Stalled: just download.
-            let id = match crate::transfers::race(current(conn, root, key), cancel).await {
-                crate::transfers::Raced::Got(id) => id?,
-                crate::transfers::Raced::Stopped => return Some(Ok(Outcome::Cancelled)),
-                crate::transfers::Raced::Stalled => return None,
+            let id = match crate::transfer::queue::race(current(conn, root, key), cancel).await {
+                crate::transfer::queue::Raced::Got(id) => id?,
+                crate::transfer::queue::Raced::Stopped => return Some(Ok(Outcome::Cancelled)),
+                crate::transfer::queue::Raced::Stalled => return None,
             };
             let src = cache.lookup(profile, root, key, &id)?;
             (id, src)
         }
     };
-    let part = crate::dest::part_path(dest);
+    let part = crate::transfer::dest::part_path(dest);
     let copied = {
         let (dest, part) = (dest.to_path_buf(), part.clone());
         // the copy runs on a blocking thread; progress and cancel go through these
@@ -495,23 +495,23 @@ pub async fn serve_download<R: Runtime>(
             let r = dl.finish(&part, dest);
             drop(held);
             if r.is_err() {
-                crate::dest::remove_part(&part);
+                crate::transfer::dest::remove_part(&part);
                 return None;
             }
-            crate::leftovers::partial_ended(&part);
+            crate::transfer::leftovers::partial_ended(&part);
             progress(id.size, id.size);
             Some(Ok(Outcome::Done))
         }
         Ok(None) => {
-            crate::dest::remove_part(&part);
-            crate::leftovers::partial_ended(&part);
+            crate::transfer::dest::remove_part(&part);
+            crate::transfer::leftovers::partial_ended(&part);
             Some(Ok(Outcome::Cancelled))
         }
         // a short copy or a disk error: drop it and fetch from the server instead
         other => {
             drop(other);
-            crate::dest::remove_part(&part);
-            crate::leftovers::partial_ended(&part);
+            crate::transfer::dest::remove_part(&part);
+            crate::transfer::leftovers::partial_ended(&part);
             None
         }
     }
@@ -526,8 +526,8 @@ fn copy_file(src: &Path, dest: &Path, part: &Path, done: &std::sync::atomic::Ato
     }
     let mut from = std::fs::File::open(src)?;
     // exclusive, never through a link planted at that name (as every download's partial file)
-    let mut to = crate::dest::create_part_blocking(part)?;
-    crate::leftovers::partial_started(part);
+    let mut to = crate::transfer::dest::create_part_blocking(part)?;
+    crate::transfer::leftovers::partial_started(part);
     let mut buf = vec![0u8; 1 << 20];
     let mut got = 0u64;
     let mut last = Instant::now();
@@ -592,14 +592,14 @@ pub struct CacheUsage {
 #[tauri::command]
 pub async fn cache_usage(app: AppHandle) -> Result<CacheUsage, String> {
     // photo placeholders count with the thumbnails (Clear cache empties both)
-    let thumbnails = crate::thumbs::usage(&app).await + crate::placeholders::usage();
+    let thumbnails = crate::files::thumbs::usage(&app).await + crate::files::placeholders::usage();
     let files = match get(&app) {
         Some(c) => tokio::task::spawn_blocking(|| c.usage()).await.unwrap_or(0),
         None => 0,
     };
     // copies made for "Open", drag-out and custom actions count with the cached files; the ones
     // still in use there are kept by Clear cache, so they are told apart
-    let (copies, in_use) = crate::open_copies::usage(&app).await;
+    let (copies, in_use) = crate::files::open_copies::usage(&app).await;
     Ok(CacheUsage { thumbnails, files: files + copies, in_use })
 }
 
@@ -607,13 +607,13 @@ pub async fn cache_usage(app: AppHandle) -> Result<CacheUsage, String> {
 /// copies made for other apps; answers the bytes freed.
 #[tauri::command]
 pub async fn clear_caches(app: AppHandle) -> Result<u64, String> {
-    let thumbs = crate::thumbs::clear(&app).await? + crate::placeholders::clear().await;
+    let thumbs = crate::files::thumbs::clear(&app).await? + crate::files::placeholders::clear().await;
     let files = match get(&app) {
         Some(c) => tokio::task::spawn_blocking(|| c.clear()).await.unwrap_or(0),
         None => 0,
     };
     // copies for other apps, except ones touched in the last hour (still open there, or arriving)
-    let open = crate::open_copies::clear(&app).await;
+    let open = crate::files::open_copies::clear(&app).await;
     Ok(thumbs + files + open)
 }
 
@@ -805,7 +805,7 @@ mod tests {
         c.store_bytes("p", "b", "k", &id("e", 5), b"hello");
         let src = c.lookup("p", "b", "k", &id("e", 5)).unwrap();
         let dest = dir.join("out/hello.txt");
-        let part = crate::dest::part_path(&dest);
+        let part = crate::transfer::dest::part_path(&dest);
         let done = std::sync::atomic::AtomicU64::new(0);
         assert!(copy_file(&src, &dest, &part, &done, &AtomicBool::new(false)).unwrap().is_some());
         assert_eq!(std::fs::read(&part).unwrap(), b"hello");
@@ -827,7 +827,7 @@ mod tests {
         std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
         let victim = dir.join("victim.txt");
         std::fs::write(&victim, b"precious").unwrap();
-        let part = crate::dest::part_path(&dest);
+        let part = crate::transfer::dest::part_path(&dest);
         std::os::unix::fs::symlink(&victim, &part).unwrap();
         let done = std::sync::atomic::AtomicU64::new(0);
         assert!(copy_file(&src, &dest, &part, &done, &AtomicBool::new(false)).unwrap().is_some());

@@ -8,7 +8,7 @@ I only read the code. Nothing was changed. File references are to the worktree a
 
 These facts set the constraints for the rest of the plan:
 
-1. **Every command is S3-only and goes through `state::client_for`** (`src-tauri/src/state.rs:391`). The commands in `commands.rs`, `transfers.rs`, `sync.rs` and `thumbs.rs` all take an `aws_sdk_s3::Client`.
+1. **Every command is S3-only and goes through `state::client_for`** (`src-tauri/src/state.rs:391`). The commands in `commands.rs`, `transfer/queue.rs`, `sync.rs` and `files/thumbs.rs` all take an `aws_sdk_s3::Client`.
    - The frontend model (profile / bucket / prefix / key, with folders ending in `/`) is a good general model. **Keep it.** "Bucket" becomes "root" and "key" becomes "path".
 2. **There is no streaming URI scheme today.** Video and audio play from presigned URLs (`PreviewPane.tsx:184`, `mobile/Viewer.tsx:46`). The only custom scheme is `thumb://` (`lib.rs:39`).
    - Providers that can't presign (FTP, SFTP, WebDAV, and Drive for practical purposes) need a new `media://` scheme that understands Range requests.
@@ -67,7 +67,7 @@ src-tauri/src/
     gdrive/{mod,api,paths,upload}.rs
     extras/{dropbox,onedrive}.rs   # share links, thumbnails, hashes, change cursors that OpenDAL doesn't cover
     media.rs               # `media://` Range scheme
-    doc.rs                 # doc_open / doc_save (editor, feature D)
+    files/doc.rs                 # doc_open / doc_save (editor, feature D)
   oauth/
     mod.rs                 # providers table, authorize() flow (loopback desktop / Custom Tab / ASWebAuthenticationSession)
     token.rs               # TokenSource: single-flight refresh, rotation saved to vault, needs-reauth state
@@ -794,10 +794,10 @@ Each subsystem has its own database file, so migrations are independent, nobody 
 | **A1 Network backends** | `storage/{dal,sftp}.rs` | `Cargo.toml` [deps: opendal, reqwest, russh*], `registry.rs` (one match arm per kind) | `Storage` impls for webdav, ftp, sftp, azblob, gcs |
 | **A2 OAuth + clouds** | `oauth/*`, `storage/gdrive/*`, `storage/extras/*` | `kybl_connect.rs` (helpers made `pub(crate)`), `KyblConnectPlugin.swift/.kt` (scheme argument), `AndroidManifest.xml` (oauth intent filter), `release.yml` (env), `registry.rs` arms | `oauth_start`, `oauth_cancel`, `oauth_builtin_clients`, the `connection-auth` event, Drive/OneDrive/Dropbox backends |
 | **A3 Connections UI** | `src/connections/*` (split from `ConnectionDialog.tsx`), `src/connections/lib/providers.ts`, `src/sidebar/Sidebar.tsx`, `src/core/useCaps.ts` | `src/mobile/MobileApp.tsx` (gating, root names), `src/mobile/components/SettingsScreen.tsx` | kind picker, forms, Reconnect, single-root collapse |
-| **A4 Media + thumbs** | `storage/media.rs`, `src/viewers/lib/media.ts` | `thumbs.rs` (generic read, remote thumbnails), `lib.rs` (one line), `src/thumbs/thumbs.ts` | `playableUrl()`, the `media://` scheme |
+| **A4 Media + thumbs** | `storage/media.rs`, `src/viewers/lib/media.ts` | `files/thumbs.rs` (generic read, remote thumbnails), `lib.rs` (one line), `src/thumbs/thumbs.ts` | `playableUrl()`, the `media://` scheme |
 | **D Viewers/editor** | `src/viewers/*`, `storage/doc.rs` | `PreviewPane.tsx`, `mobile/Viewer.tsx` (wires the registry **and** A4's `playableUrl`), `package.json`, `vite.config.ts` | `doc_open`, `doc_save` |
 | **B1 Migration engine** | `jobs/*`, `storage/s3_stream.rs` (real implementation) | `lib.rs`, `transfer_notice` call sites only | `job_*` commands, the `job-progress` event |
-| **E1 Sync v2** | `sync/*` (split of `sync.rs`) | `tray.rs` (conflict and confirm items) | `plan_upload` (exported for C1), `direction: "twoway"`, `sync.db` |
+| **E1 Sync v2** | `sync/*` (split of `sync.rs`) | `app/tray.rs` (conflict and confirm items) | `plan_upload` (exported for C1), `direction: "twoway"`, `sync.db` |
 | **F Dual pane** | `src/App.tsx` → `src/shell/*`, `src/browser/*`, `src/compare/*` | `Toolbar.tsx`, `FileTable.tsx`, `GridView.tsx` (props only), `settings.ts` (`layout`) | `PaneContext`, `useDialogs` |
 | **C1 Backup core** | `backup/*` | `lib.rs`; uses `sync/plan.rs` from E1 (until E1 lands, put `plan_upload` in `sync/plan.rs` first in a tiny shared commit) | the JNI and C ABI signatures in §3.2, the `backup_*` commands |
 | **C2 Android backup** | `BackupPlugin.kt`, `BackupWorker.kt`, `BackupNative.kt` | `AndroidManifest.xml`, `app/build.gradle.kts` | follows the §3.2 JNI contract |

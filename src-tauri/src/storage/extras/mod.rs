@@ -16,7 +16,7 @@ use futures_util::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use super::*;
-use crate::tuning::UP;
+use crate::transfer::tuning::UP;
 
 // ---------------------------------------------------------------- dates
 
@@ -342,7 +342,7 @@ impl Source {
         }
         let dir = SPOOL_DIR.get().cloned().unwrap_or_else(std::env::temp_dir);
         let path = dir.join(format!("kybl-upload-{}", uuid::Uuid::new_v4()));
-        let mut out = tokio::fs::File::from_std(crate::filecache::private_file(&path)?);
+        let mut out = tokio::fs::File::from_std(crate::files::filecache::private_file(&path)?);
         let guard = Source { inner: Inner::Bytes(Bytes::new()), len: Some(0), pos: 0, spooled: Some(path.clone()) };
         let mut total = 0u64;
         loop {

@@ -330,7 +330,7 @@ async fn finish(app: &AppHandle, state: &AppState, tok: TokenResponse, replace_i
     state.clients.lock().await.remove(&profile.id);
     crate::storage::registry::forget(&profile.id);
     // a reconnect may be another account: its files are not this one's
-    crate::filecache::forget_profile(app, &profile.id).await;
+    crate::files::filecache::forget_profile(app, &profile.id).await;
     Ok(profile)
 }
 
@@ -429,7 +429,7 @@ async fn browser_code(app: &AppHandle, flow: &Flow, base: &str, verifier: &str, 
         _ = flow.cancel.notified() => return Err(CANCELLED.into()),
         _ = tokio::time::sleep(BROWSER_TIMEOUT) => return Err(NOTHING_BACK.into()),
     };
-    crate::tray::show_main(app);
+    crate::app::tray::show_main(app);
     Ok(code)
 }
 
@@ -567,7 +567,7 @@ pub async fn kybl_device_wait(
         if status == 200 {
             let tok: TokenResponse = serde_json::from_value(body).map_err(|e| format!("Kybl Storage sent an unexpected answer.\n\n{e}"))?;
             #[cfg(desktop)]
-            crate::tray::show_main(&app);
+            crate::app::tray::show_main(&app);
             return finish(&app, &state, tok, replace_id).await;
         }
         match body.get("error").and_then(Value::as_str) {

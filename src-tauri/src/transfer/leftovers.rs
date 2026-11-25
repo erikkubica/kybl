@@ -1,7 +1,7 @@
 //! What transfers leave behind until they end: multipart uploads on the server (their parts cost
 //! storage until the upload is completed or aborted) and partial downloads (`.s3part` files).
 //!
-//! Quitting cleans those up (quit.rs), but the app can also end without that: killed, crashed,
+//! Quitting cleans those up (app/quit.rs), but the app can also end without that: killed, crashed,
 //! the computer shut down, a phone ending the process. So they are written down in a small file
 //! in the app's data folder, and the next start aborts the uploads and removes the partial files
 //! an earlier run left behind. Transfer ids don't survive a restart, so none of those can be
@@ -21,7 +21,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::{dest, state::AppState};
+use crate::{transfer::dest, state::AppState};
 
 /// Each run keeps its ledger in a folder of its own below the data folder (`<RUNS>/<run>/FILE`,
 /// see `instance_dir`), so a second Kybl starting never cleans up what the first is still using.
@@ -117,17 +117,17 @@ const SWEEP_EVERY: Duration = Duration::from_secs(3600);
 /// start. Also removes the folders of copies they left (`instance_dir::sweep_ended_runs`).
 /// Blocking, apart from the clean-up it starts.
 fn take_over_ended(app: &AppHandle) {
-    crate::instance_dir::sweep_ended_runs();
+    crate::app::instance_dir::sweep_ended_runs();
     let Some(base) = RUN.get().and_then(|r| r.as_ref()).and_then(|r| r.parent().map(Path::to_path_buf)) else { return };
     let mut found = Ledger::default();
-    crate::instance_dir::sweep_ended_adopting(&base, |_, gone| {
-        if !crate::resume::take_in(app, gone) {
+    crate::app::instance_dir::sweep_ended_adopting(&base, |_, gone| {
+        if !crate::transfer::resume::take_in(app, gone) {
             return false;
         }
         let Some(mut l) = read_ledger(&gone.join(FILE)) else { return true };
         // what a kept transfer left is the resume store's (as in `start`)
-        l.uploads.retain(|u| !crate::resume::keeps_upload(&u.upload_id));
-        l.partials.retain(|p| !crate::resume::keeps_partial(p));
+        l.uploads.retain(|u| !crate::transfer::resume::keeps_upload(&u.upload_id));
+        l.partials.retain(|p| !crate::transfer::resume::keeps_partial(p));
         merge(&mut LEDGER.lock().unwrap(), l.clone());
         // written into this run's ledger before their folder goes
         if save_now().is_err() {
@@ -177,9 +177,9 @@ fn merge(into: &mut Ledger, from: Ledger) {
 /// taken over, which is written into this run's file before the ended run's folder goes.
 fn take_over(base: &Path, legacy: Option<&Path>) -> std::io::Result<(PathBuf, Ledger)> {
     let mut found = Ledger::default();
-    let dir = crate::instance_dir::claim_adopting(base, |own, gone| {
+    let dir = crate::app::instance_dir::claim_adopting(base, |own, gone| {
         // its kept transfers come along: whoever takes over a run's ledger takes those too
-        if crate::resume::adopt(own, gone).is_err() {
+        if crate::transfer::resume::adopt(own, gone).is_err() {
             return false;
         }
         let Some(l) = read_ledger(&gone.join(FILE)) else { return true };
@@ -244,7 +244,7 @@ pub fn run_dir(app: &AppHandle) -> Option<PathBuf> {
 pub fn start(app: &AppHandle) {
     // before any upload of this run can copy a file there
     if let Ok(cache) = app.path().app_cache_dir()
-        && let Ok(dir) = crate::instance_dir::claim(&cache.join("uploads"))
+        && let Ok(dir) = crate::app::instance_dir::claim(&cache.join("uploads"))
     {
         // copies of uploads of unknown size go there too (B3-4, round 5)
         crate::storage::extras::set_spool_dir(dir);
@@ -262,8 +262,8 @@ pub fn start(app: &AppHandle) {
     });
     let Some((path, mut earlier)) = TAKEN.lock().unwrap().take() else { return };
     // what a paused or interrupted transfer kept to carry on from is the resume store's (`resume`)
-    earlier.uploads.retain(|u| !crate::resume::keeps_upload(&u.upload_id));
-    earlier.partials.retain(|p| !crate::resume::keeps_partial(p));
+    earlier.uploads.retain(|u| !crate::transfer::resume::keeps_upload(&u.upload_id));
+    earlier.partials.retain(|p| !crate::transfer::resume::keeps_partial(p));
     // kept until cleaned up, so a run that ends early again still knows about them
     {
         let mut l = LEDGER.lock().unwrap();

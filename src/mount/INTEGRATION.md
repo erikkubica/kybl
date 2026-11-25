@@ -19,7 +19,7 @@ API (end of `src/core/api.ts`, `// WP-E4`): `mountApi.mountList / mountAdd(profi
 
 - `SettingsPage.tsx`: page id `"drives"` ("Drives", under Storage) renders `<MountsSection profiles onToast />`.
 - The tray's **Drives** submenu opens a mounted drive in Finder, and "Drive settings…" emits `open-settings` with `"drives"` (AppShell already listens).
-- `quit.rs` asks before quitting while saves on drives still wait to upload, and unmounts on the way out.
+- `app/quit.rs` asks before quitting while saves on drives still wait to upload, and unmounts on the way out.
 
 ## For the manager to wire: the context menu
 

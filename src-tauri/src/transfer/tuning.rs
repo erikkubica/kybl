@@ -227,7 +227,7 @@ pub async fn set_transfer_prefs<R: Runtime>(
     {
         let _one = CHANGING.lock().await;
         let next = prefs.apply(current());
-        crate::prefs::save_transfers(&app, next)?;
+        crate::app::prefs::save_transfers(&app, next)?;
         apply(next);
     }
     // transfers waiting for a slot look again: a higher limit lets more of them start now

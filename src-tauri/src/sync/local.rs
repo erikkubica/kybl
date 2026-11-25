@@ -29,8 +29,8 @@ pub fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
-// (in dest.rs, which the phone build has too)
-pub use crate::dest::mtime_ms;
+// (in transfer/dest.rs, which the phone build has too)
+pub use crate::transfer::dest::mtime_ms;
 
 /// The file's identity on its disk: device and inode on macOS and Linux. Windows has no stable
 /// id through std, so renames there are matched by size and time.
@@ -77,12 +77,12 @@ pub fn safe_rel(rel: &str) -> bool {
 /// [`safe_rel`] for Windows or elsewhere. On Windows a name with `:` is a drive (`C:` replaces the
 /// folder it is joined to) or an alternate stream, and a device name (`NUL`, `COM1.txt`) isn't a
 /// file, and a name ending in a dot or space is trimmed to another file's name (`a.txt.` would
-/// land on `a.txt`): none of them may come from a remote key (see [`crate::dest::windows_unfit`]).
+/// land on `a.txt`): none of them may come from a remote key (see [`crate::transfer::dest::windows_unfit`]).
 fn safe_rel_on(rel: &str, windows: bool) -> bool {
     !rel.is_empty()
         && !rel.contains('\0')
         && !rel.contains('\\')
-        && rel.split('/').all(|p| !p.is_empty() && p != "." && p != ".." && !(windows && (p.contains(':') || crate::dest::windows_unfit(p))))
+        && rel.split('/').all(|p| !p.is_empty() && p != "." && p != ".." && !(windows && (p.contains(':') || crate::transfer::dest::windows_unfit(p))))
 }
 
 /// `a` and `b` name one file only by letter case: the same file on a disk that ignores case (so
@@ -119,7 +119,7 @@ fn rel_key(p: &Path) -> String {
 /// counts as one. Folders that aren't there yet are fine (they are made as plain folders).
 pub fn link_on_the_way(root: &Path, path: &Path) -> Option<PathBuf> {
     // the file itself is replaced by a rename, never written through
-    crate::local_links::link_between(root, path, false)
+    crate::files::local_links::link_between(root, path, false)
 }
 
 /// [`link_on_the_way`] as an error to show for that file.

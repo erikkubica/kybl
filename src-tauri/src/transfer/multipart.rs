@@ -29,8 +29,8 @@ use http_body::{Body, Frame, SizeHint};
 use crate::{
     state::{err, sdk_err},
     storage::{PartRecord, ResumeState},
-    transfers::{Hold, Outcome, Progress},
-    tuning::{self, UP},
+    transfer::queue::{Hold, Outcome, Progress},
+    transfer::tuning::{self, UP},
 };
 
 pub(crate) const SINGLE_PUT_LIMIT: u64 = 16 * 1024 * 1024;
@@ -258,9 +258,9 @@ async fn abort(client: &Client, bucket: &str, key: &str, upload_id: &str) {
         Ok(_) => true,
         Err(e) => upload_gone(&sdk_err(e)),
     };
-    // otherwise still on the server: the next start tries again (see leftovers.rs)
+    // otherwise still on the server: the next start tries again (see transfer/leftovers.rs)
     if gone {
-        crate::leftovers::upload_ended(upload_id);
+        crate::transfer::leftovers::upload_ended(upload_id);
     }
 }
 
@@ -275,7 +275,7 @@ pub async fn abort_all(limit: Duration) {
             .map(|(_, p)| (p.client, p.bucket, p.key, p.mp.upload_id)),
     );
     // paused and interrupted transfers kept for the next start carry on from their parts
-    jobs.retain(|j| !crate::resume::keeps_upload(&j.3));
+    jobs.retain(|j| !crate::transfer::resume::keeps_upload(&j.3));
     let mut set = tokio::task::JoinSet::new();
     for (c, b, k, u) in jobs {
         set.spawn(async move { abort(&c, &b, &k, &u).await });
@@ -349,7 +349,7 @@ pub(crate) async fn upload_resumable(
     if resumed && matches!(&r, Err(e) if upload_gone(e)) {
         // the server dropped the old upload (it expires them after a while): start over
         if let Some(m) = mp.take() {
-            crate::leftovers::upload_ended(&m.upload_id);
+            crate::transfer::leftovers::upload_ended(&m.upload_id);
         }
         r = upload(client, profile_id, bucket, key, path, cancel, progress, hold, Some(pause), on_state, &mut mp).await;
     }
@@ -392,7 +392,7 @@ async fn upload(
     progress(0, total);
     // photos carry their placeholder as metadata, so other devices can show it with one HEAD
     // (a resumed multipart upload already has its metadata: nothing to work out)
-    let placeholder = if mp.is_none() { crate::placeholders::prepare_upload(path, total).await } else { None };
+    let placeholder = if mp.is_none() { crate::files::placeholders::prepare_upload(path, total).await } else { None };
     let thumbhash = placeholder.as_ref().map(|p| p.hash.clone());
 
     if total <= SINGLE_PUT_LIMIT && mp.is_none() {
@@ -415,7 +415,7 @@ async fn upload(
             Some(r) => {
                 let out = r.map_err(sdk_err)?;
                 if let Some(p) = &placeholder {
-                    crate::placeholders::uploaded(profile_id, bucket, key, out.e_tag(), total, p).await;
+                    crate::files::placeholders::uploaded(profile_id, bucket, key, out.e_tag(), total, p).await;
                 }
                 Ok(Outcome::Done)
             }
@@ -434,7 +434,7 @@ async fn upload(
             .map_err(sdk_err)?;
         let upload_id = created.upload_id().unwrap_or_default().to_string();
         // written down until completed or aborted, in case the app ends before either
-        crate::leftovers::upload_started(profile_id, bucket, key, &upload_id);
+        crate::transfer::leftovers::upload_started(profile_id, bucket, key, &upload_id);
         *mp = Some(Multipart { upload_id, part_size: part_size_for(total), parts: BTreeMap::new() });
         if let (Some(f), Some(m)) = (on_state, mp.as_ref()) {
             f(m);
@@ -479,7 +479,7 @@ async fn upload(
     match completed {
         Ok(out) => {
             if let Some(p) = &placeholder {
-                crate::placeholders::uploaded(profile_id, bucket, key, out.e_tag(), total, p).await;
+                crate::files::placeholders::uploaded(profile_id, bucket, key, out.e_tag(), total, p).await;
             }
         }
         Err(e) => {
@@ -492,7 +492,7 @@ async fn upload(
             }
         }
     }
-    crate::leftovers::upload_ended(&m.upload_id);
+    crate::transfer::leftovers::upload_ended(&m.upload_id);
     *mp = None;
     progress(total, total);
     Ok(Outcome::Done)
@@ -563,7 +563,7 @@ async fn send_parts(
         // "Wi-Fi only" and the phone moved to mobile data: stop sending (the parts in flight go
         // back in the queue), keep the parts that made it, and carry on once it is back on Wi-Fi
         if let Some(paused) = hold
-            && crate::tuning::hold_for_wifi()
+            && crate::transfer::tuning::hold_for_wifi()
         {
             set.abort_all();
             while set.join_next().await.is_some() {}
@@ -573,13 +573,13 @@ async fn send_parts(
                 queue.push_front(p);
             }
             paused(done_bytes, total);
-            if !crate::tuning::wait_for_wifi(cancel).await {
+            if !crate::transfer::tuning::wait_for_wifi(cancel).await {
                 return Ok(false);
             }
             progress(done_bytes, total);
         }
         // the setting is read as parts start, so a change applies to an upload already running
-        while set.len() < crate::tuning::part_concurrency() {
+        while set.len() < crate::transfer::tuning::part_concurrency() {
             let Some((n, offset, len)) = queue.pop_front() else { break };
             let sent = Arc::new(AtomicU64::new(0));
             running.insert(n, (len, sent.clone()));
@@ -773,7 +773,7 @@ mod tests {
             // the first attempt loses read access to the file once the first part is in: the
             // parts still to go fail, as if the network had dropped (one part at a time, so the
             // later parts open the file after that)
-            crate::tuning::apply(crate::tuning::TransferPrefs { part_concurrency: 1, ..crate::tuning::current() });
+            crate::transfer::tuning::apply(crate::transfer::tuning::TransferPrefs { part_concurrency: 1, ..crate::transfer::tuning::current() });
             let locked = AtomicBool::new(false);
             let r = upload_resumable(&client, &id, "t", "testbucket", &key, &p, &cancel, &|done, _| {
                 if done >= MIN_PART_SIZE && !locked.swap(true, Ordering::SeqCst) {
@@ -782,7 +782,7 @@ mod tests {
             }, None, &AtomicBool::new(false), None)
             .await;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-            crate::tuning::apply(crate::tuning::TransferPrefs::default());
+            crate::transfer::tuning::apply(crate::transfer::tuning::TransferPrefs::default());
             assert!(r.is_err(), "the first attempt fails");
             let kept = PENDING.lock().unwrap().get(&id).map(|p| p.mp.parts.len()).unwrap_or(0);
             assert!(kept >= 1, "finished parts are kept for Retry");

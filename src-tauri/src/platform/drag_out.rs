@@ -130,7 +130,7 @@ fn answer(token: &str, index: usize, result: Answer) -> bool {
 pub async fn start_drag_out(window: tauri::WebviewWindow, token: String, items: Vec<DragOutItem>, image: Option<String>) -> Result<(), String> {
     // the receiving app may copy the file later (a chat uploading it): "Clear cache" leaves it
     for p in items.iter().filter_map(|i| i.path.as_deref()) {
-        crate::open_copies::handed_out(p);
+        crate::files::open_copies::handed_out(p);
     }
     #[cfg(target_os = "macos")]
     {

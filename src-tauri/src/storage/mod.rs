@@ -57,7 +57,7 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// The body of a read, or of a write from something that isn't a file.
 pub type ByteStream = BoxStream<'static, io::Result<Bytes>>;
 /// Progress callback: (bytes done, total bytes). Same type the S3 transfers use.
-pub type Progress<'a> = crate::transfers::Progress<'a>;
+pub type Progress<'a> = crate::transfer::queue::Progress<'a>;
 
 // ---------------------------------------------------------------- kinds
 

@@ -230,7 +230,7 @@ async fn browser_code(app: &AppHandle, flow: &Flow, redirect: &Redirect, label: 
         _ = flow.cancel.notified() => return Err(CANCELLED.into()),
         _ = tokio::time::sleep(TIMEOUT) => return Err(NOTHING_BACK.into()),
     };
-    crate::tray::show_main(app);
+    crate::app::tray::show_main(app);
     Ok((code, uri))
 }
 
@@ -500,7 +500,7 @@ pub async fn oauth_start(
     drop(held);
     crate::storage::registry::forget(&id);
     // a reconnect may be another account: its files are not this one's
-    crate::filecache::forget_profile(&app, &id).await;
+    crate::files::filecache::forget_profile(&app, &id).await;
     Ok(profile)
 }
 

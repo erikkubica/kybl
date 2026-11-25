@@ -29,7 +29,7 @@ use tauri::{AppHandle, Manager, Runtime, State};
 
 use crate::state::{err, AppState};
 use crate::storage::{self, registry, Conn, FolderMode, WriteOpts, WriteSource};
-use crate::thumbs;
+use crate::files::thumbs;
 
 /// The thumbhash format works on images up to 100 x 100.
 const HASH_PX: u32 = 100;

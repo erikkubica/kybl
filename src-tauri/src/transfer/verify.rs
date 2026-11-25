@@ -24,7 +24,7 @@ use tauri::{AppHandle, Manager};
 use crate::{
     state::AppState,
     storage::{extras::hashes, registry, Conn, HashKind},
-    tuning::VerifyMode,
+    transfer::tuning::VerifyMode,
 };
 
 /// What the other side says about the file.
@@ -86,7 +86,7 @@ pub fn candidate_part_sizes(total: u64, parts: u64) -> Vec<u64> {
         // one part: its size doesn't change the ETag
         return vec![total.max(1)];
     }
-    let mut c = vec![crate::multipart::part_size_for(total), crate::storage::s3_stream::part_size(Some(total))];
+    let mut c = vec![crate::transfer::multipart::part_size_for(total), crate::storage::s3_stream::part_size(Some(total))];
     c.extend([5, 8, 16, 32, 64, 100, 128, 256, 512, 1024].map(|m| m * MIB));
     // the smallest whole MiB giving that many parts (tools that divide the file evenly)
     c.push(total.div_ceil(parts).div_ceil(MIB) * MIB);
@@ -307,7 +307,7 @@ impl std::fmt::Display for CheckErr {
 /// `downloaded`: for a download, the ETag of the version it fetched.
 #[allow(clippy::too_many_arguments)]
 pub async fn check(app: &AppHandle, conn: &Conn, profile_id: &str, bucket: &str, key: &str, local: &Path, part_size: Option<u64>, downloaded: Option<&str>) -> Result<Option<Checked>, CheckErr> {
-    let mode = crate::tuning::verify_mode();
+    let mode = crate::transfer::tuning::verify_mode();
     if mode == VerifyMode::Off {
         return Ok(None);
     }

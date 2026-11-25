@@ -1507,7 +1507,7 @@ function demoPdf(): ArrayBuffer {
 }
 
 // ---------------------------------------------------------------- editing in another app (src/edit)
-// edit_* stand in for edit.rs; the console plays the other app (see src/edit/dev/devEditMock.ts)
+// edit_* stand in for files/edit.rs; the console plays the other app (see src/edit/dev/devEditMock.ts)
 {
   type Invoke = (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
   const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: Invoke } }).__TAURI_INTERNALS__;

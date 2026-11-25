@@ -41,7 +41,7 @@ impl Host for TauriHost {
     }
 
     fn started(&self, id: &str, title: &str, _stop: &Arc<AtomicBool>) {
-        crate::transfer_notice::queued(&self.app, id, crate::transfer_notice::Dir::Upload, title);
+        crate::transfer::notice::queued(&self.app, id, crate::transfer::notice::Dir::Upload, title);
         // Android: the notification's Cancel pauses the job (it stops whatever is in `cancels`).
         // Not on computers: quitting stops those, and a job interrupted by quitting must stay
         // "running" so the next start resumes it.
@@ -55,11 +55,11 @@ impl Host for TauriHost {
     }
 
     fn tick(&self, id: &str, done: u64, total: u64) {
-        crate::transfer_notice::progress(&self.app, id, done, total);
+        crate::transfer::notice::progress(&self.app, id, done, total);
     }
 
     fn ended(&self, id: &str, ok: Option<bool>) {
-        crate::transfer_notice::finished(&self.app, id, ok);
+        crate::transfer::notice::finished(&self.app, id, ok);
         #[cfg(target_os = "android")]
         {
             let (app, id) = (self.app.clone(), id.to_string());
@@ -70,6 +70,6 @@ impl Host for TauriHost {
     }
 
     fn network_blocked(&self) -> bool {
-        crate::tuning::wifi_only() && crate::platform::on_metered_network()
+        crate::transfer::tuning::wifi_only() && crate::platform::on_metered_network()
     }
 }
