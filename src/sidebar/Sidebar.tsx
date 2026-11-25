@@ -70,12 +70,15 @@ const onActivate = (fn: () => void) => (e: React.KeyboardEvent) => {
  * the pane shows; a double click, ↵ or Open opens it, and into an empty pane a click opens at once.
  */
 type Choice = { chosen: string | null; choose: (key: string) => void; paneEmpty: boolean };
-/** a place row's click and ↵; `showing`: the pane shows it already (nothing to do) */
-function placeProps(c: Choice, key: string, open: () => void, showing: boolean) {
+/**
+ * a place row's click and ↵; `showing`: the pane shows it already (nothing to do); `local`: on this
+ * computer, which opens on a click (nothing to connect to, nothing lost)
+ */
+function placeProps(c: Choice, key: string, open: () => void, showing: boolean, local = false) {
   return {
     onClick: (e: React.MouseEvent) => {
       if (showing) return;
-      if (e.detail > 1 || c.paneEmpty) return open();
+      if (e.detail > 1 || c.paneEmpty || local) return open();
       c.choose(key);
     },
     onKeyDown: onActivate(() => !showing && open()),
@@ -767,12 +770,13 @@ export function Sidebar({
                 const where = [p?.name ?? "Removed connection", ...(f.bucket === "" ? [] : [rootLabel(f.profileId, f.bucket)]), ...f.prefix.split("/").filter(Boolean)].join(" › ");
                 const open = () => p && onOpenFavorite?.(f);
                 const key = `f:${f.profileId}|${f.bucket}|${f.prefix}`;
-                const marked = chosenId === key && !paneEmpty;
+                const local = !!p && isDevice(p);
+                const marked = chosenId === key && !paneEmpty && !local;
                 return (
                   <div
                     key={key}
                     className={`side-item fav-row ${p ? "" : "is-hidden"} ${marked ? "chosen" : ""}`}
-                    {...placeProps(choice, key, open, false)}
+                    {...placeProps(choice, key, open, false, local)}
                     role="button"
                     tabIndex={0}
                     aria-disabled={!p || undefined}
@@ -998,12 +1002,11 @@ function DeviceRoots({
         const isHidden = hidden.has(b);
         if (isHidden && !revealing && !here) return null;
         const key = `b:${p.id}|${b}`;
-        const marked = choice.chosen === key && !choice.paneEmpty && !here;
         return (
           <div
             key={b}
-            className={`side-item sub bucket-row device-row ${here ? "selected" : ""} ${isHidden ? "is-hidden" : ""} ${marked ? "chosen" : ""}`}
-            {...placeProps(choice, key, () => onSelectBucket(p, b), here)}
+            className={`side-item sub bucket-row device-row ${here ? "selected" : ""} ${isHidden ? "is-hidden" : ""}`}
+            {...placeProps(choice, key, () => onSelectBucket(p, b), here, true)}
             role="button"
             tabIndex={0}
             aria-current={here}
@@ -1021,7 +1024,6 @@ function DeviceRoots({
             <Icon name={ico} size={14} />
             <span className="side-label">{rootLabel(p.id, b)}</span>
             <DriveBadge m={findMount(mounts, p.id, b, "")} onMenu={onDriveMenu} />
-            {marked && <OpenButton onOpen={() => onSelectBucket(p, b)} />}
             <button
               className="icon-btn side-hide"
               onClick={(e) => {
