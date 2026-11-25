@@ -122,9 +122,9 @@ export function usePaneSlots(s: UsePaneSlotsDeps) {
     rootLabel: s.conns.rootLabel,
     openDocument: (e) => s.openDocument(id, e),
     canOpenDocument: (e) => s.canOpenDocument(id, e),
-    editItems: (e) => {
+    editItems: (e, besideOpen) => {
       const place = editPlace(id);
-      return place ? edits.itemsFor(place, e) : [];
+      return place ? edits.itemsFor(place, e, !!besideOpen && s.canOpenDocument(id, e)) : [];
     },
     editFile: (e) => {
       const place = editPlace(id);

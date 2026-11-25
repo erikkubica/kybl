@@ -74,8 +74,9 @@ export type PaneEnv = {
   openDocument?: (e: Entry) => boolean;
   /** whether `openDocument` would take this file */
   canOpenDocument?: (e: Entry) => boolean;
-  /** "Edit", "Edit with ▸", "Edit in Kybl" for one file (src/edit); empty when it can't be edited */
-  editItems?: (e: Entry) => MenuItem[];
+  /** "Edit", "Edit with ▸", "Edit in Kybl" for one file (src/edit); empty when it can't be edited.
+   *  `besideOpen`: listed under Open, which leaves out "Edit in Kybl" when Open already does that */
+  editItems?: (e: Entry, besideOpen?: boolean) => MenuItem[];
   /** ⌘E and Quick Look's Edit: edits a file in its default app, uploading saves (src/edit) */
   editFile?: (e: Entry) => void;
   /** what to call a root on screen ("Desktop" for this computer's /Users/me/Desktop) */

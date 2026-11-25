@@ -151,9 +151,10 @@ export function useEdit({
   };
 
   /** The context menu's edit items for one file; none for folders and Google Docs. */
-  const itemsFor = (place: EditPlace, e: Entry): MenuItem[] => {
+  /** `opensInKybl`: Open already shows it in Kybl's editor, so no "Edit in Kybl" beside it */
+  const itemsFor = (place: EditPlace, e: Entry, opensInKybl = false): MenuItem[] => {
     if (e.kind !== "file" || e.native) return [];
-    const inKybl = editableInKybl(e);
+    const inKybl = !opensInKybl && editableInKybl(e);
     const here: MenuItem | false = inKybl && {
       type: "item",
       label: "Edit in Kybl",

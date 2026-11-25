@@ -478,7 +478,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       // Open with ▸ (desktop/openWith.ts)
       ...openIn.filter((i) => i.type === "submenu"),
       // Edit, Edit with ▸, Edit in Kybl: saves upload back (src/edit)
-      ...(one && e.kind === "file" && !pane.archive.inArchive ? (env.editItems?.(e) ?? []) : []),
+      ...(one && e.kind === "file" && !pane.archive.inArchive ? (env.editItems?.(e, true) ?? []) : []),
       one && e.kind === "file" && { type: "item", label: "Quick Look", icon: "eye", hint: "Space", onClick: () => pane.setQuick(e.key) },
       search && one && { type: "item", label: "Show in folder", icon: "folder", onClick: () => pane.navigate(entryParent(e), e.key) },
       sep,
