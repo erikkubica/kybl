@@ -338,7 +338,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   const favoriteItem = (b: string, pre: string): MenuItem => ({
     type: "item",
     label: profile && favoriteOf(profile.id, b, pre) ? "Remove from favorites" : "Add to favorites",
-    icon: "plus",
+    icon: "star",
     onClick: () => toggleFavorite(b, pre),
   });
 
