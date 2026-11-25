@@ -18,6 +18,7 @@ import { useTerminalPanes } from "../../terminal/hooks/useTerminalPanes";
 import { useTransfers } from "../../transfers/hooks/useTransfers";
 
 export interface UseTerminalHostDeps {
+  duplicateWorkspace: (id: string) => void;
   activeId: PaneId;
   addWorkspace: (w: Workspace, after?: string, focus?: boolean, empty?: Set<PaneId>) => void;
   clearAllSizes: () => void;
@@ -67,6 +68,18 @@ export function useTerminalHost(s: UseTerminalHostDeps) {
     fileId: s.fileId,
     splitBelow: (src, fill) => s.split("col", src, false, fill, true),
     splitAbove: (src, fill) => s.split("col", src, true, fill, true),
+    // the header's split button: split this way or that, then what the panes menu has for the others
+    panesItems: (id) => [
+      ...s.splitItems(id).map((it): MenuItem => (it.type === "item" ? { ...it, label: `Split ${it.label.toLowerCase()}` } : it)),
+      ...(leaves(s.treeRef.current).length > 1
+        ? ([
+            { type: "sep" },
+            { type: "item", label: "Make panes the same size", onClick: () => s.setTree((t) => equalize(t)) },
+            { type: "submenu", label: "Move pane", icon: "move", items: () => s.moveItems(id) },
+            { type: "item", label: "Close other panes", onClick: () => s.closeOthers(id) },
+          ] satisfies MenuItem[])
+        : []),
+    ],
     paneItems: (id) => [
       { type: "submenu", label: "Split", icon: "dual-pane", items: () => s.splitItems(id) },
       ...(leaves(s.treeRef.current).length > 1
@@ -125,6 +138,7 @@ export function useTerminalHost(s: UseTerminalHostDeps) {
     add: (w, empty) => s.addWorkspace(w, undefined, true, empty),
     patch: s.patchWorkspace,
     newEmpty: s.newWorkspace,
+    duplicate: () => s.duplicateWorkspace(s.ws.active),
     confirm: s.dialogs.confirm,
     menu: s.dialogs.menu,
     toast: s.toast,

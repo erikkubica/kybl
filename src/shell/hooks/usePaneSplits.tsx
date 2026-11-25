@@ -133,14 +133,10 @@ export function usePaneSplits(deps: UsePaneSplitsDeps) {
     const src = deps.slot(id);
     const p = deps.slot(fresh);
     deps.opened.current.add(fresh);
-    // `fill`: the new pane opens somewhere else (the command palette's ⌘↵)
+    // `fill`: the new pane opens somewhere else (the command palette's ⌘↵); else it opens empty and
+    // asks what to show (PaneLauncher), the folder of the pane it came from first, so ↵ is a copy
     if (fill) fill(fresh);
-    else if (src.here && src.profile) p.go(src.profile, src.here.bucket, src.here.prefix);
-    else if (deps.term.terms[id] && deps.profiles.some((x) => x.id === deps.term.terms[id]!.profileId)) {
-      // split from a terminal: its folder
-      const at = deps.term.terms[id]!;
-      p.go(deps.profiles.find((x) => x.id === at.profileId)!, at.bucket, at.prefix);
-    } else p.showConnection(src.profile?.id ?? null);
+    else p.showConnection(null);
     if (p.view !== src.view) p.setView(src.view);
     deps.late.keepScrolls();
     deps.setTree(splitPane(t, at.id, at.dir, fresh, place ? place.id === id && before : before));

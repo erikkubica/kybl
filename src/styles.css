@@ -1310,6 +1310,126 @@ kbd {
   background: radial-gradient(600px 320px at 50% 38%, var(--accent-soft), transparent 70%);
   animation: fade-in 0.3s;
 }
+/* an empty pane: what it should show (PaneLauncher) */
+.launcher {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  overflow: auto;
+  padding: 24px 20px;
+  animation: fade-in 0.2s;
+}
+.launcher-card {
+  width: 100%;
+  max-width: 460px;
+  margin: 6vh auto auto;
+}
+.launcher-card h2 {
+  margin: 0 0 12px;
+  color: var(--dim);
+  font-size: 13px;
+  font-weight: 600;
+}
+.launcher-find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--field);
+  color: var(--faint);
+}
+.launcher-find:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.launcher-find input,
+.launcher-find input:focus,
+.launcher-find input:focus-visible {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font-size: 13.5px;
+}
+.launcher-enter {
+  height: 20px;
+  min-width: 20px;
+  padding: 0 5px;
+  font-size: 11px;
+}
+.launcher-list {
+  margin-top: 10px;
+}
+.launcher-head {
+  padding: 10px 10px 4px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.launcher-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 38px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+.launcher-item.on {
+  background: var(--accent-soft);
+}
+.launcher-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  color: var(--dim);
+}
+.launcher-item.same .launcher-icon {
+  color: var(--accent);
+}
+.launcher-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.launcher-label,
+.launcher-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.launcher-label {
+  font-weight: 500;
+}
+.launcher-sub {
+  color: var(--faint);
+  font-size: 12px;
+}
+.launcher-none,
+.launcher-hint {
+  padding: 12px 10px;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+.launcher-hint {
+  margin: 6px 0 0;
+}
 .welcome-card {
   max-width: 440px;
   margin: auto;

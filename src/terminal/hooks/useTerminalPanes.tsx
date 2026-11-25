@@ -73,6 +73,8 @@ export type TermHost = {
   splitAbove: (src: PaneId, fill: (fresh: PaneId) => void) => void;
   /** the panes menu's items for pane `id` (split, move, size, close the others), for the terminal's ⋯ */
   paneItems: (id: PaneId) => MenuItem[];
+  /** the header's split button: split, then the panes menu's other entries */
+  panesItems: (id: PaneId) => MenuItem[];
   setActive: (id: PaneId) => void;
   focus: (id: PaneId) => void;
   close: (id: PaneId) => void;
@@ -530,6 +532,7 @@ export function useTerminalPanes(initial: Layout) {
         note={t.follow ? (notes[t.sid] ?? null) : null}
         menu={h.menu}
         paneItems={() => h.paneItems(id)}
+        onPanes={(x, y) => h.menu(x, y, h.panesItems(id))}
       />
     );
   };

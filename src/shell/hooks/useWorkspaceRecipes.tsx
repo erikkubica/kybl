@@ -29,6 +29,8 @@ export type RecipeHost = {
   add: (w: Workspace, empty: Set<PaneId>) => void;
   patch: (id: string, patch: Partial<Pick<Workspace, "start" | "recipe">>) => void;
   newEmpty: () => void;
+  /** a copy of the workspace on screen, its layout and places */
+  duplicate: () => void;
   confirm: Dialogs["confirm"];
   menu: Dialogs["menu"];
   toast: Dialogs["toast"];
@@ -208,12 +210,17 @@ export function useWorkspaceRecipes() {
   const newMenu = (anchor?: DOMRect) => {
     const h = host.current;
     if (!h) return;
-    if (!recipes.length || !anchor) return h.newEmpty();
+    if (!anchor) return h.newEmpty();
     h.menu(anchor.left, anchor.bottom + 4, [
       { type: "item", label: "Empty workspace", icon: "plus", hint: "⌘T", onClick: h.newEmpty },
-      { type: "sep" },
-      { type: "label", label: "From a recipe" },
-      ...recipes.map((r) => ({ type: "item" as const, label: r.name, icon: "columns" as const, onClick: () => openNew(r) })),
+      { type: "item", label: "Copy of this workspace", icon: "copy", onClick: h.duplicate },
+      ...(recipes.length
+        ? [
+            { type: "sep" as const },
+            { type: "label" as const, label: "From a recipe" },
+            ...recipes.map((r) => ({ type: "item" as const, label: r.name, icon: "columns" as const, onClick: () => openNew(r) })),
+          ]
+        : []),
     ]);
   };
 

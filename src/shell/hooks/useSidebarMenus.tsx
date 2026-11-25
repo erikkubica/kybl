@@ -1,19 +1,22 @@
+import { ON_OS } from "../../core/osNames";
+import { canTerminal } from "../../terminal/api";
 import { MountDialog } from "../../mount/MountDialog";
 import type { ToastAction } from "../../desktop/components/fileOps";
 import type { ConnDialogAsk } from "../lib/types";
 import type { SettingsPageId } from "../../settings/SettingsPage";
 import type { Pane } from "../../browser/hooks/usePane";
-import { type PaneId, THIS_MAC } from "../../browser/types";
+import { type PaneId, THIS_MAC, LOCAL_PROFILE } from "../../browser/types";
 import { type Profile } from "../../core/types";
 import { api, errSummary, errMessage, type MountInfo } from "../../core/api";
-import { type Favorite } from "../../settings/settings";
+import { type Favorite, type Settings } from "../../settings/settings";
 import { type EmptyActions } from "../../browser/components/PaneEmpty";
+import type { LaunchItem } from "../../browser/components/PaneLauncher";
 import { trustOnProfile } from "../../connections/components/ConnFix";
 import { forgetCaps, peekCaps } from "../../core/useCaps";
 import { freshConnection } from "../../log/connLog";
 import { scopeOf, revealKeys, type GroupChanges, normalizeGroup, groupOf, allGroups, groupLabel, inScope, renameGroup, renamedOpen, parentGroup, ungroup, type KindSection, type GroupNode, useOpenGroups, useRecentConnections } from "../../connections/lib/groups";
 import { useEffect, type Dispatch, type SetStateAction } from "react";
-import { isShellConn } from "../../connections/lib/kinds";
+import { isShellConn, addressOf } from "../../connections/lib/kinds";
 import { moveInto, togglePins } from "../../connections/lib/organize";
 import { type MenuItem, type Toast } from "../../ui/components/Dialogs";
 import { tidyMenu } from "../../desktop/lib/menus";
@@ -47,6 +50,8 @@ export interface UseSidebarMenusDeps {
   openHere: (run: (pane: Pane) => void) => void;
   openSettings: (page?: SettingsPageId) => void;
   openShell: (p: Profile, another?: boolean) => void;
+  lastBefore: (id: PaneId) => PaneId | null;
+  settings: Settings;
   paneById: (id: PaneId) => Pane;
   picks: ReturnType<typeof useConnPicks>;
   profiles: Profile[];
@@ -163,7 +168,50 @@ export function useSidebarMenus(h: UseSidebarMenusDeps) {
       await h.connectIn(id, p);
     },
     missing: h.rec.notes[id],
+    // first run (nothing saved yet): the welcome, with its ways to add one
+    launcher: h.saved.length ? () => launchItems(id) : undefined,
   });
+
+  /** What empty pane `id` offers (PaneLauncher): the other pane's place, recent, favorites, every connection, a terminal. */
+  const launchItems = (id: PaneId): LaunchItem[] => {
+    const pane = h.paneById(id);
+    const byId = (pid: string) => h.profiles.find((x) => x.id === pid);
+    const placeSub = (p: Profile, bucket: string, prefix: string) =>
+      [p.name, h.conns.rootLabel(p.id, bucket), ...prefix.split("/").filter(Boolean)].join(" › ");
+    const openIn = (p: Profile) => (isShellConn(p) ? h.openShell(p) : void h.connectIn(id, p));
+    const out: LaunchItem[] = [];
+    // the pane it was split from (or the one used last): its folder, or a terminal's
+    const o = h.lastBefore(id);
+    const there = o ? (h.term.terms[o] ?? h.paneById(o).here) : null;
+    const op = there && byId(there.profileId);
+    if (there && op)
+      out.push({ key: "same", section: "same", label: o && h.term.terms[o] ? "Same folder as the terminal" : "Same folder as the other pane", sub: placeSub(op, there.bucket, there.prefix), icon: "dual-pane", run: () => pane.go(op, there.bucket, there.prefix) });
+    for (const pid of h.recents.recent) {
+      const p = byId(pid);
+      if (p) out.push({ key: `r:${p.id}`, section: "recent", label: p.name, sub: groupLabel(groupOf(p)) || undefined, provider: p.provider, run: () => openIn(p) });
+    }
+    for (const f of h.settings.favorites) {
+      const p = byId(f.profileId);
+      if (p) out.push({ key: `f:${f.profileId}:${f.bucket}:${f.prefix}`, section: "favorite", label: f.name, sub: placeSub(p, f.bucket, f.prefix), icon: "star", run: () => pane.go(p, f.bucket, f.prefix) });
+    }
+    for (const p of h.profiles)
+      out.push({ key: `c:${p.id}`, section: "connection", label: p.name, sub: [groupLabel(groupOf(p)), addressOf(p)].filter(Boolean).join(" · ") || undefined, provider: p.provider, run: () => openIn(p) });
+    if (canTerminal({ id: LOCAL_PROFILE, kind: "local" }))
+      out.push({
+        key: "term",
+        section: "terminal",
+        label: `Terminal on ${ON_OS.here}`,
+        icon: "terminal",
+        run: async () => {
+          const home = (await api.listRoots(LOCAL_PROFILE).catch(() => []))[0]?.id;
+          if (home == null) return h.toast("info", "Couldn't find your home folder for the terminal.");
+          h.term.assign(id, { profileId: LOCAL_PROFILE, bucket: home, prefix: "" });
+          h.focusSoon(id);
+        },
+      });
+    out.push({ key: "new", section: "new", label: "New connection…", icon: "plus", run: () => h.setConnDialog({ profile: null }) });
+    return out;
+  };
 
   // the connection in the pane in use: first in Recent, and its kind section and group fold open
   // in the sidebar

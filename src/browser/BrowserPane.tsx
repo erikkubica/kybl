@@ -14,6 +14,7 @@ import { GridView } from "./components/list/GridView";
 import { QuickLook } from "../desktop/components/QuickLook";
 import type { Settings } from "../settings/settings";
 import { ChooseBucket, ListError, Welcome, type EmptyActions } from "./components/PaneEmpty";
+import { PaneLauncher } from "./components/PaneLauncher";
 import { PaneBanners, PaneStatusBar } from "./components/PaneParts";
 import type { Pane } from "./hooks/usePane";
 import { useImageModes } from "../thumbs/imageMode";
@@ -222,7 +223,7 @@ export function BrowserPane(p: BrowserPaneProps) {
 
       <div className="content">
         <div className={`pane ${pane.compact ? "compact" : ""}`}>
-          {!profile && <Welcome actions={p.empty} />}
+          {!profile && (p.empty.launcher && !p.empty.missing ? <PaneLauncher items={p.empty.launcher()} /> : <Welcome actions={p.empty} />)}
           {profile && bucket == null && <ChooseBucket profile={profile} note={p.bucketNote} error={p.bucketError} reconnect={p.bucketReconnect} actions={p.empty} />}
           {profile && bucket != null && (
             <>

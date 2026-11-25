@@ -163,6 +163,8 @@ export function usePaneSlots(s: UsePaneSlotsDeps) {
   const active = slot(s.fileId ?? s.activeId);
   /** The file pane `id` pairs with: the one active most recently before it (with two, the other one). */
   const otherOf = (id: PaneId): PaneId | null => s.recent.find((x) => x !== id && s.fileIds.includes(x)) ?? s.fileIds.find((x) => x !== id) ?? null;
+  /** the pane active before `id`, a terminal too (where a split came from) */
+  const lastBefore = (id: PaneId): PaneId | null => s.recent.find((x) => x !== id && s.ids.includes(x)) ?? null;
   const otherId = s.dual ? otherOf(active.id) : null;
   const other = otherId ? slot(otherId) : null;
   s.panesRef.current = s.fileIds.map(slot);
@@ -336,12 +338,12 @@ export function usePaneSlots(s: UsePaneSlotsDeps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // on launch the other panes reopen where they were, or start at the first one's place (a pane
-  // made by a split opens its own place and is marked here at once)
+  // on launch the other panes reopen where they were; one with nowhere to go stays empty and asks
+  // what to show (PaneLauncher). A pane made by a split is marked here at once.
   const opened = useRef(new Set<PaneId>());
   const first = slot(s.fileIds.find((id) => !s.rec.notes[id]) ?? s.fileIds[0] ?? s.ids[0]);
   useEffect(() => {
-    if (!first.here || !first.profile || !s.profiles.length) return;
+    if (!s.profiles.length) return;
     for (const id of s.ids) {
       // (a terminal's slot shows no files)
       if (id === first.id || s.term.terms[id] || opened.current.has(id)) continue;
@@ -351,9 +353,8 @@ export function usePaneSlots(s: UsePaneSlotsDeps) {
       const saved = s.settings.restoreLast || s.startSaved.current ? p.savedLocation() : null;
       const prof = saved && s.profiles.find((x) => x.id === saved.profileId);
       if (prof && saved) p.go(prof, saved.bucket, saved.prefix);
-      else p.go(first.profile, first.here.bucket, first.here.prefix);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.ids, first.here, first.profile, s.profiles, s.settings.restoreLast]);
-  return { editing, edits, slots, slot, active, otherOf, other, activeRef, paneById, showFilePane, openHere, connectIn, openShell, toggleConnection, forgetProfile, opened };
+  }, [s.ids, first.id, s.profiles, s.settings.restoreLast]);
+  return { editing, edits, slots, slot, active, otherOf, other, activeRef, paneById, showFilePane, openHere, connectIn, openShell, toggleConnection, forgetProfile, opened, lastBefore };
 }

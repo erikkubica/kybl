@@ -287,11 +287,10 @@ export function useWorkspacesHost(h: UseWorkspacesHostDeps) {
     });
     applyLayout(w, w.id, h.active.here, focus, empty);
   };
-  /** "+": one pane where the active pane is (or This Mac), its name ready to type over. */
+  /** "+": one empty pane, which asks what to show (PaneLauncher); its name ready to type over. */
   const newWorkspace = () => {
-    const snap = h.active.here ? { loc: h.active.here, view: h.active.viewState() } : null;
-    const w: Workspace = { ...oneLayout(snap), id: newId(), name: nextName(h.ws.list), color: null, start: "restore", recipe: null };
-    addWorkspace(w, undefined, false);
+    const w: Workspace = { ...oneLayout(null), id: newId(), name: nextName(h.ws.list), color: null, start: "restore", recipe: null };
+    addWorkspace(w, undefined, false, new Set(leaves(w.tree)));
     setWsEditing(w.id);
   };
   const duplicateWorkspace = (id: string) => {

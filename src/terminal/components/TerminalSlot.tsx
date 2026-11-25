@@ -46,6 +46,8 @@ export type TerminalSlotProps = {
   menu: (x: number, y: number, items: MenuItem[]) => void;
   /** split, move, size and close the other panes, as a file pane's panes menu has them */
   paneItems: () => MenuItem[];
+  /** the split button: where a new pane goes, as a file pane's panes button */
+  onPanes: (x: number, y: number) => void;
 };
 
 export function TerminalSlot(p: TerminalSlotProps) {
@@ -131,6 +133,18 @@ export function TerminalSlot(p: TerminalSlotProps) {
           <div className="spacer" />
           <button className="icon-btn" onClick={p.onFolders} title={`Folders on ${p.connName}`} aria-label={`Folders on ${p.connName}`}>
             <Icon name="folder" />
+          </button>
+          <button
+            className="icon-btn"
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              p.onPanes(r.left, r.bottom + 4);
+            }}
+            title="Split or arrange panes"
+            aria-label="Split or arrange panes"
+            aria-haspopup="menu"
+          >
+            <Icon name="dual-pane" />
           </button>
           <button className="icon-btn" onClick={more} title="Terminal actions" aria-label="Terminal actions" aria-haspopup="menu">
             <Icon name="more" />

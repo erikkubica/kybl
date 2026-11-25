@@ -15,6 +15,7 @@ import { errDetail } from "../../core/api";
 import { errorHint, freshConnection } from "../../log/connLog";
 import { classifyError } from "../../log/logText.ts";
 import { useState } from "react";
+import type { LaunchItem } from "./PaneLauncher";
 
 /** The shell's ways out of an empty pane. */
 export type EmptyActions = {
@@ -36,6 +37,8 @@ export type EmptyActions = {
   onRetryConnect: (p: Profile) => Promise<void>;
   /** a workspace recipe's pane whose connection isn't on this device: its name (it stays empty) */
   missing?: string;
+  /** what this empty pane can open (PaneLauncher), built when it shows */
+  launcher?: () => LaunchItem[];
 };
 
 export function Welcome({ actions }: { actions: EmptyActions }) {
