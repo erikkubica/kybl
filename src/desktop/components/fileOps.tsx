@@ -249,6 +249,33 @@ export function makeFileOps(c: OpsContext) {
     await uploadPaths(Array.isArray(r) ? r : r ? [r] : []);
   };
 
+  /**
+   * This computer's pane: files or folders picked anywhere on it, moved into the folder shown
+   * (a rename on the same disk, copy-then-remove across disks), with the usual clash questions.
+   */
+  const pickAndMove = async (directory: boolean) => {
+    const { profile, bucket } = c;
+    if (!profile || bucket == null) return;
+    const r = await openDialog({ multiple: true, directory, title: directory ? "Choose folders to move here" : "Choose files to move here" });
+    const paths = (Array.isArray(r) ? r : r ? [r] : []).map((p) => p.replace(/\\/g, "/"));
+    if (!paths.length) return;
+    // each path as a key of the deepest place (root) holding it
+    const roots = (await api.listRoots(profile.id).catch(() => [])).map((x) => ({ id: x.id, at: x.id.replace(/\\/g, "/").replace(/\/?$/, "/") }));
+    const groups = new Map<string, Entry[]>();
+    for (const p of paths) {
+      const root = roots.filter((x) => p.startsWith(x.at) && p.length > x.at.length).sort((a, b) => b.at.length - a.at.length)[0];
+      if (!root) {
+        toast("error", `Kybl can't move “${p.split("/").pop()}” from where it is.`);
+        continue;
+      }
+      const rel = p.slice(root.at.length).replace(/\/$/, "");
+      const name = rel.split("/").pop() ?? rel;
+      const e: Entry = { kind: directory ? "folder" : "file", key: directory ? `${rel}/` : rel, name, size: 0, modified: null };
+      groups.set(root.id, [...(groups.get(root.id) ?? []), e]);
+    }
+    for (const [root, list] of groups) await relocate(list, c.prefix, "move", { srcBucket: root, destBucket: bucket });
+  };
+
   // ---------------------------------------------------------------- download / open
   /**
    * Downloads files and folders. `relBase` (search results) keeps each file's folders below that
@@ -1189,7 +1216,7 @@ ${picked.etag ?? ""}` : null;
     void relocate(cl.items, dest, mode, { srcBucket: cl.bucket, destBucket: bucket }).then((ok) => ok && usedUp());
   };
 
-  return { uploadPaths, pickAndUpload, downloadEntries, localCopy, okToRun, openPath, openInApp, openFiles, openWith, copyFile, askDelete, askRename, askBatchRename, askNewFolder, askNewFile, relocate, duplicate, clip, paste };
+  return { uploadPaths, pickAndUpload, downloadEntries, localCopy, okToRun, openPath, openInApp, openFiles, openWith, copyFile, askDelete, askRename, askBatchRename, askNewFolder, askNewFile, pickAndMove, relocate, duplicate, clip, paste };
 }
 
 export type FileOps = ReturnType<typeof makeFileOps>;

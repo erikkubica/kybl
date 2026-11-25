@@ -199,6 +199,7 @@ export function BrowserPane(p: BrowserPaneProps) {
         onNavigate={pane.navigate}
         onUp={() => void pane.goUp()}
         onUpload={(folder) => actions.commands[folder ? "upload-folder" : "upload-files"]()}
+        onMoveHere={pane.caps?.localPaths && !pane.archive.inArchive ? (folder) => void ops.pickAndMove(folder) : undefined}
         readOnly={readOnly}
         onMoreMenu={moreMenu}
         onNewFolder={newFolder}

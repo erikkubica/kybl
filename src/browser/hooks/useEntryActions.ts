@@ -25,6 +25,7 @@ import { driveItems } from "../../mount/driveMenu";
 import { findMount, useMounts } from "../../mount/useMounts";
 import { MoveDialog } from "../../desktop/components/MoveDialog";
 import type { MenuItem } from "../../ui/components/Dialogs";
+import { bringInItems } from "../lib/bringIn";
 import type { Entry } from "../../core/types";
 import { itemClipboard } from "../../desktop/lib/clipboard";
 import { actionCommandMap, actionsMenu, type ActionContext } from "../../actions/lib/customActions";
@@ -409,8 +410,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       tidyMenu(ro([
         { type: "item", label: "New folder…", icon: "folder-plus", hint: "⇧⌘N", onClick: () => ops.askNewFolder() },
         { type: "item", label: "New file…", icon: "file-plus", hint: "⌥⌘N", onClick: () => ops.askNewFile() },
-        { type: "item", label: "Upload files…", icon: "upload", hint: "⌘U", onClick: () => ops.pickAndUpload(false) },
-        { type: "item", label: "Upload folder…", icon: "folder", hint: "⇧⌘U", onClick: () => ops.pickAndUpload(true) },
+        ...bringInItems(onDisk, ops),
         { type: "sep" },
         {
           type: "item",
@@ -628,3 +628,4 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
 }
 
 export type EntryActions = ReturnType<typeof useEntryActions>;
+

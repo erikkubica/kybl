@@ -1,4 +1,5 @@
 import { keys } from "../../ui/lib/osText";
+import { bringInItems } from "../lib/bringIn";
 import { useRef, type ReactNode, type RefObject } from "react";
 import { Icon, type IconName } from "../../ui/components/Icons";
 import { PathTitle } from "./PathTitle";
@@ -46,6 +47,7 @@ export function Toolbar({
   onNavigate,
   onUp,
   onUpload,
+  onMoveHere,
   readOnly,
   onMoreMenu,
   onNewFolder,
@@ -111,6 +113,8 @@ export function Toolbar({
   /** up a level (the "…" crumb, ⌘↑) */
   onUp: () => void;
   onUpload: (folder: boolean) => void;
+  /** this computer's pane: picked files or folders move into the folder (the + menu says Copy / Move here) */
+  onMoveHere?: (folder: boolean) => void;
   /** an archive opened like a folder: nothing to upload or create */
   readOnly?: boolean;
   /** the "⋯" button; `folded` are the header's own items that had no room on the row */
@@ -175,8 +179,7 @@ export function Toolbar({
 
   const createMenu = (e: React.MouseEvent) =>
     dialogs.menu(...anchorOf(e), [
-      { type: "item", label: "Upload files…", icon: "upload", hint: "⌘U", onClick: () => onUpload(false) },
-      { type: "item", label: "Upload folder…", icon: "folder", hint: "⇧⌘U", onClick: () => onUpload(true) },
+      ...bringInItems(!!onMoveHere, { pickAndUpload: onUpload, pickAndMove: (d) => onMoveHere?.(d) }),
       { type: "sep" },
       { type: "item", label: "New folder…", icon: "folder-plus", hint: "⇧⌘N", onClick: onNewFolder },
       ...(onNewFile ? [{ type: "item", label: "New file…", icon: "file-plus", hint: "⌥⌘N", onClick: onNewFile } as const] : []),
