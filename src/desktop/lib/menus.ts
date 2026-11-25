@@ -39,6 +39,7 @@ export const MENU_OWNS_SHORTCUTS = isTauri() && /Mac/i.test(navigator.userAgent)
  */
 export const MENU_ACCELERATORS: Record<string, string> = {
   "new-folder": "⇧⌘N",
+  "new-file": "⌥⌘N",
   "upload-files": "⌘U",
   "upload-folder": "⇧⌘U",
   download: "⇧⌘D",

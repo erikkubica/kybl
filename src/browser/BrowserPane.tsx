@@ -202,6 +202,7 @@ export function BrowserPane(p: BrowserPaneProps) {
         readOnly={readOnly}
         onMoreMenu={moreMenu}
         onNewFolder={newFolder}
+        onNewFile={() => actions.commands["new-file"]()}
         onQuery={(q) => {
           ent.setQuery(q);
           // editing the text after a deep search goes back to filtering the folder

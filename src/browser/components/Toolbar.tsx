@@ -49,6 +49,7 @@ export function Toolbar({
   readOnly,
   onMoreMenu,
   onNewFolder,
+  onNewFile,
   onQuery,
   onSearch,
   onStopSearch,
@@ -115,6 +116,7 @@ export function Toolbar({
   /** the "⋯" button; `folded` are the header's own items that had no room on the row */
   onMoreMenu: (x: number, y: number, folded: MenuItem[]) => void;
   onNewFolder: () => void;
+  onNewFile?: () => void;
   onQuery: (q: string) => void;
   /** Enter: search this folder and everything below it */
   onSearch: (q: string) => void;
@@ -177,6 +179,7 @@ export function Toolbar({
       { type: "item", label: "Upload folder…", icon: "folder", hint: "⇧⌘U", onClick: () => onUpload(true) },
       { type: "sep" },
       { type: "item", label: "New folder…", icon: "folder-plus", hint: "⇧⌘N", onClick: onNewFolder },
+      ...(onNewFile ? [{ type: "item", label: "New file…", icon: "file-plus", hint: "⌥⌘N", onClick: onNewFile } as const] : []),
     ]);
 
   const moreMenu = (e: React.MouseEvent) => {

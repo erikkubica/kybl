@@ -10,7 +10,7 @@ import { peekCaps } from "../../core/useCaps";
 import type { ReactNode } from "react";
 import type { ConfirmOptions, PromptOptions } from "../../shell/hooks/useDialogs";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { api, errMessage, errSummary, LOCAL_ID, type OpResult } from "../../core/api";
+import { api, DocConflict, docSave, errMessage, errSummary, LOCAL_ID, type OpResult } from "../../core/api";
 import { formatBytes, parentPrefix, sumSizes } from "../../core/format";
 import { destKey, entryParent, placeLabel } from "../../transfers/lib/moving";
 import type { Settings } from "../../settings/settings";
@@ -946,6 +946,40 @@ ${picked.etag ?? ""}` : null;
     });
   };
 
+  // ---------------------------------------------------------------- new file
+  /** An empty file, named in a dialog; it can't replace one already there (the server is asked). */
+  const askNewFile = (dest = c.prefix) => {
+    const { profile, bucket } = c;
+    if (!profile || bucket == null) return;
+    const pid = profile.id;
+    const b = bucket;
+    const shown = c.shownKeys?.loc.profileId === pid && c.shownKeys.loc.bucket === b && c.shownKeys.loc.prefix === dest ? c.shownKeys.keys : null;
+    let initial = "untitled.txt";
+    for (let n = 2; shown?.has(`${dest}${initial}`); n++) initial = `untitled ${n}.txt`;
+    c.prompt({
+      title: "New file",
+      label: "File name",
+      initial,
+      confirmLabel: "Create",
+      check: (name) => nameProblem(name) ?? (shown?.has(`${dest}${name}`) || c.folderKeys.has(`${dest}${name}/`) ? takenName(name, !shown?.has(`${dest}${name}`)) : null),
+      run: async (name) => {
+        const key = `${dest}${name}`;
+        try {
+          const found = await findExisting(pid, b, [{ key, folder: false }, { key: `${key}/`, folder: true }]).catch(() => new Set<string>());
+          if (found.has(key) || found.has(`${key}/`)) return takenName(name, !found.has(key));
+          // "absent": made only if nothing has the name meanwhile
+          await docSave(pid, b, key, new Uint8Array(), { kind: "absent" });
+          c.selectAfterReload(pid, b, key);
+          c.leaveSearch?.();
+          c.reloadIfShowing(pid, b);
+        } catch (e) {
+          if (e instanceof DocConflict) return takenName(name, false);
+          return errSummary(errMessage(e));
+        }
+      },
+    });
+  };
+
   // ---------------------------------------------------------------- move / copy / paste
   /**
    * Moves or copies entries into `dest`, in the same bucket or (`destBucket`) another bucket of
@@ -1155,7 +1189,7 @@ ${picked.etag ?? ""}` : null;
     void relocate(cl.items, dest, mode, { srcBucket: cl.bucket, destBucket: bucket }).then((ok) => ok && usedUp());
   };
 
-  return { uploadPaths, pickAndUpload, downloadEntries, localCopy, okToRun, openPath, openInApp, openFiles, openWith, copyFile, askDelete, askRename, askBatchRename, askNewFolder, relocate, duplicate, clip, paste };
+  return { uploadPaths, pickAndUpload, downloadEntries, localCopy, okToRun, openPath, openInApp, openFiles, openWith, copyFile, askDelete, askRename, askBatchRename, askNewFolder, askNewFile, relocate, duplicate, clip, paste };
 }
 
 export type FileOps = ReturnType<typeof makeFileOps>;

@@ -39,6 +39,7 @@ export function shellCommands(h: PaletteHost): PaletteCommand[] {
   return [
     // ---- files
     r("new-folder", "New Folder", { group: "File", icon: "folder-plus", shortcut: "⇧⌘N", disabled: noFolder }),
+    r("new-file", "New File", { group: "File", icon: "file-plus", shortcut: "⌥⌘N", disabled: noFolder }),
     r("upload-files", "Upload Files…", { group: "File", icon: "upload", shortcut: "⌘U", disabled: noFolder }),
     r("upload-folder", "Upload Folder…", { group: "File", icon: "upload", shortcut: "⇧⌘U", disabled: noFolder }),
     r("download", "Download", { group: "File", icon: "download", shortcut: "⇧⌘D", disabled: noSel }),

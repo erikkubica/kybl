@@ -408,6 +408,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
       ev.clientY,
       tidyMenu(ro([
         { type: "item", label: "New folder…", icon: "folder-plus", hint: "⇧⌘N", onClick: () => ops.askNewFolder() },
+        { type: "item", label: "New file…", icon: "file-plus", hint: "⌥⌘N", onClick: () => ops.askNewFile() },
         { type: "item", label: "Upload files…", icon: "upload", hint: "⌘U", onClick: () => ops.pickAndUpload(false) },
         { type: "item", label: "Upload folder…", icon: "folder", hint: "⇧⌘U", onClick: () => ops.pickAndUpload(true) },
         { type: "sep" },
@@ -560,6 +561,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   /** This pane's part of the commands the keyboard and the menu bar run, by menu id. */
   const commands: Record<string, () => void> = {
     "new-folder": () => ops.askNewFolder(),
+    "new-file": () => ops.askNewFile(),
     "upload-files": () => void ops.pickAndUpload(false),
     "upload-folder": () => void ops.pickAndUpload(true),
     download: () =>
@@ -591,7 +593,7 @@ export function useEntryActions(pane: PaneCore, env: PaneEnv) {
   };
   // an archive opens read-only: the keys that would write say so instead of failing later
   if (pane.archive.inArchive)
-    for (const id of ["new-folder", "upload-files", "upload-folder", "delete", "rename", "edit", "cut", "duplicate", "paste"])
+    for (const id of ["new-folder", "new-file", "upload-files", "upload-folder", "delete", "rename", "edit", "cut", "duplicate", "paste"])
       commands[id] = () => toast("info", "Archives open read-only. Extract the files to change them.");
 
   /** Quick Look's Edit button: the edit menu at `at` (src/edit) */

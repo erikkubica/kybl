@@ -14,6 +14,12 @@ const PATHS: Record<string, ReactNode> = {
       <path d="M14 3v5h5" />
     </>
   ),
+  "file-plus": (
+    <>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5M12 11.5v6M9 14.5h6" />
+    </>
+  ),
   text: (
     <>
       <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />

@@ -22,6 +22,7 @@ const PAGE_ITEMS: &[&str] = &[
     "edit",
     "new-connection",
     "new-folder",
+    "new-file",
     "upload-files",
     "upload-folder",
     "download",
@@ -104,6 +105,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         &[
             &item("new-connection", "New Connection…", None)?,
             &item("new-folder", "New Folder", Some("CmdOrCtrl+Shift+N"))?,
+            &item("new-file", "New File", Some("CmdOrCtrl+Alt+N"))?,
             &sep()?,
             &item("upload-files", "Upload Files…", Some("CmdOrCtrl+U"))?,
             &item("upload-folder", "Upload Folder…", Some("CmdOrCtrl+Shift+U"))?,

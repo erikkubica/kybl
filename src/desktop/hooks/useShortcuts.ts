@@ -66,6 +66,7 @@ export function useShortcuts(opts: ShortcutOptions) {
       else if (mod && ev.altKey && !ev.shiftKey && /^Digit[1-9]$/.test(ev.code)) id = `workspace-${ev.code.slice(5)}`;
       else if (mod && !ev.shiftKey && !ev.altKey && k === "t") id = "new-workspace";
       else if (mod && k === ",") id = own("settings");
+      else if (mod && ev.altKey && !ev.shiftKey && ev.code === "KeyN") id = own("new-file");
       else if (mod && ev.shiftKey && k === "n") id = own("new-folder");
       else if (mod && k === "u") id = own(ev.shiftKey ? "upload-folder" : "upload-files");
       else if (mod && ev.shiftKey && k === "d") id = own("download");
