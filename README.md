@@ -2,34 +2,90 @@
 
 # Kybl
 
-A fast, native desktop S3 browser (Tauri 2 + React + Rust) for any S3-compatible storage:
-Hetzner Object Storage, AWS S3, Cloudflare R2, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph …
+**One file manager for every bucket, drive and server.** A fast, native app for macOS, Windows,
+Linux, Android and iPhone (Tauri 2 + React + Rust): S3 and anything S3-compatible (Hetzner, AWS,
+Cloudflare R2, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO, Ceph …), Azure Blob Storage,
+Google Cloud Storage, Google Drive, OneDrive, Dropbox, WebDAV, SFTP, FTP/FTPS, SSH and your own disk,
+side by side.
+
+<p>
+<a href="https://kybl.app/"><b>Website</b></a> ·
+<a href="https://kybl.app/features/"><b>Feature gallery</b></a> (every screen, light and dark) ·
+<a href="https://kybl.app/manual/"><b>User manual</b></a> ·
+<a href="../../releases/latest"><b>Download</b></a>
+</p>
+
+<a href="https://kybl.app/features/#shot-app-browse"><picture><source media="(prefers-color-scheme: dark)" srcset="website/assets/shots/app-browse-dark.webp"><img src="website/assets/shots/app-browse.webp" alt="Kybl with three panes: photos in a Hetzner bucket, the files of an SFTP server, and an SSH terminal on the server below"></picture></a>
+
+<table>
+<tr>
+<td width="50%"><a href="https://kybl.app/features/#shot-claude"><picture><source media="(prefers-color-scheme: dark)" srcset="website/assets/shots/claude-dark.webp"><img src="website/assets/shots/claude.webp" alt="Claude Code in a terminal pane, the project's files beside it with git status"></picture></a><br><b>A terminal next to your files</b> · <a href="https://kybl.app/manual/#terminal">how it works</a></td>
+<td width="50%"><a href="https://kybl.app/features/#shot-mixed"><picture><source media="(prefers-color-scheme: dark)" srcset="website/assets/shots/mixed-dark.webp"><img src="website/assets/shots/mixed.webp" alt="A photo grid, a compact list grouped by kind and a small grid in one window"></picture></a><br><b>Every pane its own view</b> · <a href="https://kybl.app/manual/#views">how it works</a></td>
+</tr>
+<tr>
+<td width="50%"><a href="https://kybl.app/features/#shot-quicklook"><picture><source media="(prefers-color-scheme: dark)" srcset="website/assets/shots/quicklook-dark.webp"><img src="website/assets/shots/quicklook.webp" alt="Quick Look of a photo with its details and share link"></picture></a><br><b>Quick Look and Get Info</b> · <a href="https://kybl.app/manual/#quick-look">how it works</a></td>
+<td width="50%"><a href="https://kybl.app/features/#shot-menu"><picture><source media="(prefers-color-scheme: dark)" srcset="website/assets/shots/menu-dark.webp"><img src="website/assets/shots/menu.webp" alt="The file menu with its Copy to submenu"></picture></a><br><b>Menus that do the whole job</b> · <a href="https://kybl.app/manual/#context-menu">how it works</a></td>
+</tr>
+<tr>
+<td width="50%"><a href="https://kybl.app/features/#shot-mirror"><picture><source media="(prefers-color-scheme: dark)" srcset="website/assets/shots/mirror-dark.webp"><img src="website/assets/shots/mirror.webp" alt="Mirror: a local site checked against an FTP server before anything copies"></picture></a><br><b>Mirror with a dry run</b> · <a href="https://kybl.app/manual/#mirror">how it works</a></td>
+<td width="50%"><a href="https://kybl.app/features/#shot-copymove"><picture><source media="(prefers-color-scheme: dark)" srcset="website/assets/shots/copymove-dark.webp"><img src="website/assets/shots/copymove.webp" alt="Copy / Move to: a bucket to another connection"></picture></a><br><b>Copy or move anything anywhere</b> · <a href="https://kybl.app/manual/#copy-move-dialog">how it works</a></td>
+</tr>
+<tr>
+<td width="50%"><a href="https://kybl.app/features/#shot-app-sync"><picture><source media="(prefers-color-scheme: dark)" srcset="website/assets/shots/app-sync-dark.webp"><img src="website/assets/shots/app-sync.webp" alt="Folder sync settings with synced folders, problems and conflicts"></picture></a><br><b>Folder sync, even with the window closed</b> · <a href="https://kybl.app/manual/#sync">how it works</a></td>
+<td width="50%"><a href="https://kybl.app/features/#shot-tunnels"><picture><source media="(prefers-color-scheme: dark)" srcset="website/assets/shots/tunnels-dark.webp"><img src="website/assets/shots/tunnels.webp" alt="A server's Tunnels submenu in the sidebar"></picture></a><br><b>SSH tunnels from the sidebar</b> · <a href="https://kybl.app/manual/#ssh-tunnels">how it works</a></td>
+</tr>
+<tr>
+<td width="50%"><a href="https://kybl.app/features/#shot-rename"><picture><source media="(prefers-color-scheme: dark)" srcset="website/assets/shots/rename-dark.webp"><img src="website/assets/shots/rename.webp" alt="Batch rename with a preview of every new name"></picture></a><br><b>Batch rename</b> · <a href="https://kybl.app/manual/#rename">how it works</a></td>
+<td width="50%"><a href="https://kybl.app/features/#shot-compare-files"><picture><source media="(prefers-color-scheme: dark)" srcset="website/assets/shots/compare-files-dark.webp"><img src="website/assets/shots/compare-files.webp" alt="Two YAML files compared side by side"></picture></a><br><b>Compare files and folders</b> · <a href="https://kybl.app/manual/#compare">how it works</a></td>
+</tr>
+<tr>
+<td width="50%"><a href="https://kybl.app/features/#shot-workspaces"><picture><source media="(prefers-color-scheme: dark)" srcset="website/assets/shots/workspaces-dark.webp"><img src="website/assets/shots/workspaces.webp" alt="The new workspace menu with saved recipes"></picture></a><br><b>Workspaces and recipes</b> · <a href="https://kybl.app/manual/#recipes">how it works</a></td>
+<td width="50%"><a href="https://kybl.app/features/#shot-settings-appearance"><picture><source media="(prefers-color-scheme: dark)" srcset="website/assets/shots/settings-appearance-dark.webp"><img src="website/assets/shots/settings-appearance.webp" alt="Appearance settings with colour schemes and accents"></picture></a><br><b>Themes, colour schemes and fonts</b> · <a href="https://kybl.app/manual/#settings-appearance">how it works</a></td>
+</tr>
+</table>
+
+More in the [feature gallery](https://kybl.app/features/): the sidebar and its menus, connections,
+search, the command palette, the editor, archives, transfers and jobs, every settings page and the
+phone app. Each part has a section in the [manual](https://kybl.app/manual/), which the app opens
+from **Help** (F1, or ⇧⌘/ on a Mac) and from the **?** in its dialogs.
 
 ## Features
-- **Connections** with presets; secret keys are stored in the OS keychain, never in a file.
+- **Connections**: S3-compatible (with presets), Azure Blob, Google Cloud Storage, Google Drive,
+  OneDrive, Dropbox, WebDAV, SFTP, FTP/FTPS, SSH terminals and this computer. Import from FileZilla
+  or `~/.ssh/config`. Secrets sit in an encrypted vault whose key is in the OS keychain.
 - **Kybl Storage**: no bucket yet? Sign in with your email and the app connects itself (see below).
-- **List and grid view** (thumbnail size slider, sorting, folders first). Thumbnails are generated locally:
-  JPEGs use the photo's embedded EXIF thumbnail (only the first 256 KB is read), other images are
-  downloaded and resized once. All thumbnails are cached on disk, so revisits are instant.
-- **Browse** folders with breadcrumbs, lazy paging for huge folders, recursive search in a folder.
-- **Quick Look and Get Info**: Space previews images, video, audio, PDF, text and documents, with the file's details, share link and actions beside it (⌘I). Video and audio stream, no download first.
-- **Upload** files or folders (button or drag & drop from Finder) with multipart for big files.
-- **Download** files or whole folders, **delete**, **rename** (files and folders), **new folder**.
-- **Move and copy** files and folders: drag them onto a folder or a breadcrumb, or pick a destination.
-- **Folder sizes** on demand (S3 has none, so Kybl counts them and keeps the result).
-- **Share links** (presigned URLs, 1 hour / 1 day / 7 days), copy `s3://` URI.
-- **Transfer queue** with speed, ETA, cancel and retry.
-- **Folder sync** between a local folder and an S3 prefix, upload or download direction, with ignore
-  rules. Runs from the menu bar with the window closed. Deletions are opt-in, local files go to the
-  Trash, and sync refuses to mass-delete when one side suddenly looks empty.
-- **Settings**: light/dark/system theme, colour schemes and accents, fonts, text size, density,
-  date and size formats, launch at login, reopen the last folder, confirm before delete.
+- **Panes and workspaces**: up to six panes in a window, each with its own view (list, grid,
+  compact, grouped by kind, type, size or date). F5 copies and F6 moves between panes; compare,
+  swap or browse two panes in step. Workspace tabs keep their layouts, and recipes start one fresh.
+- **Terminals**: your computer's shell (PowerShell, Command Prompt, WSL and Git Bash on Windows)
+  or SSH, in a pane below the files (⌘J), following the folder you're in. SSH tunnels start from
+  the sidebar.
+- **Browse**: breadcrumbs, back and forward, Go to folder, lazy paging for huge folders, search
+  through every subfolder (match case, regular expressions), content search on disk and over SSH,
+  favorites, git status in project folders, and the ⌘K command palette.
+- **Thumbnails, Quick Look and Get Info**: thumbnails made and cached locally; Space previews
+  images, video, audio, PDF, text and documents, with the file's details, share link and actions.
+- **Edit**: text and code open in Kybl's own editor and Save uploads them; Edit opens a file in
+  any app and uploads every save, or only when the server's copy hasn't changed.
+- **Files**: upload, download, rename, batch rename, duplicate, new file and folder, delete with
+  undo, drag and drop (also from Finder or Explorer), name clashes asked once, archives opened like
+  folders, compressed and extracted, folder sizes on demand, share links.
+- **Copy / Move to…**: a folder, a bucket or a whole connection to any other, as jobs that
+  continue after a restart.
+- **Mirror**: check what would be copied, deleted or left alone, then mirror; saved mirrors run
+  again with one click.
+- **Folder sync**: upload, download or two-way, from the menu bar with the window closed;
+  conflicts kept as copies, deletions opt-in and confirmed when many go at once.
+- **Mount as a drive** (macOS and Linux), **custom actions** (your own shell commands in the menu,
+  with shortcuts) and **transfers** with speed, time left, pause, speed limits, retry and
+  verify-after-copy.
+- **Settings**: light, dark or system, nine colour schemes, accents, corners, fonts, text size,
+  density, date and size formats, launch at login, reopen the last place, safety questions.
 - **Updates** straight from GitHub Releases, no update server: checks at start and every few hours
   (or from the menu bar), then downloads, verifies the SHA-256 GitHub lists and installs in place
   with one click on macOS, Windows and AppImage; `.deb`/`.rpm`, Android and iOS open the download.
-- **Phones**: the same app on Android and iPhone, with a touch UI; transfers keep going in the
-  background and dropped downloads resume where they stopped (see below).
-- Keyboard: `⌘A` select all, `Delete` delete, `⌘R` refresh, `⌘F` search, arrows navigate, `Backspace` up.
+- **Phones**: the same app on Android and iPhone, with a touch UI, photo backup to any connection;
+  transfers keep going in the background and dropped downloads resume where they stopped (see below).
 
 ## Kybl Storage
 S3 storage run by Kybl, for people without a bucket of their own. Choose **Connect Kybl Storage**,

@@ -5,12 +5,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 const [out, scheme, seedFile, afterFile, w = "1200", h = "750"] = process.argv.slice(2);
 const seed = seedFile && seedFile !== "-" ? readFileSync(seedFile, "utf8") : "{}";
-const after = afterFile ? readFileSync(afterFile, "utf8") : "";
+const lib = readFileSync(new URL("./lib.js", import.meta.url), "utf8");
+const after = afterFile ? `${lib}\n${readFileSync(afterFile, "utf8")}` : "";
 const port = 9300 + Math.floor(Math.random() * 500);
 const chrome = spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", [
   "--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${mkdtempSync(join(tmpdir(), "kc-"))}`,
   "--hide-scrollbars", "--no-first-run", "--no-default-browser-check", "about:blank"], { stdio: "ignore" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// a script that never settles: give up rather than hold the batch
+setTimeout(() => { console.error("timed out"); chrome.kill(); process.exit(1); }, 90_000).unref();
 let ws;
 for (let i = 0; i < 50; i++) {
   try {

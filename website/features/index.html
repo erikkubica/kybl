@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kybl Features · Every screen, menu and flow</title>
+<meta name="description" content="A tour of Kybl in 41 screenshots: split panes, a terminal with Claude Code, connections and tunnels, Quick Look, batch rename, compare, Copy / Move, Mirror, folder sync, workspaces and recipes, every settings page and the phone app.">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="theme-color" content="#d9381f">
+<meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://kybl.app/features/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Kybl">
+<meta property="og:url" content="https://kybl.app/features/">
+<meta property="og:title" content="Kybl Features · Every screen, menu and flow">
+<meta property="og:description" content="Panes, terminal, connections, Quick Look, Copy / Move, Mirror, sync, workspaces, settings and the phone app, in screenshots.">
+<meta property="og:image" content="https://kybl.app/assets/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=Fredoka:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/assets/manual.css">
+<link rel="stylesheet" href="/assets/gallery.css">
+</head>
+<body class="gallery">
+<a class="vh" href="#overview">Skip to the screenshots</a>
+<header class="mtop">
+  <div class="mtop-in">
+    <a class="brand" href="/" aria-label="Kybl home"><img src="/assets/mark.svg" alt="" width="32" height="32"><span>kybl</span></a>
+    <nav aria-label="Main">
+      <a href="/features/" aria-current="page">Features</a>
+      <a href="/manual/">Manual</a>
+      <a class="btn btn-sm" href="/#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main class="g-main">
+  <div class="g-intro">
+    <p class="label">Features</p>
+    <h1>Every screen of Kybl, in 41 pictures.</h1>
+    <p class="body">Real screens from the app, light or dark like your system. Click one to see it full size, or read <a href="/manual/">the manual</a> for how each part works.</p>
+  </div>
+  <nav class="g-chips" aria-label="Sections">
+      <a href="#overview">Overview</a>
+      <a href="#connect">Connect</a>
+      <a href="#browse">Browse and preview</a>
+      <a href="#files">Work with files</a>
+      <a href="#move">Move data</a>
+      <a href="#workspaces">Workspaces</a>
+      <a href="#settings">Settings</a>
+      <a href="#phone">Phone</a>
+  </nav>
+
+  <section class="g-sec" id="overview" aria-labelledby="h-overview">
+    <div class="g-head">
+      <p class="label">Overview</p>
+      <h2 id="h-overview">One window for every place your files live.</h2>
+      <p class="body">Split it into panes, give each its own view, and keep a terminal next to the files it works on.</p>
+    </div>
+    <div class="g-grid">
+      <figure class="g-card wide" id="shot-app-browse">
+        <button class="g-open" type="button" aria-label="Enlarge: Buckets, servers and a terminal side by side">
+          <picture><source srcset="/assets/shots/app-browse-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/app-browse.webp" width="1800" height="1125" alt="Buckets, servers and a terminal side by side. Photos in a Hetzner bucket as a grid, the files of an SFTP server in a list, and an SSH terminal on that server below. Up to six panes in one window." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Buckets, servers and a terminal side by side</h3><p>Photos in a Hetzner bucket as a grid, the files of an SFTP server in a list, and an SSH terminal on that server below. Up to six panes in one window.</p><a class="g-more" href="/manual/#panes">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card wide" id="shot-claude">
+        <button class="g-open" type="button" aria-label="Enlarge: A coding agent in one pane, the project in the others">
+          <picture><source srcset="/assets/shots/claude-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/claude.webp" width="1800" height="1125" alt="A coding agent in one pane, the project in the others. Claude Code runs in a terminal pane on the left. On the right, two compact lists of the same project show git status on every file: modified, untracked, deleted, renamed and in conflict." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>A coding agent in one pane, the project in the others</h3><p>Claude Code runs in a terminal pane on the left. On the right, two compact lists of the same project show git status on every file: modified, untracked, deleted, renamed and in conflict.</p><a class="g-more" href="/manual/#terminal">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-mixed">
+        <button class="g-open" type="button" aria-label="Enlarge: Every pane keeps its own view">
+          <picture><source srcset="/assets/shots/mixed-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/mixed.webp" width="1800" height="1125" alt="Every pane keeps its own view. A photo grid, a compact list grouped by kind, and a smaller grid of the Pictures folder, all in one workspace." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Every pane keeps its own view</h3><p>A photo grid, a compact list grouped by kind, and a smaller grid of the Pictures folder, all in one workspace.</p><a class="g-more" href="/manual/#views">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-grouped">
+        <button class="g-open" type="button" aria-label="Enlarge: Compact lists, grouped">
+          <picture><source srcset="/assets/shots/grouped-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/grouped.webp" width="1800" height="1125" alt="Compact lists, grouped. Group a list by kind, type, size or date, and fit twice as many rows with compact layout." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Compact lists, grouped</h3><p>Group a list by kind, type, size or date, and fit twice as many rows with compact layout.</p><a class="g-more" href="/manual/#views">How it works</a></figcaption>
+      </figure>
+    </div>
+  </section>
+  <section class="g-sec" id="connect" aria-labelledby="h-connect">
+    <div class="g-head">
+      <p class="label">Connect</p>
+      <h2 id="h-connect">Bring every bucket, drive and server.</h2>
+      <p class="body">S3 and anything S3-compatible, Azure, Google Cloud Storage, Google Drive, OneDrive, Dropbox, WebDAV, SFTP, FTP, SSH and this computer.</p>
+    </div>
+    <div class="g-grid">
+      <figure class="g-card" id="shot-app-connect">
+        <button class="g-open" type="button" aria-label="Enlarge: Add a connection">
+          <picture><source srcset="/assets/shots/app-connect-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/app-connect.webp" width="1120" height="1254" alt="Add a connection. Kybl Storage, cloud drives, object storage and servers. Import connections from FileZilla or your SSH config." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Add a connection</h3><p>Kybl Storage, cloud drives, object storage and servers. Import connections from FileZilla or your SSH config.</p><a class="g-more" href="/manual/#add-connection">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-connection">
+        <button class="g-open" type="button" aria-label="Enlarge: Edit a connection">
+          <picture><source srcset="/assets/shots/connection-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/connection.webp" width="1120" height="948" alt="Edit a connection. Provider presets fill in the endpoint. Test connection really connects, and secret keys stay in your system keychain." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Edit a connection</h3><p>Provider presets fill in the endpoint. Test connection really connects, and secret keys stay in your system keychain.</p><a class="g-more" href="/manual/#edit-connection">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-sidebar">
+        <button class="g-open" type="button" aria-label="Enlarge: A sidebar that keeps up">
+          <picture><source srcset="/assets/shots/sidebar-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/sidebar.webp" width="1800" height="1125" alt="A sidebar that keeps up. Favorites on top, then this computer, groups of servers and every connection with its buckets." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>A sidebar that keeps up</h3><p>Favorites on top, then this computer, groups of servers and every connection with its buckets.</p><a class="g-more" href="/manual/#sidebar">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-menu-sidebar">
+        <button class="g-open" type="button" aria-label="Enlarge: Everything about a connection, one right-click away">
+          <picture><source srcset="/assets/shots/menu-sidebar-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/menu-sidebar.webp" width="1800" height="1350" alt="Everything about a connection, one right-click away. Open, copy or move all of it, mount it as a drive, choose how its photos preview, pin it, group it or edit it." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Everything about a connection, one right-click away</h3><p>Open, copy or move all of it, mount it as a drive, choose how its photos preview, pin it, group it or edit it.</p><a class="g-more" href="/manual/#connections">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-menu-bucket">
+        <button class="g-open" type="button" aria-label="Enlarge: Buckets and drives">
+          <picture><source srcset="/assets/shots/menu-bucket-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/menu-bucket.webp" width="1800" height="1125" alt="Buckets and drives. Add a bucket to favorites, copy or move it whole, or mount it as a drive." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Buckets and drives</h3><p>Add a bucket to favorites, copy or move it whole, or mount it as a drive.</p><a class="g-more" href="/manual/#favorites-recents">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-tunnels">
+        <button class="g-open" type="button" aria-label="Enlarge: SSH tunnels">
+          <picture><source srcset="/assets/shots/tunnels-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/tunnels.webp" width="1800" height="1350" alt="SSH tunnels. Start a server&#x27;s tunnels from the sidebar: a database, an admin panel, anything behind it." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>SSH tunnels</h3><p>Start a server&#x27;s tunnels from the sidebar: a database, an admin panel, anything behind it.</p><a class="g-more" href="/manual/#ssh-tunnels">How it works</a></figcaption>
+      </figure>
+    </div>
+  </section>
+  <section class="g-sec" id="browse" aria-labelledby="h-browse">
+    <div class="g-head">
+      <p class="label">Browse and preview</p>
+      <h2 id="h-browse">Find it, look at it, open it.</h2>
+      <p class="body">Thumbnails, Quick Look, a full info panel, search through every subfolder and a command palette for the rest.</p>
+    </div>
+    <div class="g-grid">
+      <figure class="g-card" id="shot-quicklook">
+        <button class="g-open" type="button" aria-label="Enlarge: Quick Look">
+          <picture><source srcset="/assets/shots/quicklook-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/quicklook.webp" width="1800" height="1125" alt="Quick Look. Press Space for images, video, audio, PDF, text and documents, with the file&#x27;s details, share link and actions beside it." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Quick Look</h3><p>Press Space for images, video, audio, PDF, text and documents, with the file&#x27;s details, share link and actions beside it.</p><a class="g-more" href="/manual/#quick-look">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-info">
+        <button class="g-open" type="button" aria-label="Enlarge: Info panel">
+          <picture><source srcset="/assets/shots/info-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/info.webp" width="1800" height="1125" alt="Info panel. The selected file&#x27;s details, the folder&#x27;s size and the connection, at the side of any list." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Info panel</h3><p>The selected file&#x27;s details, the folder&#x27;s size and the connection, at the side of any list.</p><a class="g-more" href="/manual/#get-info">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-search">
+        <button class="g-open" type="button" aria-label="Enlarge: Search every subfolder">
+          <picture><source srcset="/assets/shots/search-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/search.webp" width="1800" height="1125" alt="Search every subfolder. Filter as you type, press Return to search all subfolders. Match case and regular expressions included." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Search every subfolder</h3><p>Filter as you type, press Return to search all subfolders. Match case and regular expressions included.</p><a class="g-more" href="/manual/#search">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-palette">
+        <button class="g-open" type="button" aria-label="Enlarge: Command palette">
+          <picture><source srcset="/assets/shots/palette-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/palette.webp" width="1800" height="1125" alt="Command palette. ⌘K finds commands, connections, folders and settings pages, and runs them." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Command palette</h3><p>⌘K finds commands, connections, folders and settings pages, and runs them.</p><a class="g-more" href="/manual/#command-palette">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-editor">
+        <button class="g-open" type="button" aria-label="Enlarge: Built-in editor">
+          <picture><source srcset="/assets/shots/editor-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/editor.webp" width="1800" height="1125" alt="Built-in editor. Text, Markdown and code open in Kybl&#x27;s own editor with a live preview, and Save uploads straight back." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Built-in editor</h3><p>Text, Markdown and code open in Kybl&#x27;s own editor with a live preview, and Save uploads straight back.</p><a class="g-more" href="/manual/#built-in-editor">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-edit-external">
+        <button class="g-open" type="button" aria-label="Enlarge: Edit in your own app">
+          <picture><source srcset="/assets/shots/edit-external-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/edit-external.webp" width="840" height="544" alt="Edit in your own app. Every save in your editor uploads, or only when nobody changed the file on the server in the meantime." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Edit in your own app</h3><p>Every save in your editor uploads, or only when nobody changed the file on the server in the meantime.</p><a class="g-more" href="/manual/#edit-elsewhere">How it works</a></figcaption>
+      </figure>
+    </div>
+  </section>
+  <section class="g-sec" id="files" aria-labelledby="h-files">
+    <div class="g-head">
+      <p class="label">Work with files</p>
+      <h2 id="h-files">All the file manager moves, on every connection.</h2>
+      <p class="body">Menus grouped the way you think: open, edit, send, make, about, keep and delete.</p>
+    </div>
+    <div class="g-grid">
+      <figure class="g-card" id="shot-menu">
+        <button class="g-open" type="button" aria-label="Enlarge: The file menu">
+          <picture><source srcset="/assets/shots/menu-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/menu.webp" width="1800" height="1125" alt="The file menu. Cut, copy, duplicate, rename, copy or move to another pane, compress, get info, share links and more." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>The file menu</h3><p>Cut, copy, duplicate, rename, copy or move to another pane, compress, get info, share links and more.</p><a class="g-more" href="/manual/#context-menu">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-menu-folder">
+        <button class="g-open" type="button" aria-label="Enlarge: Folders: sync, keep, mirror">
+          <picture><source srcset="/assets/shots/menu-folder-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/menu-folder.webp" width="1800" height="1125" alt="Folders: sync, keep, mirror. Keep &amp; sync puts folder sync, offline copies, drives and Mirror in one place." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Folders: sync, keep, mirror</h3><p>Keep &amp; sync puts folder sync, offline copies, drives and Mirror in one place.</p><a class="g-more" href="/manual/#keep-menu">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-menu-pane">
+        <button class="g-open" type="button" aria-label="Enlarge: The pane menu">
+          <picture><source srcset="/assets/shots/menu-pane-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/menu-pane.webp" width="1800" height="1125" alt="The pane menu. Refresh, go to a folder, add it to favorites, and work with the other pane: same folder, swap, compare, synced browsing." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>The pane menu</h3><p>Refresh, go to a folder, add it to favorites, and work with the other pane: same folder, swap, compare, synced browsing.</p><a class="g-more" href="/manual/#other-pane">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-rename">
+        <button class="g-open" type="button" aria-label="Enlarge: Batch rename">
+          <picture><source srcset="/assets/shots/rename-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/rename.webp" width="1360" height="1282" alt="Batch rename. Numbers, dates, find and replace, case and extension, with every new name shown before you apply it." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Batch rename</h3><p>Numbers, dates, find and replace, case and extension, with every new name shown before you apply it.</p><a class="g-more" href="/manual/#rename">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-archive">
+        <button class="g-open" type="button" aria-label="Enlarge: Open archives like folders">
+          <picture><source srcset="/assets/shots/archive-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/archive.webp" width="1800" height="1125" alt="Open archives like folders. Browse a zip without extracting it, then copy out only what you need." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Open archives like folders</h3><p>Browse a zip without extracting it, then copy out only what you need.</p><a class="g-more" href="/manual/#browse-archive">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-compare-files">
+        <button class="g-open" type="button" aria-label="Enlarge: Compare two files">
+          <picture><source srcset="/assets/shots/compare-files-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/compare-files.webp" width="1800" height="1125" alt="Compare two files. Side by side or inline, with changed words highlighted." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Compare two files</h3><p>Side by side or inline, with changed words highlighted.</p><a class="g-more" href="/manual/#compare-files">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-compare-folders">
+        <button class="g-open" type="button" aria-label="Enlarge: Compare two folders">
+          <picture><source srcset="/assets/shots/compare-folders-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/compare-folders.webp" width="1800" height="1125" alt="Compare two folders. What exists only on one side, what&#x27;s newer, and what&#x27;s the same." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Compare two folders</h3><p>What exists only on one side, what&#x27;s newer, and what&#x27;s the same.</p><a class="g-more" href="/manual/#compare-folders">How it works</a></figcaption>
+      </figure>
+    </div>
+  </section>
+  <section class="g-sec" id="move" aria-labelledby="h-move">
+    <div class="g-head">
+      <p class="label">Move data</p>
+      <h2 id="h-move">Copy, mirror and sync between any two places.</h2>
+      <p class="body">Transfers you can follow, jobs that survive a restart, and folders that stay in step on their own.</p>
+    </div>
+    <div class="g-grid">
+      <figure class="g-card" id="shot-copymove">
+        <button class="g-open" type="button" aria-label="Enlarge: Copy / Move to…">
+          <picture><source srcset="/assets/shots/copymove-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/copymove.webp" width="1120" height="1242" alt="Copy / Move to…. A folder, a bucket or a whole connection to anywhere else, with what to do when names clash." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Copy / Move to…</h3><p>A folder, a bucket or a whole connection to anywhere else, with what to do when names clash.</p><a class="g-more" href="/manual/#copy-move-dialog">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-mirror">
+        <button class="g-open" type="button" aria-label="Enlarge: Mirror">
+          <picture><source srcset="/assets/shots/mirror-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/mirror.webp" width="1240" height="1640" alt="Mirror. Check first: see exactly what would be copied, deleted or left alone, then mirror. Save it and run it again next time." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Mirror</h3><p>Check first: see exactly what would be copied, deleted or left alone, then mirror. Save it and run it again next time.</p><a class="g-more" href="/manual/#mirror">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-transfers">
+        <button class="g-open" type="button" aria-label="Enlarge: Transfers">
+          <picture><source srcset="/assets/shots/transfers-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/transfers.webp" width="1800" height="1125" alt="Transfers. Speed and time left for every file. Pause, set a speed limit and retry what failed." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Transfers</h3><p>Speed and time left for every file. Pause, set a speed limit and retry what failed.</p><a class="g-more" href="/manual/#activity-panel">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-jobs">
+        <button class="g-open" type="button" aria-label="Enlarge: Jobs">
+          <picture><source srcset="/assets/shots/jobs-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/jobs.webp" width="1800" height="1125" alt="Jobs. Big copies between connections run as jobs that pick up after a restart." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Jobs</h3><p>Big copies between connections run as jobs that pick up after a restart.</p><a class="g-more" href="/manual/#jobs-tab">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-app-sync">
+        <button class="g-open" type="button" aria-label="Enlarge: Folder sync">
+          <picture><source srcset="/assets/shots/app-sync-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/app-sync.webp" width="1572" height="966" alt="Folder sync. Keep a folder on this computer in step with any connection, up, down or both ways, even with the window closed." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Folder sync</h3><p>Keep a folder on this computer in step with any connection, up, down or both ways, even with the window closed.</p><a class="g-more" href="/manual/#sync">How it works</a></figcaption>
+      </figure>
+    </div>
+  </section>
+  <section class="g-sec" id="workspaces" aria-labelledby="h-workspaces">
+    <div class="g-head">
+      <p class="label">Workspaces</p>
+      <h2 id="h-workspaces">A layout for every job.</h2>
+      <p class="body">Each workspace tab keeps its panes, places and terminals. Save one as a recipe and start it fresh any time.</p>
+    </div>
+    <div class="g-grid">
+      <figure class="g-card" id="shot-workspaces">
+        <button class="g-open" type="button" aria-label="Enlarge: Recipes">
+          <picture><source srcset="/assets/shots/workspaces-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/workspaces.webp" width="1800" height="1125" alt="Recipes. Start a workspace from a recipe: the shop deploy, photo culling, a coding session with a terminal." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Recipes</h3><p>Start a workspace from a recipe: the shop deploy, photo culling, a coding session with a terminal.</p><a class="g-more" href="/manual/#recipes">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-workspace-settings">
+        <button class="g-open" type="button" aria-label="Enlarge: Workspace settings">
+          <picture><source srcset="/assets/shots/workspace-settings-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/workspace-settings.webp" width="1800" height="1125" alt="Workspace settings. Name, colour, and the recipe it saves: its splits, folders and terminal start commands." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Workspace settings</h3><p>Name, colour, and the recipe it saves: its splits, folders and terminal start commands.</p><a class="g-more" href="/manual/#workspace-settings">How it works</a></figcaption>
+      </figure>
+    </div>
+  </section>
+  <section class="g-sec" id="settings" aria-labelledby="h-settings">
+    <div class="g-head">
+      <p class="label">Settings</p>
+      <h2 id="h-settings">Make it yours.</h2>
+      <p class="body">Themes and colour schemes, fonts and density, transfer limits, custom actions, drives and every connection in one list.</p>
+    </div>
+    <div class="g-grid">
+      <figure class="g-card" id="shot-settings-general">
+        <button class="g-open" type="button" aria-label="Enlarge: General">
+          <picture><source srcset="/assets/shots/settings-general-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-general.webp" width="1800" height="1125" alt="General. Reopen the last place, the menu bar icon, launch at login, safety questions and updates." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>General</h3><p>Reopen the last place, the menu bar icon, launch at login, safety questions and updates.</p><a class="g-more" href="/manual/#settings-general">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-settings-appearance">
+        <button class="g-open" type="button" aria-label="Enlarge: Appearance">
+          <picture><source srcset="/assets/shots/settings-appearance-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-appearance.webp" width="1800" height="1125" alt="Appearance. Light, dark or system, nine colour schemes, accents, corners, fonts and text size." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Appearance</h3><p>Light, dark or system, nine colour schemes, accents, corners, fonts and text size.</p><a class="g-more" href="/manual/#settings-appearance">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-settings-browsing">
+        <button class="g-open" type="button" aria-label="Enlarge: Browsing">
+          <picture><source srcset="/assets/shots/settings-browsing-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-browsing.webp" width="1800" height="1125" alt="Browsing. Thumbnails or placeholders, folders first, dates, list columns and file sizes." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Browsing</h3><p>Thumbnails or placeholders, folders first, dates, list columns and file sizes.</p><a class="g-more" href="/manual/#settings-browsing">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-settings-transfers">
+        <button class="g-open" type="button" aria-label="Enlarge: Transfers and sharing">
+          <picture><source srcset="/assets/shots/settings-transfers-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-transfers.webp" width="1800" height="1125" alt="Transfers and sharing. Download folder, parallel files and parts, speed limits and checking after copying." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Transfers and sharing</h3><p>Download folder, parallel files and parts, speed limits and checking after copying.</p><a class="g-more" href="/manual/#settings-transfers">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-settings-actions">
+        <button class="g-open" type="button" aria-label="Enlarge: Actions">
+          <picture><source srcset="/assets/shots/settings-actions-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-actions.webp" width="1800" height="1125" alt="Actions. Your own commands in the right-click menu, with their own shortcuts, here or on the server." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Actions</h3><p>Your own commands in the right-click menu, with their own shortcuts, here or on the server.</p><a class="g-more" href="/manual/#actions">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-settings-folder-sync">
+        <button class="g-open" type="button" aria-label="Enlarge: Folder sync">
+          <picture><source srcset="/assets/shots/settings-folder-sync-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-folder-sync.webp" width="1800" height="1125" alt="Folder sync. Every synced folder, its state, conflicts kept as copies and deletions waiting for you." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Folder sync</h3><p>Every synced folder, its state, conflicts kept as copies and deletions waiting for you.</p><a class="g-more" href="/manual/#sync">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-settings-drives">
+        <button class="g-open" type="button" aria-label="Enlarge: Drives">
+          <picture><source srcset="/assets/shots/settings-drives-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-drives.webp" width="1800" height="1125" alt="Drives. Connections mounted as drives in Finder or Explorer, with their cache." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Drives</h3><p>Connections mounted as drives in Finder or Explorer, with their cache.</p><a class="g-more" href="/manual/#drives">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-settings-connections">
+        <button class="g-open" type="button" aria-label="Enlarge: Connections">
+          <picture><source srcset="/assets/shots/settings-connections-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-connections.webp" width="1800" height="1125" alt="Connections. Every connection with its address and group, to filter, organise and edit." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Connections</h3><p>Every connection with its address and group, to filter, organise and edit.</p><a class="g-more" href="/manual/#settings-connections">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-settings-cache-and-data">
+        <button class="g-open" type="button" aria-label="Enlarge: Cache and data">
+          <picture><source srcset="/assets/shots/settings-cache-and-data-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-cache-and-data.webp" width="1800" height="1125" alt="Cache and data. What thumbnails and opened files use on disk, and a reset." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Cache and data</h3><p>What thumbnails and opened files use on disk, and a reset.</p><a class="g-more" href="/manual/#settings-cache">How it works</a></figcaption>
+      </figure>
+      <figure class="g-card" id="shot-settings-keyboard-shortcuts">
+        <button class="g-open" type="button" aria-label="Enlarge: Keyboard shortcuts">
+          <picture><source srcset="/assets/shots/settings-keyboard-shortcuts-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-keyboard-shortcuts.webp" width="1800" height="1125" alt="Keyboard shortcuts. Every shortcut, with Ctrl in place of ⌘ on Windows and Linux." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Keyboard shortcuts</h3><p>Every shortcut, with Ctrl in place of ⌘ on Windows and Linux.</p><a class="g-more" href="/manual/#shortcuts">How it works</a></figcaption>
+      </figure>
+    </div>
+  </section>
+  <section class="g-sec" id="phone" aria-labelledby="h-phone">
+    <div class="g-head">
+      <p class="label">Phone</p>
+      <h2 id="h-phone">The same connections in your pocket.</h2>
+      <p class="body">Android and iPhone, with a touch layout, photo backup and transfers that keep going in the background.</p>
+    </div>
+    <div class="g-grid">
+      <figure class="g-card wide" id="shot-phone">
+        <button class="g-open" type="button" aria-label="Enlarge: Kybl on a phone">
+          <picture><source srcset="/assets/shots/phone-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/phone.webp" width="1800" height="1232" alt="Kybl on a phone. Your connections, a photo grid of a bucket, and a full-screen viewer with share, download and info." loading="lazy" decoding="async"></picture>
+        </button>
+        <figcaption><h3>Kybl on a phone</h3><p>Your connections, a photo grid of a bucket, and a full-screen viewer with share, download and info.</p><a class="g-more" href="/manual/#phone">How it works</a></figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <div class="g-end">
+    <h2>Ready when you are.</h2>
+    <p class="body">Free for macOS, Windows, Linux, Android and iPhone.</p>
+    <p class="g-end-actions"><a class="btn btn-iron" href="/#download">Download Kybl</a> <a class="btn btn-line" href="/manual/">Read the manual</a></p>
+  </div>
+</main>
+
+<dialog class="g-box" aria-label="Screenshot">
+  <figure>
+    <img alt="">
+    <figcaption><b></b> <span></span> <a class="g-more" href="/manual/">How it works</a></figcaption>
+  </figure>
+  <button type="button" class="g-x" aria-label="Close" title="Close (Esc)">×</button>
+  <button type="button" class="g-prev" aria-label="Previous screenshot" title="Previous (←)">‹</button>
+  <button type="button" class="g-next" aria-label="Next screenshot" title="Next (→)">›</button>
+</dialog>
+
+<script>
+(() => {
+  const cards = [...document.querySelectorAll(".g-card")];
+  const box = document.querySelector(".g-box");
+  const img = box.querySelector("img");
+  const [title, text] = [box.querySelector("figcaption b"), box.querySelector("figcaption span")];
+  const more = box.querySelector(".g-more");
+  let at = 0;
+  const show = (i) => {
+    at = (i + cards.length) % cards.length;
+    const c = cards[at];
+    const src = c.querySelector("img");
+    img.src = src.currentSrc || src.src;
+    img.alt = src.alt;
+    title.textContent = c.querySelector("h3").textContent;
+    text.textContent = c.querySelector("figcaption p").textContent;
+    more.href = c.querySelector(".g-more").getAttribute("href");
+    history.replaceState(null, "", "#" + c.id);
+  };
+  cards.forEach((c, i) => c.querySelector(".g-open").addEventListener("click", () => { show(i); box.showModal(); }));
+  box.querySelector(".g-x").addEventListener("click", () => box.close());
+  box.querySelector(".g-prev").addEventListener("click", () => show(at - 1));
+  box.querySelector(".g-next").addEventListener("click", () => show(at + 1));
+  box.addEventListener("click", (e) => { if (e.target === box) box.close(); });
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft") show(at - 1);
+    else if (e.key === "ArrowRight") show(at + 1);
+  });
+  box.addEventListener("close", () => history.replaceState(null, "", location.pathname));
+  // a link to one screenshot (/features/#shot-mirror) opens it
+  const first = cards.findIndex((c) => "#" + c.id === location.hash);
+  if (first >= 0) { show(first); box.showModal(); }
+})();
+</script>
+</body>
+</html>

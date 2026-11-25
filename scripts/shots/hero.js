@@ -1,1 +1,2 @@
-const t = document.querySelector('.transfers [aria-expanded="true"]'); if (t) t.click();
+const t = $('.transfers [aria-expanded="true"]'); if (t) t.click();
+await openServerRight();

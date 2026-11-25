@@ -1,0 +1,1946 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kybl Manual · How to use every feature</title>
+<meta name="description" content="The Kybl user manual: connect S3, Google Drive, OneDrive, Dropbox, SFTP, FTP and WebDAV, browse with split panes, copy and move between connections, sync folders, mirror sites, use the SSH terminal, custom actions and the phone app.">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="theme-color" content="#d9381f">
+<meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://kybl.app/manual/">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Kybl">
+<meta property="og:url" content="https://kybl.app/manual/">
+<meta property="og:title" content="Kybl Manual · How to use every feature">
+<meta property="og:description" content="Everything Kybl does, explained step by step: connections, panes, transfers, sync, mirror, terminal, actions and the phone app.">
+<meta property="og:image" content="https://kybl.app/assets/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=Fredoka:wght@500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/assets/manual.css">
+<script>document.documentElement.classList.add("js")</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Kybl Manual: how to use every feature",
+  "description": "The Kybl user manual for macOS, Windows, Linux, Android and iPhone.",
+  "url": "https://kybl.app/manual/",
+  "inLanguage": "en",
+  "dateModified": "2026-11-26",
+  "image": "https://kybl.app/assets/og.jpg",
+  "proficiencyLevel": "Beginner",
+  "about": { "@type": "SoftwareApplication", "name": "Kybl", "applicationCategory": "UtilitiesApplication", "operatingSystem": "macOS, Windows, Linux, Android, iOS", "url": "https://kybl.app/" },
+  "publisher": { "@type": "Organization", "name": "Kybl", "url": "https://kybl.app/", "logo": { "@type": "ImageObject", "url": "https://kybl.app/assets/icon-512.png" } }
+}
+</script>
+</head>
+<body class="manual">
+<a class="vh" href="#manual">Skip to the manual</a>
+<header class="mtop">
+  <div class="mtop-in">
+    <a class="brand" href="/" aria-label="Kybl home"><img src="/assets/mark.svg" alt="" width="32" height="32"><span>kybl</span></a>
+    <nav aria-label="Main">
+      <a href="/features/">Features</a>
+      <a href="/manual/" aria-current="page">Manual</a>
+      <a class="btn btn-sm" href="/#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<div class="mlayout">
+  <aside class="toc-side">
+    <details class="toc-box" id="toc-box">
+      <summary>Contents</summary>
+      <div class="toc-inner">
+        <label class="toc-search">
+          <span class="vh">Search the manual</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input type="search" id="toc-q" placeholder="Search the manual" autocomplete="off" spellcheck="false">
+        </label>
+        <nav class="toc" id="toc" aria-label="Manual contents">
+<!--TOC-->
+          <ol>
+            <li><a href="#getting-started">Getting started</a>
+              <ol>
+                <li><a href="#install-mac">Install on macOS</a></li>
+                <li><a href="#install-windows">Install on Windows</a></li>
+                <li><a href="#install-linux">Install on Linux</a></li>
+                <li><a href="#install-iphone">Install on iPhone and iPad</a></li>
+                <li><a href="#install-android">Install on Android</a></li>
+                <li><a href="#first-launch">First launch</a></li>
+                <li><a href="#window-tour">A tour of the window</a></li>
+                <li><a href="#sidebar">The sidebar</a></li>
+                <li><a href="#closing">Closing and quitting</a></li>
+                <li><a href="#getting-help">Getting help</a></li>
+              </ol>
+            </li>
+            <li><a href="#connections">Connections</a>
+              <ol>
+                <li><a href="#add-connection">Add a connection</a></li>
+                <li><a href="#s3-compatible">S3-compatible storage</a></li>
+                <li><a href="#azure">Azure Blob Storage</a></li>
+                <li><a href="#gcs">Google Cloud Storage</a></li>
+                <li><a href="#cloud-drives">Google Drive, OneDrive and Dropbox</a></li>
+                <li><a href="#webdav">WebDAV (Nextcloud, ownCloud, Synology…)</a></li>
+                <li><a href="#sftp">SSH and SFTP servers</a></li>
+                <li><a href="#ftp">FTP and FTPS servers</a></li>
+                <li><a href="#this-computer">This computer</a></li>
+                <li><a href="#certificates">Certificates and trust</a></li>
+                <li><a href="#import">Import from FileZilla and other apps</a></li>
+                <li><a href="#edit-connection">Edit or delete a connection</a></li>
+                <li><a href="#groups">Groups, pins and favorites</a></li>
+                <li><a href="#secrets">Where your passwords are kept</a></li>
+              </ol>
+            </li>
+            <li><a href="#kybl-storage">Kybl Storage</a>
+              <ol>
+                <li><a href="#kybl-storage-what">What you get</a></li>
+                <li><a href="#kybl-storage-connect">Connect Kybl Storage</a></li>
+                <li><a href="#kybl-storage-keys">Keys and access</a></li>
+              </ol>
+            </li>
+            <li><a href="#browsing">Browsing</a>
+              <ol>
+                <li><a href="#navigating">Moving around</a></li>
+                <li><a href="#breadcrumbs">Breadcrumbs and Go to folder</a></li>
+                <li><a href="#views">List and grid</a></li>
+                <li><a href="#thumbnails">Thumbnails and photos</a></li>
+                <li><a href="#sorting">Sorting</a></li>
+                <li><a href="#hidden-files">Hidden files</a></li>
+                <li><a href="#search">Search and filter</a></li>
+                <li><a href="#favorites-recents">Favorites and recent places</a></li>
+                <li><a href="#folder-info">Folder info panel and git</a></li>
+                <li><a href="#big-folders">Very large folders</a></li>
+              </ol>
+            </li>
+            <li><a href="#selecting">Selecting files</a>
+              <ol>
+                <li><a href="#select-mouse">With the mouse</a></li>
+                <li><a href="#select-keyboard">With the keyboard</a></li>
+              </ol>
+            </li>
+            <li><a href="#preview">Previewing and file info</a>
+              <ol>
+                <li><a href="#quick-look">Quick Look</a></li>
+                <li><a href="#get-info">Get Info</a></li>
+                <li><a href="#folder-sizes">Folder sizes</a></li>
+                <li><a href="#opening-files">Opening files</a></li>
+                <li><a href="#viewer-limits">What the built-in viewers open</a></li>
+              </ol>
+            </li>
+            <li><a href="#editing">Editing files</a>
+              <ol>
+                <li><a href="#built-in-editor">The built-in editor</a></li>
+                <li><a href="#edit-elsewhere">Edit in your own app</a></li>
+                <li><a href="#new-file">Make a new file</a></li>
+              </ol>
+            </li>
+            <li><a href="#file-operations">Working with files and folders</a>
+              <ol>
+                <li><a href="#context-menu">The right-click menu</a></li>
+                <li><a href="#new-folder">New folder</a></li>
+                <li><a href="#copy-paste">Copy, cut and paste</a></li>
+                <li><a href="#duplicate">Duplicate</a></li>
+                <li><a href="#rename">Rename and batch rename</a></li>
+                <li><a href="#delete">Delete and the Trash</a></li>
+                <li><a href="#undo">Undo</a></li>
+                <li><a href="#conflicts">When names clash</a></li>
+                <li><a href="#move-up">Move to the parent folder</a></li>
+                <li><a href="#upload-download">Upload and download</a></li>
+                <li><a href="#copy-path">Copy path and S3 URI</a></li>
+                <li><a href="#permissions">Permissions and links on servers</a></li>
+              </ol>
+            </li>
+            <li><a href="#drag-and-drop">Drag and drop</a>
+              <ol>
+                <li><a href="#drag-inside">Inside Kybl</a></li>
+                <li><a href="#drag-in">From Finder or Explorer into Kybl</a></li>
+                <li><a href="#drag-out">From Kybl to other apps</a></li>
+                <li><a href="#drag-panes">Rearranging panes</a></li>
+              </ol>
+            </li>
+            <li><a href="#copy-move">Copy and move between connections</a>
+              <ol>
+                <li><a href="#copy-to-submenus">Copy to ▸ and Move to ▸</a></li>
+                <li><a href="#copy-move-dialog">The Copy / Move to… dialog</a></li>
+                <li><a href="#copy-move-options">Options</a></li>
+                <li><a href="#jobs-progress">Following a job</a></li>
+              </ol>
+            </li>
+            <li><a href="#panes">Panes</a>
+              <ol>
+                <li><a href="#split">Split a pane</a></li>
+                <li><a href="#pane-focus">Moving between panes</a></li>
+                <li><a href="#commander-keys">Two-pane keys</a></li>
+                <li><a href="#other-pane">Working with the other pane</a></li>
+                <li><a href="#synced-browsing">Synced browsing</a></li>
+                <li><a href="#close-panes">Closing panes</a></li>
+              </ol>
+            </li>
+            <li><a href="#workspaces">Workspaces</a>
+              <ol>
+                <li><a href="#workspace-tabs">Make and switch workspaces</a></li>
+                <li><a href="#workspace-settings">Colours and settings</a></li>
+                <li><a href="#recipes">Recipes and start options</a></li>
+                <li><a href="#workspace-moving">Moving things between workspaces</a></li>
+              </ol>
+            </li>
+            <li><a href="#terminal">Terminal</a>
+              <ol>
+                <li><a href="#open-terminal">Open a terminal</a></li>
+                <li><a href="#follow-folder">Following the folder</a></li>
+                <li><a href="#terminal-menu">The terminal menu</a></li>
+                <li><a href="#terminal-paste">Safe pasting</a></li>
+                <li><a href="#ssh-tunnels">SSH tunnels</a></li>
+              </ol>
+            </li>
+            <li><a href="#archives">Archives (zip and tar)</a>
+              <ol>
+                <li><a href="#compress">Compress</a></li>
+                <li><a href="#extract">Extract</a></li>
+                <li><a href="#browse-archive">Open an archive like a folder</a></li>
+              </ol>
+            </li>
+            <li><a href="#compare">Compare</a>
+              <ol>
+                <li><a href="#compare-files">Compare two files</a></li>
+                <li><a href="#compare-folders">Compare two folders</a></li>
+              </ol>
+            </li>
+            <li><a href="#transfers">Transfers and activity</a>
+              <ol>
+                <li><a href="#activity-panel">The Activity panel</a></li>
+                <li><a href="#pause-retry">Pause, resume, cancel and retry</a></li>
+                <li><a href="#resume">Resume after a restart</a></li>
+                <li><a href="#speed-limits">Speed limits and how many at once</a></li>
+                <li><a href="#verify">Verify after transfer</a></li>
+                <li><a href="#activity-log">The log</a></li>
+                <li><a href="#phone-transfers">On phones</a></li>
+              </ol>
+            </li>
+            <li><a href="#sharing">Sharing</a>
+              <ol>
+                <li><a href="#share-links">Share links</a></li>
+                <li><a href="#share-paths">Copy path or S3 URI</a></li>
+                <li><a href="#share-phone">From your phone</a></li>
+              </ol>
+            </li>
+            <li><a href="#sync">Folder sync</a>
+              <ol>
+                <li><a href="#sync-setup">Sync a folder</a></li>
+                <li><a href="#sync-directions">Directions</a></li>
+                <li><a href="#sync-options">Options</a></li>
+                <li><a href="#sync-deletions">Deletions waiting</a></li>
+                <li><a href="#sync-conflicts">Conflicts</a></li>
+                <li><a href="#kyblik">Kyblík in the menu bar</a></li>
+                <li><a href="#sync-background">Syncing with the window closed</a></li>
+                <li><a href="#sync-manage">Pause, sync now, stop</a></li>
+              </ol>
+            </li>
+            <li><a href="#keep-and-sync">Keep &amp; sync and jobs</a>
+              <ol>
+                <li><a href="#keep-menu">What's in Keep &amp; sync</a></li>
+                <li><a href="#jobs-tab">The Jobs tab</a></li>
+              </ol>
+            </li>
+            <li><a href="#mirror">Mirror</a>
+              <ol>
+                <li><a href="#mirror-run">Mirror a folder</a></li>
+                <li><a href="#mirror-options">Options</a></li>
+                <li><a href="#saved-mirrors">Save and re-run a mirror</a></li>
+              </ol>
+            </li>
+            <li><a href="#actions">Custom actions</a>
+              <ol>
+                <li><a href="#actions-create">Make an action</a></li>
+                <li><a href="#actions-placeholders">Placeholders</a></li>
+                <li><a href="#actions-where">Where actions run</a></li>
+                <li><a href="#actions-options">More options</a></li>
+                <li><a href="#actions-run">Run an action</a></li>
+              </ol>
+            </li>
+            <li><a href="#command-palette">Command palette</a>
+              <ol>
+                <li><a href="#palette-use">Using it</a></li>
+                <li><a href="#palette-prefixes">Prefixes</a></li>
+                <li><a href="#palette-commands">What's in it</a></li>
+              </ol>
+            </li>
+            <li><a href="#settings">Settings</a>
+              <ol>
+                <li><a href="#settings-general">General</a></li>
+                <li><a href="#settings-appearance">Appearance</a></li>
+                <li><a href="#settings-browsing">Browsing</a></li>
+                <li><a href="#settings-transfers">Transfers and sharing</a></li>
+                <li><a href="#settings-actions">Actions</a></li>
+                <li><a href="#settings-sync">Folder sync</a></li>
+                <li><a href="#settings-drives">Drives</a></li>
+                <li><a href="#settings-connections">Connections</a></li>
+                <li><a href="#settings-cache">Cache and data</a></li>
+                <li><a href="#settings-shortcuts">Keyboard shortcuts</a></li>
+              </ol>
+            </li>
+            <li><a href="#drives">Drives</a>
+              <ol>
+                <li><a href="#mount">Mount a drive</a></li>
+                <li><a href="#drive-behaviour">How drives behave</a></li>
+                <li><a href="#drive-manage">Manage drives</a></li>
+              </ol>
+            </li>
+            <li><a href="#what-works-where">What works where</a>
+            </li>
+            <li><a href="#phone">The phone app</a>
+              <ol>
+                <li><a href="#phone-home">Home</a></li>
+                <li><a href="#phone-browse">Browsing</a></li>
+                <li><a href="#phone-viewer">Photos, videos and documents</a></li>
+                <li><a href="#phone-backup">Photo backup</a></li>
+                <li><a href="#phone-share">Sharing into Kybl</a></li>
+                <li><a href="#phone-downloads">Downloads and background transfers</a></li>
+                <li><a href="#phone-lock">App lock</a></li>
+                <li><a href="#phone-settings">Phone settings</a></li>
+                <li><a href="#phone-differences">What's different from the computer</a></li>
+              </ol>
+            </li>
+            <li><a href="#updates">Updates</a>
+              <ol>
+                <li><a href="#update-check">How Kybl checks</a></li>
+                <li><a href="#update-install">Installing an update</a></li>
+              </ol>
+            </li>
+            <li><a href="#shortcuts">Keyboard shortcuts</a>
+              <ol>
+                <li><a href="#keys-general">General</a></li>
+                <li><a href="#keys-navigation">Moving around</a></li>
+                <li><a href="#keys-files">Files</a></li>
+                <li><a href="#keys-panes">Panes, terminal and workspaces</a></li>
+                <li><a href="#keys-quicklook">Quick Look</a></li>
+                <li><a href="#keys-editor">Editor, viewers and compare</a></li>
+                <li><a href="#keys-palette">Command palette</a></li>
+              </ol>
+            </li>
+            <li><a href="#troubleshooting">Troubleshooting</a>
+              <ol>
+                <li><a href="#ts-cant-connect">"Couldn't connect" or "Can't reach the storage server"</a></li>
+                <li><a href="#ts-access-denied">"Access denied"</a></li>
+                <li><a href="#ts-keys">"Doesn't recognise the access key" or "secret key doesn't match"</a></li>
+                <li><a href="#ts-region">"This bucket lives in another region"</a></li>
+                <li><a href="#ts-clock">"Your computer's clock is off"</a></li>
+                <li><a href="#ts-trust">Certificate, host key or plain-FTP questions</a></li>
+                <li><a href="#ts-sign-in">"Sign in again"</a></li>
+                <li><a href="#ts-keychain">Keychain or keyring prompts</a></li>
+                <li><a href="#ts-install">macOS won't open it, or Windows SmartScreen warns</a></li>
+                <li><a href="#ts-other">Other messages</a></li>
+                <li><a href="#ts-report">Reporting a problem</a></li>
+              </ol>
+            </li>
+            <li><a href="#privacy">Privacy</a>
+            </li>
+          </ol>
+        </nav>
+        <p class="toc-empty" id="toc-empty" hidden>Nothing matches. Try another word.</p>
+      </div>
+    </details>
+  </aside>
+
+  <main class="mdoc" id="manual">
+    <div class="mhero">
+      <p class="label">Kybl manual</p>
+      <h1>How to use every part of Kybl</h1>
+      <p class="lede">Kybl is one file manager for your buckets, cloud drives, servers and your own disk. This manual walks through everything it does, task by task, on your computer and on your phone.</p>
+      <div class="quick" aria-label="Popular topics">
+        <a href="#connections">Add a connection</a>
+        <a href="#panes">Split panes</a>
+        <a href="#copy-move">Copy between connections</a>
+        <a href="#sync">Sync a folder</a>
+        <a href="#mirror">Mirror a site</a>
+        <a href="#shortcuts">Shortcuts</a>
+        <a href="#troubleshooting">Troubleshooting</a>
+      </div>
+    </div>
+
+    <div class="note"><p><b>Shortcuts in this manual</b> are written for the Mac. On Windows and Linux, press <kbd>Ctrl</kbd> where you see <kbd>⌘</kbd> and <kbd>Alt</kbd> where you see <kbd>⌥</kbd>. <kbd>⇧</kbd> is Shift and <kbd>⌃</kbd> is Control on every system. "This computer" means the built-in connection to your own disk; the app calls it <b>This Mac</b> or <b>This PC</b>.</p></div>
+
+    <!-- ======================================================= -->
+    <section id="getting-started" aria-labelledby="h-getting-started">
+      <h2 id="h-getting-started">Getting started</h2>
+      <p class="intro">Kybl is free. It runs on macOS (Apple Silicon and Intel), Windows, Linux, Android and iPhone or iPad. Get it from the <a href="/#download">download section</a> on the homepage.</p>
+
+      <h3 id="install-mac">Install on macOS</h3>
+      <ol class="steps">
+        <li>Download the build for your Mac: <b>Apple Silicon</b> (M1 and newer) or <b>Intel</b>.</li>
+        <li>Open the download and drag Kybl into your Applications folder.</li>
+        <li>Open Kybl. The first time, macOS may say it can't check the app. Open <b>System Settings → Privacy &amp; Security</b>, scroll down and click <b>Open Anyway</b>.</li>
+      </ol>
+      <p>Updates keep the same signature, so macOS won't ask again.</p>
+
+      <h3 id="install-windows">Install on Windows</h3>
+      <ol class="steps">
+        <li>Download the 64-bit installer and run it.</li>
+        <li>If Windows SmartScreen warns you, click <b>More info</b>, then <b>Run anyway</b>.</li>
+        <li>Start Kybl from the Start menu.</li>
+      </ol>
+
+      <h3 id="install-linux">Install on Linux</h3>
+      <p>Pick the <b>AppImage</b> (it updates itself), or the <b>.deb</b> or <b>.rpm</b> package for your distribution. Make the AppImage executable and run it, or install the package as usual.</p>
+      <div class="note"><p>Kybl keeps your passwords and keys locked with a key stored in your system keyring. On Linux that needs a Secret Service, such as <b>GNOME Keyring</b> or <b>KWallet</b>. Most desktops already have one.</p></div>
+
+      <h3 id="install-iphone">Install on iPhone and iPad</h3>
+      <p>The iPhone app isn't in the App Store, so you install it yourself ("sideloading"). It needs iOS 15 or newer.</p>
+      <ol class="steps">
+        <li>Install <a href="https://altstore.io">AltStore</a> or <a href="https://sidestore.io">SideStore</a> on your iPhone.</li>
+        <li>Add the Kybl source. On the homepage, tap <b>Add to AltStore</b> or <b>SideStore</b>, or add this source address by hand:<br><code>https://github.com/erikkubica/kybl/releases/latest/download/altstore-source.json</code></li>
+        <li>Install Kybl from the source. New versions then show up as updates in AltStore or SideStore.</li>
+      </ol>
+      <p>You can also install the <b>Kybl.ipa</b> file with Sideloadly. A free Apple ID signs apps for 7 days; AltStore and SideStore renew them on their own.</p>
+
+      <h3 id="install-android">Install on Android</h3>
+      <ol class="steps">
+        <li>On your phone, download <b>Kybl.apk</b> (Android 7 or newer).</li>
+        <li>Open it. When the phone asks, allow your browser to install apps.</li>
+        <li>Later versions install over the old one, keeping your connections.</li>
+      </ol>
+
+      <h3 id="first-launch">First launch</h3>
+      <p>With no connections yet, Kybl shows a welcome card with two ways in:</p>
+      <ul>
+        <li><b>Connect Kybl Storage</b> gives you 10 GB of free storage in the EU, with no keys to type. See <a href="#kybl-storage">Kybl Storage</a>.</li>
+        <li><b>Add another S3 connection with keys</b>, or <b>New connection</b> at the bottom of the sidebar, connects your own storage or server. See <a href="#connections">Connections</a>.</li>
+      </ul>
+      <p>Kybl remembers where you were. Next time it reopens each pane at its last folder (you can turn this off in <a href="#settings-general">Settings → General</a>).</p>
+
+      <h3 id="window-tour">A tour of the window</h3>
+      <figure class="shot"><picture><source srcset="/assets/shots/app-browse-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/app-browse.webp" alt="The Kybl window with the sidebar of connections on the left and three panes: a grid of photo thumbnails in an S3 bucket, a list of files on an SSH server, and a terminal below them." loading="lazy"></picture><figcaption>The sidebar on the left, three panes on the right: a bucket, a server and a terminal.</figcaption></figure>
+      <dl>
+        <dt>Sidebar</dt>
+        <dd>Your favorites, This computer's folders and your connections. Connections with buckets or drives fold open to show them. The bottom has <b>New connection</b>, a terminal button, the folder-sync status and <b>Settings</b>. Fold it away with <kbd>⌥⌘S</kbd>; see <a href="#sidebar">The sidebar</a>.</dd>
+        <dt>Workspace tabs</dt>
+        <dd>The strip along the top. Each tab is a saved layout of panes, like browser tabs. See <a href="#workspaces">Workspaces</a>.</dd>
+        <dt>Panes</dt>
+        <dd>Each pane shows one folder on one connection, or a terminal. You can have up to six. See <a href="#panes">Panes</a>.</dd>
+        <dt>Pane toolbar</dt>
+        <dd>At the top of each pane: the connection button, the path (breadcrumbs), the <b>…</b> menu (refresh, Go to folder, Add to favorites, the other pane and more), <b>Upload or create</b>, <b>Sort and group</b>, <b>Filter or search</b>, <b>Terminal</b> and the <b>Panes</b> button. You can drag a pane by the empty part of its toolbar.</dd>
+        <dt>Status bar</dt>
+        <dd>Under each pane: how many items and how big, what you've selected, and the size of the whole folder once Kybl has added it up. At its right end are the list, grid and compact buttons, and an icon that opens the <a href="#folder-info">folder info panel</a>.</dd>
+        <dt>Activity panel</dt>
+        <dd>At the bottom of the window. It lists uploads, downloads, copy jobs and a plain-language log. See <a href="#transfers">Transfers and activity</a>.</dd>
+      </dl>
+
+      <h3 id="sidebar">The sidebar</h3>
+      <ul>
+        <li>The sidebar has four parts: <b>Favorites</b>, <b>This computer</b> (its folders: Home, Documents and so on), <b>Groups</b> and <b>Connections</b> (the ones in no group). Click a heading to fold it shut; each has a sort menu.</li>
+        <li><b>Favorites</b> are folders and roots you added with <b>Add to favorites</b>. Click one to open it; hover and click × to remove it. A favorite whose connection is gone turns grey.</li>
+        <li><b>Connections</b> lists everything you added. S3 buckets and cloud-drive roots show under their connection. A server with one root (FTP, SFTP, WebDAV) is a single row. You can file connections into your own <a href="#groups">groups</a>.</li>
+        <li>Your recent places are in the <a href="#command-palette">command palette</a> and on an empty pane.</li>
+        <li><b>Find connection</b> appears at the top when you have more than eight connections; press <kbd>⌥⌘F</kbd> to show it any time. It searches names, servers, user names, kinds and groups. Arrow keys and <kbd>↵</kbd> open a result.</li>
+        <li>Right-click a bucket to <b>Hide from the sidebar</b> (a row such as "2 hidden" under the connection lets you bring it back with the eye icon), to <b>Add to favorites</b>, or to use <b>Copy / Move to…</b>.</li>
+      </ul>
+      <figure class="shot"><picture><source srcset="/assets/shots/sidebar-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/sidebar.webp" alt="The sidebar with Favorites, This Mac, a Servers group and connections with their buckets." loading="lazy"></picture><figcaption>Favorites on top, then this computer, groups and connections.</figcaption></figure>
+      <p><b>Folded sidebar.</b> Folding hides the sidebar completely; only its button stays, next to the window controls. Press <kbd>⌥⌘F</kbd> and the full sidebar slides in over the panes so you can find a connection; it goes away when you pick something or move the pointer off it. Kybl never folds or unfolds the sidebar on its own.</p>
+
+      <h3 id="closing">Closing and quitting</h3>
+      <ul>
+        <li>Closing the window keeps Kybl running in the menu bar (macOS) or the system tray (Windows, Linux), so folder sync, jobs and drives keep working. Turn this off in <a href="#settings-general">Settings → General</a> with <b>Keep running in the menu bar</b>.</li>
+        <li>To quit, choose <b>Quit Kybl</b> from the tray icon, or press <kbd>⌘Q</kbd>. If transfers are running or the editor has unsaved changes, Kybl asks first. Quitting stops transfers, cleans up unfinished uploads and removes partial downloads.</li>
+        <li><b>Open at login</b> starts Kybl quietly in the tray, so synced folders stay current.</li>
+      </ul>
+      <div class="note"><p>Windows and Linux have no menu bar at the top of the window. Every menu command is still there, from the keyboard, the right-click menus and the <a href="#command-palette">command palette</a> (<kbd>⌘K</kbd>).</p></div>
+
+      <h3 id="getting-help">Getting help</h3>
+      <ul>
+        <li>Press <kbd>F1</kbd> on any system to open this manual in your browser. On macOS, <kbd>⇧⌘/</kbd> does the same.</li>
+        <li>On macOS the <b>Help</b> menu has <b>Kybl Manual</b>, <b>Keyboard Shortcuts</b>, <b>What's New in Kybl</b> and <b>Report a Problem…</b>. The <a href="#command-palette">command palette</a> has the same four commands, so they work on Windows and Linux too.</li>
+        <li><b>Keyboard Shortcuts</b> opens the list in <a href="#settings-shortcuts">Settings</a>. <b>What's New</b> opens the release notes and <b>Report a Problem</b> opens a new issue on GitHub (see <a href="#ts-report">Reporting a problem</a>).</li>
+        <li>In <a href="#settings">Settings</a>, each page has a <b>Help</b> button in its header that opens that page of the manual. The sidebar's <b>Help</b> group has <b>Keyboard shortcuts</b> and the links <b>User manual</b>, <b>What's new</b> and <b>Report a problem</b>.</li>
+        <li>Many dialogs have a <b>?</b> in their title row. It opens the matching section of the manual.</li>
+      </ul>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="connections" aria-labelledby="h-connections">
+      <h2 id="h-connections">Connections</h2>
+      <p class="intro">A connection is one storage account or server: an S3 bucket provider, a cloud drive, an FTP server and so on. Add as many as you like.</p>
+
+      <h3 id="add-connection">Add a connection</h3>
+      <ol class="steps">
+        <li>Click <b>New connection</b> at the bottom of the sidebar (or choose it from the command palette).</li>
+        <li>Pick a kind. They come in three groups: <b>Cloud drives</b> (Google Drive, OneDrive, Dropbox), <b>Object storage</b> (Kybl Storage, S3 Compatible, Azure Blob Storage, Google Cloud Storage) and <b>Servers</b> (WebDAV, SSH, SFTP, FTP / FTPS).</li>
+        <li>Fill in the form. The name is optional; Kybl makes one up, such as "alice@files.example.com".</li>
+        <li>Click <b>Test connection</b> to check it, then <b>Save</b>.</li>
+      </ol>
+      <figure class="shot narrow"><picture><source srcset="/assets/shots/app-connect-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/app-connect.webp" alt="The New connection picker, with Kybl Storage, S3-compatible, Azure Blob Storage and Google Cloud Storage under Object storage, Google Drive, OneDrive and Dropbox under Cloud drives, and WebDAV, SFTP and FTP under Servers." loading="lazy"></picture><figcaption>The New connection picker.</figcaption></figure>
+      <p>Every form also has a <b>Group</b> field (see <a href="#groups">Groups</a>) and a <b>Photos in lists</b> choice, which overrides the thumbnail setting for that connection.</p>
+      <p><b>Test connection</b> really connects, signs in and opens the start folder, so the message you see is the real problem, if any.</p>
+
+      <h3 id="s3-compatible">S3-compatible storage</h3>
+      <p>Pick a provider tile at the top of the form. It fills in the region, the endpoint and the addressing style for you:</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Provider</th><th>Default region</th><th>What to know</th></tr></thead>
+        <tbody>
+          <tr><td>Hetzner Object Storage</td><td>nbg1 (also fsn1, hel1)</td><td>Hetzner keys can't list all buckets, so type your bucket name in <b>Bucket</b>.</td></tr>
+          <tr><td>Amazon S3</td><td>eu-central-1</td><td>The endpoint can stay empty.</td></tr>
+          <tr><td>Cloudflare R2</td><td>auto</td><td>Replace <code>&lt;account-id&gt;</code> in the endpoint with your own account ID.</td></tr>
+          <tr><td>Backblaze B2</td><td>eu-central-003</td><td></td></tr>
+          <tr><td>Wasabi</td><td>eu-central-1</td><td></td></tr>
+          <tr><td>DigitalOcean Spaces</td><td>fra1</td><td></td></tr>
+          <tr><td>Other S3-compatible (MinIO, Ceph…)</td><td>us-east-1</td><td>Type the endpoint yourself. Path-style addressing is on.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Then enter your <b>Access key ID</b> and <b>Secret access key</b>. Optional fields:</p>
+      <ul>
+        <li><b>Bucket</b>: the connection opens straight into it. You need this when your key can't list buckets.</li>
+        <li><b>Endpoint</b>: must start with <code>https://</code> or <code>http://</code>. Required for everything except Amazon S3.</li>
+        <li><b>Use path-style addressing</b>: needed by MinIO and many self-hosted servers.</li>
+      </ul>
+      <div class="tip"><p>If your key can't list buckets and you didn't set one, the pane offers <b>Open bucket by name</b>. You can also find it in the connection's list of buckets in the sidebar.</p></div>
+
+      <h3 id="azure">Azure Blob Storage</h3>
+      <p>Enter the <b>Storage account</b>, the <b>Container</b> (one container per connection) and either the <b>Account key</b> or a <b>SAS token</b>. Leave <b>Endpoint</b> empty unless you use Azurite or a national cloud.</p>
+
+      <h3 id="gcs">Google Cloud Storage</h3>
+      <p>Enter the <b>Bucket</b> and paste the <b>Service account key</b> (the JSON file from Google Cloud), or click <b>Choose file…</b>. The <b>Endpoint</b> field is only for emulators and compatible services.</p>
+
+      <h3 id="cloud-drives">Google Drive, OneDrive and Dropbox</h3>
+      <ol class="steps">
+        <li>Choose the drive in the picker and click <b>Sign in with Google</b> (or Microsoft, or Dropbox).</li>
+        <li>Your browser opens the provider's sign-in page. Sign in and allow Kybl.</li>
+        <li>Back in Kybl, the connection saves itself. There are no keys to type.</li>
+      </ol>
+      <ul>
+        <li><b>Google Drive</b> shows My Drive, each shared drive, and <b>Shared with me</b> (read-only at its top). Google Docs, Sheets and Slides download as Office files or PDF.</li>
+        <li><b>OneDrive</b> shows your OneDrive and a read-only <b>Shared with me</b>.</li>
+        <li><b>Dropbox</b> shows one root.</li>
+        <li>Deleting on any of them goes to that service's trash, so you can restore it there.</li>
+        <li>Advanced: <b>Use your own app (advanced)</b> lets you enter your own client ID (and secret for Google, tenant for OneDrive).</li>
+      </ul>
+      <p>If your access ends (you changed your password, or revoked Kybl), the sidebar shows <b>Sign in again</b>. Signing in again keeps the same connection, so your favorites, synced folders and jobs stay attached.</p>
+
+      <h3 id="webdav">WebDAV (Nextcloud, ownCloud, Synology…)</h3>
+      <p>Enter the <b>Server address</b>, and a <b>User name</b> and <b>Password</b> if the server needs them. <b>Start in folder</b> is optional.</p>
+      <ul>
+        <li><b>Nextcloud and ownCloud</b>: the server address alone is enough; Kybl finds your files folder.</li>
+        <li><b>Synology</b>: include the WebDAV port, for example <code>https://nas.local:5006</code>.</li>
+        <li>If your account uses two-step sign-in, create an <b>app password</b> and use that.</li>
+      </ul>
+      <div class="warn"><p>An <code>http://</code> address means your password and files travel unencrypted. Use <code>https://</code> when the server supports it.</p></div>
+
+      <h3 id="sftp">SSH and SFTP servers</h3>
+      <p>Enter the <b>Server</b>, the <b>User name</b> and the <b>Port</b> (empty means 22). You can paste <code>sftp://me@host:2222</code> into Server and Kybl fills in the rest. Then choose how to sign in:</p>
+      <ul>
+        <li><b>Password</b> (it also answers "keyboard-interactive" prompts).</li>
+        <li><b>Key</b>: paste a private key or click <b>Choose file…</b>. OpenSSH, PEM and PuTTY <code>.ppk</code> keys work (Ed25519, ECDSA, RSA). Add the passphrase if the key has one.</li>
+        <li><b>SSH agent</b> (computers only): uses the agent you already run, such as ssh-agent, Pageant, Windows' OpenSSH agent or 1Password. Nothing is stored in Kybl.</li>
+      </ul>
+      <p><b>Start in folder</b> is optional; empty means your home folder.</p>
+      <p><b>Trust on first use.</b> The first time you connect, Kybl shows the server's fingerprint and asks <b>Trust this server?</b> If the server's key changes later, Kybl stops and warns you, because someone might be in the middle. You can check the new key and replace the old one with a deliberate click. The trusted fingerprint is shown in the form with a <b>Forget</b> button.</p>
+      <p>SFTP connections also give you a <a href="#terminal">terminal on the server</a>, <a href="#ssh-tunnels">SSH tunnels</a>, <a href="#permissions">permissions</a>, symbolic links, search inside files and <a href="#actions">custom actions that run on the server</a>.</p>
+
+      <h3 id="ftp">FTP and FTPS servers</h3>
+      <p>Enter the <b>Server</b> (you can type <code>host:port</code>), and choose the <b>Encryption</b>:</p>
+      <ul>
+        <li><b>FTPS (explicit TLS)</b> (port 21): the usual choice, and the default.</li>
+        <li><b>FTPS if available</b>: like FileZilla's "TLS if available". Kybl asks you once before it sends a password unencrypted.</li>
+        <li><b>FTPS, implicit TLS</b> (port 990): for older servers.</li>
+        <li><b>None (plain FTP)</b>: plain FTP. Your password and files cross the network readable, so Kybl warns you.</li>
+      </ul>
+      <p>If a server doesn't offer encryption, the error has a <b>Connect without encryption</b> button. Kybl never drops encryption for a server that has used it before. Leave <b>User name</b> empty to sign in anonymously.</p>
+
+      <h3 id="this-computer">This computer</h3>
+      <p>Your own disk is always there as <b>This Mac</b> or <b>This PC</b> (on phones, <b>On this phone</b>). You don't add it. Its folders show in the sidebar, deleting goes to the Trash or Recycle Bin, and files open in their own apps. Hidden files (dot-files) are hidden until you <a href="#hidden-files">show them</a>.</p>
+
+      <h3 id="certificates">Certificates and trust</h3>
+      <p>If an FTPS or WebDAV server uses its own (self-signed) certificate, the connection fails with <b>Trust this certificate…</b>. Click it to see why, in plain words, plus who it's made out to, who issued it, when it expires and its fingerprint. Trust it only if you expect it. If the certificate later changes, not connecting is the default. The trusted certificate is shown in the form with <b>Forget</b>.</p>
+
+      <h3 id="import">Import from FileZilla and other apps</h3>
+      <ol class="steps">
+        <li>Choose <b>Import connections…</b> in the New connection picker, or in <a href="#settings-connections">Settings → Connections</a>.</li>
+        <li>Pick a source Kybl found on your computer, or choose a file. Kybl reads FileZilla's Site Manager (and its exports) and your SSH config (<code>~/.ssh/config</code>).</li>
+        <li>Tick the sites to bring in. Sites you already have, and ones Kybl can't open (with the reason), start unticked. Each row says how it signs in and what doesn't carry over.</li>
+        <li>Click import. Saved passwords and key files go straight into Kybl's encrypted store.</li>
+      </ol>
+      <ul>
+        <li>FileZilla folders become sidebar <a href="#groups">groups</a>.</li>
+        <li>Each SSH config host becomes an SFTP connection in an "SSH config" group, and its <code>LocalForward</code> lines become <a href="#ssh-tunnels">SSH tunnels</a>. <code>ProxyJump</code> and <code>ProxyCommand</code> aren't supported.</li>
+        <li>FileZilla passwords protected with a master password can't be read; enter those by hand.</li>
+      </ul>
+      <div class="note"><p>The command palette has <b>Import Connections…</b> too. The sources Kybl reads are FileZilla and SSH config files.</p></div>
+
+      <h3 id="edit-connection">Edit or delete a connection</h3>
+      <ul>
+        <li>Right-click the connection in the sidebar and choose <b>Edit connection…</b>, or click <b>Edit</b> next to it in <a href="#settings-connections">Settings → Connections</a>.</li>
+        <li>Leaving a password or secret empty keeps the saved one. If you change the server, user name or access key, Kybl asks for the secret again, so a saved password is never sent somewhere new.</li>
+        <li><b>Delete</b> in the dialog removes the connection and its stored passwords, keys and sign-ins.</li>
+      </ul>
+      <figure class="shot"><picture><source srcset="/assets/shots/connection-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/connection.webp" alt="Editing an S3-compatible connection: provider, name, region, bucket and keys." loading="lazy"></picture><figcaption>Editing a connection. The secret key stays in your keychain.</figcaption></figure>
+
+      <h3 id="groups">Groups, pins and favorites</h3>
+      <ul>
+        <li><b>Groups</b> are folders in the sidebar. Type a group in the connection's <b>Group</b> field; use <code>/</code> for nested groups, like <code>Clients/Acme</code>. Or right-click a connection and choose <b>Move to group ▸</b>.</li>
+        <li>To file several at once, <kbd>⌘</kbd>-click connections (or choose <b>Select to organize</b>), then use <b>Move to group…</b> in the bar that appears. You can also drag connections onto a group, or onto the "Connections" heading to take them out.</li>
+        <li>Right-click a group to <b>Rename group…</b> or <b>Delete group</b> (its connections stay, one level up).</li>
+        <li><b>Pin to the top</b> in a connection's menu keeps it first in every list.</li>
+        <li><b>Favorites</b>: choose <b>Add to favorites</b> in a pane's <b>…</b> menu to add the folder it shows, or right-click a folder, a bucket, a drive root or a single-root server and choose <b>Add to favorites</b>. Favorites follow their folder when it's renamed or moved.</li>
+      </ul>
+      <figure class="shot"><picture><source srcset="/assets/shots/menu-sidebar-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/menu-sidebar.webp" alt="A connection's right-click menu: expand, Copy / Move to, Mount as drive, photo previews, pin, organize, move to group and edit." loading="lazy"></picture><figcaption>A connection's right-click menu.</figcaption></figure>
+
+      <h3 id="secrets">Where your passwords are kept</h3>
+      <p>Passwords, secret keys and sign-in tokens are kept in an encrypted file on your device. Only the key to that file is in your system's keychain: the macOS Keychain, Windows Credential Manager, or the Secret Service on Linux. That means one keychain question at most, never a settings file with passwords in it. On Android the file is sealed by the Android Keystore. Connection details (server, user name, region) are stored separately, with no secrets.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="kybl-storage" aria-labelledby="h-kybl-storage">
+      <h2 id="h-kybl-storage">Kybl Storage</h2>
+      <p class="intro">No bucket of your own? Kybl Storage is S3 storage run by Kybl, with 10 GB free.</p>
+
+      <h3 id="kybl-storage-what">What you get</h3>
+      <ul>
+        <li><b>10 GB free.</b></li>
+        <li><b>Stored in the EU</b>, in Germany.</li>
+        <li><b>Encrypted at rest</b> with AES-256, using a separate key for each bucket (SSE-C).</li>
+        <li>It's a normal S3 connection, so everything S3 can do in Kybl works, including share links.</li>
+        <li>It's the only connection where Kybl can make a <b>New bucket</b> for you.</li>
+      </ul>
+      <div class="note"><p><b>Not end-to-end encrypted.</b> Your files are encrypted on the storage servers, but the service handles the keys. If you need encryption only you can unlock, encrypt files before you upload them.</p></div>
+
+      <h3 id="kybl-storage-connect">Connect Kybl Storage</h3>
+      <ol class="steps">
+        <li>Click <b>Connect Kybl Storage</b> on the welcome card, or choose <b>Kybl Storage</b> in the New connection picker.</li>
+        <li>Click <b>Continue in browser</b>. The Kybl account site opens.</li>
+        <li>Sign in (or make an account) and approve this device. Kybl receives its own access key, named after your device. Nobody types or copies keys.</li>
+      </ol>
+      <p><b>On another device?</b> Choose <b>Sign in on another device with a code</b>. Kybl shows a QR code and a short code. Scan it with your phone, or open the link anywhere, and enter the code. A countdown shows how long the code works. If the browser doesn't open, click <b>Use a code instead</b>.</p>
+      <p>Then make a bucket with <b>New bucket</b> in the empty pane or the sidebar.</p>
+
+      <h3 id="kybl-storage-keys">Keys and access</h3>
+      <ul>
+        <li>Each computer or phone gets its own key. You can see and revoke them on the account site's <b>Access keys</b> page.</li>
+        <li>If a key is revoked or the account deleted, the sidebar shows <b>Sign in again</b>. <b>Connect again</b> gives the device a fresh key.</li>
+        <li>Because files are encrypted, Kybl compares Kybl Storage files by size, not by checksum, when it <a href="#verify">verifies transfers</a>.</li>
+      </ul>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="browsing" aria-labelledby="h-browsing">
+      <h2 id="h-browsing">Browsing</h2>
+      <p class="intro">Open a connection from the sidebar, pick a bucket or place, and you're in. Everything here works the same on every connection.</p>
+
+      <h3 id="navigating">Moving around</h3>
+      <ul>
+        <li><b>Open a folder</b>: double-click it, or select it and press <kbd>↵</kbd> or <kbd>⌘O</kbd>. In list view, the <b>..</b> row at the top goes up.</li>
+        <li><b>Go up one level</b>: <kbd>⌘↑</kbd>, <kbd>Backspace</kbd>, or the enclosing-folder button in the toolbar.</li>
+        <li><b>Back and forward</b>: <kbd>⌘[</kbd> and <kbd>⌘]</kbd>, or your mouse's side buttons. Each pane remembers its last 100 places. (There are no back and forward buttons in the toolbar.)</li>
+        <li><b>Go to the top</b>: click the connection name in the toolbar.</li>
+        <li><b>Switch connection or bucket in this pane</b>: click the connection badge before the path. It lists every connection with its buckets.</li>
+      </ul>
+
+      <h3 id="breadcrumbs">Breadcrumbs and Go to folder</h3>
+      <p>The path is a row of clickable folders. Long paths fold the middle into <b>…</b>. You can drop files on any part of it.</p>
+      <p>To type a path, click the current folder's name, or press <kbd>⇧⌘G</kbd> or <kbd>⌘L</kbd>. The path turns into a text field. Type and press <kbd>↵</kbd> (<kbd>Esc</kbd> cancels). It accepts:</p>
+      <ul>
+        <li>a path inside the current bucket or root;</li>
+        <li>on S3, <code>bucket/path</code> or <code>s3://bucket/path</code>;</li>
+        <li>on This computer, a full path;</li>
+        <li>a file's path: Kybl opens its folder and selects the file.</li>
+      </ul>
+
+      <h3 id="views">List and grid</h3>
+      <p>The buttons at the right end of the pane's status bar switch the view:</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/mixed-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/mixed.webp" alt="Three panes with different views: a photo grid, a compact list grouped by kind and a small grid." loading="lazy"></picture><figcaption>Each pane keeps its own view.</figcaption></figure>
+      <ul>
+        <li><b>As list</b> shows columns. Right-click the column header to pick them: Size, Modified, Created, Kind, Type, Storage class (S3), ETag, and Permissions and Owner where the server has them. Drag a column edge to resize; double-click to reset.</li>
+        <li><b>As grid</b> shows tiles with thumbnails. <b>Bigger Icons</b> (<kbd>⌘+</kbd>) and <b>Smaller Icons</b> (<kbd>⌘−</kbd>) in the View menu or the command palette resize them.</li>
+        <li><b>Compact layout</b> (the third button) makes rows and tiles tighter.</li>
+      </ul>
+      <p>View, sort, compact and hidden files are remembered for each pane separately.</p>
+
+      <h3 id="thumbnails">Thumbnails and photos</h3>
+      <p>The grid shows thumbnails for JPEG, PNG, GIF, WebP, BMP, TIFF and (on Apple systems) HEIC images. The <b>Photos</b> setting in <a href="#settings-browsing">Settings → Browsing</a> decides how much Kybl fetches:</p>
+      <ul>
+        <li><b>Off</b> (the default on a new install): file icons only.</li>
+        <li><b>Placeholders</b>: a blurry preview where one is known; nothing is downloaded.</li>
+        <li><b>Thumbnails</b>: the blurry preview at once, then the real thumbnail.</li>
+      </ul>
+      <p>Right-click a connection in the sidebar, or open its settings, to give it its own <b>Photos in lists</b> mode. You can also turn on <b>Share placeholders with other devices</b> (not on This computer): Kybl writes a small hidden file in each photo folder so your other devices show previews instantly.</p>
+
+      <h3 id="sorting">Sorting</h3>
+      <p>Click a column header, or use the <b>Sort and group</b> button in the toolbar to sort by <b>Name</b>, <b>Date modified</b>, <b>Date created</b>, <b>Size</b>, <b>Kind</b> or <b>Type</b>, ascending or descending. The same menu has <b>Group by</b>. Folders come first unless you turn that off in Settings. Sorting a very large folder by size or date loads all of it first.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/grouped-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/grouped.webp" alt="A compact list grouped by kind: folders, CSV, GZ archive, JPG image and more." loading="lazy"></picture><figcaption>Grouped by kind, in compact layout.</figcaption></figure>
+
+      <h3 id="hidden-files">Hidden files</h3>
+      <p>On This computer, dot-files are hidden. Press <kbd>⇧⌘.</kbd> (or choose <b>Show hidden files</b> in the <b>Sort and group</b> menu, or in the right-click menu on empty space) to show them in that pane. Other connections always show everything.</p>
+
+      <h3 id="search">Search and filter</h3>
+      <ol class="steps">
+        <li>Press <kbd>⌘F</kbd> or click <b>Filter or search</b> in the pane's toolbar.</li>
+        <li>Type. The folder filters by name as you type.</li>
+        <li>Press <kbd>↵</kbd> to search <b>all subfolders</b> too. Results stream in as Kybl looks; <b>Stop</b> ends the search.</li>
+      </ol>
+      <figure class="shot"><picture><source srcset="/assets/shots/search-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/search.webp" alt="A pane showing search results from all subfolders, each matching file listed with the folder it is in, and a banner with the number of matches and a Stop button." loading="lazy"></picture><figcaption>Search results from every subfolder.</figcaption></figure>
+      <p>In the results, right-click an item and choose <b>Show in folder</b> to jump to it. Most actions still work on results. <kbd>Esc</kbd> or <b>Clear search</b> takes you back.</p>
+      <p><b>Search inside files.</b> On This computer and SFTP servers, switch the search to <b>Contents</b> to find text inside files. Options: case sensitive, regular expression. Each result shows its first matching line, and <a href="#quick-look">Quick Look</a> opens at that line. The command palette has <b>Search Inside Files</b> too.</p>
+
+      <h3 id="favorites-recents">Favorites and recent places</h3>
+      <p>Open the pane's <b>…</b> menu and choose <b>Add to favorites</b> to put the folder it shows under <b>Favorites</b> in the sidebar; the same menu then offers <b>Remove from favorites</b>. You can also right-click a folder, a bucket, a drive root or a single-root server and choose <b>Add to favorites</b>. Recent places appear in the sidebar once you have many connections, and in the <a href="#command-palette">command palette</a> always.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/menu-bucket-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/menu-bucket.webp" alt="A bucket's right-click menu with Add to favorites and Copy / Move to." loading="lazy"></picture><figcaption>Right-click a bucket to add it to favorites.</figcaption></figure>
+
+      <h3 id="folder-info">Folder info panel and git</h3>
+      <p>Click the icon at the right end of a pane's status bar to open a small panel about the folder on screen: the connection (server, bucket, region or account), the path with a copy button, item count and size, and, where the drive reports it, the space used.</p>
+      <p>For a folder on This computer inside a git repository, Kybl shows the branch next to the path and marks changed files (M modified, A added, D deleted, R renamed, U untracked and so on). The info panel adds how far you are ahead or behind, counts of changed and staged files, the first few changed files, and the last commit.</p>
+
+      <h3 id="big-folders">Very large folders</h3>
+      <p>Big S3 folders load in pages. The status bar says when only the first part is loaded ("More load as you scroll") and how many items have arrived so far.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="selecting" aria-labelledby="h-selecting">
+      <h2 id="h-selecting">Selecting files</h2>
+
+      <h3 id="select-mouse">With the mouse</h3>
+      <ul>
+        <li>Click to select one item. <kbd>⌘</kbd>-click adds or removes one. <kbd>⇧</kbd>-click selects a range.</li>
+        <li>Drag on empty space to draw a selection box. Hold <kbd>⇧</kbd> to add, <kbd>⌘</kbd> to toggle. The list scrolls by itself near its edges.</li>
+        <li>Click empty space to clear the selection.</li>
+      </ul>
+
+      <h3 id="select-keyboard">With the keyboard</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Keys</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td class="k"><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd></td><td>Move (left and right in grid view). Hold <kbd>⇧</kbd> to extend the selection.</td></tr>
+          <tr><td class="k"><kbd>Home</kbd> / <kbd>End</kbd></td><td>First or last item</td></tr>
+          <tr><td class="k"><kbd>PgUp</kbd> / <kbd>PgDn</kbd></td><td>One screen up or down</td></tr>
+          <tr><td class="k">Letters</td><td>Jump to the next name starting with what you type</td></tr>
+          <tr><td class="k"><kbd>⌘A</kbd></td><td>Select all</td></tr>
+          <tr><td class="k"><kbd>Esc</kbd></td><td>Clear the selection</td></tr>
+          <tr><td class="k"><kbd>⇧F10</kbd></td><td>Open the right-click menu for the selection</td></tr>
+        </tbody>
+      </table></div>
+      <p>The status bar shows how many items you selected and their size, with an × to clear. Right-click menus act on the whole selection.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="preview" aria-labelledby="h-preview">
+      <h2 id="h-preview">Previewing and file info</h2>
+
+      <h3 id="quick-look">Quick Look</h3>
+      <p>Select a file and press <kbd>Space</kbd> for a large preview over the list. Press <kbd>Space</kbd> or <kbd>Esc</kbd> to close it, and the arrow keys to step through the folder. With several panes open, <kbd>F3</kbd> works too.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/quicklook-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/quicklook.webp" alt="Quick Look showing a large photo preview over the file list, with previous and next buttons, the file name and Open and Info buttons in its header, and an info column beside it." loading="lazy"></picture><figcaption>Quick Look with the info column open.</figcaption></figure>
+      <p>What Quick Look shows:</p>
+      <ul>
+        <li><b>Images</b>: JPEG, PNG, GIF, WebP, AVIF, SVG, BMP, ICO, and HEIC on Apple systems. Other formats (TIFF, RAW) show their thumbnail.</li>
+        <li><b>Video and audio</b>: they stream, with controls, without downloading first.</li>
+        <li><b>PDF</b> up to 60 MB.</li>
+        <li><b>Documents</b>: text and code, JSON, YAML, Markdown, CSV, Word, Excel and PowerPoint. Google Docs show as their Office export.</li>
+        <li><b>A folder</b>: its name and size.</li>
+        <li><b>Several items</b>: a sheet of tiles; click one to see it alone.</li>
+        <li>Anything else: its icon and details, with <b>Open in its app</b>.</li>
+      </ul>
+      <p>The header has <b>Copy</b> (macOS only: it copies the file itself so you can paste it into a chat or mail, <kbd>⌘C</kbd>), <b>Download</b>, <b>Open</b>, and an Info button. <b>Edit…</b> for text files is in the info column.</p>
+
+      <h3 id="get-info">Get Info</h3>
+      <p>Press <kbd>⌘I</kbd> (or right-click and choose <b>Get Info</b>). It opens Quick Look with the info column, which shows:</p>
+      <figure class="shot narrow"><picture><source srcset="/assets/shots/info-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/info.webp" alt="The Get Info column for a file: its name, buttons to copy, rename and delete it, a Share link section with a lifetime choice and a Copy button, and details such as size, modified date, kind and location." loading="lazy"></picture><figcaption>Get Info for a file in a bucket.</figcaption></figure>
+      <ul>
+        <li>The name and buttons: Download (Open on This computer), Move or copy to…, Rename, Delete (or Move to Trash), and <b>Edit…</b> for text files (the menu with Edit, Edit with and Edit in Kybl).</li>
+        <li><b>Share link</b>, where the connection supports it: choose 1 hour, 24 hours or 7 days, then <b>Copy</b>. See <a href="#sharing">Sharing</a>.</li>
+        <li><b>About this file</b>: size, modified date, kind and location, plus technical details (exact bytes, content type, ETag, S3 URI, metadata and tags). Click a line to copy it.</li>
+        <li>On S3 connections, <b>Edit properties</b> changes the content type, Cache-Control, Content-Disposition, Content-Encoding, storage class, custom metadata and tags.</li>
+      </ul>
+      <p>With several items selected, Get Info shows the count and total size, with Download, Move to…, and Delete buttons. The (i) button or <kbd>⌘I</kbd> shows or hides the column; Kybl remembers your choice.</p>
+
+      <h3 id="folder-sizes">Folder sizes</h3>
+      <p>Folders don't show a size until you ask, because adding one up means listing everything inside it. To get it:</p>
+      <ul>
+        <li>right-click folders and choose <b>Calculate size</b>;</li>
+        <li>click <b>Calculate</b> in the Size column, or in Get Info;</li>
+        <li>right-click empty space and choose <b>Calculate folder size</b> for the folder on screen.</li>
+      </ul>
+      <p>Up to three run at once, with progress. <b>Stop</b> (in the Size column, Get Info or the status bar) ends it straight away. Kybl keeps the result until something in the folder changes.</p>
+
+      <h3 id="opening-files">Opening files</h3>
+      <ul>
+        <li><b>Open</b> (<kbd>↵</kbd>, <kbd>⌘O</kbd> or double-click): text, code, Markdown, CSV, JSON, Word, Excel and PowerPoint open in Kybl's own viewer (text, code, JSON, Markdown and CSV files up to 5 MB are editable there, and Save uploads them). Anything else downloads a temporary copy and opens in its default app. You can open up to 10 files at once.</li>
+        <li><b>Open in default app</b>: skip Kybl's viewer (on servers and clouds).</li>
+        <li><b>Open with ▸</b>: pick any app for that file type (or <b>Other…</b>).</li>
+        <li>Files on This computer always open in their own app.</li>
+        <li>Programs, scripts and installers from a connection ask <b>Run …?</b> before they open.</li>
+      </ul>
+      <div class="warn"><p>Text and code files that <b>Open</b> shows in Kybl’s own editor save straight back: <b>Save</b> uploads the file (see <a href="#built-in-editor">the editor</a>). A file that <b>Open</b> or <b>Open with</b> hands to <b>another app</b> is a copy, and saving it there does <b>not</b> upload it. Use <a href="#edit-elsewhere">Edit</a> when you want another app’s saves to go back to the server.</p></div>
+
+      <h3 id="viewer-limits">What the built-in viewers open</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Viewer</th><th>Files</th><th>Opens up to</th><th>Can edit</th></tr></thead>
+        <tbody>
+          <tr><td>Text and code</td><td>txt, log, yml, toml, xml, html, css, js, ts, py, rs, go, sh, sql, ini, env, conf, Dockerfile, dotfiles and many more</td><td>20 MB</td><td>Up to 5 MB, with syntax colours and Find and replace</td></tr>
+          <tr><td>JSON</td><td>json, jsonl, ndjson, geojson</td><td>20 MB</td><td>Up to 5 MB, with a validity check and Format</td></tr>
+          <tr><td>Markdown</td><td>md, markdown, mdx</td><td>10 MB</td><td>Up to 5 MB, with Edit, Split and Preview layouts</td></tr>
+          <tr><td>CSV</td><td>csv, tsv</td><td>50 MB</td><td>Up to 5 MB, as a table or as text</td></tr>
+          <tr><td>Word</td><td>docx</td><td>30 MB</td><td>No, read-only</td></tr>
+          <tr><td>Excel</td><td>xlsx, xlsm, ods</td><td>30 MB</td><td>No, read-only, every sheet as a tab</td></tr>
+          <tr><td>PowerPoint</td><td>pptx</td><td>100 MB</td><td>No, an outline of each slide</td></tr>
+          <tr><td>Image</td><td>jpg, png, gif, webp, avif, svg, bmp, ico</td><td>40 MB</td><td>No, with zoom (<kbd>⌘+</kbd> <kbd>⌘−</kbd> <kbd>⌘0</kbd>, pinch, double-click)</td></tr>
+        </tbody>
+      </table></div>
+      <p>Bigger files say how big they are and offer <b>Open in another app</b>. Archives aren't previewed; they <a href="#archives">open like a folder</a>.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="editing" aria-labelledby="h-editing">
+      <h2 id="h-editing">Editing files</h2>
+      <p class="intro">You can edit text files right inside Kybl, or open any file in your own app and let Kybl upload each save.</p>
+
+      <h3 id="built-in-editor">The built-in editor</h3>
+      <p>On a server or in the cloud, <b>Open</b> (<kbd>↵</kbd> or double-click) on a text, code, JSON, Markdown or CSV file shows it in Kybl's editor, full-window, and <b>Save</b> uploads it back. On This computer, right-click the file and choose <b>Edit in Kybl</b>. The <b>Edit…</b> button in the info column (<a href="#get-info">Get Info</a>) has it too, on every connection. Files up to 5 MB.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/editor-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/editor.webp" alt="The built-in text editor showing a configuration file with syntax colours and line numbers, a dot marking unsaved changes, and Save and Close buttons in its header." loading="lazy"></picture><figcaption>The built-in editor.</figcaption></figure>
+      <ol class="steps">
+        <li>The first time, Kybl asks <b>When you save this file:</b> choose <b>Upload changes automatically</b>, or <b>Upload only if the file on the server hasn't changed since you opened it</b> (recommended). Your last answer is preselected.</li>
+        <li>Edit. A dot shows unsaved changes.</li>
+        <li>Press <kbd>⌘S</kbd> to save (or <kbd>⇧⌘S</kbd> to save a copy). <kbd>⌘F</kbd> finds and replaces. <kbd>Esc</kbd> or <kbd>⌘W</kbd> closes, asking about unsaved changes.</li>
+      </ol>
+      <p>If someone changed the file on the server meanwhile, Kybl offers <b>Reload</b>, <b>Overwrite</b> or <b>Save as copy</b>. Markdown has Edit, Split and Preview layouts; JSON can be checked and tidied; CSV can be edited as a table or as text.</p>
+
+      <h3 id="edit-elsewhere">Edit in your own app</h3>
+      <p>For a file on a server or in the cloud, right-click it and choose <b>Edit</b> (<kbd>⌘E</kbd>) for its default app, or <b>Edit with ▸</b> to pick one. This is in the computer app only, for files up to 100 MB.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/edit-external-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/edit-external.webp" alt="The Edit dialog asking when saves should upload: automatically, or only if the file on the server hasn't changed." loading="lazy"></picture><figcaption>Choose when your saves upload.</figcaption></figure>
+      <ol class="steps">
+        <li>Answer the same <b>When you save this file:</b> question.</li>
+        <li>Kybl downloads a private copy and opens it in the app.</li>
+        <li>Every time you save in that app, Kybl uploads the file. A toast confirms each upload.</li>
+      </ol>
+      <p>The Activity panel shows an <b>Editing</b> chip with each file you're editing and its state (waiting for a save, uploading, uploaded, changed on the server, or failed). From there you can open the file again, show the local copy, or <b>Stop editing</b>, which deletes the local copy (and asks first if changes haven't been sent).</p>
+      <p><b>If the server's copy changed</b> while you edited, Kybl shows both versions with <b>Compare</b> and lets you choose: <b>Overwrite the server's copy</b>, <b>Keep both</b> (yours is uploaded as "name (edited).ext"), <b>Discard my changes and reload the server's</b>, or <b>Stop editing and discard my changes</b>.</p>
+      <div class="note"><p>Files on This computer open and save in place, so they don't need Edit. Google Docs, Sheets and Slides are edited in Google Drive, not here.</p></div>
+
+      <h3 id="new-file">Make a new file</h3>
+      <p>Press <kbd>⌥⌘N</kbd>, or choose <b>New file…</b> from the <b>Upload or create</b> button or the right-click menu on empty space. Type a name (it starts as "untitled.txt") and click <b>Create</b>. Kybl makes an empty file and selects it, ready to edit. It never replaces a file that's already there.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="file-operations" aria-labelledby="h-file-operations">
+      <h2 id="h-file-operations">Working with files and folders</h2>
+
+      <h3 id="context-menu">The right-click menu</h3>
+      <p>Right-click a file or folder (or press <kbd>⇧F10</kbd>, or <kbd>⌃</kbd>-click on a Mac). If the item is part of your selection, the menu acts on all of it. Items that don't apply to that connection are left out.</p>
+      <figure class="shot narrow"><picture><source srcset="/assets/shots/menu-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/menu.webp" alt="The right-click menu for a file, grouped by lines: Open and Quick Look; Cut, Copy, Duplicate and Rename; Copy to, Move to and Download; Compress and Actions; Get Info, Copy path and Copy share link; and Delete at the bottom." loading="lazy"></picture><figcaption>The file menu, grouped from opening to deleting.</figcaption></figure>
+      <p>From top to bottom:</p>
+      <ol>
+        <li><b>Open</b>: Open, Open in default app (servers and clouds), Open with ▸, Edit and Edit with ▸ (servers and clouds), Edit in Kybl (files that Open doesn't show in Kybl, such as on This computer), Quick Look (and Show in folder in search results).</li>
+        <li><b>Edit</b>: Cut, Copy, Paste into "folder", Duplicate, Rename.</li>
+        <li><b>Send</b>: Copy to ▸ and Move to ▸, then Move to "parent folder" and Download.</li>
+        <li><b>Make</b>: Compress or Extract, Compare, and your custom Actions ▸.</li>
+        <li><b>About</b>: Get Info, Calculate size, Copy path (or Copy S3 URI), Copy share link, Show in Finder or Explorer, Open in terminal, and on servers Permissions…, Show original and Make link….</li>
+        <li><b>Keep</b> (folders): Add to favorites, and the <b>Keep &amp; sync ▸</b> submenu (see <a href="#keep-and-sync">Keep &amp; sync</a>).</li>
+        <li><b>Delete</b> or <b>Move to Trash</b>, last.</li>
+      </ol>
+      <p>Right-clicking empty space gives New folder…, New file…, Upload files, Upload folder, Paste, Select all, Refresh, Copy path, Calculate folder size, Show hidden files (This computer), Open terminal here, Keep &amp; sync ▸ and Split ▸.</p>
+
+      <h3 id="new-folder">New folder</h3>
+      <p>Press <kbd>⇧⌘N</kbd> (or <kbd>F7</kbd> with several panes open), or choose <b>New folder…</b> from the Upload or create button or the right-click menu. Type a name and press <kbd>↵</kbd>. Kybl selects the new folder.</p>
+
+      <h3 id="copy-paste">Copy, cut and paste</h3>
+      <ul>
+        <li><kbd>⌘C</kbd> copies and <kbd>⌘X</kbd> cuts the selected items. Their paths also go on the clipboard as text, so you can paste them into a chat or a terminal.</li>
+        <li><kbd>⌘V</kbd> pastes into the folder on screen. To paste into a folder in the list, right-click it and choose <b>Paste into "folder"</b>.</li>
+        <li>Paste works across connections too. Between two clouds or servers, it starts a background copy job (you confirm the destination first). Between This computer and a connection, files are uploaded or downloaded and the originals always stay, so a cut becomes a copy there.</li>
+        <li>Pasting a copy into the folder it came from makes "name (1).ext".</li>
+      </ul>
+
+      <h3 id="duplicate">Duplicate</h3>
+      <p><kbd>⌘D</kbd> copies each selected item next to itself as "name copy.ext" (then "name copy 2.ext"), and selects the copy.</p>
+
+      <h3 id="rename">Rename and batch rename</h3>
+      <p>Select one item and press <kbd>F2</kbd> (or choose <b>Rename…</b>). Type the new name and press <kbd>↵</kbd>. Kybl won't let you use a name that's taken, except that renaming a file over another asks <b>Replace…?</b></p>
+      <div class="note"><p>S3, Azure and Google Cloud Storage have no real folders, so renaming a folder there copies every file inside. Big renames run as a job in the Activity panel.</p></div>
+      <p>Select several items and press <kbd>F2</kbd> to open <b>Batch rename</b>:</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/rename-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/rename.webp" alt="The Batch rename dialog with a name pattern using a counter and date, options for case and extension, and a live preview listing each old name beside its new name." loading="lazy"></picture><figcaption>Batch rename with a live preview.</figcaption></figure>
+      <ul>
+        <li><b>Pattern</b> builds names from pieces: <code>{name}</code> (the old name), <code>{n}</code> or <code>{n:3}</code> (a counter, padded to 3 digits), <code>{date}</code> or <code>{date:YYYY-MM-DD}</code> (modified date), <code>{ext}</code>, <code>{size}</code> and <code>{folder}</code>. Set the counter's start, step and order.</li>
+        <li><b>Find and replace</b> changes part of each name, with optional regular expressions and match case.</li>
+        <li>Both can change the case (lowercase, UPPERCASE, Title Case) and the extension (lowercase, UPPERCASE, change or remove).</li>
+      </ul>
+      <p>The preview shows every new name and flags problems (empty, too long, duplicate, already taken). Nothing runs until all are fixed, and batch rename never overwrites anything. One <kbd>⌘Z</kbd> undoes the whole batch.</p>
+
+      <h3 id="delete">Delete and the Trash</h3>
+      <p>Select items and press <kbd>Delete</kbd> or <kbd>⌘⌫</kbd> (or <kbd>F8</kbd> with several panes), or choose <b>Delete…</b>.</p>
+      <ul>
+        <li>On <b>This computer, Google Drive, OneDrive and Dropbox</b> the item reads <b>Move to Trash</b> (Recycle Bin on Windows). You can restore from the system Trash or the drive's own trash.</li>
+        <li>Everywhere else (S3, Azure, GCS, SFTP, FTP, WebDAV), deleting is <b>permanent</b>, and the confirmation says so.</li>
+        <li>Folders go with everything inside. Deleting a symbolic link removes only the link.</li>
+        <li>Turn off the question with <b>Confirm before deleting</b> in <a href="#settings-general">Settings → General</a>.</li>
+      </ul>
+      <div class="warn"><p>Delete can't be undone with <kbd>⌘Z</kbd>. Only the Trash on connections that have one can bring files back.</p></div>
+
+      <h3 id="undo">Undo</h3>
+      <p><kbd>⌘Z</kbd>, or <b>Undo</b> in the toast, reverses your last move, copy, duplicate or rename, up to 20 steps back. Undoing a copy deletes exactly what the copy made. Undo isn't offered when a move or copy replaced something.</p>
+
+      <h3 id="conflicts">When names clash</h3>
+      <p>Before uploading, moving, copying, pasting or extracting, Kybl checks the destination. For each name that already exists it asks:</p>
+      <ul>
+        <li><b>Replace</b> the file, or <b>Merge</b> a folder (everything goes into the existing folder; same-named files inside are replaced);</li>
+        <li><b>Skip</b> it;</li>
+        <li><b>Keep both</b>: the new one gets a number, "name (1).ext".</li>
+      </ul>
+      <p>Tick <b>Do this for the other N</b> to answer the rest at once. Closing the dialog cancels the whole action. Background copy jobs have their own choices; see <a href="#copy-move-options">Copy / Move options</a>.</p>
+
+      <h3 id="move-up">Move to the parent folder</h3>
+      <p>Right-click and choose <b>Move to "parent"</b> to move the selection up one level.</p>
+
+      <h3 id="upload-download">Upload and download</h3>
+      <ul>
+        <li><b>Upload files</b> (<kbd>⌘U</kbd>) or <b>Upload folder</b> (<kbd>⇧⌘U</kbd>) from the Upload or create button. Folders keep their structure. You can also drag files in from Finder or Explorer.</li>
+        <li><b>Download</b> (<kbd>⇧⌘D</kbd>): one file opens a Save dialog; several items or folders ask for a folder. Folders start downloading straight away while Kybl is still finding their files.</li>
+        <li>Turn off <b>Ask where to save downloads</b> in Settings to send everything straight to your Downloads folder. A file that's already there is kept and the new one gets a number.</li>
+        <li>Google Docs, Sheets and Slides download as Office files or PDF (<b>Download as…</b>).</li>
+        <li>There's no Download on This computer; copy the files instead.</li>
+      </ul>
+
+      <h3 id="copy-path">Copy path and S3 URI</h3>
+      <p><b>Copy path</b> puts the item's full path on the clipboard (one line per item). On S3 connections it's <b>Copy S3 URI</b> instead (<code>s3://bucket/key</code>). Right-click empty space to copy the path of the folder on screen.</p>
+
+      <h3 id="permissions">Permissions and links on servers</h3>
+      <ul>
+        <li><b>Permissions…</b> (SFTP and FTP): tick Read, Write and Execute for Owner, Group and Others, or type the octal number. For folders, <b>Apply to enclosed items</b> sets everything, files only or folders only.</li>
+        <li><b>Show original</b> (SFTP): for a symbolic link, jumps to the folder of what it points to and selects it.</li>
+        <li><b>Make link…</b> (SFTP): makes a symbolic link next to the item.</li>
+      </ul>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="drag-and-drop" aria-labelledby="h-drag-and-drop">
+      <h2 id="h-drag-and-drop">Drag and drop</h2>
+
+      <h3 id="drag-inside">Inside Kybl</h3>
+      <ul>
+        <li>Drag items onto a folder, a breadcrumb, another pane, a bucket in the sidebar, a <a href="#workspaces">workspace tab</a> or a terminal.</li>
+        <li>A drop <b>moves</b>. Hold <kbd>⌥</kbd> (at any time during the drag) to <b>copy</b> instead. The label next to the pointer says which: "Move to X · ⌥ to copy" or "Copy to X".</li>
+        <li>Rest over a folder for a moment and it springs open, so you can go deeper.</li>
+        <li>Between two different connections, or between This computer and a connection, the drop always copies (the originals stay). Between clouds it runs as a background job after a quick confirm.</li>
+        <li>Dropping on a workspace tab puts the items in that workspace's active pane, with a <b>Show</b> button in the toast. Rest on the tab to open it and drop into any of its panes. Rest on <b>+</b> to open a new workspace.</li>
+        <li>Dropping on a terminal types the items' paths into the shell.</li>
+      </ul>
+
+      <h3 id="drag-in">From Finder or Explorer into Kybl</h3>
+      <p>Drop files and folders from your desktop onto a pane to upload them there. An overlay says "Drop to upload to …". Name clashes go through the <a href="#conflicts">conflict dialog</a>.</p>
+
+      <h3 id="drag-out">From Kybl to other apps</h3>
+      <p>Drag items out of the window into Finder, Explorer, a mail or a chat app. Files on This computer (and in synced folders) go as real files. Small files from other connections (up to 64 MB each, 20 files and 256 MB in all) are fetched as you drag, so chat and mail apps accept them. On macOS, anything bigger downloads to wherever the receiving app asks; on Windows and Linux such items stay behind.</p>
+
+      <h3 id="drag-panes">Rearranging panes</h3>
+      <p>Drag a pane by the empty part of its toolbar. Over another pane, drop on an edge to dock it there, or in the middle to swap the two. <kbd>Esc</kbd> cancels.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="copy-move" aria-labelledby="h-copy-move">
+      <h2 id="h-copy-move">Copy and move between connections</h2>
+      <p class="intro">Kybl copies straight from one connection to another: a bucket to a server, Dropbox to S3, a server to another server. It picks the fastest route and keeps going after a restart.</p>
+
+      <h3 id="copy-to-submenus">Copy to ▸ and Move to ▸</h3>
+      <p>The right-click menu has <b>Copy to ▸</b> and <b>Move to ▸</b>. Each lists the folders of your other <b>open panes</b> (when there are several), then <b>recent</b> places and <b>favorites</b>, and ends with <b>Choose folder…</b>. Pick one and the selection goes there.</p>
+      <p><b>Choose folder…</b> opens a folder picker with every connection. Get Info and Quick Look have a <b>Move or copy to…</b> button that opens the same picker.</p>
+      <div class="tip"><p>With exactly two panes, <kbd>F5</kbd> copies and <kbd>F6</kbd> moves the selection to the other pane's folder. With more panes they show the same list as Copy to ▸.</p></div>
+
+      <h3 id="copy-move-dialog">The Copy / Move to… dialog</h3>
+      <p>To copy or move a whole folder, a bucket or an entire connection to somewhere else, use <b>Copy / Move to…</b>. You'll find it in:</p>
+      <ul>
+        <li>the <b>Keep &amp; sync ▸</b> submenu (right-click empty space, or the pane's <b>…</b> menu) for the folder on screen;</li>
+        <li>a bucket's right-click menu in the sidebar;</li>
+        <li>a connection's right-click menu in the sidebar, for everything in it.</li>
+      </ul>
+      <figure class="shot narrow"><picture><source srcset="/assets/shots/copymove-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/copymove.webp" alt="The Copy / Move to dialog with Copy and Move buttons at the top, a folder tree of every connection to pick the destination from, and an Options section with what to do when a file is already there." loading="lazy"></picture><figcaption>One dialog copies or moves to any connection.</figcaption></figure>
+      <ol class="steps">
+        <li>Choose <b>Copy</b> or <b>Move</b> at the top.</li>
+        <li>Pick the destination folder on any connection. You can make a new folder on the way.</li>
+        <li>Open <b>Options</b> if you want to change them (below).</li>
+        <li>Click <b>Copy here</b> or <b>Move here</b>. The job runs in the background, in the <b>Jobs</b> tab of the Activity panel.</li>
+      </ol>
+
+      <h3 id="copy-move-options">Options</h3>
+      <dl>
+        <dt>If a file is already there</dt>
+        <dd><b>Skip if it's the same</b> (default; same size is skipped, different is replaced), <b>Always skip</b>, <b>Replace if older</b>, <b>Always replace</b>, or <b>Keep both</b> (the copy gets a name like "photo (1).jpg").</dd>
+        <dt>Check contents after copying</dt>
+        <dd>Compares fingerprints where both sides have them. Sizes are always checked.</dd>
+        <dt>Keep modification dates</dt>
+        <dd>Where the destination can store them, like This computer.</dd>
+        <dt>Leave out</dt>
+        <dd>Patterns of files to skip, separated by commas, like <code>*.tmp, node_modules/</code>. By default <code>.DS_Store</code>, <code>Thumbs.db</code> and <code>desktop.ini</code>.</dd>
+      </dl>
+      <p>A move deletes each original only after its copy is checked. Kybl remembers your options for next time.</p>
+
+      <h3 id="jobs-progress">Following a job</h3>
+      <p>The <b>Jobs</b> tab shows progress, speed and time left, with <b>Pause</b>, <b>Resume</b> and <b>Stop</b>. When it's done, <b>Show where it went</b> opens the destination. Files that failed are listed with <b>Try again</b>. Jobs survive quitting, crashes and restarts: Kybl picks them up where they stopped. If a cloud sign-in expires, the job waits in <b>Sign in again</b> and carries on once you do.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="panes" aria-labelledby="h-panes">
+      <h2 id="h-panes">Panes</h2>
+      <p class="intro">Split the window into up to six panes, each with its own connection, folder, view and selection. Two side by side make Kybl a classic two-pane file manager.</p>
+
+      <h3 id="split">Split a pane</h3>
+      <ul>
+        <li><b>Split right</b>: <kbd>⌘\</kbd>. <b>Split down</b>: <kbd>⇧⌘\</kbd>.</li>
+        <li>Or click the <b>Panes</b> button in a pane's toolbar for Split right, down, left or up, or right-click empty space and choose <b>Split ▸</b>.</li>
+        <li>The new pane opens in the same folder.</li>
+      </ul>
+      <p>Drag a divider to resize; double-click it to share the room evenly. <b>Make panes the same size</b> is in the Panes menu. If the window gets too small for every pane, Kybl shows only the active one with a small numbered pane switcher at the top. Make the window bigger to bring the layout back.</p>
+
+      <h3 id="pane-focus">Moving between panes</h3>
+      <p>Click a pane, press <kbd>Tab</kbd>, or press <kbd>⌥⌘</kbd> with an arrow key to go to the pane on that side. The active pane is highlighted. To move a pane, drag its toolbar (see <a href="#drag-panes">Rearranging panes</a>) or use <b>Move pane ▸</b> in the Panes menu. <b>Swap panes</b> is <kbd>⇧⌘S</kbd>.</p>
+
+      <h3 id="commander-keys">Two-pane keys</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Key</th><th>With several panes open</th></tr></thead>
+        <tbody>
+          <tr><td class="k"><kbd>F3</kbd></td><td>Quick Look</td></tr>
+          <tr><td class="k"><kbd>F5</kbd></td><td>Copy the selection to the other pane</td></tr>
+          <tr><td class="k"><kbd>F6</kbd></td><td>Move the selection to the other pane</td></tr>
+          <tr><td class="k"><kbd>F7</kbd></td><td>New folder</td></tr>
+          <tr><td class="k"><kbd>F8</kbd></td><td>Delete</td></tr>
+          <tr><td class="k"><kbd>Tab</kbd></td><td>Switch to the next pane</td></tr>
+        </tbody>
+      </table></div>
+      <p>Moving between This computer and a cloud only copies; the originals stay.</p>
+
+      <h3 id="other-pane">Working with the other pane</h3>
+      <p>The pane's <b>…</b> menu has four items for the panes beside it. With two panes each is a single item; with more, each is a list of the other panes by name:</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/menu-pane-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/menu-pane.webp" alt="The pane's … menu with Same folder, Swap, Compare and Synced browsing with the other pane." loading="lazy"></picture><figcaption>The pane's … menu works with the other pane.</figcaption></figure>
+      <ul>
+        <li><b>Same folder in</b>: open this folder in the other pane too.</li>
+        <li><b>Swap with</b>: trade places with the other pane (<kbd>⇧⌘S</kbd>).</li>
+        <li><b>Compare with</b>: compare the two folders (see <a href="#compare-folders">Compare folders</a>).</li>
+        <li><b>Synced browsing with</b>: link the two panes (below).</li>
+      </ul>
+
+      <h3 id="synced-browsing">Synced browsing</h3>
+      <p>Linked panes follow each other: open a subfolder in one and the other opens the same subfolder, and going up goes up in both. Handy for comparing a local site with its server copy. Turn it on with <b>Synced browsing with</b>, the command palette, or the small round link button on the divider between two panes. A lit button shows which panes are linked; links can chain across three or more. Click it again, or use the toast, to turn it off.</p>
+
+      <h3 id="close-panes">Closing panes</h3>
+      <p><kbd>⌘W</kbd> closes the active pane while several are open (with one pane left, it closes the window). The Panes menu also has <b>Close pane</b> and <b>Close other panes</b>. If a terminal in the pane is busy, Kybl asks first.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="workspaces" aria-labelledby="h-workspaces">
+      <h2 id="h-workspaces">Workspaces</h2>
+      <p class="intro">Workspaces are tabs along the top of the window. Each one keeps its own layout of panes, so you can have one for a client's servers, one for photos and one for a deploy.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/workspaces-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/workspaces.webp" alt="The workspace bar with several coloured tabs, one open with its settings popover showing name, colour and recipe options." loading="lazy"></picture><figcaption>Workspace tabs, each with its own panes.</figcaption></figure>
+
+      <h3 id="workspace-tabs">Make and switch workspaces</h3>
+      <ul>
+        <li><b>New workspace</b>: <kbd>⌘T</kbd> or the <b>+</b> button. The + menu also lists your saved recipes.</li>
+        <li><b>Switch</b>: click a tab, or press <kbd>⌃Tab</kbd> / <kbd>⌃⇧Tab</kbd> (or <kbd>⇧⌘]</kbd> / <kbd>⇧⌘[</kbd>). <kbd>⌥⌘1</kbd> to <kbd>⌥⌘8</kbd> go to the first eight, <kbd>⌥⌘9</kbd> to the last.</li>
+        <li><b>Rename</b>: double-click the tab, or press <kbd>F2</kbd> on it.</li>
+        <li><b>Reorder</b>: drag a tab sideways, or press <kbd>⌥⇧⌘[</kbd> / <kbd>⌥⇧⌘]</kbd>.</li>
+        <li><b>Close</b>: right-click the tab and choose <b>Close workspace</b>. A toast offers <b>Undo</b>. Terminals in it end.</li>
+      </ul>
+      <p>Right-click a tab for Rename, Settings…, Duplicate, Close workspace and Close other workspaces. Transfers and jobs belong to the whole app, so they keep running when you switch.</p>
+
+      <h3 id="workspace-settings">Colours and settings</h3>
+      <p>Click the cog that appears on a tab when you hover it. You can change its <b>Name</b> and <b>Color</b> (red, orange, yellow, green, teal, blue, purple, pink or gray), duplicate or close it, and manage its recipe.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/workspace-settings-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/workspace-settings.webp" alt="Workspace settings: name, colour and the recipe it saves." loading="lazy"></picture><figcaption>A workspace's settings and its recipe.</figcaption></figure>
+
+      <h3 id="recipes">Recipes and start options</h3>
+      <p>A <b>recipe</b> is a saved copy of a workspace's layout: its splits, each pane's place and view, and its terminals with the commands they run when they start.</p>
+      <ul>
+        <li><b>Save layout as recipe</b> in the workspace settings. <b>Update</b> saves changes; <b>Reset to recipe</b> puts the workspace back the way the recipe says.</li>
+        <li>Each terminal in a recipe has a <b>runs on start</b> box (one command per line).</li>
+        <li>Tick <b>Open from the recipe when Kybl starts</b> to start that workspace fresh from its recipe every launch, instead of where you left it.</li>
+        <li>Recipes are kept even when you close the workspace, so you can open one again from the + menu.</li>
+      </ul>
+
+      <h3 id="workspace-moving">Moving things between workspaces</h3>
+      <p>Drag a pane onto a tab to move it to that workspace. Drag files onto a tab to copy or move them into its active pane. Files from Finder or Explorer dropped on a tab upload there.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="terminal" aria-labelledby="h-terminal">
+      <h2 id="h-terminal">Terminal</h2>
+      <p class="intro">A pane can be a terminal: a shell on your computer, or an SSH session on an SFTP server. Terminals are in the computer app only.</p>
+
+      <h3 id="open-terminal">Open a terminal</h3>
+      <ul>
+        <li>Press <kbd>⌘J</kbd> or <kbd>⌃`</kbd>. A terminal opens below the active pane, in the same folder. Press it again to go back and forth between the terminal and its file pane.</li>
+        <li>Or right-click a folder and choose <b>Open in terminal</b>, or right-click empty space and choose <b>Open terminal here</b>.</li>
+        <li>On an <b>SFTP</b> connection the terminal is an SSH session on that server, signed in with the connection's details.</li>
+        <li>On <b>This computer</b> it runs your login shell. On Windows you can choose PowerShell, Command Prompt, WSL or Git Bash under <b>Terminal shell</b> in <a href="#settings-general">Settings → General</a>.</li>
+      </ul>
+      <figure class="shot"><picture><source srcset="/assets/shots/claude-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/claude.webp" alt="Claude Code running in a terminal pane, next to two compact lists of the same project with git status badges." loading="lazy"></picture><figcaption>A coding agent in a terminal pane, the project's files beside it.</figcaption></figure>
+
+      <h3 id="follow-folder">Following the folder</h3>
+      <p>Tick <b>Follow the folder above</b> in the terminal's <b>…</b> menu and the shell changes directory whenever the file pane above it moves. Kybl only types into the shell while it waits at its prompt; if it's busy, it follows again on the next folder change.</p>
+
+      <h3 id="terminal-menu">The terminal menu</h3>
+      <p>Clear, Restart shell, Follow the folder above, Copy, Paste, Bigger text, Smaller text, Actual size and Close terminal. Inside a terminal, shortcuts use <kbd>⌘</kbd> on the Mac and <kbd>Ctrl</kbd>+<kbd>⇧</kbd> on Windows and Linux.</p>
+      <p>Drop files from Finder or Explorer onto a terminal on your computer to type their paths.</p>
+
+      <h3 id="terminal-paste">Safe pasting</h3>
+      <p>If you paste several lines, Kybl shows exactly what will run first, including invisible characters and every line break. <b>Don't ask again</b> turns the question off for that one terminal. <b>Ask in all terminals</b> in Settings → General turns it back on everywhere.</p>
+
+      <h3 id="ssh-tunnels">SSH tunnels</h3>
+      <p>An SFTP connection can forward local ports to its server, for example to reach a database that only listens inside the server.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/tunnels-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/tunnels.webp" alt="A server's right-click menu with its Tunnels submenu: Postgres, an admin panel and a Redis port." loading="lazy"></picture><figcaption>Start a server's tunnels from the sidebar.</figcaption></figure>
+      <ol class="steps">
+        <li>Edit the SFTP connection and open the <b>Tunnels</b> section.</li>
+        <li>Add a tunnel: the <b>Local port</b> on your computer, the <b>Remote host</b> as the server sees it (such as <code>localhost</code> or <code>db.internal</code>) and the <b>Remote port</b>. Give it a name if you like.</li>
+        <li>Switch on <b>Auto-start</b> to start it the first time Kybl opens that connection.</li>
+      </ol>
+      <p>Start and stop tunnels from the connection's right-click menu (<b>Tunnels ▸</b>), the command palette or Settings. They listen on your computer only (127.0.0.1).</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="archives" aria-labelledby="h-archives">
+      <h2 id="h-archives">Archives (zip and tar)</h2>
+
+      <h3 id="compress">Compress</h3>
+      <p>Select items in one folder, right-click and choose <b>Compress</b>. Kybl makes a <code>.zip</code> named after the item (or "Archive.zip"). Photos, video, music and other already-compressed files are stored as they are, so it's quick.</p>
+
+      <h3 id="extract">Extract</h3>
+      <ul>
+        <li><b>Extract here</b> puts a folder named after the archive next to it. Works for <code>.zip</code>, <code>.tar</code>, <code>.tar.gz</code> and <code>.tgz</code>.</li>
+        <li><b>Extract to…</b> lets you pick any folder, on any connection.</li>
+      </ul>
+      <p>On SFTP servers that have zip, unzip or tar, Kybl packs and unpacks on the server itself. Elsewhere it does the work on your computer and uploads the result. Each one is a single row in the Activity panel that you can stop.</p>
+
+      <h3 id="browse-archive">Open an archive like a folder</h3>
+      <p>Double-click an archive (or press <kbd>↵</kbd>) to look inside without extracting. You can preview, copy out or extract items. It's read-only, so menu items that would change it are left out. Going up from the top returns to the folder that holds the archive.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/archive-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/archive.webp" alt="A zip file opened as a folder in a pane, its files and folders listed with sizes, and the path showing the archive's name as part of the breadcrumbs." loading="lazy"></picture><figcaption>A zip opened like a folder.</figcaption></figure>
+      <p>Encrypted entries, links and unsafe paths inside an archive are skipped, with a note.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="compare" aria-labelledby="h-compare">
+      <h2 id="h-compare">Compare</h2>
+
+      <h3 id="compare-files">Compare two files</h3>
+      <p>Select two text files and right-click: <b>Compare files</b>. Or select one file here and one in another pane: <b>Compare with "other file"</b>. The older file goes on the left.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/compare-files-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/compare-files.webp" alt="Two versions of a text file side by side, with removed lines marked in red, added lines in green, changed words highlighted, and unchanged stretches folded away." loading="lazy"></picture><figcaption>A side-by-side diff.</figcaption></figure>
+      <p>The toolbar switches between side by side and inline, wraps lines, ignores whitespace, and steps through changes. Press <kbd>F7</kbd> or <kbd>n</kbd> for the next change, <kbd>⇧F7</kbd> or <kbd>p</kbd> for the previous, <kbd>Esc</kbd> to close.</p>
+
+      <h3 id="compare-folders">Compare two folders</h3>
+      <p>Open the two folders in two panes, then choose <b>Compare with</b> in the pane's <b>…</b> menu (or <b>Compare Folders</b> in the command palette).</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/compare-folders-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/compare-folders.webp" alt="The folder comparison summary listing files only on the left, only on the right, newer on one side, and different, with a count of matching files and Compare buttons beside changed text files." loading="lazy"></picture><figcaption>What differs between two folders.</figcaption></figure>
+      <p>Kybl lists what's only on one side, what's newer on one side, what differs, and how many match. Changed text files have a <b>Compare</b> button. It also <b>selects what the other side is missing</b>, so pressing <kbd>F5</kbd> copies it across. Files are compared by size, date and, between S3 buckets, checksum. Subfolders are matched by name only; their contents aren't compared. To bring a whole tree in line, use <a href="#mirror">Mirror</a>.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="transfers" aria-labelledby="h-transfers">
+      <h2 id="h-transfers">Transfers and activity</h2>
+      <p class="intro">Every upload, download, copy job and long operation shows in the Activity panel at the bottom of the window.</p>
+
+      <h3 id="activity-panel">The Activity panel</h3>
+      <figure class="shot"><picture><source srcset="/assets/shots/transfers-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/transfers.webp" alt="The Activity panel open at the bottom of the window, listing running uploads with progress bars, speed and time left, tabs for In progress, Failed, Done, Log and Jobs, and buttons to pause, resume and set a speed limit." loading="lazy"></picture><figcaption>The Activity panel with transfers running.</figcaption></figure>
+      <p>It opens by itself when a transfer starts (turn that off with <b>Show activity automatically</b> in Settings), or choose <b>Show activity</b> from the pane's <b>…</b> menu. Its tabs:</p>
+      <ul>
+        <li><b>In progress</b>: running, queued and paused transfers, plus running sync and jobs. Each row shows speed, time left and bytes.</li>
+        <li><b>Failed</b>: what went wrong, in plain words, with Retry.</li>
+        <li><b>Done</b>: finished items and what was checked. <b>Clear</b> empties it.</li>
+        <li><b>Log</b>: a readable history of what happened (see below).</li>
+        <li><b>Jobs</b>: copies and moves between connections, and mirrors.</li>
+      </ul>
+
+      <h3 id="pause-retry">Pause, resume, cancel and retry</h3>
+      <ul>
+        <li>On each row: pause, resume, cancel, retry, move to the top of the queue, open, or show in Finder or Explorer.</li>
+        <li>In the panel header: <b>Pause all</b>, <b>Resume all</b>, <b>Cancel all</b>, <b>Retry failed</b>, <b>Clear</b> and <b>Clear failed</b>.</li>
+        <li>Each connection has its own queue, so a long upload to one never holds up a download from another.</li>
+      </ul>
+
+      <h3 id="resume">Resume after a restart</h3>
+      <p>If Kybl quits or crashes mid-transfer, unfinished transfers come back <b>paused</b> next time. Resume them and they carry on from where they stopped, where the connection allows it: partial downloads, S3 multipart uploads, cloud-drive upload sessions and temporary files on SFTP and FTP servers. A dropped connection resumes the download from the same version of the file. Leftovers nobody resumes are cleaned up after 7 days.</p>
+      <div class="note"><p>Azure, Google Cloud Storage and WebDAV uploads start again from the beginning after a restart.</p></div>
+
+      <h3 id="speed-limits">Speed limits and how many at once</h3>
+      <ul>
+        <li>Click the gauge in the Activity panel to set a limit: No limit, 1, 5 or 10 MB/s, or Custom. It applies to running transfers immediately.</li>
+        <li><a href="#settings-transfers">Settings → Transfers and sharing</a> has separate <b>Download limit</b> and <b>Upload limit</b>, <b>Files at the same time</b> per connection (1 to 8, default 3) and <b>Parts per file</b> for big files (1 to 8, default 4).</li>
+        <li>Limits are shared by all transfers in that direction and also apply to copy jobs.</li>
+      </ul>
+
+      <h3 id="verify">Verify after transfer</h3>
+      <p><b>Verify files after copying</b> in Settings → Transfers and sharing:</p>
+      <ul>
+        <li><b>Off</b> (default): trust the server's answer.</li>
+        <li><b>Size</b>: compare sizes. A mismatch fails the transfer, with Retry.</li>
+        <li><b>Checksum</b>: compare a content fingerprint where both sides have one (S3, Google Drive, Dropbox, OneDrive, SFTP), otherwise size. The Done tab shows what was checked.</li>
+      </ul>
+      <p>Encrypted storage (including Kybl Storage), FTP, WebDAV and This computer are checked by size.</p>
+
+      <h3 id="activity-log">The log</h3>
+      <p>The <b>Log</b> tab says in plain words what you started and how it ended: "Started downloading 'photos' (folder) from X to Downloads", then counts, size and time, or why it failed, with the first errors under <b>Details</b>. It also records connecting ("Connected to X (1.4 s)") and errors. Filter it to problems only, or click <b>Copy</b> to paste the whole log into a bug report.</p>
+
+      <h3 id="phone-transfers">On phones</h3>
+      <p>Phones have a <b>Transfers</b> screen with the same actions. Android keeps transfers going in the background with a progress notification (with Cancel), even if you swipe the app away. iPhone keeps going for about half a minute after you leave the app, then resumes the rest when you come back. <b>Wi-Fi only</b> makes transfers wait for Wi-Fi. See <a href="#phone">The phone app</a>.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="sharing" aria-labelledby="h-sharing">
+      <h2 id="h-sharing">Sharing</h2>
+
+      <h3 id="share-links">Share links</h3>
+      <ol class="steps">
+        <li>Right-click one file and choose <b>Copy share link (24 hours)</b>. The link is on your clipboard.</li>
+        <li>Or open <a href="#get-info">Get Info</a> (<kbd>⌘I</kbd>), choose 1 hour, 24 hours or 7 days under <b>Share link</b>, and click <b>Copy</b>.</li>
+      </ol>
+      <p>Set the default lifetime with <b>Share link lifetime</b> in <a href="#settings-transfers">Settings → Transfers and sharing</a>.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Connection</th><th>Share links</th></tr></thead>
+        <tbody>
+          <tr><td>S3-compatible and Kybl Storage</td><td>Yes. A private link that only works for people who have it, and stops at the time you chose.</td></tr>
+          <tr><td>OneDrive</td><td>Yes. Under an hour it's a temporary download link; longer links are view-only links that expire, public until then.</td></tr>
+          <tr><td>Dropbox</td><td>Yes. Up to 4 hours it's a temporary link; longer links are public links that expire (needs a paid Dropbox plan).</td></tr>
+          <tr><td>Google Drive</td><td>No. Drive links are permanent public permissions, so Kybl doesn't make them.</td></tr>
+          <tr><td>Azure, Google Cloud Storage, SFTP, FTP, WebDAV, This computer</td><td>No.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3 id="share-paths">Copy path or S3 URI</h3>
+      <p>To point a colleague or a script at a file, right-click it and choose <b>Copy path</b>, or on S3 <b>Copy S3 URI</b>. <kbd>⌘C</kbd> on files also puts their paths on the clipboard as text.</p>
+
+      <h3 id="share-phone">From your phone</h3>
+      <p>On the phone, <b>Share…</b> in an item's menu sends the file itself to another app. Files shared <i>into</i> Kybl from other apps can be uploaded anywhere; see <a href="#phone-share">Sharing into Kybl</a>.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="sync" aria-labelledby="h-sync">
+      <h2 id="h-sync">Folder sync</h2>
+      <p class="intro">Pair a folder on your computer with a folder on any connection, and Kybl keeps them in step, even with the window closed. Folder sync is in the computer app only.</p>
+
+      <h3 id="sync-setup">Sync a folder</h3>
+      <ol class="steps">
+        <li>Right-click a folder on a connection and choose <b>Keep &amp; sync ▸ Sync this folder…</b>, or click <b>Add folder</b> in <a href="#settings-sync">Settings → Folder sync</a>.</li>
+        <li>Check the connection and remote folder, and choose the <b>local folder</b>.</li>
+        <li>Choose a <b>direction</b> (below) and the options.</li>
+        <li>Click <b>Start syncing</b>. The first sync starts in a moment.</li>
+      </ol>
+      <figure class="shot"><picture><source srcset="/assets/shots/app-sync-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/app-sync.webp" alt="Folder sync settings listing synced folders: one uploading to a bucket and up to date, one with an access problem explained in plain words, and a two-way synced folder that kept two conflicts as copies." loading="lazy"></picture><figcaption>Synced folders in Settings → Folder sync.</figcaption></figure>
+
+      <h3 id="sync-directions">Directions</h3>
+      <dl>
+        <dt>Upload only</dt>
+        <dd>Your local folder is the original. Changes upload within seconds of happening.</dd>
+        <dt>Download only</dt>
+        <dd>Keeps a copy of the remote folder on your computer, checked on a schedule. The remote folder is the original.</dd>
+        <dt>Two-way</dt>
+        <dd>Changes on either side are copied to the other. Renames stay renames. Edited on both sides? You keep both versions.</dd>
+      </dl>
+
+      <h3 id="sync-options">Options</h3>
+      <ul>
+        <li><b>Mirror deletions</b> (one-way only, off by default): deleting a file on one side deletes it on the other. With it off, an upload sync keeps everything you ever uploaded, which makes it a simple backup. In download mode, local files go to the Trash, and files you edited locally are never removed. Two-way sync always passes deletions on, behind the guard below.</li>
+        <li><b>Keep deleted files in a trash folder</b>: for connections without their own trash, deleted files go to a dated <code>.kybl-trash</code> folder in the remote folder. On by default for two-way.</li>
+        <li><b>Ask before big deletions</b> (on by default): if a sync would delete more than 50 files and more than a fifth of the folder, it stops and asks. A side that suddenly looks empty is always checked with you.</li>
+        <li><b>Full check every</b> 1 minute, 5 minutes (default), 15 minutes or 1 hour. Local changes go over right away; this is how often the other side is looked at, since most storage can't announce changes.</li>
+        <li><b>Ignore</b>: patterns to skip, one per line, like a <code>.gitignore</code>. The defaults skip <code>.DS_Store</code>, <code>Thumbs.db</code>, <code>desktop.ini</code>, temporary files, <code>.git/</code> and <code>node_modules/</code>. <b>Reset to defaults</b> brings them back.</li>
+      </ul>
+
+      <h3 id="sync-deletions">Deletions waiting</h3>
+      <p>When the guard stops a sync, the folder shows <b>Deletions waiting</b>. Look through the list (<b>Show files</b>), then click <b>Delete them</b> or <b>Keep the files</b>. Nothing is deleted until you decide. The tray menu shows <b>Confirm deletions in N folders…</b> while something waits.</p>
+
+      <h3 id="sync-conflicts">Conflicts</h3>
+      <p>If a file changed on both sides, Kybl keeps both: the other side's version keeps the name and yours becomes a copy next to it. The folder lists its <b>Conflicts</b>, each with:</p>
+      <ul>
+        <li><b>Open both</b> to look at the two versions;</li>
+        <li><b>Keep mine</b>: your version replaces the other one, on both sides;</li>
+        <li><b>Keep theirs</b>: your copy goes to the Trash;</li>
+        <li><b>Keep both</b>: both files stay and the conflict stops showing.</li>
+      </ul>
+
+      <h3 id="kyblik">Kyblík in the menu bar</h3>
+      <p>The little bucket in the menu bar (macOS) or system tray (Windows, Linux) shows how your folders are doing: all synced, syncing, paused, or in need of a hand. Its menu shows a status line ("Syncing… 14 of 18 files", "Up to date · 3 folders"), and has <b>Open Kybl</b>, <b>Sync now</b>, <b>Pause syncing</b>, <b>Sync settings…</b>, your <a href="#drives">drives</a>, <b>Check for updates…</b> and <b>Quit Kybl</b>. <b>Review N conflicts…</b> and <b>Confirm deletions…</b> appear when something waits for you. The folder-sync indicator at the bottom of the sidebar shows the same status.</p>
+
+      <h3 id="sync-background">Syncing with the window closed</h3>
+      <p>Sync keeps running when you close the window, as long as <b>Keep running in the menu bar</b> is on. Turn on <b>Open at login</b> in Settings → General and Kybl starts quietly at login, so synced folders stay current.</p>
+
+      <h3 id="sync-manage">Pause, sync now, stop</h3>
+      <p>Each synced folder in Settings → Folder sync has <b>Sync now</b>, <b>Pause</b> / <b>Resume</b>, edit and remove (files stay where they are). <b>Pause syncing</b> pauses all of them. Each shows its state (Up to date, Checking, Syncing, Problem, Paused or Waiting for you), the file it's on, progress, and the last sync time.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="keep-and-sync" aria-labelledby="h-keep-and-sync">
+      <h2 id="h-keep-and-sync">Keep &amp; sync and jobs</h2>
+      <p class="intro">The <b>Keep &amp; sync ▸</b> submenu, on a folder's right-click menu and in the pane's <b>…</b> menu, gathers the ways to keep a folder somewhere else. Everything it starts shows in the Activity panel.</p>
+
+      <h3 id="keep-menu">What's in Keep &amp; sync</h3>
+      <ul>
+        <li><b>Sync this folder…</b>: set up <a href="#sync">folder sync</a> with this folder.</li>
+        <li><b>Keep on this device</b>: makes a two-way synced copy in a <b>Kybl</b> folder in your home folder and opens it in Finder or Explorer. The first time, Kybl explains that deleting files there deletes them online too. Once kept, the item reads <b>Kept on this device</b>; click it to stop (the copy stays on disk).</li>
+        <li><b>Mount as drive…</b>: see <a href="#drives">Drives</a>.</li>
+        <li><b>Copy / Move to…</b> (in the pane's <b>…</b> menu and the empty-space menu, for the folder on screen): copy or move it, or a whole bucket, to another connection. See <a href="#copy-move-dialog">the Copy / Move to dialog</a>.</li>
+        <li><b>Mirror to…</b> and your saved mirrors (<b>Run "name"</b>). See <a href="#mirror">Mirror</a>.</li>
+      </ul>
+      <p>Sync, Keep on this device and Mount as drive aren't offered for folders on This computer, since those files are already on your disk. Inside an archive, Keep &amp; sync only offers what doesn't change the archive.</p>
+
+      <h3 id="jobs-tab">The Jobs tab</h3>
+      <figure class="shot"><picture><source srcset="/assets/shots/jobs-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/jobs.webp" alt="The Jobs tab of the Activity panel listing copy jobs between connections, each with a progress bar, file counts, speed and time left, and Pause and Stop buttons." loading="lazy"></picture><figcaption>Copy jobs and mirrors in the Jobs tab.</figcaption></figure>
+      <p>Copies and moves between connections and mirrors run as <b>jobs</b>. A job goes through: getting ready, copying (or moving, or removing originals), and done. It can also be paused, waiting for Wi-Fi (phones), waiting for you to sign in again, done with problems, or stopped. Use <b>Pause</b>, <b>Resume</b>, <b>Stop</b>, <b>Show where it went</b> and <b>Remove from the list</b>. Failed files have <b>Try again</b>.</p>
+      <p>Jobs are saved as they run, so they continue after a quit, a crash or a phone closing the app.</p>
+      <div class="note"><p>Jobs run when you start them; there's no timetable for running them later. For something that keeps running by itself, use <a href="#sync">folder sync</a>. To repeat the same copy, save it as a <a href="#saved-mirrors">mirror</a> and run it again in one click.</p></div>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="mirror" aria-labelledby="h-mirror">
+      <h2 id="h-mirror">Mirror</h2>
+      <p class="intro">Mirror makes one folder match another, once: deploy a website to a server, or pull a folder down. It shows you exactly what it will do before it touches anything.</p>
+
+      <h3 id="mirror-run">Mirror a folder</h3>
+      <ol class="steps">
+        <li>Right-click a folder and choose <b>Keep &amp; sync ▸ Mirror to…</b>. The Mirror sheet opens with that folder as <b>From</b>.</li>
+        <li>Pick the <b>To</b> folder, on any connection. The swap button between them copies the other way instead.</li>
+        <li>Open <b>Options</b> if you need them (below).</li>
+        <li>Click <b>Check</b>. Kybl lists both sides and compares them, without changing anything.</li>
+        <li>Look at the result tabs: <b>Copy</b> (new and changed files), <b>Delete</b> (only when deleting is on) and <b>Same</b> (files already up to date). Each is grouped by folder.</li>
+        <li>Click <b>Mirror N files</b> (or <b>Mirror and delete N</b>). The job copies first and deletes last, and touches nothing outside the list you saw.</li>
+      </ol>
+      <figure class="shot"><picture><source srcset="/assets/shots/mirror-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/mirror.webp" alt="The Mirror sheet with a From folder on this computer and a To folder on a web server, folded options, and a dry run result with Copy, Delete and Same tabs listing files grouped by folder." loading="lazy"></picture><figcaption>A dry run before mirroring a site to a server.</figcaption></figure>
+
+      <h3 id="mirror-options">Options</h3>
+      <dl>
+        <dt>Delete what isn't in the source</dt>
+        <dd>Off by default. When on, files only at the destination are deleted, so it matches exactly. Deletions on This computer go to the Trash.</dd>
+        <dt>Copy a file when</dt>
+        <dd><b>Size or date differs</b> (default, quick, works everywhere), <b>Size differs</b>, or <b>Checksum differs</b> (exact but slower, only where both connections have checksums). Kybl allows for clocks that round to the minute, as FTP servers do.</dd>
+        <dt>Leave out</dt>
+        <dd>Patterns of files never copied or deleted, one per line, like a <code>.gitignore</code>. By default <code>.git/</code>, <code>node_modules/</code>, <code>.DS_Store</code>, <code>Thumbs.db</code> and <code>.env</code>.</dd>
+        <dt>Also leave out what .gitignore lists</dt>
+        <dd>Skips whatever the source folder's <code>.gitignore</code> lists, handy for deploying a project.</dd>
+      </dl>
+      <p>Links are left alone: nothing at or behind a link is copied or deleted. If the destination folder doesn't exist yet, it's made first.</p>
+
+      <h3 id="saved-mirrors">Save and re-run a mirror</h3>
+      <ul>
+        <li>Name a mirror to keep it ("Keep it, to run again with one click"). The <b>Saved</b> menu in the sheet loads, renames or forgets saved mirrors; <b>New mirror</b> starts fresh.</li>
+        <li>Run a saved mirror from the folder's <b>Keep &amp; sync ▸ Run "name"</b>, or from the command palette (<b>Run mirror "name"</b>).</li>
+        <li>A saved mirror checks first. If it would delete anything, the sheet opens so you can confirm.</li>
+      </ul>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="actions" aria-labelledby="h-actions">
+      <h2 id="h-actions">Custom actions</h2>
+      <p class="intro">Add your own shell commands to the right-click menu, give them a shortcut, and run them on selected files: resize images, compute a checksum, fix permissions on a server.</p>
+
+      <h3 id="actions-create">Make an action</h3>
+      <ol class="steps">
+        <li>Open <a href="#settings-actions">Settings → Actions</a> and add an action.</li>
+        <li>Give it a <b>Name</b> and a <b>Command</b>, using placeholders for the files (below). The preview shows what would run.</li>
+        <li>Choose where it <b>Runs</b>, what it <b>Applies to</b> and its <b>Output</b>.</li>
+        <li>Optionally give it a <b>Shortcut</b>, and switch it on.</li>
+      </ol>
+      <figure class="shot"><picture><source srcset="/assets/shots/settings-actions-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-actions.webp" alt="Settings, Actions page listing custom actions with on and off switches, one open for editing with its name, a shell command containing placeholders, where it runs, what it applies to, and a shortcut." loading="lazy"></picture><figcaption>Custom actions in Settings.</figcaption></figure>
+
+      <h3 id="actions-placeholders">Placeholders</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Placeholder</th><th>Becomes</th></tr></thead>
+        <tbody>
+          <tr><td><code>{path}</code></td><td>Each item's path. The command runs once per item.</td></tr>
+          <tr><td><code>{paths}</code></td><td>All items, separated by spaces. The command runs once.</td></tr>
+          <tr><td><code>{name}</code></td><td>The item's name</td></tr>
+          <tr><td><code>{stem}</code></td><td>The name without its extension</td></tr>
+          <tr><td><code>{ext}</code></td><td>The extension</td></tr>
+          <tr><td><code>{dir}</code></td><td>The folder it's in</td></tr>
+        </tbody>
+      </table></div>
+      <p>Kybl quotes each value safely for the shell. Click the chips to insert them. It refuses placeholders in unsafe places, such as inside quotes.</p>
+
+      <h3 id="actions-where">Where actions run</h3>
+      <ul>
+        <li><b>On this computer</b>: in a standard shell (<code>sh</code>; on Windows, the one from Git for Windows). Files from servers and clouds are downloaded to a temporary folder first, so changes stay in that copy. Folders on a server can't be used this way.</li>
+        <li><b>On the server</b>: for SFTP connections, the command runs on the server over SSH, on the real files.</li>
+      </ul>
+
+      <h3 id="actions-options">More options</h3>
+      <ul>
+        <li><b>Applies to</b>: Files, Folders or Both, optionally only some extensions ("jpg, png").</li>
+        <li><b>Output</b>: <b>Show output</b> in a sheet (with Stop), or <b>Run silently, notify when done</b>.</li>
+        <li><b>Refresh the folder afterwards</b>.</li>
+        <li><b>Shortcut</b>: <kbd>⌘</kbd> plus a key, or an F-key. Shortcuts Kybl already uses are refused, with the reason.</li>
+      </ul>
+
+      <h3 id="actions-run">Run an action</h3>
+      <p>Select files and choose it from <b>Actions ▸</b> in the right-click menu, press its shortcut, or pick <b>Run "name"</b> in the command palette. Each run is a row in the Activity panel. More than 20 items asks first.</p>
+      <p>Kybl comes with a few examples, all off until you switch them on: Optimize images (macOS), Compute SHA-256, Disk usage on server and Make executable (server). Use <b>Export</b> and <b>Import</b> to share actions as a file; imported actions arrive switched off so you can review them.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="command-palette" aria-labelledby="h-command-palette">
+      <h2 id="h-command-palette">Command palette</h2>
+      <p class="intro">Press <kbd>⌘K</kbd> for one search box that finds connections, places, commands and the files in the folder on screen.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/palette-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/palette.webp" alt="The command palette over the window, with a search field at the top and results grouped into recent places, connections, commands with their shortcuts, and files." loading="lazy"></picture><figcaption>The command palette.</figcaption></figure>
+
+      <h3 id="palette-use">Using it</h3>
+      <ul>
+        <li>Type a few letters. Results are ranked together: <b>Recent</b>, <b>Connections</b>, <b>Places</b>, <b>Commands</b>, <b>Files</b> and <b>Go to</b>.</li>
+        <li><kbd>↵</kbd> opens the result in the active pane. <kbd>⌘↵</kbd> opens it in a new pane to the right (for a file, shows it in the list).</li>
+        <li><kbd>↑</kbd> <kbd>↓</kbd> (or <kbd>⌃N</kbd> / <kbd>⌃P</kbd>) move, <kbd>PgUp</kbd> / <kbd>PgDn</kbd> jump, <kbd>Esc</kbd> closes.</li>
+      </ul>
+
+      <h3 id="palette-prefixes">Prefixes</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Start with</th><th>To</th></tr></thead>
+        <tbody>
+          <tr><td><code>&gt;</code></td><td>Search commands only</td></tr>
+          <tr><td><code>@</code></td><td>Search connections only</td></tr>
+          <tr><td><code>/</code> or <code>~</code></td><td>Type a path. <kbd>Tab</kbd> completes a folder name.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3 id="palette-commands">What's in it</h3>
+      <p>Every menu command (file, view, go, panes, workspaces), plus: new and imported connections, sort and view choices, theme (System, Light, Dark), each settings page, compress, extract and compare for the selection, Search Inside Files, Open Terminal Here and Toggle Terminal, the Help commands (Kybl Manual, Keyboard Shortcuts, What’s New in Kybl, Report a Problem…), synced browsing with a named pane, workspace recipes, start and stop each SSH tunnel, run each saved mirror, and run each custom action. Commands that can't run right now are greyed, with the reason ("Open a folder first").</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="settings" aria-labelledby="h-settings">
+      <h2 id="h-settings">Settings</h2>
+      <p class="intro">Press <kbd>⌘,</kbd> or click <b>Settings</b> at the bottom of the sidebar. Settings fill the window; <kbd>Esc</kbd> or <b>Back to app</b> closes them.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/settings-appearance-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-appearance.webp" alt="The Appearance settings page with the page list on the left and, on the right, the light, dark or system mode choice, colour scheme previews, accent colours, fonts and interface size." loading="lazy"></picture><figcaption>Settings → Appearance.</figcaption></figure>
+
+      <h3 id="settings-general">General</h3>
+      <ul>
+        <li><b>Reopen last location</b>: start where you left off (on).</li>
+        <li><b>Keep running in the menu bar</b> (or system tray): closing the window keeps sync, jobs and drives going (on).</li>
+        <li><b>Open at login</b>: start quietly in the tray (off).</li>
+        <li><b>Confirm before deleting</b> (on).</li>
+        <li><b>Ask before pasting several lines in a terminal</b>, with <b>Ask in all terminals</b>.</li>
+        <li><b>Terminal shell</b> (when more than one is installed, such as on Windows).</li>
+        <li><b>Secret keys</b>: shows that they're saved encrypted.</li>
+        <li><b>About</b>, <b>Check for updates automatically</b> and the update buttons. See <a href="#updates">Updates</a>.</li>
+      </ul>
+      <figure class="shot"><picture><source srcset="/assets/shots/settings-general-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-general.webp" alt="Settings, General: startup, menu bar, safety and about." loading="lazy"></picture><figcaption>Settings, General</figcaption></figure>
+
+      <h3 id="settings-appearance">Appearance</h3>
+      <ul>
+        <li><b>Mode</b>: System, Light or Dark.</li>
+        <li><b>Colour scheme</b>: Kybl, Classic, Windows 11, Graphite, Midnight, Nord, Solarized, Ember or Grape, each with a light and a dark version.</li>
+        <li><b>Accent colour</b>: the scheme's own, or blue, purple, pink, orange, green or graphite.</li>
+        <li><b>Corners</b>: Square, Subtle, Default or Round.</li>
+        <li><b>Font</b>: System, Rounded, Serif or Mono.</li>
+        <li><b>Size</b>: Small, Default, Large or Larger. Zooms the whole interface.</li>
+        <li><b>Compact layout</b> for every pane (each pane can still change its own).</li>
+      </ul>
+
+      <h3 id="settings-browsing">Browsing</h3>
+      <ul>
+        <li><b>Photos</b>: Off, Placeholders or Thumbnails. See <a href="#thumbnails">Thumbnails</a>.</li>
+        <li><b>Folders first</b> (on).</li>
+        <li><b>Dates</b>: friendly ("Today, 14:32"), your system's format, or a format you pick.</li>
+        <li><b>List columns</b>: Size, Modified, Kind, Storage class, ETag.</li>
+        <li><b>File sizes</b>: MB (1000) or MiB (1024).</li>
+      </ul>
+      <figure class="shot"><picture><source srcset="/assets/shots/settings-browsing-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-browsing.webp" alt="Settings, Browsing: photo previews, folders first, dates, list columns and file sizes." loading="lazy"></picture><figcaption>Settings, Browsing</figcaption></figure>
+
+      <h3 id="settings-transfers">Transfers and sharing</h3>
+      <ul>
+        <li><b>Ask where to save downloads</b> and the <b>Download folder</b>.</li>
+        <li><b>Files at the same time</b> and <b>Parts per file</b>.</li>
+        <li><b>Download limit</b> and <b>Upload limit</b>.</li>
+        <li><b>Verify files after copying</b>: Off, Size or Checksum.</li>
+        <li><b>Show activity automatically</b>.</li>
+        <li><b>Share link lifetime</b>: 1 hour, 24 hours or 7 days.</li>
+      </ul>
+      <figure class="shot"><picture><source srcset="/assets/shots/settings-transfers-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-transfers.webp" alt="Settings, Transfers and sharing: downloads, speed and checking." loading="lazy"></picture><figcaption>Settings, Transfers and sharing</figcaption></figure>
+
+      <h3 id="settings-actions">Actions</h3>
+      <p>Your <a href="#actions">custom actions</a>: switch each on or off, edit it, set its shortcut, and export or import them.</p>
+
+      <h3 id="settings-sync">Folder sync</h3>
+      <p>Your <a href="#sync">synced folders</a>, deletions waiting, conflicts, <b>Add folder</b>, and <b>Pause syncing</b>.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/settings-folder-sync-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-folder-sync.webp" alt="Settings, Folder sync: synced folders with their state, problems and conflicts." loading="lazy"></picture><figcaption>Settings, Folder sync</figcaption></figure>
+
+      <h3 id="settings-drives">Drives</h3>
+      <p>Your <a href="#drives">mounted drives</a>, and how drives work.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/settings-drives-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-drives.webp" alt="Settings, Drives: mounted connections with their cache." loading="lazy"></picture><figcaption>Settings, Drives</figcaption></figure>
+
+      <h3 id="settings-connections">Connections</h3>
+      <p>Every saved connection with <b>Edit</b>, plus <b>New connection</b> and <b>Import connections…</b>.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/settings-connections-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-connections.webp" alt="Settings, Connections: every connection with its address and group." loading="lazy"></picture><figcaption>Settings, Connections</figcaption></figure>
+
+      <h3 id="settings-cache">Cache and data</h3>
+      <ul>
+        <li><b>Clear cache</b>: thumbnails, placeholders and recently opened files, with their current sizes. Files you opened in other apps in the last hour are kept.</li>
+        <li><b>Reset all settings</b> (asks twice): settings go back to their defaults. Transfer settings go back too. Your connections, favorites, synced folders, actions, layout, sort order and Open at login are kept.</li>
+      </ul>
+      <figure class="shot"><picture><source srcset="/assets/shots/settings-cache-and-data-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-cache-and-data.webp" alt="Settings, Cache and data: the cache and a reset." loading="lazy"></picture><figcaption>Settings, Cache and data</figcaption></figure>
+
+      <h3 id="settings-shortcuts">Keyboard shortcuts</h3>
+      <p>A full list of shortcuts, shown with your system's keys. The same list is in <a href="#shortcuts">Keyboard shortcuts</a> below.</p>
+      <figure class="shot"><picture><source srcset="/assets/shots/settings-keyboard-shortcuts-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/settings-keyboard-shortcuts.webp" alt="Settings, Keyboard shortcuts." loading="lazy"></picture><figcaption>Settings, Keyboard shortcuts.</figcaption></figure>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="drives" aria-labelledby="h-drives">
+      <h2 id="h-drives">Drives</h2>
+      <p class="intro">Mount a bucket, a cloud drive, a server or one of its folders as a drive. It shows up in Finder (or your Linux file manager), and any app can open and save files on it.</p>
+
+      <h3 id="mount">Mount a drive</h3>
+      <ol class="steps">
+        <li>Right-click a connection, a bucket or a folder and choose <b>Mount as drive…</b> (for folders, it's in <b>Keep &amp; sync ▸</b>).</li>
+        <li>Name the drive (Kybl suggests one) and confirm.</li>
+        <li>The drive appears in Finder. A drive badge shows on it in the sidebar.</li>
+      </ol>
+
+      <h3 id="drive-behaviour">How drives behave</h3>
+      <ul>
+        <li>Files download when you open them, and are cached on disk.</li>
+        <li>What you save uploads in the background, with retries.</li>
+        <li>If a save clashes with a change on the other side, it's kept as a conflict copy and Kybl tells you.</li>
+        <li>Clutter such as <code>.DS_Store</code> stays on your computer.</li>
+        <li>Drives mount again when Kybl starts and unmount when it quits. Uploads still waiting carry on next time.</li>
+        <li>Google Docs show as shortcut pages that open in the browser.</li>
+      </ul>
+
+      <h3 id="drive-manage">Manage drives</h3>
+      <p>A mounted drive's menu (from the sidebar badge, or the item you mounted) has <b>Show drive in Finder</b> and <b>Eject</b> (<b>Unmount</b> on Linux). If mounting fails, choose <b>Try mounting again</b> or <b>Drive settings…</b>. <a href="#settings-drives">Settings → Drives</a> lists all of them, and the tray menu has a <b>Drives</b> submenu.</p>
+      <div class="note"><p>Drives work on <b>macOS and Linux</b>. They aren't available on Windows yet, or on phones. While a drive is mounted, other programs on your computer can reach it, just like any mounted folder.</p></div>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="what-works-where" aria-labelledby="h-what-works-where">
+      <h2 id="h-what-works-where">What works where</h2>
+      <p class="intro">Browsing, uploading, downloading, deleting, copying between connections, previews, archives, search by name, folder sync, mirror and copy jobs work with every connection. The rest depends on what the service can do:</p>
+      <div class="tbl ww" tabindex="0" role="region" aria-label="Features by connection type"><table>
+        <thead><tr><th scope="col">Feature</th><th scope="col">S3 and Kybl Storage</th><th scope="col">Azure Blob</th><th scope="col">Google Cloud Storage</th><th scope="col">Google Drive</th><th scope="col">OneDrive</th><th scope="col">Dropbox</th><th scope="col">WebDAV</th><th scope="col">SFTP</th><th scope="col">FTP / FTPS</th><th scope="col">This computer</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Signs in with</th><td class="p">Access key</td><td class="p">Account key or SAS</td><td class="p">Service account</td><td class="p">Browser</td><td class="p">Browser</td><td class="p">Browser</td><td class="p">Password</td><td class="p">Password, key or agent</td><td class="p">Password or anonymous</td><td class="p">Nothing</td></tr>
+          <tr><th scope="row">Quick rename and move</th><td class="p">Copies</td><td class="p">Copies</td><td class="p">Copies</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td></tr>
+          <tr><th scope="row">Copy inside without downloading</th><td class="y">Yes</td><td class="p">Same container</td><td class="p">Same bucket</td><td class="y">Yes</td><td class="p">Same drive</td><td class="y">Yes</td><td class="y">Yes</td><td class="n">No</td><td class="n">No</td><td class="y">Yes</td></tr>
+          <tr><th scope="row">Share links</th><td class="y">Yes</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="y">Yes</td><td class="y">Yes</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td></tr>
+          <tr><th scope="row">Deleted files can be restored</th><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="y">Yes</td></tr>
+          <tr><th scope="row">Search inside files</th><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="y">Yes</td><td class="n">No</td><td class="y">Yes</td></tr>
+          <tr><th scope="row">Uploads resume after a restart</th><td class="y">Yes</td><td class="n">No</td><td class="n">No</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="n">No</td><td class="y">Yes</td><td class="y">Yes</td><td class="p">n/a</td></tr>
+          <tr><th scope="row">Verify by checksum</th><td class="p">Yes (Kybl Storage: size)</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="p">Size</td><td class="p">If the server allows</td><td class="p">Size</td><td class="p">Size</td></tr>
+          <tr><th scope="row">Tags, metadata, storage class</th><td class="y">Yes</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td></tr>
+          <tr><th scope="row">Permissions (chmod)</th><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="y">Yes</td><td class="p">If the server allows</td><td class="n">No</td></tr>
+          <tr><th scope="row">Symbolic links</th><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="y">Yes</td><td class="p">Shown only</td><td class="p">Shown as files</td></tr>
+          <tr><th scope="row">New bucket from the app</th><td class="p">Kybl Storage only</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td></tr>
+          <tr><th scope="row">Edit in your own app</th><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="p">Not Google Docs</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="p">Opens in place</td></tr>
+          <tr><th scope="row">Terminal</th><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="y">Yes</td><td class="n">No</td><td class="y">Yes</td></tr>
+          <tr><th scope="row">SSH tunnels</th><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="n">No</td><td class="y">Yes</td><td class="n">No</td><td class="p">n/a</td></tr>
+          <tr><th scope="row">Custom actions</th><td class="p">Files, on this computer</td><td class="p">Files, on this computer</td><td class="p">Files, on this computer</td><td class="p">Files, on this computer</td><td class="p">Files, on this computer</td><td class="p">Files, on this computer</td><td class="p">Files, on this computer</td><td class="y">Here or on the server</td><td class="p">Files, on this computer</td><td class="y">Yes</td></tr>
+          <tr><th scope="row">Mount as a drive (macOS, Linux)</th><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="p">n/a</td></tr>
+          <tr><th scope="row">Sync, Keep on this device</th><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="p">The other end</td></tr>
+          <tr><th scope="row">Largest single file</th><td class="p">5 TB</td><td class="p">—</td><td class="p">—</td><td class="p">5 TB</td><td class="p">250 GB</td><td class="p">350 GB</td><td class="p">—</td><td class="p">—</td><td class="p">—</td><td class="p">—</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>Share links: on S3 only people with the link can open the file. OneDrive links over an hour and Dropbox links over 4 hours are public until they end; Dropbox needs a paid plan for those.</li>
+        <li>"Copies" means renaming or moving a folder copies each file and deletes the original, because that storage has no real folders. Big ones run as a job.</li>
+        <li>On the phone you can browse, preview, upload, download, share, edit text and back up photos with every connection. Terminal, tunnels, folder sync, drives, custom actions and editing in other apps are in the computer app only.</li>
+      </ul>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="phone" aria-labelledby="h-phone">
+      <h2 id="h-phone">The phone app</h2>
+      <p class="intro">Kybl for Android and iPhone uses the same connections and does the same careful transfers, with a touch layout made for one hand. On a tablet or a big window it switches to a wide layout: connections on the left, files in the middle, details on the right.</p>
+      <figure class="shot narrow"><picture><source srcset="/assets/shots/phone-dark.webp" media="(prefers-color-scheme: dark)"><img src="/assets/shots/phone.webp" alt="Kybl on a phone: the home screen with a photo backup card, favorites and connections, a folder of photos in grid view, and a full-screen photo viewer." loading="lazy"></picture><figcaption>Home, a photo folder and the photo viewer on a phone.</figcaption></figure>
+
+      <h3 id="phone-home">Home</h3>
+      <p>The top bar has a <b>Transfers</b> button (with a count of what's running) and <b>Settings</b>. Below are the <b>Photo backup</b> card, your <b>Favorites</b>, <b>Recent</b> places and your <b>Connections</b>, with buckets or drives under each. Tap a connection's <b>…</b> to edit it, sign in again, pick which buckets show, make a new bucket (Kybl Storage), set its Photos mode, or copy everything to another connection.</p>
+
+      <h3 id="phone-browse">Browsing</h3>
+      <ul>
+        <li>Tap to open. Use the sort pill (Name, Newest first, Largest first) and the list or grid toggle.</li>
+        <li>Type in the filter field to filter the folder, or <b>Search all subfolders for …</b> to look deeper.</li>
+        <li><b>Pull down</b> to refresh. Big folders load more as you scroll.</li>
+        <li>The <b>+</b> button: Take photo or video, Upload photos &amp; videos, Upload files, New folder.</li>
+        <li><b>Long-press</b> a row to start selecting, and drag over rows to select a range. The bar at the bottom has Share, Download, Move, Delete and More.</li>
+        <li>Tap a row's <b>…</b> for its menu: Share…, Open in…, Save to Photos, Info, Rename, Move or copy…, Copy to another connection…, Add to Favorites, Select, Delete.</li>
+        <li>Go back with the back button, Android's back gesture, or by swiping from the left edge on iPhone.</li>
+      </ul>
+
+      <h3 id="phone-viewer">Photos, videos and documents</h3>
+      <p>Photos and videos open full screen: swipe between them, pinch or double-tap to zoom, drag down to close, tap to hide the controls. The bottom has Share, Save to Photos, Download, Info and Delete. Text files and documents open in the same editor as on the computer; <b>Open in…</b> hands a file to another app.</p>
+
+      <h3 id="phone-backup">Photo backup</h3>
+      <ol class="steps">
+        <li>Tap the <b>Photo backup</b> card on Home (or Settings → Photo backup).</li>
+        <li>Choose what to back up: the <b>camera roll</b> or folders you pick.</li>
+        <li>Choose where it should go: any connection and folder.</li>
+        <li>Choose a folder layout: by year and month (default), by day, by phone name, all in one folder, or the same folders as on the phone.</li>
+        <li>Choose the options and when it runs.</li>
+      </ol>
+      <ul>
+        <li>Options: include videos, Live Photo videos (iPhone), save HEIC as JPEG (iPhone), edited photos as edited, original or both (iPhone), and start with all photos or only new ones.</li>
+        <li><b>Wi-Fi only</b> (on by default) and <b>Only while charging</b> (off).</li>
+        <li>Android backs up every 15 minutes and when new photos appear. iPhone backs up while the app is open and overnight while charging. <b>Back up everything now</b> runs it straight away.</li>
+        <li>Each photo is uploaded once. Backup never deletes anything at the destination, and removing a backup leaves the files where they are.</li>
+      </ul>
+
+      <h3 id="phone-share">Sharing into Kybl</h3>
+      <p>In any app, share files and pick <b>Kybl</b>. Choose a connection and folder (you can make a new folder), and Kybl uploads them. Backing out asks <b>Don't upload</b>.</p>
+
+      <h3 id="phone-downloads">Downloads and background transfers</h3>
+      <ul>
+        <li>Downloads go to <b>Files → On My iPhone → Kybl</b> on iPhone, and to <b>Download/Kybl</b> on Android.</li>
+        <li>Android keeps transfers running with a notification (tap it to open Transfers, or Cancel). iPhone keeps going for about 30 seconds in the background, then finishes when you return.</li>
+        <li><b>Wi-Fi only</b> in Settings makes uploads, downloads and photo previews wait for Wi-Fi. A running download pauses if you move to mobile data.</li>
+      </ul>
+
+      <h3 id="phone-lock">App lock</h3>
+      <p>Turn on <b>Lock with Face ID</b> (iPhone) or <b>Lock with fingerprint</b> (Android) in Settings. Kybl then asks when it opens and after more than a minute away. While locked nothing is shown, and the app switcher and screenshots stay blank. You need a screen lock on the phone first.</p>
+
+      <h3 id="phone-settings">Phone settings</h3>
+      <p>Theme (Automatic, Light, Dark), text size, reopen the last folder, ask before deleting, binary sizes, full dates, Photo backup, Wi-Fi only, app lock, Photos in lists, share link lifetime, connections, clear cache and updates.</p>
+
+      <h3 id="phone-differences">What's different from the computer</h3>
+      <ul>
+        <li>One screen at a time: no panes, workspaces or tabs.</li>
+        <li>Not on phones: folder sync, drives, terminal and tunnels, custom actions, the command palette, compare folders, edit in other apps, speed limits and the menu bar icon.</li>
+        <li>Only on phones: photo backup, app lock, Wi-Fi only, take photo or video, Save to Photos, sharing into Kybl and pull to refresh.</li>
+      </ul>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="updates" aria-labelledby="h-updates">
+      <h2 id="h-updates">Updates</h2>
+
+      <h3 id="update-check">How Kybl checks</h3>
+      <p>Kybl looks for a new version shortly after it starts and every 6 hours, as long as <b>Check for updates automatically</b> is on (Settings → General). You can also click <b>Check now</b> there, choose <b>Check for Updates…</b> in the Kybl menu (macOS), or use the tray menu. Nothing installs without asking. New versions come from Kybl's releases on GitHub, and every download is checked against its published fingerprint before it runs.</p>
+
+      <h3 id="update-install">Installing an update</h3>
+      <p>When a version is available, a card appears in the corner: "Kybl x.y.z is available". Choose:</p>
+      <ul>
+        <li><b>Update and restart</b> to install it now. If transfers are running, the button says so and becomes <b>Restart and stop transfers</b>.</li>
+        <li><b>Later</b> to be reminded next launch, or <b>Skip</b> to ignore this version.</li>
+        <li><b>What's new</b> to read the release notes.</li>
+      </ul>
+      <div class="tbl"><table>
+        <thead><tr><th>System</th><th>What happens</th></tr></thead>
+        <tbody>
+          <tr><td>macOS</td><td>Kybl downloads the update, swaps itself and relaunches.</td></tr>
+          <tr><td>Windows</td><td>The installer runs quietly and Kybl starts again.</td></tr>
+          <tr><td>Linux AppImage</td><td>The AppImage replaces itself.</td></tr>
+          <tr><td>Linux .deb and .rpm</td><td><b>Download</b> opens the new package; install it as usual.</td></tr>
+          <tr><td>Android</td><td><b>Download</b> gets the new APK; open it to install over the old one.</td></tr>
+          <tr><td>iPhone</td><td>Update from AltStore or SideStore (or <b>View release</b> for the IPA).</td></tr>
+        </tbody>
+      </table></div>
+      <p>There's one release channel: the latest published version.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="shortcuts" aria-labelledby="h-shortcuts">
+      <h2 id="h-shortcuts">Keyboard shortcuts</h2>
+      <div class="note"><p>On Windows and Linux, use <kbd>Ctrl</kbd> instead of <kbd>⌘</kbd> and <kbd>Alt</kbd> instead of <kbd>⌥</kbd>. Shortcuts don't act behind an open dialog, menu or preview.</p></div>
+
+      <h3 id="keys-general">General</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td class="k"><kbd>⌘K</kbd></td><td>Command palette</td></tr>
+          <tr><td class="k"><kbd>F1</kbd> (macOS: also <kbd>⇧⌘/</kbd>)</td><td>Open the manual</td></tr>
+          <tr><td class="k"><kbd>⌘,</kbd></td><td>Settings</td></tr>
+          <tr><td class="k"><kbd>⌘F</kbd></td><td>Search or filter this folder</td></tr>
+          <tr><td class="k"><kbd>⌥⌘F</kbd></td><td>Find a connection in the sidebar</td></tr>
+          <tr><td class="k"><kbd>⌥⌘S</kbd></td><td>Show or hide the sidebar</td></tr>
+          <tr><td class="k"><kbd>⌘R</kbd></td><td>Refresh</td></tr>
+          <tr><td class="k"><kbd>⇧⌘.</kbd></td><td>Show or hide hidden files (This computer)</td></tr>
+          <tr><td class="k"><kbd>⌘+</kbd> / <kbd>⌘−</kbd></td><td>Bigger or smaller grid tiles</td></tr>
+          <tr><td class="k"><kbd>Esc</kbd></td><td>Clear the selection, or close a dialog</td></tr>
+          <tr><td class="k"><kbd>⌘Q</kbd></td><td>Quit (macOS)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3 id="keys-navigation">Moving around</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td class="k"><kbd>⇧⌘G</kbd> or <kbd>⌘L</kbd></td><td>Go to folder</td></tr>
+          <tr><td class="k"><kbd>⌘[</kbd> / <kbd>⌘]</kbd></td><td>Back / forward (also the mouse side buttons)</td></tr>
+          <tr><td class="k"><kbd>⌘↑</kbd> or <kbd>Backspace</kbd></td><td>Up one level</td></tr>
+          <tr><td class="k"><kbd>↵</kbd>, <kbd>⌘O</kbd> or <kbd>⌘↓</kbd></td><td>Open</td></tr>
+          <tr><td class="k"><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd></td><td>Move the cursor; <kbd>⇧</kbd> extends the selection</td></tr>
+          <tr><td class="k"><kbd>Home</kbd> / <kbd>End</kbd></td><td>First / last item</td></tr>
+          <tr><td class="k"><kbd>PgUp</kbd> / <kbd>PgDn</kbd></td><td>One screen up / down</td></tr>
+          <tr><td class="k">Letters</td><td>Jump to a name</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3 id="keys-files">Files</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td class="k"><kbd>⌘A</kbd></td><td>Select all</td></tr>
+          <tr><td class="k"><kbd>⇧</kbd>-click / <kbd>⌘</kbd>-click</td><td>Extend / add to the selection</td></tr>
+          <tr><td class="k"><kbd>Space</kbd></td><td>Quick Look</td></tr>
+          <tr><td class="k"><kbd>⌘I</kbd></td><td>Get Info</td></tr>
+          <tr><td class="k"><kbd>⌘E</kbd></td><td>Edit the file in its app (saves upload back)</td></tr>
+          <tr><td class="k"><kbd>⇧F10</kbd></td><td>Right-click menu for the selection</td></tr>
+          <tr><td class="k"><kbd>⌘C</kbd> / <kbd>⌘X</kbd> / <kbd>⌘V</kbd></td><td>Copy / cut / paste</td></tr>
+          <tr><td class="k"><kbd>⌘D</kbd></td><td>Duplicate</td></tr>
+          <tr><td class="k"><kbd>F2</kbd></td><td>Rename (batch rename for several)</td></tr>
+          <tr><td class="k"><kbd>⌘Z</kbd></td><td>Undo the last move, copy, duplicate or rename</td></tr>
+          <tr><td class="k"><kbd>⇧⌘N</kbd></td><td>New folder</td></tr>
+          <tr><td class="k"><kbd>⌥⌘N</kbd></td><td>New file</td></tr>
+          <tr><td class="k"><kbd>⌘U</kbd> / <kbd>⇧⌘U</kbd></td><td>Upload files / a folder</td></tr>
+          <tr><td class="k"><kbd>⇧⌘D</kbd></td><td>Download</td></tr>
+          <tr><td class="k"><kbd>Delete</kbd> or <kbd>⌘⌫</kbd></td><td>Delete or move to Trash</td></tr>
+          <tr><td class="k"><kbd>⌥</kbd> while dragging</td><td>Copy instead of move</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3 id="keys-panes">Panes, terminal and workspaces</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td class="k"><kbd>⌘\</kbd> / <kbd>⇧⌘\</kbd></td><td>Split right / down</td></tr>
+          <tr><td class="k"><kbd>⌘W</kbd></td><td>Close the pane (with one pane, the window)</td></tr>
+          <tr><td class="k"><kbd>⌥⌘</kbd> + arrow</td><td>Go to the pane on that side</td></tr>
+          <tr><td class="k"><kbd>Tab</kbd></td><td>Switch pane</td></tr>
+          <tr><td class="k"><kbd>⇧⌘S</kbd></td><td>Swap panes</td></tr>
+          <tr><td class="k"><kbd>F3</kbd> <kbd>F5</kbd> <kbd>F6</kbd> <kbd>F7</kbd> <kbd>F8</kbd></td><td>With several panes: Quick Look, copy to other pane, move to other pane, new folder, delete</td></tr>
+          <tr><td class="k"><kbd>⌘J</kbd> or <kbd>⌃`</kbd></td><td>Open a terminal below the pane, or go back and forth to it</td></tr>
+          <tr><td class="k"><kbd>⌘T</kbd></td><td>New workspace</td></tr>
+          <tr><td class="k"><kbd>⌃Tab</kbd> / <kbd>⌃⇧Tab</kbd></td><td>Next / previous workspace (also <kbd>⇧⌘]</kbd> / <kbd>⇧⌘[</kbd>)</td></tr>
+          <tr><td class="k"><kbd>⌥⌘1</kbd> … <kbd>⌥⌘8</kbd>, <kbd>⌥⌘9</kbd></td><td>Go to workspace 1 to 8, or the last one</td></tr>
+          <tr><td class="k"><kbd>⌥⇧⌘[</kbd> / <kbd>⌥⇧⌘]</kbd></td><td>Move the workspace left / right</td></tr>
+          <tr><td class="k"><kbd>F2</kbd> on a tab, or double-click</td><td>Rename the workspace</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3 id="keys-quicklook">Quick Look</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td class="k"><kbd>Space</kbd>, <kbd>Esc</kbd> or <kbd>⌘W</kbd></td><td>Close</td></tr>
+          <tr><td class="k"><kbd>←</kbd> <kbd>↑</kbd> / <kbd>→</kbd> <kbd>↓</kbd></td><td>Previous / next item</td></tr>
+          <tr><td class="k"><kbd>↵</kbd> or <kbd>⌘O</kbd></td><td>Open in its app</td></tr>
+          <tr><td class="k"><kbd>⌘I</kbd></td><td>Show or hide the info column</td></tr>
+          <tr><td class="k"><kbd>⌘C</kbd></td><td>Copy the file itself (macOS)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3 id="keys-editor">Editor, viewers and compare</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td class="k"><kbd>⌘S</kbd></td><td>Save</td></tr>
+          <tr><td class="k"><kbd>⇧⌘S</kbd></td><td>Save a copy</td></tr>
+          <tr><td class="k"><kbd>⌘F</kbd></td><td>Find and replace</td></tr>
+          <tr><td class="k"><kbd>Esc</kbd> or <kbd>⌘W</kbd></td><td>Close (asks about unsaved changes)</td></tr>
+          <tr><td class="k"><kbd>⌘+</kbd> <kbd>⌘−</kbd> <kbd>⌘0</kbd></td><td>Zoom an image in, out, to fit</td></tr>
+          <tr><td class="k"><kbd>F7</kbd> / <kbd>⇧F7</kbd> (or <kbd>n</kbd> / <kbd>p</kbd>)</td><td>Next / previous change when comparing files</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3 id="keys-palette">Command palette</h3>
+      <div class="tbl"><table>
+        <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td class="k"><kbd>↵</kbd></td><td>Open in the active pane</td></tr>
+          <tr><td class="k"><kbd>⌘↵</kbd></td><td>Open in a new pane, or show a file in the list</td></tr>
+          <tr><td class="k"><kbd>↑</kbd> <kbd>↓</kbd> or <kbd>⌃N</kbd> <kbd>⌃P</kbd></td><td>Move</td></tr>
+          <tr><td class="k"><kbd>Tab</kbd></td><td>Complete a path</td></tr>
+          <tr><td class="k"><kbd>Esc</kbd> or <kbd>⌘W</kbd></td><td>Close</td></tr>
+          <tr><td class="k"><code>&gt;</code> <code>@</code> <code>/</code> <code>~</code></td><td>Commands only, connections only, type a path</td></tr>
+        </tbody>
+      </table></div>
+      <p>Your <a href="#actions">custom actions</a> can have their own shortcuts too.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="troubleshooting" aria-labelledby="h-troubleshooting">
+      <h2 id="h-troubleshooting">Troubleshooting</h2>
+      <p class="intro">When something fails, Kybl says why in plain words and usually offers the fix right there, often with <b>Try again</b>. Here are the common ones.</p>
+
+      <h3 id="ts-cant-connect">"Couldn't connect" or "Can't reach the storage server"</h3>
+      <ul>
+        <li>Check your internet connection, and your VPN if the server needs one.</li>
+        <li>Edit the connection and check the <b>endpoint</b> or <b>server address</b> and port. "Nothing is answering at that address" means the address is wrong or the server is down.</li>
+        <li>Click <b>Try again</b>. Kybl drops the old connection first, so it really reconnects.</li>
+      </ul>
+
+      <h3 id="ts-access-denied">"Access denied"</h3>
+      <ul>
+        <li>The key isn't allowed to do that. Check its permissions with your provider.</li>
+        <li>A brand-new key can take a few minutes to start working at some providers (such as Hetzner). Wait and try again.</li>
+        <li>If your key can't list buckets, that's not a failed connection: use <b>Open bucket by name</b>, or set <b>Bucket</b> in the connection.</li>
+      </ul>
+
+      <h3 id="ts-keys">"Doesn't recognise the access key" or "secret key doesn't match"</h3>
+      <p>Edit the connection and enter the keys again. Copying from a web page sometimes picks up the wrong characters; Kybl trims spaces and line breaks for you. If the credentials have expired, create fresh ones.</p>
+
+      <h3 id="ts-region">"This bucket lives in another region"</h3>
+      <p>Edit the connection and set the bucket's region, and check the endpoint matches it. Picking the provider preset again fills in the right endpoint.</p>
+
+      <h3 id="ts-clock">"Your computer's clock is off"</h3>
+      <p>S3 servers refuse requests from a clock that's too far wrong. Turn on setting the time automatically in your system settings, then try again.</p>
+
+      <h3 id="ts-trust">Certificate, host key or plain-FTP questions</h3>
+      <ul>
+        <li><b>Trust this certificate…</b>: the server uses its own certificate. Check the details, and trust it only if you expect it. See <a href="#certificates">Certificates</a>.</li>
+        <li><b>Trust this server?</b> on SFTP: normal the first time. If Kybl says the server's key <b>changed</b>, find out why before you accept it.</li>
+        <li><b>Connect without encryption</b> on FTP: the server doesn't offer encryption. Your password would travel readable.</li>
+      </ul>
+
+      <h3 id="ts-sign-in">"Sign in again"</h3>
+      <p>Google Drive, OneDrive, Dropbox or Kybl Storage stopped letting Kybl in (you changed your password or revoked access). Right-click the connection and choose <b>Sign in again</b>. Use the same account; your synced folders and jobs carry on afterwards.</p>
+
+      <h3 id="ts-keychain">Keychain or keyring prompts</h3>
+      <ul>
+        <li>On macOS, Kybl asks the Keychain once for the key to its encrypted store. Choose <b>Always Allow</b> so it doesn't ask again.</li>
+        <li>On Linux, if Kybl can't save secrets, install and unlock a Secret Service such as GNOME Keyring or KWallet.</li>
+        <li>On Android, removing the phone's screen lock or restoring a backup to another phone can lose the key; Kybl tells you, and you'll need to enter your passwords again.</li>
+      </ul>
+
+      <h3 id="ts-install">macOS won't open it, or Windows SmartScreen warns</h3>
+      <ul>
+        <li>macOS: <b>System Settings → Privacy &amp; Security → Open Anyway</b>. You only need to do this once.</li>
+        <li>Windows: in the SmartScreen warning, click <b>More info → Run anyway</b>.</li>
+        <li>iPhone: if Kybl stops opening after 7 days, refresh it in AltStore or SideStore.</li>
+      </ul>
+
+      <h3 id="ts-other">Other messages</h3>
+      <dl>
+        <dt>"The server is busy and asked to slow down"</dt><dd>Wait a moment and try again, or lower <b>Files at the same time</b>.</dd>
+        <dt>"The storage is full, or over its quota"</dt><dd>Free up space or raise your plan with the provider.</dd>
+        <dt>"This file isn't there any more"</dt><dd>Someone moved or deleted it. Refresh with <kbd>⌘R</kbd>.</dd>
+        <dt>"That place is outside the folders Kybl can open here"</dt><dd>On phones, Kybl can only reach folders you've given it.</dd>
+        <dt>"Drives aren't available on Windows yet"</dt><dd>Drives work on macOS and Linux for now. Use folder sync or Keep on this device instead.</dd>
+      </dl>
+
+      <h3 id="ts-report">Reporting a problem</h3>
+      <p>Open the <b>Log</b> tab in the Activity panel, filter to problems if you like, and click <b>Copy</b>. Paste that into your report on <a href="https://github.com/erikkubica/kybl">GitHub</a>, or mail <a href="mailto:hello@kybl.app">hello@kybl.app</a>. The log never includes passwords or what you type in a terminal.</p>
+    </section>
+
+    <!-- ======================================================= -->
+    <section id="privacy" aria-labelledby="h-privacy">
+      <h2 id="h-privacy">Privacy</h2>
+      <ul>
+        <li><b>No telemetry.</b> Kybl has no analytics, no tracking and no ads.</li>
+        <li><b>Your files go straight to your storage.</b> Kybl talks directly to the services you connect; your files, keys and passwords don't pass through Kybl's servers.</li>
+        <li><b>Secrets stay encrypted on your device</b>, with the key in your system's keychain. See <a href="#secrets">Where your passwords are kept</a>.</li>
+        <li><b>Kybl Storage</b>, if you use it, keeps your email address and the files you upload, encrypted at rest in the EU.</li>
+      </ul>
+      <p>Read the full <a href="/privacy-policy/">Privacy Policy</a> and the <a href="/terms-of-service/">Terms of Service</a>.</p>
+      <a class="back-top" href="#manual">↑ Back to the top</a>
+    </section>
+  </main>
+</div>
+
+<footer class="mfoot">
+  <div class="mfoot-in">
+    <span>© 2026 Kybl · Drop it in the kybl.</span>
+    <nav aria-label="Footer">
+      <a href="/">Home</a>
+      <a href="/features/">Features</a>
+      <a href="/#download">Download</a>
+      <a href="https://github.com/erikkubica/kybl">GitHub</a>
+      <a href="/privacy-policy/">Privacy</a>
+      <a href="/terms-of-service/">Terms</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+(() => {
+  const box = document.getElementById("toc-box");
+  const toc = document.getElementById("toc");
+  const q = document.getElementById("toc-q");
+  const empty = document.getElementById("toc-empty");
+  const wide = matchMedia("(min-width: 961px)");
+  const fit = () => { box.open = wide.matches; };
+  fit();
+  wide.addEventListener("change", fit);
+
+  // "#" links on every heading
+  document.querySelectorAll(".mdoc section > h2, .mdoc h3[id]").forEach((h) => {
+    const id = h.tagName === "H2" ? h.parentElement.id : h.id;
+    const a = document.createElement("a");
+    a.className = "anchor";
+    a.href = "#" + id;
+    a.textContent = "#";
+    a.setAttribute("aria-label", "Link to " + h.textContent);
+    h.prepend(a);
+  });
+
+  // the section on screen, lit in the contents
+  const links = new Map();
+  toc.querySelectorAll("a").forEach((a) => links.set(a.getAttribute("href").slice(1), a));
+  const heads = [...document.querySelectorAll(".mdoc > section, .mdoc h3[id]")];
+  let current = null;
+  const light = () => {
+    const line = Math.min(160, innerHeight * 0.3);
+    let hit = null;
+    for (const h of heads) {
+      const top = (h.tagName === "SECTION" ? h.querySelector("h2") : h).getBoundingClientRect().top;
+      if (top <= line) hit = h; else break;
+    }
+    const id = hit ? hit.id : null;
+    if (id === current) return;
+    current = id;
+    toc.querySelectorAll("a.current").forEach((a) => a.classList.remove("current"));
+    toc.querySelectorAll("li.open").forEach((li) => li.classList.remove("open"));
+    const a = id && links.get(id);
+    if (!a) return;
+    a.classList.add("current");
+    const top = a.closest(".toc > ol > li");
+    if (top) {
+      top.classList.add("open");
+      top.firstElementChild.classList.add("current");
+    }
+    if (wide.matches && !q.value) {
+      const r = a.getBoundingClientRect(), t = toc.getBoundingClientRect();
+      if (r.top < t.top || r.bottom > t.bottom) toc.scrollTop += r.top - t.top - t.height / 3;
+    }
+  };
+  let queued = false;
+  const later = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; light(); }); } };
+  if ("IntersectionObserver" in window) {
+    const io = new IntersectionObserver(later, { rootMargin: "0px 0px -60% 0px" });
+    heads.forEach((h) => io.observe(h.tagName === "SECTION" ? h.querySelector("h2") : h));
+  }
+  addEventListener("scroll", later, { passive: true });
+  light();
+
+  // narrow screens: a pick closes the contents
+  toc.addEventListener("click", (e) => { if (e.target.closest("a") && !wide.matches) box.open = false; });
+
+  // search the manual: each contents entry matches its heading and the text under it
+  const norm = (s) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const textUnder = (h) => {
+    let t = "", n = h.nextElementSibling;
+    while (n && n.tagName !== "H3" && n.tagName !== "H2") { t += " " + n.textContent; n = n.nextElementSibling; }
+    return t;
+  };
+  const textOf = (id) => {
+    const el = document.getElementById(id);
+    if (!el) return "";
+    return el.tagName === "SECTION" ? el.querySelector("h2").textContent + textUnder(el.querySelector("h2")) : el.textContent + textUnder(el);
+  };
+  const entry = (li) => ({ li, text: norm(textOf(li.firstElementChild.getAttribute("href").slice(1))) });
+  const items = [...toc.querySelectorAll(":scope > ol > li")].map((li) => ({ ...entry(li), subs: [...li.querySelectorAll("li")].map(entry) }));
+  const search = () => {
+    const words = norm(q.value.trim()).split(/\s+/).filter(Boolean);
+    const has = (t) => words.every((w) => t.includes(w));
+    toc.classList.toggle("filtering", words.length > 0);
+    let any = false;
+    for (const it of items) {
+      if (!words.length) { it.li.hidden = false; it.subs.forEach((s) => (s.li.hidden = false)); continue; }
+      let kids = 0;
+      for (const s of it.subs) { s.li.hidden = !has(s.text); if (!s.li.hidden) kids++; }
+      it.li.hidden = !(kids || has(it.text));
+      if (!it.li.hidden) any = true;
+    }
+    empty.hidden = !words.length || any;
+  };
+  q.addEventListener("input", search);
+  q.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && q.value) { e.preventDefault(); q.value = ""; search(); }
+    if (e.key === "Enter") {
+      const a = [...toc.querySelectorAll("a")].find((x) => !x.closest("li[hidden]") && (!x.parentElement.querySelector("ol") || !q.value));
+      const pick = a || [...toc.querySelectorAll("a")].find((x) => !x.closest("li[hidden]"));
+      if (pick) { location.hash = pick.getAttribute("href"); if (!wide.matches) box.open = false; }
+    }
+  });
+})();
+</script>
+</body>
+</html>

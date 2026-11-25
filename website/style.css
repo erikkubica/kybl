@@ -152,7 +152,6 @@ kbd { font: 600 13px/1 var(--mono); min-width: 28px; height: 28px; padding: 0 8p
 .ticks { list-style: none; padding: 0; margin: 4px 0 0; display: grid; gap: 10px; font-size: 16.5px; }
 .ticks li { position: relative; padding-left: 32px; }
 .ticks li::before { content: ""; position: absolute; left: 0; top: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--leaf) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M6 10.5l2.6 2.6L14 7.6' fill='none' stroke='%23fff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 20px no-repeat; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) 
 /* mascot states */
 .states { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .state { background: var(--bg); border-radius: 24px; padding: 28px 18px 24px; display: grid; gap: 8px; justify-items: center; text-align: center; transition: transform 0.2s ease; }
@@ -404,3 +403,19 @@ kbd { font: 600 13px/1 var(--mono); min-width: 28px; height: 28px; padding: 0 8p
 .matrix .na::before { content: "n/a"; color: var(--dim); opacity: 0.55; font-size: 13px; }
 .matrix-notes { display: grid; gap: 6px; margin-top: 18px; color: var(--dim); font-size: 14.5px; max-width: 90ch; }
 .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* features: a peek at the gallery (website/features) */
+.tour { margin-top: 56px; display: grid; grid-template-columns: 1.5fr 0.8fr 1.2fr; grid-template-rows: auto auto; gap: 20px; align-items: start; }
+.tour-shot { display: block; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow); background: var(--card); transition: transform 0.2s ease; }
+.tour-shot:hover { transform: translateY(-3px); }
+.tour-shot img { width: 100%; height: auto; }
+.tour-shot:nth-child(2) { grid-row: span 2; }
+.tour-copy { grid-column: 1; grid-row: 2; padding: 8px 4px; display: grid; gap: 10px; }
+.tour-copy h3 { font: 600 28px/1.15 var(--display); }
+.tour-copy p { color: var(--dim); max-width: 46ch; }
+.tour-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+@media (max-width: 860px) {
+  .tour { grid-template-columns: 1fr; }
+  .tour-shot:nth-child(2), .tour-shot:nth-child(3) { display: none; }
+  .tour-copy { grid-column: auto; grid-row: auto; }
+}

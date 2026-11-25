@@ -1,0 +1,90 @@
+/* Kybl features gallery (website/features). Tokens from /style.css, the top bar from manual.css. */
+html { scroll-padding-top: calc(var(--m-top) + 64px); }
+body.gallery { font-size: 16.5px; line-height: 1.6; }
+
+.g-main { max-width: 1240px; margin-inline: auto; padding: 0 24px 96px; }
+.g-intro { padding: 56px 0 24px; max-width: 760px; }
+.g-intro h1 { font: 700 clamp(34px, 5vw, 56px)/1.05 var(--display); letter-spacing: -0.02em; margin: 10px 0 14px; }
+.g-intro .body a { color: var(--accent); }
+
+/* section links: stay under the top bar while scrolling */
+.g-chips {
+  position: sticky; top: var(--m-top); z-index: 10;
+  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+  margin: 0 -24px; padding: 12px 24px;
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: saturate(1.4) blur(14px); -webkit-backdrop-filter: saturate(1.4) blur(14px);
+}
+.g-chips::-webkit-scrollbar { display: none; }
+.g-chips a {
+  flex: none; text-decoration: none; font-weight: 500; font-size: 14.5px; color: var(--dim);
+  padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card);
+  transition: color 0.15s, border-color 0.15s;
+}
+.g-chips a:hover { color: var(--fg); border-color: var(--accent); }
+
+.g-sec { padding-top: 56px; }
+.g-head { max-width: 720px; margin-bottom: 28px; }
+.g-head h2 { font: 600 clamp(26px, 3.4vw, 38px)/1.12 var(--display); letter-spacing: -0.015em; margin: 8px 0 10px; }
+
+.g-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
+.g-card { margin: 0; display: flex; flex-direction: column; gap: 14px; }
+.g-card.wide { grid-column: 1 / -1; }
+.g-open {
+  position: relative;
+  display: grid; place-items: center; padding: 0; cursor: zoom-in; overflow: hidden;
+  aspect-ratio: 16 / 10; border: 1px solid var(--line); border-radius: 16px;
+  background: var(--surface); box-shadow: var(--shadow);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.g-card.wide .g-open { aspect-ratio: auto; }
+.g-open:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.g-open picture { display: contents; }
+.g-open img { width: 100%; height: 100%; object-fit: contain; }
+.g-card.wide .g-open img { height: auto; }
+/* dialogs and tall crops sit on the surface, whole, rather than filling the frame */
+.g-open img[width="1120"], .g-open img[width="1240"], .g-open img[width="1360"], .g-open img[width="840"] {
+  position: absolute; inset: 0; margin: auto;
+  width: auto; height: auto; max-width: calc(100% - 36px); max-height: calc(100% - 36px);
+  border-radius: 10px; box-shadow: var(--shadow);
+}
+.g-card figcaption h3 { font: 600 20px/1.25 var(--display); margin: 0 0 4px; }
+.g-card figcaption p { color: var(--dim); font-size: 15.5px; max-width: 60ch; }
+.g-more { display: inline-block; margin-top: 6px; color: var(--accent); font-weight: 600; font-size: 14.5px; text-decoration: none; }
+.g-more::after { content: " →"; }
+.g-more:hover { text-decoration: underline; }
+
+.g-end { margin-top: 96px; padding: 48px 32px; border-radius: 24px; background: var(--surface); text-align: center; display: grid; gap: 12px; justify-items: center; }
+.g-end h2 { font: 600 clamp(26px, 3.4vw, 38px)/1.1 var(--display); }
+.g-end-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 8px; }
+
+/* the full-size view */
+.g-box {
+  width: min(1500px, 100vw - 32px); max-width: none; max-height: calc(100vh - 32px);
+  padding: 0; border: 0; border-radius: 18px; background: var(--card); color: var(--fg);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45); overflow: hidden;
+}
+.g-box::backdrop { background: rgba(20, 16, 16, 0.72); backdrop-filter: blur(4px); }
+.g-box figure { margin: 0; display: flex; flex-direction: column; max-height: calc(100vh - 32px); }
+.g-box img { width: 100%; min-height: 0; flex: 1; object-fit: contain; background: var(--surface); }
+.g-box figcaption { padding: 14px 64px 16px 20px; font-size: 15px; color: var(--dim); }
+.g-box figcaption b { color: var(--fg); font-family: var(--display); font-weight: 600; font-size: 17px; margin-right: 4px; }
+.g-box figcaption .g-more { margin: 0 0 0 6px; }
+.g-box button {
+  position: absolute; width: 42px; height: 42px; border-radius: 50%; border: 0; cursor: pointer;
+  display: grid; place-items: center; font: 500 26px/1 var(--body);
+  background: color-mix(in srgb, var(--card) 88%, transparent); color: var(--fg); box-shadow: var(--shadow);
+}
+.g-box button:hover { background: var(--accent); color: #fff; }
+.g-x { top: 12px; right: 12px; }
+.g-prev, .g-next { top: 50%; transform: translateY(-50%); }
+.g-prev { left: 12px; }
+.g-next { right: 12px; }
+
+@media (max-width: 760px) {
+  .g-grid { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  .g-intro { padding-top: 36px; }
+  .g-sec { padding-top: 40px; }
+  .g-box figcaption { padding-right: 20px; }
+  .g-prev, .g-next { top: auto; bottom: 64px; transform: none; }
+}

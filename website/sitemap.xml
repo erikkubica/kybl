@@ -2,13 +2,66 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
   <url>
     <loc>https://kybl.app/</loc>
-    <lastmod>2026-11-16</lastmod>
+    <lastmod>2026-11-26</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
     <image:image><image:loc>https://kybl.app/assets/og.jpg</image:loc></image:image>
     <image:image><image:loc>https://kybl.app/assets/shots/app-browse.webp</image:loc></image:image>
     <image:image><image:loc>https://kybl.app/assets/shots/app-connect.webp</image:loc></image:image>
     <image:image><image:loc>https://kybl.app/assets/shots/app-sync.webp</image:loc></image:image>
+  </url>
+  <url>
+    <loc>https://kybl.app/features/</loc>
+    <lastmod>2026-11-26</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <image:image><image:loc>https://kybl.app/assets/shots/app-browse.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/app-connect.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/app-sync.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/archive.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/claude.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/compare-files.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/compare-folders.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/connection.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/copymove.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/edit-external.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/editor.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/grouped.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/info.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/jobs.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/menu.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/menu-bucket.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/menu-folder.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/menu-pane.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/menu-sidebar.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/mirror.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/mixed.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/palette.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/phone.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/quicklook.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/rename.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/search.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/settings-actions.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/settings-appearance.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/settings-browsing.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/settings-cache-and-data.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/settings-connections.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/settings-drives.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/settings-folder-sync.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/settings-general.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/settings-keyboard-shortcuts.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/settings-transfers.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/sidebar.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/transfers.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/tunnels.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/workspace-settings.webp</image:loc></image:image>
+    <image:image><image:loc>https://kybl.app/assets/shots/workspaces.webp</image:loc></image:image>
+  </url>
+  <url>
+    <loc>https://kybl.app/manual/</loc>
+    <lastmod>2026-11-26</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
   </url>
   <url>
     <loc>https://kybl.app/privacy-policy/</loc>

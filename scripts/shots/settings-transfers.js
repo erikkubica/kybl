@@ -1,0 +1,1 @@
+await settingsPage("Transfers");

@@ -37,6 +37,31 @@ const shotSession = (f: Fake) => {
   send(f, "09:41:12 INFO Order 10483 paid, 54.90 EUR\r\n");
 };
 
+/** a screenshot's terminal in a project folder on this computer: an AI coding agent at work */
+const shotAgent = (f: Fake) => {
+  const o = "\x1b[38;2;217;119;87m";
+  const d = "\x1b[2m";
+  const g = "\x1b[32m";
+  const r = "\x1b[31m";
+  const x = "\x1b[0m";
+  const b = "\x1b[1m";
+  send(f, `${f.who ? `\x1b[32m${f.who}\x1b[0m:\x1b[34m${f.cwd}\x1b[0m$ ` : ""}claude\r\n\r\n`);
+  send(f, ` ${o}✻${x} ${b}Claude Code${x}\r\n`);
+  send(f, `   ${d}${f.cwd.replace(/^\/Users\/demo/, "~")}${x}\r\n\r\n`);
+  send(f, `${d}>${x} Add a dark mode toggle to the header and remember the choice\r\n\r\n`);
+  send(f, `${o}●${x} I'll read the header and how the app keeps settings first.\r\n\r\n`);
+  send(f, `${g}●${x} ${b}Bash${x}(grep -rn localStorage src | head -1)\r\n`);
+  send(f, `  ${d}⎿  src/app.ts:41:  localStorage.setItem("lang", lang)${x}\r\n\r\n`);
+  send(f, `${g}●${x} ${b}Bash${x}(pnpm test --run)\r\n`);
+  send(f, `  ${d}⎿  24 passed (1.2s)${x}\r\n\r\n`);
+  send(f, `${g}●${x} ${b}Update${x}(src/components/Header.tsx)\r\n`);
+  send(f, `  ${d}⎿  Updated with ${x}${g}6 additions${x}${d} and ${x}${r}2 removals${x}\r\n\r\n`);
+  send(f, `${o}●${x} Added a sun and moon toggle to the header. It follows the\r\n`);
+  send(f, `  system until clicked, then keeps the choice in localStorage.\r\n\r\n`);
+  send(f, `${d}${"─".repeat(Math.max(20, Math.min(f.cols, 120)))}${x}\r\n`);
+  send(f, `${d}>${x} `);
+};
+
 function run(id: number, f: Fake, cmd: string) {
   const [name, ...args] = cmd.trim().split(/\s+/);
   switch (name) {
@@ -102,6 +127,7 @@ export async function handleTerminal(cmd: string, a: any, profiles: Profile[]): 
       live.set(id, f);
       if (SHOTS) f.who = a.profileId === "local" ? "you@macbook" : `${p?.net?.user || "deploy"}@${(p?.net?.host ?? "server").split(".")[0]}`;
       setTimeout(() => {
+        if (SHOTS && a.profileId === "local" && /\/Projects\//.test(`${cwd}/`)) return shotAgent(f);
         if (SHOTS && a.profileId !== "local") shotSession(f);
         else if (!SHOTS) send(f, `Kybl mock shell on ${p?.name ?? ON_OS.device} (${a.cols}x${a.rows})\r\n`);
         prompt(f);

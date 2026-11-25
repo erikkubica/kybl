@@ -1,0 +1,41 @@
+# name seed script [width height]
+app-browse hero hero
+app-connect hero connect 1200 900
+app-sync hero sync 1200 800
+claude claude claude
+mixed mixed mixed
+grouped grouped grouped
+quicklook one-photos quicklook
+info one-photos-list info
+menu one-photos menu
+menu-folder one-root menu-folder
+menu-pane hero menu-pane
+menu-sidebar hero menu-sidebar 1200 900
+menu-bucket hero menu-bucket
+sidebar hero sidebar
+tunnels hero tunnels 1200 900
+connection hero connection
+rename one-photos-list rename
+transfers hero transfers
+jobs hero jobs
+palette one-root palette
+compare-files one-docs compare-files
+compare-folders dual-acme compare-folders
+archive one-downloads archive
+editor one-root editor
+search one-root search
+copymove hero copymove
+mirror one-sites mirror 1200 860
+workspaces hero workspaces
+workspace-settings hero workspace-settings
+settings-general one-root settings-general
+settings-appearance one-root settings-appearance
+settings-browsing one-root settings-browsing
+settings-transfers one-root settings-transfers
+settings-actions one-root settings-actions
+settings-folder-sync one-root settings-folder-sync
+settings-drives one-root settings-drives
+settings-connections one-root settings-connections
+settings-cache-and-data one-root settings-cache-and-data
+settings-keyboard-shortcuts one-root settings-keyboard-shortcuts
+edit-external one-root edit-external

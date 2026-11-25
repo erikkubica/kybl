@@ -7,6 +7,8 @@ Kybl (pronounced "kibble", from the Czech and Slovak word for bucket) talks to y
 ## Pages
 
 - [Homepage](https://kybl.app/): connections, features, SSH and terminals, sync, Kybl Storage, FAQ and downloads
+- [Features](https://kybl.app/features/): every screen, menu and flow in screenshots
+- [Manual](https://kybl.app/manual/): how to use every feature, step by step, with a keyboard shortcut reference
 - [Full text for LLMs](https://kybl.app/llms-full.txt): everything on the homepage as plain text
 - [Source code](https://github.com/erikkubica/kybl): the app's repository on GitHub
 
