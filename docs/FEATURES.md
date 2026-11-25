@@ -297,11 +297,14 @@ In order, top to bottom, in groups divided by lines (like Finder or Explorer). I
 | **Copy** (⌘C) | Always. |
 | **Paste into “folder”** | One folder, when something is on the clipboard from the same connection. |
 | **Duplicate** (⌘D) | Always. |
+| **Rename…** (F2) or **Rename N items…** | Always. One item opens a name prompt, several open the Batch rename dialog. |
 | separator | |
 | **Copy to “<other pane>”** (F5) | Several panes open. Greyed when both panes show the same folder. |
 | **Move to “<other pane>”** (F6) | Several panes open, except between This computer and a cloud (those only copy). |
 | **Copy or move to…** | Always. Opens the destination picker (a tree of every connection, opened at this folder). Copy/Move is chosen in the picker. |
 | **Move to “<parent folder>”** | When not at the top level and not in search results. Moves the selection up one level. |
+| **Download** (⇧⌘D), or **Download as <format>** | Not on This computer. For a Google Doc, Sheet or Slides the first export is the main item. |
+| **Download as <other format>** | One Google Doc/Sheet/Slides: one item per further export format (for example PDF). |
 | separator | |
 | **Compress “name”** / **Compress N items** | Not in search results. Not inside an archive. Makes a .zip. |
 | **Extract here** / **Extract N archives here** | Every selected item is a .zip, .tar, .tar.gz or .tgz. Inside an archive that is open as a folder it reads "Extract to “<folder the archive is in>”". |
@@ -309,24 +312,19 @@ In order, top to bottom, in groups divided by lines (like Finder or Explorer). I
 | **Compare files** or **Compare with “other.txt”** | Exactly two text files selected, or one text file here plus one text file selected in another pane. |
 | **Actions ▸** | Only when at least one enabled custom action takes the selection. Each entry shows a server icon or laptop icon, the shortcut as a hint, and "(n of m)" when it takes only part of the selection. Entries are greyed with "Fix it in Settings" when the command template is invalid. See Custom actions. |
 | separator | |
-| **Download** (⇧⌘D), or **Download as <format>** | Not on This computer. For a Google Doc, Sheet or Slides the first export is the main item. |
-| **Download as <other format>** | One Google Doc/Sheet/Slides: one item per further export format (for example PDF). |
-| **Copy share link (24 hours)** | Connections with share links. The label shows the lifetime set in Settings. Greyed unless exactly one file is selected. |
+| **Get Info** (⌘I) | Always. |
+| **Calculate size** / **Calculate sizes of N folders** | At least one folder selected. Can be stopped (see Folder sizes). |
 | **Copy S3 URI** | S3-compatible connections. Greyed unless exactly one item is selected. |
 | **Copy path** / **Copy paths** | Every other connection. Puts the full path on the clipboard: the real path on This computer, the path inside the connection elsewhere (one line per item). |
-| separator | |
-| **Get Info** (⌘I) | Always. |
+| **Copy share link (24 hours)** | Connections with share links. The label shows the lifetime set in Settings. Greyed unless exactly one file is selected. |
 | **Show in Finder / Show in Explorer** | One item on This computer, or inside a folder kept on this device by sync (its copy on disk). |
 | **Open in terminal** | One folder, on This computer or an SFTP server. |
 | **Show original** | One symbolic link, on SFTP. Jumps to the folder the link points into and selects the target. |
 | **Permissions…** (or "Permissions of N items…") | SFTP and FTP. |
 | **Make link…** | One item, on SFTP. Makes a symbolic link next to it ("report link.pdf"). |
-| **Calculate size** / **Calculate sizes of N folders** | At least one folder selected. Can be stopped (see Folder sizes). |
+| separator | |
 | **Add to favorites / Remove from favorites** | One folder. |
 | **Keep & sync ▸** | One folder. Holds the rarely used ones: **Sync this folder…** (not on This computer), **Keep on this device** (ticked "Kept on this device" once kept; clicking the ticked item stops keeping, after a question; not on This computer, makes a two-way synced copy in the Kybl folder and opens it), **Mount as drive…** and the drive group (see below; not on This computer), **Mirror to…** and **Run “saved mirror”** (with more than two saved mirrors from that folder they collapse into "Run a saved mirror ▸"). |
-| separator | |
-| **Rename…** (F2) or **Rename N items…** | Always. One item opens a name prompt, several open the Batch rename dialog. |
-| **Refresh** (⌘R), or **Search again** during a search | Always. Reloads the folder on screen (a full folder has no empty space to right-click). |
 | separator | |
 | **Move to Trash** (⌘⌫), with "…" when confirmation is on | Connections with a restorable trash. Called "Recycle Bin" on a Windows PC. |
 | **Delete…** (⌘⌫), red, or **Delete N items…** | All other connections. |
