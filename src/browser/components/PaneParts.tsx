@@ -55,15 +55,15 @@ export function PaneBanners({ pane }: { pane: Pane }) {
                     : ` · ${plural(search.scanned, "object")} checked`}
             </span>
           )}
-          {search.running && !search.stopped ? (
+          {/* Stop keeps what was found; Clear (also while it runs) goes back to the folder */}
+          {search.running && !search.stopped && (
             <button className="btn btn-sm" onClick={ent.sr.stop}>
               Stop
             </button>
-          ) : (
-            <button className="btn btn-ghost btn-sm" onClick={actions.clearSearch}>
-              Clear search
-            </button>
           )}
+          <button className="btn btn-sm" onClick={actions.clearSearch}>
+            Clear
+          </button>
         </div>
       )}
       {!search && filter && fresh && (

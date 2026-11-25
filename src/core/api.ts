@@ -347,7 +347,7 @@ export type TransferPrefs = {
 
 /**
  * Native app events (listen with `@tauri-apps/api/event`):
- * - `menu` (string): macOS menu bar / app menu item ids: "new-folder", "upload-files",
+ * - `menu` (string): macOS menu bar / app menu item ids: "new-folder", "new-file" (⌥⌘N), "upload-files",
  *   "upload-folder", "download", "refresh", "go-up", "back", "forward", "go-to", "search",
  *   "select-all", "delete", "rename", "duplicate" (⌘D), "get-info", "edit" (⌘E), "settings", "new-connection".
  *   Panes (View menu): "split-right" (⌘\), "split-down" (⇧⌘\), "close-pane",
