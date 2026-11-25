@@ -49,4 +49,16 @@ jobs:
         env:
           KYBL_TEST_ENDPOINT: http://127.0.0.1:9123
           KYBL_TEST_MULTIPART_ENDPOINT: http://127.0.0.1:9125
-        run: cargo test --lib
+        # in a session of its own, with a process cap and a deadline: a test that signals its own
+        # group, forks without end or hangs fails the step (with its log) instead of taking the
+        # runner down with it
+        timeout-minutes: 40
+        run: |
+          cargo test --lib --no-run
+          ulimit -u 4000
+          setsid timeout --kill-after=30s 25m cargo test --lib 2>&1 | tee "$RUNNER_TEMP/rust-tests.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: Rust test log
+        if: failure()
+        run: tail -n 200 "$RUNNER_TEMP/rust-tests.log" || true
