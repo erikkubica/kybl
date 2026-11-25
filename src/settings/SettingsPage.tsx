@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react
 import { askBeforeEveryPaste, onPasteTrustChange, pasteTrustCount, setTerminalShell, terminalShell, terminalShells, type ShellChoice } from "../terminal/api";
 import { getVersion } from "@tauri-apps/api/app";
 import { Icon, type IconName } from "../ui/components/Icons";
+import { ContextMenu, type MenuItem } from "../ui/components/Dialogs";
 import { SCHEMES, type Palette } from "./schemes";
 import { ACCENTS, EXPIRIES, SCALES, isDark, resetSettings, type ColumnId, type FontChoice, type Settings, type Theme } from "./settings";
 import { api, errMessage, type TransferPrefs } from "../core/api";
@@ -17,10 +18,85 @@ import { ActionsSection } from "../actions/components/ActionsSection";
 import { syncApi, type AppPrefs } from "../sync/sync";
 import { openLink } from "../core/openLink";
 import { actionLabel, ago, installAndRestart, UpdateStepError, updatesApi, useUpdates } from "../updates/updates";
-import { customLimitProblem, DATE_FORMATS, formatBytes, formatPattern, mbpsInput, mbpsToKbps, parseMbps } from "../core/format";
+import { customLimitProblem, formatBytes, formatPattern, mbpsInput, mbpsToKbps, parseMbps } from "../core/format";
 
 /** The date the Dates picker shows each format with (a single-digit day and month, an afternoon). */
 const DATE_SAMPLE = new Date(2026, 2, 7, 14, 5, 9).getTime();
+
+/** The Dates picker's groups: each format shown as the sample date reads in it. */
+const DATE_GROUPS: { label: string | null; items: [format: string, hint: string][] }[] = [
+  { label: null, items: [["friendly", "Friendly"], ["system", "System"]] },
+  {
+    label: "Day first",
+    items: [
+      ["dd.MM.yyyy HH:mm:ss", "24-hour · seconds"],
+      ["dd.MM.yyyy HH:mm", "24-hour"],
+      ["d. M. yyyy H:mm", "24-hour"],
+      ["dd/MM/yyyy HH:mm:ss", "24-hour · seconds"],
+      ["dd/MM/yyyy HH:mm", "24-hour"],
+      ["dd-MM-yyyy HH:mm", "24-hour"],
+    ],
+  },
+  {
+    label: "Month first",
+    items: [
+      ["MM/dd/yyyy hh:mm:ss a", "12-hour · seconds"],
+      ["M/d/yyyy h:mm a", "12-hour"],
+    ],
+  },
+  {
+    label: "Year first",
+    items: [
+      ["yyyy-MM-dd HH:mm:ss", "ISO · seconds"],
+      ["yyyy-MM-dd HH:mm", "ISO"],
+      ["yyyy/MM/dd HH:mm", "24-hour"],
+    ],
+  },
+  {
+    label: "Month by name",
+    items: [
+      ["d MMM yyyy, HH:mm", "24-hour"],
+      ["MMM d, yyyy, h:mm a", "12-hour"],
+      ["d MMMM yyyy HH:mm", "24-hour"],
+    ],
+  },
+];
+
+/** How a format reads, on the sample date. */
+function dateSample(f: string): string {
+  if (f === "friendly") return "Today, 14:05";
+  if (f === "system") return new Date(DATE_SAMPLE).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return formatPattern(DATE_SAMPLE, f);
+}
+
+/** The Dates setting: a button showing the current format, opening Kybl's menu of them. */
+function DatePick({ value, onChange }: { value: string; onChange: (f: string) => void }) {
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+  const hint = DATE_GROUPS.flatMap((g) => g.items).find(([f]) => f === value)?.[1];
+  const items: MenuItem[] = DATE_GROUPS.flatMap((g, i) => [
+    ...(i > 0 ? [{ type: "sep" } as const] : []),
+    ...(g.label ? [{ type: "label", label: g.label } as const] : []),
+    ...g.items.map(([f, h]): MenuItem => ({ type: "item", label: dateSample(f), hint: h, checked: f === value, onClick: () => onChange(f) })),
+  ]);
+  return (
+    <>
+      <button
+        type="button"
+        className="date-pick"
+        aria-label="Dates"
+        aria-haspopup="menu"
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setAt({ x: r.left, y: r.bottom + 4 });
+        }}
+      >
+        <span className="date-pick-sample">{dateSample(value)}</span>
+        {hint && <span className="date-pick-hint">{hint}</span>}
+      </button>
+      {at && <ContextMenu x={at.x} y={at.y} items={items} label="Dates" onClose={() => setAt(null)} />}
+    </>
+  );
+}
 import { useTransfersActive } from "../transfers/hooks/useTransfers";
 import { spellKeys } from "../ui/lib/shortcutKeys";
 import { keys, TRAY } from "../ui/lib/osText";
@@ -780,13 +856,7 @@ export function SettingsPage({
                     <Switch label="Folders first" on={settings.foldersFirst} onChange={(foldersFirst) => onChange({ foldersFirst })} />
                   </Row>
                   <Row label="Dates" hint="How dates read in lists, tooltips and Info. Friendly: “Today, 14:32”.">
-                    <select value={settings.dateFormat} aria-label="Dates" onChange={(e) => onChange({ dateFormat: e.target.value })}>
-                      {DATE_FORMATS.map((f) => (
-                        <option key={f} value={f}>
-                          {f === "friendly" ? "Friendly (Today, 14:32)" : f === "system" ? `System (${new Date(DATE_SAMPLE).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })})` : `${formatPattern(DATE_SAMPLE, f)}   ·   ${f.toLowerCase()}`}
-                        </option>
-                      ))}
-                    </select>
+                    <DatePick value={settings.dateFormat} onChange={(dateFormat) => onChange({ dateFormat })} />
                   </Row>
                   <Row label="List columns" hint="Shown after the name in the list. You can also right-click the column headers." stack>
                     <div className="set-checks" role="group" aria-label="List columns">
