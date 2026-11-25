@@ -5,7 +5,6 @@ import type { ToastAction } from "../../desktop/components/fileOps";
 import type { Toast } from "../../ui/components/Dialogs";
 import type { Dir } from "../lib/paneLayout";
 import type { SettingsPageId } from "../../settings/SettingsPage";
-import type { SaveRule } from "../../edit/lib/editStore";
 import type { Entry, Profile } from "../../core/types";
 import type { PaneId } from "../../browser/types";
 import type { RefObject, Dispatch, SetStateAction } from "react";
@@ -26,7 +25,7 @@ export interface UseCommandsHostDeps {
   closeWorkspace: (id: string) => Promise<void>;
   connDialog: ConnDialogAsk | null;
   dialogs: ReturnType<typeof useDialogs>;
-  docRef: RefObject<{ pane: PaneId; profileId: string; bucket: string; entry: Entry; rule?: SaveRule; sheet?: boolean; } | null>;
+  docRef: RefObject<{ pane: PaneId; profileId: string; bucket: string; entry: Entry; } | null>;
   dual: boolean;
   dualPane: ReturnType<typeof usePanesHost>["dualPane"];
   findConnection: () => void;

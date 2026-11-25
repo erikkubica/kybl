@@ -9,7 +9,7 @@ import type { DualContext } from "../components/dualActions";
 import { type PaneId, paneKeys, PANE_IDS, THIS_MAC } from "../../browser/types";
 import { type EditPlace, useEdit } from "../../edit/hooks/useEdit";
 import { peekCaps, forgetCaps } from "../../core/useCaps";
-import { useEditCount, type SaveRule } from "../../edit/lib/editStore";
+import { useEditCount } from "../../edit/lib/editStore";
 import { type PaneEnv, usePane, type Pane } from "../../browser/hooks/usePane";
 import { sendItems } from "../lib/crossPane";
 import { tunnelMenuItems } from "../../tunnels/tunnelMenu";
@@ -63,7 +63,7 @@ export interface UsePaneSlotsDeps {
   reloadIfShowing: (pid: string, b: string) => boolean;
   setActiveId: (id: PaneId) => void;
   setConnDialog: (d: ConnDialogAsk | null) => void;
-  setDoc: Dispatch<SetStateAction<{ pane: PaneId; profileId: string; bucket: string; entry: Entry; rule?: SaveRule; sheet?: boolean; } | null>>;
+  setDoc: Dispatch<SetStateAction<{ pane: PaneId; profileId: string; bucket: string; entry: Entry; } | null>>;
   setLinks: Dispatch<SetStateAction<SyncLink[]>>;
   setWs: Dispatch<SetStateAction<WorkspaceStore>>;
   settings: Settings;
@@ -94,10 +94,11 @@ export function usePaneSlots(s: UsePaneSlotsDeps) {
     dialogs: s.dialogs,
     transfers: s.transfers,
     reloadIfShowing: s.reloadIfShowing,
-    openInKybl: (place, e, rule) => {
+    // the same full-window editor as opening the file (its save asks on a conflict)
+    openInKybl: (place, e) => {
       const id = (place.pane as PaneId | undefined) ?? activeRef.current.id;
       paneById(id).closeQuick();
-      s.setDoc({ pane: id, profileId: place.profileId, bucket: place.bucket, entry: e, rule: rule ?? "ifUnchanged", sheet: true });
+      s.setDoc({ pane: id, profileId: place.profileId, bucket: place.bucket, entry: e });
     },
   });
 

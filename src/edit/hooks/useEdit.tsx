@@ -1,9 +1,9 @@
 /**
  * "Edit" for files of any connection: the menu items (Edit, Edit with ▸, Edit in Kybl), ⌘E, and
- * the flow behind them. Files of this computer open directly (nothing to upload). Anything else
- * asks the save rule first (SaveRulePrompt), then either opens in Kybl's own editor (the shell's
- * document sheet, saving under that rule) or goes to files/edit.rs: a private copy, opened in an app,
- * uploaded back on every save.
+ * the flow behind them. Edit in Kybl opens the same full-window editor as opening the file (a save
+ * asks if the file changed meanwhile). Edit in another app asks the save rule first
+ * (SaveRulePrompt) and goes to files/edit.rs: a private copy, opened in the app, uploaded back on
+ * every save; files of this computer open directly (nothing to upload).
  */
 import { createElement, useCallback, useEffect, useRef } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -46,7 +46,7 @@ export function useEdit({
   dialogs: Dialogs;
   transfers: TransferActions;
   /** shows Kybl's editor on this file; `rule` undefined for this computer's files */
-  openInKybl: (place: EditPlace, e: Entry, rule: SaveRule | undefined) => void;
+  openInKybl: (place: EditPlace, e: Entry) => void;
   reloadIfShowing: (profileId: string, bucket: string) => boolean;
 }) {
   const { toast } = dialogs;
@@ -117,12 +117,10 @@ export function useEdit({
     }
   };
 
-  /** Kybl's own editor, under the rule picked for this edit. */
-  const editHere = async (place: EditPlace, e: Entry) => {
+  /** Kybl's own editor: the one opening the file shows. */
+  const editHere = (place: EditPlace, e: Entry) => {
     if (e.size > EDIT_MAX) return toast("info", `Files up to ${formatBytes(EDIT_MAX)} can be edited in Kybl. Edit opens this one in another app.`);
-    if (place.onDisk) return openInKybl(place, e, undefined);
-    const rule = await askRule(e.name, "Kybl");
-    if (rule) openInKybl(place, e, rule);
+    openInKybl(place, e);
   };
 
   /** "Other…" on macOS: any app, picked in a file dialog. */

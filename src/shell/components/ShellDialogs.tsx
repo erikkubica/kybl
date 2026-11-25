@@ -5,7 +5,7 @@ import type { Toast, MenuItem } from "../../ui/components/Dialogs";
 import type { Profile } from "../../core/types";
 import { SettingsPage } from "../../settings/SettingsPage";
 import { KyblConnectDialog } from "../../connections/components/KyblConnectDialog";
-import { forgetCaps, peekCaps } from "../../core/useCaps";
+import { forgetCaps } from "../../core/useCaps";
 import { ConnectionDialog } from "../../connections/components/ConnectionDialog";
 import { KYBL } from "../../connections/lib/kybl";
 import { allGroups } from "../../connections/lib/groups";
@@ -13,7 +13,6 @@ import { clearAuthNeeded } from "../../connections/lib/authNeeded";
 import { flushSync } from "react-dom";
 import { isShellConn } from "../../connections/lib/kinds";
 import { ImportDialog } from "../../connections/components/ImportDialog";
-import { DocShell } from "./DocShell";
 import { Suspense } from "react";
 import { LazyDocumentView } from "../../viewers/lib/registry";
 import { focusPaneList } from "../lib/focus";
@@ -150,7 +149,6 @@ export function ShellDialogs({ active, closeWorkspace, connDialog, connectIn, co
         />
       )}
       {doc && (
-        <DocShell sheet={!!doc.sheet} rule={doc.rule && peekCaps(doc.profileId)?.localPaths ? undefined : doc.rule}>
           <Suspense fallback={null}>
             <LazyDocumentView
               ref={editor}
@@ -158,8 +156,6 @@ export function ShellDialogs({ active, closeWorkspace, connDialog, connectIn, co
               bucket={doc.bucket}
               entry={doc.entry}
               mode="full"
-              inline={doc.sheet}
-              saveRule={doc.rule}
               onClose={() => {
                 setDoc(null);
                 requestAnimationFrame(() => focusPaneList(doc.pane));
@@ -172,7 +168,6 @@ export function ShellDialogs({ active, closeWorkspace, connDialog, connectIn, co
               onOpenExternal={(e) => void paneById(doc.pane).ops.openInApp(e)}
             />
           </Suspense>
-        </DocShell>
       )}
       {wsSettings && wsOpen && (
         <WorkspaceSettings

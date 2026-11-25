@@ -1,7 +1,6 @@
 import { useState, useRef } from "react";
 import { type PaneId } from "../../browser/types";
 import { type Entry } from "../../core/types";
-import { type SaveRule } from "../../edit/lib/editStore";
 import { type DocumentHandle } from "../../viewers/components/DocumentView";
 import { peekCaps } from "../../core/useCaps";
 import { asExport } from "../../connections/lib/native";
@@ -14,11 +13,10 @@ export interface UseFullEditorDeps {
   late: Late;
 }
 
-/** The document editor over everything (Open on a text, code, Markdown, CSV, JSON or Office file), or in a sheet for "Edit in Kybl". */
+/** The document editor over everything: Open on a text, code, Markdown, CSV, JSON or Office file, and "Edit in Kybl". */
 export function useFullEditor(s: UseFullEditorDeps) {
   // Open on a text, code, Markdown, CSV, JSON or Office file shows it here, over everything
-  // `rule`: opened by "Edit in Kybl" (a sheet, saving under the rule picked for this edit)
-  const [doc, setDoc] = useState<{ pane: PaneId; profileId: string; bucket: string; entry: Entry; rule?: SaveRule; sheet?: boolean } | null>(null);
+  const [doc, setDoc] = useState<{ pane: PaneId; profileId: string; bucket: string; entry: Entry } | null>(null);
   const docRef = useRef(doc);
   docRef.current = doc;
   const editor = useRef<DocumentHandle>(null);
