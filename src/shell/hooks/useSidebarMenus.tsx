@@ -168,8 +168,9 @@ export function useSidebarMenus(h: UseSidebarMenusDeps) {
       await h.connectIn(id, p);
     },
     missing: h.rec.notes[id],
-    // first run (nothing saved yet): the welcome, with its ways to add one
-    launcher: h.saved.length ? () => launchItems(id) : undefined,
+    // first run (nothing saved, nothing opened yet, a pane of its own): the welcome, with its ways
+    // to add one; any other empty pane asks what to show, this computer and a terminal too
+    launcher: h.saved.length || h.recents.recent.length || h.lastBefore(id) != null ? () => launchItems(id) : undefined,
   });
 
   /** What empty pane `id` offers (PaneLauncher): the other pane's place, recent, favorites, every connection, a terminal. */
@@ -209,6 +210,7 @@ export function useSidebarMenus(h: UseSidebarMenusDeps) {
           h.focusSoon(id);
         },
       });
+    if (!h.saved.length) out.push({ key: "kybl", section: "new", label: "Connect Kybl Storage…", icon: "cloud", run: () => h.setKyblDialog({ existing: null }) });
     out.push({ key: "new", section: "new", label: "New connection…", icon: "plus", run: () => h.setConnDialog({ profile: null }) });
     return out;
   };

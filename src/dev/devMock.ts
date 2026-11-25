@@ -32,6 +32,8 @@ const profiles: Profile[] = [
   { id: "g1", name: "Google Drive (demo@gmail.com)", kind: "gdrive", provider: "gdrive", endpoint: "", region: "", accessKeyId: "", bucket: null, pathStyle: false, cloud: { accountEmail: "demo@gmail.com", accountId: "1001", clientId: null, tenant: null, scopes: ["drive"] } },
   ...(new URLSearchParams(location.search).has("many") ? manyProfiles() : []),
 ];
+// `?none`: a first run, nothing saved yet (the welcome, and the launcher in other panes)
+if (new URLSearchParams(location.search).has("none")) profiles.length = 0;
 
 /**
  * `?many`: about 150 more connections in a few groups, like a big FileZilla import (every name and
