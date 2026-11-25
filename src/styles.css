@@ -5755,9 +5755,10 @@ input[type="range"]:focus-visible {
   flex: none;
   display: inline-grid;
   place-items: center;
-  width: 28px;
-  height: 26px;
-  margin-right: -8px;
+  /* 17px icons with 3px round them: the hover box keeps clear of the footer's edges */
+  width: 23px;
+  height: 23px;
+  margin-right: -4px;
   /* no default button padding: it squeezed the icon off centre */
   padding: 0;
   border: 0;
