@@ -810,6 +810,9 @@ export function SettingsPage({
                       ))}
                     </div>
                   </Row>
+                  <Row label="Corners" hint="How round buttons, fields, menus and cards are.">
+                    <Seg label="Corners" value={settings.corners} options={CORNERS} onChange={(corners) => onChange({ corners })} />
+                  </Row>
                 </div>
 
                 <h3 className="set-title">Text</h3>
@@ -832,9 +835,6 @@ export function SettingsPage({
                   </Row>
                   <Row label="Size" hint="Scales the whole interface.">
                     <Seg label="Size" value={settings.scale} options={SCALES} onChange={(scale) => onChange({ scale })} />
-                  </Row>
-                  <Row label="Corners" hint="How round buttons, fields, menus and cards are.">
-                    <Seg label="Corners" value={settings.corners} options={CORNERS} onChange={(corners) => onChange({ corners })} />
                   </Row>
                 </div>
 
