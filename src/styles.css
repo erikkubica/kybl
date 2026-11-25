@@ -5758,6 +5758,8 @@ input[type="range"]:focus-visible {
   width: 22px;
   height: 20px;
   margin-right: -6px;
+  /* no default button padding: it squeezed the icon off centre */
+  padding: 0;
   border: 0;
   border-radius: var(--r-sm);
   background: none;
