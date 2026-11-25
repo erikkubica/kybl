@@ -405,12 +405,12 @@ export function MirrorSheet({ src: src0 = null, dst: dst0 = null, saved: saved0 
           ) : (
             !plan && (
               <div className="mirror-status dim">
-                {!config ? "Choose both folders to see what would change." : shown ? "Options changed. Check again to update the list." : "Nothing changes until you look at the list and mirror."}
+                {!config ? "Choose both folders to see what would change." : shown ? "Options changed. Check again to see what would change." : "Nothing changes until you look at the list and mirror."}
               </div>
             )
           )}
-          {shown && !empty && busy !== "preview" && (
-            <div className={`mirror-result ${plan ? "" : "faded"}`}>
+          {plan && shown && !empty && busy !== "preview" && (
+            <div className="mirror-result">
               <div className="mirror-tabs" role="tablist">
                 <button role="tab" aria-selected={tab === "upload"} className={tab === "upload" ? "on" : ""} onClick={() => setTab("upload")}>
                   Copy <b>{n(shown.upload.length)}</b>

@@ -8,9 +8,10 @@
 }
 
 /* ---------------------------------------------------------------- from → to: one card, two rows */
+/* in a sheet the theme's hairline is too faint: boxes here take the strong border, labels the dim text */
 .mirror-route {
   position: relative;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-lg);
   background: var(--panel);
 }
@@ -23,13 +24,14 @@
   padding: 6px 8px 6px 14px;
 }
 .mirror-swap + .mirror-end {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-strong);
 }
 .mirror-end.picking {
-  background: var(--accent-soft);
+  background: var(--hover);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .mirror-end-k {
-  color: var(--faint);
+  color: var(--dim);
   font-size: 11.5px;
   font-weight: 600;
 }
@@ -71,10 +73,10 @@
   width: 24px;
   height: 24px;
   margin-top: -12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 50%;
   background: var(--raised);
-  color: var(--dim);
+  color: var(--text);
 }
 .mirror-swap:hover:not(:disabled) {
   border-color: var(--accent);
@@ -84,6 +86,7 @@
   opacity: 0.45;
 }
 .mirror-picker.jobs-tree {
+  border-color: var(--border-strong);
   height: clamp(180px, calc(100vh - 520px), 300px);
 }
 
@@ -111,7 +114,7 @@
 .mirror-opts-sum {
   min-width: 0;
   overflow: hidden;
-  color: var(--faint);
+  color: var(--dim);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -167,8 +170,8 @@
 .mirror-preview {
   display: flex;
   flex-direction: column;
-  min-height: 64px;
-  border: 1px solid var(--border);
+  min-height: 48px;
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-lg);
   background: var(--field);
   overflow: hidden;
@@ -181,7 +184,7 @@
   color: var(--dim);
 }
 .mirror-status.dim {
-  color: var(--faint);
+  color: var(--dim);
 }
 .mirror-status.ok svg {
   color: var(--ok);
@@ -194,7 +197,7 @@
   align-items: center;
   gap: 2px;
   padding: 4px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-strong);
   background: var(--panel);
 }
 .mirror-tabs button {
@@ -242,6 +245,7 @@
 .mirror-group-head {
   position: sticky;
   top: -4px;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -311,11 +315,11 @@
 }
 .mirror-empty {
   padding: 12px;
-  color: var(--faint);
+  color: var(--dim);
 }
 .mirror-note {
   padding: 6px 10px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-strong);
   color: var(--dim);
   font-size: 12px;
 }
@@ -362,7 +366,7 @@
   min-width: 220px;
   max-width: 320px;
   padding: 4px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-lg);
   background: var(--raised);
   box-shadow: var(--shadow-lg, 0 8px 24px rgb(0 0 0 / 0.3));
@@ -402,7 +406,7 @@
 .mirror-menu-sep {
   height: 1px;
   margin: 4px 2px;
-  background: var(--border);
+  background: var(--border-strong);
 }
 
 @media (max-width: 620px) {
@@ -420,7 +424,4 @@
   flex-direction: column;
   min-height: 0;
   transition: opacity 0.15s var(--ease);
-}
-.mirror-result.faded {
-  opacity: 0.45;
 }
