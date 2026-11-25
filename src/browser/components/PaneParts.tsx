@@ -192,8 +192,8 @@ export function PaneStatusBar({ pane }: { pane: Pane }) {
         // the panel only shows inside a folder: a connection's bucket list has none
         disabled={!folderOpen}
         aria-pressed={pane.infoOpen && folderOpen}
-        title={!folderOpen ? "Open a folder to see its info" : pane.infoOpen ? "Hide folder info" : "Show folder info"}
-        aria-label="Folder info"
+        title={!folderOpen ? "Open a folder to see its info" : pane.infoOpen ? "Hide info" : "Show info: the selection and the folder"}
+        aria-label="Info panel"
       >
         <Icon name="panel-right" size={14} />
       </button>

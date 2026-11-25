@@ -5811,6 +5811,19 @@ input[type="range"]:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* the selection's own section at the panel's top */
+.info-sel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.info-sel-head h3 {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
 .info-kind {
   margin: 0 0 8px;
   color: var(--faint);

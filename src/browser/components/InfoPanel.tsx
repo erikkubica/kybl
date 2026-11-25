@@ -1,5 +1,6 @@
 /**
- * The pane's info panel: context for the folder on screen, not a file preview. The connection
+ * The pane's info panel: what is selected (one item's kind, size, dates and path, or a count and
+ * total for several), then context for the folder on screen, not a file preview. The connection
  * (kind, server, user), the path with a copy button, the folder's item count and size, and for a
  * folder of this computer inside a git work tree: the branch and what it tracks, the remote, the
  * counts of changes with a short list of changed files, the last ten commits, a tag and stashes,
@@ -9,7 +10,9 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../../ui/components/Icons";
-import { formatBytes, plural } from "../../core/format";
+import { entryKind, entrySize, formatBytes, formatDateFull, plural, sumSizes } from "../../core/format";
+import { FileIcon } from "./list/FileIcon";
+import { FolderSizeLine } from "./EntryInfo";
 import { addressOf, kindInfo, pickOf } from "../../connections/lib/kinds";
 import { providerMeta } from "../../connections/lib/providers";
 import { devtoolsApi, type GitCommit, type GitOverview } from "../lib/devtoolsApi";
@@ -19,6 +22,12 @@ import type { Entry } from "../../core/types";
 import { TunnelList } from "../../tunnels/TunnelBadge";
 import { tunnelsOf } from "../../tunnels/tunnels";
 import { PHONE } from "../../connections/components/fields";
+
+/**
+ * Before a path shown right to left (so a long one keeps its end): its slashes stay where they
+ * are instead of the leading one jumping to the end.
+ */
+const LRM = "\u200E";
 
 /** How many changed files the panel lists before saying how many more there are. */
 const LIST_MAX = 8;
@@ -63,13 +72,14 @@ export default function InfoPanel({ pane }: { pane: Pane }) {
   const root = bucket ?? "";
   const local = !!caps?.localPaths;
 
-  // ---- the path, for copying
-  const path = useMemo(() => {
-    const dir = prefix.replace(/\/+$/, "");
+  // ---- the path, for copying (the folder's, or a selected item's)
+  const pathOf = (key: string) => {
+    const dir = key.replace(/\/+$/, "");
     if (local) return `${root.replace(/\/+$/, "")}${dir ? `/${dir}` : ""}` || "/";
     const single = root === "";
     return single ? `/${dir}` : `${root}/${dir}`.replace(/\/$/, "");
-  }, [local, root, prefix]);
+  };
+  const path = useMemo(() => pathOf(prefix), [local, root, prefix]);
 
   // ---- the folder
   // the whole folder, not the rows a name filter leaves
@@ -163,7 +173,50 @@ export default function InfoPanel({ pane }: { pane: Pane }) {
   };
 
   return (
-    <aside className="info-panel" aria-label="Folder info">
+    <aside className="info-panel" aria-label="Info">
+      {/* what is selected comes first: it is what the panel is looked at for */}
+      {picked.length === 1 && (
+        <section className="info-sel">
+          <div className="info-sel-head">
+            <FileIcon entry={picked[0]} size={28} />
+            <h3 title={picked[0].name}>{picked[0].name}</h3>
+          </div>
+          <div className="info-path">
+            <code title={pathOf(picked[0].key)}>{LRM + pathOf(picked[0].key)}</code>
+            <CopyButton text={pathOf(picked[0].key)} label="Copy path" />
+          </div>
+          <Rows
+            facts={[
+              { label: "Kind", value: picked[0].kind === "folder" ? "Folder" : entryKind(picked[0]) },
+              ...(picked[0].kind === "file" ? [{ label: "Size", value: entrySize(picked[0]) }] : []),
+              ...(picked[0].modified ? [{ label: "Modified", value: formatDateFull(picked[0].modified) }] : []),
+              ...(picked[0].created ? [{ label: "Created", value: formatDateFull(picked[0].created) }] : []),
+            ]}
+          />
+          {picked[0].kind === "folder" && (
+            <dl className="info-facts">
+              <div>
+                <dt>Size</dt>
+                <dd>
+                  <FolderSizeLine entryKey={picked[0].key} folderSize={pane.folderSizes.view} onCalcSize={(k) => pane.actions.calcSizes([k])} onCancelSize={pane.folderSizes.cancel} />
+                </dd>
+              </div>
+            </dl>
+          )}
+        </section>
+      )}
+      {picked.length > 1 && (
+        <section className="info-sel">
+          <h3>{picked.length.toLocaleString()} items selected</h3>
+          <Rows
+            facts={[
+              ...(picked.some((e) => e.kind === "folder") ? [{ label: "Folders", value: picked.filter((e) => e.kind === "folder").length.toLocaleString() }] : []),
+              ...(picked.some((e) => e.kind === "file") ? [{ label: "Files", value: picked.filter((e) => e.kind === "file").length.toLocaleString() }] : []),
+              ...(picked.some((e) => e.kind === "file") ? [{ label: picked.some((e) => e.kind === "folder") ? "Size of the files" : "Size", value: formatBytes(sumSizes(picked)) }] : []),
+            ]}
+          />
+        </section>
+      )}
       <section>
         <h3>{profile.name}</h3>
         <p className="info-kind" title={profile.kind === "local" ? undefined : addressOf(profile)}>
@@ -188,7 +241,7 @@ export default function InfoPanel({ pane }: { pane: Pane }) {
       <section>
         <h3>Folder</h3>
         <div className="info-path">
-          <code title={path}>{path}</code>
+          <code title={path}>{LRM + path}</code>
           <CopyButton text={path} label="Copy path" />
         </div>
         <Rows
@@ -220,7 +273,7 @@ export default function InfoPanel({ pane }: { pane: Pane }) {
           )}
           {ov?.remote && (
             <div className="info-path">
-              <code title={ov.remote}>{ov.remote}</code>
+              <code title={ov.remote}>{LRM + ov.remote}</code>
               <CopyButton text={ov.remote} label="Copy remote address" />
             </div>
           )}
