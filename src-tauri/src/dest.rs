@@ -238,12 +238,17 @@ pub enum Stamp {
 /// What a download answers when the file at its destination changed while it ran.
 pub const CHANGED: &str = "The file here changed while it was downloaded, so it was left as it is.";
 
+/// A file's modified time in milliseconds since 1970 (0 when the disk doesn't say).
+pub fn mtime_ms(meta: &std::fs::Metadata) -> i64 {
+    meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
 impl Stamp {
     /// Whether the file at `dest` is still the one this stamp describes.
     pub fn holds(self, dest: &Path) -> bool {
         match (self, std::fs::symlink_metadata(dest)) {
             (Stamp::Absent, Err(e)) => e.kind() == std::io::ErrorKind::NotFound,
-            (Stamp::Matches(s, m), Ok(meta)) => meta.is_file() && meta.len() == s && crate::sync::local::mtime_ms(&meta) == m,
+            (Stamp::Matches(s, m), Ok(meta)) => meta.is_file() && meta.len() == s && mtime_ms(&meta) == m,
             _ => false,
         }
     }

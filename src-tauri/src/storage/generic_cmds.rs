@@ -1092,7 +1092,7 @@ mod tests {
             std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
             std::fs::write(&dest, b"mine").unwrap();
             let meta = std::fs::metadata(&dest).unwrap();
-            let stamp = dest::Stamp::Matches(meta.len(), crate::sync::local::mtime_ms(&meta));
+            let stamp = dest::Stamp::Matches(meta.len(), crate::dest::mtime_ms(&meta));
             // the user saves the file while the download is under way
             let edit = || std::fs::write(&dest, b"mine, edited").unwrap();
             let report = |_: u64, _: u64| edit();
@@ -1103,7 +1103,7 @@ mod tests {
 
             // unchanged: replaced as before
             let meta = std::fs::metadata(&dest).unwrap();
-            let stamp = dest::Stamp::Matches(meta.len(), crate::sync::local::mtime_ms(&meta));
+            let stamp = dest::Stamp::Matches(meta.len(), crate::dest::mtime_ms(&meta));
             assert!(matches!(download(&b, &root, "photos/2026/cat.jpg", &dest, &never, &|_, _| {}, None, Some(stamp)).await.unwrap(), Outcome::Done));
             assert_eq!(std::fs::read(&dest).unwrap().len(), 1000);
 

@@ -5,6 +5,7 @@
 #[cfg(desktop)]
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(desktop)]
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime};
 #[cfg(desktop)]

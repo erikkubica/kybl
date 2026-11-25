@@ -29,9 +29,8 @@ pub fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
-pub fn mtime_ms(meta: &std::fs::Metadata) -> i64 {
-    meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0)
-}
+// (in dest.rs, which the phone build has too)
+pub use crate::dest::mtime_ms;
 
 /// The file's identity on its disk: device and inode on macOS and Linux. Windows has no stable
 /// id through std, so renames there are matched by size and time.
