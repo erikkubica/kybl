@@ -18,14 +18,14 @@ API (end of `src/core/api.ts`, `// WP-E4`): `mountApi.mountList / mountAdd(profi
 ## Already wired
 
 - `SettingsPage.tsx`: page id `"drives"` ("Drives", under Storage) renders `<MountsSection profiles onToast />`.
-- The tray's **Drives** submenu opens a mounted drive in Finder, and "Drive settings…" emits `open-settings` with `"drives"` (AppShell already listens).
+- The tray's **Drives** submenu opens a mounted drive in Finder, and "Drive settings…" emits `open-settings` with `"drives"` (useShellSettings already listens).
 - `app/quit.rs` asks before quitting while saves on drives still wait to upload, and unmounts on the way out.
 
 ## For the manager to wire: the context menu
 
 Add **Mount as drive…** (icon `server`) to:
 
-1. the sidebar bucket menu (`AppShell.bucketMenu`): `prefix = ""`;
+1. the sidebar bucket menu (`bucketMenu` in `src/shell/hooks/useSidebarMenus.tsx`): `prefix = ""`;
 2. the folder row menu (`useEntryActions`, next to "Sync this folder…"): `prefix = e.key` (ends with `/`);
 3. optionally the connection menu: `bucket = ""`, `prefix = ""` mounts the whole connection. Every root (bucket, drive) becomes a top-level folder; a connection with one root (SFTP, FTP, WebDAV, Dropbox) shows that root's contents directly.
 

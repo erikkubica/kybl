@@ -55,10 +55,12 @@ let shellList: Promise<ShellChoice[]> | null = null;
 /** The shells installed here, the default first (empty on macOS and Linux: the login shell runs). */
 export function terminalShells(): Promise<ShellChoice[]> {
   // a failed lookup isn't kept: the next ask tries again
-  shellList ??= invoke<ShellChoice[]>("terminal_shells").catch(() => {
-    shellList = null;
-    return [];
-  });
+  shellList ??= invoke<ShellChoice[] | null>("terminal_shells")
+    .then((l) => l ?? [])
+    .catch(() => {
+      shellList = null;
+      return [];
+    });
   return shellList;
 }
 

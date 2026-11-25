@@ -1,0 +1,200 @@
+import type { Workspace } from "../lib/workspaces";
+import type { ToastAction } from "../../desktop/components/fileOps";
+import type { Toast } from "../../ui/components/Dialogs";
+import type { Profile } from "../../core/types";
+import { SettingsPage } from "../../settings/SettingsPage";
+import { KyblConnectDialog } from "../../connections/components/KyblConnectDialog";
+import { forgetCaps, peekCaps } from "../../core/useCaps";
+import { ConnectionDialog } from "../../connections/components/ConnectionDialog";
+import { KYBL } from "../../connections/lib/kybl";
+import { allGroups } from "../../connections/lib/groups";
+import { clearAuthNeeded } from "../../connections/lib/authNeeded";
+import { flushSync } from "react-dom";
+import { isShellConn } from "../../connections/lib/kinds";
+import { ImportDialog } from "../../connections/components/ImportDialog";
+import { DocShell } from "./DocShell";
+import { Suspense } from "react";
+import { LazyDocumentView } from "../../viewers/lib/registry";
+import { focusPaneList } from "../lib/focus";
+import { WorkspaceSettings } from "./WorkspaceSettings";
+import { usePaneSlots } from "../hooks/usePaneSlots";
+import { useWorkspacesHost } from "../hooks/useWorkspacesHost";
+import { useConnDialogs } from "../hooks/useConnDialogs";
+import { useConnections } from "../hooks/useConnections";
+import { useFullEditor } from "../hooks/useFullEditor";
+import { useShellLayout } from "../hooks/useShellLayout";
+import { usePanesHost } from "../hooks/usePanesHost";
+import { useShellSettings } from "../hooks/useShellSettings";
+
+export interface ShellDialogsProps {
+  active: ReturnType<typeof usePaneSlots>["active"];
+  closeWorkspace: ReturnType<typeof useWorkspacesHost>["closeWorkspace"];
+  connDialog: ReturnType<typeof useConnDialogs>["connDialog"];
+  connectIn: ReturnType<typeof usePaneSlots>["connectIn"];
+  conns: ReturnType<typeof useConnections>;
+  doc: ReturnType<typeof useFullEditor>["doc"];
+  duplicateWorkspace: ReturnType<typeof useWorkspacesHost>["duplicateWorkspace"];
+  editor: ReturnType<typeof useFullEditor>["editor"];
+  forgetProfile: ReturnType<typeof usePaneSlots>["forgetProfile"];
+  importOpen: ReturnType<typeof useConnDialogs>["importOpen"];
+  kyblDialog: ReturnType<typeof useConnDialogs>["kyblDialog"];
+  openHere: ReturnType<typeof usePaneSlots>["openHere"];
+  openShell: ReturnType<typeof usePaneSlots>["openShell"];
+  paneById: ReturnType<typeof usePaneSlots>["paneById"];
+  patchWorkspace: ReturnType<typeof useWorkspacesHost>["patchWorkspace"];
+  rec: ReturnType<typeof useShellLayout>["rec"];
+  reloadIfShowing: ReturnType<typeof usePanesHost>["reloadIfShowing"];
+  renameWorkspace: ReturnType<typeof useWorkspacesHost>["renameWorkspace"];
+  saved: Profile[];
+  setConnDialog: ReturnType<typeof useConnDialogs>["setConnDialog"];
+  setDoc: ReturnType<typeof useFullEditor>["setDoc"];
+  setImportOpen: ReturnType<typeof useConnDialogs>["setImportOpen"];
+  setKyblDialog: ReturnType<typeof useConnDialogs>["setKyblDialog"];
+  setSettingsOpen: ReturnType<typeof useShellSettings>["setSettingsOpen"];
+  setWsSettings: ReturnType<typeof useWorkspacesHost>["setWsSettings"];
+  settings: ReturnType<typeof useShellSettings>["settings"];
+  settingsOpen: ReturnType<typeof useShellSettings>["settingsOpen"];
+  settingsPage: ReturnType<typeof useShellSettings>["settingsPage"];
+  slots: ReturnType<typeof usePaneSlots>["slots"];
+  toast: (kind: Toast["kind"], text: string, action?: ToastAction) => void;
+  updateSettings: ReturnType<typeof useShellSettings>["updateSettings"];
+  ws: ReturnType<typeof useShellLayout>["ws"];
+  wsOpen: Workspace | null | undefined;
+  wsSettings: ReturnType<typeof useWorkspacesHost>["wsSettings"];
+}
+
+/** What comes up over the window: Settings, the connection dialogs, Import, the full-window editor and a workspace's settings. */
+export function ShellDialogs({ active, closeWorkspace, connDialog, connectIn, conns, doc, duplicateWorkspace, editor, forgetProfile, importOpen, kyblDialog, openHere, openShell, paneById, patchWorkspace, rec, reloadIfShowing, renameWorkspace, saved, setConnDialog, setDoc, setImportOpen, setKyblDialog, setSettingsOpen, setWsSettings, settings, settingsOpen, settingsPage, slots, toast, updateSettings, ws, wsOpen, wsSettings }: ShellDialogsProps) {
+  return (
+    <>
+      {settingsOpen && (
+        <SettingsPage
+          settings={settings}
+          compact={active.compact}
+          profiles={saved}
+          onChange={updateSettings}
+          // Settings sets it for every pane (each can still change its own from its toolbar)
+          onCompact={(c) => {
+            for (const p of slots) p.setCompact(c);
+          }}
+          onEditProfile={(p) => setConnDialog({ profile: p })}
+          onNewProfile={() => setConnDialog({ profile: null })}
+          onImportProfiles={() => setImportOpen(true)}
+          onClose={() => setSettingsOpen(false)}
+          initialPage={settingsPage.page}
+          pageRequest={settingsPage.n}
+          activeProfileId={active.profile?.id ?? null}
+          onToast={toast}
+        />
+      )}
+      {kyblDialog && (
+        <KyblConnectDialog
+          existing={kyblDialog.existing}
+          reconnect={kyblDialog.reconnect}
+          onClose={() => setKyblDialog(null)}
+          onConnected={(p) => {
+            forgetCaps(p.id);
+            conns.upsertProfile(p);
+            openHere((pane) => void connectIn(pane.id, p));
+          }}
+          onDeleted={forgetProfile}
+        />
+      )}
+      {connDialog && (
+        <ConnectionDialog
+          initial={connDialog.profile}
+          reconnect={connDialog.reconnect}
+          startKind={connDialog.startKind}
+          startTab={connDialog.startTab}
+          onClose={() => setConnDialog(null)}
+          onKybl={() => {
+            setConnDialog(null);
+            setKyblDialog({ existing: null });
+          }}
+          kyblFirst={!saved.some((p) => p.provider === KYBL)}
+          groups={allGroups(saved)}
+          onImport={() => {
+            setConnDialog(null);
+            setImportOpen(true);
+          }}
+          onSaved={(p) => {
+            forgetCaps(p.id);
+            clearAuthNeeded(p.id);
+            // rendered at once: an SSH connection opens as its terminal, which looks the new
+            // profile up in the list
+            flushSync(() => conns.upsertProfile(p));
+            if (isShellConn(p)) openShell(p);
+            else openHere((pane) => void connectIn(pane.id, p));
+          }}
+          onDeleted={forgetProfile}
+        />
+      )}
+      {importOpen && (
+        <ImportDialog
+          onClose={() => setImportOpen(false)}
+          onImported={(list) => {
+            for (const p of list) conns.upsertProfile(p);
+          }}
+          toast={toast}
+        />
+      )}
+      {doc && (
+        <DocShell sheet={!!doc.sheet} rule={doc.rule && peekCaps(doc.profileId)?.localPaths ? undefined : doc.rule}>
+          <Suspense fallback={null}>
+            <LazyDocumentView
+              ref={editor}
+              profileId={doc.profileId}
+              bucket={doc.bucket}
+              entry={doc.entry}
+              mode="full"
+              inline={doc.sheet}
+              saveRule={doc.rule}
+              onClose={() => {
+                setDoc(null);
+                requestAnimationFrame(() => focusPaneList(doc.pane));
+              }}
+              onSaved={() => {
+                // size, date and ETag changed (or a copy appeared); the editor's header says
+                // "Saved" / "Saved as …" itself, so no toast on top
+                reloadIfShowing(doc.profileId, doc.bucket);
+              }}
+              onOpenExternal={(e) => void paneById(doc.pane).ops.openInApp(e)}
+            />
+          </Suspense>
+        </DocShell>
+      )}
+      {wsSettings && wsOpen && (
+        <WorkspaceSettings
+          key={wsOpen.id}
+          name={wsOpen.name}
+          color={wsOpen.color}
+          recipe={rec.view(wsOpen.id)}
+          canClose={ws.list.length > 1}
+          anchor={wsSettings.anchor}
+          onRename={(n) => renameWorkspace(wsOpen.id, n)}
+          onColor={(color) => patchWorkspace(wsOpen.id, { color })}
+          onSaveRecipe={() => rec.save(wsOpen.id)}
+          onResetRecipe={() => {
+            setWsSettings(null);
+            void rec.reset(wsOpen.id);
+          }}
+          onDeleteRecipe={() => {
+            const r = rec.recipeOf(wsOpen);
+            if (r) rec.remove(r.id);
+          }}
+          onOpenOnLaunch={(on) => patchWorkspace(wsOpen.id, { start: on ? "saved" : "restore" })}
+          onStartup={(pane, text) => {
+            const r = rec.recipeOf(wsOpen);
+            if (r) rec.setLines(r.id, pane, text);
+          }}
+          onDuplicate={() => duplicateWorkspace(wsOpen.id)}
+          onClose={() => {
+            setWsSettings(null);
+            void closeWorkspace(wsOpen.id);
+          }}
+          onDismiss={() => setWsSettings(null)}
+        />
+      )}
+    </>
+  );
+}
