@@ -52,6 +52,7 @@ export interface UseSidebarMenusDeps {
   openShell: (p: Profile, another?: boolean) => void;
   lastBefore: (id: PaneId) => PaneId | null;
   settings: Settings;
+  updateSettings: (patch: Partial<Settings>) => void;
   paneById: (id: PaneId) => Pane;
   picks: ReturnType<typeof useConnPicks>;
   profiles: Profile[];
@@ -403,8 +404,9 @@ export function useSidebarMenus(h: UseSidebarMenusDeps) {
         : single
         ? { type: "item" as const, label: "Open", icon: "folder" as const, onClick: () => h.openHere((pane) => pane.openBucket(p, "")) }
         : { type: "item" as const, label: h.conns.expanded.has(p.id) ? "Collapse" : "Expand", icon: "chevron" as const, onClick: () => h.toggleConnection(p) },
+      single && !isShellConn(p) && !own ? favItem(p, "") : null,
       // all of this computer is too much to copy in one go: its folders have their own menus
-      ...(own ? [] : [{ type: "item" as const, label: "Copy / Move to…", icon: "copy" as const, onClick: () => void copyAll() }]),
+      ...(own ? [] : [{ type: "item" as const, label: "Copy / Move to…", icon: "copy-to" as const, onClick: () => void copyAll() }]),
       ...(own ? [] : driveFor(p, "")),
       ...photoMenuItems(p, h.dialogs),
       ...tunnelMenuItems(p, h.toast),
@@ -491,12 +493,29 @@ export function useSidebarMenus(h: UseSidebarMenusDeps) {
       { type: "item", label: "New connection…", icon: "plus", onClick: () => h.setConnDialog({ profile: null }) },
     ]);
   };
+  /** "Add to favorites" (or Remove) for the top of root `b` of `p`. */
+  const favItem = (p: Profile, b: string): MenuItem => {
+    const favs = h.settings.favorites;
+    const fav = favs.find((f) => f.profileId === p.id && f.bucket === b && f.prefix === "");
+    const name = (b ? h.conns.rootLabel(p.id, b) : "") || b || p.name;
+    return {
+      type: "item",
+      label: fav ? "Remove from favorites" : "Add to favorites",
+      icon: "star",
+      onClick: () => {
+        if (fav) return h.updateSettings({ favorites: favs.filter((f) => f !== fav) });
+        h.updateSettings({ favorites: [...favs, { profileId: p.id, bucket: b, prefix: "", name }] });
+        h.toast("success", `Added “${name}” to favorites`);
+      },
+    };
+  };
   /** Right-click on a bucket (or one of this computer's folders) in the sidebar. */
   const bucketMenu = (p: Profile, b: string, x: number, y: number) => {
     const hidden = (h.conns.hiddenBuckets[p.id] ?? []).includes(b);
     h.dialogs.menu(x, y, tidyMenu([
       { type: "item", label: "Open", icon: p.id === THIS_MAC.id ? "folder" : "bucket", onClick: () => h.openHere((pane) => pane.openBucket(p, b)) },
-      { type: "item", label: "Copy / Move to…", icon: "copy", onClick: () => h.migrations.open({ profileId: p.id, root: b, items: [{ path: "", isDir: true }] }, "copy") },
+      favItem(p, b),
+      { type: "item", label: "Copy / Move to…", icon: "copy-to", onClick: () => h.migrations.open({ profileId: p.id, root: b, items: [{ path: "", isDir: true }] }, "copy") },
       ...(p.id === THIS_MAC.id ? [] : driveFor(p, b)),
       { type: "sep" },
       { type: "item", label: hidden ? "Show in the sidebar" : "Hide from the sidebar", icon: hidden ? "eye" : "eye-off", onClick: () => h.conns.setBucketHidden(p, b, !hidden) },
