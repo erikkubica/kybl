@@ -16,6 +16,7 @@ import type { Settings } from "../settings/settings";
 import { ChooseBucket, ListError, Welcome, type EmptyActions } from "./components/PaneEmpty";
 import { PaneLauncher } from "./components/PaneLauncher";
 import { PaneBanners, PaneStatusBar } from "./components/PaneParts";
+import { InfoGrip, INFO_W } from "./components/InfoGrip";
 import type { Pane } from "./hooks/usePane";
 import { useImageModes } from "../thumbs/imageMode";
 import type { MenuItem } from "../ui/components/Dialogs";
@@ -323,9 +324,13 @@ export function BrowserPane(p: BrowserPaneProps) {
           )}
         </div>
         {pane.infoOpen && profile && bucket != null && (
-          <Suspense fallback={<aside className="info-panel" aria-busy="true" />}>
-            <InfoPanel pane={pane} />
-          </Suspense>
+          // the width: the pane's own, at most half the pane (min() in CSS, so a narrow pane wins)
+          <div className="info-wrap" style={{ width: `max(200px, min(${pane.infoW ?? INFO_W}px, 50%))` }}>
+            <InfoGrip width={pane.infoW} onWidth={pane.setInfoW} />
+            <Suspense fallback={<aside className="info-panel" aria-busy="true" />}>
+              <InfoPanel pane={pane} />
+            </Suspense>
+          </div>
         )}
       </div>
       {/* under the list and the info panel alike */}

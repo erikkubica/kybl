@@ -116,6 +116,7 @@ function usePaneCore(env: PaneEnv) {
   const [groupOwn, setGroupBy] = usePanePref<GroupBy>(keys.group);
   // the info panel beside the list (remembered per pane, and kept by the workspace)
   const [infoOwn, setInfoOpen] = usePanePref<boolean>(keys.info);
+  const [infoWOwn, setInfoW] = usePanePref<number>(keys.infoW);
   const sortSetting = sortOwn ?? settings.sort;
   const showHidden = hiddenOwn ?? settings.showHiddenFiles;
   const compact = compactOwn ?? LS.get("s3b.compact") === "1";
@@ -174,7 +175,7 @@ function usePaneCore(env: PaneEnv) {
     LS.set(viewKey, v);
   };
   /** The pane's own view choices as they are (null: following the app's setting), for a workspace to keep. */
-  const viewState = (): PaneView => ({ view, sort: sortOwn, hidden: hiddenOwn, compact: compactOwn, tile: tileOwn, group: groupOwn, info: infoOwn });
+  const viewState = (): PaneView => ({ view, sort: sortOwn, hidden: hiddenOwn, compact: compactOwn, tile: tileOwn, group: groupOwn, info: infoOwn, infoW: infoWOwn });
   /** Takes a workspace's view choices back. */
   const applyView = (v: PaneView) => {
     if (v.view !== view) setView(v.view);
@@ -184,6 +185,7 @@ function usePaneCore(env: PaneEnv) {
     setTile(v.tile);
     setGroupBy(v.group ?? null);
     setInfoOpen(v.info ? true : null);
+    setInfoW(v.infoW ?? null);
   };
 
   const folderSizes = useFolderSizes(profile?.id ?? null, bucket, (pre, msg) =>
@@ -517,6 +519,9 @@ function usePaneCore(env: PaneEnv) {
     tile,
     setTile,
     infoOpen: !!infoOwn,
+    /** the info panel's own width (null: the default) */
+    infoW: infoWOwn ?? null,
+    setInfoW,
     setInfoOpen: (on: boolean) => setInfoOpen(on ? true : null),
     onPress,
     go,

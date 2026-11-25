@@ -35,6 +35,8 @@ export type PaneView = {
   group?: GroupBy | null;
   /** the info panel beside the list is open (absent or null: closed) */
   info?: boolean | null;
+  /** the info panel's width in px, dragged by its edge (absent or null: the default) */
+  infoW?: number | null;
 };
 
 export function paneKeys(id: PaneId) {
@@ -47,6 +49,7 @@ export function paneKeys(id: PaneId) {
     tile: `s3b.tile.${id}`,
     group: `s3b.group.${id}`,
     info: `s3b.info.${id}`,
+    infoW: `s3b.infoW.${id}`,
   };
 }
 
