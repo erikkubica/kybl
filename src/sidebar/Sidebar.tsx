@@ -646,7 +646,6 @@ export function Sidebar({
       authNeeded={!!authNeeded?.has(p.id)}
       rootLabel={rootLabel}
       onFold={onFoldProfile ?? onToggleProfile}
-      onOpen={(x) => (onOpenConnection ? onOpenConnection(x) : onToggleProfile(x))}
       onSelectBucket={onSelectBucket}
       onOpenBucketByName={onOpenBucketByName}
       onNewBucket={onNewBucket}
@@ -1052,10 +1051,10 @@ function DeviceRoots({
 }
 
 /**
- * One connection in the sidebar, every kind alike: a click marks it with an Open button (a click
- * alone never replaces what the pane shows), a double click, ↵ or Open opens it, and into an empty
- * pane a click opens at once. One with buckets (or drives) also folds open on them, by a click or
- * its caret; a bucket row opens that bucket.
+ * One connection in the sidebar. A server (one root) is a place like a bucket: a click marks it
+ * with an Open button (a click alone never replaces what the pane shows), a double click, ↵ or
+ * Open opens it, and into an empty pane a click opens at once. One with buckets (or drives) never
+ * opens itself: its row folds open on them, and each bucket row opens that bucket.
  */
 function SidebarConnection({
   p,
@@ -1070,7 +1069,6 @@ function SidebarConnection({
   authNeeded,
   rootLabel,
   onFold,
-  onOpen,
   onSelectBucket,
   onOpenBucketByName,
   onNewBucket,
@@ -1100,8 +1098,6 @@ function SidebarConnection({
   rootLabel: (profileId: string, root: string) => string;
   /** folds it open or shut on its buckets */
   onFold: (p: Profile) => void;
-  /** opens it in the pane in use */
-  onOpen: (p: Profile) => void;
   onSelectBucket: (p: Profile, b: string) => void;
   onOpenBucketByName: (p: Profile) => void;
   onNewBucket: (p: Profile) => void;
@@ -1135,16 +1131,17 @@ function SidebarConnection({
   const canOpenByName = !own && mode === "buckets" && !canCreate;
   const here = active && single && bucket === "";
   // already what the pane shows: opening it again would only reload it
-  const showing = single ? here : active;
-  const open_ = () => (single ? onSelectBucket(p, "") : onOpen(p));
-  const asks = !!choice && !paneEmpty && !showing;
+  // a server (one root) opens like a place; one with buckets only folds: which bucket to open is
+  // the bucket row's to say
+  const open_ = () => onSelectBucket(p, "");
+  const asks = single && !!choice && !paneEmpty && !here;
   // ⌘/Ctrl-click (or any click while some are picked) picks the connection instead of opening it
   const click = (e: React.MouseEvent) => {
     if (onPick && !own && (e.metaKey || e.ctrlKey || e.shiftKey || pickMode)) return onPick(p);
-    if (e.detail > 1) return asks || !showing ? open_() : undefined;
-    if (!single && !(paneEmpty && open)) onFold(p);
-    if (asks) return choice!.choose(`c:${p.id}`);
-    if (!showing) open_();
+    if (!single) return e.detail < 2 ? onFold(p) : undefined;
+    if (here) return;
+    if (e.detail > 1 || !asks) return open_();
+    choice!.choose(`c:${p.id}`);
   };
   // the error a server gave, as a dot with the message on hover (the pane says it in full)
   const trouble = single && active && list?.note && !list.names.length ? list.note : null;
@@ -1165,7 +1162,7 @@ function SidebarConnection({
             e.preventDefault();
             return onFold(p);
           }
-          onActivate(() => !showing && open_())(e);
+          onActivate(() => (single ? !here && open_() : onFold(p)))(e);
         }}
         role="button"
         tabIndex={0}
