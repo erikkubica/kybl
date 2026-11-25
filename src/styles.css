@@ -6146,3 +6146,7 @@ input[type="range"]:focus-visible {
 .side-head.sect .side-head-fold {
   padding-left: 2px;
 }
+/* a connection's buckets (and its "New bucket" / "Open bucket by name"): centered under its badge */
+.bucket-list > .side-item.sub > svg:first-child {
+  margin: 0 3px;
+}
